@@ -5,10 +5,11 @@ hand-maintained registries (the "seven-registry knob tax" traced via the
 ``genealogy`` knob). Finding 3 makes the FIELD DECLARATION the source of
 truth: each participating field on :class:`ScoringWeights` and its nested
 config dataclasses carries :func:`~zicato.core.scoring_config._knob` metadata
-(``omit_at_default`` + ``builder_op`` + optional ``builder_arg``), and the
+(``omit_at_default`` + ``builder_op`` + optional ``builder_arg`` + an
+optional :class:`~zicato.core.constraints.KnobConstraint` bound), and the
 mechanical registries derive from / are enforced against it.
 
-Two guards live here:
+Three guards live here:
 
 * :func:`test_derived_omit_set_equals_frozen_literal` — the contract
   canonicalizer's omit set is now DERIVED from the ``omit_at_default``
@@ -23,6 +24,11 @@ Two guards live here:
   one reds THIS test with a message naming exactly which touchpoint is
   missing for which knob. Enforcement over generation: the ops are NOT
   code-generated; this test is the net that catches a half-wired knob.
+
+* :func:`test_loader_and_builder_refuse_alike` — every knob that declares a
+  bound is refused by the contract loader and by the builder operation that
+  sets it, with the same message. Each surface used to carry its own copy of
+  each rule, and the copies drifted.
 """
 
 from __future__ import annotations
@@ -31,10 +37,23 @@ import inspect
 import re
 from pathlib import Path
 
+import pytest
+
 import zicato.dashboard as _dashboard_pkg
 from zicato.builder import api as builder_api
 from zicato.builder import copilot_tools, operations
-from zicato.core.scoring_config import contract_knobs, omit_at_default_fields
+from zicato.builder.draft import TournamentDraft
+from zicato.core.constraints import knob_constraint
+from zicato.core.scoring_config import (
+    ContractKnob,
+    LadderConfig,
+    OverfittingConfig,
+    ProposerQualityConfig,
+    ScoringWeights,
+    contract_knobs,
+    omit_at_default_fields,
+)
+from zicato.core.tournament import TournamentStructure
 
 _SCORING_OMIT_AT_DEFAULT_FIELDS = omit_at_default_fields()
 
@@ -331,3 +350,126 @@ def test_every_builder_op_knob_is_fully_wired() -> None:
                     f"touchpoint ({letter}): {description}"
                 )
     assert not failures, "half-wired builder knob(s):\n" + "\n".join(failures)
+
+
+# ---------------------------------------------------------------------------
+# Guard 3 — one declared bound per knob, honoured by loader and builder alike.
+# ---------------------------------------------------------------------------
+
+#: One inadmissible value per knob that declares a bound. Both the contract
+#: loader (constructing the owning dataclass) and the builder operation the
+#: knob's own metadata names must refuse it, with the SAME message — which is
+#: what :func:`test_loader_and_builder_refuse_alike` asserts. The wording
+#: drifted for years while the two surfaces kept private copies of each rule
+#: (``screen_entries must be >= 0`` against ``screen entries must be >= 0``).
+_INADMISSIBLE_VALUES: dict[tuple[type, str], object] = {
+    (ScoringWeights, "pass_weight"): float("nan"),
+    (ScoringWeights, "default_judge_weight"): float("inf"),
+    (ScoringWeights, "plan_revision_weight"): float("nan"),
+    (ScoringWeights, "task_failure_weight"): float("nan"),
+    (ScoringWeights, "not_completed_weight"): float("nan"),
+    (ScoringWeights, "diff_complexity_weight"): -1.0,
+    (ScoringWeights, "diff_complexity_ceiling"): -1.0,
+    (ScoringWeights, "promote_margin"): -0.05,
+    (ScoringWeights, "holdout_entry_regression_budget"): -1,
+    (ScoringWeights, "pass_rate_monotonicity_scope"): "per_namespace",
+    (ScoringWeights, "regression_timeout_s"): 0,
+    (ScoringWeights, "telemetry_dialect"): "syslog",
+    (OverfittingConfig, "min_board_size_for_split"): -1,
+    # Not ``0``: ``set_holdout`` reserves that as the token that CLEARS the
+    # ceiling, since ``None`` there already means "leave unchanged".
+    (OverfittingConfig, "max_generations_per_contract"): -1,
+    (OverfittingConfig, "random_baseline_every_n"): -1,
+    (LadderConfig, "threshold"): -0.5,
+    (LadderConfig, "budget"): -1,
+    (LadderConfig, "noise_scale"): -0.1,
+    (ProposerQualityConfig, "best_of_n"): 0,
+    (ProposerQualityConfig, "screen_entries"): -1,
+    (ProposerQualityConfig, "process_exemplars"): -1,
+    (ProposerQualityConfig, "genealogy"): -1,
+    (ProposerQualityConfig, "calibration_feedback"): -1,
+    (ProposerQualityConfig, "recombine_merge"): "union",
+}
+
+
+def _bounded_knobs() -> list[ContractKnob]:
+    """Every knob that declares a bound, in declaration order."""
+    return [knob for knob in contract_knobs() if _declares_a_bound(knob)]
+
+
+def _declares_a_bound(knob: ContractKnob) -> bool:
+    try:
+        knob_constraint(knob.owner, knob.name)
+    except KeyError:
+        return False
+    return True
+
+
+def _set_through_builder(knob: ContractKnob, value: object) -> None:
+    """Set one knob to ``value`` through the operation its metadata names.
+
+    A DOTTED ``builder_arg`` (``ladder.threshold``) names a subkey of a
+    partial-mapping argument, so the value is wrapped in that mapping — the
+    same reading of the metadata the wiring guard above applies.
+    """
+    argument, _, subkey = knob.builder_arg.partition(".")
+    payload = {subkey: value} if subkey else value
+    getattr(operations, knob.builder_op)(TournamentDraft(), **{argument: payload})
+
+
+@pytest.mark.parametrize("knob", _bounded_knobs(), ids=lambda knob: knob.key)
+def test_loader_and_builder_refuse_alike(knob: ContractKnob) -> None:
+    """Contract load and the builder operation reject with one wording."""
+    value = _INADMISSIBLE_VALUES[(knob.owner, knob.name)]
+    with pytest.raises(ValueError) as from_loader:
+        knob.owner(**{knob.name: value})
+    with pytest.raises(ValueError) as from_builder:
+        _set_through_builder(knob, value)
+    assert str(from_loader.value) == str(from_builder.value)
+    expected_name = knob_constraint(knob.owner, knob.name).label or knob.name
+    assert str(from_loader.value).startswith(expected_name)
+
+
+def test_every_bounded_knob_has_an_inadmissible_value() -> None:
+    """No knob may declare a bound with no case pinning both surfaces to it."""
+    declared = {(knob.owner, knob.name) for knob in _bounded_knobs()}
+    missing = sorted(
+        f"{owner.__name__}.{name}" for owner, name in declared - set(_INADMISSIBLE_VALUES)
+    )
+    assert not missing, (
+        f"knob(s) {missing} declare a bound with no entry in _INADMISSIBLE_VALUES — "
+        "add a value the bound forbids."
+    )
+    stale = sorted(
+        f"{owner.__name__}.{name}" for owner, name in set(_INADMISSIBLE_VALUES) - declared
+    )
+    assert not stale, f"_INADMISSIBLE_VALUES names knob(s) {stale} that declare no bound."
+
+
+def test_promote_margin_may_not_invert_the_gate() -> None:
+    """A negative promote margin is refused rather than promoting a regression.
+
+    The gate's scalar rule is ``delta_scalar <= -promote_margin``, so a margin
+    of ``-0.05`` would promote a challenger that scored 0.05 WORSE than the
+    champion. Nothing rejected it before: the field was checked for
+    finiteness alone.
+    """
+    with pytest.raises(ValueError, match="promote_margin must be >= 0"):
+        ScoringWeights(promote_margin=-0.05)
+    # A zero margin is a bar of zero, not an inversion.
+    ScoringWeights(promote_margin=0.0)
+
+
+@pytest.mark.parametrize("replicates", [0, -2])
+def test_zero_or_negative_replicates_is_refused(replicates: int) -> None:
+    """A duel count below one is refused at load instead of clamped at run time.
+
+    ``replicates`` lives in the untyped structure-params mapping, where every
+    strategy that reads it clamps with ``max(1, ...)`` — so an operator who
+    wrote ``0`` got single-run duels and no indication their setting was
+    ignored.
+    """
+    with pytest.raises(ValueError, match=r'tournament params\["replicates"\] must be >= 1'):
+        TournamentStructure(structure="swiss", params={"replicates": replicates})
+    with pytest.raises(ValueError, match=r'tournament params\["replicates"\] must be >= 1'):
+        operations.set_param(TournamentDraft(), "replicates", replicates)

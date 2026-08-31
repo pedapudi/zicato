@@ -30,11 +30,12 @@ from typing import Any
 
 from zicato.board.split import HOLDOUT_TAG, split_board
 from zicato.builder.draft import TournamentDraft
+from zicato.core.constraints import require_knob
 from zicato.core.types import (
-    KNOWN_TELEMETRY_DIALECTS,
     VALID_TOURNAMENT_STRUCTURES,
     BoardEntry,
     JudgeSpec,
+    ProposerQualityConfig,
     ScoringWeights,
     TournamentStructure,
 )
@@ -525,6 +526,10 @@ def set_gate(
 ) -> DraftPatch:
     """Set the promote gate: margin, monotonicity, and the hard blocks.
 
+    ``promote_margin`` is the improvement a challenger must show before the
+    gate promotes it; it may not be negative, which would turn the rule into
+    one that promotes a regression.
+
     ``monotonicity`` is the on/off switch; ``monotonicity_scope`` selects
     the granularity when it is on (``"per_entry"`` — default, every
     champion-passed entry must hold — or ``"aggregate"`` — only the overall
@@ -551,12 +556,14 @@ def set_gate(
     """
     changed: dict[str, Any] = {}
     scoring_changes: dict[str, Any] = {}
-    if promote_margin is not None and promote_margin != draft.scoring.promote_margin:
-        scoring_changes["promote_margin"] = promote_margin
-        changed["promote_margin"] = {
-            "from": draft.scoring.promote_margin,
-            "to": promote_margin,
-        }
+    if promote_margin is not None:
+        require_knob(ScoringWeights, "promote_margin", promote_margin)
+        if promote_margin != draft.scoring.promote_margin:
+            scoring_changes["promote_margin"] = promote_margin
+            changed["promote_margin"] = {
+                "from": draft.scoring.promote_margin,
+                "to": promote_margin,
+            }
     if holdout_margin is not None:
         # Negative CLEARS to auto (the field's meaningful "off" is None,
         # which this op reserves for "leave unchanged"); the dataclass
@@ -569,11 +576,9 @@ def set_gate(
                 "to": effective,
             }
     if holdout_entry_regression_budget is not None:
-        if holdout_entry_regression_budget < 0:
-            raise ValueError(
-                f"holdout_entry_regression_budget must be >= 0, got "
-                f"{holdout_entry_regression_budget!r}"
-            )
+        require_knob(
+            ScoringWeights, "holdout_entry_regression_budget", holdout_entry_regression_budget
+        )
         if holdout_entry_regression_budget != draft.scoring.holdout_entry_regression_budget:
             scoring_changes["holdout_entry_regression_budget"] = holdout_entry_regression_budget
             changed["holdout_entry_regression_budget"] = {
@@ -587,11 +592,7 @@ def set_gate(
             "to": monotonicity,
         }
     if monotonicity_scope is not None:
-        if monotonicity_scope not in ("per_entry", "aggregate"):
-            raise ValueError(
-                f"monotonicity_scope must be 'per_entry' or 'aggregate', got "
-                f"{monotonicity_scope!r}"
-            )
+        require_knob(ScoringWeights, "pass_rate_monotonicity_scope", monotonicity_scope)
         if monotonicity_scope != draft.scoring.pass_rate_monotonicity_scope:
             scoring_changes["pass_rate_monotonicity_scope"] = monotonicity_scope
             changed["pass_rate_monotonicity_scope"] = {
@@ -625,8 +626,7 @@ def set_gate(
                 "to": list(command),
             }
     if regression_timeout_s is not None:
-        if regression_timeout_s < 1:
-            raise ValueError(f"regression_timeout_s must be >= 1, got {regression_timeout_s!r}")
+        require_knob(ScoringWeights, "regression_timeout_s", regression_timeout_s)
         if regression_timeout_s != draft.scoring.regression_timeout_s:
             scoring_changes["regression_timeout_s"] = regression_timeout_s
             changed["regression_timeout_s"] = {
@@ -669,8 +669,7 @@ def set_namespace_weights(
                 "to": normalized,
             }
     if diff_complexity_weight is not None:
-        if diff_complexity_weight < 0:
-            raise ValueError(f"diff_complexity_weight must be >= 0, got {diff_complexity_weight!r}")
+        require_knob(ScoringWeights, "diff_complexity_weight", diff_complexity_weight)
         if diff_complexity_weight != draft.scoring.diff_complexity_weight:
             scoring_changes["diff_complexity_weight"] = diff_complexity_weight
             changed["diff_complexity_weight"] = {
@@ -678,10 +677,7 @@ def set_namespace_weights(
                 "to": diff_complexity_weight,
             }
     if diff_complexity_ceiling is not None:
-        if diff_complexity_ceiling < 0:
-            raise ValueError(
-                f"diff_complexity_ceiling must be >= 0, got {diff_complexity_ceiling!r}"
-            )
+        require_knob(ScoringWeights, "diff_complexity_ceiling", diff_complexity_ceiling)
         if diff_complexity_ceiling != draft.scoring.diff_complexity_ceiling:
             scoring_changes["diff_complexity_ceiling"] = diff_complexity_ceiling
             changed["diff_complexity_ceiling"] = {
@@ -755,8 +751,7 @@ def set_proposer_quality(
     quality = draft.scoring.proposer_quality
     quality_changes: dict[str, Any] = {}
     if best_of_n is not None:
-        if best_of_n < 1:
-            raise ValueError(f"best_of_n must be >= 1, got {best_of_n!r}")
+        require_knob(ProposerQualityConfig, "best_of_n", best_of_n)
         if best_of_n != quality.best_of_n:
             quality_changes["best_of_n"] = best_of_n
             changed["best_of_n"] = {"from": quality.best_of_n, "to": best_of_n}
@@ -764,8 +759,7 @@ def set_proposer_quality(
         quality_changes["critique_enabled"] = critique_enabled
         changed["critique_enabled"] = {"from": quality.critique_enabled, "to": critique_enabled}
     if process_exemplars is not None:
-        if process_exemplars < 0:
-            raise ValueError(f"process_exemplars must be >= 0, got {process_exemplars!r}")
+        require_knob(ProposerQualityConfig, "process_exemplars", process_exemplars)
         if process_exemplars != quality.process_exemplars:
             quality_changes["process_exemplars"] = process_exemplars
             changed["process_exemplars"] = {
@@ -776,10 +770,7 @@ def set_proposer_quality(
         quality_changes["recombine"] = recombine
         changed["recombine"] = {"from": quality.recombine, "to": recombine}
     if recombine_merge is not None:
-        if recombine_merge not in ("mechanical", "llm"):
-            raise ValueError(
-                f"recombine_merge must be 'mechanical' or 'llm', got {recombine_merge!r}"
-            )
+        require_knob(ProposerQualityConfig, "recombine_merge", recombine_merge)
         if recombine_merge != quality.recombine_merge:
             quality_changes["recombine_merge"] = recombine_merge
             changed["recombine_merge"] = {
@@ -787,14 +778,12 @@ def set_proposer_quality(
                 "to": recombine_merge,
             }
     if genealogy is not None:
-        if genealogy < 0:
-            raise ValueError(f"genealogy must be >= 0, got {genealogy!r}")
+        require_knob(ProposerQualityConfig, "genealogy", genealogy)
         if genealogy != quality.genealogy:
             quality_changes["genealogy"] = genealogy
             changed["genealogy"] = {"from": quality.genealogy, "to": genealogy}
     if calibration_feedback is not None:
-        if calibration_feedback < 0:
-            raise ValueError(f"calibration_feedback must be >= 0, got {calibration_feedback!r}")
+        require_knob(ProposerQualityConfig, "calibration_feedback", calibration_feedback)
         if calibration_feedback != quality.calibration_feedback:
             quality_changes["calibration_feedback"] = calibration_feedback
             changed["calibration_feedback"] = {
@@ -854,9 +843,7 @@ def set_telemetry_dialect(
     """
     changed: dict[str, Any] = {}
     if dialect is not None:
-        if dialect not in KNOWN_TELEMETRY_DIALECTS:
-            known = ", ".join(sorted(KNOWN_TELEMETRY_DIALECTS))
-            raise ValueError(f"telemetry_dialect must be one of {{{known}}}, got {dialect!r}")
+        require_knob(ScoringWeights, "telemetry_dialect", dialect)
         current = draft.scoring.telemetry_dialect
         if dialect != current:
             draft.scoring = _replace_scoring(draft, telemetry_dialect=dialect)
@@ -915,14 +902,14 @@ def set_screening(
     the screen's measurements to the veto (no selection tiebreak feeds).
     Both live on the nested ``proposer_quality`` contract block, so a
     change rolls the epoch like any other weight. A negative ``entries``
-    raises (the dataclass validator re-checks on replace).
+    is refused by the bound the ``screen_entries`` field declares, with the
+    message the contract loader would give.
     """
     changed: dict[str, Any] = {}
     quality = draft.scoring.proposer_quality
     quality_changes: dict[str, Any] = {}
     if entries is not None:
-        if entries < 0:
-            raise ValueError(f"screen entries must be >= 0, got {entries!r}")
+        require_knob(ProposerQualityConfig, "screen_entries", entries)
         if entries != quality.screen_entries:
             quality_changes["screen_entries"] = entries
             changed["screen_entries"] = {"from": quality.screen_entries, "to": entries}
