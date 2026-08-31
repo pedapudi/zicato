@@ -28,11 +28,11 @@ different questions that sit *beneath* scheduling:
 
 ---
 
-## 1. The reframe: zicato's gap is not more brackets
+## 1. What is missing beneath the schedulers
 
 The five shipped structures are all **schedulers**: they decide which
-pairwise duels to run and in what order. They differ in their schedule,
-not in how they read the results. Once duels complete, every structure
+pairwise duels to run and in what order. They differ in their schedule
+rather than in how they read the results. Once duels complete, every structure
 collapses the matrix the same naive way — Copeland count (swiss),
 single-survivor knockout (the elim brackets), or rank-by-scalar within a
 rung (racing).
@@ -66,7 +66,7 @@ informs how many replicates each duel deserves. Crucially:
 > **Every method here only PROPOSES a winner. The promote gate still
 > owns promotion.** The protected-incumbent invariant
 > ([`SELECTION.md`](SELECTION.md), [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md))
-> is untouched: a resolver names an internal leader; that leader is then
+> is untouched. A resolver names an internal leader. That leader is then
 > run through the *unchanged* champion-gate against the incumbent, and is
 > promoted only if it clears `promote_margin` with no per-task
 > regression. A resolver can crown the wrong leader and the worst case is
@@ -88,11 +88,11 @@ This inverts the usual social-choice framing, where the ballot matrix is
 *given* and a cycle is a genuine feature of voter preferences. In zicato
 the matrix is *measured*, and a cycle is first-and-foremost evidence that
 two contestants are close enough that one more sample would likely order
-them. The rating layer (§7) is what tells us this: when two contestants'
-strength confidence intervals overlap, the duel between them is the one
-to replicate. Only when the CIs are *separated* and the cycle *persists*
-is it a real preference cycle, and only then does the resolver earn its
-keep.
+them. The rating layer (§7) is what shows this: when two contestants'
+strength confidence intervals (CIs) overlap, the duel between them is the
+one to replicate. Only when the intervals are *separated* and the cycle
+*persists* is it a real preference cycle, and only then does the resolver
+earn its keep.
 
 ---
 
@@ -114,7 +114,7 @@ every sensible method below returns it when it exists.
 matrix).
 
 **In zicato's regime.** When replication has done its job, the field
-usually *has* a Condorcet winner: one challenger that genuinely beats all
+usually *has* a Condorcet winner: one challenger that beats all
 others. The whole point of a resolver is to behave gracefully when it
 does *not*.
 
@@ -167,7 +167,7 @@ simple, transparent count.
 
 **Tractability.** Polynomial (O(n²)).
 
-**In zicato's regime.** **Already shipped** — this is exactly how the
+**In zicato's regime.** **Already shipped** — this is how the
 `swiss` structure ranks its field (standing = Copeland score = duels won,
 tie-broken by mean scalar; see
 [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) §3.4). Its
@@ -208,7 +208,7 @@ subset of the uncovered set and has strong axiomatic properties.
 
 **In zicato's regime.** It uses only the *sign* of each duel, discarding
 the loss margins — the very signal zicato has in abundance. Its
-*weighted* generalization is precisely **maximal lotteries** (§6), which
+*weighted* generalization is **maximal lotteries** (§6), which
 keeps the margins. So the bipartisan set is the margin-blind special case
 of the randomized method we actually want.
 
@@ -232,8 +232,8 @@ transitive); the Slater set is the set of possible Slater winners.
 **Tractability.** **NP-hard.** Finding the minimum-disagreement order is
 equivalent to the linear-ordering / minimum-feedback-arc-set problem.
 
-**Verdict.** **SKIP.** NP-hard, margin-blind (it counts upsets, not
-gaps), and for zicato's tiny residual cycles it returns essentially what
+**Verdict.** **SKIP.** NP-hard, margin-blind (it counts upsets rather
+than gaps), and for zicato's tiny residual cycles it returns essentially what
 Ranked Pairs returns at polynomial cost. No practical gain.
 
 ### 4.2 Banks set
@@ -311,9 +311,9 @@ a Smith set of ≤ ~6, if ever). Do not make it the default resolver.
 **Definition.** Sort all pairwise duels by **margin**, strongest first.
 "Lock in" each pairwise result in that order, *skipping* any that would
 create a cycle with the results already locked. The resulting acyclic
-relation has a unique source — the winner. Decisive, deterministic, and
-fully auditable (you can read off *exactly which* duels were locked and
-which were skipped).
+relation has a unique source — the winner. It is decisive,
+deterministic, and fully auditable: the trace records *exactly which*
+duels were locked and which were skipped.
 
 **Tractability.** **Polynomial** (O(n² log n) to sort, O(n³)-ish to
 lock).
@@ -321,14 +321,14 @@ lock).
 **In zicato's regime.** This is the strongest fit. It is
 Condorcet-consistent, **uses the loss margins directly** (the strongest
 duels — the most separated, least likely to be noise — are locked first,
-exactly the right priority for a noisy measurement), **cloneproof**, and
+the right priority for a noisy measurement), **cloneproof**, and
 **monotone**. The lock/skip trace is an auditable artifact that maps
-cleanly onto zicato's journal/dashboard ethos: every resolution is
-explainable as "we trusted the most-separated duels and skipped the ones
-that would have made a cycle."
+cleanly onto zicato's journal and dashboard idiom. Every resolution
+reads as "the most-separated duels were trusted, and the duels that
+would have closed a cycle were skipped."
 
 **Verdict.** **BUILD — top recommendation.** This is the endorsed default
-resolver (§8 #1).
+resolver (§8).
 
 ### 5.3 Schulze (beatpath)
 
@@ -368,18 +368,18 @@ margins balance.
 margin-weighted generalization of the bipartisan set, §3.6).
 
 **In zicato's regime.** This is the principled way to handle a cycle that
-has **survived replication** — a *real* rock-paper-scissors structure,
-not a noise artifact. Rather than force a deterministic (and arguably
+has **survived replication** — a *real* rock-paper-scissors structure
+rather than a noise artifact. Rather than force a deterministic (and arguably
 arbitrary) pick among three mutually-cyclic contestants, it hands back a
 distribution; zicato can sample it to choose which contestant to run
 through the champion-gate, and the choice is game-theoretically optimal
 in expectation. Because it collapses to the Condorcet winner whenever one
-exists, it is *safe* to apply unconditionally — but it only differs from
-the deterministic resolvers precisely on residual cycles, which is the
-only place we want randomness.
+exists, it is *safe* to apply unconditionally, and it differs from the
+deterministic resolvers only on residual cycles, which is the only place
+randomness is wanted.
 
-**Verdict.** **BUILD — for residual cycles only** (§8 #3). Reach for it
-*after* replication has failed to break the cycle, not before.
+**Verdict.** **BUILD — for residual cycles only** (§8). Reach for it only
+*after* replication has failed to break the cycle.
 
 ---
 
@@ -398,61 +398,58 @@ strength θᵢ, and the probability that i beats j is the logistic
 σ(θᵢ − θⱼ). Fit the θ's by maximum likelihood over all observed (and
 replicated) duels.
 
-**Tractability.** **Convex MLE** — a single global optimum, solved
+**Tractability.** A **convex maximum-likelihood estimate (MLE)** — a single global optimum, solved
 reliably and cheaply at zicato's field sizes. It **natively absorbs
 replication** (each replicate is just another observation in the
 likelihood) and **partial schedules** (not every pair need be played),
 and it yields **confidence intervals** on each strength.
 
-**In zicato's regime.** This is the rating backbone. The CIs are the
-operational payoff: when two contestants' strength intervals **overlap**,
-the duel between them is statistically unresolved and is exactly where the
-next replication should go (CI-overlap-driven replication budgeting). When
-the intervals **separate**, that pair is settled and further replication
-there is wasted. It turns "replicate first" from a slogan into a
-schedule. It also gracefully handles the small noisy field: with a
-half-dozen contestants and a handful of replicates each, the MLE is
-stable and the CIs are meaningful.
+**In zicato's regime.** This is the rating backbone. The confidence
+intervals are the operational payoff: when two contestants' strength
+intervals **overlap**, the duel between them is statistically unresolved
+and is where the next replication should go. When the intervals
+**separate**, that pair is settled and further replication there is
+wasted. Interval overlap is what converts "replicate first" into a
+concrete schedule. The model also handles the small noisy field: with a
+half-dozen contestants and a handful of replicates each, the
+maximum-likelihood fit is stable and the intervals are meaningful.
 
-**Verdict.** **BUILD — the rating recommendation** (§8 #2). Drives
+**Verdict.** **BUILD — the rating recommendation** (§8). Drives
 replication budgeting; its point estimates also give a clean
 margin-bearing ranking that feeds the §5 resolvers.
 
-> **Status — implemented: the BT rating fold, now a Plackett–Luce
-> generalisation.** The batch MLE
+> **Status — implemented: the rating fold, as a Plackett–Luce
+> generalisation.** The batch maximum-likelihood fit
 > (`src/zicato/selection/rating.py::fit_bradley_terry`) is the engine of the
-> index-side visibility rating (`src/zicato/index/elo.py`): at every
-> reindex/ingest it is re-fit over the de-duplicated persisted match ledger
-> and written to `generations.elo` / `elo_se` / `elo_games` on the
-> conventional Elo scale (`1500 + θ·400/ln 10`), replacing the earlier
-> sequential margin-K approximation (§7.2's order-dependence and missing CIs
-> were exactly its defects). Displayed in the standings / gens roster /
-> candidate dossier; **visibility only — it never touches the gate or the
-> selection path**.
+> index-side visibility rating (`src/zicato/index/elo.py`). At every
+> reindex or ingest it is re-fit over the de-duplicated persisted match
+> ledger and written to `generations.elo` / `elo_se` / `elo_games` on the
+> conventional Elo scale (`1500 + θ·400/ln 10`). It is displayed in the
+> standings, the generations roster, and the candidate dossier;
+> **visibility only — it never touches the gate or the selection path**.
 >
-> The former hole — racing intermediate rungs persist a survivor/cut *set*
-> with no named pairwise winner, so rung cuts contributed zero games — is now
-> closed. The fold's fit is
-> `src/zicato/selection/rating.py::fit_plackett_luce`, which folds **two
+> The fold's fit is
+> `src/zicato/selection/rating.py::fit_plackett_luce`, which carries **two
 > observation shapes under one likelihood**:
 >
 > * a two-competitor game (`i` beat `j`) — the Plackett–Luce choice
 >   probability `p_i/(p_i+p_j)` **is** the Bradley–Terry logistic, so the fit
->   *reduces exactly to BT* on pairwise data (theta and Fisher SE agree
->   term-for-term; pinned by a test). It is a strict generalisation, so every
->   pre-existing pairwise rating is byte-unchanged.
+>   *reduces exactly to Bradley–Terry* on pairwise data (theta and Fisher
+>   standard error agree term-for-term; pinned by a test). It is a strict
+>   generalisation, so every pairwise rating is byte-unchanged.
 > * a racing rung group — a survivor set `S` finished above a cut set `C`,
 >   order within each block unobserved. The likelihood is the **exact marginal
 >   over the within-`S` orderings**: the probability that `S` occupies the top
 >   `|S|` positions of the pool `S ∪ C` in some order, summed over all `|S|!`
 >   sequential-choice terms (the within-`C` orderings marginalise to one). No
->   approximation is smuggled in — an over-cap survivor set (`|S| >
+>   approximation is introduced — an over-cap survivor set (`|S| >
 >   PL_MAX_SURVIVORS = 8`; racing fields are single-digit) is *skipped with a
->   debug log*, not truncated or sampled. `elo_games` becomes "observations a
->   generation appeared in" (a rung group counts once per participant), so a
->   rung-cut generation is now rated where the BT fold left it NULL.
+>   debug log* rather than truncated or sampled. `elo_games` counts the
+>   observations a generation appeared in (a rung group counts once per
+>   participant), so a generation cut at a rung carries a rating that a
+>   strictly pairwise fold cannot give it.
 >
-> **Slices are deliberately unweighted (v1).** A rung run on a small board
+> **Slices are unweighted.** A rung run on a small board
 > slice is noisier evidence than one on the full board, but every observation
 > enters the likelihood with equal weight. The rating is visibility-only (it
 > never gates), so under-counting a small-slice rung's noise costs nothing
@@ -471,10 +468,10 @@ approximation to Bradley–Terry's logistic model.
 uncertainty estimate**.
 
 **In zicato's regime.** zicato evaluates in **batches** (a tournament
-resolves a whole matrix at once), not in a long online stream, so Elo's
+resolves a whole matrix at once) rather than in a long online stream, so Elo's
 only advantage — incrementality — does not apply, while its
-disadvantages (order sensitivity, no CIs) do. Bradley–Terry is the same
-model fit properly.
+disadvantages (order sensitivity, no confidence intervals) do.
+Bradley–Terry is the same model fit properly.
 
 **Verdict.** **SKIP (dominated by Bradley–Terry).** In a batch,
 margin-rich regime, fit the MLE directly.
@@ -509,10 +506,10 @@ round-robin/swiss scheduler — not a new top-level structure.
    swiss/round-robin.** Deterministic, Condorcet-consistent, margin-aware,
    cloneproof, and *auditable* (the lock/skip trace explains every
    resolution). This is the default resolver.
-2. **Bradley–Terry rating as the noise backbone.** Strengths + confidence
-   intervals from replicated/partial duels; **CI overlap drives
-   replication budgeting** (replicate the unresolved pairs, stop on the
-   separated ones).
+2. **Bradley–Terry rating as the noise backbone.** Strengths plus
+   confidence intervals from replicated or partial duels; **interval
+   overlap drives replication budgeting** (replicate the unresolved pairs,
+   stop on the separated ones).
 3. **Maximal lotteries for cycles that SURVIVE replication.** When a real
    (non-noise) cycle persists, return the Nash distribution over the cycle
    rather than an arbitrary deterministic pick; it degrades to the
@@ -528,7 +525,7 @@ round-robin/swiss scheduler — not a new top-level structure.
 - **Markov/Elo and TrueSkill** — dominated by Bradley–Terry in zicato's
   **batch, margin-rich, strictly-pairwise** regime.
 
-**The operating rule, restated:** **replicate first, resolve second.**
+**The operating rule: replicate first, resolve second.**
 Most zicato cycles are noise artifacts that replication dissolves; only
 invoke a cycle-resolver on the *residual*. And — the load-bearing safety
 property — **every one of these only PROPOSES a winner; the gate still
@@ -563,18 +560,18 @@ round-robin) reads:
   current swiss behaviour (the backwards-compatible default), so adding
   the knob changes nothing until an operator opts in.
 - `rating` selects the §7 backbone; `none` is today's behaviour.
-- The Smith-set prune (§8 #4) would run unconditionally inside any
-  non-`none` resolver — it is a cheap correctness/speed step, not an
-  operator choice.
+- The Smith-set prune (§8) would run unconditionally inside any
+  non-`none` resolver: it is a cheap correctness and speed step rather
+  than an operator choice.
 - **The champion-gate, the contract-hash treatment, and the
   `SelectionStrategy` seam are all unchanged.** A resolver/rating choice
-  would fold into the contract hash exactly as the existing params do
-  (it changes *what a promotion means*), and would roll the epoch on
+  would fold into the contract hash in the same way as the existing params
+  do (it changes *what a promotion means*), and would roll the epoch on
   change — same rationale as
   [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) §4.1.
 
-Again: **this section is a sketch of where the methods would attach.** No
-such keys exist in the loader, the strategies, or the tests today.
+**This section is a sketch of where the methods would attach.** No such
+keys exist in the loader, the strategies, or the tests today.
 
 ---
 
@@ -587,20 +584,20 @@ such keys exist in the loader, the strategies, or the tests today.
 
 These methods all derive from one object — the **pairwise duel matrix** —
 so the idiomatic answer is **one honest substrate plus a switchable
-resolver lens**, not a gallery of unrelated charts. Every figure below
+resolver lens** rather than a gallery of unrelated charts. Every figure below
 stays in the Console language: Tufte small-multiples and signed
 dot-plots, diverging **green = improvement / red = regression**, the
 **champion always a reference rule (never an ordinary mark)**, the **gate
-margin always a shaded band**, direct labeling over legends, and all of it
-computed server-side from the *settled* round so it renders once
-(digest-gated — no rebuild on a no-op heartbeat). And every lens ends at
+margin always a shaded band**, and direct labeling over legends. Every
+figure is computed server-side from the *settled* round, so it renders
+once and a no-op heartbeat rebuilds nothing. And every lens ends at
 the same caption: *…which only PROPOSES a winner; the gate still decides.*
 
 ### 10.1 The substrate — the duel grid
 
 A contestant×contestant **margin matrix**, champion pinned top-left behind
 a reference rule, ordered by current standing. Each cell is a small
-*signed dot* (Tufte, not a heavy heatmap fill): green = row beat column,
+*signed dot* (a Tufte-style mark rather than a heavy heatmap fill): green = row beat column,
 red = lost, size = |loss-margin|. The diagonal carries each contestant's
 own loss tick. **Unplayed pairings** (racing/elim never run them) render
 as faint hatch — honest about coverage. Every solution concept below is an
@@ -624,7 +621,7 @@ as faint hatch — honest about coverage. Every solution concept below is an
   racing survival-funnel idiom) labeled `Smith set · k of N`; everything
   below dims. The champion's position relative to the cut shows at a glance
   whether the incumbent is even in contention.
-- **Uncovered set** → an annotation column, not a graph: each row gets a
+- **Uncovered set** → an annotation column rather than a graph: each row gets a
   tiny `covered-by` count bar; uncovered rows (count 0) stay lit, covered
   rows dim with a caret pointing at their coverer. No node-link diagram —
   that would be chartjunk.
@@ -654,8 +651,9 @@ chmp │·                .00   (champion reference rule)
   loss-floor waterfall motif directly: duels sorted by margin, longest
   signed bar on top, each row a green/red magnitude bar with a state glyph
   — `✓ locked` or `⊘ skipped (would close a cycle)`. The **discarded edge
-  is the auditable hero of the view**: the one row marked "dropped — weakest
-  margin in the cycle." The resolved DAG's source is the proposed winner.
+  is what the view exists to show**: the row marked "dropped — weakest
+  margin in the cycle." The source of the resolved acyclic relation is the
+  proposed winner.
 
 ```
 Ranked Pairs · lock-in order (by margin)
@@ -669,7 +667,7 @@ Ranked Pairs · lock-in order (by margin)
 - **Schulze** → the alternate lens on the *same* data: a small-multiple of
   **beatpath breadcrumbs**, one strip per rival (`c2 ▸ c4 ▸ c1`), strip
   width = path strength (weakest link). A ⌘K toggle off the Ranked-Pairs
-  view, not its own panel.
+  view rather than its own panel.
 - **Kemeny–Young** → just **reorder the duel grid into the Kemeny order**
   and light the residual upset cells *below the diagonal* in red; their
   count is the Kemeny distance being minimized. "The order that pushes red
@@ -679,10 +677,10 @@ Ranked Pairs · lock-in order (by margin)
 
 A latent-**strength dot-plot with confidence whiskers**, champion as the
 reference rule and the **gate margin as a shaded band** to its right that a
-challenger must clear. The zicato-honest move: **overlapping CIs dim and
-flag "not yet separated → replicate"**, and a thin adjacent column shows
-replicate-count per contestant so you can see *where the next duel should
-go*. This is the visual form of *replicate-first, resolve-second* (§2, §7).
+challenger must clear. **Overlapping intervals dim and carry the flag
+"not yet separated → replicate"**, and a thin adjacent column shows the
+replicate count per contestant, so the view names *where the next duel
+should go*. This is the visual form of *replicate-first, resolve-second* (§2, §7).
 
 ```
 Bradley–Terry strength  (— = 95% CI)        replicates
@@ -702,7 +700,8 @@ its existing swiss ladder; the new lenses are the lollipop
 (bipartisan/lottery), the lock-in waterfall (Ranked Pairs/Schulze), the
 grid-reorder (Smith/Kemeny), and the CI dot-plot (Bradley–Terry). The
 champion is forever a reference rule and the gate forever a shaded band, so
-the protected-incumbent invariant is **visible, not merely asserted**.
+the protected-incumbent invariant is **visible rather than merely
+asserted**.
 
 ---
 
@@ -724,8 +723,8 @@ the protected-incumbent invariant is **visible, not merely asserted**.
 | **Ranked Pairs (Tideman)** | ranking | **P** | **yes** | **BUILD — top resolver** |
 | Schulze (beatpath) | ranking | P (O(n³)) | yes | BUILD-capable (2nd choice) |
 | Maximal lotteries | randomized | P (LP) | yes (degrades to it) | **BUILD — residual cycles** |
-| **Bradley–Terry** | rating | P (convex MLE) | — (rating, not a rule) | **BUILD — rating backbone** |
-| Elo | rating | trivial (online) | — | SKIP (dominated by BT) |
+| **Bradley–Terry** | rating | P (convex MLE) | — (a rating rather than a rule) | **BUILD — rating backbone** |
+| Elo | rating | trivial (online) | — | SKIP (dominated by Bradley–Terry) |
 | TrueSkill | rating | tractable | — | SKIP (over-engineered for pairwise batch) |
 
 ---
