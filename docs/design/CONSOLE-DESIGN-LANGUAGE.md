@@ -20,10 +20,10 @@ It states in one place the design language that
 [DASHBOARD-VARIANTS.md](DASHBOARD-VARIANTS.md) catalogues across the
 bake-off field.
 
-Everything here is derived from the live code under
-`src/zicato/dashboard/static/js/variants/T/**` and
-`css/variants/T/console4.css`. Where this document and the code disagree,
-**the code is authoritative**. [variant-T.md](variant-T.md) and
+Everything here is derived from the live code: the modules under
+`src/zicato/dashboard/static/js/` and the stylesheet
+`src/zicato/dashboard/static/css/console.css`. Where this document and the code
+disagree, **the code is authoritative**. [variant-T.md](variant-T.md) and
 [DASHBOARD-VARIANTS.md](DASHBOARD-VARIANTS.md) are historical records; this is
 the present-tense reference.
 
@@ -39,7 +39,7 @@ it is still in flight**. The aesthetic stance that follows from that job:
   sankeys — every one of which fits its pane and responds to hover and click.
   Tables exist (the candidate roster, the publication, the mutation matrix) but
   they support the figures rather than leading.
-- **A dense observatory for a power user.** The default skin (`console4.css`)
+- **A dense observatory for a power user.** The default skin (`css/console.css`)
   is dense and data-ink-maximal, on the `monokai` palette. The single permanent
   spacing baseline is **cozy**; the operator tunes the fit with a page-wide
   **scale** pill.
@@ -49,9 +49,9 @@ it is still in flight**. The aesthetic stance that follows from that job:
   coherent terminal-and-tournament voice. See §8 for the lineage of these
   choices.
 
-Console is self-contained under `js/variants/T/**` + `console4.css` + the
-entry `app_T.js`, reusing only the shared `js/core/*` data spine. Exactly one UI
-loads at a time.
+Console is self-contained: the entry `app_T.js`, the modules under `js/`, and
+the stylesheet `css/console.css`, with the data spine in `js/core/*`. Exactly
+one UI loads at a time.
 
 ## 2. The six-colour ROLE system
 
