@@ -1,4 +1,8 @@
-"""Round-log, report, and health projection ownership."""
+"""Round-log emission, epoch-report refresh, and loop-health inputs.
+
+The evolve loop calls in once per settled round. Nothing here may fail a
+round: every emission and every workspace read is best-effort.
+"""
 
 # ruff: noqa: E402
 from __future__ import annotations
@@ -13,9 +17,8 @@ from zicato.util import best_effort
 from zicato.workspace import WorkspaceLayout
 
 if TYPE_CHECKING:
-    # Annotation-only — the proposer module is imported lazily inside
-    # ``evolve_once`` (see the module docstring on lazy imports), so its
-    # exception type is referenced here purely for type annotations.
+    # No annotation-only imports: every cross-module reference in this file
+    # is resolved lazily at its call site.
     pass
 
 log = logging.getLogger("zicato.orchestrator")
@@ -45,8 +48,8 @@ async def _regenerate_epoch_report(
     best-effort: any failure is swallowed and logged at debug level so a
     wedge here can never abort the round or the loop. ``auxiliary_*`` are
     accepted for call-site parity with the LLM-authoring close render (and
-    so the full-render path can be swapped back in per-epoch if wanted);
-    the per-round refresh deliberately spends no tokens.
+    so the full-render path can be swapped in per-epoch if wanted); the
+    per-round refresh spends no tokens.
     """
     del auxiliary_call_llm, auxiliary_model  # no per-round LLM call by design
     with best_effort(
@@ -59,7 +62,7 @@ async def _regenerate_epoch_report(
 
 
 # ---------------------------------------------------------------------------
-# Durable per-round event log (WS8) — best-effort emission
+# Durable per-round event log — best-effort emission
 # ---------------------------------------------------------------------------
 
 
@@ -87,7 +90,7 @@ _ROUND_LOG_STEP: dict[str, str] = {
     "frontier_updated": "decide",
 }
 
-#: Tokens that DELIBERATELY carry no step. The round's own boundaries are not
+#: Tokens that carry no step by design. The round's own boundaries are not
 #: steps within it — the plan has five steps, and open/close are neither. This
 #: set exists so steplessness is a stated decision rather than an omission: the
 #: correspondence test requires every known event token to appear in exactly
@@ -128,7 +131,7 @@ def _duel_scope(
 
 
 class _RoundLogEmitter:
-    """Best-effort appender onto one round's durable RoundLog (WS8).
+    """Best-effort appender onto one round's durable RoundLog.
 
     A STORAGE failure must never fail a round — the live index dual-write
     (:func:`_ingest_experiment_into_index`) is the precedent: the canonical
@@ -303,9 +306,9 @@ def _emit_harness_loaded(
         )
 
 
-# _str_tuple and the tree-import-gap reader now live in
-# zicato.health.inputs (imported below) — pure workspace reads shared with
-# the standalone `zicato health` CLI, which needs the same findings from a
+# ``str_tuple`` and the tree-import-gap reader (``epoch_tree_import_gaps``)
+# live in zicato.health.inputs — pure workspace reads shared with the
+# standalone `zicato health` CLI, which needs the same findings from a
 # point-in-time invocation rather than a live round.
 
 
@@ -324,28 +327,29 @@ def _emit_gate_evaluated(
 
     ``rule_fired`` carries the gate's own ``reason`` verbatim (the string
     that names which rule rejected; empty on a clean promote — the gate
-    reports no rule for a pass). UNCHANGED.
+    reports no rule for a pass).
 
     The scalars the gate decided on are recorded STRUCTURALLY alongside it, on
-    BOTH decisions, so a promoted duel is no longer a numberless record and a
-    downstream effect-size analysis is not missing exactly its promotions (see
+    BOTH decisions, so a promoted duel carries its numbers and a downstream
+    effect-size analysis is not missing exactly its promotions (see
     :class:`~zicato.epoch.round_log.GateEvaluated`). They come from the same
     aggregates and weights the gate itself was handed, so the event cannot
     disagree with the decision it describes.
 
-    The three sources are keyword-optional: an older caller still emits a
-    well-formed event with the scalars ABSENT (``None``) rather than
-    fabricating zeros. Same tolerance within a call — a hand-built aggregate
-    carrying no ``scalar``, or a non-numeric one, leaves that field absent
+    The three sources are keyword-optional: a caller that supplies none of
+    them still emits a well-formed event with the scalars ABSENT (``None``)
+    rather than fabricating zeros. Same tolerance within a call — a
+    hand-built aggregate carrying no ``scalar``, or a non-numeric one,
+    leaves that field absent
     rather than failing the round, matching the best-effort discipline of
     every other emission.
 
     The gate's ``attributable_regressions`` — the entries that regressed on
     their own evidence whatever the verdict (issue #130) — travel too, and only
-    when non-empty, so an ordinary duel's payload is byte-identical to before
-    the field existed. They are recorded ALONGSIDE ``rule_fired``, never inside
-    it: on a promotion ``rule_fired`` is empty by invariant, and that is exactly
-    the case where this list has something to say.
+    when non-empty, so an ordinary duel's payload carries no such key. They
+    are recorded ALONGSIDE ``rule_fired``, never inside it: on a promotion
+    ``rule_fired`` is empty by invariant, and that is the case where this list
+    has something to say.
     """
     fields: dict[str, Any] = {
         "rule_fired": str(getattr(outcome, "reason", "") or ""),
@@ -517,6 +521,6 @@ def _epoch_max_generations_per_contract(workspace_root: Path, epoch_id: str) -> 
     return overfitting_config_from_dict(raw.get("overfitting")).max_generations_per_contract
 
 
-# _epoch_noise_floor_inputs and _epoch_preflight_record now live in
-# zicato.health.inputs (imported below) alongside the tree-import-gap
-# reader, for the same reason: the CLI needs them too.
+# ``epoch_noise_floor_inputs`` and ``epoch_preflight_record`` live in
+# zicato.health.inputs alongside the tree-import-gap reader, for the same
+# reason: the CLI needs them too.

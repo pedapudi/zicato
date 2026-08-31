@@ -1,25 +1,25 @@
 """Best-of-N sampling + a self-critique pass over the proposer step.
 
-FUNCTIONALITY-RECOMMENDATIONS.md §4.1 — the top proposal-quality lever. Today
-the proposer takes ONE sample, and the retry loop only fires on *invalid*
-output: a valid-but-mediocre proposal is never reconsidered. This module wraps
-any :class:`~zicato.proposer.agent.ProposerAgent` so that, per propose-step,
-it samples ``best_of_n`` candidate experiments and then a cheap self-critique
-pass picks (or, by heuristic, selects) the best against a quality bar —
-grounded in a tool call? targets a real failure mode? minimal diff?
+The proposal-quality lever of FUNCTIONALITY-RECOMMENDATIONS.md §4.1. A single
+proposer call takes ONE sample, and its retry loop fires only on *invalid*
+output, so a valid-but-mediocre proposal is never reconsidered. This module
+wraps any :class:`~zicato.proposer.agent.ProposerAgent` so that, per
+propose-step, it samples ``best_of_n`` candidate experiments and then a cheap
+self-critique pass — or, with critique disabled, a deterministic heuristic —
+picks the best against a quality bar: grounding in a tool call, a real
+targeted failure mode, and a minimal diff.
 
 Best-of-N is the DEFAULT (``proposer_quality.best_of_n == 3``): each
 propose-step samples a slate of three and critiques. Each slate slot carries a
 distinct edit-class hint (:data:`EDIT_CLASS_HINTS`) so the N samples explore
 different edit strategies rather than re-rolling one. A contract that pins
 ``best_of_n: 1`` short-circuits to a single inner ``propose`` call with NO
-critique and NO extra work (:meth:`BestOfNProposerAgent.propose`) — the
-historical single-sample proposer, the right pin for scripted/deterministic
-proposers.
+critique and NO extra work (:meth:`BestOfNProposerAgent.propose`) — a
+single-sample proposer, the right pin for scripted/deterministic proposers.
 
-Slate concurrency (WS-CONC)
----------------------------
-The N samples are genuinely independent — each varies only by a deterministic
+Slate concurrency
+-----------------
+The N samples are independent — each varies only by a deterministic
 per-slot hint (:func:`~zicato.proposer.hints.hint_for_slot` +
 :func:`~zicato.proposer.hints.strategy_for_slot`) and its OWN per-slot scratch
 VALIDATION tree — so :meth:`BestOfNProposerAgent.propose` gathers them under an
@@ -35,8 +35,7 @@ candidate, after selection
 (:meth:`BestOfNProposerAgent._mount_chosen`). A deterministic post-gather pass
 emits the ``candidate_sampled`` events and appends candidates in SLOT order, so
 the slate, event sequence, and chosen candidate are byte-identical regardless
-of completion order; ``propose_parallelism == 1`` runs the slate serially,
-byte-identically to the pre-concurrency wrapper.
+of completion order; ``propose_parallelism == 1`` runs the slate serially.
 
 Candidate screening (tryouts; opt-in)
 -------------------------------------
@@ -55,8 +54,8 @@ selection only as a LATE tiebreak (suppressed entirely by
 ``screen_veto_only``); the panel scalar is selection-biased and is never
 journaled as evidence.
 
-Screen-informed revise (WS-R; bounded, rides the screen opt-in)
----------------------------------------------------------------
+Screen-informed revise (bounded, rides the screen opt-in)
+---------------------------------------------------------
 When the screen runs and the slate ends ALL-VETOED, the wrapper takes
 exactly ONE revise pass before degrading to critic-over-all: it
 re-samples a single replacement candidate with the slate's COUNTS-ONLY
@@ -71,17 +70,16 @@ knob: the revise rides ``screen_entries > 0``, because an all-vetoed
 slate with no revise wastes the whole propose step on a known-vetoed
 candidate — the single re-sample is the cheapest possible recovery, and
 a contract that opted into paying for the screen has already accepted
-that propose-step cost class. With screening off nothing here runs and
-the propose path is byte-identical.
+that propose-step cost class. With screening off nothing here runs.
 
-The recombination slot (WS-REC; opt-in, rides ``recombine`` + ``best_of_n > 1``)
----------------------------------------------------------------------------------
+The recombination slot (opt-in, rides ``recombine`` + ``best_of_n > 1``)
+------------------------------------------------------------------------
 When the orchestrator threads a per-round
 :attr:`~zicato.proposer.agent.ProposerContext.recombine_pair` (two
 rejected complementary challengers of the current reign, selected by
 :mod:`zicato.epoch.recombine`), the LAST slate slot COMPOSES their union
-instead of sampling the LLM. Two merge modes (WS-MERGE; PROPOSER.md
-§2.6.1), chosen by ``proposer_quality.recombine_merge``:
+instead of sampling the LLM. Two merge modes (PROPOSER.md §2.6.1),
+chosen by ``proposer_quality.recombine_merge``:
 
 * ``"mechanical"`` (default) — a PURE mint of the disjoint patch union
   (:mod:`zicato.proposer.recombine`), NO LLM call — cost-neutral by
@@ -98,7 +96,7 @@ A NON-VETOED mint/merge short-circuits the selection
 (``selection_mode="recombined"``, no critic call) because the heuristic's
 minimal-diff key would systematically starve the union — its diff is
 larger than either parent's by construction; a VETOED one stays an
-ordinary slate member and every existing path is unchanged.
+ordinary slate member and goes through the normal selection.
 
 Ensemble proposer roles
 -----------------------
@@ -243,17 +241,17 @@ class _SlotOutcome:
     post-gather pass reads them in SLOT order (``sample``) to emit the
     ``candidate_sampled`` events and append candidates, so the observable
     outcome never depends on completion order. A failed slot carries its
-    :class:`~zicato.proposer.proposer.ProposerError` (the slate narrows, but
-    the error is now REPORTED — see :meth:`BestOfNProposerAgent.propose`),
+    :class:`~zicato.proposer.proposer.ProposerError` (the slate narrows and
+    the error is REPORTED — see :meth:`BestOfNProposerAgent.propose`),
     never losing the slots that did succeed.
 
     ``degraded_errors`` is the SURVIVED-BUT-FAILED channel: a call that was
     swallowed to a degrade rather than failing the slot, so the slot can
-    still carry a candidate alongside it. Today that is the LLM
+    still carry a candidate alongside it. Its one producer is the LLM
     recombination merge (:meth:`BestOfNProposerAgent._merge_recombined`),
-    whose call exception degrades the slot to a fresh sample; before issue
-    #141 that exception reached nothing but a ``debug`` log, which made an
-    outage-driven degrade indistinguishable from a clean mechanical mint.
+    whose call exception degrades the slot to a fresh sample. Carrying that
+    exception here is what keeps an outage-driven degrade distinguishable
+    from a clean mechanical mint (issue #141).
     """
 
     sample: int
@@ -342,7 +340,7 @@ def _heuristic_best_index(
        the smaller (better) SELECTION-BIASED panel scalar breaks the
        remaining tie; a ``None`` scalar (no signal) sorts after every
        measured one. ``screen_scalars is None`` (unscreened / veto-only)
-       leaves the term constant — inert, byte-identical ordering.
+       leaves the term constant, so the earlier keys decide alone.
     5. **Stable order** — ties break toward the earlier-sampled candidate, so
        the selection is deterministic for a fixed slate.
 
@@ -385,7 +383,7 @@ def _render_candidate_slate(candidates: list[Experiment]) -> str:
 
     One block per candidate: its 0-based index, the hypothesis core idea, the
     targeted mutation ids, a per-patch op + rationale summary, and the diff
-    size. Deliberately compact — the critic ranks the candidates, it does not
+    size. Compact by design — the critic ranks the candidates, it does not
     re-derive them — and carries no per-entry board identity (only the
     proposer's own declared targets + rationale, already inside the
     visibility envelope).
@@ -461,7 +459,7 @@ _CRITIC_SYSTEM_PROMPT = (
 #: model that ignores the length instruction must not bloat the log. The
 #: truncation is silent by design: the rationale is provenance, never a
 #: parsed input, so a clipped tail costs a reader the end of a sentence and
-#: costs the loop nothing. Deliberately ABOVE the 200 characters the prompt
+#: costs the loop nothing. Set ABOVE the 200 characters the prompt
 #: asks for, so an answer that obeys the instruction is never clipped — the
 #: cap catches runaway text, it does not enforce the ask.
 RATIONALE_CAP: int = 240
@@ -471,7 +469,7 @@ def normalize_selection_rationale(rationale: str) -> str:
     """Return the bounded, single-line form stored in round-log provenance.
 
     Both critic transports persist this untrusted model output. Keeping the
-    normalization here makes their ``critique_selected`` records genuinely
+    normalization here makes their ``critique_selected`` records
     interchangeable and protects the canonical JSONL log from runaway text.
     """
     return " ".join(rationale.split())[:RATIONALE_CAP]
@@ -618,7 +616,7 @@ def _slot_error_texts(outcome: _SlotOutcome) -> tuple[str, ...]:
     log intact. That fidelity is load-bearing downstream:
     :mod:`zicato.epoch.round_integrity` anchors its infra-marker scan to those
     exact prefixes, and an error re-wrapped in the "proposer failed after N
-    attempt(s)" envelope would no longer match one. An ``attempts``-less error
+    attempt(s)" envelope would fail to match one. An ``attempts``-less error
     (nothing raises one today) falls back to its own text so the slot is never
     silently error-free.
 
@@ -640,8 +638,7 @@ def _parse_critic_choice(response: str, n: int) -> tuple[int | None, str]:
     is in ``range(n)``, else ``None`` (the caller falls back to the
     heuristic). The rationale is the critic's own one-line justification,
     whitespace-collapsed and capped at :data:`RATIONALE_CAP` — ``""`` when the
-    critic wrote none, which is every response from a model that answers with
-    the bare integer the OLD prompt asked for.
+    critic wrote none — every response that is a bare integer.
 
     Tolerant on BOTH halves, because a flaky critic must never fail a propose:
 
@@ -665,9 +662,9 @@ def _parse_critic_choice(response: str, n: int) -> tuple[int | None, str]:
     head, _, tail = response.strip().partition("\n")
     match = re.search(r"-?\d+", head)
     if match is None:
-        # The first line carried no digits — fall back to the historical
-        # whole-response scan, and keep NO rationale (the split that would
-        # have separated them is exactly the thing that did not hold).
+        # The first line carried no digits — fall back to scanning the whole
+        # response, and keep NO rationale (the split that would have separated
+        # them is the thing that did not hold).
         match = re.search(r"-?\d+", response)
         tail = ""
     if match is None:
@@ -688,8 +685,8 @@ class BestOfNProposerAgent:
     Construct it around the epoch's resolved inner agent and the contract's
     :class:`~zicato.core.types.ProposerQualityConfig`. With an explicit
     ``best_of_n == 1`` pin :meth:`propose` is a transparent pass-through to
-    the inner agent — no extra sampling, no critique call — the historical
-    single-sample behaviour (the DEFAULT config samples a slate of 3).
+    the inner agent — no extra sampling, no critique call (the DEFAULT config
+    samples a slate of 3).
 
     The wrapper preserves the inner agent's failure contract: when no
     candidate can be sampled it re-raises the inner
@@ -705,13 +702,12 @@ class BestOfNProposerAgent:
     depth_call_llm: CallLLM | None = None
     breadth_model: str | None = None
     depth_model: str | None = None
-    #: WS-CONC slate-gather concurrency cap — the ``asyncio.Semaphore`` size
-    #: for the best-of-N sampling fan-out (threaded from
+    #: Slate-gather concurrency cap — the ``asyncio.Semaphore`` size for the
+    #: best-of-N sampling fan-out (threaded from
     #: :attr:`~zicato.core.runtime.RuntimeConfig.propose_parallelism`). ``1``
-    #: (the default, and every context that pins it) runs the slate serially,
-    #: byte-identically to the pre-concurrency wrapper; the deterministic
-    #: post-gather pass makes any value produce the SAME slate + event stream
-    #: regardless of slot completion order. Effectively capped at ``best_of_n``
+    #: (the default, and every context that pins it) runs the slate serially;
+    #: the deterministic post-gather pass makes any value produce the SAME
+    #: slate + event stream regardless of slot completion order. Effectively capped at ``best_of_n``
     #: (never more tasks than slots).
     propose_parallelism: int = 1
 
@@ -734,17 +730,16 @@ class BestOfNProposerAgent:
     async def propose(self, ctx: ProposerContext) -> Experiment:
         n = self.config.best_of_n
         if n <= 1:
-            # Byte-identical to today: one inner sample, no critique.
+            # One inner sample, no critique.
             return await self.inner.propose(ctx)
 
-        # WS-CONC: the N slate samples are genuinely independent (each varies
-        # only by a deterministic per-slot hint + its OWN scratch validation
-        # tree), so fan them out under the propose-parallelism cap and collect
-        # one ``_SlotOutcome`` per slot. ``asyncio.gather`` preserves INPUT
-        # order in its result list regardless of completion order, so the
-        # ordered pass below is deterministic; ``propose_parallelism == 1``
-        # runs the slots serially, byte-identically to the pre-concurrency
-        # wrapper. Every slot leases its OWN scratch derivation tree (see
+        # The N slate samples are independent (each varies only by a
+        # deterministic per-slot hint + its OWN scratch validation tree), so
+        # fan them out under the propose-parallelism cap and collect one
+        # ``_SlotOutcome`` per slot. ``asyncio.gather`` preserves INPUT order
+        # in its result list regardless of completion order, so the ordered
+        # pass below is deterministic; ``propose_parallelism == 1`` runs the
+        # slots serially. Every slot leases its OWN scratch derivation tree (see
         # :meth:`_run_one_slot`), so two concurrent slots never race on the
         # shared ``next_id`` tree — that shared derive happens exactly once,
         # for the chosen candidate, in :meth:`_mount_chosen` after selection.
@@ -757,20 +752,18 @@ class BestOfNProposerAgent:
         # that did both (a degraded merge whose fresh sample then landed)
         # contributes both, in that order.
         #
-        # Emitting the failures is issue #141. A failed slot still narrows the
-        # slate exactly as before — the DEGRADE BEHAVIOUR is unchanged — but
-        # its error is no longer discarded just because a sibling survived.
-        # That discard is what let a credential-lapsed round reach the
-        # integrity reader as ``candidates_sampled=1, errors=()``: zero model
-        # responses and no recorded evidence of the outage.
+        # A failed slot narrows the slate, and its error is reported rather
+        # than discarded because a sibling survived (issue #141). Discarding it
+        # would let a credential-lapsed round reach the integrity reader as
+        # ``candidates_sampled=1, errors=()``: zero model responses and no
+        # recorded evidence of the outage.
         #
         # The events are STAGED rather than emitted inline because the
         # all-failed path must not double-report: it raises a
         # :class:`ProposerError` aggregating every slot's attempts, and
         # ``evolve/propose_apply.py`` already emits one ``proposal_attempted``
         # per attempt of an escaping error. Staging lets this pass emit only
-        # when the slate survived, while keeping the emission order the
-        # inline version would have produced.
+        # when the slate survived, in the order the walk visits the slots.
         candidates: list[Experiment] = []
         staged: list[tuple[str, dict[str, Any]]] = []
         slot_attempts: list[str] = []
@@ -795,11 +788,11 @@ class BestOfNProposerAgent:
             # The whole slate failed — surface the inner failure exactly as a
             # single propose would (the caller's rejected-outcome path handles
             # it), but carrying EVERY slot's attempts rather than only the last
-            # slot's. Re-raising the last error alone lost slots 0..n-2
-            # entirely, so a slate whose earlier slots hit a credential lapse
-            # and whose final slot hit a parse error reported only the parse
-            # error — the infra evidence was gone from the one channel that
-            # outlives the run. Each attempt is prefixed with its slot so the
+            # slot's. Re-raising the last error alone would drop slots
+            # 0..n-2, so a slate whose earlier slots hit a credential lapse
+            # and whose final slot hit a parse error would report only the
+            # parse error, losing the infra evidence from the one channel
+            # that outlives the run. Each attempt is prefixed with its slot so the
             # aggregate stays readable; the integrity reader strips that prefix
             # before anchoring its marker scan (``epoch/round_integrity.py``).
             # ``slot_attempts`` is non-empty because n >= 2 means the loop ran.
@@ -834,13 +827,13 @@ class BestOfNProposerAgent:
         # a catastrophic regression is disqualified here, but the screen
         # never ranks; the critic/heuristic below still chooses among the
         # survivors. ``None`` (unscreened — no runner threaded, screen
-        # error, or malformed result) leaves the selection byte-identical.
+        # error, or malformed result) leaves the selection to the quality bar.
         screen_results = await self._screen_slate(candidates, ctx)
 
         if recombined_index is not None and (
             screen_results is None or not screen_results[recombined_index].vetoed
         ):
-            # SELECTION SHORT-CIRCUIT (WS-REC): a NON-VETOED mint is chosen
+            # SELECTION SHORT-CIRCUIT: a NON-VETOED mint is chosen
             # outright — no critic call (the sole-survivor precedent). The
             # heuristic's minimal-diff key would systematically STARVE the
             # union (its diff is larger than either parent's BY
@@ -850,7 +843,7 @@ class BestOfNProposerAgent:
             # evidence from two real tournament rounds, the screen above
             # could still veto it, and the unchanged gate remains the
             # arbiter. A VETOED mint takes the else-branch as an ordinary
-            # slate member — every existing path is unchanged.
+            # slate member.
             chosen, selection_mode = recombined_index, "recombined"
             await self._mount_chosen(candidates, chosen, ctx)
             _emit_round_event(
@@ -871,7 +864,7 @@ class BestOfNProposerAgent:
                 survivor_indices = survivors
             else:
                 # Every candidate vetoed — take the ONE bounded
-                # screen-informed revise pass first (WS-R); only when it
+                # screen-informed revise pass first; only when it
                 # too produces nothing usable does the step degrade to
                 # critic-over-ALL, with the mode string recording the
                 # degraded selection basis. The screen may narrow but
@@ -920,11 +913,11 @@ class BestOfNProposerAgent:
         Returns one :class:`_SlotOutcome` per slot IN SLOT ORDER
         (``asyncio.gather`` preserves input order regardless of which slot
         finishes first), so the caller's ordered pass is deterministic.
-        ``propose_parallelism == 1`` runs the slots strictly serially — the
-        exact pre-concurrency ordering — and skips the task/semaphore
-        machinery so the no-factory unit-test path stays a plain loop.
+        ``propose_parallelism == 1`` runs the slots strictly serially, in
+        slot order, and skips the task/semaphore machinery so the no-factory
+        unit-test path stays a plain loop.
 
-        Scratch-lease safety (WS-CONC scratch-leak): ``_run_one_slot``'s own
+        Scratch-lease safety: ``_run_one_slot``'s own
         ``try/finally`` always releases ITS slot's scratch lease, but plain
         ``asyncio.gather()`` (``return_exceptions=False``) propagates the
         FIRST exception the instant any one slot raises, WITHOUT cancelling
@@ -939,8 +932,8 @@ class BestOfNProposerAgent:
         completion order) for the same determinism the rest of the gather
         provides; a slot's own :class:`~zicato.proposer.proposer.ProposerError`
         never reaches here (:meth:`_sample_slot` already folds it into a
-        normal ``_SlotOutcome``), so only a genuinely unexpected exception
-        takes this path.
+        normal ``_SlotOutcome``), so only an unexpected exception takes this
+        path.
         """
         parallelism = max(1, min(self.propose_parallelism, n))
         if parallelism == 1:
@@ -988,9 +981,9 @@ class BestOfNProposerAgent:
             # as overlapping lifelines under the propose phase (HARMONOGRAF.md §7).
             async with meta_span(f"slot {sample}", kind=SPAN_SLOT, meta={"sample": sample}):
                 if sample == n - 1 and ctx.recombine_pair is not None:
-                    # The recombination slot (WS-REC): the LAST slot composes the
-                    # round's selected pair instead of sampling the LLM (WS-MERGE
-                    # modes; PROPOSER.md §2.6.1). It validates through the SAME
+                    # The recombination slot: the LAST slot composes the
+                    # round's selected pair instead of sampling the LLM (the two
+                    # merge modes; PROPOSER.md §2.6.1). It validates through the SAME
                     # per-slot scratch hook every sample uses. Any failure DEGRADES
                     # to the normal fresh sample below — the identical slot body,
                     # with the slot's normal exploratory hint (a recombination
@@ -1024,7 +1017,7 @@ class BestOfNProposerAgent:
         concurrent slots never collide. Without one (single-sample proposers,
         unit-test contexts with no genstore) the slot leases the SHARED
         ``validate_experiment`` hook + a no-op cleanup and the slate runs
-        serially — byte-identical to the pre-concurrency wrapper.
+        serially.
         """
         factory = ctx.scratch_validator_factory
         if factory is not None:
@@ -1050,8 +1043,7 @@ class BestOfNProposerAgent:
         slate). There is no shared tree to fall back to, so any finding
         surfaces the standard :class:`~zicato.proposer.proposer.ProposerError`
         every call site already handles. ``validate_experiment is None`` (a
-        context with no derive hook — the pre-hook caller contract) mounts
-        nothing and returns.
+        context with no derive hook) mounts nothing and returns.
         """
         validate = ctx.validate_experiment
         if validate is None:
@@ -1075,8 +1067,8 @@ class BestOfNProposerAgent:
         than re-rolling one idea. The edit-class mapping
         (:func:`zicato.proposer.hints.hint_for_slot`) conditions slots
         0..N-2 on the profile's DOMINANT failure mode and keeps the LAST
-        slot exploratory; with no profile signal it is the historical
-        EDIT_CLASS_HINTS rotation, byte-identical. The strategy framing
+        slot exploratory; with no profile signal it is the plain
+        :data:`EDIT_CLASS_HINTS` rotation. The strategy framing
         (:func:`zicato.proposer.hints.strategy_for_slot`) is a small fixed
         vocabulary rotated deterministically per (slot, round) — no RNG, no
         extra sampling params (the ``aux_call_llm`` seam is
@@ -1095,14 +1087,13 @@ class BestOfNProposerAgent:
         emission in slot order. The recombination slot's degrade path reuses
         this body VERBATIM.
         """
-        # WS-ENS: slate SAMPLING runs on the breadth role. The swap is a no-op
-        # (same object) when no breadth role is configured, so the slot is
-        # byte-identical to the pre-ensemble wrapper; when configured, the
+        # Slate SAMPLING runs on the breadth role. The swap is a no-op (same
+        # object) when no breadth role is configured; when configured, the
         # inner proposer's ``ctx.aux_call_llm`` consumers reach the breadth
-        # endpoint. We ALSO swap ``ctx.model`` to the breadth model name so the
-        # DEFAULT ADK proposer — which binds to the model STRING, not the
-        # callable — honors the role too; absent a breadth model the string is
-        # replaced with its OWN value (byte-identical). The recombination-mint
+        # endpoint. ``ctx.model`` is swapped to the breadth model name too, so
+        # the DEFAULT ADK proposer — which binds to the model STRING rather
+        # than the callable — honors the role; absent a breadth model the string is
+        # replaced with its OWN value. The recombination-mint
         # DEGRADE path routes here too, so a degraded slot samples on breadth
         # exactly like an ordinary one.
         # Compose the two diversity axes into the single sample-hint string:
@@ -1173,7 +1164,7 @@ class BestOfNProposerAgent:
     async def _merge_recombined(
         self, ctx: ProposerContext
     ) -> tuple[Experiment | None, tuple[str, ...]]:
-        """LLM-guided merge of the round's recombination pair (WS-MERGE). GUARDED.
+        """LLM-guided merge of the round's recombination pair. GUARDED.
 
         The ``recombine_merge = "llm"`` counterpart to :meth:`_mint_recombined`
         (PROPOSER.md §2.6.1): instead of mechanically concatenating a disjoint
@@ -1201,11 +1192,11 @@ class BestOfNProposerAgent:
         ``candidate_sampled`` event with the ``recombined`` marker.
 
         Returns ``(merged_or_None, degrade_evidence)``. The second element is
-        the round-log channel issue #141 added: the swallowed CALL exception,
-        rendered as a call-boundary error string for the slot's
-        ``proposal_attempted``. It is EVIDENCE ONLY — every degrade decision
-        above is unchanged, and a caller that ignores it behaves exactly as
-        before. Empty on success and on every post-response degrade.
+        the round-log channel for the swallowed CALL exception, rendered as a
+        call-boundary error string for the slot's ``proposal_attempted``
+        (issue #141). It is EVIDENCE ONLY: it steers no degrade decision above,
+        and a caller that ignores it still degrades identically. Empty on
+        success and on every post-response degrade.
         """
         import dataclasses  # noqa: PLC0415
 
@@ -1246,8 +1237,8 @@ class BestOfNProposerAgent:
                 pair.b_generation_id,
                 exc,
             )
-            # Issue #141: the swallowed CALL exception is the one degrade the
-            # round log must not lose. It is rendered with the SAME
+            # The swallowed CALL exception is the one degrade the round log
+            # must not lose (issue #141). It is rendered with the SAME
             # call-boundary template the retry loop uses for an auxiliary call
             # (``proposer/proposer.py``) so the integrity reader's marker scan,
             # which anchors on that prefix, sees a merge-call outage exactly as
@@ -1306,7 +1297,7 @@ class BestOfNProposerAgent:
 
         ``None`` — no screen runner on the context (every contract that
         does not opt in), a raising runner, or a malformed result — means
-        UNSCREENED: the caller selects exactly as before. Screening must
+        UNSCREENED: the caller selects over the whole slate. Screening must
         never fail a propose step. Emits one ``candidate_screened`` round
         event per candidate (after the ``candidate_sampled`` events,
         before ``critique_selected``) with the counts-only summary.
@@ -1340,20 +1331,20 @@ class BestOfNProposerAgent:
         ctx: ProposerContext,
         n: int,
     ) -> str:
-        """The ONE bounded screen-informed revise pass (WS-R). GUARDED.
+        """The ONE bounded screen-informed revise pass. GUARDED.
 
         Called only for an ALL-VETOED screened slate — the one screen
         verdict under which proceeding is *knowingly* wasteful (the step
         would send a vetoed candidate to a full tournament round). That
-        is deliberately the WHOLE trigger: a cold-start slate whose
+        is the WHOLE trigger: a cold-start slate whose
         survivors were merely crash-only screened (no champion-passing
         baseline, so no pass-flip was ever detectable —
         :class:`~zicato.epoch.screen.ScreenPanel.baseline_pass_ids`
         empty) does NOT revise, because a replacement would face the same
         crash-only panel and could earn no stronger signal than the
         survivors already hold; and a no-signal survivor (screen error)
-        is the screen's own degrade-to-unscreened contract, not evidence
-        against the slate.
+        is the screen's own degrade-to-unscreened contract rather than
+        evidence against the slate.
 
         One replacement is re-sampled with the slate's COUNTS-ONLY veto
         summary seeded through the repair-feedback machinery
@@ -1384,8 +1375,8 @@ class BestOfNProposerAgent:
           ``screen_all_vetoed_after_revise`` mode prefix recording that
           the revise was spent.
         * ``"unavailable"`` — the inner proposer produced no replacement:
-          the caller degrades exactly as before the revise existed
-          (``screen_all_vetoed``). No tree restore is needed — the
+          the caller degrades to critic-over-ALL (``screen_all_vetoed``).
+          No tree restore is needed — the
           replacement validated into its own throwaway scratch tree.
         """
         revise_index = len(candidates)
@@ -1396,9 +1387,9 @@ class BestOfNProposerAgent:
         # own tempdir, and the chosen candidate is mounted from patches later.
         validate, cleanup = self._slot_validate_lease(ctx)
         try:
-            # WS-ENS: the screen-informed REVISE is a DEPTH pass (a targeted
-            # repair, not exploration) — it runs on the depth role, falling
-            # back to ``ctx.aux_call_llm`` (byte-identical) when unconfigured.
+            # The screen-informed REVISE is a DEPTH pass (a targeted repair
+            # rather than exploration) — it runs on the depth role, falling
+            # back to ``ctx.aux_call_llm`` when unconfigured.
             # ``ctx.model`` is swapped to the depth model name for the same
             # reason as the sampling site: so the default ADK proposer (which
             # binds the model STRING) honors the role; absent it, the string is
@@ -1487,12 +1478,12 @@ class BestOfNProposerAgent:
         ``screen_veto_only`` — through two advisory channels: the critique
         prompt's counts-only ``## Screen measurements`` block, and the
         heuristic's penultimate panel-scalar key. Unscreened (or
-        veto-only), both channels are inert and the selection is
-        byte-identical to the pre-screen wrapper.
+        veto-only), both channels are inert and the selection runs on the
+        quality bar alone.
 
         ⛔ The critic sees the SUB-slate, renumbered from 0 by
         :func:`_render_candidate_slate` — its "candidate 1" is
-        ``survivor_indices[1]``, not slate slot 1. The returned index is
+        ``survivor_indices[1]`` rather than slate slot 1. The returned index is
         mapped back here, but the RATIONALE is free text that cannot be
         mapped, so a sentence naming a candidate number would point at the
         wrong row of the event's own ``slate`` field. That is why
@@ -1555,14 +1546,15 @@ class BestOfNProposerAgent:
 
         ``screen_scalars`` / ``screen_note`` are the OPTIONAL candidate-
         screen tiebreak feeds (heuristic key / critic prompt block); both
-        default inert — every unscreened caller is byte-identical.
+        default inert, so an unscreened caller selects on the quality bar
+        alone.
         """
         if not self.config.critique_enabled:
             return _heuristic_best_index(candidates, ctx, screen_scalars), "heuristic", ""
 
-        # WS-ENS: the self-CRITIQUE selection call is a DEPTH pass (it judges +
-        # ranks the slate) — resolve the depth role, falling back to
-        # ``ctx.aux_call_llm`` (byte-identical) when no depth role is set.
+        # The self-CRITIQUE selection call is a DEPTH pass (it judges + ranks
+        # the slate) — resolve the depth role, falling back to
+        # ``ctx.aux_call_llm`` when no depth role is set.
         aux_call_llm = self._depth_call_llm(ctx)
         if aux_call_llm is None:  # pragma: no cover — orchestrator always wires it
             return _heuristic_best_index(candidates, ctx, screen_scalars), "heuristic", ""
@@ -1640,7 +1632,7 @@ class BestOfNProposerAgent:
             f"{slate}\n"
             # Optional counts-only screen block (the calibration-note
             # precedent) — empty for every unscreened / veto-only call, so
-            # the prompt is byte-identical to the pre-screen wrapper.
+            # the prompt then carries no screen block at all.
             f"{calibration_note}"
             f"{screen_note}\n"
             f"Respond with the integer index (0..{len(candidates) - 1}) of "
@@ -1680,20 +1672,20 @@ def wrap_with_proposer_quality(
     """Interpose best-of-N + self-critique only when an operator opts in.
 
     Returns ``inner`` UNCHANGED when ``config.best_of_n <= 1`` (the default),
-    so a contract that does not opt in pays nothing and behaves
-    byte-identically — there is not even a wrapper object in the call path.
+    so a contract that does not opt in pays nothing — there is not even a
+    wrapper object in the call path.
     Otherwise wraps ``inner`` in a :class:`BestOfNProposerAgent`. The
     orchestrator calls this once per evolve invocation, right after it builds
     the epoch's proposer agent.
 
-    ``breadth_call_llm`` / ``depth_call_llm`` are the WS-ENS ensemble roles
+    ``breadth_call_llm`` / ``depth_call_llm`` are the ensemble roles
     (typically ``config.proposer_breadth_call_llm`` /
     ``config.proposer_depth_call_llm`` off the
     :class:`~zicato.core.runtime.RuntimeConfig`): the slate SAMPLING callable
     and the CRITIQUE + REVISE callable. Both default to ``None``, in which
     case the wrapper resolves each per-propose to ``ctx.aux_call_llm`` — the
-    exact auxiliary callable it always used, so an unconfigured ensemble is
-    byte-identical. They are irrelevant on the ``best_of_n <= 1`` pass-through
+    workspace's auxiliary callable, so an unconfigured ensemble runs every
+    call on it. They are irrelevant on the ``best_of_n <= 1`` pass-through
     (no wrapper, no critique).
 
     ``breadth_model`` / ``depth_model`` are the role MODEL-NAME strings that
@@ -1703,13 +1695,12 @@ def wrap_with_proposer_quality(
     onto ``ctx.model`` at the sampling/revise sites so the default ADK
     proposer — which binds the model STRING, not ``ctx.aux_call_llm`` — honors
     the role. ``None`` (the common case, a callable-only or absent role) leaves
-    ``ctx.model`` at its own value, byte-identical.
+    ``ctx.model`` at its own value.
 
-    ``propose_parallelism`` (WS-CONC; typically ``config.propose_parallelism``
-    off the :class:`RuntimeConfig`) sizes the slate-sampling gather's
-    semaphore. ``1`` (the default) runs the slate serially, byte-identically
-    to the pre-concurrency wrapper; the deterministic post-gather pass makes
-    any value produce the SAME slate + event stream regardless of slot
+    ``propose_parallelism`` (typically ``config.propose_parallelism`` off the
+    :class:`RuntimeConfig`) sizes the slate-sampling gather's semaphore. ``1``
+    (the default) runs the slate serially; the deterministic post-gather pass
+    makes any value produce the SAME slate + event stream regardless of slot
     completion order. Irrelevant on the ``best_of_n <= 1`` pass-through.
     """
     if config.best_of_n <= 1:

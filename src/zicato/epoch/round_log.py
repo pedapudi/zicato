@@ -1,16 +1,15 @@
 """The per-round durable EVENT LOG — one evolve round's store-of-record trace.
 
-Every decision an evolve round makes today is scattered across the
-journal, ``experiment.json``, the runtime tournament log (ephemeral), and
-free-text reasons. This module defines the ONE durable, replayable record
-of a round: a typed, sequenced JSONL event log at
-
-``epochs/{epoch}/rounds/{round}/round_log.jsonl``. Each wire record has a
+A round's decisions otherwise spread across the journal,
+``experiment.json``, the ephemeral runtime tournament log, and free-text
+reasons. This module defines the ONE durable, replayable record of a
+round — a typed, sequenced JSONL event log at
+``epochs/{epoch}/rounds/{round}/round_log.jsonl`` — plus the fold that
+reduces it to a typed :class:`RoundRecord` summary. Each wire record has a
 type-specific ``payload`` plus an extensible ``scope`` envelope for plan
-coordinates; adding a coordinate does not require changing every event's
-payload schema.
+coordinates, so adding a coordinate does not require changing every
+event's payload schema.
 
-plus the fold that reduces it to a typed :class:`RoundRecord` summary.
 The orchestrator's ``_RoundLogEmitter`` wires this on the evolve path:
 every settled round writes its ``round_log.jsonl`` as the round runs.
 
@@ -32,10 +31,9 @@ Load-bearing invariants
   dropping history. The writer repairs a torn tail before appending
   (terminates the partial line) so the dead bytes can never concatenate
   with the next event.
-* **Durable, not runtime.** The log lives under ``epochs/`` — the
-  store-of-record tree — not ``runtime/``: it survives the run, is
-  keyed by the round it describes, and is never cleared by resume/crash
-  cleanup.
+* **Durability.** The log lives under ``epochs/``, the store-of-record
+  tree, rather than under ``runtime/``: it survives the run, is keyed by
+  the round it describes, and is never cleared by resume/crash cleanup.
 
 Event vocabulary
 ----------------
@@ -104,14 +102,14 @@ class ProposalAttempted:
     """One proposer attempt settled; ``errors`` is empty on success.
 
     ``slot_index`` names the best-of-N SLATE SLOT the attempt belongs to,
-    and exists because a slate slot that fails while a sibling survives is
-    an attempt the round log never used to record at all (issue #141): the
-    wrapper narrowed the slate and dropped the error, so a round could lose
-    most of its slate to a credential lapse and leave ``proposal.errors``
-    empty. ``None`` is the NON-SLATE attempt — the single-propose retry
-    trail :mod:`zicato.evolve.propose_apply` emits, which has no slot to
-    name. Additive with a default so every pre-slot log decodes identically
-    (the ``CandidateSampled.revise`` precedent).
+    so that a slot which fails while a sibling survives still leaves its
+    own record: the wrapper narrows the slate, and without a per-slot
+    event a round could lose most of its slate to a credential lapse and
+    still report empty ``proposal.errors`` (issue #141). ``None`` is the
+    NON-SLATE attempt — the single-propose retry trail
+    :mod:`zicato.evolve.propose_apply` emits, which has no slot to name.
+    Additive with a default, so a log written without the field decodes
+    identically (the ``CandidateSampled.revise`` precedent).
     """
 
     TYPE: ClassVar[str] = "proposal_attempted"
@@ -125,13 +123,13 @@ class CandidateSampled:
 
     ``revise`` marks the ONE bounded screen-informed revise re-sample an
     all-vetoed slate may take (``i`` is then the replacement's slate
-    position, one past the sampled slots). Additive with a default so
-    every pre-revise log decodes identically.
+    position, one past the sampled slots). Additive with a default, so a
+    log written without the field decodes identically.
 
     ``recombined`` marks the slot that MECHANICALLY MINTED the union of two
-    rejected parents' patch sets (WS-REC) instead of sampling the LLM — the
-    last slot when the round carries a recombination pair. Additive with a
-    default so every pre-recombine log decodes identically.
+    rejected parents' patch sets instead of sampling the LLM — the last
+    slot when the round carries a recombination pair. Additive with a
+    default, so a log written without the field decodes identically.
 
     Its challenger and other plan coordinates live in the enclosing
     :class:`RoundEventScope` rather than in this event-specific payload.
@@ -158,7 +156,7 @@ class CandidateScreened:
     budget-abort veto carries ``False``. ``revise`` marks the screen of
     the ONE bounded revise replacement an all-vetoed slate may sample
     (``index`` is then one past the original slate) — additive with a
-    default so every pre-revise log decodes identically.
+    default, so a log written without the field decodes identically.
 
     Its challenger and other plan coordinates live in the enclosing
     :class:`RoundEventScope` rather than in this event-specific payload.
@@ -210,12 +208,13 @@ class HarnessLoaded:
     The mutated-tree provenance (issue #110). ``entrypoint_file`` is the
     SNAPSHOT-RELATIVE path (``agent/agent.py``) of the ``module.__file__`` the
     adapter imported for ``generation_id``, after asserting it lies under that
-    generation's snapshot. Relative, not absolute, because the snapshot a
-    worker loads is a per-run ephemeral checkout that is deleted when the run
-    ends — the durable, comparable fact is WHICH module inside the snapshot
-    ran, not where the throwaway copy of it lived. Empty for the dependency
-    shape, where the entrypoint legitimately lives outside every mutable tree
-    (target 2 mutates goldfive and drives it from a harness module elsewhere).
+    generation's snapshot. The path is snapshot-relative rather than absolute
+    because the snapshot a worker loads is a per-run ephemeral checkout that is
+    deleted when the run ends — the durable, comparable fact is WHICH module
+    inside the snapshot ran, rather than where the throwaway copy of it lived.
+    Empty for the dependency shape, where the entrypoint legitimately lives
+    outside every mutable tree (the goldfive-steering target mutates goldfive
+    and drives it from a harness module elsewhere).
 
     ``trees_verified`` / ``trees_never_imported`` carry the per-tree half — the
     one that answers "were the MUTATIONS under test?" rather than "where did
@@ -230,7 +229,7 @@ class HarnessLoaded:
     an adapter kind that does not, or a generation whose units all came from
     the unit cache, simply contributes no event. Purely additive provenance:
     readers MUST tolerate its absence, unknown tokens are ignored by the fold,
-    and every field defaults, so every pre-existing log decodes unchanged.
+    and every field defaults, so a log without the event decodes unchanged.
     """
 
     TYPE: ClassVar[str] = "harness_loaded"
@@ -263,40 +262,39 @@ class GateEvaluated:
     """The promote gate fired ``rule_fired`` and returned ``decision``.
 
     ``champion_scalar`` / ``challenger_scalar`` / ``margin_required`` are the
-    inputs to the gate's CONTINUOUS decision axis — Rule 1 is literally
+    inputs to the gate's CONTINUOUS decision axis — the scalar-margin rule is
     ``challenger_scalar > champion_scalar - margin_required`` ⇒ reject — recorded
     on BOTH decisions so the duel's effect size is reconstructable from the log
     alone.
 
-    Before they existed the compared scalars survived only inside the
-    human-readable REJECT text (``rule_fired``, which is empty on a clean
-    promote — unchanged by this addition). A promoted duel therefore recorded no
-    numbers at all, and that gap is not merely missing data: it is CORRELATED
-    with the quantity being measured. A sample recovered from the log is missing
-    exactly its promotions, which are by definition the largest improvements, so
-    comparing configurations biases the ranking toward whichever one promotes
-    least — close to the opposite of what the analysis is looking for. Nothing in
-    the output signals it; the per-arm sample sizes still look plausible.
+    Recording them on BOTH decisions is what keeps a sample drawn from these
+    logs unbiased. ``rule_fired`` is empty whenever the gate promotes, so a log
+    carrying the compared scalars only inside that human-readable reject text
+    would be missing exactly its promotions — by definition the largest
+    improvements. That gap is CORRELATED with the quantity being measured:
+    comparing configurations off such a sample biases the ranking toward
+    whichever one promotes least. Nothing in the output signals it; the per-arm
+    sample sizes still look plausible.
 
     Division of labour: these three fields are the CONTRACT for anything a
-    consumer computes on; ``rule_fired`` names which rule actually decided and is
+    consumer computes on; ``rule_fired`` names which rule decided and is
     PRESENTATION. Its phrasing varies by rule (``insufficient improvement: ...``,
     ``challenger regressed: ...``, ``pass-rate regression on entries: ...``,
-    ``diff_complexity_ceiling: ...``), so nothing should be regexed out of it —
-    and it is empty whenever the gate promotes, which is why the numbers had to
-    move somewhere structural rather than into the prose.
+    ``diff_complexity_ceiling: ...``), so nothing should be regexed out of it,
+    and it is empty whenever the gate promotes — which is why the numbers live
+    in structural fields rather than in the prose.
 
-    Rules 2 and 3 (pass-rate and per-namespace monotonicity) decide on per-entry
+    The pass-rate and per-namespace monotonicity rules decide on per-entry
     and per-namespace maps that would not fit an event payload; ``rule_fired``
     names them when they fire, and the aggregates themselves live in the
     generations' ``gen_score.json``.
 
-    Additive with ``None`` — NOT ``0.0`` — defaults: a scalar of ``0.0`` is a
-    legal measurement, so a numeric default would make "this log predates the
-    fields" indistinguishable from "both sides scored zero", reintroducing the
-    same ambiguity one layer down. Every pre-existing log decodes with all three
-    ``None`` (:func:`_decode_event` defaults absent keys), following the
-    ``revise: bool = False`` precedent above.
+    Additive with ``None`` rather than ``0.0`` defaults: a scalar of ``0.0`` is
+    a legal measurement, so a numeric default would make "this log carries no
+    scalars" indistinguishable from "both sides scored zero", reintroducing the
+    same ambiguity one layer down. A log written without the fields decodes with
+    all three ``None`` (:func:`_decode_event` defaults absent keys), following
+    the ``revise: bool = False`` precedent above.
 
     ``attributable_regressions`` names the entries that regressed on their own
     per-entry evidence, on BOTH decisions — the observation the gate makes but
@@ -304,9 +302,10 @@ class GateEvaluated:
     :func:`zicato.tournament.gate.attributable_entry_regressions`). A PROMOTED
     duel carrying entries here is the case worth reading: the loss is now in the
     lineage and ``rule_fired`` is, correctly, empty. Emitted only when non-empty,
-    so an ordinary duel's payload is unchanged; ``()`` here is "none reported",
+    so an ordinary duel's payload stays small; ``()`` here is "none reported",
     which for this field is the same statement as "not recorded" — it changes no
-    analysis, so the empty tuple default is safe where a ``0.0`` scalar was not.
+    analysis, so the empty-tuple default is safe in a way a ``0.0`` scalar
+    default would not be.
     """
 
     TYPE: ClassVar[str] = "gate_evaluated"
@@ -476,16 +475,15 @@ class RoundEventScope:
     (:func:`zicato.proposer.reflection.assert_redacted`), so board text,
     prompts and transcripts must never travel here.
 
-    All fields default to the empty scope. Logs written before scopes existed
-    therefore remain readable, but their events cannot be attributed more
-    precisely than the legacy record permits.
+    All fields default to the empty scope, so a log whose writer emitted no
+    scope stays readable; its events simply carry no challenger and no step.
     """
 
     generation_id: str = ""
     step: str = ""
     attributes: dict[str, Any] = field(default_factory=dict)
 
-    #: DELIBERATELY unhashable. ``frozen=True`` would otherwise generate a
+    #: Unhashable by design. ``frozen=True`` would otherwise generate a
     #: ``__hash__`` that raises on the ``attributes`` mapping — clean to a
     #: type checker, a crash at runtime, and no hint of the supported route.
     #: ``None`` states the decision: the type reports as unhashable, and a
@@ -562,7 +560,7 @@ class RoundLogEnvelope:
     the decoded dataclass for a known ``type``; ``None`` for a token this
     reader does not know (forward compatibility — the raw ``payload`` is
     still carried verbatim). ``scope`` is the stable, type-independent plan
-    coordinate envelope. It is empty for legacy records which predate scope.
+    coordinate envelope, empty for a record whose writer emitted none.
     """
 
     seq: int
@@ -779,12 +777,12 @@ class ProposalSession:
 class RoundRecord:
     """The typed summary of one round's log — the fold's output.
 
-    A skeleton by design (WS8-1 is schema + fold; emission wiring and any
-    richer per-matchup reconstruction come later): it reduces the event
-    stream to the round's arc — proposal session, applied generations,
-    validation findings, the matchup units that ran, the gate/holdout/
-    evidence trail, and the recorded decision with its provenance.
-    ``complete`` is true only for a log that both opened and closed.
+    A summary rather than a per-matchup reconstruction: it reduces the
+    event stream to the round's arc — proposal session, applied
+    generations, validation findings, the matchup units that ran, the
+    gate/holdout/evidence trail, and the recorded decision with its
+    provenance. ``complete`` is true only for a log that both opened and
+    closed.
     """
 
     opened: bool = False
@@ -795,15 +793,15 @@ class RoundRecord:
     #: Per-generation snapshot-origin provenance folded from the
     #: ``harness_loaded`` events: ``{generation_id: snapshot-relative
     #: entrypoint path}``.
-    #: Additive — empty for every log written before the event existed, for
-    #: a non-reporting adapter kind, and for a fully cache-served round.
+    #: Additive — empty for any log carrying no ``harness_loaded`` events:
+    #: a non-reporting adapter kind, or a round served wholly from the
+    #: unit cache.
     harness_entrypoint_files: dict[str, str] = field(default_factory=dict)
     #: Per-generation mutable trees NO unit of that generation ever imported,
     #: folded from the same events: ``{generation_id: (tree_basename, ...)}``.
     #: A non-empty entry means that generation's mutations to those trees
-    #: cannot have been under test (issue #110's original shape) — the
-    #: loop-health check turns it into a WARNING finding. Additive and
-    #: normally empty.
+    #: cannot have been under test (issue #110) — the loop-health check
+    #: turns it into a WARNING finding. Additive and normally empty.
     harness_never_imported_trees: dict[str, tuple[str, ...]] = field(default_factory=dict)
     validation_findings: tuple[str, ...] = ()
     units: tuple[UnitCompleted, ...] = ()
@@ -811,9 +809,10 @@ class RoundRecord:
     holdout: HoldoutReleased | None = None
     evidence_trail: tuple[dict[str, Any], ...] = ()
     #: The rounds' Pareto-frontier movements, in emission order. Empty for
-    #: every round that moved nothing and for every log written before the
-    #: event existed — the record is an observation, never a decision, so a
-    #: reader that ignores this field reads the round exactly as before.
+    #: every round that moved nothing and for any log carrying no
+    #: ``frontier_updated`` events — the record is an observation, never a
+    #: decision, so a reader that ignores this field still reads the
+    #: round's decisions in full.
     frontier_updates: tuple[FrontierUpdated, ...] = ()
     decision: str = ""
     decision_provenance: dict[str, Any] = field(default_factory=dict)
