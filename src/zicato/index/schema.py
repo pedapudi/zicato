@@ -37,6 +37,10 @@ The tables are all derived from canonical workspace files:
   (``docs/design/PARETO-FRONTIER.md``). Derived, read-only, and never
   consulted by the loop.
 
+:class:`Table` builds one writer's insert and upsert from the columns
+declared below, so :mod:`zicato.index.ingest` writes out no column list of
+its own and a column added here reaches every statement that carries it.
+
 The single exception to "every table is derived from a canonical file" is
 ``ingest_cursors`` (v14): it records what the WORKSPACE looked like when each
 epoch was last projected, which is the one fact the workspace itself does not
@@ -47,6 +51,9 @@ carry. It exists so the index can notice its own staleness cheaply — see
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
+from functools import cache
+from typing import Any
 
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
@@ -699,6 +706,127 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
 
 
+@cache
+def _columns_by_table() -> dict[str, tuple[str, ...]]:
+    """Return every table's column names, in declaration order.
+
+    Derived by applying :data:`_TABLE_STATEMENTS` to a scratch in-memory
+    database and reading ``PRAGMA table_info`` back, so the answer is
+    whatever SQLite itself makes of the DDL rather than a second parse of
+    it. Cached: the DDL is a module constant.
+    """
+    conn = sqlite3.connect(":memory:")
+    try:
+        for statement in _TABLE_STATEMENTS:
+            conn.execute(statement)
+        names = [str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master")]
+        return {
+            name: tuple(str(row[1]) for row in conn.execute(f"PRAGMA table_info({name})"))
+            for name in names
+        }
+    finally:
+        conn.close()
+
+
+def table_columns(table: str) -> tuple[str, ...]:
+    """Return one table's column names, in declaration order.
+
+    Raises :class:`KeyError` for a name the DDL does not declare.
+    """
+    try:
+        return _columns_by_table()[table]
+    except KeyError:
+        raise KeyError(f"no table named {table!r} in the index schema") from None
+
+
+@dataclass(frozen=True)
+class Table:
+    """One writer's view of a table: which columns it writes, and how.
+
+    A writer names the table and the ways its columns depart from "write
+    every column, overwrite every column on a re-ingest". The column list
+    itself comes from :func:`table_columns`, so a statement built here
+    cannot drift from the DDL above.
+
+    :param name: the table the statements address.
+    :param key: the table's primary key as this writer keys it. An
+        :attr:`upsert` matches its ``ON CONFLICT`` clause on these columns
+        and assigns none of them; an :attr:`insert_or_replace` resolves
+        against the same columns without naming them.
+    :param preserved_when_incoming_null: columns whose stored value
+        survives a re-ingest that supplies ``NULL``. The writer cannot
+        always recover these (a tournament link resolved from a file that
+        has since been deleted, say), and a null from one pass must not
+        erase what an earlier pass established.
+    :param preserved_when_already_set: columns whose stored value
+        survives a re-ingest unconditionally, even when the incoming
+        value is not null. For a column that a different pass fills in
+        with the richer value, this writer's value is only a fallback for
+        a row that does not exist yet.
+    :param set_on_insert_only: columns written when the row is created
+        and left untouched on a re-ingest, with no fallback to the
+        incoming value.
+    :param written_elsewhere: columns another writer owns. They are
+        absent from the statements entirely, so this writer neither
+        creates nor clears them.
+    """
+
+    name: str
+    key: tuple[str, ...] = ()
+    preserved_when_incoming_null: tuple[str, ...] = ()
+    preserved_when_already_set: tuple[str, ...] = ()
+    set_on_insert_only: tuple[str, ...] = ()
+    written_elsewhere: tuple[str, ...] = ()
+
+    @property
+    def columns(self) -> tuple[str, ...]:
+        """The columns this writer supplies, in declaration order."""
+        return tuple(c for c in table_columns(self.name) if c not in self.written_elsewhere)
+
+    @property
+    def insert(self) -> str:
+        """``INSERT INTO <table>(<columns>) VALUES(?, …)``."""
+        columns = self.columns
+        placeholders = ", ".join("?" * len(columns))
+        return f"INSERT INTO {self.name}({', '.join(columns)}) VALUES({placeholders})"
+
+    @property
+    def insert_or_replace(self) -> str:
+        """The same insert, with a conflicting row replaced whole."""
+        return self.insert.replace("INSERT INTO", "INSERT OR REPLACE INTO", 1)
+
+    @property
+    def upsert(self) -> str:
+        """The insert plus the ``ON CONFLICT DO UPDATE`` clause the fields describe."""
+        assignments = []
+        for column in self.columns:
+            if column in self.key or column in self.set_on_insert_only:
+                continue
+            if column in self.preserved_when_already_set:
+                assignments.append(f"{column} = COALESCE({self.name}.{column}, excluded.{column})")
+            elif column in self.preserved_when_incoming_null:
+                assignments.append(f"{column} = COALESCE(excluded.{column}, {self.name}.{column})")
+            else:
+                assignments.append(f"{column} = excluded.{column}")
+        clause = ", ".join(assignments)
+        return f"{self.insert} ON CONFLICT({', '.join(self.key)}) DO UPDATE SET {clause}"
+
+    def bind(self, **values: Any) -> tuple[Any, ...]:
+        """Order one row's values to match :attr:`columns`.
+
+        Raises :class:`KeyError` unless the keyword names match the columns
+        one for one, which is what makes adding a column to the DDL a loud
+        failure at every writer that has not been taught to supply it.
+        """
+        if values.keys() != set(self.columns):
+            raise KeyError(f"{self.name}: values do not match the statement's columns")
+        return tuple(values[column] for column in self.columns)
+
+    def upsert_row(self, conn: sqlite3.Connection, **values: Any) -> None:
+        """Insert one row, updating a conflicting one as the fields describe."""
+        conn.execute(self.upsert, self.bind(**values))
+
+
 def read_schema_version(conn: sqlite3.Connection) -> int:
     """Return the database's stamped schema version.
 
@@ -716,7 +844,9 @@ def read_schema_version(conn: sqlite3.Connection) -> int:
 __all__ = [
     "SCHEMA_VERSION",
     "IndexSchemaNewerError",
+    "Table",
     "apply_schema",
     "raise_if_newer",
     "read_schema_version",
+    "table_columns",
 ]

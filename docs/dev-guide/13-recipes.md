@@ -705,7 +705,7 @@ a canonical file; the index row is a projection (the files-canonical rule —
 | File | Symbol | Why |
 |---|---|---|
 | `src/zicato/index/schema.py` | `SCHEMA_VERSION`, `_TABLE_STATEMENTS`, `_V<N>_ADDED_COLUMNS`, `_migrate_inplace` | schema + migration |
-| `src/zicato/index/ingest.py` | `_upsert_<table>`, `rebuild_index` | populate it |
+| `src/zicato/index/ingest.py` | the table's `Table` descriptor, `_upsert_<table>`, `rebuild_index` | populate it |
 | `src/zicato/index/query.py` | selector + `_select_optional_columns` | read it back-compatibly |
 | `tests/test_index_schema.py`, `tests/test_index_v<N>_schema.py` | tests | pin the column contract |
 
@@ -732,12 +732,29 @@ a canonical file; the index row is a projection (the files-canonical rule —
 
    The migration block is idempotent (guarded by `_column_names`), so a
    half-applied open is safe to re-run.
-4. **Populate it in ingest.** Teach the upsert writer (`_upsert_<table>` in
-   `ingest.py`) to read the value off the canonical record and add it to the
-   `INSERT … ON CONFLICT DO UPDATE` column list. Use `COALESCE` for a nullable
-   provenance column, so a re-ingest never nulls a value already set. For a
-   derived-analytics column, follow the `_fold_elo` precedent (a post-ingest
-   fold run by `rebuild_index`).
+4. **Populate it in ingest.** No column list is written out in `ingest.py`:
+   each writer holds a `Table` descriptor (`schema.py`) that reads its columns
+   off the DDL and builds the `INSERT … ON CONFLICT DO UPDATE` from them. So
+   teach `_upsert_<table>` to read the value off the canonical record and pass
+   it by the column's name; the statement picks it up. Two tests fail until you
+   do, one naming the writer that does not supply the column. Name the column
+   in the descriptor only where it departs from "write it, overwrite it on a
+   re-ingest":
+
+   ```python
+   # src/zicato/index/ingest.py — the runs writer
+   _RUNS = Table(
+       "runs",
+       key=("run_id",),
+       preserved_when_incoming_null=("tournament_id", "match_id"),
+   )
+   ```
+
+   `preserved_when_incoming_null` is the one to reach for on a nullable
+   provenance column, so a re-ingest that cannot resolve the value leaves the
+   stored one standing. `written_elsewhere` is for a column a different writer
+   owns — the Elo triple, which `_fold_elo` updates after ingest, is the
+   precedent for a derived-analytics column.
 5. **Read it back-compatibly.** In `query.py`, expose the column through
    `_select_optional_columns`, which emits `NULL AS <col>` when the column is
    absent — so an index built before your bump still loads. Never `SELECT
@@ -784,7 +801,8 @@ a canonical file; the index row is a projection (the files-canonical rule —
 
 ```bash
 uv run pytest tests/test_index_schema.py tests/test_index_v10_schema.py \
-    tests/test_index_ingest.py tests/test_index_query.py -q
+    tests/test_index_statements.py tests/test_index_ingest.py \
+    tests/test_index_query.py -q
 # add + run your new tests/test_index_v<N>_schema.py
 bash tools/parity.sh --only REINDEX-DUMP        # the rebuilt-index golden
 ```

@@ -31,11 +31,11 @@ loss — it is purely a re-projection of the files.
 
 Idempotency
 -----------
-Every write is an ``INSERT ... ON CONFLICT DO UPDATE`` upsert keyed on
-the natural primary key (``run_id``, ``(epoch_id, generation_id)``,
-``patch_id``, ``tournament_id``). Running :func:`ingest_run` or
-:func:`ingest_experiment` twice produces the same rows; running
-:func:`rebuild_index` repeatedly is a no-op beyond the file drop.
+Every write is an ``INSERT ... ON CONFLICT DO UPDATE`` upsert keyed on the
+natural primary key, built by a :class:`~zicato.index.schema.Table`
+descriptor from the DDL rather than from a column list written out here.
+Running :func:`ingest_run` or :func:`ingest_experiment` twice produces the
+same rows; :func:`rebuild_index` repeats as a no-op beyond the file drop.
 
 Reading source files
 --------------------
@@ -70,6 +70,7 @@ from zicato.core.types import Experiment, LossProfile
 from zicato.core.workspace import loss_profile_path
 from zicato.index.schema import (
     SCHEMA_VERSION,
+    Table,
     apply_schema,
     raise_if_newer,
     read_schema_version,
@@ -171,6 +172,67 @@ def _namespace_of(metric_name: str) -> str:
 # Row writers (upserts)
 # ---------------------------------------------------------------------------
 
+# One descriptor per statement this module writes. Each names its table and
+# the ways it departs from "write every column, overwrite every column on a
+# re-ingest"; the column list itself is read off the DDL, so no column name is
+# spelled out twice. ``tests/test_index_statements.py`` pins each descriptor's
+# column set against the schema, so a column added to a table without a
+# decision about this writer fails a test rather than reaching a database.
+_EPOCHS = Table(
+    "epochs",
+    key=("epoch_id",),
+    preserved_when_incoming_null=("parent_epoch_id",),
+)
+_GENERATIONS = Table(
+    "generations",
+    key=("epoch_id", "generation_id"),
+    preserved_when_incoming_null=("round_index",),
+    # The Elo triple belongs to the ratings fold (:mod:`zicato.index.elo`),
+    # which UPDATEs it over rows this writer created. Naming the columns here
+    # would insert NULLs over a fold that had already run.
+    written_elsewhere=("elo", "elo_se", "elo_games"),
+)
+_RUNS = Table(
+    "runs",
+    key=("run_id",),
+    preserved_when_incoming_null=("tournament_id", "match_id"),
+)
+_LOSS_PROFILES = Table(
+    "loss_profiles",
+    key=("run_id",),
+    preserved_when_incoming_null=("tournament_id", "match_id", "source_epoch", "source_run"),
+)
+_JUDGE_LOSSES = Table("judge_losses", key=("run_id", "judge_name"))
+_METRIC_COUNTS = Table("metric_counts")
+_EXPERIMENTS = Table("experiments", key=("epoch_id", "generation_id"))
+_PATCHES = Table("patches", key=("patch_id",))
+_CROWNING_TOURNAMENTS = Table(
+    "tournaments",
+    key=("tournament_id",),
+    preserved_when_incoming_null=("champion_run_ref",),
+    # A crowning record carries no proposing outcomes, so it writes an empty
+    # field status that must not clobber what the settled round wrote.
+    preserved_when_already_set=("field_status_json",),
+)
+_FIELD_TOURNAMENTS = Table(
+    "tournaments",
+    key=("tournament_id",),
+    set_on_insert_only=("parent_scalar", "child_scalar"),
+    # The champion-eval provenance describes one crowning duel, which a
+    # field-level row does not have; :func:`_upsert_tournament` owns both
+    # columns on the per-challenger rows.
+    written_elsewhere=("champion_eval_mode", "champion_run_ref"),
+)
+_REFLECTIONS = Table("reflections", key=("reflection_id",))
+_JUDGE_SCORECARDS = Table("judge_scorecards", key=("reflection_id", "judge_name"))
+# An epoch's frontier is rewritten whole, so this one is written through
+# ``insert_or_replace`` and its key is the row identity that resolves.
+_PARETO_FRONTIER = Table(
+    "pareto_frontier",
+    key=("epoch_id", "generation_id", "status", "round_retired"),
+)
+_INGEST_CURSORS = Table("ingest_cursors", key=("epoch_id",))
+
 
 def _upsert_epoch(
     conn: sqlite3.Connection,
@@ -203,16 +265,14 @@ def _upsert_epoch(
     ``COALESCE``. The canonical rebuild path always knows the parent
     from ``lineage.json`` and writes it explicitly.
     """
-    conn.execute(
-        "INSERT INTO epochs(epoch_id, contract_hash, created_at, closed, goal, parent_epoch_id) "
-        "VALUES(?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(epoch_id) DO UPDATE SET "
-        "contract_hash = excluded.contract_hash, "
-        "created_at = excluded.created_at, "
-        "closed = excluded.closed, "
-        "goal = excluded.goal, "
-        "parent_epoch_id = COALESCE(excluded.parent_epoch_id, epochs.parent_epoch_id)",
-        (epoch_id, contract_hash or "", created_at, 1 if closed else 0, goal, parent_epoch_id),
+    _EPOCHS.upsert_row(
+        conn,
+        epoch_id=epoch_id,
+        contract_hash=contract_hash or "",
+        created_at=created_at,
+        closed=1 if closed else 0,
+        goal=goal,
+        parent_epoch_id=parent_epoch_id,
     )
 
 
@@ -247,23 +307,14 @@ def _upsert_generation(
     # clobbers a value a lineage-derived pass already set. A generation
     # whose lineage row carries no birth round leaves it NULL — birth round
     # unknown — which consumers read as absent.
-    conn.execute(
-        "INSERT INTO generations("
-        "epoch_id, generation_id, parent_generation_id, promoted, created_at, round_index) "
-        "VALUES(?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(epoch_id, generation_id) DO UPDATE SET "
-        "parent_generation_id = excluded.parent_generation_id, "
-        "promoted = excluded.promoted, "
-        "created_at = excluded.created_at, "
-        "round_index = COALESCE(excluded.round_index, generations.round_index)",
-        (
-            epoch_id,
-            generation_id,
-            parent_generation_id,
-            1 if promoted else 0,
-            created_at,
-            round_index,
-        ),
+    _GENERATIONS.upsert_row(
+        conn,
+        epoch_id=epoch_id,
+        generation_id=generation_id,
+        parent_generation_id=parent_generation_id,
+        promoted=1 if promoted else 0,
+        created_at=created_at,
+        round_index=round_index,
     )
 
 
@@ -283,49 +334,32 @@ def _upsert_run(
 ) -> None:
     """Upsert one ``runs`` row.
 
-    ``tournament_id`` is the FK link back to a ``tournaments`` row.
-    NULL is permitted for old rows (pre-v2 schema) and for runs that
-    have no tournament round (champion-only fast-cache runs under a
-    ``v0`` seed). The upsert preserves an existing ``tournament_id``
-    via ``COALESCE`` so a re-ingest that cannot resolve the round
-    (e.g. the child's ``experiment.json`` was deleted) does not clear
-    the column.
+    ``tournament_id`` is the FK link back to a ``tournaments`` row. NULL is
+    permitted for old rows (pre-v2 schema) and for runs that have no
+    tournament round (champion-only fast-cache runs under a ``v0`` seed).
 
     ``match_id`` (schema v4) is the per-board-run tournament-provenance
     tag — the matchup id this run executed within (e.g. ``"rung0_m2"``,
     ``"racing-final"``). NULL for a run persisted without the tag and for a
     run that executed outside a tagged matchup (a gauntlet duel, which never
-    carries a ``match_id``). Same ``COALESCE`` story
-    as ``tournament_id``: a re-ingest that cannot recover the tag leaves
-    an existing value intact.
+    carries a ``match_id``).
+
+    Both are resolved from a file a re-ingest may no longer be able to read
+    (the child's ``experiment.json`` deleted, say), so :data:`_RUNS` declares
+    them preserved against an incoming null.
     """
-    conn.execute(
-        "INSERT INTO runs("
-        "run_id, epoch_id, generation_id, entry_id, started_at, ended_at, "
-        "aborted, runtime_ms, tournament_id, match_id) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(run_id) DO UPDATE SET "
-        "epoch_id = excluded.epoch_id, "
-        "generation_id = excluded.generation_id, "
-        "entry_id = excluded.entry_id, "
-        "started_at = excluded.started_at, "
-        "ended_at = excluded.ended_at, "
-        "aborted = excluded.aborted, "
-        "runtime_ms = excluded.runtime_ms, "
-        "tournament_id = COALESCE(excluded.tournament_id, runs.tournament_id), "
-        "match_id = COALESCE(excluded.match_id, runs.match_id)",
-        (
-            run_id,
-            epoch_id,
-            generation_id,
-            entry_id,
-            started_at,
-            ended_at,
-            1 if aborted else 0,
-            int(runtime_ms),
-            tournament_id,
-            match_id,
-        ),
+    _RUNS.upsert_row(
+        conn,
+        run_id=run_id,
+        epoch_id=epoch_id,
+        generation_id=generation_id,
+        entry_id=entry_id,
+        started_at=started_at,
+        ended_at=ended_at,
+        aborted=1 if aborted else 0,
+        runtime_ms=int(runtime_ms),
+        tournament_id=tournament_id,
+        match_id=match_id,
     )
 
 
@@ -336,10 +370,8 @@ def _upsert_loss_profile(
 ) -> None:
     """Upsert one ``loss_profiles`` row.
 
-    ``tournament_id`` matches the FK on the parallel ``runs`` row
-    (same nullability story). Preserves any pre-existing value via
-    ``COALESCE`` so a re-ingest that can't resolve the round leaves
-    the column intact.
+    ``tournament_id`` matches the FK on the parallel ``runs`` row, with the
+    same nullability and the same preservation against an incoming null.
 
     ``match_id`` (schema v4) is read straight off the profile — the
     runner stamps it onto ``LossProfile.match_id`` (and into the run's
@@ -364,44 +396,23 @@ def _upsert_loss_profile(
     # NULL so a reader can ``WHERE abort_cause = 'parent_kill'`` to spot an
     # over-firing watchdog without re-parsing the ``loss_json`` blob.
     abort_cause = getattr(profile, "abort_cause", None) or None
-    conn.execute(
-        "INSERT INTO loss_profiles("
-        "run_id, epoch_id, generation_id, entry_id, drift_loss, pass_fail, "
-        "runtime_ms, wall_clock_budget_exceeded, loss_json, tournament_id, match_id, "
-        "cached, source_epoch, source_run, abort_cause) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(run_id) DO UPDATE SET "
-        "epoch_id = excluded.epoch_id, "
-        "generation_id = excluded.generation_id, "
-        "entry_id = excluded.entry_id, "
-        "drift_loss = excluded.drift_loss, "
-        "pass_fail = excluded.pass_fail, "
-        "runtime_ms = excluded.runtime_ms, "
-        "wall_clock_budget_exceeded = excluded.wall_clock_budget_exceeded, "
-        "loss_json = excluded.loss_json, "
-        "tournament_id = COALESCE(excluded.tournament_id, loss_profiles.tournament_id), "
-        "match_id = COALESCE(excluded.match_id, loss_profiles.match_id), "
-        "cached = excluded.cached, "
-        "source_epoch = COALESCE(excluded.source_epoch, loss_profiles.source_epoch), "
-        "source_run = COALESCE(excluded.source_run, loss_profiles.source_run), "
-        "abort_cause = excluded.abort_cause",
-        (
-            profile.run_id,
-            profile.epoch_id,
-            profile.generation_id,
-            profile.entry_id,
-            float(profile.drift_loss),
-            _bool_to_int_or_none(profile.pass_fail),
-            int(profile.runtime_ms),
-            1 if profile.wall_clock_budget_exceeded else 0,
-            json.dumps(asdict(profile), sort_keys=True),
-            tournament_id,
-            match_id,
-            cached,
-            source_epoch,
-            source_run,
-            abort_cause,
-        ),
+    _LOSS_PROFILES.upsert_row(
+        conn,
+        run_id=profile.run_id,
+        epoch_id=profile.epoch_id,
+        generation_id=profile.generation_id,
+        entry_id=profile.entry_id,
+        drift_loss=float(profile.drift_loss),
+        pass_fail=_bool_to_int_or_none(profile.pass_fail),
+        runtime_ms=int(profile.runtime_ms),
+        wall_clock_budget_exceeded=1 if profile.wall_clock_budget_exceeded else 0,
+        loss_json=json.dumps(asdict(profile), sort_keys=True),
+        tournament_id=tournament_id,
+        match_id=match_id,
+        cached=cached,
+        source_epoch=source_epoch,
+        source_run=source_run,
+        abort_cause=abort_cause,
     )
 
 
@@ -434,23 +445,18 @@ def _replace_judge_losses(
     attribution itself.
     """
     conn.execute("DELETE FROM judge_losses WHERE run_id = ?", (run_id,))
-    rows: list[tuple[str, str, float, float, float]] = []
-    for jl in profile.per_judge_loss:
-        rows.append(
-            (
-                run_id,
-                jl.judge_name,
-                float(jl.weighted_loss),
-                float(jl.raw_loss),
-                float(jl.weight),
-            )
+    rows = [
+        _JUDGE_LOSSES.bind(
+            run_id=run_id,
+            judge_name=jl.judge_name,
+            weighted_loss=float(jl.weighted_loss),
+            raw_loss=float(jl.raw_loss),
+            weight=float(jl.weight),
         )
+        for jl in profile.per_judge_loss
+    ]
     if rows:
-        conn.executemany(
-            "INSERT INTO judge_losses(run_id, judge_name, weighted_loss, raw_loss, weight) "
-            "VALUES(?, ?, ?, ?, ?)",
-            rows,
-        )
+        conn.executemany(_JUDGE_LOSSES.insert, rows)
 
 
 def _replace_metric_counts(
@@ -470,23 +476,18 @@ def _replace_metric_counts(
     events and the LossProfile's own metric surface.
     """
     conn.execute("DELETE FROM metric_counts WHERE run_id = ?", (run_id,))
-    rows: list[tuple[str, str, str, str, float]] = []
-    for mc in profile.unified_metrics():
-        rows.append(
-            (
-                run_id,
-                _namespace_of(mc.name),
-                mc.name,
-                mc.severity,
-                float(mc.count),
-            )
+    rows = [
+        _METRIC_COUNTS.bind(
+            run_id=run_id,
+            namespace=_namespace_of(mc.name),
+            name=mc.name,
+            severity=mc.severity,
+            count=float(mc.count),
         )
+        for mc in profile.unified_metrics()
+    ]
     if rows:
-        conn.executemany(
-            "INSERT INTO metric_counts(run_id, namespace, name, severity, count) "
-            "VALUES(?, ?, ?, ?, ?)",
-            rows,
-        )
+        conn.executemany(_METRIC_COUNTS.insert, rows)
 
 
 def _upsert_experiment(conn: sqlite3.Connection, experiment: Experiment) -> None:
@@ -508,56 +509,30 @@ def _upsert_experiment(conn: sqlite3.Connection, experiment: Experiment) -> None
         pass_delta = None
         outcome_json = None
 
-    conn.execute(
-        "INSERT INTO experiments("
-        "epoch_id, generation_id, hypothesis_core_idea, hypothesis_why, "
-        "hypothesis_json, tournament_decision, rejection_reason, "
-        "scalar_score_delta, drift_loss_delta, pass_rate_delta, outcome_json) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(epoch_id, generation_id) DO UPDATE SET "
-        "hypothesis_core_idea = excluded.hypothesis_core_idea, "
-        "hypothesis_why = excluded.hypothesis_why, "
-        "hypothesis_json = excluded.hypothesis_json, "
-        "tournament_decision = excluded.tournament_decision, "
-        "rejection_reason = excluded.rejection_reason, "
-        "scalar_score_delta = excluded.scalar_score_delta, "
-        "drift_loss_delta = excluded.drift_loss_delta, "
-        "pass_rate_delta = excluded.pass_rate_delta, "
-        "outcome_json = excluded.outcome_json",
-        (
-            experiment.epoch_id,
-            experiment.generation_id,
-            hyp.core_idea,
-            hyp.why,
-            json.dumps(asdict(hyp), sort_keys=True),
-            decision,
-            rejection_reason,
-            scalar_delta,
-            drift_delta,
-            pass_delta,
-            outcome_json,
-        ),
+    _EXPERIMENTS.upsert_row(
+        conn,
+        epoch_id=experiment.epoch_id,
+        generation_id=experiment.generation_id,
+        hypothesis_core_idea=hyp.core_idea,
+        hypothesis_why=hyp.why,
+        hypothesis_json=json.dumps(asdict(hyp), sort_keys=True),
+        tournament_decision=decision,
+        rejection_reason=rejection_reason,
+        scalar_score_delta=scalar_delta,
+        drift_loss_delta=drift_delta,
+        pass_rate_delta=pass_delta,
+        outcome_json=outcome_json,
     )
 
     for patch in experiment.patches:
-        conn.execute(
-            "INSERT INTO patches("
-            "patch_id, epoch_id, generation_id, mutation_id, op, rationale) "
-            "VALUES(?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(patch_id) DO UPDATE SET "
-            "epoch_id = excluded.epoch_id, "
-            "generation_id = excluded.generation_id, "
-            "mutation_id = excluded.mutation_id, "
-            "op = excluded.op, "
-            "rationale = excluded.rationale",
-            (
-                patch.id,
-                experiment.epoch_id,
-                experiment.generation_id,
-                patch.mutation_id,
-                patch.op,
-                patch.rationale,
-            ),
+        _PATCHES.upsert_row(
+            conn,
+            patch_id=patch.id,
+            epoch_id=experiment.epoch_id,
+            generation_id=experiment.generation_id,
+            mutation_id=patch.mutation_id,
+            op=patch.op,
+            rationale=patch.rationale,
         )
 
 
@@ -621,58 +596,26 @@ def _upsert_tournament(conn: sqlite3.Connection, experiment: Experiment) -> None
         if experiment.parent_generation_id
         else None
     )
-    conn.execute(
-        "INSERT INTO tournaments("
-        "tournament_id, epoch_id, parent_generation_id, child_generation_id, "
-        "decision, parent_scalar, child_scalar, delta_scalar, rejection_reason, "
-        "ran_at, structure, structure_params_json, competitors_json, rounds_json, "
-        "standings_json, field_status_json, champion_eval_mode, champion_run_ref) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(tournament_id) DO UPDATE SET "
-        "epoch_id = excluded.epoch_id, "
-        "parent_generation_id = excluded.parent_generation_id, "
-        "child_generation_id = excluded.child_generation_id, "
-        "decision = excluded.decision, "
-        "parent_scalar = excluded.parent_scalar, "
-        "child_scalar = excluded.child_scalar, "
-        "delta_scalar = excluded.delta_scalar, "
-        "rejection_reason = excluded.rejection_reason, "
-        "ran_at = excluded.ran_at, "
-        "structure = excluded.structure, "
-        "structure_params_json = excluded.structure_params_json, "
-        "competitors_json = excluded.competitors_json, "
-        "rounds_json = excluded.rounds_json, "
-        "standings_json = excluded.standings_json, "
-        # Keep any field-status the settle path may have written: the
-        # per-experiment crowning record does not carry the proposing
-        # outcomes, so COALESCE preserves an existing value rather than
-        # clobbering it with this row's empty list.
-        "field_status_json = COALESCE(tournaments.field_status_json, excluded.field_status_json), "
-        "champion_eval_mode = excluded.champion_eval_mode, "
-        # Preserve an existing run-ref rather than clobbering it with NULL
-        # when a re-ingest cannot resolve a parent (defensive — the crowning
-        # row always carries one).
-        "champion_run_ref = COALESCE(excluded.champion_run_ref, tournaments.champion_run_ref)",
-        (
-            tournament_id,
-            experiment.epoch_id,
-            experiment.parent_generation_id,
-            experiment.generation_id,
-            outcome.tournament_decision,
-            None,
-            None,
-            float(outcome.scalar_score_delta),
-            outcome.rejection_reason,
-            outcome.ran_at,
-            structure,
-            json.dumps({}),
-            json.dumps(competitors),
-            json.dumps(rounds),
-            json.dumps([]),
-            json.dumps([]),
-            champion_eval_mode,
-            champion_run_ref,
-        ),
+    _CROWNING_TOURNAMENTS.upsert_row(
+        conn,
+        tournament_id=tournament_id,
+        epoch_id=experiment.epoch_id,
+        parent_generation_id=experiment.parent_generation_id,
+        child_generation_id=experiment.generation_id,
+        decision=outcome.tournament_decision,
+        parent_scalar=None,
+        child_scalar=None,
+        delta_scalar=float(outcome.scalar_score_delta),
+        rejection_reason=outcome.rejection_reason,
+        ran_at=outcome.ran_at,
+        structure=structure,
+        structure_params_json=json.dumps({}),
+        competitors_json=json.dumps(competitors),
+        rounds_json=json.dumps(rounds),
+        standings_json=json.dumps([]),
+        field_status_json=json.dumps([]),
+        champion_eval_mode=champion_eval_mode,
+        champion_run_ref=champion_run_ref,
     )
 
 
@@ -700,34 +643,18 @@ def _upsert_reflection(
     tally, stored as JSON. Every write is a keyed upsert so a re-ingest (or a
     ``zicato repair index`` after the file was rewritten) is idempotent.
     """
-    conn.execute(
-        "INSERT INTO reflections("
-        "reflection_id, epoch_id, created_at, mode, executed, "
-        "noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges, "
-        "verdict_counts_json) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(reflection_id) DO UPDATE SET "
-        "epoch_id = excluded.epoch_id, "
-        "created_at = excluded.created_at, "
-        "mode = excluded.mode, "
-        "executed = excluded.executed, "
-        "noise_floor_max_abs_delta = excluded.noise_floor_max_abs_delta, "
-        "decision_flip_p = excluded.decision_flip_p, "
-        "n_findings = excluded.n_findings, "
-        "n_judges = excluded.n_judges, "
-        "verdict_counts_json = excluded.verdict_counts_json",
-        (
-            reflection_id,
-            epoch_id,
-            created_at,
-            mode,
-            1 if executed else 0,
-            noise_floor_max_abs_delta,
-            decision_flip_p,
-            int(n_findings),
-            int(n_judges),
-            json.dumps(verdict_counts, sort_keys=True),
-        ),
+    _REFLECTIONS.upsert_row(
+        conn,
+        reflection_id=reflection_id,
+        epoch_id=epoch_id,
+        created_at=created_at,
+        mode=mode,
+        executed=1 if executed else 0,
+        noise_floor_max_abs_delta=noise_floor_max_abs_delta,
+        decision_flip_p=decision_flip_p,
+        n_findings=int(n_findings),
+        n_judges=int(n_judges),
+        verdict_counts_json=json.dumps(verdict_counts, sort_keys=True),
     )
 
 
@@ -746,36 +673,28 @@ def _upsert_judge_scorecards(
     ``redundant_with`` to ``redundant_with_json``.
     """
     conn.execute("DELETE FROM judge_scorecards WHERE reflection_id = ?", (reflection_id,))
-    rows: list[tuple[Any, ...]] = []
-    for card in scorecards:
-        rows.append(
-            (
-                reflection_id,
-                str(card.get("judge_name", "")),
-                _opt_int_field(card.get("tp")),
-                _opt_int_field(card.get("fp")),
-                _opt_int_field(card.get("fn")),
-                _opt_int_field(card.get("tn")),
-                _opt_int_field(card.get("ambiguous")),
-                _opt_float_field(card.get("precision")),
-                _opt_float_field(card.get("recall")),
-                _opt_float_field(card.get("f1")),
-                _opt_float_field(card.get("severity_accuracy")),
-                _opt_float_field(card.get("disagreement_rate")),
-                _opt_float_field(card.get("self_consistency_kappa")),
-                1 if card.get("exercised") else 0,
-                json.dumps(card.get("redundant_with") or [], sort_keys=True),
-            )
+    rows = [
+        _JUDGE_SCORECARDS.bind(
+            reflection_id=reflection_id,
+            judge_name=str(card.get("judge_name", "")),
+            tp=_opt_int_field(card.get("tp")),
+            fp=_opt_int_field(card.get("fp")),
+            fn=_opt_int_field(card.get("fn")),
+            tn=_opt_int_field(card.get("tn")),
+            ambiguous=_opt_int_field(card.get("ambiguous")),
+            precision=_opt_float_field(card.get("precision")),
+            recall=_opt_float_field(card.get("recall")),
+            f1=_opt_float_field(card.get("f1")),
+            severity_accuracy=_opt_float_field(card.get("severity_accuracy")),
+            disagreement_rate=_opt_float_field(card.get("disagreement_rate")),
+            kappa=_opt_float_field(card.get("self_consistency_kappa")),
+            exercised=1 if card.get("exercised") else 0,
+            redundant_with_json=json.dumps(card.get("redundant_with") or [], sort_keys=True),
         )
+        for card in scorecards
+    ]
     if rows:
-        conn.executemany(
-            "INSERT INTO judge_scorecards("
-            "reflection_id, judge_name, tp, fp, fn, tn, ambiguous, "
-            "precision, recall, f1, severity_accuracy, disagreement_rate, kappa, "
-            "exercised, redundant_with_json) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
+        conn.executemany(_JUDGE_SCORECARDS.insert, rows)
 
 
 def _opt_int_field(value: Any) -> int | None:
@@ -835,45 +754,24 @@ def _upsert_field_tournament(conn: sqlite3.Connection, record: dict[str, Any]) -
     epoch_id = str(record.get("epoch_id") or "")
     if not tournament_id or not epoch_id:
         return
-    conn.execute(
-        "INSERT INTO tournaments("
-        "tournament_id, epoch_id, parent_generation_id, child_generation_id, "
-        "decision, parent_scalar, child_scalar, delta_scalar, rejection_reason, "
-        "ran_at, structure, structure_params_json, competitors_json, rounds_json, "
-        "standings_json, field_status_json) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(tournament_id) DO UPDATE SET "
-        "epoch_id = excluded.epoch_id, "
-        "parent_generation_id = excluded.parent_generation_id, "
-        "child_generation_id = excluded.child_generation_id, "
-        "decision = excluded.decision, "
-        "delta_scalar = excluded.delta_scalar, "
-        "rejection_reason = excluded.rejection_reason, "
-        "ran_at = excluded.ran_at, "
-        "structure = excluded.structure, "
-        "structure_params_json = excluded.structure_params_json, "
-        "competitors_json = excluded.competitors_json, "
-        "rounds_json = excluded.rounds_json, "
-        "standings_json = excluded.standings_json, "
-        "field_status_json = excluded.field_status_json",
-        (
-            tournament_id,
-            epoch_id,
-            "",
-            "",
-            str(record.get("decision") or ""),
-            None,
-            None,
-            record.get("delta_scalar"),
-            str(record.get("reason") or ""),
-            str(record.get("ran_at") or ""),
-            str(record.get("structure") or "gauntlet"),
-            json.dumps(record.get("structure_params") or {}),
-            json.dumps(list(competitors)),
-            json.dumps(record.get("rounds") or []),
-            json.dumps(record.get("standings") or []),
-            json.dumps(record.get("field_status") or []),
-        ),
+    _FIELD_TOURNAMENTS.upsert_row(
+        conn,
+        tournament_id=tournament_id,
+        epoch_id=epoch_id,
+        parent_generation_id="",
+        child_generation_id="",
+        decision=str(record.get("decision") or ""),
+        parent_scalar=None,
+        child_scalar=None,
+        delta_scalar=record.get("delta_scalar"),
+        rejection_reason=str(record.get("reason") or ""),
+        ran_at=str(record.get("ran_at") or ""),
+        structure=str(record.get("structure") or "gauntlet"),
+        structure_params_json=json.dumps(record.get("structure_params") or {}),
+        competitors_json=json.dumps(list(competitors)),
+        rounds_json=json.dumps(record.get("rounds") or []),
+        standings_json=json.dumps(record.get("standings") or []),
+        field_status_json=json.dumps(record.get("field_status") or []),
     )
 
 
@@ -1196,45 +1094,25 @@ def _ingest_pareto_frontier_into(
         return False
 
     conn.execute("DELETE FROM pareto_frontier WHERE epoch_id = ?", (epoch_id,))
-    rows: list[tuple[Any, ...]] = []
-    for member in frontier.members:
-        rows.append(
-            (
-                epoch_id,
-                member.generation_id,
-                "member",
-                int(member.round_admitted),
-                None,
-                None,
-                member.champion_generation_id,
-                member.scalar,
-                json.dumps(dict(member.axis_values), sort_keys=True),
-                json.dumps(list(member.beats_champion_on)),
-            )
+
+    def row(member: Any, retired: Any = None) -> tuple[Any, ...]:
+        """One frontier row. ``retired`` is the retirement record, absent for a member."""
+        return _PARETO_FRONTIER.bind(
+            epoch_id=epoch_id,
+            generation_id=member.generation_id,
+            status="member" if retired is None else "retired",
+            round_admitted=int(member.round_admitted),
+            round_retired=None if retired is None else int(retired.round_retired),
+            retired_reason=None if retired is None else retired.reason,
+            champion_generation_id=member.champion_generation_id,
+            scalar=member.scalar,
+            axis_values_json=json.dumps(dict(member.axis_values), sort_keys=True),
+            beats_champion_on_json=json.dumps(list(member.beats_champion_on)),
         )
-    for entry in frontier.retired:
-        member = entry.member
-        rows.append(
-            (
-                epoch_id,
-                member.generation_id,
-                "retired",
-                int(member.round_admitted),
-                int(entry.round_retired),
-                entry.reason,
-                member.champion_generation_id,
-                member.scalar,
-                json.dumps(dict(member.axis_values), sort_keys=True),
-                json.dumps(list(member.beats_champion_on)),
-            )
-        )
-    conn.executemany(
-        "INSERT OR REPLACE INTO pareto_frontier("
-        "epoch_id, generation_id, status, round_admitted, round_retired, "
-        "retired_reason, champion_generation_id, scalar, axis_values_json, "
-        "beats_champion_on_json) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        rows,
-    )
+
+    rows = [row(member) for member in frontier.members]
+    rows += [row(entry.member, entry) for entry in frontier.retired]
+    conn.executemany(_PARETO_FRONTIER.insert_or_replace, rows)
     return True
 
 
@@ -1694,27 +1572,15 @@ def _write_cursor(
         workspace_root, epoch_id, lineage_entry
     )
     indexed_experiments, indexed_runs = _index_side_counts(conn, epoch_id)
-    conn.execute(
-        "INSERT INTO ingest_cursors("
-        "epoch_id, experiments_count, runs_count, round_dirs_count, reflections_count, "
-        "lineage_generations_count, last_ingested_at) "
-        "VALUES(?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(epoch_id) DO UPDATE SET "
-        "experiments_count = excluded.experiments_count, "
-        "runs_count = excluded.runs_count, "
-        "round_dirs_count = excluded.round_dirs_count, "
-        "reflections_count = excluded.reflections_count, "
-        "lineage_generations_count = excluded.lineage_generations_count, "
-        "last_ingested_at = excluded.last_ingested_at",
-        (
-            epoch_id,
-            indexed_experiments,
-            indexed_runs,
-            round_dirs,
-            reflections,
-            lineage_generations,
-            _now_iso(),
-        ),
+    _INGEST_CURSORS.upsert_row(
+        conn,
+        epoch_id=epoch_id,
+        experiments_count=indexed_experiments,
+        runs_count=indexed_runs,
+        round_dirs_count=round_dirs,
+        reflections_count=reflections,
+        lineage_generations_count=lineage_generations,
+        last_ingested_at=_now_iso(),
     )
 
 

@@ -794,7 +794,8 @@ package-internal (enforced by a ruff banned-api rule) — everyone else
 goes through the public `zicato.storage` face.
 
 **`index/`** — the SQLite analytical index: `schema.py` (the table
-definitions plus `schema_version`), `ingest.py` (rebuild + incremental),
+definitions, `schema_version`, and the `Table` descriptor that builds each
+write statement from those definitions), `ingest.py` (rebuild + incremental),
 `query.py`, `elo.py`. Derived from the canonical files, and never
 canonical itself.
 

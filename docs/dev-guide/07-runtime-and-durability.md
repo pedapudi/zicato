@@ -148,6 +148,25 @@ Read the except clauses carefully — this is the doctrine's teeth:
 > UPDATE` keyed on the natural primary key). The live path and the rebuild
 > path both hit the same rows; a bare `INSERT` breaks the second writer.
 
+Idempotency is not left to each writer to spell out. Every statement
+`ingest.py` writes comes from a `Table` descriptor
+(`zicato.index.schema.Table`), which takes its column list from the DDL and
+builds the insert and the `ON CONFLICT DO UPDATE` from it. A descriptor names
+a column only where the write departs from "write it, overwrite it on a
+re-ingest". Five fields say how:
+
+| Field | The write it describes |
+|---|---|
+| `key` | the columns `ON CONFLICT` matches on; never reassigned |
+| `preserved_when_incoming_null` | a null second pass keeps the stored value (`runs.tournament_id`, `loss_profiles.source_run`) |
+| `preserved_when_already_set` | the stored value wins outright (`tournaments.field_status_json`, which only the settled round knows) |
+| `set_on_insert_only` | written when the row is created, left alone after |
+| `written_elsewhere` | a column a different writer owns, absent from the statement entirely (`generations.elo` and its two companions, updated by the ratings fold) |
+
+Values are bound by column name, so a column added to the DDL fails
+`tests/test_index_statements.py` at every writer that has not been taught to
+supply it, rather than reaching a database.
+
 One failure inside the index write path is raised rather than swallowed
 there, and it is a refusal rather than a crash of the loop — the outer
 dual-write `except Exception` still catches it and degrades:
