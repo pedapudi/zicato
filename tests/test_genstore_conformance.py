@@ -365,6 +365,58 @@ def test_diff_generations_reports_the_applied_source_change(
     assert "agent/prompts.py" in diff
 
 
+def _diff_fixture_tree(root: Path, *, revised: bool) -> Path:
+    """One source tree in two versions, covering every diff-rendering case.
+
+    Between the two versions a text file changes, one file is added and
+    another removed, a file without a final newline changes, a file whose
+    lines end in carriage-return–newline changes, and a file of
+    non-decodable bytes changes. Nested directories cover path ordering.
+    """
+    tree = root / "agent"
+    _write(tree / "prompts.py", f'INSTR = """{"rewritten" if revised else "original"}"""\n')
+    _write(tree / "lib" / "util.py", "X = 1\n")
+    _write(tree / "notes.txt", "after" if revised else "before")
+    _write(tree / "crlf.txt", "one\r\n" + ("TWO\r\n" if revised else "two\r\n"))
+    _write(tree / ("added.py" if revised else "removed.py"), "A = 1\n")
+    payload = range(256) if revised else reversed(range(256))
+    (tree / "bin").mkdir(parents=True, exist_ok=True)
+    (tree / "bin" / "weights.dat").write_bytes(bytes(payload))
+    return tree
+
+
+def _rendered_diffs(tmp_path: Path) -> dict[str, str]:
+    """Render the same two source trees through every backend."""
+    original = _diff_fixture_tree(tmp_path / "original", revised=False)
+    revised = _diff_fixture_tree(tmp_path / "revised", revised=True)
+    rendered: dict[str, str] = {}
+    for name, factory in _BACKENDS.items():
+        store = factory(tmp_path / f"ws-{name}")
+        store.seed_generation("e1", "v0", [original])
+        store.seed_generation("e1", "v1", [revised])
+        rendered[name] = store.diff_generations("e1", "v0", "v1")
+    return rendered
+
+
+def test_every_backend_renders_one_diff_text(tmp_path: Path) -> None:
+    """The proposer reads the same diff whichever backend stores the source."""
+    rendered = _rendered_diffs(tmp_path)
+    assert rendered["directory"] == rendered["git"]
+
+
+def test_rendered_diff_carries_the_git_style_markers(tmp_path: Path) -> None:
+    """The rendered format: per-file header, binary notice, newline marker."""
+    diff = _rendered_diffs(tmp_path)["git"]
+    assert "diff --git a/agent/prompts.py b/agent/prompts.py\n" in diff
+    assert '-INSTR = """original"""\n+INSTR = """rewritten"""\n' in diff
+    assert "Binary files a/agent/bin/weights.dat and b/agent/bin/weights.dat differ\n" in diff
+    assert "-before\n\\ No newline at end of file\n+after\n\\ No newline at end of file\n" in diff
+    assert "--- /dev/null\n+++ b/agent/added.py\n" in diff
+    assert "--- a/agent/removed.py\n+++ /dev/null\n" in diff
+    assert "-two\r\n+TWO\r\n" in diff
+    assert "agent/lib/util.py" not in diff
+
+
 def test_prune_generations_dry_run_and_apply(seeded_store: GenerationStore) -> None:
     path = seeded_store.materialize_snapshot("e1", "v0")
     expected_bytes = sum(p.stat().st_size for p in path.rglob("*") if p.is_file())

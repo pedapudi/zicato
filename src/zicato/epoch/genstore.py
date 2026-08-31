@@ -62,9 +62,10 @@ downstream renders that as "this generation has no source tree".
 from __future__ import annotations
 
 import difflib
+import re
 import shutil
 import tempfile
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -228,42 +229,107 @@ def source_tree_bytes(root: Path) -> int:
     return total
 
 
-def _diff_materialized_trees(from_root: Path, to_root: Path) -> str:
-    """Return a deterministic unified diff between two local source trees."""
-    from_files = {
-        path.relative_to(from_root).as_posix(): path
-        for path in from_root.rglob("*")
-        if path.is_file()
-        and not any(is_artifact(part) for part in path.relative_to(from_root).parts)
+#: Bytes examined for the NUL that marks a file binary — git's own sniff
+#: length, so a file git calls binary is called binary here too.
+_BINARY_SNIFF_BYTES = 8000
+
+#: Trailer for a hunk line whose file ends without a final newline. Without
+#: it the next line of the diff runs on from the end of that one.
+_NO_FINAL_NEWLINE = "\\ No newline at end of file\n"
+
+#: Repository bookkeeping that no registered source tree contributes: the
+#: git backend's repo carries an artifact-exclusion ``.gitignore`` at its
+#: root, so dropping it is what lets both backends see the same files.
+_NON_SOURCE_ROOT_FILES = frozenset({".gitignore"})
+
+#: One line of a file: either everything up to and including a newline, or
+#: a final run of bytes with no newline after it.
+_LINE = re.compile(rb".*\n|.+")
+
+
+def is_generation_source_path(rel_path: str) -> bool:
+    """Return whether a ``/``-separated tree path is generation source.
+
+    Run artifacts and repository bookkeeping are not, so no tree read and
+    no diff reports them.
+    """
+    return rel_path not in _NON_SOURCE_ROOT_FILES and not any(
+        is_artifact(part) for part in rel_path.split("/")
+    )
+
+
+def read_tree_files(root: Path) -> dict[str, bytes]:
+    """Read every source file under a local tree, keyed by relative path.
+
+    Symbolic links are skipped: a link is a path reference rather than
+    file content, and git records one as a mode a content diff cannot
+    render.
+    """
+    return {
+        rel_path: path.read_bytes()
+        for path in root.rglob("*")
+        if not path.is_symlink()
+        and path.is_file()
+        and is_generation_source_path(rel_path := path.relative_to(root).as_posix())
     }
-    to_files = {
-        path.relative_to(to_root).as_posix(): path
-        for path in to_root.rglob("*")
-        if path.is_file() and not any(is_artifact(part) for part in path.relative_to(to_root).parts)
-    }
-    lines: list[str] = []
+
+
+def _diff_lines(data: bytes) -> list[str]:
+    """Split file bytes into diff lines, breaking only at a newline.
+
+    ``str.splitlines`` also breaks at a form feed, a lone carriage return,
+    and several Unicode separators, putting a break where no line ends.
+    """
+    return [line.decode("utf-8", "replace") for line in _LINE.findall(data)]
+
+
+def render_source_diff(
+    from_files: Mapping[str, bytes],
+    to_files: Mapping[str, bytes],
+) -> str:
+    """Render one unified diff between two generation source trees.
+
+    Every generation store renders through this function, so the diff a
+    reader receives — the proposer above all, which puts this text in its
+    prompt — is the same for a given pair of trees whichever backend
+    stores them. Each input is a whole tree as file bytes by
+    ``/``-separated relative path, which :func:`read_tree_files` builds
+    from a local tree and a backend holding its trees elsewhere builds its
+    own way.
+
+    Files come in path order, each opened by a ``diff --git a/<path>
+    b/<path>`` line, then a unified diff with three lines of context. An
+    added file reads from ``/dev/null`` and a removed file writes to it, a
+    file holding a NUL byte is reported as differing rather than rendered,
+    and a hunk line from a file with no final newline carries the marker
+    saying so. Unchanged files produce nothing, so identical trees render
+    an empty string.
+    """
+    rendered: list[str] = []
     for rel_path in sorted(from_files.keys() | to_files.keys()):
         before = from_files.get(rel_path)
         after = to_files.get(rel_path)
-        before_lines = (
-            before.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
-            if before is not None
-            else []
-        )
-        after_lines = (
-            after.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
-            if after is not None
-            else []
-        )
-        lines.extend(
-            difflib.unified_diff(
-                before_lines,
-                after_lines,
-                fromfile=f"a/{rel_path}" if before is not None else "/dev/null",
-                tofile=f"b/{rel_path}" if after is not None else "/dev/null",
+        if before == after:
+            continue
+        from_label = f"a/{rel_path}" if before is not None else "/dev/null"
+        to_label = f"b/{rel_path}" if after is not None else "/dev/null"
+        rendered.append(f"diff --git a/{rel_path} b/{rel_path}\n")
+        if any(b"\0" in (side or b"")[:_BINARY_SNIFF_BYTES] for side in (before, after)):
+            rendered.append(f"Binary files {from_label} and {to_label} differ\n")
+            continue
+        body = [
+            line if line.endswith("\n") else line + "\n" + _NO_FINAL_NEWLINE
+            for line in difflib.unified_diff(
+                _diff_lines(before or b""),
+                _diff_lines(after or b""),
+                fromfile=from_label,
+                tofile=to_label,
             )
-        )
-    return "".join(lines)
+        ]
+        # An empty file appearing or disappearing changes the tree without
+        # producing a hunk; name both sides so the header is never alone.
+        rendered.extend(body or [f"--- {from_label}\n", f"+++ {to_label}\n"])
+    return "".join(rendered)
 
 
 @runtime_checkable
@@ -773,10 +839,10 @@ class DirectoryGenerationStore:
         from_generation_id: str,
         to_generation_id: str,
     ) -> str:
-        """Return a unified diff between two directory snapshots."""
-        return _diff_materialized_trees(
-            self.materialize_snapshot(epoch_id, from_generation_id),
-            self.materialize_snapshot(epoch_id, to_generation_id),
+        """Diff two snapshot directories through the shared renderer."""
+        return render_source_diff(
+            read_tree_files(self.materialize_snapshot(epoch_id, from_generation_id)),
+            read_tree_files(self.materialize_snapshot(epoch_id, to_generation_id)),
         )
 
     def prune_generations(
