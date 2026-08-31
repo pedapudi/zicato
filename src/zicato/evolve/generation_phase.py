@@ -57,6 +57,45 @@ class PreparedRound:
     custom_judge_names: frozenset[str]
 
 
+@dataclass(frozen=True, slots=True)
+class FieldRound:
+    """One round's coordinates, contract inputs, and runtime seams, expanded.
+
+    :class:`PreparedRound` is what the evolve loop hands a round.  This value
+    is that same state read out once, at the round's start, under the exact
+    names the round's phases use.  Expanding it here rather than at the top of
+    every phase keeps the round's board slices, model ids, and clock seams in
+    one place, so two phases cannot disagree about which of them they run
+    against.  ``prepared`` is retained because the candidate-batch phase
+    consumes the whole value.
+    """
+
+    prepared: PreparedRound
+    round_log: Any
+    workspace_root: Path
+    workspace_config: Any
+    epoch_id: str
+    round_index: int
+    total_rounds: int
+    parent_id: str
+    adapter: Any
+    config: Any
+    weights: Any
+    board: list[Any]
+    train_board: list[Any]
+    tournament_spec: Any
+    strategy: Any
+    mutations: list[Any]
+    disable_drift: tuple[Any, ...]
+    judge_only: bool
+    fast_mode: bool
+    beater: Any
+    meta_loop_emitter: Any
+    auxiliary_call_llm: Any
+    auxiliary_model: str
+    field_size: int
+
+
 def current_marker(workspace_root: Path, epoch_id: str) -> Path:
     return WorkspaceLayout.from_root(workspace_root).current_generation_marker(epoch_id)
 
@@ -108,6 +147,7 @@ def mutable_trees(adapter: Any, snapshot: Path) -> list[Path]:
 
 
 __all__ = [
+    "FieldRound",
     "PreparedRound",
     "current_generation",
     "mutable_trees",

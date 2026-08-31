@@ -380,11 +380,11 @@ def test_evolve_round_threads_strategy_replicates_into_the_canonical_runner() ->
     """
     import inspect
 
-    from zicato.evolve.field import evolve_field_round
+    from zicato.evolve.field_execution import run_field_matchup
 
-    src = inspect.getsource(evolve_field_round)
+    src = inspect.getsource(run_field_matchup)
     assert "await run_matchup(" in src
-    assert "replicates=m.replicates" in src
+    assert "replicates=matchup.replicates" in src
 
 
 def test_fast_runner_keys_independent_replicates_for_both_sides() -> None:

@@ -1,15 +1,72 @@
-"""Typed result passed from tournament evaluation to durable settlement."""
+"""Settle one field round: record it, commit it, and close it.
+
+The round pipeline's decide phase. :func:`settle_field_round` is the whole
+of it, in four steps that always run in this order and nowhere else:
+
+* :func:`_record_field_tournament` writes the resolved structure — the
+  Pareto frontier row, the live envelope, and the durable
+  field-tournament record;
+* :func:`_build_field_settlement` turns the crowning into one terminal
+  :class:`OutcomeRecord` per applied challenger;
+* :func:`_commit_field_settlement` makes those outcomes durable, then
+  advances lineage, the champion pointer, and the journal under the
+  invariants that keep the bracket and the champion in agreement;
+* :func:`_close_field_round` runs the round epilogue and returns the
+  round's summary.
+
+The values passed between the steps — :class:`RoundSettlement` and the
+post-promotion hook failure — stay inside the module, because nothing
+outside it can observe a round mid-settlement.
+
+Every write in this phase happens on the post-holdout, post-integrity,
+post-override truth, so no durable store can describe a crowning the
+champion pointer contradicts.
+"""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from zicato.core.types import OutcomeRecord
+from zicato.core.types import (
+    Experiment,
+    Generation,
+    MatchOutcome,
+    OutcomeRecord,
+    TournamentDecision,
+)
+from zicato.evolve import generation_phase
+from zicato.evolve.dashboard_projection import (
+    _persist_field_tournament,
+    _serialise_rounds,
+    _serialise_standings,
+    _settle_active_tournament,
+)
+from zicato.evolve.decision_support import (
+    _generalization_fields_from_scalars,
+    _token_clip_state,
+)
+from zicato.evolve.field_candidates import CandidateField
+from zicato.evolve.field_execution import FieldExecution
+from zicato.evolve.gate import FieldVerdict, _first_aggregate_for
+from zicato.evolve.generation_phase import FieldRound
+from zicato.evolve.lifecycle_services import _beat, _now_iso
+from zicato.evolve.pareto import record_round_frontier
+from zicato.evolve.persist import _finalize_generation, _round_epilogue
+from zicato.evolve.placebo import is_placebo_experiment
+from zicato.evolve.promote_hook import fire_on_promote
+from zicato.evolve.propose_apply import _maybe_run_placebo_arm_gauntlet
+from zicato.evolve.round_api import EvolveRoundOutcome
+from zicato.evolve.round_reporting import _promoted_entry_regressions
 from zicato.selection.strategy import SelectionDecision
+from zicato.util import best_effort
+from zicato.workspace import generation_round_number
 
 if TYPE_CHECKING:
     from zicato.evolve.propose_apply import _AppliedChallenger
+
+log = logging.getLogger("zicato.orchestrator")
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,12 +79,20 @@ class CandidateSettlement:
 
 @dataclass(frozen=True, slots=True)
 class RoundSettlement:
-    """The complete decision that one persistence tail commits."""
+    """The complete decision that one persistence tail commits.
+
+    ``champion_scalar`` and ``crowned_scalar`` are the standings-derived
+    scalars the round summary falls back to when no crowning duel ran; a
+    round that crowned nothing reports the champion's own scalar on both
+    sides.
+    """
 
     decision: SelectionDecision
     primary_promoted_generation_id: str | None
     promoted_generation_ids: tuple[str, ...]
     candidates: tuple[CandidateSettlement, ...]
+    champion_scalar: float = 0.0
+    crowned_scalar: float = 0.0
 
 
 def ordered_promotions(primary: str | None, promoted: set[str]) -> tuple[str, ...]:
@@ -38,4 +103,569 @@ def ordered_promotions(primary: str | None, promoted: set[str]) -> tuple[str, ..
     return (primary, *sorted(promoted - {primary}))
 
 
-__all__ = ["CandidateSettlement", "RoundSettlement", "ordered_promotions"]
+def _record_field_tournament(
+    field_round: FieldRound,
+    candidates: CandidateField,
+    execution: FieldExecution,
+    verdict: FieldVerdict,
+) -> None:
+    """Record the resolved structure to every store that serves it.
+
+    The Pareto frontier row (docs/design/PARETO-FRONTIER.md) names the
+    round's champion — the crowned generation when the field crowned one,
+    else the incumbent — and names the placebo ids explicitly, because a
+    field round can carry the random-baseline arm inside its slate and a
+    no-op re-emission of the champion must never land on the record.
+    Record-only: it never fails a round.
+
+    The live envelope is then settled with the resolved rounds and standings
+    so the dashboard sees the final topology; the completed envelope remains
+    available until the next round starts.  That envelope is EPHEMERAL,
+    overwritten by the next round and cleared on a crash, so a completed
+    Swiss or elimination epoch would render blank from the index alone.  The
+    durable field record carries the same shape, keyed on the round's first
+    applied challenger, and FINALISES the ``in_progress`` record opened
+    before resolution (issue #16) — the same tournament id, so this is an
+    idempotent upsert to ``settled``.  Both carry the holdout-resolved
+    decision, so the dashboard never shows a crown that contradicts the
+    champion pointer (issue #20).
+    """
+
+    record_round_frontier(
+        workspace_root=field_round.workspace_root,
+        epoch_id=field_round.epoch_id,
+        round_index=field_round.round_index,
+        weights=field_round.weights,
+        champion_generation_id=verdict.promoted_id or field_round.parent_id,
+        aggregates=execution.aggregates,
+        placebo_generation_ids=[
+            c.generation_id for c in candidates.challengers if is_placebo_experiment(c.experiment)
+        ],
+        round_log=field_round.round_log,
+    )
+    _settle_active_tournament(
+        field_round.workspace_root,
+        tournament_id=candidates.tournament_id,
+        epoch_id=field_round.epoch_id,
+        structure=field_round.tournament_spec.structure,
+        structure_params=dict(field_round.tournament_spec.params),
+        competitors=candidates.competitors,
+        strategy=field_round.strategy,
+        decision=verdict.effective_decision,
+        round_index=field_round.round_index,
+        total_rounds=field_round.total_rounds,
+        field_status=candidates.field_status,
+    )
+    _persist_field_tournament(
+        field_round.workspace_root,
+        field_tournament_id=f"{field_round.epoch_id}:field:{candidates.first_challenger_id}",
+        first_challenger_id=candidates.first_challenger_id,
+        epoch_id=field_round.epoch_id,
+        structure=field_round.tournament_spec.structure,
+        structure_params=dict(field_round.tournament_spec.params),
+        competitors=candidates.competitors,
+        rounds=_serialise_rounds(field_round.strategy.rounds()),
+        standings=_serialise_standings(verdict.effective_decision.standings),
+        field_status=candidates.field_status or [],
+        decision=verdict.effective_decision,
+        state="settled",
+        # Operator override readback (additive — omitted when no override
+        # fired, so a gate-decided field round's record carries no such key).
+        override_status=verdict.override_provenance or None,
+        promoted_generation_ids=(
+            sorted(verdict.promoted_ids) if len(verdict.promoted_ids) > 1 else None
+        ),
+    )
+
+
+def _match_records(decision: Any, generation_ids: list[str]) -> dict[str, list[MatchOutcome]]:
+    """Collect each challenger's per-duel record from the settled bracket."""
+
+    matches_by_gen: dict[str, list[MatchOutcome]] = {gid: [] for gid in generation_ids}
+    for mr in decision.matchups:
+        delta = mr.outcome.delta_scalar
+        winner = mr.lower_scalar_id()
+        if mr.left_id in matches_by_gen:
+            matches_by_gen[mr.left_id].append(
+                MatchOutcome(
+                    match_id=mr.matchup_id,
+                    opponent=mr.right_id,
+                    won=(winner == mr.left_id),
+                    delta_scalar=-delta,
+                )
+            )
+        if mr.right_id in matches_by_gen:
+            matches_by_gen[mr.right_id].append(
+                MatchOutcome(
+                    match_id=mr.matchup_id,
+                    opponent=mr.left_id,
+                    won=(winner == mr.right_id),
+                    delta_scalar=delta,
+                )
+            )
+    return matches_by_gen
+
+
+def _crowning_duel_deltas(raw_crowning: Any, parent_id: str) -> tuple[float, float]:
+    """The crowning duel's pass-rate and drift-loss deltas, challenger-first.
+
+    The runner reports its result with ``parent_*`` describing the duel's
+    LEFT side, which is the champion by the strategy's convention but need
+    not be, so the orientation is resolved from the ids rather than assumed.
+    Both deltas are then stated as challenger minus champion, matching the
+    scalar delta's sign convention.
+    """
+
+    if raw_crowning is None:
+        return 0.0, 0.0
+    champion_is_parent_side = raw_crowning.parent_generation_id == parent_id
+    pass_rate_delta = float(raw_crowning.outcome.delta_pass_rate) * (
+        1.0 if champion_is_parent_side else -1.0
+    )
+    champion_drift = float(
+        (raw_crowning.parent_agg if champion_is_parent_side else raw_crowning.child_agg).get(
+            "drift_loss_mean", 0.0
+        )
+    )
+    challenger_drift = float(
+        (raw_crowning.child_agg if champion_is_parent_side else raw_crowning.parent_agg).get(
+            "drift_loss_mean", 0.0
+        )
+    )
+    return pass_rate_delta, challenger_drift - champion_drift
+
+
+def _build_field_settlement(
+    field_round: FieldRound,
+    candidates: CandidateField,
+    execution: FieldExecution,
+    verdict: FieldVerdict,
+) -> RoundSettlement:
+    """Turn the crowning into one terminal outcome per applied challenger.
+
+    The crowning challenger — the survivor that reached the final
+    champion-gate duel — carries the Ladder/holdout evidence block, the
+    per-generation train/holdout/gap fields, and the crowning duel's own
+    pass-rate and drift-loss deltas.  A holdout-demoted crown carries the
+    ``holdout_not_confirmed`` reason from the confirmation step rather than
+    the strategy's crowning reason.  Every other challenger is a dead bracket
+    branch: no holdout block, and the strategy's reason.
+
+    An operator override on a generation makes its verdict explicit — the
+    reject reason carries the override note, and a forced promote clears it.
+    """
+
+    decision = execution.decision
+    rank_by_id = {s.generation_id: s.rank for s in decision.standings}
+    matches_by_gen = _match_records(decision, [c.generation_id for c in candidates.challengers])
+    champion_agg = _first_aggregate_for(field_round.parent_id, decision)
+    parent_scalar = float(champion_agg.get("scalar", 0.0)) if champion_agg else 0.0
+
+    settlements: list[CandidateSettlement] = []
+    crowned_scalar = parent_scalar
+    for challenger in candidates.challengers:
+        gid = challenger.generation_id
+        # A generation is crowned if it is in the (possibly multi-element)
+        # promoted set — see `_apply_field_overrides` for the no-override
+        # single-promotion invariant (the set is exactly ``{promoted_id}``).
+        is_crowned = gid in verdict.promoted_ids
+        is_crowning_challenger = gid == verdict.crowning_challenger_id
+        gid_override = verdict.overrides.get(gid)
+        if is_crowned:
+            gen_decision = TournamentDecision.PROMOTED
+        elif is_crowning_challenger and decision.decision == "deferred":
+            gen_decision = TournamentDecision.DEFERRED
+        else:
+            gen_decision = TournamentDecision.REJECTED
+        agg = _first_aggregate_for(gid, decision)
+        gen_scalar = float(agg.get("scalar", 0.0)) if agg else 0.0
+        if gid == verdict.promoted_id:
+            crowned_scalar = gen_scalar
+        if is_crowning_challenger:
+            rejection_reason = (
+                ""
+                if is_crowned
+                else (verdict.reason_override if verdict.reason_override else decision.reason)
+            )
+            holdout_block = verdict.holdout_block
+            # Pair the crowning duel's TRAIN scalar with its HOLDOUT scalar so
+            # the gap is measured on the same duel (falls back to the standings
+            # aggregate only if the crowning train scalar is somehow absent).
+            crown_train = (
+                verdict.crowning_challenger_train_scalar
+                if verdict.crowning_challenger_train_scalar is not None
+                else gen_scalar
+            )
+            gen_fields = _generalization_fields_from_scalars(
+                crown_train, verdict.holdout_child_scalar
+            )
+            pass_rate_delta, drift_loss_delta = _crowning_duel_deltas(
+                execution.raw_results.get(decision.crowning_matchup_id),
+                field_round.parent_id,
+            )
+        else:
+            rejection_reason = "" if is_crowned else decision.reason
+            holdout_block = None
+            gen_fields = _generalization_fields_from_scalars(gen_scalar, None)
+            pass_rate_delta = 0.0
+            drift_loss_delta = 0.0
+        operator_override = gid_override is not None
+        operator_override_reason = gid_override.reason if gid_override is not None else ""
+        if gid_override is not None:
+            rejection_reason = f"operator override: {gid_override.reason}" if not is_crowned else ""
+        settlements.append(
+            CandidateSettlement(
+                challenger=challenger,
+                outcome=OutcomeRecord(
+                    ran_at=_now_iso(),
+                    drift_movements=(),
+                    pass_rate_delta=pass_rate_delta,
+                    drift_loss_delta=drift_loss_delta,
+                    scalar_score_delta=gen_scalar - parent_scalar,
+                    tournament_decision=gen_decision,
+                    rejection_reason=rejection_reason,
+                    operator_override=operator_override,
+                    operator_override_reason=operator_override_reason,
+                    structure=field_round.tournament_spec.structure,
+                    final_rank=rank_by_id.get(gid),
+                    match_record=tuple(matches_by_gen.get(gid, ())),
+                    champion_eval_mode=execution.champion_eval_mode,
+                    holdout=holdout_block,
+                    train_loss=gen_fields["train_loss"],
+                    holdout_loss=gen_fields["holdout_loss"],
+                    generalization_gap=gen_fields["generalization_gap"],
+                    evidence=execution.gate_evidence if is_crowning_challenger else None,
+                ),
+            )
+        )
+    return RoundSettlement(
+        decision=verdict.effective_decision,
+        primary_promoted_generation_id=verdict.promoted_id,
+        promoted_generation_ids=ordered_promotions(verdict.promoted_id, verdict.promoted_ids),
+        candidates=tuple(settlements),
+        champion_scalar=parent_scalar,
+        crowned_scalar=crowned_scalar,
+    )
+
+
+def _assert_crowning_agrees(settlement: RoundSettlement, candidates: CandidateField) -> None:
+    """Refuse to persist a bracket the champion pointer would contradict.
+
+    The durable bracket and the champion state MUST agree (issue #20).  A
+    settled bracket that records ``promoted`` with a promoted generation the
+    champion pointer and lineage never advance to — or the inverse — is a
+    silent correctness bug, so this fails loudly before lineage is written.
+    The persisted decision is the post-holdout truth and the primary promoted
+    id is what drives lineage and ``current_generation``; the two are the
+    same value by construction, and this guard makes that contract explicit
+    and catches any future code path that lets them drift apart.
+    """
+
+    bracket_promoted = settlement.decision.decision == "promoted"
+    if bracket_promoted != (settlement.primary_promoted_generation_id is not None):
+        raise RuntimeError(
+            "crowning invariant violated: settled bracket decision "
+            f"{settlement.decision.decision!r} (promoted_generation_id="
+            f"{settlement.decision.promoted_generation_id!r}) disagrees with the "
+            "champion to be crowned "
+            f"({settlement.primary_promoted_generation_id!r}); refusing to persist a "
+            "bracket the champion pointer / lineage contradict"
+        )
+    if (
+        settlement.primary_promoted_generation_id is not None
+        and settlement.primary_promoted_generation_id not in candidates.by_id
+    ):
+        raise RuntimeError(
+            "crowning invariant violated: settled bracket promotes "
+            f"{settlement.primary_promoted_generation_id!r} but no such challenger "
+            "applied this round; "
+            "refusing to advance the champion to a generation with no snapshot"
+        )
+
+
+async def _commit_field_settlement(
+    field_round: FieldRound,
+    candidates: CandidateField,
+    execution: FieldExecution,
+    settlement: RoundSettlement,
+) -> tuple[str, str, str] | None:
+    """Make the round durable, and return any post-promotion hook failure.
+
+    Outcomes and their index projections become durable before lineage or
+    the champion marker changes, so an invariant failure can never leave a
+    promoted lineage node pointing at an unsettled outcome.  Lineage then
+    puts every PROMOTED generation on the spine and records every other
+    challenger as a dead branch (a rejected child of the champion).  An
+    operator multi-promote marks each advanced candidate promoted while
+    ``current_generation`` still advances only to the primary head.
+
+    The post-promotion adapter hook (issue #125) fires once, after the
+    champion marker advances, for the PRIMARY head only: an operator
+    multi-promote marks several candidates promoted in lineage, but
+    ``current_generation`` advances to exactly one, and it is that crowning
+    the adapter's out-of-tree state has to track.
+    """
+
+    from zicato.epoch import append_journal_entry, append_to_lineage  # noqa: PLC0415
+
+    decision = execution.decision
+    finalised_by_id: dict[str, Experiment] = {}
+    for candidate in settlement.candidates:
+        gid = candidate.challenger.generation_id
+        finalised_by_id[gid] = _finalize_generation(
+            workspace_root=field_round.workspace_root,
+            epoch_id=field_round.epoch_id,
+            generation_id=gid,
+            outcome=candidate.outcome,
+            journal=False,
+        )
+
+    _assert_crowning_agrees(settlement, candidates)
+
+    champion_agg = _first_aggregate_for(field_round.parent_id, decision)
+    for candidate in settlement.candidates:
+        challenger = candidate.challenger
+        gid = challenger.generation_id
+        gen_record = Generation(
+            id=gid,
+            epoch_id=field_round.epoch_id,
+            parent_id=field_round.parent_id,
+            snapshot_root=challenger.snapshot_root,
+            created_at=challenger.generation.created_at,
+            promoted=gid in settlement.promoted_generation_ids,
+            round_index=challenger.generation.round_index,
+        )
+        # The settle-time facts, per challenger (issue #124): the reason
+        # this one was cut — already computed above, including the
+        # holdout-demotion and operator-override phrasings, and read back
+        # off the outcome so the DAG and experiment.json cannot disagree —
+        # and its own standings scalar against the champion's. ``None``
+        # rather than 0.0 when a challenger has no aggregate: a zero scalar
+        # is a legal measurement.
+        settled = finalised_by_id.get(gid)
+        gen_agg = _first_aggregate_for(gid, decision)
+        append_to_lineage(
+            field_round.workspace_root,
+            field_round.epoch_id,
+            gen_record,
+            parent_id=field_round.parent_id,
+            rejection_reason=(
+                settled.outcome.rejection_reason
+                if settled is not None and settled.outcome is not None
+                else ""
+            ),
+            parent_scalar=float(champion_agg["scalar"]) if champion_agg else None,
+            child_scalar=float(gen_agg["scalar"]) if gen_agg else None,
+        )
+
+    on_promote_failure: tuple[str, str, str] | None = None
+    if settlement.primary_promoted_generation_id is not None:
+        generation_phase.set_current_generation(
+            field_round.workspace_root,
+            field_round.epoch_id,
+            settlement.primary_promoted_generation_id,
+        )
+        # The marker MUST now name the crowned generation — a write that did
+        # not stick (e.g. a read-only workspace) would leave a settled
+        # ``promoted`` bracket whose champion never advanced. Re-read and
+        # raise rather than diverge silently (issue #20).
+        crowned_head = generation_phase.current_generation(
+            field_round.workspace_root, field_round.epoch_id
+        )
+        if crowned_head != settlement.primary_promoted_generation_id:
+            raise RuntimeError(
+                "crowning invariant violated: bracket promoted "
+                f"{settlement.primary_promoted_generation_id!r} but current_generation resolves to "
+                f"{crowned_head!r} after the crowning write; the champion "
+                "pointer did not advance to the promoted generation"
+            )
+        on_promote_failure = await fire_on_promote(
+            field_round.adapter,
+            workspace_root=field_round.workspace_root,
+            epoch_id=field_round.epoch_id,
+            generation_id=settlement.primary_promoted_generation_id,
+            parent_generation_id=field_round.parent_id,
+            snapshot_root=candidates.by_id[settlement.primary_promoted_generation_id].snapshot_root,
+        )
+
+    for candidate in settlement.candidates:
+        append_journal_entry(
+            field_round.workspace_root,
+            field_round.epoch_id,
+            finalised_by_id[candidate.challenger.generation_id],
+        )
+    return on_promote_failure
+
+
+def _round_summary(
+    field_round: FieldRound,
+    candidates: CandidateField,
+    execution: FieldExecution,
+    verdict: FieldVerdict,
+    settlement: RoundSettlement,
+) -> tuple[str, float, float]:
+    """The round summary's proposed generation and its two scalars.
+
+    The scalars MUST come from the gate's CROWNING matchup — the same
+    champion-versus-leader duel the rejection reason is built from.  Two
+    other sources are wrong here: the per-pairing standings aggregate
+    averages across all of the champion's pairings, and a
+    child-defaults-to-parent fallback reports delta 0.0 on a rejection even
+    though the gate measured a real regression (issue #10).  The standings
+    aggregate is the fallback only when no crowning duel ran.
+
+    On a rejection the proposed generation reported is the LEADING challenger
+    that reached the gate — the one the reason is about — rather than an
+    arbitrary first slot.
+    """
+
+    decision = execution.decision
+    crowning = (
+        next(
+            (m for m in decision.matchups if m.matchup_id == decision.crowning_matchup_id),
+            None,
+        )
+        if decision.crowning_matchup_id
+        else None
+    )
+    if crowning is None:
+        return (
+            verdict.promoted_id or candidates.first_challenger_id,
+            settlement.champion_scalar,
+            settlement.crowned_scalar,
+        )
+    champ_is_left = crowning.left_id == field_round.parent_id
+    return (
+        verdict.promoted_id or (crowning.right_id if champ_is_left else crowning.left_id),
+        crowning.left_scalar() if champ_is_left else crowning.right_scalar(),
+        crowning.right_scalar() if champ_is_left else crowning.left_scalar(),
+    )
+
+
+async def _close_field_round(
+    field_round: FieldRound,
+    candidates: CandidateField,
+    execution: FieldExecution,
+    verdict: FieldVerdict,
+    settlement: RoundSettlement,
+    on_promote_failure: tuple[str, str, str] | None,
+) -> EvolveRoundOutcome:
+    """Run the round epilogue, close the round's log, and summarise it.
+
+    A one-challenger field runs the random-baseline placebo as a separate
+    duel here, because a one-slot slate has no room to carry it; a wider
+    field already fielded it inside the slate
+    (:mod:`zicato.evolve.field_candidates`).  The placebo duel never advances
+    the champion.
+    """
+
+    from zicato.runtime import progress_log  # noqa: PLC0415
+
+    decision = execution.decision
+    promoted_id = verdict.promoted_id
+    first_challenger_id = candidates.first_challenger_id
+    if field_round.field_size == 1:
+        await _maybe_run_placebo_arm_gauntlet(
+            workspace_root=field_round.workspace_root,
+            epoch_id=field_round.epoch_id,
+            adapter=field_round.adapter,
+            parent_gen=candidates.champion,
+            parent_id=field_round.parent_id,
+            round_id=candidates.base_generation_id,
+            mutations=field_round.mutations,
+            board=field_round.board,
+            weights=field_round.weights,
+            config=field_round.config,
+            disable_drift=field_round.disable_drift,
+            judge_only=field_round.judge_only,
+            fast_mode=field_round.fast_mode,
+            round_index=field_round.round_index,
+            total_rounds=field_round.total_rounds,
+        )
+
+    health_summary, health_critical = await _round_epilogue(
+        workspace_root=field_round.workspace_root,
+        epoch_id=field_round.epoch_id,
+        board=field_round.board,
+        round_n=generation_round_number(first_challenger_id) or field_round.round_index,
+        analyzer_round=generation_round_number(first_challenger_id),
+        mutations=field_round.mutations,
+        auxiliary_call_llm=field_round.auxiliary_call_llm,
+        auxiliary_model=field_round.auxiliary_model,
+        meta_loop_emitter=field_round.meta_loop_emitter,
+        token_clip=_token_clip_state(field_round.config),
+        attributable_regressions=(
+            _promoted_entry_regressions(execution.raw_results[decision.crowning_matchup_id])
+            if promoted_id is not None and decision.crowning_matchup_id in execution.raw_results
+            else None
+        ),
+        on_promote_failure=on_promote_failure,
+    )
+
+    bookkeeping_decision = "promoted" if promoted_id is not None else "rejected"
+    # Progress transition: the field tournament settled — record the
+    # crowning (TOURNAMENT_SETTLE) then the terminal verdict so the
+    # liveness seq lands on a PROMOTE/REJECT at the round's true end.
+    with best_effort(
+        "progress-log field tournament-settle",
+        on_error=lambda exc: log.debug("progress-log field tournament-settle skipped: %s", exc),
+    ):
+        progress_log.append_progress(field_round.workspace_root, progress_log.TOURNAMENT_SETTLE)
+    _beat(
+        field_round.beater,
+        workspace_root=field_round.workspace_root,
+        progress=(
+            progress_log.PROMOTE if bookkeeping_decision == "promoted" else progress_log.REJECT
+        ),
+        epoch_id=field_round.epoch_id,
+        generation_id=promoted_id or first_challenger_id,
+        round_index=field_round.round_index,
+        phase=f"done:round_{field_round.round_index}:{candidates.tournament_id}:"
+        f"{bookkeeping_decision}",
+    )
+    field_round.round_log.emit("round_closed")
+
+    child_id, parent_scalar, child_scalar = _round_summary(
+        field_round, candidates, execution, verdict, settlement
+    )
+    return EvolveRoundOutcome(
+        parent_generation_id=field_round.parent_id,
+        proposed_generation_id=child_id,
+        tournament_decision=bookkeeping_decision,
+        rejection_reason=(
+            # The effective decision is the post-holdout, post-integrity, and
+            # post-override truth, so its reason matches the persisted outcome
+            # for every rejection path.
+            "" if promoted_id is not None else verdict.effective_decision.reason
+        ),
+        parent_scalar=parent_scalar,
+        child_scalar=child_scalar,
+        delta_scalar=child_scalar - parent_scalar,
+        health_summary=health_summary,
+        health_critical=health_critical,
+    )
+
+
+async def settle_field_round(
+    field_round: FieldRound,
+    candidates: CandidateField,
+    execution: FieldExecution,
+    verdict: FieldVerdict,
+) -> EvolveRoundOutcome:
+    """Record, commit, and close the round the crowning verdict resolved.
+
+    The round's terminal phase and the last thing that runs: it returns the
+    summary the evolve loop reads.
+    """
+
+    _record_field_tournament(field_round, candidates, execution, verdict)
+    settlement = _build_field_settlement(field_round, candidates, execution, verdict)
+    on_promote_failure = await _commit_field_settlement(
+        field_round, candidates, execution, settlement
+    )
+    return await _close_field_round(
+        field_round, candidates, execution, verdict, settlement, on_promote_failure
+    )
+
+
+__all__ = ["ordered_promotions", "settle_field_round"]

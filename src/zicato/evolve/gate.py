@@ -6,11 +6,15 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from zicato.core.types import Generation, TournamentDecision
 from zicato.evolve.lifecycle_services import _now_iso
-from zicato.runtime.control_consumer import GateOverride
+from zicato.runtime.control_consumer import GateOverride, claim_field_gate_overrides
+
+if TYPE_CHECKING:
+    from zicato.evolve.field_candidates import CandidateField
+    from zicato.evolve.generation_phase import FieldRound
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -314,6 +318,169 @@ def _apply_field_overrides(
             reason=_decision_reason,
         )
     return promoted_id, promoted_ids, override_provenance, effective_decision
+
+
+@dataclass(frozen=True, slots=True)
+class FieldVerdict:
+    """One round's crowning after every check that may revise it.
+
+    The strategy resolves a leader on the train slice; this value is what the
+    workspace will actually commit, once the holdout confirmation, the opt-in
+    integrity blocks, and any operator override have had their say.
+
+    ``promoted_ids`` is the (possibly multi-element) promoted SET, every
+    member of which is marked promoted in lineage, while ``promoted_id`` is
+    the PRIMARY head that alone advances the champion pointer.
+    ``effective_decision`` is the post-confirmation, post-override truth
+    every durable store must describe (issue #20).  The remaining fields are
+    the crowning challenger's evidence, stamped on its outcome record.
+    """
+
+    promoted_id: str | None
+    promoted_ids: set[str]
+    override_provenance: dict[str, dict[str, Any]]
+    effective_decision: Any
+    overrides: dict[str, GateOverride]
+    reason_override: str | None
+    holdout_block: dict[str, Any] | None
+    holdout_child_scalar: float | None
+    crowning_challenger_id: str | None
+    crowning_challenger_train_scalar: float | None
+
+
+async def resolve_field_verdict(
+    field_round: FieldRound,
+    candidates: CandidateField,
+    decision: Any,
+) -> FieldVerdict:
+    """Confirm, block, or override the strategy's crowning, then record it.
+
+    Three revisions apply in a fixed order, and each is recorded rather than
+    silent:
+
+    * **Holdout confirmation** (OVERFITTING.md §3/§4).  The structure
+      resolved its leader on the TRAIN slice and ran ONE crowning
+      champion-versus-survivor duel, also on train.  If that duel promoted
+      and a holdout slice exists, the win must ALSO confirm on the holdout,
+      through the shared Ladder-mediated machinery and the per-epoch
+      ``ladder_state.json`` budget.  A released non-confirmation flips the
+      crowning promote to a holdout reject and the champion stands.  An
+      empty holdout — a small board, or the split disabled — means no
+      holdout run and no Ladder move.
+    * **Integrity blocking** (default OFF).  Diff containment on the crowned
+      child's snapshot plus a gate-contradiction re-derivation against the
+      crowning duel's delta, applied before anything persists and before the
+      override claim below, so an explicit force-promote remains the
+      operator's recorded prerogative.
+    * **Operator overrides.**  The structure has settled and nothing is
+      persisted yet, which is the safe point at which a force-promote or
+      force-reject of ANY field candidate overrides the verdict.  An
+      override may target a non-winner, the crowned leader, or several
+      candidates; a one-candidate gauntlet is the degenerate case.  Only the
+      claim is I/O: :func:`_apply_field_overrides` re-resolves the promoted
+      set, the primary head, the provenance, and the effective decision
+      purely.
+    """
+
+    from zicato.tournament.runner import confirm_crowning_holdout  # noqa: PLC0415
+
+    crowning = await _confirm_crowning_on_holdout(
+        decision=decision,
+        parent_id=field_round.parent_id,
+        champion_gen=candidates.champion,
+        generation_for=candidates.generation,
+        adapter=field_round.adapter,
+        board=field_round.board,
+        weights=field_round.weights,
+        config=field_round.config,
+        workspace_root=field_round.workspace_root,
+        epoch_id=field_round.epoch_id,
+        disable_drift=field_round.disable_drift,
+        judge_only=field_round.judge_only,
+        fast_mode=field_round.fast_mode,
+        confirm_fn=confirm_crowning_holdout,
+    )
+    promoted_id = crowning.promoted_id
+    reason_override = crowning.reason_override
+    # The crowning holdout release (a populated block always means a holdout
+    # existed and was consulted).
+    if crowning.holdout_block is not None:
+        field_round.round_log.emit(
+            "holdout_released",
+            {"confirmed": bool(crowning.holdout_block.get("confirmed"))},
+            {"generation_id": crowning.challenger_id},
+        )
+
+    if promoted_id is not None:
+        block_reason = _integrity_block_reason(
+            weights=field_round.weights,
+            parent_snapshot_root=candidates.champion.snapshot_root,
+            child_snapshot_root=candidates.by_id[promoted_id].snapshot_root,
+            mutable_trees=_registered_mutable_trees(field_round.workspace_config),
+            delta_scalar=crowning.crowning_delta_scalar,
+        )
+        if block_reason is not None:
+            log.warning(
+                "evolve: integrity block — generation %s crowning refused (%s)",
+                promoted_id,
+                block_reason,
+            )
+            promoted_id = None
+            reason_override = block_reason
+
+    overrides: dict[str, GateOverride] = claim_field_gate_overrides(
+        field_round.workspace_root, [c.generation_id for c in candidates.challengers]
+    )
+    (
+        promoted_id,
+        promoted_ids,
+        override_provenance,
+        effective_decision,
+    ) = _apply_field_overrides(
+        workspace_root=field_round.workspace_root,
+        decision=decision,
+        promoted_id=promoted_id,
+        crowning_reason_override=reason_override,
+        field_overrides=overrides,
+        structure=field_round.tournament_spec.structure,
+    )
+    # The round's terminal decision + provenance (operator overrides
+    # explicit, never silent) — the post-holdout/post-override truth.
+    field_round.round_log.emit(
+        "decision_recorded",
+        {
+            "decision": str(effective_decision.decision),
+            "provenance": {
+                "structure": field_round.tournament_spec.structure,
+                "reason": effective_decision.reason,
+                "parent_generation_id": field_round.parent_id,
+                "promoted_generation_id": promoted_id,
+                "promoted_generation_ids": sorted(promoted_ids),
+                "operator_override": bool(override_provenance),
+                "operator_override_reason": next(
+                    (
+                        override.reason
+                        for generation_id, override in overrides.items()
+                        if generation_id == promoted_id or promoted_id is None
+                    ),
+                    "",
+                ),
+                "overrides": override_provenance,
+            },
+        },
+    )
+    return FieldVerdict(
+        promoted_id=promoted_id,
+        promoted_ids=promoted_ids,
+        override_provenance=override_provenance,
+        effective_decision=effective_decision,
+        overrides=overrides,
+        reason_override=reason_override,
+        holdout_block=crowning.holdout_block,
+        holdout_child_scalar=crowning.holdout_child_scalar,
+        crowning_challenger_id=crowning.challenger_id,
+        crowning_challenger_train_scalar=crowning.challenger_train_scalar,
+    )
 
 
 def _registered_mutable_trees(workspace_config: Any) -> list[str]:

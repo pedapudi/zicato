@@ -63,10 +63,15 @@ def test_round_pipeline_structure_stays_bounded() -> None:
     assert len((src / "orchestrator.py").read_text().splitlines()) < 1_000
     for name in (
         "decision_support.py",
+        "field.py",
+        "field_candidates.py",
+        "field_execution.py",
+        "gate.py",
         "round_api.py",
         "round_baseline.py",
         "round_prepare.py",
         "round_reporting.py",
+        "settlement.py",
     ):
         assert len((src / "evolve" / name).read_text().splitlines()) < 1_000
 
