@@ -36,13 +36,14 @@ The mutated-tree invariant (fail CLOSED)
 
 The invariant a scored round depends on is **"the MUTATED TREE is what
 runs"** — not the narrower "the entrypoint came from the snapshot". The
-two coincide only when the entrypoint lives INSIDE a mutable tree; for
-the equally legitimate *dependency* shape (mutate a package the
-entrypoint merely imports — target 2 mutates goldfive and drives it from
-a harness module outside every tree) the entrypoint's own origin says
-nothing about whether the mutations were under test, and a registration
-with two trees can satisfy the entrypoint rule while every mutation to
-the second tree is a silent scored no-op.
+two coincide only when the entrypoint lives INSIDE a mutable tree. The
+*dependency* shape is equally legitimate: mutate a package the entrypoint
+merely imports, as the sibling project's steering target does when it
+mutates goldfive and drives it from a harness module outside every tree.
+There the entrypoint's own origin says nothing about whether the mutations
+were under test. A registration with two trees can likewise satisfy the
+entrypoint rule while every mutation to the second tree is a silent scored
+no-op.
 
 Putting the snapshot on ``sys.path`` is NOT sufficient to guarantee the
 snapshot's code is what runs. ``sys.path`` governs only TOP-LEVEL name
@@ -788,13 +789,13 @@ def _resolves_to_genai_client(model_str: str) -> bool:
     Identifies the genai-backed classes POSITIVELY — ``issubclass(cls,
     Gemini)``, which covers :class:`Gemma` (it subclasses :class:`Gemini`) and
     nothing else in the registry. The tempting shorthand ``not
-    issubclass(cls, LiteLlm)`` is wrong in two directions: it is unanswerable
-    when ``litellm`` is not importable (``google-adk``'s ``extensions`` extra
+    issubclass(cls, LiteLlm)`` is wrong in two directions. It is unanswerable
+    when ``litellm`` is not importable — ``google-adk``'s ``extensions`` extra
     owns it, so ADK can resolve ``gemini-*`` in an install that cannot import
-    :class:`LiteLlm`), where returning ``False`` would fail OPEN and let the
-    flood back in; and it misreads every OTHER native provider class the
+    :class:`LiteLlm` — and returning ``False`` there would fail OPEN and let
+    the flood back in. It also misreads every OTHER native provider class the
     registry grows as genai-backed, displacing a real function-calling model
-    for a flood it could never cause.
+    for a flood that class could never cause.
 
     ``False`` for a :class:`LiteLlm`-resolvable string (its construction builds
     no genai client), for any other non-genai provider class, for an

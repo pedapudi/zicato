@@ -119,21 +119,23 @@ def _line_delta(parent: str, child: str) -> tuple[int, int]:
 
     A line-level :class:`difflib.SequenceMatcher` diff: every non-``equal``
     opcode contributes the lines it introduced to ``added`` and the lines it
-    destroyed to ``removed`` (a ``replace`` opcode contributes to both, which
-    is the honest MDL reading — the edit must describe both the deletion and
-    the insertion). Identical texts yield ``(0, 0)``.
+    destroyed to ``removed``. A ``replace`` opcode contributes to both,
+    because the edit has to describe the deletion and the insertion alike.
+    Identical texts yield ``(0, 0)``.
 
     ``autojunk`` is disabled up to :data:`EXACT_DIFF_MAX_LINES`: its heuristic
     drops lines appearing in more than 1% of a long sequence, which on a large
     generated file silently changes the measured size of an edit that touches
     those lines (measured: a 1000-line whole-file rewrite scores 800 exactly
-    and 998 with the heuristic on). Beyond the cap the heuristic comes back —
-    see the constant for why, and read the overcount honestly: it is exact for
-    a TARGETED edit at any file size (a one-line change in a 3000-line file
-    measures ``(1, 1)`` either way, because the popular lines fall in the
-    matched run), and it overstates only a near-total rewrite, where the
-    parsimony toll is large under any accounting. Deterministic either way:
-    the cap is a size threshold rather than a timeout.
+    and 998 with the heuristic on). Beyond the cap the heuristic comes back;
+    see the constant for why.
+
+    Read that overcount honestly. It is exact for a TARGETED edit at any file
+    size: a one-line change in a 3000-line file measures ``(1, 1)`` either
+    way, because the popular lines fall in the matched run. It overstates
+    only a near-total rewrite, where the parsimony toll is large under any
+    accounting. Both paths are deterministic, because the cap is a size
+    threshold rather than a timeout.
     """
     parent_lines = _lines(parent)
     child_lines = _lines(child)

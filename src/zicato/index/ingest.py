@@ -801,15 +801,17 @@ def _opt_float_field(value: Any) -> float | None:
 def _upsert_field_tournament(conn: sqlite3.Connection, record: dict[str, Any]) -> None:
     """Write the FIELD-level ``tournaments`` row for a settled tournament.
 
-    Unlike :func:`_upsert_tournament` (one row PER CHALLENGER, describing
-    that challenger's crowning duel), this writes ONE row for the whole
+    :func:`_upsert_tournament` writes one row PER CHALLENGER, describing
+    that challenger's crowning duel. This writes ONE row for the whole
     round's tournament: the settled round-by-round pairings
     (``rounds_json``), the Copeland standings (``standings_json``), the
     full competitor field (``competitors_json``), and the proposing
-    field-status (``field_status_json``) — the same shape the runtime
-    ``active_tournament`` envelope carries, so the dashboard's structure
-    renderers (which already consume that shape live) render the swiss /
-    elim ladder post-run unchanged.
+    field-status (``field_status_json``).
+
+    That is the same shape the runtime ``active_tournament`` envelope
+    carries. The dashboard's structure renderers already consume that shape
+    live, so they render the swiss and elimination ladders post-run with no
+    second code path.
 
     The ``tournament_id`` is the field-level id
     ``"{epoch_id}:field:{first_challenger}"`` — stable per round and
@@ -1785,12 +1787,12 @@ def _diverged_epochs(
     holds rows for that is GONE from the workspace.
 
     That last set is the union of the cursor table and ``indexed`` (the epoch
-    ids actually present in ``epochs``) — not the cursor table alone. A
-    cursor-driven test can only ever find epochs some cursor-writing path
-    already visited, so rows written before v14 existed are invisible to it:
-    a v13 database migrated IN PLACE by the incremental writers arrives with
-    populated tables and ZERO cursors, and any of its epochs since deleted
-    from the workspace would be orphaned in the index permanently, with
+    ids actually present in ``epochs``) rather than the cursor table alone. A
+    cursor-driven test can only find epochs that some cursor-writing path
+    already visited, so a row written without a cursor is invisible to it.
+    A database migrated IN PLACE by the incremental writers arrives with
+    populated tables and ZERO cursors. Any of its epochs since deleted from
+    the workspace would then be orphaned in the index permanently, with
     ``heal_index`` reporting nothing to do. Reading the epoch ids straight
     off the index closes that, and costs one ``SELECT DISTINCT``.
     """
@@ -1862,10 +1864,10 @@ def _build_tmp_path(target: Path) -> Path:
     whose lock read lost the window to a starting evolve, both build.
 
     A shared scratch path makes that race destructive rather than merely
-    wasteful, because a build is not a moment: the second builder's
-    :func:`_unlink_db` removes the inode the first is still writing into,
-    the first's :func:`os.replace` then renames whatever now sits at the
-    path — the second's HALF-BUILT database — onto the live index, and the
+    wasteful, because a build is not a moment. The second builder's
+    :func:`_unlink_db` removes the inode the first is still writing into.
+    The first's :func:`os.replace` then renames whatever now sits at the
+    path — the second's HALF-BUILT database — onto the live index. The
     sidecar unlink that follows deletes the WAL holding the rest of it.
     The observed result is a valid, EMPTY ``index.db`` (``user_version=0``,
     zero tables) installed by the self-healing path itself, with no

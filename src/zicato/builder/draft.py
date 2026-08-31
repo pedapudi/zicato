@@ -414,13 +414,13 @@ class DraftStore:
     :meth:`TournamentDraft.from_workspace`, so the builder always opens
     pre-filled with what is running.
 
-    NAMED SLOTS are the fork/compare lifecycle: :meth:`fork` snapshots a
+    NAMED SLOTS are the fork/compare lifecycle. :meth:`fork` snapshots a
     session's working draft into a named slot and binds the session TO
-    that slot (subsequent edits accumulate on it); :meth:`switch` rebinds
-    the session to another slot with its state intact; named drafts are
-    how an operator iterates on contract variants WITHOUT rolling the
-    epoch — the write path is untouched (``apply`` still writes whichever
-    draft the session is on).
+    that slot, so subsequent edits accumulate on it; :meth:`switch`
+    rebinds the session to another slot with its state intact. Named
+    drafts are how an operator iterates on contract variants WITHOUT
+    rolling the epoch: the write path is untouched, and ``apply`` still
+    writes whichever draft the session is on.
 
     Slots persist exactly the way session drafts do — in this
     process-local store (drafts have never outlived the dashboard

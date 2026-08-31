@@ -326,9 +326,9 @@ def harness_load_path(workspace_root: Path, epoch_id: str, generation_id: str) -
 def patches_dir(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     """Path to the per-patch JSON directory under a generation.
 
-    See :doc:`project_zicato_storage_design` for the per-patch file
-    layout. The directory is created lazily by writers; readers tolerate
-    its absence (an experiment with zero patches has no directory).
+    See ``docs/design/STORAGE.md`` for the per-patch file layout. The
+    directory is created lazily by writers; readers tolerate its absence
+    (an experiment with zero patches has no directory).
     """
     return _layout(workspace_root).patches_dir(epoch_id, generation_id)
 

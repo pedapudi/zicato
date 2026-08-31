@@ -76,18 +76,20 @@ def _knob(
     / GUI row use for this field WHEN it differs from the field name (e.g.
     ``screen_entries`` is the ``entries`` arg of ``set_screening``); ``None``
     means "same as the field name". A DOTTED value (``"ladder.threshold"``)
-    names a field the op takes as a SUBKEY of a partial-mapping argument:
-    the op / dispatch / copilot touchpoints are checked against the mapping
-    arg (``ladder``), while the GUI row and node test must additionally
-    name the subkey — otherwise one row for one subkey would vacuously
-    cover every sibling (which is exactly how ``ladder.threshold`` shipped
-    with no GUI row at all). A registry-driven completeness guard test
-    asserts every ``builder_op`` knob is wired through all its touchpoints
+    names a field the op takes as a SUBKEY of a partial-mapping argument.
+    The op, dispatch and copilot touchpoints are then checked against the
+    mapping argument (``ladder``), while the GUI row and node test must
+    additionally name the subkey. Without that, one row for one subkey
+    would vacuously cover every sibling — which is how ``ladder.threshold``
+    came to ship with no GUI row at all.
+
+    Two guard tests keep the registry honest. A completeness guard asserts
+    every ``builder_op`` knob is wired through all five of its touchpoints
     (op signature, API dispatch, copilot tool, GUI row, node test), naming
-    exactly which touchpoint is missing for which knob — and a companion
-    guard asserts every contract knob field either CARRIES a ``builder_op``
-    or sits in an explicitly justified exemption set, so a knob cannot skip
-    the builder entirely by simply omitting this metadata.
+    exactly which touchpoint is missing for which knob. A companion guard
+    asserts every contract knob field either CARRIES a ``builder_op`` or
+    sits in an explicitly justified exemption set, so a knob cannot skip
+    the builder entirely by omitting this metadata.
 
     Defaults and validation are unaffected: they stay on the field
     declaration and ``__post_init__``. This is metadata only.
@@ -442,12 +444,15 @@ class ProposerQualityConfig:
         mechanically-REDACTED event windows from the champion's
         TRAIN-slice ``events.jsonl`` files — one per detected pattern,
         ±3 events around an anchor drift — and splices them into the
-        proposer prompt after the failure-mode profile, so the proposer
-        can see HOW a detected failure unfolds (the wandering plan step,
-        the looping tool call) without ever learning WHICH board entry
-        it unfolded on (no entry ids, no task text, no model outputs —
-        the doc's §3 redaction rules are enforced in code, never by an
-        LLM). ``0`` (default) is OFF — no extraction runs and the
+        proposer prompt after the failure-mode profile.
+
+        The proposer can then see HOW a detected failure unfolds: the
+        wandering plan step, the looping tool call. It never learns WHICH
+        board entry the failure unfolded on, because a window carries no
+        entry ids, no task text and no model outputs. The doc's §3
+        redaction rules are enforced in code, never by an LLM.
+
+        ``0`` (default) is OFF — no extraction runs and the
         proposer prompt is byte-identical. Unlike ``screen_entries``
         this knob is NOT set by the scaffold: the screen is
         evaluation-side, while exemplars widen the proposer-visibility
@@ -460,13 +465,13 @@ class ProposerQualityConfig:
     recombine:
         Opt-in mechanical recombination slot. When ``True`` AND
         ``best_of_n > 1``, the orchestrator builds one recombination pair
-        per round (from the current reign's REJECTED, complementary,
-        disjoint-patch challengers) and, when a pair is found, the last
+        per round, drawn from the current reign's REJECTED, complementary,
+        disjoint-patch challengers. When a pair is found, the last
         best-of-N slot MINTS the union of the two patch sets instead of
-        sampling the LLM — a non-vetoed mint is CHOSEN with
-        ``selection_mode="recombined"`` (a single winner can capture two
-        complementary fixes a parsimony-biased selector would each
-        discount). INERT unless ``best_of_n > 1`` (a single-sample proposer
+        sampling the LLM, and a non-vetoed mint is CHOSEN with
+        ``selection_mode="recombined"``. That lets a single winner capture
+        two complementary fixes a parsimony-biased selector would each
+        discount. INERT unless ``best_of_n > 1`` (a single-sample proposer
         has no slate slot to mint into) — and cost-neutral: the mint
         REPLACES the slot's auxiliary propose call, never adds one.
         ``False`` (default) is OFF — no pair is ever built and the propose
@@ -476,17 +481,20 @@ class ProposerQualityConfig:
         can recombine rejected fixes proposes under a different rule. See
         :mod:`zicato.epoch.recombine` / :mod:`zicato.proposer.recombine`.
     genealogy:
-        Opt-in genealogy channel (WS-GENE; ``docs/design/PROPOSER.md`` §2.7).
+        Opt-in genealogy channel (``docs/design/PROPOSER.md`` §2.7).
         When ``> 0``, each round the orchestrator samples up to this many
-        candidate-LINEAGE items from the current reign's durable records —
-        PARENTS (the champion's own promoted patch history) + INSPIRATIONS
-        (diverse rejected reign candidates chosen by mutation-id-set
-        dissimilarity) — each carrying the proposer-authored core idea + a
-        capped diff excerpt + a BANDED whole-candidate outcome, and splices
-        them into the proposer prompt so the LLM can evolve IN CONTEXT
-        (extend a winning line or re-frame a rejected one — the in-context
-        analogue of the mechanical recombination slot, reaching even the
-        pure-drift-side pairs that slot cannot see). Envelope-safe by
+        candidate-LINEAGE items from the current reign's durable records:
+        PARENTS (the champion's own promoted patch history) and
+        INSPIRATIONS (diverse rejected reign candidates chosen by
+        mutation-id-set dissimilarity). Each item carries the
+        proposer-authored core idea, a capped diff excerpt, and a BANDED
+        whole-candidate outcome.
+
+        Splicing those into the proposer prompt lets the LLM evolve IN
+        CONTEXT — extend a winning line, or re-frame a rejected one. It is
+        the in-context analogue of the mechanical recombination slot, and
+        it reaches even the pure-drift-side pairs that slot cannot see.
+        Envelope-safe by
         construction: it carries candidate genealogy, never board data — no
         entry ids, no per-entry results, no exact deltas (banded through the
         same ``_bucket_scalar_delta`` vocabulary as the experiment memory),
@@ -502,15 +510,17 @@ class ProposerQualityConfig:
         ``>= 0``. See :mod:`zicato.proposer.genealogy`.
     calibration_feedback:
         Opt-in critic-calibration channel (``docs/design/PROPOSER.md``
-        §2.8). When ``> 0``, each round the orchestrator summarizes the current
-        reign's PREDICTION CALIBRATION — how the proposer's own falsifiable
-        movement predictions landed against realized outcomes, joining the
-        durable records with the prediction-accuracy grader
+        §2.8). When ``> 0``, each round the orchestrator summarizes the
+        current reign's PREDICTION CALIBRATION: how the proposer's own
+        falsifiable movement predictions landed against realized outcomes.
+        It joins the durable records with the prediction-accuracy grader
         (:func:`zicato.tournament.detail.hypothesis_ledger`, the
-        ``/api/hypothesis-accuracy`` feed) — and splices it into the proposer
-        prompt: per-claim-type hit / miss / unresolved COUNTS, the overall
-        calibration fraction, and up to this many RECENT graded claims (claim
-        text + banded realized outcome + hit/miss). A proposer shown its own
+        ``/api/hypothesis-accuracy`` feed).
+
+        The summary spliced into the proposer prompt carries per-claim-type
+        hit / miss / unresolved COUNTS, the overall calibration fraction,
+        and up to this many RECENT graded claims (claim text, banded
+        realized outcome, hit or miss). A proposer shown its own
         miss pattern hypothesizes more honestly. Envelope-safe by construction:
         claim text is proposer-authored, realized outcomes render BANDED
         through the same ``_bucket_scalar_delta`` vocabulary as the experiment

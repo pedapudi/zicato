@@ -6,16 +6,17 @@ terminal lens and vice versa. ``/e/<epoch>/gen/17`` is the candidate dossier in
 both places; there is no second vocabulary to learn.
 
 Shorthands exist for the common cases (``candidate/17``, ``instrument``), and
-they resolve to the same :class:`Route`. Where the browser has a view v1 does
-not ship — the deferred lenses (candidate, board, health) as well as the
-permanently browser-side surfaces (builder, settings, publication, traces) —
-the route resolves to the NEAREST shipped lens and records what was asked for
-in :attr:`Route.unsupported`, so the status band says "candidate is not in this
-build" instead of silently landing somewhere unrelated.
+they resolve to the same :class:`Route`. The terminal ships fewer views than
+the browser: the candidate, board and health lenses are not built here, and
+the builder, settings, publication and traces surfaces are browser-side
+only. An address naming one of those resolves to the NEAREST lens this
+build does have, and records what was asked for in
+:attr:`Route.unsupported`, so the status band can say "candidate is not in
+this build" rather than landing somewhere unrelated without comment.
 
-That distinction is the render-conformance rule in code: an address the
-operator can type always resolves, and always admits when it could not give
-them what they asked for.
+That is the rule this module enforces: an address the operator can type
+always resolves, and always admits when it could not give them what they
+asked for.
 """
 
 from __future__ import annotations

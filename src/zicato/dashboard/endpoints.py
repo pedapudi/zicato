@@ -483,7 +483,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         return JSONResponse(view)
 
     async def api_epoch_eval_health(request: Request) -> JSONResponse:
-        """The WS-HEALTH instrument panel for one epoch (EVAL-VIEW.md §5).
+        """The instrument-quality panel for one epoch (EVAL-VIEW.md §5).
 
         ``GET /api/epoch/{epoch_id}/eval-health``. A malformed id degrades to the
         empty health shape (HTTP 200), matching every other coordinate handler.

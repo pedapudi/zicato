@@ -22,7 +22,7 @@ class EpochConfig:
 
     Pinned for the lifetime of the epoch: board, proposer brief, scoring
     weights. Changing any of these starts a new epoch — see
-    :doc:`project_zicato_journaling_and_epochs`.
+    ``docs/design/EPOCHS-AND-JOURNALING.md``.
 
     Fields
     ------

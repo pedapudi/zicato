@@ -325,11 +325,13 @@ def _record_surface(paths: WorkspacePaths, epoch_id: str) -> dict[str, MutationP
     """Rebuild an epoch's mutation surface from ``mutations.json``.
 
     The round wrote that file from the very enumeration it fed the
-    proposer, so every site's content and line span is the real thing —
-    with two honest gaps the caller captions rather than papers over:
-    the snapshot carries no ``metadata`` (a site's ``role`` reads empty),
-    and it is the enumeration of the round's *champion*, which is ``v0``
-    for an epoch that never promoted and the promoted parent otherwise.
+    proposer, so every site's content and line span is the real thing.
+
+    Two gaps remain, and the caller captions them rather than papering over
+    them. The snapshot carries no ``metadata``, so a site's ``role`` reads
+    empty. And it is the enumeration of the round's *champion*, which is
+    ``v0`` for an epoch that never promoted, and the promoted parent
+    otherwise.
     """
     points: dict[str, MutationPoint] = {}
     for record in load_mutation_surface(layout_of(paths), epoch_id):

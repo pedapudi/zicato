@@ -706,44 +706,54 @@ def set_proposer_quality(
 ) -> DraftPatch:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
 
-    ``best_of_n`` is how many candidate experiments each propose-step
-    samples before selection (``1`` = the historical single sample, no
-    critique; must be >= 1); ``critique_enabled`` toggles the auxiliary
-    self-critique selection pass (inert at ``best_of_n == 1``);
-    ``process_exemplars`` opts the proposer into up to that many REDACTED
-    drift-anchored event windows per round (``0`` = off, the default —
-    see ``docs/design/PROCESS-EXEMPLARS.md`` incl. its §5 harm-detection
-    runbook before opting in; must be >= 0; read-side only, so the cost
-    meter is untouched). ``recombine`` opts in the mechanical
-    recombination slot: when ``True`` the last best-of-N slot
-    mints the patch union of two rejected complementary challengers
-    instead of sampling the LLM — REQUIRES ``best_of_n > 1`` to have any
-    effect (a single-sample proposer has no slate slot to mint into) and
-    is cost-neutral (the mint REPLACES the slot's auxiliary propose call,
-    never adds one — see :mod:`zicato.epoch.recombine`). Flipping it
-    rolls the epoch. ``recombine_merge`` (``"mechanical"`` default |
-    ``"llm"``) chooses HOW the slot composes the union: ``"mechanical"``
-    mints the disjoint patch concatenation with no LLM call; ``"llm"``
-    issues one merge call whose response flows through the normal parse
-    path and RELAXES disjointness so an OVERLAPPING pair the mechanical
-    mint cannot touch can be merged (PROPOSER.md §2.6.1). Meaningful only
-    with ``recombine`` on; ``"llm"`` rolls the epoch. ``genealogy`` opts in
-    the genealogy channel: up to that many candidate-LINEAGE items — the champion's
-    promoted patch history + diverse rejected reign candidates, each with
-    a banded outcome — are spliced into the prompt so the proposer can
-    evolve in context (``0`` = off, the default; must be >= 0; read-side
-    only, so the cost meter is untouched — see
-    :mod:`zicato.proposer.genealogy`). ``calibration_feedback`` opts in the
-    critic-calibration channel: up to that many RECENT graded
-    hypotheses — the proposer's own falsifiable predictions graded against
-    realized outcomes (hit / miss / unresolved counts + the overall
-    calibration fraction + banded per-claim outcomes) — are spliced into
-    the prompt so the proposer sees its OWN miss pattern and predicts more
-    honestly (``0`` = off, the default; must be >= 0; read-side only, so the
-    cost meter is untouched — see :mod:`zicato.proposer.calibration`).
-    COMPOSES with :func:`set_screening` — both edit the same nested
-    ``proposer_quality`` block; the screen knobs stay that op's. Changing
-    any rolls the epoch.
+    ``best_of_n``
+        How many candidate experiments each propose-step samples before
+        selection. ``1`` is a single sample with no critique. Must be >= 1.
+    ``critique_enabled``
+        Toggles the auxiliary self-critique selection pass. Inert at
+        ``best_of_n == 1``.
+    ``process_exemplars``
+        Opts the proposer into up to that many REDACTED drift-anchored
+        event windows per round. ``0`` = off, the default. Read the §5
+        harm-detection runbook in ``docs/design/PROCESS-EXEMPLARS.md``
+        before opting in. Must be >= 0; read-side only, so the cost meter
+        is untouched.
+    ``recombine``
+        Opts in the mechanical recombination slot: when ``True`` the last
+        best-of-N slot mints the patch union of two rejected complementary
+        challengers instead of sampling the LLM. REQUIRES ``best_of_n > 1``
+        to have any effect, since a single-sample proposer has no slate
+        slot to mint into. Cost-neutral: the mint REPLACES the slot's
+        auxiliary propose call rather than adding one (see
+        :mod:`zicato.epoch.recombine`). Flipping it rolls the epoch.
+    ``recombine_merge``
+        Chooses HOW that slot composes the union. ``"mechanical"`` (the
+        default) mints the disjoint patch concatenation with no LLM call.
+        ``"llm"`` issues one merge call whose response flows through the
+        normal parse path, and RELAXES disjointness so an OVERLAPPING pair
+        the mechanical mint cannot touch can be merged (PROPOSER.md
+        §2.6.1). Meaningful only with ``recombine`` on; ``"llm"`` rolls the
+        epoch.
+    ``genealogy``
+        Opts in the genealogy channel: up to that many candidate-LINEAGE
+        items — the champion's promoted patch history plus diverse rejected
+        reign candidates, each with a banded outcome — are spliced into the
+        prompt so the proposer can evolve in context. ``0`` = off, the
+        default; must be >= 0; read-side only, so the cost meter is
+        untouched (see :mod:`zicato.proposer.genealogy`).
+    ``calibration_feedback``
+        Opts in the critic-calibration channel: up to that many RECENT
+        graded hypotheses — the proposer's own falsifiable predictions
+        graded against realized outcomes, as hit / miss / unresolved counts
+        plus the overall calibration fraction plus banded per-claim
+        outcomes — are spliced into the prompt, so the proposer sees its
+        OWN miss pattern and predicts more honestly. ``0`` = off, the
+        default; must be >= 0; read-side only, so the cost meter is
+        untouched (see :mod:`zicato.proposer.calibration`).
+
+    COMPOSES with :func:`set_screening`: both edit the same nested
+    ``proposer_quality`` block, and the screen knobs stay that op's.
+    Changing any of these rolls the epoch.
     """
     changed: dict[str, Any] = {}
     quality = draft.scoring.proposer_quality

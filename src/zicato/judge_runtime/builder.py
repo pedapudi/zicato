@@ -541,11 +541,11 @@ class _PythonJudgeWrapper:
 
         Operator code that RAISES is caught here rather than left to
         goldfive's ``evaluate_judges``, which logs it and ``continue``s.
-        The catch is behaviourally neutral on the wire — the errored
-        verdict it returns populates no flavour, so goldfive derives no
-        ``verdict_kind`` and emits no ``JudgementEmitted``, exactly as
-        the swallowed exception did — but the failure now lands in the
-        process register, so a python judge that raised on every
+        The catch is behaviourally neutral on the wire: the errored verdict
+        it returns populates no flavour, so goldfive derives no
+        ``verdict_kind`` and emits no ``JudgementEmitted``. What it adds is
+        that the failure lands in the process register, so a python judge
+        that raised on every
         invocation is distinguishable in ``loss.json`` from one whose
         criterion was never met.
         """

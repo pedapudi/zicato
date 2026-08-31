@@ -170,15 +170,16 @@ class JudgeError:
     """Per-judge CALL-FAILURE provenance for one run.
 
     :class:`JudgeLoss` covers judges that FIRED. This covers the third
-    outcome a judge can have, which until now was persisted as the second
-    one: the judge's callable RAISED. An inline judge whose auxiliary
-    endpoint 404s (a misconfigured judge model, a revoked key, a
-    transient outage) returns an empty verdict by hard contract — a judge
-    must never crash a run — and goldfive emits no ``JudgementEmitted``
-    for an empty verdict, so a judge that raised on every invocation is
-    byte-identical, in ``loss.json`` and in ``events.jsonl``, to one that
-    ran and found nothing. The only trace was a WARNING in a log that
-    rotates.
+    outcome a judge can have: the judge's callable RAISED.
+
+    Without this record that outcome is indistinguishable from "fired and
+    found nothing". An inline judge whose auxiliary endpoint 404s — a
+    misconfigured judge model, a revoked key, a transient outage — returns
+    an empty verdict by hard contract, because a judge must never crash a
+    run. goldfive emits no ``JudgementEmitted`` for an empty verdict. So a
+    judge that raised on every invocation reads byte-identically, in both
+    ``loss.json`` and ``events.jsonl``, to one that ran and found nothing,
+    and the only other trace is a WARNING in a log that rotates.
 
     This tuple is that trace made durable: zicato's judge boundary
     (:mod:`zicato.judge_runtime.error_register`) counts invocations and

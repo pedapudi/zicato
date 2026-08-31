@@ -188,11 +188,11 @@ def make_runtime_config(
 
     parallelism, _parallelism_source = resolve_parallelism(runtime_dict)
 
-    # Propose-phase concurrency cap (WS-CONC): the best-of-N slate gather's
-    # semaphore size — the propose-side analogue of ``parallelism``. Read from
-    # the same ``runtime`` block; absent ⇒ the dataclass default (4). A value
-    # of 1 runs the slate serially (byte-identical to the pre-concurrency
-    # behaviour). ``RuntimeConfig.__post_init__`` re-validates ``>= 1``. NOT
+    # Propose-phase concurrency cap: the best-of-N slate gather's semaphore
+    # size, the propose-side analogue of ``parallelism``. Read from the same
+    # ``runtime`` block; absent ⇒ the dataclass default (4). A value of 1
+    # runs the slate serially.
+    # ``RuntimeConfig.__post_init__`` re-validates ``>= 1``. NOT
     # part of the frozen contract — a runtime tuning knob only.
     propose_parallelism_raw = runtime_dict.get("propose_parallelism")
     propose_parallelism = int(propose_parallelism_raw) if propose_parallelism_raw is not None else 4

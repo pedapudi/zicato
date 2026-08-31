@@ -1,12 +1,13 @@
 """Cross-run pattern detectors over LossProfile windows.
 
 Each detector is a pure function ``DetectorInput -> list[Pattern]``. The
-input bundles every per-run :class:`zicato.core.LossProfile` over the
-window the caller cares about, the :class:`zicato.core.BoardEntry`
-catalog (so detectors can slice by tag / kind), and a map from entry id
-to the goldfive events JSONL path for detectors that need to read the
-raw event stream (the LossProfile is a digest; raw events carry the
-agent/task identifiers detectors like :func:`detect_hot_tasks` need).
+input bundles three things: every per-run
+:class:`zicato.core.LossProfile` over the window the caller cares about,
+the :class:`zicato.core.BoardEntry` catalog, so detectors can slice by tag
+or kind, and a map from entry id to the goldfive events JSONL path. The
+last is for detectors that need the raw event stream: a LossProfile is a
+digest, while raw events carry the agent and task identifiers a detector
+like :func:`detect_hot_tasks` needs.
 
 Design constraints:
 

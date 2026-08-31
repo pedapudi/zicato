@@ -204,11 +204,11 @@ def is_same_process(pid: int, expected_start_time: float | None) -> bool:
     """Return ``True`` iff ``pid`` is alive **and** is the same process.
 
     "Same process" means the live process now holding ``pid`` is the one
-    that recorded ``expected_start_time`` — defeating pid reuse, where a
-    dead worker's pid is reissued to an unrelated process (which would
-    make the dead worker look alive and decline a steal) or a stale lock's
-    pid number now belongs to an innocent bystander (which would make us
-    refuse to start, or mis-target it).
+    that recorded ``expected_start_time``. That defeats pid reuse, which
+    otherwise misleads in two directions: a dead worker's pid reissued to
+    an unrelated process makes the dead worker look alive and declines a
+    steal, and a stale lock's pid number now belonging to an innocent
+    bystander makes this process refuse to start, or mis-target it.
 
     Decision matrix:
 

@@ -817,8 +817,9 @@ async def _run(args: dict[str, Any]) -> None:
     # above rather than before. An endpoint-shaped harness role (spec.model +
     # endpoint/api_key_env — the live-validation shape) forces
     # ``_resolve_inner_model_from_role`` to import the whole ``google.adk``
-    # graph right here (~1 s / 80 MB / ~1500 modules, measured — RUNTIME.md
-    # §5.5.8), and ``ADKHarnessAdapter.load()`` a few lines below imports
+    # graph right here, a measured ~1 s / 80 MB / ~1500 modules
+    # (RUNTIME.md §5.5.8), and ``ADKHarnessAdapter.load()`` a few lines below
+    # imports
     # the SAME graph unconditionally for every ADK-adapter run regardless of
     # ``inner_model`` — so the import cost is unavoidable for this shape and
     # deferring it past ``.load()`` saves nothing on top (measured: building

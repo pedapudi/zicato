@@ -1090,10 +1090,10 @@ def detect_placebo_promoted(
     ``promote_margin`` and ``noise_floor`` are the epoch's decision
     parameters, threaded from :func:`assess_loop_health` so the alarm can
     show the comparison that failed rather than only its verdict (issue
-    #129): a no-op whose measured delta cleared a margin that sits inside
-    the measured noise is a mis-set margin, while the same delta clearing
-    a margin well above the floor is a broken reducer or a rigged gate,
-    and the operator's next move differs. Both default to ``None`` (never
+    #129). The two readings call for different operator moves. A no-op
+    whose measured delta cleared a margin that sits inside the measured
+    noise is a mis-set margin. The same delta clearing a margin well above
+    the floor is a broken reducer or a rigged gate. Both default to ``None`` (never
     measured / not supplied), which simply leaves that clause off the
     line. Absolute parent and child scalars are NOT available here — an
     :class:`~zicato.core.experiment.Outcome` records deltas only.
