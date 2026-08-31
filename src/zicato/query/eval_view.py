@@ -12,12 +12,11 @@ measured). Two index-first, file-fallback readers back the three eval views
   flip rate, discrimination, runtime cost, per-candidate trajectory, and the
   first-passed-by / regressed-by attribution along the champion spine.
 
-Every reader is best-effort and honest (EVAL-VIEW.md §3): a
-never-indexed workspace, an unknown epoch/entry, or absent calibration
-degrades to a same-shape payload (``found: False`` / ``null`` fields, a
-``"flip rate unmeasured"`` signal — NEVER a fabricated ``0.0``) rather than
-raising. This module stays dashboard-free (the ``zicato.query`` import
-contract).
+Every reader is best-effort and honest (EVAL-VIEW.md §3): a never-indexed
+workspace, an unknown epoch/entry, or absent calibration degrades to a
+same-shape payload (``found: False`` / ``null`` fields, a ``"flip rate
+unmeasured"`` signal — NEVER a fabricated ``0.0``) rather than raising. This
+module stays dashboard-free (the ``zicato.query`` import contract).
 
 The pure analytics helpers (:func:`flip_rate`, :func:`discrimination`,
 :func:`runtime_aggregates`, :func:`pass_ratio`, :func:`evidence_of`) do no
@@ -50,7 +49,7 @@ _MDE_POWER = 0.80
 _MDE_FORMULA = "MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd ≈ floor,  df = 2·(n−1)"
 
 # The minimum-comparisons honesty threshold for the DEAD-eval finding
-# (EVAL-VIEW.md §5 WS-HEALTH): an entry needs at least this many both-sides
+# (EVAL-VIEW.md §5): an entry needs at least this many both-sides
 # matchups before a zero discrimination is read as "dead" rather than thin
 # evidence. Below it the entry reports "insufficient comparisons", never dead —
 # §4's no-fabricated-numbers rule extended to the discrimination claim.
@@ -461,9 +460,8 @@ def _lineage_nodes(paths: WorkspacePaths, epoch_id: str) -> dict[str, dict[str, 
 
     The lineage view is THE promotion authority. ``lineage.json`` owns parent
     and promoted state; experiment outcomes are journal detail, never a second
-    topology source.
-    Best-effort: an unreadable workspace yields ``{}`` and the caller
-    falls back to the index bool.
+    topology source. Best-effort: an unreadable workspace yields ``{}`` and the
+    caller falls back to the index bool.
     """
     from zicato.query.lineage_view import build_lineage_view  # noqa: PLC0415
 
@@ -945,7 +943,7 @@ def _reflection_findings_for_entry(
 
     Cheap and honest: scans the epoch's reflections (via ``reflection_view``)
     and keeps findings whose serialized text mentions ``entry_id``. Empty when
-    no reflection exists or none reference the entry — the WS-DOSSIER view links
+    no reflection exists or none reference the entry — the per-entry dossier links
     into ``reflection_view`` for the full detail; this is only the pointer.
     """
     from zicato.query.reflection_view import (  # noqa: PLC0415
@@ -1114,7 +1112,7 @@ def build_eval_dossier(
 
 
 # ---------------------------------------------------------------------------
-# build_eval_health — the WS-HEALTH instrument panel (epoch-wide)
+# build_eval_health — the instrument-quality panel (epoch-wide)
 # ---------------------------------------------------------------------------
 
 
@@ -1297,7 +1295,7 @@ def _empty_health(epoch_id: str | None) -> dict[str, Any]:
 
 
 def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
-    """The WS-HEALTH instrument panel for one epoch (EVAL-VIEW.md §5 WS-HEALTH).
+    """The instrument-quality panel for one epoch (EVAL-VIEW.md §5).
 
     The board read as a measuring device: the measured noise floor + the live MDE
     ladder (§4.3), the ranked noisy / dead / costly evals (§2.2/§2.3), the
@@ -1353,7 +1351,7 @@ def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
 
     # Dead vs insufficient — a zero-discrimination channel is DEAD only above the
     # minimum-comparisons honesty threshold; below it we say "insufficient
-    # comparisons", never "dead" (§5 WS-HEALTH honesty rule).
+    # comparisons", never "dead" (the §5 honesty rule).
     dead: list[dict[str, Any]] = []
     insufficient: list[dict[str, Any]] = []
     for eid in ordered:
@@ -1584,9 +1582,8 @@ def facet_scores_for_generation(
     ``{entry_id: (facet, ...)}`` — pass it when the caller already read the
     board, so one request does not walk ``board.jsonl`` twice.
 
-    Best-effort: an unreadable board or absent run files yield
-    ``{"facets": {}, "overall": None}`` and the dossier's facet table simply
-    does not paint.
+    Best-effort: an unreadable board or absent run files yield ``{"facets": {},
+    "overall": None}`` and the dossier's facet table simply does not paint.
     """
     from zicato.tournament.scoring import aggregate_generation_score  # noqa: PLC0415
 

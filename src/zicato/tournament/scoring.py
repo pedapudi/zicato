@@ -60,13 +60,12 @@ epoch's :class:`~zicato.core.ScoringWeights`. The dict carries:
   ``diff_size`` was threaded for the candidate) a final ``"diff_complexity"``
   entry is appended; at the default weight ``0.0`` the key is absent.
 
-The aggregation is intentionally cheap and deterministic; it does NOT
-re-derive ``drift_loss`` from raw drift counts (that derivation lives
-in the telemetry reducer). :func:`per_run_drift_loss` is exposed as
-the canonical hook for callers who want to re-derive; it returns
-``loss.drift_loss``. Should the telemetry reducer's formula ever need to
-diverge from the tournament's view, the divergence is bounded to this
-single function.
+The aggregation is intentionally cheap and deterministic; it does NOT re-derive
+``drift_loss`` from raw drift counts (that derivation lives in the telemetry
+reducer). :func:`per_run_drift_loss` is exposed as the canonical hook for
+callers who want to re-derive; it returns ``loss.drift_loss``. Should the
+telemetry reducer's formula ever need to diverge from the tournament's view,
+the divergence is bounded to this single function.
 """
 
 from __future__ import annotations
@@ -199,7 +198,7 @@ def aggregate_namespaced_metrics(
     For the ``"drift:"`` namespace the aggregate is
     ``namespace_weights["drift:"] * mean(LossProfile.drift_loss)``: drift is
     reduced per run into ``drift_loss`` (Seam 1) and enters the scalar as one
-    channel, not as its per-``(kind, severity)`` buckets.
+    channel rather than as its per-``(kind, severity)`` buckets.
 
     For every other namespace the aggregate is
     ``namespace_weights[namespace] * mean(Σ within-channel-weighted

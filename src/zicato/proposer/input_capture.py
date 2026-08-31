@@ -1,15 +1,14 @@
 """Durable capture of every rendered proposer input.
 
-The proposer stack decides what the next generation *is*, so its input is
-worth reading back. Without a durable capture it is unrecoverable after
-the call: the renderers are pure, but the channels they render from
-(``patterns``, the loss summary, the prior-experiment digest, the
-genealogy and calibration blocks, the retry feedback) are never persisted,
-so a past round's prompt could only be re-derived approximately. Board
-runs, by contrast, keep their full transcript. This module closes that
-asymmetry: it writes the rendered system and user text verbatim to one
-append-only JSONL per epoch, ``epochs/{epoch_id}/proposer_inputs.jsonl``,
-one line per LLM call.
+The proposer stack decides what the next generation *is*, so its input is worth
+reading back. Without a durable capture it is unrecoverable after the call: the
+renderers are pure, but the channels they render from (``patterns``, the loss
+summary, the prior-experiment digest, the genealogy and calibration blocks, the
+retry feedback) are never persisted, so a past round's prompt could only be
+re-derived approximately. Board runs, by contrast, keep their full transcript.
+This module closes that asymmetry: it writes the rendered system and user text
+verbatim to one append-only JSONL per epoch,
+``epochs/{epoch_id}/proposer_inputs.jsonl``, one line per LLM call.
 
 The file is a new at-rest location for board-derived content, beside
 ``brief.md`` (spliced verbatim into the system prompt) and

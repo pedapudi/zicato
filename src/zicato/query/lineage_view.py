@@ -1,9 +1,8 @@
 """The lineage feed: one node per generation directory, across every epoch.
 
 Each node carries the generation's identity, its parent, the tri-state
-promotion flag, and the settle-time facts ``lineage.json`` recorded. The
-visibility rating triple is joined onto each node server-side from the
-analytical index.
+promotion flag, and the settle-time facts ``lineage.json`` recorded, plus the
+visibility rating triple joined server-side from the analytical index.
 """
 
 from __future__ import annotations
@@ -55,13 +54,12 @@ def build_lineage_view(
     workspace-global walk. An unknown id yields an empty list — the same
     honest degrade as an epoch with no generations.
 
-    Each node also carries the visibility rating triple ``elo`` /
-    ``elo_se`` / ``elo_games``, in one snake_case spelling, joined
-    server-side from the analytical index and never re-derived by the
-    client. The join is best-effort: an absent or cold index — or a
-    generation the fold has not rated (zero settled duels, or a file
-    written before the last reindex) — reads as the null triple, never an
-    error. The rating is visibility-only; it never gates promotion.
+    Each node also carries the visibility rating triple ``elo`` / ``elo_se``
+    / ``elo_games``, in one snake_case spelling, joined server-side from the
+    analytical index and never re-derived by the client. The join is
+    best-effort: an absent or cold index — or a generation the fold has not
+    rated — reads as the null triple, never an error. The rating is
+    visibility-only; it never gates promotion.
     """
     legacy: dict[tuple[str, str], dict[str, Any]] = {}
     lineage_file = _read_json_value(paths.lineage)
@@ -116,12 +114,10 @@ def build_lineage_view(
                 promoted = meta.get("promoted")
                 promoted = promoted if isinstance(promoted, bool) else None
 
-                # The evolve-round that MINTED this generation (its birth round
-                # within the epoch's outer loop), stamped onto experiment.json
-                # when the generation is minted. On a generation whose record
-                # carries no stamp the field is simply absent, and the dashboard
-                # derives the rounds from the field-tournament records and
-                # lineage instead. Read it tolerantly (int only).
+                # The evolve-round that MINTED this generation, stamped onto
+                # experiment.json at mint time. Absent on a record carrying no
+                # stamp, where the dashboard derives the rounds from the
+                # field-tournament records and lineage. Read tolerantly (int).
                 round_index: int | None = None
                 if experiment is not None:
                     raw_round = experiment.get("round_index")

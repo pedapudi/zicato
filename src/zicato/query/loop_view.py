@@ -170,12 +170,11 @@ def build_optimization_trajectory(paths: WorkspacePaths, epoch_id: str) -> dict[
     # cannot tell" into the most reassuring word the UI can print (issue #129).
     #
     # The floor decides WHICH honest word applies rather than whether one
-    # applies. With
-    # a MEASURED floor the stall is the noise-floor-honest "no detectable
-    # signal" (every challenger tied within the A/A spread; issue #84).
-    # Without one, "stalled" reports the promotions that did not happen and
-    # claims nothing about noise — fabricating no_signal here would assert a
-    # measurement that was never taken.
+    # applies. With a MEASURED floor the stall is the noise-floor-honest "no
+    # detectable signal" (every challenger tied within the A/A spread; issue
+    # #84). Without one, "stalled" reports the promotions that did not happen
+    # and claims nothing about noise — fabricating no_signal here would assert
+    # a measurement that was never taken.
     #
     # The denominator is SETTLED challengers rather than fielded ones. A challenger
     # that has applied its snapshot and is still racing already holds an index
@@ -451,12 +450,11 @@ def _project_pipeline(
 def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
     """The authoritative live pipeline state — ``GET /api/live/pipeline``.
 
-    Projects the propose → apply → run → gate position SERVER-SIDE from,
-    in preference order: the runtime tournament event-log fold (the
-    ``field_status`` slot outcomes + the tournament ``phase``), the
-    heartbeat ``phase`` string, and the in-flight ``active_runs`` count.
-    The reader owns the phase-string inference; the stepper renders this
-    verdict verbatim.
+    Projects the propose → apply → run → gate position SERVER-SIDE from, in
+    preference order: the runtime tournament event-log fold (the
+    ``field_status`` slot outcomes + the tournament ``phase``), the heartbeat
+    ``phase`` string, and the in-flight ``active_runs`` count. The reader owns
+    the phase-string inference; the stepper renders this verdict verbatim.
 
     ``running`` / ``stale`` are folded from the ONE served liveness
     verdict (:func:`zicato.query.runtime_view.derive_liveness`), which

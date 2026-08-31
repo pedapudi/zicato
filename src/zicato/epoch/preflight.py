@@ -21,19 +21,18 @@ Measurements
     (:func:`zicato.tournament.calibration.measure_noise_floor`, cache-
     idempotent with ``zicato board audit``).
 (b) The **scripted-perturbation duels** — the champion against copies of
-    itself degraded on purpose. Each degradation is synthetic and
-    mechanical: one enumerated mutation point has its span
-    blanked/scrambled in a scratch copy of the snapshot via the existing
-    applier machinery (:func:`zicato.mutation.applier.apply_patches`).
-    Each degraded tree is **ephemeral** — a temp directory, never
-    registered in the lineage — and its single draw caches under the
-    champion's id on a reserved replicate index
-    (:data:`PREFLIGHT_REPLICATE_BASE` + the probe ordinal), so re-running
-    the pre-flight is idempotent and can never collide with a real duel's
-    cache slots. ``max`` over probes of
-    ``|degraded_scalar - mean(champion_scalars)|`` is the contract's
-    demonstrated **degradation signal**. The window section below explains
-    why that is NOT the same as achievable improvement.
+    itself degraded on purpose. Each degradation is synthetic and mechanical:
+    one enumerated mutation point has its span blanked/scrambled in a scratch
+    copy of the snapshot via the existing applier machinery
+    (:func:`zicato.mutation.applier.apply_patches`). Each degraded tree is
+    **ephemeral** — a temp directory, never registered in the lineage — and its
+    single draw caches under the champion's id on a reserved replicate index
+    (:data:`PREFLIGHT_REPLICATE_BASE` + the probe ordinal), so re-running the
+    pre-flight is idempotent and can never collide with a real duel's cache
+    slots. ``max`` over probes of ``|degraded_scalar -
+    mean(champion_scalars)|`` is the contract's demonstrated **degradation
+    signal**. The window section below explains why that is NOT the same as
+    achievable improvement.
 
 Probe selection (issue #106)
 ----------------------------
@@ -149,19 +148,18 @@ and acts on :func:`effective_gate_verdict` per the gate mode:
   the hard stop the operator explicitly declined
   (:func:`zicato.health.diagnostics.detect_preflight_verdict`).
 * ``"refuse"`` — additionally raises :class:`PreflightRefusedError` when
-  the signal verdict refuses (the measured signal at/below the floor),
-  stopping the run *before* it spends rounds. The margin-window verdicts do
-  NOT refuse — they compare the margin against numbers that do not bound a
-  challenger's reach (see the window section above) — and
-  only here is the health finding a CRITICAL (moot for the breaker, since
-  the run already stopped at pre-flight). A deterministic
-  probe-selection CONFIG error (an unknown pinned mutation id, a probe
-  ceiling wider than the reserved replicate block) also refuses under this
-  mode: an outage never disqualifies a contract, but an operator typo is
+  the signal verdict refuses (the measured signal at/below the floor), stopping
+  the run *before* it spends rounds. The margin-window verdicts do NOT refuse —
+  they compare the margin against numbers that do not bound a challenger's
+  reach (see the window section above) — and only here is the health finding a
+  CRITICAL (moot for the breaker, since the run already stopped at pre-flight).
+  A deterministic probe-selection CONFIG error (an unknown pinned mutation id,
+  a probe ceiling wider than the reserved replicate block) also refuses under
+  this mode: an outage never disqualifies a contract, but an operator typo is
   not an outage, and silently proceeding unprotected is the one outcome a
-  ``"refuse"`` operator did not ask for
-  (:class:`PreflightConfigError`). An ``"inert"`` verdict never refuses:
-  the probe rather than the contract is what came up short.
+  ``"refuse"`` operator did not ask for (:class:`PreflightConfigError`). An
+  ``"inert"`` verdict never refuses: the probe rather than the contract is what
+  came up short.
 
 Surfaces: ``zicato board preflight`` (manual, always recommend-only,
 carries ``--degrade-mutation-id``) and the number of A/A draws K from the
@@ -317,12 +315,11 @@ class ProbedPoint:
         ``role`` metadata (``""`` when the point declares none) — ``role``
         is the axis :func:`select_probe_points` samples across.
     degraded_scalar, signal:
-        The degraded copy's aggregate scalar and
-        ``|degraded_scalar - mean(champion_scalars)|`` — DEGRADATION
-        headroom, persisted under both ``signal`` (the older key) and
-        ``degradation_signal`` (the one that names what it measures). Both
-        ``None`` when the probe
-        was never run (see :attr:`skipped`).
+        The degraded copy's aggregate scalar and ``|degraded_scalar -
+        mean(champion_scalars)|`` — DEGRADATION headroom, persisted under both
+        ``signal`` (the older key) and ``degradation_signal`` (the one that
+        names what it measures). Both ``None`` when the probe was never run
+        (see :attr:`skipped`).
     skipped:
         ``""`` when the point was actually degraded and drawn; else the
         machine-readable reason it cost no draw: ``"no_op_patch"`` (the
@@ -393,12 +390,11 @@ class PreflightReport:
     measured_at:
         ISO-8601 UTC timestamp of the measurement.
     probed_points:
-        Every point the sample considered, in probe order, with its
-        per-point signal or the reason it cost no draw (issue #106). The
-        max over these IS :attr:`signal`; the record is what lets an
-        operator see an inert point next to a live one instead of only the
-        winner. Additive: a record written before the per-point trail existed
-        carries none (issue #106).
+        Every point the sample considered, in probe order, with its per-point
+        signal or the reason it cost no draw (issue #106). The max over these
+        IS :attr:`signal`; the record is what lets an operator see an inert
+        point next to a live one instead of only the winner. Additive: a record
+        written before the per-point trail existed carries none (issue #106).
     promote_margin:
         The contract's ``promote_margin`` at measurement time, kept beside
         the measured signal so the window comparison is auditable from the
@@ -673,12 +669,11 @@ def preflight_verdict(
 
     * **Saturation first**: when the spread across ALL probes (every A/A
       draw plus the degraded draw) is exactly zero, even a tree broken on
-      purpose scored identically — the contract cannot discriminate
-      anything (the ``1.000000`` signature) ⇒ ``"warn"``. This is checked
-      before the floor comparison because a saturated contract trivially
-      also has ``signal == floor == 0``, and the saturation diagnosis is
-      the actionable one (the probe moved NOTHING, so the board — not the
-      noise — is the problem).
+      purpose scored identically — the contract cannot discriminate anything
+      (the ``1.000000`` signature) ⇒ ``"warn"``. This is checked before the
+      floor comparison because a saturated contract trivially also has ``signal
+      == floor == 0``, and the saturation diagnosis is the actionable one (the
+      probe moved NOTHING, so the board — not the noise — is the problem).
     * ``"inert"`` when the signal is EXACTLY zero while the champion's own
       draws did vary. Two facts hold simultaneously: the harness
       demonstrably can move the scalar, and the degradation moved it by
@@ -686,20 +681,19 @@ def preflight_verdict(
       contract, so it is reported apart from ``"refuse"`` (a different
       fix: choose a representative point) and never hard-stops a run.
 
-      Its reach is narrow. The two conditions together — champion spread
-      ``> 0`` and the
-      degraded scalar EXACTLY at the champion mean — are only jointly
-      satisfiable on a **quantized** scoring scale whose attainable values
-      include that mean. On a continuous noisy scale hitting the mean has
-      probability zero; on a deterministic harness the champion draws do not
-      vary at all, so the saturation branch above claims the case first
-      (degraded == champion ⇒ spread ``== 0`` ⇒ ``"warn"``). In particular
-      this branch is NOT what saves issue #106's healthy board: a live point
-      the deliverable merely routes around measures a small non-zero signal
-      and lands in ``"refuse"``. The role-diverse sample
-      (:func:`select_probe_points`) is what out-measures it, and the
-      gate-aware severity of the resulting health finding is what keeps a
-      warn-mode run alive while the operator fixes the sample.
+      Its reach is narrow. The two conditions together — champion spread ``>
+      0`` and the degraded scalar EXACTLY at the champion mean — are only
+      jointly satisfiable on a **quantized** scoring scale whose attainable
+      values include that mean. On a continuous noisy scale hitting the mean
+      has probability zero; on a deterministic harness the champion draws do
+      not vary at all, so the saturation branch above claims the case first
+      (degraded == champion ⇒ spread ``== 0`` ⇒ ``"warn"``). In particular this
+      branch is NOT what saves issue #106's healthy board: a live point the
+      deliverable merely routes around measures a small non-zero signal and
+      lands in ``"refuse"``. The role-diverse sample
+      (:func:`select_probe_points`) is what out-measures it, and the gate-aware
+      severity of the resulting health finding is what keeps a warn-mode run
+      alive while the operator fixes the sample.
     * ``"refuse"`` when the measured signal is positive but at or below
       the measured floor — an A/A re-roll moves the scalar as much as a
       deliberate degradation does, so duels are decided by noise.
@@ -810,12 +804,11 @@ def holdout_window_note(weights: ScoringWeights, holdout_entries: int) -> str | 
 
     * the scalar bound — one holdout entry flipping pass→fail moves the
       holdout scalar by about ``pass_weight / N``, so the holdout margin must
-      reach that for the slice's smallest expressible movement to be
-      tolerated. (Approximately rather than exactly: the estimate assumes a
-      linear pass term
-      and no other namespace moving. It is the right order of magnitude for
-      the pass-dominated boards where this bites, and it is prose rather than
-      a threshold anything is compared against.)
+      reach that for the slice's smallest expressible movement to be tolerated.
+      (Approximately rather than exactly: the estimate assumes a linear pass
+      term and no other namespace moving. It is the right order of magnitude
+      for the pass-dominated boards where this bites, and it is prose rather
+      than a threshold anything is compared against.)
     * the pass-rate rule — at
       :attr:`~zicato.core.ScoringWeights.holdout_entry_regression_budget`
       ``== 0`` a single flipped holdout entry rejects at EVERY margin, under
@@ -935,13 +928,12 @@ async def run_contract_preflight(
     ``promote_margin`` / floor window.
 
     ``degrade_mutation_id`` pins the probe to ONE named mutation point
-    (``zicato board preflight --degrade-mutation-id``); absent, the pin
-    falls back to :attr:`RuntimeConfig.preflight_probe_mutation_ids` and
-    then to the automatic sample. ``probe_points`` caps the automatic
-    sample, defaulting to :attr:`RuntimeConfig.preflight_probe_points` —
-    a CEILING rather than a cost: the loop stops at the first probe that settles
-    the verdict, so a healthy contract still spends exactly one degraded
-    draw.
+    (``zicato board preflight --degrade-mutation-id``); absent, the pin falls
+    back to :attr:`RuntimeConfig.preflight_probe_mutation_ids` and then to the
+    automatic sample. ``probe_points`` caps the automatic sample, defaulting to
+    :attr:`RuntimeConfig.preflight_probe_points` — a CEILING rather than a
+    cost: the loop stops at the first probe that settles the verdict, so a
+    healthy contract still spends exactly one degraded draw.
 
     ``on_probe`` (default ``None`` — no behaviour change for callers that
     do not pass one) is called ``(units_settled, total_units)`` where a

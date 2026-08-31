@@ -4,9 +4,9 @@ The instrument's second loop (EVAL-SYNTHESIS.md) opens here: mine bounded
 **episodes** from the candidate loop's observed behaviour, each one a demand
 signal for an instrument change. This module is the endpoint-free front of that
 pipeline — it spends ZERO LLM budget and only READS already-persisted
-artifacts. Downstream (WS-SYNTH / WS-ADMIT / WS-SURFACE) turns ranked episodes
-into measured suggestions; nothing here authors a suggestion or touches a
-contract.
+artifacts. Downstream, synthesis, admission and the suggestion surface turn
+ranked episodes into measured suggestions; nothing here authors a suggestion
+or touches a contract.
 
 Five episode kinds, each bound to a **tree-verified** real data source
 (EVAL-SYNTHESIS.md §2 — the binding discipline is the eval-view lesson: bind to

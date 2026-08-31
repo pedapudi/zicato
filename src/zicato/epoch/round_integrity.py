@@ -45,18 +45,17 @@ Both are properties of the LOG rather than of this module, so neither can
 be fixed here. They are recorded because a reader who does not know them will
 over-trust a clean report.
 
-(A third limit — **discarded slate errors** — is closed at the writer
-(issue #141). ``proposer/best_of_n.py`` records every failed slate slot's
-error. Discarding a failed slot's error whenever a sibling survived,
-re-raising only the LAST one when none did, and swallowing the LLM-merge
-call's exception outright would let a round lose most of its slate to a
-credential lapse and
+(A third limit — **discarded slate errors** — is closed at the writer (issue
+#141). ``proposer/best_of_n.py`` records every failed slate slot's error.
+Discarding a failed slot's error whenever a sibling survived, re-raising only
+the LAST one when none did, and swallowing the LLM-merge call's exception
+outright would let a round lose most of its slate to a credential lapse and
 leave ``proposal.errors`` empty. It now emits one ``proposal_attempted`` per
 failed slot, carrying that slot's attempts verbatim. This module reads that
-evidence like any other: the lapse lands as a matched marker and voids by
-rule 3. The ``recombined_sampled`` discriminator in :func:`classify_round`
-stays as defense in depth — it does not need the evidence to be present, so
-it still holds when a future writer path forgets to emit.
+evidence like any other: the lapse lands as a matched marker and voids by rule
+3. The ``recombined_sampled`` discriminator in :func:`classify_round` stays as
+defense in depth — it does not need the evidence to be present, so it still
+holds when a future writer path forgets to emit.
 
 That has a consequence on THIS side. Because failed-slot errors reach the
 log, ``invalid_patch`` cannot be "the round has any error at all": a
@@ -521,13 +520,12 @@ def classify_round(
        carries a credential/transport/quota failure is the outage this
        module exists to catch.
     4. **Settled, no gate, the proposer was reached AND the patch was
-       invalid** → ``settled_degraded``. This acceptance is NARROW by
-       design, and it is load-bearing: a round where the
-       proposer really was reached and really did produce an invalid
-       patch is a REAL MEASUREMENT of a degraded arm, and voiding it
-       would send a legitimately-degraded arm around the retry loop to
-       exhaustion, burning the sweep's budget re-measuring a result it
-       already has. Accepting it is the point.
+       invalid** → ``settled_degraded``. This acceptance is NARROW by design,
+       and it is load-bearing: a round where the proposer really was reached
+       and really did produce an invalid patch is a REAL MEASUREMENT of a
+       degraded arm, and voiding it would send a legitimately-degraded arm
+       around the retry loop to exhaustion, burning the sweep's budget
+       re-measuring a result it already has. Accepting it is the point.
     5. **Settled, no gate, anything else** → ``void``: no measurement
        and no explanation for its absence.
 
@@ -883,9 +881,8 @@ def render_round_integrity(report: EpochRoundIntegrity) -> str:
     """Render the report as the operator-facing text block.
 
     Renders the EVIDENCE rather than a boolean: every round gets its status,
-    its gate count, and the lines explaining the call — matched infra
-    markers verbatim — so the verdict can be audited from this output
-    alone.
+    its gate count, and the lines explaining the call — matched infra markers
+    verbatim — so the verdict can be audited from this output alone.
 
     A round that PROMOTED while entries regressed on their own evidence also
     gets a warning line naming them. It sits apart from the evidence trail

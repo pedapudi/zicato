@@ -16,11 +16,10 @@ re-validate the LLM result beyond writing it through; downstream tooling
 that wants structure should read from ``experiment.json`` and
 ``journal.md`` directly.
 
-The pass is **bounded**: we cap the journal slice and per-experiment
-detail we inline into the prompt so the call is predictable. Operators
-who need a fuller retrospective can re-run the pass with a larger budget
-by setting environment knobs; the function takes a ``model`` argument so a
-caller can select one.
+The pass is **bounded**: we cap the journal slice and per-experiment detail we
+inline into the prompt so the call is predictable. Operators who need a fuller
+retrospective can re-run the pass with a larger budget by setting environment
+knobs; the function takes a ``model`` argument so a caller can select one.
 """
 
 from __future__ import annotations

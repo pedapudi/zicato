@@ -12,12 +12,11 @@ grids, and one Elo fold) and assembles the plain-data
 function of that pre-fetched data, so the selector is exhaustively
 testable per-predicate with no fixtures.
 
-The 8 hard eligibility predicates (a candidate must clear ALL of #1–#6;
-a PAIR must clear #7–#8), justified inline, are the settled design of
-``docs/design/PROPOSER.md`` §2.6. Cross-regression is a RANKING penalty
-rather than a filter, because a per-entry single-sample verdict is noisy;
-the screen confirms before it vetoes for the same reason. The ranking is
-total and
+The 8 hard eligibility predicates (a candidate must clear ALL of #1–#6; a PAIR
+must clear #7–#8), justified inline, are the settled design of
+``docs/design/PROPOSER.md`` §2.6. Cross-regression is a RANKING penalty rather
+than a filter, because a per-entry single-sample verdict is noisy; the screen
+confirms before it vetoes for the same reason. The ranking is total and
 deterministic: any evidence tie is broken lexicographically, so the same
 pre-fetched data always mints the same pair.
 """
@@ -29,12 +28,11 @@ from itertools import combinations
 
 from zicato.core.types import ExpectedDriftMovement, ExpectedMetricMovement, Patch
 
-#: Elo scale midpoint that default-fills a candidate whose rating the
-#: fold has not produced (a fresh reject, or an index-absent
-#: workspace). 1500 is the conventional Elo seed; filling both sides of a
-#: pair with it makes the summed-Elo ranking key inert across an
-#: all-unrated pool — it can only ever REORDER within an evidence tie,
-#: never manufacture a pair.
+#: Elo scale midpoint that default-fills a candidate whose rating the fold has
+#: not produced (a fresh reject, or an index-absent workspace). 1500 is the
+#: conventional Elo seed; filling both sides of a pair with it makes the
+#: summed-Elo ranking key inert across an all-unrated pool — it can only ever
+#: REORDER within an evidence tie, never manufacture a pair.
 DEFAULT_ELO: float = 1500.0
 
 #: Hard cap on the recombination pool size — the N most-recent rejects the
@@ -176,7 +174,7 @@ def rank_pairs(
     nothing and the round is byte-identical.
 
     ``merge_mode`` (``"mechanical"`` default | ``"llm"``) is the ONLY split
-    (WS-MERGE; PROPOSER.md §2.6.1): in ``"llm"`` mode predicate #7
+    (PROPOSER.md §2.6.1): in ``"llm"`` mode predicate #7
     (disjointness) RELAXES for pair selection — the LLM merge resolves the
     overlap the mechanical mint cannot — and overlap becomes a RANKING
     penalty instead. EVERY other predicate holds in both modes (#8

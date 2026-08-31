@@ -96,10 +96,9 @@ from zicato.epoch.round_log import (
 )
 from zicato.mutation.validator import POST_APPLY_CHECKS, classify_post_apply_error
 
-#: Observations below which a rate is reported but marked ``provisional``.
-#: Four rounds of a fresh epoch are noise rather than a base rate; the marker
-#: says so
-#: without hiding the number.
+#: Observations below which a rate is reported but marked ``provisional``. Four
+#: rounds of a fresh epoch are noise rather than a base rate; the marker says
+#: so without hiding the number.
 MIN_SAMPLE_N: int = 5
 
 #: The bucket for a proposal error that carries no recognised check code — a

@@ -208,11 +208,10 @@ def _resolve_generation_root(ctx: ProposerContext) -> Path:
 
     Prefers :attr:`ProposerContext.generation_root`, which the orchestrator
     populates at the single ``_propose_child`` construction site (a REQUIRED
-    argument there, so the real path always carries it). The derivation
-    below is the fallback for a context assembled by hand — a test, a
-    standalone propose — and exists only so those keep working; it
-    duplicates the generation store's path convention, which is why the
-    field exists.
+    argument there, so the real path always carries it). The derivation below
+    is the fallback for a context assembled by hand — a test, a standalone
+    propose — and exists only so those keep working; it duplicates the
+    generation store's path convention, which is why the field exists.
 
     The read-only tools (``read_mutable_file`` / ``grep_mutable``) read the
     PARENT generation snapshot — the tree this round is about to patch. We
@@ -287,14 +286,13 @@ class ADKProposerAgent:
     #: ``proposer_path`` / ``builtin_default`` are ignored and no disk load
     #: or default-agent build happens.
     agent: Any | None = None
-    #: When ``True`` this is the BUILT-IN DEFAULT proposer: the agent is
-    #: built from :func:`build_default_adk_agent` bound to ``ctx.model`` on
-    #: first :meth:`propose` (no ``agent.py`` on disk, no injected agent).
+    #: When ``True`` this is the BUILT-IN DEFAULT proposer: the agent is built
+    #: from :func:`build_default_adk_agent` bound to ``ctx.model`` on first
+    #: :meth:`propose` (no ``agent.py`` on disk, no injected agent).
     #: ``build_proposer_agent`` sets this for the builtin-default spec. The
-    #: per-run model is the auxiliary model the operator already configured,
-    #: so the model-collusion smell test is intentionally skipped for the
-    #: default (it is the documented, expected posture rather than an author
-    #: error).
+    #: per-run model is the auxiliary model the operator already configured, so
+    #: the model-collusion smell test is intentionally skipped for the default
+    #: (it is the documented, expected posture rather than an author error).
     builtin_default: bool = False
 
     def _load_agent(self, ctx: ProposerContext | None = None) -> Any:

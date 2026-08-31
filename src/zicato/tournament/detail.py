@@ -266,15 +266,14 @@ class TrajectoryPoint:
 class Trajectory:
     """The optimisation trajectory across the promoted lineage.
 
-    ``plateaued`` and ``plateau_measurable`` are read as a PAIR.
-    ``plateaued`` is a property of the promoted spine, and a spine
-    shorter than :data:`PLATEAU_WINDOW` resolved scalars cannot plateau —
-    so ``plateaued=False`` alone conflates "the lineage is still
-    improving" with "the lineage is too short to tell". A run where every
-    challenger was rejected has a one-node spine and reports
-    ``plateaued=False`` for the second reason rather than the first.
-    ``plateau_measurable`` names which of the two it is: ``False`` means
-    the flag carries no measurement at all.
+    ``plateaued`` and ``plateau_measurable`` are read as a PAIR. ``plateaued``
+    is a property of the promoted spine, and a spine shorter than
+    :data:`PLATEAU_WINDOW` resolved scalars cannot plateau — so
+    ``plateaued=False`` alone conflates "the lineage is still improving" with
+    "the lineage is too short to tell". A run where every challenger was
+    rejected has a one-node spine and reports ``plateaued=False`` for the
+    second reason rather than the first. ``plateau_measurable`` names which of
+    the two it is: ``False`` means the flag carries no measurement at all.
 
     ``challenger_count`` and ``settled_count`` are the same kind of pair.
     ``challenger_count`` counts every non-seed generation the index
@@ -1261,10 +1260,9 @@ def optimization_trajectory(db_path: str | Path, epoch_id: str) -> Trajectory:
       promoted generations. A spine shorter than the window cannot
       plateau (returns ``False``).
     * ``plateau_measurable`` — whether that flag rests on a measurement
-      at all. A run whose challengers were all rejected has a one-node
-      spine, so it reports ``plateaued=False`` for want of data rather than
-      for want of a plateau; the pair distinguishes it from an improving
-      lineage.
+      at all. A run whose challengers were all rejected has a one-node spine,
+      so it reports ``plateaued=False`` for want of data rather than for want
+      of a plateau; the pair distinguishes it from an improving lineage.
 
     Generations whose scalar cannot be resolved contribute a ``None``
     scalar point and are skipped by the plateau check — never raises.

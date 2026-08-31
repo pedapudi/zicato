@@ -133,11 +133,10 @@ def _ensure_baseline_snapshot(
 
     1. **Cross-epoch lineage seed.** When the epoch was created by a
        contract-roll, :func:`ensure_epoch_for_contract` leaves a
-       ``v0_seed_from`` marker pointing at the previous epoch's
-       promoted-head snapshot. The new epoch's ``v0`` is seeded from
-       that snapshot so the lineage continues from the best result of
-       the predecessor epoch rather than restarting from the registered
-       source.
+       ``v0_seed_from`` marker pointing at the previous epoch's promoted-head
+       snapshot. The new epoch's ``v0`` is seeded from that snapshot so the
+       lineage continues from the best result of the predecessor epoch rather
+       than restarting from the registered source.
     2. **Registered mutable trees.** The default for a fresh, non-rolled
        epoch (or a rolled epoch whose predecessor had no promoted
        generation beyond v0). Each registered ``mutable_trees`` root is

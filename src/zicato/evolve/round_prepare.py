@@ -55,12 +55,11 @@ async def _maybe_calibrate_noise_floor(
 ) -> None:
     """Run the opt-in A/A noise-floor calibration once per epoch.
 
-    Fires only when the workspace config carries ``"calibrate_noise_floor":
-    K`` (K >= 2 draws) AND the epoch record has no measured floor yet, so the
-    measurement happens once at epoch open (the first evolve round of
-    a fresh epoch) and every later round short-circuits on the persisted
-    record. Best-effort by contract — a calibration failure must never abort
-    the round.
+    Fires only when the workspace config carries ``"calibrate_noise_floor": K``
+    (K >= 2 draws) AND the epoch record has no measured floor yet, so the
+    measurement happens once at epoch open (the first evolve round of a fresh
+    epoch) and every later round short-circuits on the persisted record.
+    Best-effort by contract — a calibration failure must never abort the round.
 
     The measurement is SERIAL and front-loaded — K passes over every board
     entry before the round's first duel — so it owns the heartbeat for its
@@ -461,9 +460,8 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
 
     Consulted once per evolve invocation (round 0). A WARNING only when the
     evidence gate is OFF — with the gate on, the defer→replicate loop still
-    holds promotions to CI separation, so the margin being inside the noise
-    is an informational note rather than a decision hazard. Never
-    hard-refuses.
+    holds promotions to CI separation, so the margin being inside the noise is
+    an informational note rather than a decision hazard. Never hard-refuses.
 
     Best-effort like the rest of the health path: the :mod:`zicato.health`
     sibling lands in parallel and may be absent, so a missing
@@ -864,14 +862,13 @@ def _warn_erroring_judges(epoch_id: str, round_n: int, health: Any) -> None:
 
     The sibling of :func:`_warn_dead_judges`, for the failure that is easily
     confused with a dead judge (issue #121). A judge whose callable raised
-    produced no
-    verdict at all, but every layer below swallows the exception — zicato's
-    judge boundary and goldfive's steerer both catch by hard contract — and
-    goldfive emits no event for the empty verdict that results. So the round
-    scored with that judge's signal silently missing, and its zero drift
+    produced no verdict at all, but every layer below swallows the exception —
+    zicato's judge boundary and goldfive's steerer both catch by hard contract
+    — and goldfive emits no event for the empty verdict that results. So the
+    round scored with that judge's signal silently missing, and its zero drift
     made the generation look BETTER than the evidence supports. That is a
-    result the operator must see on the terminal in the round it happens,
-    not in a per-round JSON read afterwards.
+    result the operator must see on the terminal in the round it happens, not
+    in a per-round JSON read afterwards.
 
     Tolerant of the health sibling's exact shape: it scans ``.findings`` for
     the stable ``code == "judge_erroring"`` and reads the finding's

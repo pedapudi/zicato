@@ -149,16 +149,15 @@ class _IncrementalScorer:
     dashboard) therefore sees a real server-side ``scalar`` climb as the
     tournament runs rather than 0.00 until the round ends.
 
-    The accumulators are plain lists guarded by an :class:`asyncio.Lock`.
-    The lock is not strictly required while the runner stays
-    single-threaded — a coroutine body runs uninterrupted between
-    ``await`` points — but it makes the read-modify-recompute-persist
-    sequence an explicit critical section, so a future move of any part
-    of it onto a thread (or an interleaving ``await`` added inside
-    ``record``) cannot corrupt the running aggregate. The state write is
-    strictly best-effort: a missing runtime-state module or an I/O error
-    is swallowed, as every other dashboard-facing write in this module is;
-    incremental scoring must never abort a run.
+    The accumulators are plain lists guarded by an :class:`asyncio.Lock`. The
+    lock is not strictly required while the runner stays single-threaded — a
+    coroutine body runs uninterrupted between ``await`` points — but it makes
+    the read-modify-recompute-persist sequence an explicit critical section, so
+    a future move of any part of it onto a thread (or an interleaving ``await``
+    added inside ``record``) cannot corrupt the running aggregate. The state
+    write is strictly best-effort: a missing runtime-state module or an I/O
+    error is swallowed, as every other dashboard-facing write in this module
+    is; incremental scoring must never abort a run.
     """
 
     __slots__ = (
@@ -558,7 +557,7 @@ async def _run_board_units_full(
 
     The board entries are the "boards" of the tournament hall: up to
     :attr:`RuntimeConfig.parallelism` BOARD UNITS play at once. The
-    semaphore counts board units, not subprocesses — in full mode each
+    semaphore counts board units rather than subprocesses — in full mode each
     admitted unit runs champion + challenger concurrently (see
     :func:`_run_full_board_unit`), so ``parallelism`` board units mean up
     to ``2 * parallelism`` run subprocesses alive at once.
@@ -571,13 +570,12 @@ async def _run_board_units_full(
     whole parent board before the child board. The gate still compares two
     fully-aggregated generations, so the decision is unaffected.
 
-    Result ordering is independent of completion order: the two
-    ``entry.id -> LossProfile`` maps are rebuilt by zipping the board
-    (input order) with the gather results (:func:`asyncio.gather`
-    preserves submission order). Failure handling follows one contract: a
-    raising board unit does not cancel in-flight siblings,
-    and the first failure (board order) is re-raised after every sibling
-    has settled.
+    Result ordering is independent of completion order: the two ``entry.id ->
+    LossProfile`` maps are rebuilt by zipping the board (input order) with the
+    gather results (:func:`asyncio.gather` preserves submission order). Failure
+    handling follows one contract: a raising board unit does not cancel
+    in-flight siblings, and the first failure (board order) is re-raised after
+    every sibling has settled.
 
     Each board unit is scored the instant its champion + challenger
     runs settle — see :class:`_IncrementalScorer`. The running partial
@@ -1081,7 +1079,7 @@ async def _run_unit_cache_first(
     cached-vs-fresh tally for the round. It counts what each caller DID:
     a coalesced waiter reuses a persisted result and launches no worker,
     so it counts as cached — the tally stays a count of evaluations
-    performed, not of requests made.
+    performed rather than of requests made.
     """
 
     async def _evaluate() -> LossProfile:
@@ -1627,7 +1625,7 @@ async def _run_replicated(
         mode = "fast" if left_fully_cached else "fast-degraded"
 
     # Opt-in matchup-level wall-clock cap. The deadline spans ALL replicates
-    # (it bounds the TOTAL matchup wall-clock, not each replicate), so it is
+    # (it bounds the TOTAL matchup wall-clock rather than each replicate), so it is
     # computed ONCE here from a monotonic clock. ``None`` ⇒ uncapped: the
     # deadline is never consulted.
     matchup_deadline: float | None = (
@@ -1665,20 +1663,19 @@ async def _run_replicated(
         return left_folded, right_folded, mode, provenance
 
     for replicate_offset in range(replicate_count):
-        # Each replicate keys a distinct cache slot; the same board-unit
-        # runner handles champion + challenger cache-first, so an existing
-        # replicate is reused (incremental) and only missing slots run.
-        # Subprocess isolation, scoring, and failure surfacing are
-        # unchanged. The replicate index is stamped onto each entry's
-        # context (run provenance for the harness under test — a
-        # seeded/deterministic harness varies its noise draw by it);
-        # replicate 0 is left untouched, byte-identical to before.
-        # Per-round token budget: stop scheduling FURTHER replicate
-        # slots once the budget is spent — the completed slots average
-        # as-is ("settle with what it has"), rather than folding synthetic
-        # worst-case skips into entries that already measured cleanly.
-        # Slot 0 always runs (its own between-unit checks skip-record when
-        # the budget was already spent) so the return shape is intact.
+        # Each replicate keys a distinct cache slot; the same board-unit runner
+        # handles champion + challenger cache-first, so an existing replicate
+        # is reused (incremental) and only missing slots run. Subprocess
+        # isolation, scoring, and failure surfacing are unchanged. The
+        # replicate index is stamped onto each entry's context (run provenance
+        # for the harness under test — a seeded/deterministic harness varies
+        # its noise draw by it); replicate 0 is left untouched, byte-identical
+        # to before. Per-round token budget: stop scheduling FURTHER replicate
+        # slots once the budget is spent — the completed slots average as-is
+        # ("settle with what it has"), rather than folding synthetic worst-case
+        # skips into entries that already measured cleanly. Slot 0 always runs
+        # (its own between-unit checks skip-record when the budget was already
+        # spent) so the return shape is intact.
         if replicate_offset > 0 and _token_budget_spent(config):
             log.warning(
                 "matchup %s: per-round token budget reached after %d/%d "

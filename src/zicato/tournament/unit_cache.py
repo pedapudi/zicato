@@ -161,7 +161,7 @@ def is_own_code_board_draw(replicate_index: int) -> bool:
     """Whether a slot under ``generations/<gen>/runs/`` is a full-board draw of
     THAT generation's own, unmodified code.
 
-    The replicate-index namespace is partitioned by owner (G7's reserved-base
+    The replicate-index namespace is partitioned by owner (the reserved-base
     ledger, rolled up at
     :data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`). Several
     owners cache under a REAL generation id, and only some of them ran that
@@ -410,13 +410,12 @@ def run_result_to_payload(run_result: Any) -> dict[str, Any]:
 def read_run_result(path: Path) -> dict[str, Any] | None:
     """Read one persisted ``result.json``; ``None`` on ANY defect.
 
-    The tolerant read twin of the worker's best-effort write: a missing
-    file (a run that captured none, an opted-out runtime, a failed
-    capture), unreadable
-    bytes, non-JSON / non-object content, or a ``format_version`` other
-    than :data:`RUN_RESULT_FORMAT_VERSION` (absent, older, newer,
-    garbage) all return ``None`` — the caller degrades to the next
-    fidelity tier (BOARD-REFLECTION.md's ladder), never crashes.
+    The tolerant read twin of the worker's best-effort write: a missing file (a
+    run that captured none, an opted-out runtime, a failed capture), unreadable
+    bytes, non-JSON / non-object content, or a ``format_version`` other than
+    :data:`RUN_RESULT_FORMAT_VERSION` (absent, older, newer, garbage) all
+    return ``None`` — the caller degrades to the next fidelity tier
+    (BOARD-REFLECTION.md's ladder), never crashes.
     """
     try:
         raw = path.read_text(encoding="utf-8")

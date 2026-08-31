@@ -346,12 +346,11 @@ def _integrity_block_reason(
 ) -> str | None:
     """The refusal reason when an opt-in integrity block fires, else ``None``.
 
-    Consulted immediately before a GATE-DECIDED promotion is finalized —
-    the in-band, opt-in twins of the supervisor's alarm-only integrity
-    notary. Both checks default OFF (``ScoringWeights``); an explicit
-    operator force-promote is never routed here (the override is recorded
-    provenance rather than a silent flip, and blocking it would disable the
-    control protocol).
+    Consulted immediately before a GATE-DECIDED promotion is finalized — the
+    in-band, opt-in twins of the supervisor's alarm-only integrity notary. Both
+    checks default OFF (``ScoringWeights``); an explicit operator force-promote
+    is never routed here (the override is recorded provenance rather than a
+    silent flip, and blocking it would disable the control protocol).
 
     (a) **Diff containment** (``block_on_containment_violation``): every
         file outside the registered mutable trees must be byte-identical

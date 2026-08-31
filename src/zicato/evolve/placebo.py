@@ -81,14 +81,13 @@ def placebo_round_due(every_n: int, round_n: int | None) -> bool:
 def placebo_noop_content(point: MutationPoint) -> str:
     """The ``new_content`` that re-emits ``point``'s value unchanged.
 
-    See the module docstring for the per-kind rules. The span path
-    re-resolves the literal through the SAME applier helpers a real
-    ``replace`` uses, so the value it re-emits is the value the applier
-    would be replacing. Falls back to ``point.content`` when the literal
-    cannot be re-resolved (an unparseable file); that is still a valid
-    patch, though it is no longer guaranteed to preserve semantics. The
-    caller's
-    best-effort wrapper tolerates the degenerate case.
+    See the module docstring for the per-kind rules. The span path re-resolves
+    the literal through the SAME applier helpers a real ``replace`` uses, so
+    the value it re-emits is the value the applier would be replacing. Falls
+    back to ``point.content`` when the literal cannot be re-resolved (an
+    unparseable file); that is still a valid patch, though it is no longer
+    guaranteed to preserve semantics. The caller's best-effort wrapper
+    tolerates the degenerate case.
     """
     if point.kind in ("file", "code") or point.file.suffix != ".py":
         return point.content

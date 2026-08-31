@@ -46,15 +46,14 @@ Three rules, applied in order:
    :attr:`ScoringWeights.pass_rate_monotonicity_scope`:
 
    * ``"per_entry"`` (default) — for every entry the parent SCORED, the
-     child's continuous score may not drop below the parent's by more
-     than :data:`PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE`. A BOOL entry
-     the parent passed has score ``1.0``, so the child must still score
-     ``1.0`` (within the tiny tolerance), so it must still pass. A
-     continuous entry may dip by the tolerance band
-     to absorb small-board scoring jitter. If any tracked entry regressed,
-     the gate rejects with the entry ids listed in the reason. Entries the
-     parent failed (score ``0.0``) or had no expectation for are not gated.
-     The right policy for invariant / regression-suite boards.
+     child's continuous score may not drop below the parent's by more than
+     :data:`PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE`. A BOOL entry the parent
+     passed has score ``1.0``, so the child must still score ``1.0`` (within
+     the tiny tolerance), so it must still pass. A continuous entry may dip by
+     the tolerance band to absorb small-board scoring jitter. If any tracked
+     entry regressed, the gate rejects with the entry ids listed in the reason.
+     Entries the parent failed (score ``0.0``) or had no expectation for are
+     not gated. The right policy for invariant / regression-suite boards.
    * ``"aggregate"`` — reject only when the child's OVERALL ``mean_score``
      fell below the parent's by more than
      :data:`PASS_RATE_MONOTONICITY_TOLERANCE`. The child may trade
@@ -278,13 +277,12 @@ def regressed_namespaces(
     but missing from the parent or child aggregates are silently
     skipped — we cannot judge regression without two points to compare.
 
-    Public because Rule 3's question — "did a monotonicity-tracked
-    namespace move the wrong way between these two aggregates?" — is asked
-    outside the gate too: the gate-rule view renders it, and the Pareto
-    frontier record uses it as its admission control (see
-    ``docs/design/PARETO-FRONTIER.md`` §4). A second implementation would
-    let the record and the gate disagree about what a regression is, so
-    there is only one.
+    Public because Rule 3's question — "did a monotonicity-tracked namespace
+    move the wrong way between these two aggregates?" — is asked outside the
+    gate too: the gate-rule view renders it, and the Pareto frontier record
+    uses it as its admission control (see ``docs/design/PARETO-FRONTIER.md``
+    §4). A second implementation would let the record and the gate disagree
+    about what a regression is, so there is only one.
     """
     parent_ns: dict[str, Any] = parent_agg.get("namespace_aggregates", {}) or {}
     child_ns: dict[str, Any] = child_agg.get("namespace_aggregates", {}) or {}
@@ -388,13 +386,12 @@ def _regressed_entries(parent_agg: dict[str, Any], child_agg: dict[str, Any]) ->
     vanished row as a child that no longer passes.
 
     On a score-less or all-bool board this reduces to the bool rule: a
-    parent-passed entry has ``parent_score == 1.0``, and any
-    child below ``1.0 - tolerance`` (i.e. a 1.0 -> 0.0 flip, or a vanished
-    row read as 0.0) regresses, while a parent-FAILED entry
-    (``parent_score == 0.0``) is never gated because no child score can
-    fall below ``0.0 - tolerance``. The small tolerance only loosens the
-    purely-continuous case; it cannot make a bool pass->fail flip slip
-    through.
+    parent-passed entry has ``parent_score == 1.0``, and any child below ``1.0
+    - tolerance`` (i.e. a 1.0 -> 0.0 flip, or a vanished row read as 0.0)
+    regresses, while a parent-FAILED entry (``parent_score == 0.0``) is never
+    gated because no child score can fall below ``0.0 - tolerance``. The small
+    tolerance only loosens the purely-continuous case; it cannot make a bool
+    pass->fail flip slip through.
     """
     parent_per: dict[str, dict[str, Any]] = parent_agg.get("per_entry", {})
     child_per: dict[str, dict[str, Any]] = child_agg.get("per_entry", {})
@@ -652,14 +649,13 @@ def _holdout_confirms(
       ``pass_rate_monotonicity_scope`` so train and holdout apply one
       consistent policy — per-entry on both sides, or aggregate on both).
 
-    Both bounds are the HOLDOUT's own (issue #118). Reusing the train knob
-    for the scalar band pulled one number in two directions at once, and the
-    pass-rate rule had no operator tolerance at all — only its float-noise
-    band — so on a 6-entry holdout a single entry flipping pass→fail
-    rejected at every margin. That contradicts this step's own doctrine
-    (below): a confirmation that no achievable margin can satisfy is not a
-    confirmation, it is a second gate. Both knobs default to the strict
-    setting.
+    Both bounds are the HOLDOUT's own (issue #118). Reusing the train knob for
+    the scalar band pulled one number in two directions at once, and the
+    pass-rate rule had no operator tolerance at all — only its float-noise band
+    — so on a 6-entry holdout a single entry flipping pass→fail rejected at
+    every margin. That contradicts this step's own doctrine (below): a
+    confirmation that no achievable margin can satisfy is not a confirmation,
+    it is a second gate. Both knobs default to the strict setting.
 
     The holdout is never asked to clear the margin in the *improving*
     direction — a train-measured win that merely holds flat on the holdout

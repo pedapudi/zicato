@@ -717,10 +717,9 @@ def build_run_header(
 ) -> dict[str, Any]:
     """Per-run header metrics.
 
-    Projects the numeric / verdict header fields from a board-entry
-    run's ``loss.json``. The run page already shows ``drift_loss`` and
-    ``pass_fail`` from the per-entry table; this reader surfaces the
-    remaining header fields:
+    Projects the numeric / verdict header fields from a board-entry run's
+    ``loss.json``. The run page already shows ``drift_loss`` and ``pass_fail``
+    from the per-entry table; this reader surfaces the remaining header fields:
 
     * ``runtime_ms`` — total wall-clock duration in ms.
     * ``tokens_spent`` — LLM token cost as recorded by the harness.

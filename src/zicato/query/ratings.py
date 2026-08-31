@@ -18,8 +18,7 @@ from typing import Any
 from zicato.query._sqlite import _IndexAbsent, open_index_ro
 from zicato.query.paths import WorkspacePaths
 
-#: The three wire fields, in payload order, each in its one snake_case
-#: spelling on the wire.
+#: The three wire fields, in payload order, each in one snake_case spelling.
 RATING_FIELDS: tuple[str, str, str] = ("elo", "elo_se", "elo_games")
 
 

@@ -1,9 +1,10 @@
-"""WS-SURFACE — the eval-suggestion surface (persistence + render + seams).
+"""The eval-suggestion surface (persistence + render + seams).
 
-The operator-facing front of eval synthesis (EVAL-SYNTHESIS.md §6). WS-MINE
-extracts episodes; **WS-SYNTH** turns them into suggestions (§3), **WS-ADMIT**
-stamps admission statistics onto them (§5), and this module is what the operator
-touches: the persisted-suggestion shape, its tolerant reader/writer (beside
+The operator-facing front of eval synthesis (EVAL-SYNTHESIS.md §6). The
+episode extractor mines episodes; **synthesis** turns them into suggestions
+(§3), **admission** stamps admission statistics onto them (§5), and this
+module is what the operator touches: the persisted-suggestion shape, its
+tolerant reader/writer (beside
 ``findings.json`` — the reflection persistence idiom), the honest render of the
 admission stats (§5 — measured numbers with n, ``unmeasured`` states, the
 recommended bands as quiet advice, never auto-verdicts), and the two thin SEAM
@@ -20,9 +21,9 @@ other's branches. This module therefore defines the persisted-suggestion JSON
 shape (:class:`Suggestion`) and two callable seams mirroring the doc:
 
 * :class:`SynthesizeSeam` — ``(episodes, *, allow_llm) -> list[Suggestion]``
-  (WS-SYNTH; ``reflection.synthesis.synthesize``).
+  (``reflection.synthesis.synthesize``).
 * :class:`AdmitSeam` — ``(suggestions, *, probe, workspace_root, epoch_id) ->
-  list[Suggestion]`` (WS-ADMIT; ``reflection.admission.admit``).
+  list[Suggestion]`` (``reflection.admission.admit``).
 
 :func:`resolve_synthesize` / :func:`resolve_admit` late-bind those sibling
 modules (absent ⇒ ``None``, an honest degrade), and both are monkeypatch points
@@ -62,10 +63,11 @@ SLICE_EXISTING_JUDGE: str = "existing_judge"
 RECOMMENDED_FLIP_CEILING: float = 0.25
 RECOMMENDED_MIN_DISCRIMINATION: int = 1
 
-#: The reserved replicate base WS-ADMIT measures A/A noise at (EVAL-SYNTHESIS.md
-#: §5; dev-guide 04 §8.1 — 6000 is the next free base after board reflection's
-#: 5000). Declared HERE only for the plan-cost narrative; WS-ADMIT owns the
-#: canonical constant + the r0-isolation proof.
+#: The reserved replicate base admission measures A/A noise at
+#: (EVAL-SYNTHESIS.md §5; dev-guide 04 §8.1 — 6000 is the next free base after
+#: board reflection's 5000). Declared HERE only for the plan-cost narrative;
+#: :mod:`zicato.reflection.admission` owns the canonical constant and the
+#: r0-isolation proof.
 SYNTHESIS_REPLICATE_BASE: int = 6000
 
 
@@ -97,7 +99,7 @@ class Suggestion:
         regression entry, allowed), or ``existing_judge`` (a rubric revision).
     draft_artifact:
         The BOARD-FORMAT entry JSON or the ``{name, mode, body, severity}``
-        judge JSON WS-SYNTH drafted (validated against the real loader before
+        judge JSON synthesis drafted (validated against the real loader before
         it ships, §3).
     proposed_op:
         The ``{op, args}`` the apply seam stages onto a builder draft
@@ -201,7 +203,7 @@ def rank_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
 
 @runtime_checkable
 class SynthesizeSeam(Protocol):
-    """WS-SYNTH: ranked episodes → suggestions (EVAL-SYNTHESIS.md §3).
+    """Synthesis: ranked episodes → suggestions (EVAL-SYNTHESIS.md §3).
 
     The synthesiser loads the epoch board (to pin regressions / perturb dead
     entries / host judges) from ``workspace_root`` + ``epoch_id``, and resolves
@@ -225,7 +227,7 @@ class SynthesizeSeam(Protocol):
 
 @runtime_checkable
 class AdmitSeam(Protocol):
-    """WS-ADMIT: suggestions → admission-stamped suggestions (EVAL-SYNTHESIS.md §5)."""
+    """Admission: suggestions → admission-stamped suggestions (EVAL-SYNTHESIS.md §5)."""
 
     def __call__(
         self,
@@ -255,7 +257,7 @@ def _resolve_seam(module_name: str, attr: str) -> Any | None:
 
 
 def resolve_synthesize() -> SynthesizeSeam | None:
-    """Late-bind ``reflection.synthesis.synthesize`` (WS-SYNTH), or ``None``.
+    """Late-bind ``reflection.synthesis.synthesize``, or ``None``.
 
     A monkeypatch point for the CLI round-trip tests (which inject a fake synth
     seam) and the honest degrade when the sibling has not landed yet.
@@ -264,7 +266,7 @@ def resolve_synthesize() -> SynthesizeSeam | None:
 
 
 def resolve_admit() -> AdmitSeam | None:
-    """Late-bind ``reflection.admission.admit`` (WS-ADMIT), or ``None``."""
+    """Late-bind ``reflection.admission.admit``, or ``None``."""
     return _resolve_seam("admission", "admit")
 
 

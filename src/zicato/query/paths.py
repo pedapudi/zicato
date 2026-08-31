@@ -1,8 +1,7 @@
 """The ``.zicato/`` path layout every reader shares, and its small primitives.
 
-:class:`WorkspacePaths` names each file and directory the readers open.
-The rest are the coercions and epoch-id helpers that keep one spelling of
-a value on the wire.
+:class:`WorkspacePaths` names each file the readers open; the rest are the
+coercions and epoch-id helpers that keep one spelling of a value on the wire.
 """
 
 from __future__ import annotations
@@ -245,9 +244,8 @@ def coerce_float(value: Any) -> float | None:
     """``float(value)`` for a real number, else ``None``.
 
     THE one numeric payload coercer, with bools excluded because a stray
-    ``True`` is not a scalar. Every reader coerces through this function
-    rather than an inline
-    ``float(x) if isinstance(x, int | float) else None``.
+    ``True`` is not a scalar. Every reader coerces through this function rather
+    than an inline ``float(x) if isinstance(x, int | float) else None``.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None

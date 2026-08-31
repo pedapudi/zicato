@@ -30,8 +30,8 @@ class ObjectPayload(TypedDict, total=False):
 
     Endpoint-specific records remain JSON values, but their top-level shape is
     declared here instead of being an undocumented ``dict[str, Any]`` at the
-    HTTP boundary. Keys are optional because every reader is best-effort and
-    may answer with a partial or empty read.
+    HTTP boundary. Keys are optional because every reader is best-effort and may
+    answer with a partial or empty read.
     """
 
     epoch_id: str | None
@@ -105,7 +105,7 @@ class DetailPayload(ObjectPayload, total=False):
 
 # Every JSON GET has one declared boundary contract. Routes that share an
 # envelope share one type, so each wire spelling is declared here once rather
-# than repeated in a per-route wrapper.
+# than in a per-route wrapper.
 ENDPOINT_PAYLOADS: Final[dict[str, type[Any]]] = {
     path: CollectionPayload
     for path in (

@@ -245,10 +245,9 @@ def _scorecard_from_experiment(experiment: dict[str, Any]) -> dict[str, Any]:
         "hits": hits,
         "total": total,
         "fraction": fraction,
-        # Brier is null: the schema carries no probabilistic forecast to
-        # score against (predictions are direction and magnitude buckets
-        # rather than probabilities). The key is present so callers can
-        # light up a Brier
+        # Brier is null: the schema carries no probabilistic forecast to score
+        # against (predictions are direction and magnitude buckets rather than
+        # probabilities). The key is present so callers can light up a Brier
         # column the moment a probabilistic forecast field lands.
         "brier": None,
     }

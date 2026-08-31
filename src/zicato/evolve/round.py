@@ -16,7 +16,7 @@ slot:
   ``forbidden_ids`` mutation. Raises :class:`BadPatchSetError` — a
   ``ValueError`` — on either violation (issue #83).
 
-Concurrency note (WS-CONC): under best-of-N slate parallelism the per-slot
+Concurrency note: under best-of-N slate parallelism the per-slot
 ``validate`` hook from :func:`build_scratch_validator_factory` calls
 ``genstore.derive_scratch`` SYNCHRONOUSLY on the event loop — there is no
 ``await`` between the derive's start and finish — so two slots' derives never
@@ -198,7 +198,7 @@ def build_scratch_validator_factory(
     beater: HeartbeatBeater | None,
     round_index: int,
 ) -> ScratchValidatorFactory:
-    """Build the per-slot scratch ``validate_experiment`` factory (WS-CONC).
+    """Build the per-slot scratch ``validate_experiment`` factory.
 
     The concurrency-enabling sibling of :func:`build_post_apply_validator`.
     Where that shared hook derives every attempt into the ONE shared

@@ -36,13 +36,12 @@ probes. They surface as MEASUREMENT BAND steps
 per stage, holding one node per draw — so the plan accounts for every
 non-attempt loss file on disk and nothing executed is invisible.
 
-A band is not a work unit and must never read as one. The pre-flight band
-in particular describes DEGRADED copies of the champion's code, cached
-under the champion's own id. Its label and every draw's purpose say so, so
-that a reader who meets one of those nodes without its parent still does
-not mistake a probe's failure for champion behaviour. An index no
-owner claims lands in the ``unclaimed`` band rather than being admitted
-quietly.
+A band is not a work unit and must never read as one. The pre-flight band in
+particular describes DEGRADED copies of the champion's code, cached under the
+champion's own id. Its label and every draw's purpose say so, so that a reader
+who meets one of those nodes without its parent still does not mistake a
+probe's failure for champion behaviour. An index no owner claims lands in the
+``unclaimed`` band rather than being admitted quietly.
 
 Never guess a shape
 -------------------

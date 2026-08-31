@@ -62,10 +62,10 @@ def _run_id_of_events_file(events_path: Path) -> str | None:
 
 # Cache: workspace epochs dir → {run_id: events.jsonl path}. The board-run
 # layout names run directories by ENTRY id rather than run id, so the only way
-# to map a run id to its events file is to read the ``runId`` field out of
-# each current events file. Cache each file independently: a live append keeps
-# the already-discovered id, while a file that is new, replaced, truncated, or
-# was empty at the last scan is reparsed. This avoids reopening the entire workspace on every
+# to map a run id to its events file is to read the ``runId`` field out of each
+# current events file. Cache each file independently: a live append keeps the
+# already-discovered id, while a file that is new, replaced, truncated, or was
+# empty at the last scan is reparsed. This avoids reopening the workspace on every
 # event appended by an in-progress run.
 _RunIdFileState = tuple[int, int, int, int, str | None]
 _RunIdIndexState = tuple[dict[str, _RunIdFileState], dict[str, Path]]
@@ -203,17 +203,16 @@ def _find_run_events_in_index(paths: WorkspacePaths, run_id: str) -> Path | None
 
 
 # Cache: workspace epochs dir → {run_id: gen×entry events.jsonl path}. In
-# successive-halving racing the fixed champion (e.g. v0) is RE-RACED /
-# REUSED across rungs, so the same gen×entry yields MULTIPLE per-rung run
-# records — but only ONE rung actually executed and emitted its own
-# events.jsonl; the rest are score-reuse records carrying a distinct
-# ``run_id`` with NO transcript of their own. Each such record is written
-# as a ``runs/<entry>/loss.json`` carrying both its ``run_id`` and the
-# gen×entry it belongs to (the run directory it lives under). Mapping every
-# such ``run_id`` to its gen×entry ``events.jsonl`` lets a transcript-less
-# reuse run_id resolve to the one real transcript for that pair. Memoized
-# on the epochs-dir mtime (the reuse records are settled rather than live
-# streams).
+# successive-halving racing the fixed champion (e.g. v0) is RE-RACED / REUSED
+# across rungs, so the same gen×entry yields MULTIPLE per-rung run records —
+# but only ONE rung actually executed and emitted its own events.jsonl; the
+# rest are score-reuse records carrying a distinct ``run_id`` with NO
+# transcript of their own. Each such record is written as a
+# ``runs/<entry>/loss.json`` carrying both its ``run_id`` and the gen×entry it
+# belongs to (the run directory it lives under). Mapping every such ``run_id``
+# to its gen×entry ``events.jsonl`` lets a transcript-less reuse run_id resolve
+# to the one real transcript for that pair. Memoized on the epochs-dir mtime
+# (the reuse records are settled rather than live streams).
 _REUSE_RUN_ID_INDEX_CACHE: dict[str, tuple[float, dict[str, Path]]] = {}
 
 
@@ -542,11 +541,11 @@ def read_run_result(run_dir: Path) -> dict[str, Any] | None:
 def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
     """The workspace-level cross-epoch summary.
 
-    Returns the whole-workspace ribbon the dashboard's Workspace shell
-    needs: the per-epoch lineage with a single best (lowest) scalar
-    surfaced per epoch, plus a flat ``sparkline`` list of those best
-    scalars in epoch (directory) order so the workspace view can paint a
-    tiny cross-epoch curve without re-fanning to per-epoch endpoints.
+    Returns the whole-workspace ribbon the dashboard's Workspace shell needs:
+    the per-epoch lineage with a single best (lowest) scalar per epoch, plus a
+    flat ``sparkline`` list of those best scalars in epoch order, so the
+    workspace view paints a cross-epoch curve without re-fanning to per-epoch
+    endpoints.
 
     Each epoch row carries:
 
@@ -646,8 +645,8 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
             # Lineage edge — read ``parent_epoch_id`` from the index
             # when available so the workspace lineage table can render arrows
             # between consecutive epochs. Best-effort: a v1 or never-indexed
-            # database surfaces ``None`` and the workspace view falls back to
-            # directory order.
+            # database surfaces ``None`` and the view falls back to directory
+            # order.
             parent_epoch_id: str | None = None
             if conn is not None:
                 try:
@@ -743,9 +742,9 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
         }
 
     A component is listed even when both hashes are missing, so the
-    contract-diff view renders a stable five-row matrix. ``changed`` is
-    ``True`` iff the two hashes differ AND both are non-empty: an unknown
-    predecessor hash is "no diff signal" rather than "everything changed".
+    contract-diff view renders a stable five-row matrix. ``changed`` is ``True``
+    iff the two hashes differ AND both are non-empty: an unknown predecessor
+    hash is "no diff signal" rather than "everything changed".
 
     The first epoch on disk reports ``predecessor_epoch_id = None`` and
     every component as not-changed: there is nothing to diff against.
@@ -859,14 +858,13 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
     * ``structure``        — the epoch's frozen tournament structure token.
     * ``closed`` / ``open`` — lifecycle, so the open epoch dashes.
     * ``changed_components`` — the per-component change MAP vs the
-      PREDECESSOR epoch over :data:`_LEDGER_COMPONENT_NAMES` (the five
-      surfaced contract components PLUS ``structure`` and ``proposer``).
-      A component is ``True`` iff it has a comparable signal that differs
-      from the predecessor: contract sub-hashes are compared when BOTH are
-      present (a hash absent from an older record is "no signal" rather than
-      "changed");
-      ``structure`` is compared by its derived token. The first epoch has
-      an all-``False`` map (nothing to diff against).
+      PREDECESSOR epoch over :data:`_LEDGER_COMPONENT_NAMES` (the five surfaced
+      contract components PLUS ``structure`` and ``proposer``). A component is
+      ``True`` iff it has a comparable signal that differs from the
+      predecessor: contract sub-hashes are compared when BOTH are present (a
+      hash absent from an older record is "no signal" rather than "changed");
+      ``structure`` is compared by its derived token. The first epoch has an
+      all-``False`` map (nothing to diff against).
     * ``changed_list``     — the changed components as an ordered list (a
       convenience for the change-chip rail).
     * ``soft``             — ``True`` when this roll changed ``structure``:

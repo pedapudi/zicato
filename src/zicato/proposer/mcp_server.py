@@ -28,12 +28,11 @@ rather than transcribed: a tool added to ``DEFAULT_PROPOSER_TOOLS`` is
 served here with no edit to this module.
 
 The wrapper neither narrows nor widens the registry: whatever
-``DEFAULT_PROPOSER_TOOLS`` contains is exactly what it serves. What
-belongs on the sanctioned proposer surface — which tools may write (and
-into what), which may query the training slice and under what redaction
-— is therefore decided in :mod:`zicato.proposer.tools` rather than here. Do not
-read a tool's presence on this transport as a second sanction; there is
-only the one, upstream.
+``DEFAULT_PROPOSER_TOOLS`` contains is exactly what it serves. What belongs on
+the sanctioned proposer surface — which tools may write (and into what), which
+may query the training slice and under what redaction — is therefore decided in
+:mod:`zicato.proposer.tools` rather than here. Do not read a tool's presence on
+this transport as a second sanction; there is only the one, upstream.
 
 One server per challenger process
 ---------------------------------

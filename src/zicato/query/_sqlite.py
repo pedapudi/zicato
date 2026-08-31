@@ -1,8 +1,7 @@
-"""Access to the SQLite analytical index: connections and tolerant row readers.
+"""The SQLite analytical index: read-only connections and tolerant row reads.
 
-One connection lifecycle for every reader (read-only, guaranteed close) plus
-the four accessors that let a reader select a column a stale index may not
-have yet.
+One connection lifecycle for every reader, plus the accessors that read a
+column a stale index may not carry.
 """
 
 from __future__ import annotations

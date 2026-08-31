@@ -1,12 +1,11 @@
 """Snapshot GC / retention — prune generation SOURCE TREES, never records.
 
 A long epoch accumulates one materialised source tree per generation:
-``generations/{id}/snapshot/`` directories under the directory backend,
-tagged commits + materialised ``repo-worktrees/`` checkouts under the
-git backend. The trees of dead branches (rejected challengers) are pure
-disk cost once their tournament settled — every analytical consumer
-(journal, dashboard, reindex) reads the RECORDS rather than the trees. This
-module reclaims that cost.
+``generations/{id}/snapshot/`` directories under the directory backend, tagged
+commits + materialised ``repo-worktrees/`` checkouts under the git backend. The
+trees of dead branches (rejected challengers) are pure disk cost once their
+tournament settled — every analytical consumer (journal, dashboard, reindex)
+reads the RECORDS rather than the trees. This module reclaims that cost.
 
 What pruning means, per backend
 -------------------------------

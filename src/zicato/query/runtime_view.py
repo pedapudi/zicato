@@ -514,12 +514,11 @@ def _reader_shares_worker_host(paths: WorkspacePaths | None) -> bool:
     token. When that exact process is live *here*, this reader is on the
     orchestrator's host and the worker pids denote local processes.
 
-    ``False`` whenever host-locality cannot be proven, which is the only
-    safe default. Three cases cannot prove it: no lock file at all (a
-    workspace at rest), a lock that is unreadable or carries no start-time
-    token, and a lock whose owner is not a live local process. The last
-    covers a workspace synced or copied to another machine, where the
-    recorded pids mean nothing locally.
+    ``False`` whenever host-locality cannot be proven, which is the only safe
+    default. Three cases cannot prove it: no lock file at all (a workspace at
+    rest), a lock that is unreadable or carries no start-time token, and a lock
+    whose owner is not a live local process. The last covers a workspace synced
+    or copied to another machine, where the recorded pids mean nothing locally.
     """
     if paths is None:
         return False

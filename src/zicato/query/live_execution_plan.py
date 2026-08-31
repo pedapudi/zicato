@@ -68,9 +68,8 @@ from zicato.tournament.calibration import CALIBRATION_PHASE_TOKEN
 #: step runs once per epoch, ahead of the round's propose → apply → run → gate
 #: (:func:`zicato.query.loop_view._epoch_open_step`), so its live position is
 #: the band step holding the draws it is taking rather than a round step. A
-#: step with
-#: no entry here marks nothing: the plan will not point at a node whose
-#: correspondence to the phase is a guess.
+#: step with no entry here marks nothing: the plan will not point at a node
+#: whose correspondence to the phase is a guess.
 #:
 #: The two sides are written out rather than fused. A phase token names a
 #: stretch of the loop (``zicato.epoch.preflight`` /

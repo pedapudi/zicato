@@ -1,4 +1,4 @@
-"""Pure, deterministic sampler for the genealogy channel (WS-GENE). NO IO.
+"""Pure, deterministic sampler for the genealogy channel. NO IO.
 
 The in-context analogue of AlphaEvolve's prompt sampler: it feeds the
 proposer a redacted view of the current reign's candidate LINEAGE so the

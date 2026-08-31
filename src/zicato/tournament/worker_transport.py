@@ -1,6 +1,6 @@
 """Tournament subprocess/process-boundary transport.
 
-The "L3" robustness layer: every tournament run executes in its OWN OS
+The subprocess worker boundary: every tournament run executes in its OWN OS
 process — a ``python -m zicato._tournament_worker`` subprocess. This
 module owns everything on the wire between the orchestrator process and
 those workers:
@@ -233,7 +233,7 @@ def _stamp_judge_only(
 
 
 #: ``BoardEntry.context`` key carrying the run's REPLICATE INDEX to the
-#: harness under test. Run provenance, not a contract input: a
+#: harness under test. Run provenance rather than a contract input: a
 #: deterministic/seeded harness (e.g. the convergence example's noisy
 #: adapter) derives its per-run noise from stable identifiers, and the
 #: replicate index is the one identifier that distinguishes the N
@@ -317,7 +317,7 @@ def _runtime_state() -> tuple[Any, Any] | None:
 
 
 # ---------------------------------------------------------------------------
-# Subprocess worker spawn — the "L3" robustness layer.
+# Subprocess worker spawn — the worker-process boundary.
 # ---------------------------------------------------------------------------
 #
 # Every tournament run executes in its OWN OS process: a

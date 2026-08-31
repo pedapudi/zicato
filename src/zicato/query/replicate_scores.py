@@ -38,19 +38,18 @@ from zicato.query.paths import WorkspacePaths
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from zicato.core.loss import LossProfile
 
-# Which replicate-index ranges count as EVIDENCE FOR A CELL (EVAL-VIEW.md §2.1 /
-# §4.1). The board unit's replicate slots are reserved by purpose: real duel
+# Which replicate-index ranges count as EVIDENCE FOR A CELL (EVAL-VIEW.md §2.1
+# / §4.1). The board unit's replicate slots are reserved by purpose: real duel
 # replicates count up from 0 (r0 = the canonical loss.json, plus the
 # holdout-ladder confirmation re-runs, which reuse the low duel slots), the
-# evidence-gate's paired draws sit at 4000+ (EVIDENCE_REPLICATE_BASE). Those two
-# ranges are FRESH measurements of THIS cell, so they raise its evidence tier.
-# EXCLUDED: A/A calibration at 1000+ (the champion NOISE-FLOOR trace, which
-# feeds the flip badge rather than the cell), the contract pre-flight at 2000+,
-# the pre-tournament candidate screen at 3000+ (an ephemeral veto probe), and
-# reflection draws at 5000+ (a meta-evaluation of the judges rather than of the
-# candidate).
-# Every one of those excluded ranges IS enumerated, as its own measurement band:
-# see :data:`MEASUREMENT_BANDS` below.
+# evidence-gate's paired draws sit at 4000+ (EVIDENCE_REPLICATE_BASE). Those
+# two ranges are FRESH measurements of THIS cell, so they raise its evidence
+# tier. EXCLUDED: A/A calibration at 1000+ (the champion NOISE-FLOOR trace,
+# which feeds the flip badge rather than the cell), the contract pre-flight at
+# 2000+, the pre-tournament candidate screen at 3000+ (an ephemeral veto
+# probe), and reflection draws at 5000+ (a meta-evaluation of the judges rather
+# than of the candidate). Every one of those excluded ranges IS enumerated, as
+# its own measurement band: see :data:`MEASUREMENT_BANDS` below.
 CELL_EVIDENCE_REPLICATE_RANGES: tuple[tuple[int, int], ...] = ((0, 1000), (4000, 5000))
 
 

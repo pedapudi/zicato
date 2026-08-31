@@ -1,13 +1,12 @@
 """The champion and challenger conversations for one board entry.
 
 This module owns the join that pairs the two sides of a matchup and
-reconstructs both transcripts, so the dashboard endpoint renders what it
-is handed. The transcript reconstructor lives in
-``zicato.dashboard.transcript`` and the query layer must stay
-dashboard-free (the import-linter contract), so
-:func:`build_matchup_conversations` takes it as an INJECTED callable.
-Passing ``None`` degrades each side to a record without a transcript; no
-reader here raises.
+reconstructs both transcripts, so the dashboard endpoint renders what it is
+handed. The transcript reconstructor lives in ``zicato.dashboard.transcript``
+and the query layer must stay dashboard-free (the import-linter contract), so
+:func:`build_matchup_conversations` takes it as an INJECTED callable. Passing
+``None`` degrades each side to a record without a transcript; no reader here
+raises.
 """
 
 from __future__ import annotations
@@ -30,18 +29,16 @@ def build_matchup_conversations(
     and reconstructs both transcripts so the UI can render them side by
     side.
 
-    Fast-mode caveat: in a fast-mode round the champion side is NOT
-    actually executed — its ``status_raw`` is ``"cached"`` and the per-
-    entry scalar is reused from the cached aggregate. The matching
-    transcript on disk is the one this generation produced when it was
-    the live challenger in its *original* tournament, persisted under
-    its own generation directory. The active-tournament's per-entry
-    ``generation_id`` is the correct lookup key;
-    ``_normalize_tournament_statuses`` stamps it from the
-    tournament-level parent and child fields. One code path then serves
-    both sides: it routes a cached side through the cached generation's
-    own runs directory and a live side through the in-progress round's
-    runs directory.
+    Fast-mode caveat: in a fast-mode round the champion side is NOT actually
+    executed — its ``status_raw`` is ``"cached"`` and the per- entry scalar is
+    reused from the cached aggregate. The matching transcript on disk is the
+    one this generation produced when it was the live challenger in its
+    *original* tournament, persisted under its own generation directory. The
+    active-tournament's per-entry ``generation_id`` is the correct lookup key;
+    ``_normalize_tournament_statuses`` stamps it from the tournament-level
+    parent and child fields. One code path then serves both sides: it routes a
+    cached side through the cached generation's own runs directory and a live
+    side through the in-progress round's runs directory.
     """
     result: dict[str, Any] = {"champion": None, "challenger": None}
     tournament = read_active_tournament_dict(paths)
@@ -67,11 +64,10 @@ def build_matchup_conversations(
     tournament_child_gen = tournament.get("child_generation_id")
 
     def _resolve_generation_id(side: str, fallback: Any) -> Any:
-        # Prefer the per-entry generation_id (stamped explicitly so a
-        # cached row can carry a generation distinct from the current
-        # round's champion-of-this-round id, if those ever differ). Fall
-        # back to the tournament-level field for a payload that carries
-        # only it.
+        # Prefer the per-entry generation_id (stamped explicitly so a cached
+        # row can carry a generation distinct from the current round's
+        # champion-of-this-round id, if those ever differ). Fall back to the
+        # tournament-level field for a payload that carries only it.
         entry = entries_index.get((entry_id, side))
         if entry is not None:
             gen_id = entry.get("generation_id")

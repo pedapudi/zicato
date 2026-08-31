@@ -74,14 +74,13 @@ def emit_dialect_capability_warnings(workspace_root: Path) -> tuple[str, ...]:
 def log_effective_concurrency(workspace_root: Path) -> str:
     """Log the run's effective concurrency knobs ONCE, at invocation start.
 
-    ``parallelism`` decides how many board units run at a time and defaults
-    to 4 regardless of the host. Unlogged, it leaves an operator on a
-    64-core box watching four units in flight with nothing to say a ceiling
-    is in force, and nothing to separate "the default is holding you at 4"
-    from "the work is simply slow" (issue #126). The same holds for its
-    propose-side analogue and for the host-wide worker permit count, whose
-    AUTO resolution is host-dependent and so unguessable from the config
-    file alone.
+    ``parallelism`` decides how many board units run at a time and defaults to
+    4 regardless of the host. Unlogged, it leaves an operator on a 64-core box
+    watching four units in flight with nothing to say a ceiling is in force,
+    and nothing to separate "the default is holding you at 4" from "the work is
+    simply slow" (issue #126). The same holds for its propose-side analogue and
+    for the host-wide worker permit count, whose AUTO resolution is
+    host-dependent and so unguessable from the config file alone.
 
     So report all three, plus the cores the process may actually run on and
     the tier ``parallelism`` was resolved from
@@ -279,8 +278,7 @@ async def _apply_rubric_replacement(
     The proposer brief is part of the evaluation contract (board + brief +
     scoring + harness identity). Replacing it mid-loop must NOT be a silent
     in-place patch, because generations on either side of the edit are not
-    comparable.
-    So this helper:
+    comparable. So this helper:
 
     1. Writes the operator's payload to the LIVE proposer brief (the same
        ``brief_path`` :func:`zicato.epoch.contract.resolve_contract_inputs`
@@ -439,15 +437,14 @@ async def evolve_n_rounds(
     consecutive-rejection counter.
 
     A second circuit breaker watches loop *health*: when
-    ``stop_on_degenerate_health`` is true (the default), the loop stops
-    early once :data:`_DEGENERATE_HEALTH_STOP_THRESHOLD` consecutive
-    rounds report a CRITICAL loop-health finding (e.g. degenerate
-    scoring, where the tournament cannot tell a real improvement from
-    noise). Same shape as the consecutive-rejection breaker: there is
-    no point spending more LLM calls on a loop that is producing no
-    usable signal. A round whose health is not CRITICAL resets the
-    counter. Pass ``stop_on_degenerate_health=False`` to opt out and run
-    every requested round regardless of health.
+    ``stop_on_degenerate_health`` is true (the default), the loop stops early
+    once :data:`_DEGENERATE_HEALTH_STOP_THRESHOLD` consecutive rounds report a
+    CRITICAL loop-health finding (e.g. degenerate scoring, where the tournament
+    cannot tell a real improvement from noise). Same shape as the
+    consecutive-rejection breaker: there is no point spending more LLM calls on
+    a loop that is producing no usable signal. A round whose health is not
+    CRITICAL resets the counter. Pass ``stop_on_degenerate_health=False`` to
+    opt out and run every requested round regardless of health.
 
     A third early-exit is the **total wall-clock budget**: when
     ``max_wall_clock_seconds`` is set (``None``, the default, leaves the
@@ -884,15 +881,14 @@ async def evolve_n_rounds(
                 if eid:
                     regenerate_in_progress_html(workspace_root, eid)
             if outcome.tournament_decision == DEFERRED_INFRA_DECISION:
-                # Endpoint-outage deferral: the round burned NO
-                # experiment — it persists un-outcomed on disk. Back off
-                # (exponential, capped) instead of re-proposing straight
-                # into a dead endpoint, then hand the next round the SAME
-                # conservative reconciliation a crash-resume performs:
-                # resume the deferred generation in place when any board
-                # unit completed (the unit cache HITs the done work),
-                # discard it cleanly when none did. Deliberately skips
-                # BOTH stop-policies below — a deferral is evidence about
+                # Endpoint-outage deferral: the round burned NO experiment — it
+                # persists un-outcomed on disk. Back off (exponential, capped)
+                # instead of re-proposing straight into a dead endpoint, then
+                # hand the next round the SAME conservative reconciliation a
+                # crash-resume performs: resume the deferred generation in
+                # place when any board unit completed (the unit cache HITs the
+                # done work), discard it cleanly when none did. Deliberately
+                # skips BOTH stop-policies below — a deferral is evidence about
                 # the endpoint rather than about the experiment stream, so it
                 # must neither count toward consecutive rejections nor
                 # reset/advance the degenerate-health streak.

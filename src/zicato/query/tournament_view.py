@@ -290,10 +290,9 @@ def _bracket_from_conn(
             # "NULL ⇒ full" rule above, so an absent mode means there was no
             # row to read. That is a round whose champion has not been
             # evaluated yet, because the field row is written at OPEN, before
-            # any crowning row. That
-            # is unknown, and the round timeline already carries
-            # ``eval_mode: None`` for it; the tree renders plain "defends"
-            # rather than claiming "defends · re-run".
+            # any crowning row. That is unknown, and the round timeline already
+            # carries ``eval_mode: None`` for it; the tree renders plain
+            # "defends" rather than claiming "defends · re-run".
             "eval_mode": base.get("eval_mode"),
             "run_ref": base.get("run_ref"),
         }
@@ -843,10 +842,9 @@ def build_matchup_grid(
             "parent_pass": p.get("pass_fail") if p else None,
             "child_pass": c.get("pass_fail") if c else None,
             # Continuous per-entry outcome (#18) + its optional
-            # precision/recall decomposition. ``None`` for a loss.json
-            # written before the ``score`` field existed, so a bool-only entry
-            # carries score and metrics as None and renders by its pass bit
-            # alone.
+            # precision/recall decomposition. ``None`` for a loss.json written
+            # before the ``score`` field existed, so a bool-only entry carries
+            # score and metrics as None and renders by its pass bit alone.
             "parent_score": parent_score,
             "child_score": child_score,
             "parent_metrics": p.get("metrics") if p else None,
@@ -1070,8 +1068,7 @@ def derive_elim_states(rounds: Any) -> dict[str, Any]:
     service, Rust supervisor, the node mock) serve ONE identical model; a
     client (``svg.js`` elimFlow and its radial twin) that derived it per render
     would be re-deriving what the server already owns. Ported line-for-line
-    into
-    ``crates/supervisor/src/elim_states.rs`` — the shared fixture
+    into ``crates/supervisor/src/elim_states.rs`` — the shared fixture
     ``tests/data/elim_states_fixture.json`` pins the two folds together.
 
     Input: the raw ``rounds[]`` blob (each round ``{round_index? /
@@ -1090,12 +1087,11 @@ def derive_elim_states(rounds: Any) -> dict[str, Any]:
       references below are COLUMN indices into this sorted array.
     * ``gen_states`` — one record per competitor, first-seen order:
       ``{generation_id, played_rounds, advanced_rounds, lost_rounds,
-      eliminated_at_round, side_by_round, lb_entry_round, projected}``.
-      The elimination-vs-drop rule is the client's, verbatim: a loss with
-      NO later appearance is an elimination there; a loss followed by a
-      later appearance is a winners→losers drop (the second life).
-      ``null`` = undecided; ``side_by_round`` keys are stringified
-      column indices (JSON object keys).
+      eliminated_at_round, side_by_round, lb_entry_round, projected}``. The
+      elimination-vs-drop rule is the client's, verbatim: a loss with NO later
+      appearance is an elimination there; a loss followed by a later appearance
+      is a winners→losers drop (the second life). ``null`` = undecided;
+      ``side_by_round`` keys are stringified column indices (JSON object keys).
 
     Pure + best-effort: a malformed blob degrades to empty lists and never
     raises.

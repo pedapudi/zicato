@@ -3,12 +3,11 @@
 The train/holdout split (:mod:`zicato.board.split`) and the
 holdout-*confirmation* step in the gate
 (:func:`zicato.tournament.gate.evaluate_gate`) together require a
-train-measured win to hold on a held-out slice the proposer never sees.
-That makes a *single* holdout query trustworthy. It does nothing about
-the deeper failure this note is written for: the proposer queries the *same*
-holdout every round of an epoch, adaptively, and a reused holdout "gets used
-up" — its confirmations become an optimistically-biased signal the optimizer
-can climb.
+train-measured win to hold on a held-out slice the proposer never sees. That
+makes a *single* holdout query trustworthy. It does nothing about the deeper
+failure this note is written for: the proposer queries the *same* holdout every
+round of an epoch, adaptively, and a reused holdout "gets used up" — its
+confirmations become an optimistically-biased signal the optimizer can climb.
 
 [Blum & Hardt 2015][ladder] give the mechanism for this "submit, see
 score, submit again" loop. The Ladder releases a new holdout-based signal only

@@ -434,10 +434,9 @@ def _diff_against(proposer_path: Path | None, relative_path: str, new_text: str)
 
     ``kind`` is ``skill_add`` when nothing is at that path and
     ``skill_replace`` when something is, so the operator reading the queue can
-    tell at a glance whether
-    a recommendation grows the proposer or rewrites part of it. With no
-    proposer dir configured (the built-in default) every remedy is an add, and
-    the diff is against an empty file.
+    tell at a glance whether a recommendation grows the proposer or rewrites
+    part of it. With no proposer dir configured (the built-in default) every
+    remedy is an add, and the diff is against an empty file.
     """
     current = ""
     if proposer_path is not None:

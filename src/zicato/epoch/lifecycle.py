@@ -24,10 +24,9 @@ is a filesystem-safe slug of the operator-supplied name. If the same
 name is created twice on the same day the second call gets a numeric
 suffix.
 
-The module is small and procedural by design — there is no
-``Lifecycle`` class. Functions take ``workspace_root`` explicitly so the
-CLI and tests construct calls from explicit Paths without holding on to
-shared state.
+The module is small and procedural by design — there is no ``Lifecycle`` class.
+Functions take ``workspace_root`` explicitly so the CLI and tests construct
+calls from explicit Paths without holding on to shared state.
 """
 
 from __future__ import annotations
@@ -75,10 +74,9 @@ _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
 def _brief_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to the frozen proposer brief (``brief.md``) for one epoch.
 
-    The epoch directory is owned by this module, so the brief path is
-    defined here directly, keeping the name self-contained to
-    ``zicato.epoch`` rather than
-    threading it through the shared workspace-path module.
+    The epoch directory is owned by this module, so the brief path is defined
+    here directly, keeping the name self-contained to ``zicato.epoch`` rather
+    than threading it through the shared workspace-path module.
     """
     return epoch_dir(workspace_root, epoch_id) / "brief.md"
 
@@ -460,12 +458,11 @@ def new_epoch(
     spelling quietly win, which is the failure mode this whole seam
     exists to prevent.
 
-    ``goal`` is a free-form operator-supplied statement of intent for
-    the epoch. It is persisted into ``config.json`` and surfaced in
-    the analyzer report header so the *why* of the epoch is machine-
-    readable rather than only narrative in ``journal.md``. Empty by default
-    (rendered as "no goal recorded" downstream); multi-line strings
-    are accepted verbatim.
+    ``goal`` is a free-form operator-supplied statement of intent for the
+    epoch. It is persisted into ``config.json`` and surfaced in the analyzer
+    report header so the *why* of the epoch is machine- readable rather than
+    only narrative in ``journal.md``. Empty by default (rendered as "no goal
+    recorded" downstream); multi-line strings are accepted verbatim.
 
     Returns the constructed :class:`EpochConfig`.
     """

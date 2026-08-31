@@ -223,11 +223,10 @@ class _ProgressBumpingSink:
     run loop once ``session.run`` is entered, so the only place the
     orchestrator can observe per-event progress is the sink boundary.
 
-    The throttle is a simple monotonic-clock gate: the first emit always
-    bumps (so a freshly-started run animates immediately), and subsequent
-    emits bump only after the interval has elapsed. A run that emits
-    nothing simply never bumps — the supervisor's deadline logic still
-    covers a wedged run.
+    The throttle is a simple monotonic-clock gate: the first emit always bumps
+    (so a freshly-started run animates immediately), and subsequent emits bump
+    only after the interval has elapsed. A run that emits nothing simply never
+    bumps — the supervisor's deadline logic still covers a wedged run.
 
     The progress bump is strictly best-effort: a missing runtime-state
     module, or a write failure (e.g. the run already finished and the
@@ -367,14 +366,13 @@ async def _run_single(
         entry_id=entry.id,
         replicate_index=_entry_replicate_index(entry),
     )
-    # The worker writes its loss into the run's REPLICATE-keyed cache slot
-    # (the stamped replicate index; see _stamp_replicate_index). Replicate
-    # 0 — every single-replicate path — maps to the canonical
-    # ``runs/<entry>/loss.json``; replicate r>0 maps to the sibling
-    # ``loss.r<r>.json``. Sharing one file would let a later replicate's
-    # worker write CLOBBER the canonical file that doubles as replicate 0's
-    # cache slot, replacing replicate 0's persisted sample with the last
-    # replicate's draw.
+    # The worker writes its loss into the run's REPLICATE-keyed cache slot (the
+    # stamped replicate index; see _stamp_replicate_index). Replicate 0 — every
+    # single-replicate path — maps to the canonical ``runs/<entry>/loss.json``;
+    # replicate r>0 maps to the sibling ``loss.r<r>.json``. Sharing one file
+    # would let a later replicate's worker write CLOBBER the canonical file
+    # that doubles as replicate 0's cache slot, replacing replicate 0's
+    # persisted sample with the last replicate's draw.
     loss_path = _unit_loss_path(
         workspace_root,
         epoch_id,
@@ -582,23 +580,22 @@ async def _run_single(
             )
             return final_loss
 
-        # --- 3. Spawn the worker subprocess. ---
-        # ``start_new_session=True`` runs the worker in its OWN session and
-        # process-group (it calls ``setsid`` before ``exec``), so the worker
-        # leads a group containing itself plus any grandchildren the inner
-        # harness spawns (shells, helper tools). The worker records that
-        # group's id (``pgid``) on its ActiveRun record, letting the
-        # supervisor GROUP-kill the whole tree by negating the pgid rather
-        # than leaking grandchildren when it kills the worker pid alone. It
-        # also detaches the worker from the orchestrator's controlling
-        # terminal so a Ctrl-C / SIGINT to the orchestrator's terminal group
-        # is not broadcast straight into every in-flight worker.
+        # --- 3. Spawn the worker subprocess. --- ``start_new_session=True``
+        # runs the worker in its OWN session and process-group (it calls
+        # ``setsid`` before ``exec``), so the worker leads a group containing
+        # itself plus any grandchildren the inner harness spawns (shells,
+        # helper tools). The worker records that group's id (``pgid``) on its
+        # ActiveRun record, letting the supervisor GROUP-kill the whole tree by
+        # negating the pgid rather than leaking grandchildren when it kills the
+        # worker pid alone. It also detaches the worker from the orchestrator's
+        # controlling terminal so a Ctrl-C / SIGINT to the orchestrator's
+        # terminal group is not broadcast straight into every in-flight worker.
         # Compose the worker's environment. By default ``env=None`` inherits
         # the orchestrator's full environment. When the operator opts into
-        # ``scrub_worker_env`` the
-        # worker instead gets a MINIMAL explicit env (process-essential keys +
-        # the api_key_env names the configured roles need + any passthrough),
-        # so a mutated worker cannot read every credential in the process env.
+        # ``scrub_worker_env`` the worker instead gets a MINIMAL explicit env
+        # (process-essential keys + the api_key_env names the configured roles
+        # need + any passthrough), so a mutated worker cannot read every
+        # credential in the process env.
         worker_env: dict[str, str] | None = None
         if config.scrub_worker_env:
             worker_env = scrubbed_worker_env(
@@ -801,16 +798,14 @@ async def _run_single(
             try:
                 state_mod.remove_active_run(workspace_root, run_id)
                 # Fold the run's per-entry loss summary into the live
-                # active-tournament record so the dashboard renders a
-                # per-entry score the instant the run finishes — rather
-                # than leaving ``loss_summary`` empty until the journal
-                # materialises. The shape is pinned by
-                # ``state.loss_summary_from_profile`` /
-                # ``drift_count_snapshot_from_profile`` (the Zone-B
-                # contract). ``final_loss`` is set on every clean-finish
-                # AND abort path; it is ``None`` only after an
-                # unexpected hard crash, where we fall back to the bare
-                # status transition.
+                # active-tournament record so the dashboard renders a per-entry
+                # score the instant the run finishes — rather than leaving
+                # ``loss_summary`` empty until the journal materialises. The
+                # shape is pinned by ``state.loss_summary_from_profile`` /
+                # ``drift_count_snapshot_from_profile`` (the Zone-B contract).
+                # ``final_loss`` is set on every clean-finish AND abort path;
+                # it is ``None`` only after an unexpected hard crash, where we
+                # fall back to the bare status transition.
                 entry_updates: dict[str, Any] = {
                     "status": "completed",
                     "completed_at": _now_iso_utc(),
@@ -935,13 +930,12 @@ async def run_tournament(
     gate compares the challenger's diff against a parsimony-free baseline.
 
     ``force_fresh`` defaults to ``True``, under which the rigorous full A/B
-    path re-evaluates BOTH sides from scratch
-    (no cache read) so a ``--mode full`` round always re-samples noise.
-    The orchestrator's conservative crash-resume (RUNTIME.md §4) passes
-    ``force_fresh=False`` for the one round it resumes in place, so the
-    per-unit ``loss.json`` cache HITs every board unit the interrupted run
-    already completed and only the unfinished entries re-run. Every other
-    caller leaves the default, which re-runs every unit.
+    path re-evaluates BOTH sides from scratch (no cache read) so a ``--mode
+    full`` round always re-samples noise. The orchestrator's conservative
+    crash-resume (RUNTIME.md §4) passes ``force_fresh=False`` for the one round
+    it resumes in place, so the per-unit ``loss.json`` cache HITs every board
+    unit the interrupted run already completed and only the unfinished entries
+    re-run. Every other caller leaves the default, which re-runs every unit.
 
     ``disable_drift`` is the board-level drift-suppression set parsed
     from the board's ``board_meta`` header (see
@@ -1174,23 +1168,22 @@ async def run_fast_mode(
     losses from the per-entry map. (Fast mode has no parent
     per-entry loss profiles to report.)
 
-    ``replicates`` is the §9-lever-1 replication knob, honoured here on
-    the CHALLENGER side as :func:`run_matchup` honours it under
-    ``fast=True``: the child board is run ``replicates`` times, each
-    replicate on its own per-unit cache slot (the
-    ``(generation, entry, replicate)`` key) with its index stamped onto
-    each entry's context, and the per-entry losses are folded through the
-    same :func:`~zicato.tournament.unit_cache._average_losses` every other
-    path uses. ``1`` (this function's own default; the orchestrator threads
-    the structure's resolved value) is the single-run path, where a duel
-    rests on one draw per side. With no token ledger bound
-    the slots run OVERLAPPED against one shared semaphore
-    (:func:`~zicato.tournament.scheduling._run_replicate_slots_fast`), as
-    on the full path. With one bound they run one at a time: a spent
-    per-round token budget stops scheduling further slots and the fold
-    settles over the completed ones, matching :func:`_run_replicated` —
-    the alternative is averaging synthesised worst-case skips into entries
-    that already measured cleanly.
+    ``replicates`` is the §9-lever-1 replication knob, honoured here on the
+    CHALLENGER side as :func:`run_matchup` honours it under ``fast=True``: the
+    child board is run ``replicates`` times, each replicate on its own per-unit
+    cache slot (the ``(generation, entry, replicate)`` key) with its index
+    stamped onto each entry's context, and the per-entry losses are folded
+    through the same :func:`~zicato.tournament.unit_cache._average_losses`
+    every other path uses. ``1`` (this function's own default; the orchestrator
+    threads the structure's resolved value) is the single-run path, where a
+    duel rests on one draw per side. With no token ledger bound the slots run
+    OVERLAPPED against one shared semaphore
+    (:func:`~zicato.tournament.scheduling._run_replicate_slots_fast`), as on
+    the full path. With one bound they run one at a time: a spent per-round
+    token budget stops scheduling further slots and the fold settles over the
+    completed ones, matching :func:`_run_replicated` — the alternative is
+    averaging synthesised worst-case skips into entries that already measured
+    cleanly.
 
     The asymmetry is deliberate and is NOT variance reduction on both
     sides: the champion remains ONE frozen cached draw no matter how high

@@ -257,20 +257,19 @@ def _build_recombination_pair(
                 if entry_id not in train_entry_ids:
                     continue  # the envelope point: holdout never counts
                 # PASS-FLIP sets rather than the grid's drift-only ``won_by``:
-                # per-run drift folds every remaining defect into EVERY
-                # entry's loss, so a strictly-better challenger "wins" all
-                # entries on drift and two single-fix parents could never
-                # read as complementary. The pass bit is the per-entry
-                # signal a fix actually owns: improved = a champion-failing
-                # entry this challenger passes; regressed = the inverse.
-                # KNOWN NARROWING: a pair whose improvements are PURELY
-                # drift-side (no pass flip — e.g. two independent verbosity
-                # fixes on an all-passing board) is invisible to this
-                # selector and never recombines mechanically. Deliberate:
-                # per-entry drift deltas are noisy single-sample verdicts
-                # (the same reason cross-regression is a ranking penalty,
-                # not a filter). Such pairs remain reachable through the
-                # in-context genealogy channel; a drift-delta-with-
+                # per-run drift folds every remaining defect into EVERY entry's
+                # loss, so a strictly-better challenger "wins" all entries on
+                # drift and two single-fix parents could never read as
+                # complementary. The pass bit is the per-entry signal a fix
+                # actually owns: improved = a champion-failing entry this
+                # challenger passes; regressed = the inverse. KNOWN NARROWING:
+                # a pair whose improvements are PURELY drift-side (no pass flip
+                # — e.g. two independent verbosity fixes on an all-passing
+                # board) is invisible to this selector and never recombines
+                # mechanically. That is by design: per-entry drift deltas are
+                # noisy single-sample verdicts, the same reason cross-regression
+                # ranks rather than filters. Such pairs remain reachable
+                # through the in-context genealogy channel; a drift-delta-with-
                 # confirmation variant is a documented future seam.
                 parent_pass = row.get("parent_pass")
                 child_pass = row.get("child_pass")
@@ -299,10 +298,10 @@ def _build_recombination_pair(
 
         manifest_ids = frozenset(str(m.id) for m in mutations)
         eligible = eligible_parents(candidates, champion_id=parent_id, manifest_ids=manifest_ids)
-        # WS-MERGE: the merge mode gates the disjointness predicate — "llm"
-        # relaxes #7 for pair selection so an OVERLAPPING pair (which only an
-        # LLM merge can compose) is eligible; "mechanical" (default) keeps #7
-        # hard and selects byte-identically to before this knob.
+        # The merge mode gates the disjointness predicate: "llm" relaxes #7
+        # for pair selection so an OVERLAPPING pair (which only an LLM merge
+        # can compose) is eligible, while "mechanical" (the default) keeps #7
+        # hard and selects only disjoint pairs.
         merge_mode = getattr(quality, "recombine_merge", "mechanical")
         pair = rank_pairs(eligible, tried_pairs=frozenset(tried), merge_mode=merge_mode)
         if pair is None:
@@ -315,7 +314,7 @@ def _build_recombination_pair(
             len(a.improved_entry_ids | b.improved_entry_ids),
             len(a.regressed_entry_ids | b.regressed_entry_ids),
         )
-        # WS-MERGE: the LLM merge prompt carries each parent's whole-candidate
+        # The LLM merge prompt carries each parent's whole-candidate
         # BANDED outcome (envelope-clean — the exact Δscalar is bucketed HERE
         # and discarded, only the coarse label reaches the pair). Reuses the
         # experiment-memory band vocabulary; "" for an unsettled delta.
@@ -358,7 +357,7 @@ def _build_genealogy_items(
     epoch_id: str,
     parent_id: str,
 ) -> tuple[Any, ...]:
-    """Sample this round's genealogy items (WS-GENE), or ``()`` when OFF.
+    """Sample this round's genealogy items, or ``()`` when OFF.
 
     ``()`` — the DEFAULT — unless the contract opts in with
     ``proposer_quality.genealogy > 0``: the propose path then carries no items

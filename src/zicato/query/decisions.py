@@ -26,8 +26,7 @@ PROMOTED_DECISIONS = frozenset({"promoted", "promote", "accepted", "accept", "wi
 #: Recorded tokens that count as a rejection.
 REJECTED_DECISIONS = frozenset({"rejected", "reject", "lose", "lost"})
 
-#: Recorded tokens that count as a deferral: kept for analysis, and never
-#: advancing the champion.
+#: Recorded tokens that count as a deferral: kept for analysis, never crowned.
 DEFERRED_DECISIONS = frozenset({"deferred", "defer"})
 
 
@@ -75,9 +74,9 @@ def canonical_decision(raw: str | None) -> str | None:
 def promoted_tristate(raw: str | None) -> bool | None:
     """The tri-state ``promoted`` stamp for a recorded decision token.
 
-    ``None`` when no decision is recorded (in-flight / never raced), and
-    never a default ``False``, which would report an undecided promotion
-    as a rejection. Otherwise the same boolean the lineage view derives
+    ``None`` when no decision is recorded (in-flight / never raced), and never
+    a default ``False``, which would report an undecided promotion as a
+    rejection. Otherwise the same boolean the lineage view derives
     (``token in PROMOTED_DECISIONS``).
     """
     if raw is None:

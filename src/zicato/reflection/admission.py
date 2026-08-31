@@ -1,11 +1,11 @@
-"""WS-ADMIT — the admission pipeline for eval synthesis (generative reflection).
+"""The admission pipeline for eval synthesis (generative reflection).
 
 The instrument's second loop (EVAL-SYNTHESIS.md) turns observed behaviour into
 drafted instrument changes; admission is the step that attaches **measured
 operating characteristics** to a drafted suggestion *before the operator ever
 sees it* — the "evals are hypotheses too" move made mechanical (§1, §5). Four
-recommend-only probes ride the suggestion; thresholds are the operator's read in
-WS-SURFACE, never a silent auto-reject here:
+recommend-only probes ride the suggestion; thresholds are the operator's read
+on the suggestion surface, never a silent auto-reject here:
 
 * **(a) EXECUTION** — the champion runs the drafted entry through the REAL
   board-unit runner (:func:`zicato.tournament.scheduling._run_board_units_fast`,
@@ -107,8 +107,8 @@ _UNMEASURED = "unmeasured"
 class AdmissionRequest:
     """A drafted suggestion presented to admission (EVAL-SYNTHESIS.md §3 / §5).
 
-    WS-SYNTH builds this from a synthesised suggestion; WS-ADMIT never authors a
-    draft. The pipeline stays decoupled from the (not-yet-built) ``Suggestion``
+    Synthesis builds this from a synthesised suggestion; admission never authors
+    a draft. The pipeline stays decoupled from the ``Suggestion``
     dataclass by binding only to the drafted artifact + the §4 provenance a
     suggestion always carries.
 
@@ -319,7 +319,8 @@ async def admit_suggestion(
 
 
 # ---------------------------------------------------------------------------
-# The surface bridge — the sync seam WS-SURFACE / the CLI call into (§5 / §6)
+# The surface bridge — the sync seam the suggestion surface and the CLI call
+# into (§5 / §6)
 # ---------------------------------------------------------------------------
 
 
@@ -346,7 +347,7 @@ def admit(
     workspace_root: Path,
     epoch_id: str,
 ) -> list[Any]:
-    """The sync WS-ADMIT seam: stamp admission records onto surface suggestions (§5).
+    """The sync admission seam: stamp admission records onto surface suggestions (§5).
 
     The callable :func:`zicato.reflection.suggestions.resolve_admit` late-binds
     and the CLI drives under ``--probe``. It resolves the same corpus context

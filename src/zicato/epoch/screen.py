@@ -17,12 +17,11 @@ can burn a tournament round. The semantics are strictly **veto-first**:
   scalars.
 
 Relationship to racing, which it complements rather than overlaps: a racing
-tournament's rung-0 halving is field-level screening DOWNSTREAM of the
-proposer — it prunes applied challengers on a board slice after they are
-already lineage children. This screen runs UPSTREAM, inside one
-propose-step's candidate slate, before any child is minted into lineage.
-The two compose: the screen keeps a broken candidate out of the field,
-racing prunes the mediocre field members.
+tournament's rung-0 halving is field-level screening DOWNSTREAM of the proposer
+— it prunes applied challengers on a board slice after they are already lineage
+children. This screen runs UPSTREAM, inside one propose-step's candidate slate,
+before any child is minted into lineage. The two compose: the screen keeps a
+broken candidate out of the field, racing prunes the mediocre field members.
 
 Cache + lineage hygiene (the :mod:`zicato.epoch.preflight` template):
 every screen run is an **ephemeral** evaluation — the candidate's patches

@@ -76,12 +76,11 @@ class ExternalProposerConfig:
     the identity that was hashed and the agent that runs are resolved from
     the same inputs by construction.
 
-    ``options`` is NOT hashed wholesale. It carries unrelated runtime
-    keys (the harness/auxiliary dotted paths among them), and a change to
-    those is infrastructure rather than contract. An implementation folds in
-    only what causally steers it — for the pi agent, the knob's *effect* (the
-    resolved version of the binary it selects) rather than the knob's
-    spelling.
+    ``options`` is NOT hashed wholesale. It carries unrelated runtime keys (the
+    harness/auxiliary dotted paths among them), and a change to those is
+    infrastructure rather than contract. An implementation folds in only what
+    causally steers it — for the pi agent, the knob's *effect* (the resolved
+    version of the binary it selects) rather than the knob's spelling.
     """
 
     dotted_path: str

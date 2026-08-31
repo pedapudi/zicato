@@ -20,9 +20,8 @@ at the highest fidelity the capture ladder retained:
 * ``preview`` — the truncated ``events.jsonl`` reconstruction
   (:func:`zicato.dashboard.transcript.reconstruct_transcript`) as the last
   resort for a run that captured neither sidecar. It can rank suspects but
-  never ground a verdict,
-  and the tier rides through onto every finding so a preview adjudication never
-  masquerades as a verbatim one.
+  never ground a verdict, and the tier rides through onto every finding so a
+  preview adjudication never masquerades as a verbatim one.
 
 Every context is frozen through :func:`zicato.judge_runtime.reliability._freeze_context`
 so it obeys the same ``JudgeContext | str | turn-sequence`` semantics the

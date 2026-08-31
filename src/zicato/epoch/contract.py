@@ -13,9 +13,8 @@ contract:
    proposer when none is configured).
 
 A change to any of these makes generations on either side of the change
-incomparable, so the epoch must roll. The inner harness's *source content*
-is NOT part of the contract, because that is what zicato mutates within an
-epoch.
+incomparable, so the epoch must roll. The inner harness's *source content* is
+NOT part of the contract, because that is what zicato mutates within an epoch.
 
 This module reduces the contract components to a single
 ``sha256`` hex digest. The hash is *canonicalized* so spurious edits
@@ -98,15 +97,14 @@ class ContractInputs:
     #: naming an external agent — or upgrading the runtime it launches —
     #: rolls the epoch.
     external_proposer: ExternalProposerConfig | None = None
-    #: The tier-2 static-check names the proposer holds its own draft
-    #: patches to (``contract.proposer_static_checks`` in ``config.json``;
-    #: see :func:`zicato.proposer.validate.declared_static_checks`). This
-    #: is contract rather than configuration: changing which checks the proposer
-    #: must satisfy changes which patches it accepts from itself, hence
-    #: what it proposes. ``()`` — the default, and every workspace that
-    #: never configures the feature — is OMITTED from the canonical form,
-    #: so the proposer component hashes byte-identically to before this
-    #: field existed.
+    #: The tier-2 static-check names the proposer holds its own draft patches
+    #: to (``contract.proposer_static_checks`` in ``config.json``; see
+    #: :func:`zicato.proposer.validate.declared_static_checks`). This is
+    #: contract rather than configuration: changing which checks the proposer
+    #: must satisfy changes which patches it accepts from itself, hence what it
+    #: proposes. ``()`` — the default, and every workspace that never
+    #: configures the feature — is OMITTED from the canonical form, so the
+    #: proposer component hashes byte-identically to before this field existed.
     proposer_static_checks: tuple[str, ...] = ()
 
 
@@ -525,14 +523,13 @@ def _canon_entrypoint(entrypoint: str) -> str:
 def _canon_mutable_trees(mutable_trees: tuple[str, ...]) -> str:
     """Canonical form of the mutable trees: sorted normalized path strings.
 
-    The identity being hashed is *which subtrees of the target are
-    mutable* — a property of the registration rather than of where the checkout
-    happens to live. Paths are normalized (``.``/``..`` segments and
-    separators collapsed, POSIX-rendered) but NEVER resolved against the
-    filesystem: resolving folded the process cwd and the absolute
-    checkout path into the hash, so the same workspace hashed
-    differently when run from a different directory — or after being
-    moved — and spuriously rolled its epoch. Registration order does not
+    The identity being hashed is *which subtrees of the target are mutable* — a
+    property of the registration rather than of where the checkout happens to
+    live. Paths are normalized (``.``/``..`` segments and separators collapsed,
+    POSIX-rendered) but NEVER resolved against the filesystem: resolving folded
+    the process cwd and the absolute checkout path into the hash, so the same
+    workspace hashed differently when run from a different directory — or after
+    being moved — and spuriously rolled its epoch. Registration order does not
     move the hash (sorted); adding or removing a tree does.
     """
     normalized = sorted(PurePosixPath(os.path.normpath(p)).as_posix() for p in mutable_trees)

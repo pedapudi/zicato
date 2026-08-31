@@ -250,15 +250,14 @@ async def propose_experiment(
     process_exemplars:
         Optional pre-rendered, train-slice-only, REDACTED process-exemplar
         block (the opt-in ``proposer_quality.process_exemplars`` channel —
-        ``docs/design/PROCESS-EXEMPLARS.md``). When non-empty, a
-        ``## Process exemplars`` section is spliced into the user prompt
-        directly after the failure-mode profile so the proposer can see HOW
-        a detected failure unfolds — never WHICH entry it unfolded on. The
-        string is already mechanically redacted by its extractor + renderer
-        (:func:`~zicato.analyzer.process_exemplars.extract_process_exemplars`
-        / :func:`~zicato.proposer.prompts.render_process_exemplars`); this
-        engine only forwards it. Empty (the default) omits the section
-        entirely.
+        ``docs/design/PROCESS-EXEMPLARS.md``). When non-empty, a ``## Process
+        exemplars`` section is spliced into the user prompt directly after the
+        failure-mode profile so the proposer can see HOW a detected failure
+        unfolds — never WHICH entry it unfolded on. The string is already
+        mechanically redacted by its extractor + renderer
+        (:func:`~zicato.analyzer.process_exemplars.extract_process_exemplars` /
+        :func:`~zicato.proposer.prompts.render_process_exemplars`); this engine
+        only forwards it. Empty (the default) omits the section entirely.
     genealogy:
         Optional sampled genealogy items (the opt-in
         ``proposer_quality.genealogy`` channel — ``docs/design/PROPOSER.md``
@@ -314,15 +313,14 @@ async def propose_experiment(
 
     revise_feedback:
         Optional SEED for the repair-feedback loop's first attempt — the
-        best-of-N screen-informed revise channel. When non-empty,
-        the FIRST attempt already renders the repair section with this
-        string in the ``feedback`` slot, exactly as a retry after a
-        validation failure would; subsequent retries overwrite it with
-        their own concrete errors as usual. The wrapper stamps only the
-        screen's COUNTS-ONLY veto summary here (never an entry id), so
-        the restricted-visibility envelope is untouched. Empty (the
-        default) seeds nothing — every existing caller renders a
-        byte-identical first prompt.
+        best-of-N screen-informed revise channel. When non-empty, the FIRST
+        attempt already renders the repair section with this string in the
+        ``feedback`` slot, exactly as a retry after a validation failure would;
+        subsequent retries overwrite it with their own concrete errors as
+        usual. The wrapper stamps only the screen's COUNTS-ONLY veto summary
+        here (never an entry id), so the restricted-visibility envelope is
+        untouched. Empty (the default) seeds nothing — every existing caller
+        renders a byte-identical first prompt.
 
     slot_index:
         Optional best-of-N slate coordinate, recorded on this call's

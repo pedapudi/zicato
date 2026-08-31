@@ -1,9 +1,8 @@
 """The run-log tail: a run's ``events.jsonl`` records plus an append cursor.
 
-Locates the events file for the newest active run (or an epoch's newest
-run), parses its records, and returns the last ``limit`` of them with a
-monotone cursor, so a follower appends what arrived instead of re-reading
-the file.
+Locates the events file for the newest active run, parses its records, and
+returns the last ``limit`` of them with a monotone cursor, so a follower
+appends what arrived instead of re-reading the file.
 """
 
 from __future__ import annotations

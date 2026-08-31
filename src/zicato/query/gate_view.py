@@ -372,13 +372,12 @@ def build_health_report(paths: WorkspacePaths) -> dict[str, Any]:
 def _read_epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
     """Build the epoch's :class:`ScoringWeights` from its ``scoring.json``.
 
-    The shipped ``workspace_loader`` / ``lifecycle`` parsers intentionally
-    drop the gate-only fields (``regression_gate_enabled``,
-    ``namespace_weights``, ``namespace_monotonicity``) — they only need the
-    scalar weights. The gate breakdown DOES need them, so this reader maps
-    every gate-relevant key through, falling back to the dataclass defaults
-    when ``scoring.json`` is absent, or is a partial document written before
-    a key existed.
+    The shipped ``workspace_loader`` / ``lifecycle`` parsers intentionally drop
+    the gate-only fields (``regression_gate_enabled``, ``namespace_weights``,
+    ``namespace_monotonicity``) — they only need the scalar weights. The gate
+    breakdown DOES need them, so this reader maps every gate-relevant key
+    through, falling back to the dataclass defaults when ``scoring.json`` is
+    absent, or is a partial document written before a key existed.
     """
     from zicato.core import ScoringWeights  # noqa: PLC0415
 

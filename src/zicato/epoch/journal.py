@@ -71,15 +71,13 @@ class PatchRecord:
 def _field(name: str, text: str) -> str:
     """Render one ``**name**: value`` field, preserving ``text`` in full.
 
-    Single-line values stay inline, so an ordinary entry renders as one
-    line per field. A value carrying
-    newlines is fenced by a blank line on BOTH sides and becomes its own
-    paragraph, so the markdown still renders and the bytes survive
-    verbatim. The trailing blank line is load-bearing: without it the
-    FOLLOWING field (``**why**``, ``**outcome**``) is only a line break
-    away from the body and markdown folds it into the same paragraph,
-    so a multi-line ``core_idea`` would visually swallow the field
-    after it.
+    Single-line values stay inline, so an ordinary entry renders as one line
+    per field. A value carrying newlines is fenced by a blank line on BOTH
+    sides and becomes its own paragraph, so the markdown still renders and the
+    bytes survive verbatim. The trailing blank line is load-bearing: without it
+    the FOLLOWING field (``**why**``, ``**outcome**``) is only a line break
+    away from the body and markdown folds it into the same paragraph, so a
+    multi-line ``core_idea`` would visually swallow the field after it.
 
     Nothing is dropped here. ``journal.md`` is append-only and is the one
     durable surface the proposer can read its own prior reasoning back
@@ -354,9 +352,8 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         train_loss=_opt_float(d.get("train_loss")),
         holdout_loss=_opt_float(d.get("holdout_loss")),
         generalization_gap=_opt_float(d.get("generalization_gap")),
-        # Operator override. ``False`` / absent on
-        # every gate-decided round and on journals written before the
-        # control consumer was wired.
+        # Operator override. ``False`` / absent on every gate-decided round and
+        # on journals written before the control consumer was wired.
         operator_override=bool(d.get("operator_override", False)),
         operator_override_reason=str(d.get("operator_override_reason", "")),
         # Evidence-gate resolution (rating block + ci_history). Stored

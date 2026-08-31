@@ -217,12 +217,11 @@ async def evolve_once(
     )
     # NOTE: the best-of-N proposer-quality wrapper is interposed BELOW, right
     # after the RuntimeConfig is built, because it threads the config's
-    # breadth/depth ensemble-role callables into the wrapper (see there).
-    # --- 0b. Durable per-round event log ---
-    # The round's store-of-record trace at
-    # ``epochs/{epoch}/rounds/{round_index}/round_log.jsonl``, opened here
-    # with the frozen contract hash. Every emission is best-effort: a log
-    # failure can never fail the round (the index dual-write precedent).
+    # breadth/depth ensemble-role callables into the wrapper (see there). ---
+    # 0b. Durable per-round event log --- The round's store-of-record trace at
+    # ``epochs/{epoch}/rounds/{round_index}/round_log.jsonl``, opened here with
+    # the frozen contract hash. Every emission is best-effort: a log failure
+    # can never fail the round (the index dual-write precedent).
     round_log = _RoundLogEmitter(workspace_root, resolved_epoch_id, round_index)
     round_log.emit("round_opened", {"contract_hash": _epoch_cfg.contract_hash or ""})
     # Custom judges declared on the board / per_judge_weights are valid
@@ -275,10 +274,10 @@ async def evolve_once(
     # never rolls the epoch.
     from zicato.proposer.best_of_n import wrap_with_proposer_quality  # noqa: PLC0415
 
-    # WS-CONC: the best-of-N slate SAMPLES fan out under
+    # Slate concurrency: the best-of-N slate SAMPLES fan out under
     # ``config.propose_parallelism`` (a runtime-only knob, never part of the
-    # frozen contract). ``1`` runs the slate serially, byte-identically to the
-    # pre-concurrency wrapper; the deterministic post-gather pass makes any
+    # frozen contract). ``1`` runs the slate serially; the deterministic
+    # post-gather pass makes any
     # value produce the same slate + event stream regardless of completion
     # order. Each slot validates into its OWN scratch tree (the factory the
     # propose builders thread on the context), so the samples never race on the
@@ -526,7 +525,7 @@ async def evolve_once(
         mutations=mutations,
     )
 
-    # --- 5a'''. Optional genealogy channel (WS-GENE) ---
+    # --- 5a'''. Optional genealogy channel ---
     # ONE sampling per round, built only when the contract opts in
     # (proposer_quality.genealogy > 0) — otherwise () and no items ride the
     # propose path. Read-side only (the meter is untouched): the sampler reads

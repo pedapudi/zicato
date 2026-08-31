@@ -1,4 +1,4 @@
-"""WS-SYNTH — turn mined episodes into drafted eval-synthesis suggestions.
+"""Turn mined episodes into drafted eval-synthesis suggestions.
 
 The second loop's authoring step (EVAL-SYNTHESIS.md §3). :mod:`~zicato.reflection.mining`
 extracts ranked :class:`~zicato.reflection.mining.MinedEpisode` demand signals;
@@ -887,7 +887,7 @@ def _parse_json_object(raw: str, tier: str, subject: str) -> dict[str, Any] | No
 
 
 # ---------------------------------------------------------------------------
-# The trajectory-bootstrap tier (TRAJECTORY-BOOTSTRAP.md §5) — spec for WS-BOOT
+# The trajectory-bootstrap tier (TRAJECTORY-BOOTSTRAP.md §5)
 # ---------------------------------------------------------------------------
 
 _BOOTSTRAP_RUBRIC_SYSTEM_PROMPT: str = (
@@ -1346,7 +1346,8 @@ async def synthesize_suggestions(
 
 
 # ---------------------------------------------------------------------------
-# The surface bridge — the sync seam WS-SURFACE / the CLI call into (§6)
+# The surface bridge — the sync seam the suggestion surface and the CLI call
+# into (§6)
 # ---------------------------------------------------------------------------
 
 
@@ -1358,7 +1359,7 @@ def synthesize(
     epoch_id: str | None = None,
     imported_traces: Sequence[ImportedTrace] = (),
 ) -> list[Any]:
-    """The sync WS-SURFACE seam: ranked episodes → persisted-shape suggestions (§6).
+    """The sync surface seam: ranked episodes → persisted-shape suggestions (§6).
 
     This is the callable :func:`zicato.reflection.suggestions.resolve_synthesize`
     late-binds and the CLI drives. It bridges the two suggestion shapes: the

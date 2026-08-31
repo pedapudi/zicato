@@ -72,12 +72,11 @@ class ProposerToolContext:
         ``list_mutation_points`` renders it; the read/grep tools derive
         the mutable subtrees from its ``source_root`` set.
     generation_id:
-        The id of the generation ``generation_root`` snapshots — the
-        round's champion (the proposer's PARENT generation). Lets
-        ``read_parent_diff`` resolve the generation-store coordinates of
-        the tree the tools are already reading. Empty (the default when no
-        id is supplied) degrades that tool to an explicit "coordinates
-        unavailable" answer.
+        The id of the generation ``generation_root`` snapshots — the round's
+        champion (the proposer's PARENT generation). Lets ``read_parent_diff``
+        resolve the generation-store coordinates of the tree the tools are
+        already reading. Empty (the default when no id is supplied) degrades
+        that tool to an explicit "coordinates unavailable" answer.
     """
 
     workspace_root: Path

@@ -156,8 +156,7 @@ def _log_skip(epoch_id: str, exc: Exception) -> None:
     """Log a swallowed recorder failure at the level its cause deserves.
 
     A transient defect — a busy index, a failed round-log emit — is noise at
-    ``debug``, like the dual-write and round-log emitters this module
-    follows.
+    ``debug``, like the dual-write and round-log emitters this module follows.
 
     A MALFORMED CANONICAL RECORD is not. The precedents swallow silently
     because what they write is a projection that the next rebuild re-derives;
