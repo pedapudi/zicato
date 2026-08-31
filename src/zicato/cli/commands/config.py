@@ -1,4 +1,4 @@
-"""``zicato config`` — introspect zicato's configuration surface.
+"""``zicato inspect environment`` — zicato's configuration surface.
 
 ADVANCED — off the happy path. Operator knobs live on CLI flags (each
 ``--help`` names the config knob a flag shadows) and in the workspace
@@ -6,11 +6,11 @@ ADVANCED — off the happy path. Operator knobs live on CLI flags (each
 ``models`` block, ``harmonograf_url``). No environment variable is a
 configuration knob.
 
-``zicato inspect environment`` prints the small MERITED set of environment
-variables zicato still touches — each one a
-process-boundary contract (harness contract, internal handoff, secrets
-boundary, external integration, CI/test toggle), sourced from
-:func:`zicato.config.describe_env_vars` so this command can never drift
+The command prints the small MERITED set of environment variables zicato
+touches. Each is a process-boundary contract: a harness contract, an
+internal handoff, the secrets boundary, an external integration, or a
+CI/test toggle. The set is sourced from
+:func:`zicato.config.describe_env_vars`, so this command cannot drift
 from the code.
 
 Standalone command file picked up by :mod:`zicato.cli.discovery`.
