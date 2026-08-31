@@ -1607,16 +1607,27 @@ the test's coverage.
 
 ---
 
-## 11.13 The reader parity harness — a byte-identical-except-ordering oracle
+## 11.13 The reader parity harnesses — snapshot oracles over the workspace readers
 
-`tests/_reader_parity_harness.py` is the model for a whole class of test:
-the **snapshot oracle** for a refactor/migration. It builds a deterministic
-multi-epoch fixture, captures EVERY public `build_*` reader response into one
-canonical-JSON snapshot, and lets you assert "nothing observable moved"
-across a change to the readers — the same discipline as the MOCK-GOLDEN
-parity gate (§11.7.5), applied to the query readers.
+Two harnesses pin what the code reads off a `.zicato/` workspace. Each builds
+a deterministic fixture workspace, calls every reader in its scope, and
+serialises the results into one canonical-JSON document compared against a
+committed golden. Together they are the oracle for any refactor of the read
+path: capture BEFORE, refactor, capture AFTER, and every difference has to be
+explained.
 
-The fixture is built to expose one defect class: epoch ordering, where
+| Harness | Scope | Fixture | Golden |
+|---|---|---|---|
+| `tests/_reader_parity_harness.py` | the dashboard query layer's public `build_*` readers | three epochs, one of them empty | `tests/data/reader_parity_snapshot.json` |
+| `tests/_workspace_reader_parity_harness.py` | `zicato.analyzer`, `zicato.reflection`, `zicato.health`, `zicato.index`, `zicato.workspace`, and the `zicato health` command's own loaders in `zicato.cli` | two epochs, eleven generations, replicates, reflections, round logs | `tests/data/workspace_reader_parity_snapshot.json` |
+
+The goldens are independent. A change to the query layer never re-records the
+workspace-reader golden, and the reverse holds too, so a re-record is always
+scoped to the reader family that moved.
+
+### 11.13.1 The query-layer harness — epoch ordering
+
+The query fixture is built to expose one defect class: epoch ordering, where
 directory-name order disagrees with `created_at` order. It also carries an
 empty epoch:
 
@@ -1639,8 +1650,6 @@ per-epoch (`build_epoch_view`, `build_bracket`, `build_score_trajectory`,
 …), and per-generation (`build_matchup_detail`, `build_gate_breakdown`, …)
 — so the snapshot exercises the leaf path-readers as well as the
 enumerations, and freezes the whole read surface in one diffable document.
-
-### 11.13.1 The split: byte-identity vs order-aware equality
 
 A change to epoch ordering legitimately moves ONE thing and must move
 NOTHING else, so the harness splits its assertions. Every NON-epoch-list
@@ -1669,13 +1678,75 @@ presents (the `epochs[].epoch_id` list, or the first-appearance order in the
 lineage generation list) so the harness can assert it equals the canonical
 `list_epoch_ids` order — the intended fix, and nothing more.
 
-### 11.13.2 The masking discipline — narrow, or you weaken a check
+### 11.13.2 The workspace-reader harness — generation ordering
 
-Like every snapshot oracle, it masks ONLY the fields that are
-non-deterministic by construction, and the docstrings state the boundary —
-the response-stamp `generated_at` is masked, but on-disk-derived
-timestamps (`created_at`/`proposed_at`) are deterministic in the fixture and
-are NOT masked:
+The readers outside the query layer walk the same tree from six packages, and
+they do not all order it the same way. The second harness pins each of them
+under a `<package>.<function>` label, with the coordinate the reader was
+called on appended after `::` where one reader is captured several times
+(`zicato.index.runs_for_generation::v0`).
+
+Its fixture is built around the orderings those readers disagree about:
+
+- **Eleven generations, `v0` through `v10`.** Numeric-aware ordering puts
+  `v2` before `v10`; lexical ordering puts `v10` between `v1` and `v2`. The
+  golden records both: `zicato.workspace.reads.read_experiments` and
+  the `zicato health` command sort numerically, while the index's
+  `experiments_for_epoch` selector orders by the id column and so sorts
+  lexically.
+- **Board entry ids `t1`, `t2`, `t10` and reflection ids `r-2`, `r-10`**,
+  which put the same question to the per-entry and per-reflection walks.
+- **Two epochs, `e2` (January) and `e10` (February)**, whose directory names
+  sort in the opposite order to their recorded creation times under a lexical
+  sort — the query harness's epoch axis, carried here so the cross-epoch
+  readers are pinned on it too.
+- **Per-run replicates**, including one slot in the contract pre-flight's
+  reserved band, which the observation corpus must refuse: a pre-flight probe
+  patches the champion's snapshot and runs it under the champion's own
+  generation id, so the slot describes code the champion does not have.
+- A per-round event log, a durable field-tournament snapshot, two board
+  reflections, persisted loop-health reports, per-generation
+  mutated-tree-import provenance, and a derived SQLite index — so every
+  reader has real material rather than an empty directory.
+
+The gate runs at two levels. `ORDER_ENFORCED` maps a label to whatever
+identifies one of its rows — a JSON key, a tuple position, or `None` for rows
+that are bare strings — and the harness compares those identifier sequences
+FIRST:
+
+```python
+ORDER_ENFORCED: dict[str, str | int | None] = {
+    # Numeric-aware generation order: v2 before v10.
+    "zicato.workspace.read_experiments::e2": 0,
+    "zicato.cli.health.generation_ids::e2": None,
+    ...
+}
+```
+— `tests/_workspace_reader_parity_harness.py`
+
+Byte identity over the canonical JSON subsumes that check, since a reordered
+list is a different document. The order pass exists so the common failure is
+legible: it reports the label and both orders instead of a diff several
+thousand lines into the golden. Flipping the `zicato health` command's
+generation sort from numeric to lexical produces:
+
+```
+AssertionError: reader 'zicato.cli.health.generation_ids::e2' changed its row order:
+    ['v0', 'v1', 'v10', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9']
+    ['v0', 'v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10']
+```
+
+Add a label to `ORDER_ENFORCED` whenever a reader's row order is part of what
+callers rely on. Leave it out when the order is incidental; byte identity
+still pins it either way.
+
+### 11.13.3 The masking discipline — narrow, or you weaken a check
+
+Both harnesses mask ONLY the fields that are non-deterministic by
+construction, and the docstrings state the boundary — the response-stamp
+`generated_at` is masked, but on-disk-derived timestamps
+(`created_at`/`proposed_at`) are deterministic in the fixtures and are NOT
+masked:
 
 ```python
 def mask_volatile(value: Any) -> Any:
@@ -1688,9 +1759,45 @@ def mask_volatile(value: Any) -> Any:
 — `tests/_reader_parity_harness.py`, `mask_volatile`
 
 `_normalize_root` collapses the per-run absolute workspace path to `<ws>` so
-path-bearing responses (`environment.workspace`) compare stably. The rule is
-identical to `tools/parity/lib/normalize.py` (§11.7.6): mask the KNOWN
-non-determinism narrowly, so a REAL field change still surfaces as a diff.
+path-bearing responses (`environment.workspace`, the corpus' artifact refs)
+compare stably. The rule is identical to `tools/parity/lib/normalize.py`
+(§11.7.6): mask the KNOWN non-determinism narrowly, so a REAL field change
+still surfaces as a diff.
+
+The workspace-reader harness adds two masks of its own, each scoped to one
+reader rather than applied by key name:
+
+- The loop-health report's `checked_at` is the moment the assessment was
+  taken. It is masked on that one field of that one report, because the
+  fixture's persisted pre-flight verdict and per-round health reports carry a
+  `checked_at` of their own that is read off disk and stays pinned.
+- A mined episode's `episode_id` is a digest over the absolute paths of the
+  artifacts it references, so it varies with the temporary directory before
+  the workspace-root normalization can reach it.
+  `_stabilize_episode_ids` renames the distinct ids to `episode-1`,
+  `episode-2` … in first-appearance order, which keeps the episode count, the
+  sharing of ids between rows, and the rank order under the golden's control
+  while dropping only the opaque digest.
+
+`test_fixture_is_reproducible` builds the fixture twice under different
+temporary roots and compares the two snapshots, so a per-run value that
+escapes both masks fails there rather than as an intermittent golden diff.
+
+### 11.13.4 Recording a golden
+
+Both harnesses re-record under the same environment variable, and only the
+test you run re-records its own golden:
+
+```
+ZICATO_PARITY_UPDATE=1 uv run pytest -q tests/test_workspace_reader_parity.py
+ZICATO_PARITY_UPDATE=1 uv run pytest -q tests/test_dashboard_reader_parity.py
+```
+
+Re-record only once you can name, for every label that moved, what changed
+and why — then put that list in the change's description. A golden re-recorded
+to make a red test green is a golden that has stopped being an oracle. Read
+`git diff` on the golden before committing it; the labels are sorted, so the
+diff reads as a list of affected readers.
 
 > ✅ ALWAYS reach for a snapshot oracle when you refactor a family of pure
 > readers (the query layer, a serializer, a canonicalizer): capture every
@@ -2000,7 +2107,8 @@ where to ADD) a test, by concern.
 | worker-boundary stubs (module-level, importable) | `tests/_subprocess_worker_support.py` |
 | cross-backend generation-store contract + session templates | `tests/test_genstore_conformance.py` |
 | cross-backend storage contract | `tests/test_storage_conformance.py` |
-| the reader snapshot oracle (epoch ordering) | `tests/_reader_parity_harness.py` + its consuming test |
+| the reader snapshot oracle — query layer, epoch ordering | `tests/_reader_parity_harness.py` + `tests/test_dashboard_reader_parity.py` |
+| the reader snapshot oracle — analyzer / reflection / health / index / workspace / CLI | `tests/_workspace_reader_parity_harness.py` + `tests/test_workspace_reader_parity.py` |
 | the behavior-preserving parity gates | `tools/parity.sh` + `tools/parity/lib/*.py` + `tools/parity/golden/` |
 | contract-hash checkout-independence | `tests/test_epoch_contract.py::test_contract_hash_is_cwd_and_checkout_invariant` |
 | the CLI surface is canonical | `tools/parity/lib/cli_help.py` (regen: `--update`) |
