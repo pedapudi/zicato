@@ -32,6 +32,7 @@ from tests._orchestrator_harness import (
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 from zicato.epoch.preflight import PreflightReport
 from zicato.tournament.calibration import NoiseFloor
@@ -136,16 +137,7 @@ def _prepare(
 
 
 def _run_once(monkeypatch: pytest.MonkeyPatch, workspace: Path, epoch_id: str) -> Any:
-    from zicato.orchestrator import evolve_once
-
-    return asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
-    )
+    return run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
 
 
 # ---------------------------------------------------------------------------

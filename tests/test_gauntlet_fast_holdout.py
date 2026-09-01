@@ -19,16 +19,15 @@ entries — the divergence these tests are built out of.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
 from tests._orchestrator_harness import (
-    _harness_call_llm,
     _install_stub_adapter_factory,
     _make_aux_responder,
+    run_evolve_once,
 )
 from tests.test_orchestrator_multi_challenger_holdout import (
     _bootstrap,
@@ -45,16 +44,9 @@ _HOLDOUT_ENTRY = "h0"
 
 def _run_fast_round(workspace: Path, epoch_id: str) -> object:
     """Run one single-challenger round under fast mode."""
-    from zicato.orchestrator import evolve_once
 
-    return asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(1)),
-            fast_mode=True,
-        )
+    return run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(1)), fast_mode=True
     )
 
 
@@ -180,16 +172,9 @@ def test_the_same_round_in_full_mode_reaches_the_same_verdicts(
     )
 
     from zicato.evolve.generation_phase import current_generation
-    from zicato.orchestrator import evolve_once
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(1)),
-            fast_mode=False,
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(1)), fast_mode=False
     )
 
     assert outcome.tournament_decision != "promoted"

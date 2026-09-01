@@ -26,7 +26,6 @@ express.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 import types
@@ -36,7 +35,6 @@ import pytest
 
 from tests._contract_pins import pin_deterministic
 from tests._orchestrator_harness import (
-    _harness_call_llm,
     _install_stub_adapter_factory,
     _make_aux_responder,
     run_evolve_once,
@@ -606,8 +604,6 @@ def test_crowning_invariant_raises_when_champion_pointer_cannot_advance(
         pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    import zicato.orchestrator as _orch
-
     # The crowning write becomes a no-op, so current_generation stays v0 even
     # though the bracket settled a promotion — exactly the silent divergence
     # the fail-loud guard must catch.
@@ -616,11 +612,4 @@ def test_crowning_invariant_raises_when_champion_pointer_cannot_advance(
     )
 
     with pytest.raises(RuntimeError, match="crowning invariant violated"):
-        asyncio.run(
-            _orch.evolve_once(
-                workspace_root=workspace,
-                epoch_id=epoch_id,
-                harness_call_llm=_harness_call_llm,
-                auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-            )
-        )
+        run_evolve_once(workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2)))

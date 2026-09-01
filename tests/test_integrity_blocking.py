@@ -19,7 +19,6 @@ existing promotion test runs with both knobs at their False default).
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -29,11 +28,11 @@ import pytest
 from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
     _bootstrap_workspace,
-    _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 from zicato.evolve.containment import (
     check_containment,
@@ -241,15 +240,8 @@ def test_containment_block_rejects_out_of_bounds_child(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     assert outcome.tournament_decision == "rejected"
@@ -280,15 +272,8 @@ def test_containment_block_off_promotes_with_alarm_only(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     assert outcome.tournament_decision == "promoted"
 
@@ -324,15 +309,8 @@ def test_gate_contradiction_block_refuses_unsupported_promote(
 
     monkeypatch.setattr(_runner_mod, "evaluate_gate", _rigged_gate)
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     assert outcome.tournament_decision == "rejected"
@@ -369,15 +347,8 @@ def test_gate_contradiction_block_off_keeps_rigged_promote(
 
     monkeypatch.setattr(_runner_mod, "evaluate_gate", _rigged_gate)
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     assert outcome.tournament_decision == "promoted"
 
@@ -402,15 +373,8 @@ def test_supported_promote_passes_with_both_knobs_on(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     assert outcome.tournament_decision == "promoted"
     marker = workspace / "epochs" / epoch_id / "current_generation"

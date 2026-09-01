@@ -48,6 +48,7 @@ from tests._orchestrator_harness import (
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 from tests.test_evolve_preflight_gate import _prepare, _set_preflight_gate
 from zicato.epoch.preflight import (
@@ -314,16 +315,7 @@ def _pin_probe_ids(workspace: Path, ids: list[str]) -> None:
 
 
 def _run_once(workspace: Path, epoch_id: str) -> Any:
-    from zicato.orchestrator import evolve_once
-
-    return asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
-    )
+    return run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
 
 
 def test_an_unknown_pinned_probe_id_refuses_the_run_under_the_hard_gate(

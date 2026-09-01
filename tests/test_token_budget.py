@@ -24,7 +24,6 @@ Coverage:
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -33,16 +32,15 @@ import pytest
 
 from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
-    _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 from zicato.core.runtime import RoundTokenLedger, RuntimeConfig
 from zicato.core.types import DriftCount, LossProfile
 from zicato.epoch.lifecycle import new_epoch
-from zicato.orchestrator import evolve_once
 
 # Grab the REAL reducer helper before any test masks zicato.telemetry in
 # sys.modules — the unit cache persists a skipped unit through the writer
@@ -189,13 +187,8 @@ def _run_one_round(
     stub_reducer = sys.modules["zicato.telemetry.reducer"]
     stub_reducer.write_loss_profile = _real_write_loss_profile  # type: ignore[attr-defined]
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     return workspace, epoch_id, outcome, calls
 
