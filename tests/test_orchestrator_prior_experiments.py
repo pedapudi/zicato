@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from tests._orchestrator_harness import (
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
     run_evolve_once,
 )
 from tests.test_orchestrator_multi_challenger import _bootstrap_swiss_workspace
@@ -81,8 +81,8 @@ def test_field_accumulates_in_flight_siblings(
     """Challenger k's prompt carries the in-flight core-ideas of the
     siblings minted before it this round."""
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.5, "v2": 1.0, "v3": 0.5},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
@@ -126,8 +126,8 @@ def test_failed_challenger_contributes_no_sibling(
     """A challenger whose proposer fails has no hypothesis to share, so it
     contributes no in-flight sibling line to the next challenger's prompt."""
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0, "v2": 0.5},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
@@ -158,8 +158,8 @@ def test_duplicate_sibling_is_soft_rejected_for_field_diversity(
     dropped from the run slate and recorded with a ``field_diversity_duplicate``
     reason, leaving exactly two DISTINCT challengers to run."""
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.5, "v2": 1.0, "v3": 0.5},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
@@ -206,8 +206,8 @@ def test_same_ids_different_idea_is_not_a_duplicate(
     ideas are distinct experiments — neither is soft-rejected (the constraint
     dedups by id-set AND core idea, not by id alone)."""
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0, "v2": 0.5},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
@@ -269,8 +269,8 @@ def test_overlap_soft_reject_fires_under_diversity_tolerance(
     experiments."""
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
     _set_runtime_diversity_tolerance(workspace, 0.5)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.5, "v2": 1.0, "v3": 0.5},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
@@ -321,8 +321,8 @@ def test_overlap_enforcement_absent_is_byte_compatible(
     compatible with today."""
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
     # Deliberately do NOT set diversity_tolerance.
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.5, "v2": 1.0, "v3": 0.5},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},

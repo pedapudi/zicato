@@ -51,8 +51,8 @@ import pytest
 # the test is independent of where the examples distribution lives on disk.
 import zicato_examples.target_1_presentation as _t1_pkg
 from tests._orchestrator_harness import (
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
     run_evolve_once,
 )
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
@@ -118,7 +118,7 @@ def _install_caching_telemetry_stubs(
 ) -> None:
     """Telemetry stub that PERSISTS each run's ``loss.json`` and reads it back.
 
-    The default ``_install_telemetry_stubs`` short-circuits
+    The default ``install_telemetry_stubs`` short-circuits
     ``read_loss_profile`` to always raise, so the fast-mode champion-cache
     resolver (which reads per-board ``loss.json`` from disk) can never find
     a cache there. This variant writes a real ``loss.json`` for every run
@@ -136,7 +136,7 @@ def _install_caching_telemetry_stubs(
     from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 
     # Keep the default stubs for sink path / harmonograf / adapter wiring.
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen=canned_loss_by_gen,
         canned_pass_by_gen=canned_pass_by_gen,
@@ -301,12 +301,12 @@ def test_presentation_racing_field_runs_end_to_end_and_promotes(
     survivor clears the full-board champion gate, and the live
     ActiveTournament envelope + per-challenger OutcomeRecord audit persist."""
     workspace, epoch_id = _bootstrap_racing_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     # Strictly-descending challenger losses: v1 is the best arm and survives
     # every rung, then beats champion v0 on the full board. v4 is worst and
     # dies in rung 0. The cuts are by rank (best-arm identification), the
     # final crowning is the unchanged promote gate.
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 0.4, "v2": 0.8, "v3": 1.2, "v4": 1.6},
         canned_pass_by_gen={gid: True for gid in ("v0", *_CHALLENGER_IDS)},
@@ -399,10 +399,10 @@ def test_presentation_racing_field_rejects_when_no_arm_beats_champion(
     the champion stands and every challenger is a dead branch — the example
     contract's promote_margin gate is the unchanged final arbiter."""
     workspace, epoch_id = _bootstrap_racing_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     # Every challenger regresses vs the champion (higher loss), so even the
     # racing survivor cannot clear the champion gate on the full board.
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 0.2, "v1": 1.0, "v2": 1.4, "v3": 1.8, "v4": 2.2},
         canned_pass_by_gen={gid: True for gid in ("v0", *_CHALLENGER_IDS)},
@@ -437,7 +437,7 @@ def test_fast_racing_reuses_cached_champion_and_records_provenance(
     provenance.
     """
     workspace, epoch_id = _bootstrap_racing_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     # Pre-seed the champion (v0) cache the way a prior full round would —
     # BEFORE the reducer stub is installed (it imports the real writer).
     # The racing contract requests replicates=2, so a prior full round
@@ -481,7 +481,7 @@ def test_fast_racing_degrades_to_full_without_cache(
 ) -> None:
     """Fast racing with NO cached champion runs the champion once (degraded)."""
     workspace, epoch_id = _bootstrap_racing_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     champion_runs: list[str] = []
     # No champion cache pre-seeded → the seed champion has no aggregate yet,
     # so fast must degrade to a full champion run (and cache it).

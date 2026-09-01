@@ -33,12 +33,12 @@ from typing import Any
 import pytest
 
 from tests._orchestrator_harness import (
-    _bootstrap_workspace,
-    _harness_call_llm,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    bootstrap_workspace,
+    harness_call_llm,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 from tests.test_orchestrator_multi_challenger import (
     _bootstrap_swiss_workspace,
@@ -316,17 +316,15 @@ def test_gauntlet_promotion_fires_the_hook_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The gauntlet's champion-marker advance notifies the adapter."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     calls = _install_hooked_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == "promoted"
     assert len(calls) == 1, calls
@@ -349,17 +347,15 @@ def test_a_rejected_round_never_fires_the_hook(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No promotion, no notification — the champion did not move."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     calls = _install_hooked_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 0.0, "v1": 5.0},
         canned_pass_by_gen={"v0": True, "v1": False},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == "rejected"
     assert calls == []
@@ -376,15 +372,13 @@ def test_multi_challenger_crowning_fires_the_hook_once(
     """
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
     calls = _install_hooked_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
 
     assert outcome.tournament_decision == "promoted"
     assert len(calls) == 1, calls
@@ -411,22 +405,20 @@ def test_a_failing_hook_leaves_the_promotion_standing(
     is be reported — which it is, as an ``on_promote_hook_failed`` WARNING
     in the round's loop-health report.
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
 
     async def _explode(**context: Any) -> None:
         del context
         raise ConnectionError("the external store is unreachable")
 
     calls = _install_hooked_adapter_factory(monkeypatch, on_promote=_explode)
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     # The round settled normally and the promotion is intact on every store.
     assert len(calls) == 1
@@ -452,15 +444,15 @@ def test_a_successful_hook_raises_no_finding(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The finding is a failure signal, not a promotion log line."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _install_hooked_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
+    run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert _findings(_health_report(workspace, epoch_id, 1), "on_promote_hook_failed") == []
 
@@ -484,9 +476,9 @@ def test_resume_never_re_fires_a_settled_promotion(
     the same funnel). So the restarted loop moves past v1 rather than
     replaying its tail.
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     calls = _install_hooked_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         # Round 1 promotes v1; round 2's v2 is worse than the new champion
         # and is rejected, so the ONLY promotion in the run is v1's.
@@ -494,7 +486,7 @@ def test_resume_never_re_fires_a_settled_promotion(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": False},
     )
 
-    first = run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
+    first = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     assert first.tournament_decision == "promoted"
     assert [c["generation_id"] for c in calls] == ["v1"]
 
@@ -517,8 +509,8 @@ def test_resume_never_re_fires_a_settled_promotion(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
         )
     )
 

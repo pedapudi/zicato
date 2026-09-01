@@ -37,13 +37,13 @@ import zicato.tournament.runner as _runner_mod
 # orchestrator telemetry stubs (which shadow zicato.telemetry.reducer in
 # sys.modules with a stub that has no working read/write).
 from tests._orchestrator_harness import (
-    _bootstrap_workspace,
-    _harness_call_llm,
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    bootstrap_workspace,
+    harness_call_llm,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 from zicato.telemetry.reducer import read_loss_profile as _REAL_READ_LOSS
 from zicato.telemetry.reducer import write_loss_profile as _REAL_WRITE_LOSS
@@ -52,7 +52,7 @@ from zicato.telemetry.reducer import write_loss_profile as _REAL_WRITE_LOSS
 def _wire_real_loss_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the stub reducer's loss read/write at the REAL implementations.
 
-    ``_install_telemetry_stubs`` installs a reducer stub whose
+    ``install_telemetry_stubs`` installs a reducer stub whose
     ``read_loss_profile`` always raises and that has no
     ``write_loss_profile`` — so the per-unit ``loss.json`` cache is inert
     under the default orchestrator stubs. The resume test needs a *working*
@@ -113,9 +113,9 @@ def test_resume_reuses_completed_units_without_rerun(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An interrupted v1 tournament resumes; cached units are not re-run."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -123,7 +123,7 @@ def test_resume_reuses_completed_units_without_rerun(
     _wire_real_loss_cache(monkeypatch)
 
     # --- Round 1: run a full round so v0 + v1 board units land loss.json. ---
-    first = run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
+    first = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     assert first.proposed_generation_id == "v1"
     gens = workspace / "epochs" / epoch_id / "generations"
     v1_dir = gens / "v1"
@@ -147,7 +147,7 @@ def test_resume_reuses_completed_units_without_rerun(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
+            harness_call_llm=harness_call_llm,
             auxiliary_call_llm=_aux_must_not_propose,
         )
     )
@@ -187,9 +187,9 @@ def test_clean_workspace_evolve_is_unchanged(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """With nothing to resume, evolve runs a normal fresh round (no v-skip)."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -202,8 +202,8 @@ def test_clean_workspace_evolve_is_unchanged(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
         )
     )
 

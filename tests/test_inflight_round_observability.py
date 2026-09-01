@@ -42,9 +42,9 @@ import pytest
 
 # Reuse the fully-mocked harness from the gauntlet orchestrator tests.
 from tests._orchestrator_harness import (
-    _harness_call_llm,
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
+    harness_call_llm,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
     run_evolve_once,
 )
 from zicato.core.types import ScoringWeights, TournamentStructure
@@ -210,11 +210,11 @@ def test_birth_round_index_stamped_per_round_end_to_end(
     AND its lineage.json node, for every round.
     """
     workspace, epoch_id = _bootstrap_single_elim_workspace(tmp_path, field_size=4)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     # Per-generation losses: v1 (and later v5) lead their fields so a
     # challenger is crowned each round (the loop advances). Exact ordering
     # of the bracket is immaterial to the birth-round assertions.
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={
             "v0": 2.0,
@@ -238,7 +238,7 @@ def test_birth_round_index_stamped_per_round_end_to_end(
             rounds=2,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
+            harness_call_llm=harness_call_llm,
             auxiliary_call_llm=_infinite_proposer_responder(),
             auto_epoch=False,
         )
@@ -289,8 +289,8 @@ def test_inflight_round_visible_in_every_store_before_settle(
     the new round was invisible to every queryable store.
     """
     workspace, epoch_id = _bootstrap_single_elim_workspace(tmp_path, field_size=4)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={
             "v0": 2.0,
@@ -346,7 +346,7 @@ def test_inflight_round_visible_in_every_store_before_settle(
             rounds=2,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
+            harness_call_llm=harness_call_llm,
             auxiliary_call_llm=_infinite_proposer_responder(),
             auto_epoch=False,
         )
@@ -391,8 +391,8 @@ def test_field_record_finalises_to_settled_after_round(
     ``in_progress`` to ``settled`` under the SAME key — the open + settle
     compose idempotently (no duplicate record, no stale in_progress)."""
     workspace, epoch_id = _bootstrap_single_elim_workspace(tmp_path, field_size=4)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={
             "v0": 2.0,

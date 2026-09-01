@@ -35,13 +35,13 @@ from typing import Any
 import pytest
 
 from tests._orchestrator_harness import (
-    _bootstrap_workspace,
-    _harness_call_llm,
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    bootstrap_workspace,
+    harness_call_llm,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 from zicato.core.types import DriftCount, LossProfile
 from zicato.orchestrator import DEFERRED_INFRA_DECISION, EvolveRoundOutcome
@@ -55,7 +55,7 @@ from zicato.runtime.resume import prepare_resume
 def _install_infra_abort_run_single(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make every board unit come back as an INFRA abort (a worker crash).
 
-    Layered on top of ``_install_telemetry_stubs`` (which stubs the real
+    Layered on top of ``install_telemetry_stubs`` (which stubs the real
     subprocess ``_run_single``): the profile carries the runner's
     ``nonzero_exit`` abort cause — an :func:`is_infra_abort_cause` class,
     never a genuine budget exhaustion — and the worst-case
@@ -106,9 +106,9 @@ def _set_runtime_block(workspace: Path, runtime: dict[str, Any]) -> None:
 def _rig_outage_workspace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, threshold: int | None
 ) -> tuple[Path, str]:
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -129,9 +129,7 @@ def test_all_infra_aborted_round_defers_un_outcomed(
 ) -> None:
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=1)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
     assert "deferred_infra" in outcome.rejection_reason
@@ -172,17 +170,15 @@ def test_field_infrastructure_threshold_accumulates_across_matchups(
 
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
     _set_runtime_block(workspace, {"infra_abort_round_threshold": 3})
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0, "v2": 1.5},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
     _install_infra_abort_run_single(monkeypatch)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
 
     # Each two-sided, single-entry matchup contributes two infrastructure
     # aborts. No individual matchup reaches three, but the Swiss matchup plus
@@ -210,9 +206,7 @@ def test_deferred_round_reconciles_cleanly_and_recovers(
     endpoint settles the re-run round normally."""
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=1)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
 
     # Infra aborts are never persisted to the unit cache, so a full-outage
@@ -224,12 +218,12 @@ def test_deferred_round_reconciles_cleanly_and_recovers(
 
     # Heal the endpoint (restore the stub's healthy _run_single) and run the
     # next round: it re-proposes v1 fresh and settles normally.
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
-    healed = run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
+    healed = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     assert healed.tournament_decision == "promoted"
     assert healed.proposed_generation_id == "v1"
 
@@ -241,9 +235,7 @@ def test_partial_outage_leaves_resume_in_place_classification(
     the cached units are worth keeping and the cache HITs them on re-run."""
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=1)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
 
     # Simulate one completed unit having landed before the outage (a real
@@ -267,9 +259,7 @@ def test_threshold_off_settles_exactly_as_today(
     ``rejected`` outcome — the un-opted-in path is untouched."""
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=None)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == "rejected"
     v1_dir = workspace / "epochs" / epoch_id / "generations" / "v1"
@@ -319,7 +309,7 @@ def test_loop_backs_off_exponentially_and_reconciles(
     import zicato.evolve.loop as loop_mod
     import zicato.orchestrator as orch
 
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _set_runtime_block(workspace, {"infra_backoff_base_s": 0.01, "infra_backoff_cap_s": 0.02})
 
     async def _permissive_aux(system: str, user: str, model: str) -> str:
@@ -361,7 +351,7 @@ def test_loop_backs_off_exponentially_and_reconciles(
             workspace_root=workspace,
             rounds=5,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
+            harness_call_llm=harness_call_llm,
             auxiliary_call_llm=_permissive_aux,
             # Three deferrals in a row must NOT trip this breaker — a
             # deferral is evidence about the endpoint, not the stream.

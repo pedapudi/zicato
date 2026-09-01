@@ -418,6 +418,11 @@ def drive_mock_evolve(
     if str(_REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(_REPO_ROOT))
 
+    from tests._orchestrator_harness import (
+        harness_call_llm,
+        install_stub_adapter_factory,
+        install_telemetry_stubs,
+    )
     from tests._stub_adapter import stub_adapter_pythonpath
     from tests.test_example_target_1_racing import (
         EXAMPLE_DIR,
@@ -425,11 +430,6 @@ def drive_mock_evolve(
         _make_example_aux_responder,
         _preseed_champion_cache,
         bootstrap_example_workspace,
-    )
-    from tests.test_orchestrator import (
-        _harness_call_llm,
-        _install_stub_adapter_factory,
-        _install_telemetry_stubs,
     )
 
     # Replicate the two autouse fixtures from tests/conftest.py that the
@@ -489,7 +489,7 @@ def drive_mock_evolve(
     #    import the stub adapter's module wherever this capture was started
     #    from.
     monkeypatch.setenv("PYTHONPATH", stub_adapter_pythonpath())
-    _install_stub_adapter_factory(monkeypatch, bypass_workspace_gate=False)
+    install_stub_adapter_factory(monkeypatch, bypass_workspace_gate=False)
     # Strictly-descending challenger losses: v1 is the best arm, so it
     # survives every racing rung and clears the champion gate — and it is
     # also the single challenger a gauntlet lane mints. A lane whose field
@@ -540,7 +540,7 @@ def drive_mock_evolve(
             canned_pass_by_gen=canned_pass_by_gen,
         )
     else:
-        _install_telemetry_stubs(
+        install_telemetry_stubs(
             monkeypatch,
             canned_loss_by_gen=canned_loss_by_gen,
             canned_pass_by_gen=canned_pass_by_gen,
@@ -558,7 +558,7 @@ def drive_mock_evolve(
             rounds=lane.rounds,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
+            harness_call_llm=harness_call_llm,
             auxiliary_call_llm=_make_example_aux_responder(),
             fast_mode=lane.fast_mode,
         )

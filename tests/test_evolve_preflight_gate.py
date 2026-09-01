@@ -26,13 +26,13 @@ from typing import Any
 import pytest
 
 from tests._orchestrator_harness import (
-    _bootstrap_workspace,
-    _harness_call_llm,
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    bootstrap_workspace,
+    harness_call_llm,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 from zicato.epoch.preflight import PreflightReport
 from zicato.tournament.calibration import NoiseFloor
@@ -116,10 +116,10 @@ def _prepare(
     floor_max: float = 0.0,
     **window: Any,
 ) -> tuple[Path, str, list[Any]]:
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _set_preflight_gate(workspace, gate)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -137,7 +137,7 @@ def _prepare(
 
 
 def _run_once(monkeypatch: pytest.MonkeyPatch, workspace: Path, epoch_id: str) -> Any:
-    return run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
+    return run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
 
 # ---------------------------------------------------------------------------
@@ -189,8 +189,8 @@ def test_refuse_mode_stops_evolve_n_rounds_before_spending_rounds(
             rounds=3,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()] * 3),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response()] * 3),
             stop_reason_out=stop_reason,
         )
     )

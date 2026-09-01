@@ -35,8 +35,8 @@ import pytest
 
 from tests._contract_pins import pin_deterministic
 from tests._orchestrator_harness import (
-    _install_stub_adapter_factory,
-    _make_aux_responder,
+    install_stub_adapter_factory,
+    make_aux_responder,
     run_evolve_once,
 )
 from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile
@@ -323,7 +323,7 @@ def test_holdout_confirms_a_true_win_and_persists_records(
     train/holdout/gap fields (so #5's detector + the board-status surface work
     for these structures too)."""
     workspace, epoch_id = _bootstrap(tmp_path, structure=structure, field_size=2)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     # v1 improves both train (2.0 -> 0.5) and holdout (2.0 -> 0.5): a general
     # win. v2 is a weaker challenger; v0 is the champion.
     loss: dict[tuple[str, str], float] = {}
@@ -337,9 +337,7 @@ def test_holdout_confirms_a_true_win_and_persists_records(
         pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
 
     assert outcome.tournament_decision == "promoted", structure
     crowned = outcome.proposed_generation_id
@@ -369,7 +367,7 @@ def test_holdout_regression_flips_a_bracket_leaders_win_to_reject(
     Ladder-confirmation flips the promote to ``rejected`` (``holdout_not_
     confirmed``) and the champion stands."""
     workspace, epoch_id = _bootstrap(tmp_path, structure=structure, field_size=2)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     # BOTH challengers win the TRAIN slice (2.0 -> 0.5 / 1.5) but BOTH regress
     # hard on the HOLDOUT entry (2.0 -> 5.0): whichever survivor reaches the
     # champion gate, the holdout confirmation must flip its train win. (Using
@@ -391,9 +389,7 @@ def test_holdout_regression_flips_a_bracket_leaders_win_to_reject(
 
     from zicato.evolve.generation_phase import current_generation
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
 
     assert outcome.tournament_decision == "rejected", structure
     assert "holdout_not_confirmed" in outcome.rejection_reason
@@ -421,7 +417,7 @@ def test_per_epoch_ladder_budget_is_shared_and_decremented(
     ``ladder_state.json`` the gauntlet uses, so the budget is shared across the
     structure's confirmation and decrements when the holdout is queried."""
     workspace, epoch_id = _bootstrap(tmp_path, structure=structure, field_size=2)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     loss: dict[tuple[str, str], float] = {}
     for e in (*(f"train_{i}" for i in range(4)), "h0"):
         loss[("v0", e)] = 2.0
@@ -435,7 +431,7 @@ def test_per_epoch_ladder_budget_is_shared_and_decremented(
 
     from zicato.core.workspace import ladder_state_path
 
-    run_evolve_once(workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2)))
+    run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
 
     state_path = ladder_state_path(workspace, epoch_id)
     assert state_path.exists(), "the crowning confirmation must persist the shared ladder state"
@@ -461,7 +457,7 @@ def test_empty_holdout_degrades_to_whole_board(
         overfitting=OverfittingConfig(enabled=False),
         with_holdout_tag=False,
     )
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     # h0 would regress, but with no holdout slice it is just another train
     # entry — v1 still wins the whole-board average and promotes.
     loss: dict[tuple[str, str], float] = {}
@@ -480,9 +476,7 @@ def test_empty_holdout_degrades_to_whole_board(
 
     from zicato.core.workspace import ladder_state_path
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
 
     assert outcome.tournament_decision == "promoted", structure
     crowned = outcome.proposed_generation_id
@@ -509,7 +503,7 @@ def test_settled_promotion_agrees_with_champion_and_lineage(
     lineage to the promoted generation, AND the durable FIELD bracket records
     the SAME promotion — no store disagrees (issue #20, acceptance #1)."""
     workspace, epoch_id = _bootstrap(tmp_path, structure=structure, field_size=2)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     loss: dict[tuple[str, str], float] = {}
     for e in (*(f"train_{i}" for i in range(4)), "h0"):
         loss[("v0", e)] = 2.0
@@ -523,9 +517,7 @@ def test_settled_promotion_agrees_with_champion_and_lineage(
 
     from zicato.evolve.generation_phase import current_generation
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
 
     assert outcome.tournament_decision == "promoted", structure
     crowned = outcome.proposed_generation_id
@@ -550,7 +542,7 @@ def test_holdout_flip_persists_a_rejected_bracket_not_a_phantom_promotion(
     the HOLDOUT-RESOLVED ``rejected`` verdict — agreeing with the champion that
     stood."""
     workspace, epoch_id = _bootstrap(tmp_path, structure=structure, field_size=2)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     loss: dict[tuple[str, str], float] = {}
     for e in (f"train_{i}" for i in range(4)):
         loss[("v0", e)] = 2.0
@@ -567,9 +559,7 @@ def test_holdout_flip_persists_a_rejected_bracket_not_a_phantom_promotion(
 
     from zicato.evolve.generation_phase import current_generation
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
 
     assert outcome.tournament_decision == "rejected", structure
     # Champion stands.
@@ -592,7 +582,7 @@ def test_crowning_invariant_raises_when_champion_pointer_cannot_advance(
     by stubbing the marker writer to a no-op so the re-read after the crowning
     write still names the old champion."""
     workspace, epoch_id = _bootstrap(tmp_path, structure="single_elim", field_size=2)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     loss: dict[tuple[str, str], float] = {}
     for e in (*(f"train_{i}" for i in range(4)), "h0"):
         loss[("v0", e)] = 2.0
@@ -612,4 +602,4 @@ def test_crowning_invariant_raises_when_champion_pointer_cannot_advance(
     )
 
     with pytest.raises(RuntimeError, match="crowning invariant violated"):
-        run_evolve_once(workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2)))
+        run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))

@@ -27,13 +27,13 @@ from typing import Any
 import pytest
 
 from tests._orchestrator_harness import (
-    _bootstrap_workspace,
-    _harness_call_llm,
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    bootstrap_workspace,
+    harness_call_llm,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 
 # ---------------------------------------------------------------------------
@@ -128,18 +128,16 @@ def _run_one_round(
 
     Returns ``(workspace, epoch_id, outcome)``.
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
     _install_fake_health(monkeypatch, health=health, calls=calls)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     return workspace, epoch_id, outcome
 
 
@@ -358,9 +356,9 @@ def test_evolve_once_runs_without_health_sibling(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """With no zicato.health sibling the round still completes, no report."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -378,9 +376,7 @@ def test_evolve_once_runs_without_health_sibling(
 
     monkeypatch.setattr("builtins.__import__", _blocking_import)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == "promoted"
     # No assessment ran → no summary, not critical, no report file.
@@ -457,9 +453,9 @@ def test_evolve_n_rounds_stops_on_consecutive_critical_health(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Two consecutive CRITICAL-health rounds stop evolve_n_rounds early."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 1.0, "v1": 1.0, "v2": 1.0, "v3": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
@@ -483,8 +479,8 @@ def test_evolve_n_rounds_stops_on_consecutive_critical_health(
             rounds=4,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response() for _ in range(4)]),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response() for _ in range(4)]),
             max_consecutive_rejections=99,  # isolate the health breaker
         )
     )
@@ -497,9 +493,9 @@ def test_evolve_n_rounds_opt_out_of_health_stop(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """stop_on_degenerate_health=False runs every round despite CRITICAL health."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 1.0, "v1": 1.0, "v2": 1.0, "v3": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
@@ -521,8 +517,8 @@ def test_evolve_n_rounds_opt_out_of_health_stop(
             rounds=3,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response() for _ in range(3)]),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response() for _ in range(3)]),
             max_consecutive_rejections=99,
             stop_on_degenerate_health=False,
         )
