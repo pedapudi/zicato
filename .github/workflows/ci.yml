@@ -40,6 +40,22 @@ jobs:
         # so parallel prose branches never contend for the baseline.
         run: python tools/prose_lint.py --baseline tools/prose_lint_baseline.json
 
+  dashboard-javascript:
+    name: dashboard JavaScript behaviour (Node 22)
+    # Repository policy requires this result before merge. The job name is a
+    # stable, visible status name; repository settings do not enforce it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Dashboard JavaScript behaviour
+        run: make node-test
+
   lint-and-test:
     runs-on: ubuntu-latest
     strategy:
@@ -92,11 +108,9 @@ jobs:
         run: uv run mypy src/zicato/
 
       - name: Pytest (default tier)
-        # The DEFAULT TIER ONLY. A pull request does not run the `slow`
-        # tier: those seven tests are 5 minutes of the 6 a full run takes,
-        # and .github/workflows/slow-tier.yml runs them nightly against
-        # main instead, so a regression in one surfaces within a day rather
-        # than on every branch.
+        # The default tier stays short enough for quick pull-request signal.
+        # .github/workflows/slow-tier.yml runs the seven statistical and
+        # end-to-end oracles as a separate pull-request check.
         #
         # The exclusion is stated here rather than inherited: the `slow`
         # tier is deselected only for a BARE `pytest`, and this step names
@@ -114,8 +128,8 @@ jobs:
   parity:
     name: parity gates (${{ matrix.python-version }})
     # PYTEST is skipped: lint-and-test's Pytest step already runs the
-    # default tier (pyproject testpaths = ["tests"]), and the `slow` tier
-    # runs nightly in slow-tier.yml. Every other gate runs.
+    # default tier (pyproject testpaths = ["tests"]), and slow-tier.yml
+    # runs the other tier as its own check. Every other gate runs.
     #
     # Every supported interpreter, not one: a golden is a claim that the
     # bytes are a function of the code and the inputs, and running it on a

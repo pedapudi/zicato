@@ -43,11 +43,6 @@ from zicato.mutation.enumerator import enumerate_mutations
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 from zicato_examples.target_0_convergence.harness import parse_style_tokens
 
-# Every unit here is target_0, whose adapter reads a generation as TEXT,
-# and none of these tests is about the process boundary — so they run
-# through the worker entry in-process (tests/conftest.py).
-pytestmark = pytest.mark.usefixtures("inline_worker")
-
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
 AGENT_DIR = EXAMPLE_DIR / "agent"
 BOARD_PATH = EXAMPLE_DIR / "board.jsonl"

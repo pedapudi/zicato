@@ -14,11 +14,6 @@ from zicato.core.types import (
     JudgeSpec,
 )
 
-# Every unit here is target_0, whose adapter reads a generation as TEXT,
-# and none of these tests is about the process boundary — so they run
-# through the worker entry in-process (tests/conftest.py).
-pytestmark = pytest.mark.usefixtures("inline_worker")
-
 
 def _entry(entry_id: str, *, tags: tuple[str, ...] = ()) -> BoardEntry:
     return BoardEntry(

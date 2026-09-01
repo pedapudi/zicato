@@ -28,7 +28,7 @@
 >
 > | ID | Name | Invariant |
 > |----|------|-----------|
-> | V1 | the both-tiers-before-a-merge rule | **A bare `pytest` is the fast tier; a merge needs BOTH tiers, and running them is YOURS to do.** Only a bare `pytest` drops the `slow` tier (seven tests measured at 15 s or more ALONE) — naming a file, a test or a marker expression runs what it names. `make test` and `tools/parity.sh` run both tiers; a pull request runs only the default one, and the `slow` tier runs nightly against main. So the tier is the one part of the suite CI does not check before a merge. An `integration` test's runtime IS its coverage, never a candidate for stubbing. |
+> | V1 | the both-tiers-before-a-merge rule | **A bare `pytest` is the fast tier; a merge needs BOTH tiers.** Only a bare `pytest` drops the `slow` tier (seven tests measured at 15 s or more ALONE) — naming a file, a test or a marker expression runs what it names. `make test` and `tools/parity.sh` run both tiers locally. Pull requests run the default tier and the `slow` tier as separate checks. An `integration` test's runtime IS its coverage, never a candidate for stubbing. |
 > | V2 | the must-fail-with-the-fix-stashed rule | **A regression test MUST fail with the fix stashed.** A test that passes both before and after a fix proves nothing about the fix. |
 > | V3 | the never-weaken-an-assertion rule | **Never weaken an assertion to make a test pass.** Fix the code, or pin the new value with a measured justification in the commit. A pinned number moves only with a measured reason. |
 > | V4 | the pin-off-and-carry-the-countermeasure rule | **Deterministic contracts pin interacting knobs OFF — AND carry the countermeasure.** Pinning best-of-1 / replicates-1 / gate-off makes a script deterministic, but every shipped default also needs a knob-ON adversarial test. Pinning alone is how the best-of-N tree-mismatch case and the evidence-gate replicate-reuse case hid (`12-bug-casebook.md` cases 6 and 8). |
@@ -58,8 +58,8 @@
 | `tools/parity/golden/` | the committed golden baselines |
 | `pyproject.toml` | `[tool.pytest.ini_options]` (markers, `addopts`), `[tool.importlinter]` (the five contracts), `[tool.ruff.lint...banned-api]` (the TID251 bans) |
 | `Makefile` | the targets (`test` = both tiers / `test-fast` = the default tier / `node-test` / `lint` / `import-lint` / `typecheck` / `check`) |
-| `.github/workflows/ci.yml` | the pull-request jobs (Python matrix running the DEFAULT tier, parity, + the Rust supervisor) |
-| `.github/workflows/slow-tier.yml` | the `slow` tier, nightly against main and on demand |
+| `.github/workflows/ci.yml` | the pull-request jobs (Python matrix running the DEFAULT tier, dashboard JavaScript, parity, and the Rust supervisor) |
+| `.github/workflows/slow-tier.yml` | the `slow` tier on pull requests, nightly against main, and on demand |
 | `src/zicato/dashboard/static/test/run-all.mjs` | the Node behaviour-suite runner (exit-code-honest) |
 
 The suite is large (about 5,990 Python tests plus the Node suite plus the
@@ -85,14 +85,13 @@ gives you and what the inner loop uses; the SLOW tier is seven tests, each
 measured at 15 s or more ON ITS OWN. Together they are about five of the
 six minutes a full run takes.
 
-A merge needs both. Running both is the contributor's job: `make test` and
-`tools/parity.sh`'s PYTEST gate each run the whole suite, and the
-pre-commit checklist (§11.11) is where they sit. **A pull request runs only
-the default tier**, and `.github/workflows/slow-tier.yml` runs the `slow`
-tier nightly against main plus on demand from the Actions tab. A regression
-in one of the seven therefore surfaces within a day rather than on the
-branch that caused it — which is the trade the tiering buys, and the reason
-the local ladder is not optional.
+A merge needs both. `make test` and `tools/parity.sh`'s PYTEST gate each run
+the whole suite locally, and the pre-commit checklist (§11.11) includes both.
+Pull requests run the default tier and the `slow` tier as separate checks,
+alongside the dashboard JavaScript and Rust checks. Repository policy requires
+every reported result to pass before merge. `.github/workflows/slow-tier.yml`
+also runs the seven slow tests nightly against main and on demand from the
+Actions tab.
 
 ```
 addopts = "-n auto -m 'not node and not cascade_oc'"
@@ -235,51 +234,7 @@ pythonpath = ["."]
 > test flakes only in the full run, the first suspect is a shared resource it
 > did not isolate — never "xdist is flaky".
 
-### 11.1.2 Running a board unit in this interpreter
-
-A tournament run normally executes in its own OS process — that is what
-makes the per-run wall-clock budget enforceable and keeps two generations'
-source out of one interpreter (§11.5). The suite drives about 1,080 of those
-in the default tier, each finishing in milliseconds behind roughly half a
-second of interpreter startup and import, so the boundary rather than the
-work is most of what the tier costs.
-
-`zicato.tournament.worker_transport.use_worker_launcher` is the one seam
-that changes it. Production never touches the seam: `launch_worker` calls
-`spawn_worker_subprocess`, which owns the
-`python -m zicato._tournament_worker` argv and the `start_new_session=True`
-that gives the worker its own process group. A test module opts out of the
-process per unit with one line:
-
-```python
-pytestmark = pytest.mark.usefixtures("inline_worker")
-```
-
-The unit still goes through `zicato._tournament_worker.main`, the same args
-file and the same result file; only the interpreter is shared.
-`tests/test_worker_inline_seam.py` pins the equivalence — the same adapter,
-generation, entry and weights run BOTH ways produce the same loss profile,
-field for field.
-
-> ⛔ NEVER request `inline_worker` for a test whose subject IS the boundary.
-> Worker pids, process groups, signals, budget escalation, supervisor
-> reaping and worker-environment scrubbing are properties of a real child
-> process, and `InlineWorker` RAISES rather than faking any of them — so
-> such a test fails loudly instead of passing without a worker.
-> `test_subprocess_workers.py`, `test_spawn_permit.py`,
-> `test_cli_config_flags.py` and the two oracles keep the real subprocess
-> for this reason: an oracle's worth is that it runs the real thing end to
-> end.
-
-> ⛔ NEVER request it for an adapter that IMPORTS its generation snapshot as
-> Python. Two generations of one module name in a single interpreter is the
-> confusion the subprocess exists to prevent, and `sys.modules` would hand
-> the second run the first one's code. The modules that opt in all drive
-> target_0, whose adapter reads a generation as TEXT.
-
----
-
-### 11.1.3 Running only what a change can reach
+### 11.1.2 Running only what a change can reach
 
 `tools/affected_tests.py` narrows the inner loop below the default tier. It
 diffs a ref range, builds the import graph of `zicato`, `zicato_examples`,
@@ -1541,13 +1496,11 @@ invokes it. The whole module skips when `node` is unavailable.
 
 `.github/workflows/ci.yml` runs one job per gate family. The Python job
 matrixes over 3.11 and 3.12 and runs the gates in order: ruff → import
-contracts → mypy → the DEFAULT test tier. The `slow` tier is not in this
-job: `.github/workflows/slow-tier.yml` runs it nightly against main and on
-demand, because those seven tests are about five of the six minutes a full
-run takes. The step names its own marker expression rather than leaning on
-the default, because it names paths — and naming anything runs the `slow`
-tier (§11.1). Dependencies install with `--frozen` (exactly what `uv.lock`
-pins, failing if the lock is stale — reproducible CI):
+contracts → mypy → the DEFAULT test tier. The step names its own marker
+expression rather than leaning on the default, because it names paths — and
+naming anything runs the `slow` tier (§11.1). Dependencies install with
+`--frozen` (exactly what `uv.lock` pins, failing if the lock is stale —
+reproducible CI):
 
 ```yaml
       - name: Sync dependencies
@@ -1565,11 +1518,24 @@ pins, failing if the lock is stale — reproducible CI):
 ```
 — `.github/workflows/ci.yml`
 
-The `slow` tier has a workflow of its own, on a schedule rather than on a
-pull request:
+The dashboard JavaScript job installs Node 22 and runs the same canonical
+command used locally:
+
+```yaml
+  dashboard-javascript:
+    name: dashboard JavaScript behaviour (Node 22)
+    ...
+      - name: Dashboard JavaScript behaviour
+        run: make node-test
+```
+— `.github/workflows/ci.yml`
+
+The `slow` tier has a separate workflow so its result appears as a distinct
+pull-request check. The workflow also runs nightly and on demand:
 
 ```yaml
 on:
+  pull_request:
   schedule:
     - cron: "0 7 * * *"
   workflow_dispatch:
@@ -1579,10 +1545,11 @@ on:
 ```
 — `.github/workflows/slow-tier.yml`
 
-`workflow_dispatch` is there so anyone can run the tier from the Actions
-tab without waiting for the small hours — worth doing on a branch that
-touches the decision procedure, the convergence loop or the evidence gate,
-which is where all seven live.
+`workflow_dispatch` lets collaborators with write access run the tier from the
+Actions tab. Stable job names make the Python 3.11 and 3.12 results individually
+visible. Repository policy requires both results before merge; repository
+settings do not enforce that policy. The scheduled run tests main once a day
+even when no pull request is open.
 
 The Rust job builds and tests the supervisor: `cargo fmt --check`,
 `cargo clippy --all-targets -- -D warnings`, `cargo test`. A change that
@@ -1614,7 +1581,7 @@ gate a real regression could hide behind.
 #    would select it and run the slow tier with it.
 uv run pytest -q
 
-# 2. Full suite — BOTH tiers, which is what the merge gate runs.
+# 2. Full suite — BOTH tiers, which repository policy requires before merge.
 uv run pytest tests/ -m "not node and not cascade_oc" -q
 
 # 3. Format + lint (whole tree, the way CI does).
@@ -2354,7 +2321,7 @@ where to ADD) a test, by concern.
 | the retired private paths stay retired | `pyproject.toml [tool.ruff...banned-api]` → `uv run ruff check` |
 | the digest / no-op / DOM-identity render discipline | `src/zicato/dashboard/static/test/*.test.mjs` → `make node-test` |
 | the served-join parity witness | `src/zicato/dashboard/static/test/mock_server.mjs` + `tests/test_dashboard_racing_and_rounds.py` |
-| the whole thing, reproducibly, both languages | `.github/workflows/ci.yml` (Python matrix + `cargo test`) |
+| the whole thing, reproducibly, in Python, JavaScript, and Rust | `.github/workflows/ci.yml` (default Python tier + dashboard JavaScript + `cargo test`) and `.github/workflows/slow-tier.yml` (statistical and end-to-end oracles) |
 
 The single command that runs the most in one shot is `make check` (lint +
 import-lint + typecheck + both test tiers + node); the parity gates and the

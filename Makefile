@@ -41,7 +41,8 @@ test:
 # The DEFAULT tier alone — the inner loop. A BARE `pytest` is what drops
 # the seven tests measured at 15 s or more alone (tests/conftest.py), so this
 # names no path: adding one would select it and run the tier too.
-# Run `make test` before merging; CI runs both tiers as separate steps.
+# Run `make test` before merging; pull requests expose both tiers in separate
+# workflows so the quick result is available without hiding the slow result.
 test-fast:
 	@cd $(ROOT) && uv run pytest
 

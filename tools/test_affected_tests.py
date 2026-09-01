@@ -109,18 +109,15 @@ def test_a_dynamic_import_the_parser_cannot_evaluate_selects_the_whole_suite(
 # ---------------------------------------------------------------------------
 
 
-def test_the_subprocess_worker_is_reachable_from_the_runner(
+def test_the_subprocess_worker_is_an_edge_out_of_the_runner(
     graph: dict[str, set[str]],
 ) -> None:
-    """A tournament spawns the worker with `-m`, which no import shows.
+    """`runner` spawns the worker with `-m`, which no import statement shows.
 
-    The edge belongs to whichever module writes the argv, which is
-    `worker_transport.spawn_worker_subprocess`. What the selection depends
-    on is the REACHABILITY: without it, a change to the worker would leave
-    every test that drives a real tournament unselected.
+    Without this edge a change to the worker would leave every test that
+    drives a real tournament unselected.
     """
-    assert "zicato._tournament_worker" in graph["zicato.tournament.worker_transport"]
-    assert "zicato._tournament_worker" in at._closure("zicato.tournament.runner", graph)
+    assert "zicato._tournament_worker" in graph["zicato.tournament.runner"]
 
 
 def test_the_dashboard_server_is_an_edge_out_of_its_launchers(

@@ -103,8 +103,11 @@ These override convenience. Violating them is a defect.
 
 - Python is managed by `uv`; the CLI entry point is `zicato.cli:main`
   (Click, auto-discovered subcommands under `zicato/cli/commands/`).
-- Run the suite with `uv run pytest`; lint/type with the pre-commit
-  hooks (`make install-hooks`).
+- Use bare `uv run pytest` for the quick local tier. Run `make test` for
+  both Python test tiers before merging. Pull requests report the tiers as
+  separate checks and report the dashboard JavaScript suite in another check.
+  Repository policy requires every reported result to pass before merge. Run
+  lint and type checks through the pre-commit hooks (`make install-hooks`).
 - The CLI is the contract — trust `zicato <command> --help` over the
   design docs when they disagree (the docs drift). Every flag in
   [`docs/design/CLI.md`](docs/design/CLI.md) should match a real option;
