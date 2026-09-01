@@ -130,14 +130,6 @@ def _racing_workspace(tmp_path: Path) -> Path:
     return ws
 
 
-@pytest.fixture
-def static_dir(tmp_path: Path) -> Path:
-    d = tmp_path / "static"
-    d.mkdir()
-    (d / "index.html").write_text("<!doctype html><title>z</title>", encoding="utf-8")
-    return d
-
-
 # ---------------------------------------------------------------------------
 # The racing-field join.
 # ---------------------------------------------------------------------------

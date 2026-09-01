@@ -20,14 +20,13 @@ dashboard server.
 
 from __future__ import annotations
 
-import asyncio
-import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 from click.testing import CliRunner
 
+from tests._dashboard_spawn import FakeDashboardProc, install_spawn_mock
 from zicato.cli.commands.dashboard import dashboard_cmd
 from zicato.cli.discovery import build_cli_root
 from zicato.dashboard.static_assets import resolve_static_dir
@@ -191,64 +190,10 @@ def test_dashboard_reports_missing_service(monkeypatch: pytest.MonkeyPatch) -> N
 # ---------------------------------------------------------------------------
 
 
-class _FakeProc:
-    """Minimal stand-in for an asyncio subprocess."""
-
-    def __init__(self, argv: tuple[str, ...]) -> None:
-        self.argv = argv
-        self.returncode: int | None = None
-        self.terminated = False
-        self.killed = False
-
-    def terminate(self) -> None:
-        self.terminated = True
-        self.returncode = 0
-
-    def kill(self) -> None:  # pragma: no cover - escalation path
-        self.killed = True
-        self.returncode = -9
-
-    async def wait(self) -> int:
-        if self.returncode is None:
-            self.returncode = 0
-        return self.returncode
-
-
-def _install_evolve_mocks(monkeypatch: pytest.MonkeyPatch, spawned: list[_FakeProc]) -> None:
+def _install_evolve_mocks(monkeypatch: pytest.MonkeyPatch) -> list[FakeDashboardProc]:
     """Mock the subprocess spawns and ``evolve_n_rounds`` for an
-    ``evolve`` invocation."""
-
-    async def _fake_exec(*args: str, **kwargs: object) -> _FakeProc:
-        del kwargs
-        argv = tuple(str(a) for a in args)
-        proc = _FakeProc(argv)
-        spawned.append(proc)
-        # If this is the dashboard spawn, publish a fake endpoint file so the
-        # CLI's bound-port readback (_report_dashboard_url) resolves
-        # immediately instead of polling its full 10s fallback timeout — the
-        # real dashboard server writes this once it binds a port. Mirrors the
-        # conftest ``mock_dashboard_spawn`` fixture. (The 10s-fallback path is
-        # covered separately by test_evolve_cli_fixes.py's
-        # test_report_dashboard_url_falls_back_when_endpoint_never_appears.)
-        if "zicato.dashboard" in argv and "--workspace" in argv:
-            ws = Path(argv[argv.index("--workspace") + 1])
-            host = "127.0.0.1"
-            if "--host" in argv:
-                host = argv[argv.index("--host") + 1]
-            port = 7892
-            if "--port" in argv:
-                port = int(argv[argv.index("--port") + 1])
-            from zicato.runtime.paths import dashboard_endpoint_path
-
-            endpoint = dashboard_endpoint_path(ws)
-            endpoint.parent.mkdir(parents=True, exist_ok=True)
-            endpoint.write_text(
-                json.dumps({"host": host, "port": port}),
-                encoding="utf-8",
-            )
-        return proc
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    ``evolve`` invocation, and return the list of spawned children."""
+    spawned = install_spawn_mock(monkeypatch)
 
     # A built supervisor binary always "resolves" so the supervisor
     # branch is exercised deterministically.
@@ -265,6 +210,7 @@ def _install_evolve_mocks(monkeypatch: pytest.MonkeyPatch, spawned: list[_FakePr
     import zicato.orchestrator as orch_mod
 
     monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
+    return spawned
 
 
 def _evolve_args(*extra: str) -> list[str]:
@@ -282,8 +228,7 @@ def test_evolve_spawns_supervisor_and_dashboard(monkeypatch: pytest.MonkeyPatch)
     AND the Python dashboard service."""
     from zicato.cli.commands.evolve import evolve_cmd
 
-    spawned: list[_FakeProc] = []
-    _install_evolve_mocks(monkeypatch, spawned)
+    spawned = _install_evolve_mocks(monkeypatch)
 
     runner = CliRunner()
     result = runner.invoke(evolve_cmd, _evolve_args())
@@ -309,8 +254,7 @@ def test_evolve_dashboard_port_flag_is_plumbed(monkeypatch: pytest.MonkeyPatch) 
     """``--dashboard-port`` flows through to the dashboard spawn + URL."""
     from zicato.cli.commands.evolve import evolve_cmd
 
-    spawned: list[_FakeProc] = []
-    _install_evolve_mocks(monkeypatch, spawned)
+    spawned = _install_evolve_mocks(monkeypatch)
 
     runner = CliRunner()
     result = runner.invoke(evolve_cmd, _evolve_args("--dashboard-port", "9100"))
@@ -327,8 +271,7 @@ def test_evolve_no_dashboard_suppresses_both_spawns(
     """``--no-dashboard`` suppresses both the dashboard and the watchdog."""
     from zicato.cli.commands.evolve import evolve_cmd
 
-    spawned: list[_FakeProc] = []
-    _install_evolve_mocks(monkeypatch, spawned)
+    spawned = _install_evolve_mocks(monkeypatch)
 
     runner = CliRunner()
     result = runner.invoke(evolve_cmd, _evolve_args("--no-dashboard"))
@@ -346,8 +289,7 @@ def test_evolve_keeps_dashboard_serving_at_normal_conclusion(
     clear "still serving" line."""
     from zicato.cli.commands.evolve import evolve_cmd
 
-    spawned: list[_FakeProc] = []
-    _install_evolve_mocks(monkeypatch, spawned)
+    spawned = _install_evolve_mocks(monkeypatch)
 
     runner = CliRunner()
     result = runner.invoke(evolve_cmd, _evolve_args())
@@ -373,8 +315,7 @@ def test_evolve_tears_down_both_children_on_error(
     import zicato.orchestrator as orch_mod
     from zicato.cli.commands.evolve import evolve_cmd
 
-    spawned: list[_FakeProc] = []
-    _install_evolve_mocks(monkeypatch, spawned)
+    spawned = _install_evolve_mocks(monkeypatch)
 
     async def _boom(**_kwargs: Any) -> list[Any]:
         raise RuntimeError("contract drifted")

@@ -56,14 +56,6 @@ _SAMPLE_COORDINATE = "sample"
 _WORKSPACE_READING_DEGRADES = (_degrade_drift_movements, _degrade_matchup_detail)
 
 
-@pytest.fixture
-def static_dir(tmp_path: Path) -> Path:
-    d = tmp_path / "static"
-    d.mkdir()
-    (d / "index.html").write_text("<!doctype html><title>z</title>", encoding="utf-8")
-    return d
-
-
 def _routes(tmp_path: Path, static_dir: Path) -> list[Route]:
     app = create_app(tmp_path / "ws", static_dir, read_only=True)
     return [route for route in app.routes if isinstance(route, Route)]

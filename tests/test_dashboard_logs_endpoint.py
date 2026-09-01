@@ -11,18 +11,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
-
-
-@pytest.fixture
-def static_dir(tmp_path: Path) -> Path:
-    d = tmp_path / "static"
-    d.mkdir()
-    (d / "index.html").write_text("<!doctype html><title>z</title>", encoding="utf-8")
-    return d
 
 
 def _write_stream(ws: Path, name: str, records: list[dict]) -> None:
