@@ -496,7 +496,6 @@ def _write_args(
     return loss
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_worker_writes_result_json_and_judge_io_on_clean_exit(tmp_path: Path) -> None:
     """Default knobs (a legacy args file with NO knob keys): both artifacts land."""
@@ -531,7 +530,6 @@ def test_worker_writes_result_json_and_judge_io_on_clean_exit(tmp_path: Path) ->
     assert not list(loss_path.parent.glob("*.tmp"))
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_worker_persists_synthesized_run_result_on_budget_abort(tmp_path: Path) -> None:
     """The cooperative-budget path persists its synthesized RunResult too."""
@@ -556,7 +554,6 @@ def test_worker_persists_synthesized_run_result_on_budget_abort(tmp_path: Path) 
     assert captured["run_id"] == "v0--entry_a"
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_worker_replicate_slot_gets_replicate_named_artifacts(tmp_path: Path) -> None:
     """A loss.r2.json unit writes result.r2.json + judge_io.r2.jsonl."""
@@ -581,7 +578,6 @@ def test_worker_replicate_slot_gets_replicate_named_artifacts(tmp_path: Path) ->
     assert read_run_result(run_dir / "result.r2.json") is not None
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_worker_knobs_off_writes_no_new_files_and_identical_loss(tmp_path: Path) -> None:
     """The scored-loss pin: knobs OFF adds no files, and every scored field of
@@ -634,7 +630,6 @@ def test_worker_knobs_off_writes_no_new_files_and_identical_loss(tmp_path: Path)
     assert on_result == off_result
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_worker_capture_failure_is_best_effort(tmp_path: Path) -> None:
     """Unwritable capture paths: loss.json + exit code + result file unchanged."""

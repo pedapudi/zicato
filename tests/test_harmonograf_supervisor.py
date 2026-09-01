@@ -75,11 +75,12 @@ def _wait_for_health(url: str, *, deadline_s: float = 10.0) -> bool:
 def _boots_or_uses_live_server(func: object) -> object:
     """Mark a test that boots a live harmonograf (or leans on the shared one).
 
-    The launch/liveness behaviour IS the coverage for these tests. Tagged
-    ``slow`` + ``integration`` for the opt-in fast lane (``-m "not slow"``);
-    the full suite still runs them by default.
+    The launch/liveness behaviour IS the coverage for these tests, so
+    ``integration`` marks them: never stub the launch to speed one up.
+    Each measures well under the ``slow`` tier's 15 s, so they run in the
+    default tier.
     """
-    return pytest.mark.slow(pytest.mark.integration(func))
+    return pytest.mark.integration(func)
 
 
 def test_missing_live_telemetry_names_install_profile(

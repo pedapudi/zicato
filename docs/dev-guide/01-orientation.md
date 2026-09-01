@@ -924,12 +924,16 @@ canonical. `docs/design/CLI.md` is generated. This guide
 (`docs/dev-guide/`) cites design docs for *rationale* and code for
 *facts*.
 
-**`tests/`** — the suite (2800+). Default run is parallel
-(`-n auto`) and excludes the Node shim (`-m 'not node'`). Markers:
-`slow` (real-subprocess/server tests whose runtime IS the coverage),
-`integration`, `node`. The fast lane is
-`uv run pytest -m "not slow and not node"` — note a command-line `-m`
-REPLACES the pyproject default, hence both terms. See 11-testing.md.
+**`tests/`** — the suite (about 5,990 tests). The default run is
+parallel (`-n auto`) and is the FAST TIER: it excludes the Node shim and
+the opt-in cascade measurement by marker, and the `slow` tier by a hook
+that fires only when nothing was named on the command line. Markers: `slow` (one test
+measured at 15 s or more), `integration` (crosses a process or network
+boundary, so its runtime IS its coverage), `node`, `cascade_oc`, `pi`. The
+full suite is `uv run pytest -m "not node and not cascade_oc"`, which is
+what `make test` and CI run — note a command-line `-m` REPLACES the
+pyproject default rather than intersecting with it, hence both terms. See
+11-testing.md.
 
 ---
 
@@ -1038,6 +1042,9 @@ oracle tests rather than a live endpoint.
 > uv run pytest tests/test_convergence_known_answer.py -q
 > uv run pytest tests/test_decision_procedure_power.py -q
 > ```
+>
+> Naming a file runs every test in it, `slow` tier included — that is the
+> whole point of the rule in 11-testing.md §11.1.
 
 **Why.** These two files are the repo's end-to-end truth anchors:
 
@@ -1355,17 +1362,24 @@ uv run zicato --help        # fast — the lazy-import discipline at work
 uv run pytest --version
 ```
 
-### 5.2 Run the fast lane (5–10 min)
+### 5.2 Run the default tier (about two minutes)
 
 ```sh
-uv run pytest -m "not slow and not node" -q
+uv run pytest -q
 ```
 
-This drops the real-subprocess/real-server `slow` tests and the node
-shim. Remember: a command-line `-m` REPLACES the pyproject default
-`-m 'not node'`, which is why the expression carries both terms. The full
-default suite (`uv run pytest`) fans out with `-n auto`; use `-n0` for a
-serial debug run of one test.
+That is the fast tier — everything except the seven tests measured at
+15 s or more on their own, the node shim, and the opt-in cascade
+measurement. It fans
+out with `-n auto`; use `-n0` for a serial debug run of one test. Before
+you propose a commit, run both tiers:
+
+```sh
+uv run pytest -m "not node and not cascade_oc" -q
+```
+
+A command-line `-m` REPLACES the pyproject default rather than
+intersecting with it, which is why that expression restates both terms.
 
 ### 5.3 Run the two oracles and the other gates (10–20 min)
 
@@ -1455,10 +1469,15 @@ the code that exists because the mistake happened.
 > functions rather than passing one function twice.
 
 > ⚠️ **TRAP — `-m` on the pytest command line REPLACES the default.**
-> The pyproject default is `-m 'not node'`. Passing `-m slow` silently
-> re-includes the node shim; the fast lane must always be spelled
-> `-m "not slow and not node"`. (pyproject.toml
-> `[tool.pytest.ini_options]` documents this.)
+> The pyproject default is `-m 'not node and not cascade_oc'`. Passing
+> `-m slow` silently re-includes the node shim and the cascade measurement,
+> so the slow tier is spelled `-m "slow and not node and not cascade_oc"`
+> and the full suite is `-m "not node and not cascade_oc"`.
+>
+> The `slow` tier is NOT in that expression. It is deselected by a hook in
+> `tests/conftest.py`, and only for a BARE `pytest` — so naming a file or a
+> test runs it whatever tier it is in, and the trap above is the only one
+> here. (11-testing.md §11.1 states the rule.)
 
 > ⚠️ **TRAP — best-effort wrapping is a contract.** The round's
 > non-critical writes (round log, index dual-write, dashboard envelopes,

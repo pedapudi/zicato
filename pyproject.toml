@@ -96,7 +96,7 @@ dev = [
     "pytest-asyncio >= 0.23",
     # Parallel test execution across worker processes. The default test
     # run uses `-n auto` (see [tool.pytest.ini_options] addopts) so the
-    # ~2630-case suite fans out across CPU cores. The suite is already
+    # ~5990-case suite fans out across CPU cores. The suite is already
     # process-isolation-clean (tmp_path everywhere, dynamic ports via
     # bind(("127.0.0.1", 0)), tempdir-isolated worker fixtures) so xdist
     # needs no per-test fixes. `-n0` on the command line overrides back
@@ -285,31 +285,50 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-# Default run: fan out across CPU cores with pytest-xdist, and exclude
-# the Node-suite shim from the in-pytest run. `-n auto` spawns one
-# worker per detected core (the suite is process-isolation-clean — see
-# the pytest-xdist note in the `dev` extra). Override to a single serial
-# in-process run for debugging with `-n0` on the command line, e.g.
-# `pytest -n0 tests/test_foo.py::test_bar`. `-m "not node"` drops the
-# `test_dashboard_js` shim that re-runs the whole standalone Node suite
-# inside pytest (a full duplicate of `make node-test` / the standalone
-# `node src/zicato/dashboard/static/test/run-all.mjs` run); pass
-# `-m node` (or `--no-header -m ''`) / run `make node-test` to exercise
-# the Node behaviour suite.
+# Default run: the FAST TIER, fanned out across CPU cores with
+# pytest-xdist. `-n auto` spawns one worker per detected core (the suite
+# is process-isolation-clean — see the pytest-xdist note in the `dev`
+# extra). Override to a single serial in-process run for debugging with
+# `-n0` on the command line, e.g. `pytest -n0 tests/test_foo.py::test_bar`.
+#
+# Three marker terms are excluded, for three different reasons:
+#
+#   not node        drops the `test_dashboard_js` shim that re-runs the
+#                   whole standalone Node suite inside pytest (a full
+#                   duplicate of `make node-test` / the standalone
+#                   `node src/zicato/dashboard/static/test/run-all.mjs`
+#                   run); pass `-m node` or run `make node-test` to
+#                   exercise the Node behaviour suite.
+#   not cascade_oc  drops the opt-in evaluation-cascade measurement
+#                   suite (CASCADE.md §4); run it with `-m cascade_oc`.
+# The `slow` tier is NOT excluded here. It is deselected by
+# `pytest_collection_modifyitems` in tests/conftest.py, and only when the
+# run is the bare default — nothing named on the command line: no test path
+# or node id, no `-k`, no explicit `-m`. Naming a file, a test or a keyword
+# therefore runs it in full, whatever tier it is in, so no recipe in this
+# repository has to remember a selector to mean what it says. See the
+# `slow` marker below.
 addopts = "-n auto -m 'not node and not cascade_oc'"
-# Custom markers. `node` tags tests that shell out to the `node` runtime
-# (the dashboard JS harness); excluded from the default run via addopts.
-# `slow` and `integration` tag the real-subprocess / real-server tests
-# (worker isolation, real pytest boots, live harmonograf launches,
-# git-native genstore): the FULL suite stays the default — these markers
-# only enable an opt-in fast lane. NOTE: a command-line `-m` REPLACES the
-# `-m 'not node'` below, so the fast lane is
-# `pytest -m "not slow and not node"`. A tagged test's runtime IS its
-# coverage — never a candidate for stubbing.
+# Custom markers. Two of them answer different questions and must not be
+# conflated: `slow` is about a test's measured RUNTIME (which tier
+# schedules it), `integration` is about what a test TOUCHES (a process or
+# network boundary, so its runtime is the coverage and stubbing it deletes
+# what it proves). A test can carry either, both, or neither — the four
+# combinations are all meaningful, and most `integration` tests are fast
+# enough to run in the default tier.
+#
+# `slow` is applied by MEASUREMENT, not by judgement: run
+# `pytest --durations=0` and mark what comes back at 15 s or more.
+# tests/test_slow_tier_registry.py pins the marked set against a declared
+# list so the tier cannot drift silently.
+#
+# A bare `pytest` is the ONLY invocation that drops the tier. Everything
+# that selects something — a path, a node id, a `-k`, an explicit `-m` —
+# runs what it names.
 markers = [
     "node: shells out to the standalone Node test harness (run via `make node-test`)",
-    "slow: real-subprocess / real-server test whose runtime IS the coverage; the fast lane is `-m 'not slow and not node'` (the full suite stays the default run)",
-    "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses)",
+    "slow: one test measured at 15 s or more ALONE (`-n0`; statistical characterizations and end-to-end simulations); deselected ONLY by a bare `pytest` (see tests/conftest.py) — naming a file, a test or a `-k` keyword runs it, `-m slow` runs the tier alone, and `make test` and tools/parity.sh run both tiers",
+    "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses); its runtime IS its coverage, so it is never a candidate for stubbing",
     "cascade_oc: the opt-in evaluation-cascade OC measurement suite (CASCADE.md §4); EXCLUDED from the default run via addopts — run with `-m cascade_oc`",
     "pi: launches the real pi coding agent from integrations/pi (needs `npm ci` + Node >= 22); SKIPS cleanly when it is not installed, so the default run is unaffected — the CI lane selects it with `-m pi`",
 ]

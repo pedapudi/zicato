@@ -65,8 +65,11 @@ observability and delivery — each reached the same seven conclusions.
 This is the safety net that makes a behavior-preserving refactor possible.
 Build it in the first stage and run it at the end of every sub-step.
 
-- **Unit/integration suite**: `uv run pytest` (xdist-parallel; suite already runs
-  ~18s). Must stay green at every commit. (Remember: `uv sync --all-extras`.)
+- **Unit/integration suite**: `uv run pytest -m "not node and not cascade_oc"`
+  (xdist-parallel; both tiers, about seven minutes on twelve cores — a bare
+  `uv run pytest` is the default tier alone, about a minute and three
+  quarters). Must stay green at every commit. (Remember:
+  `uv sync --all-extras`.)
 - **Static gates**: `mypy` + `ruff` via pre-commit (`make install-hooks`). The
   refactor should *strengthen* mypy (fewer `Any`), so treat a new type error as
   a finding to act on rather than as noise to suppress.
@@ -316,8 +319,8 @@ from the clean structure underneath.
 
 ## Verification (every phase)
 
-Run the parity harness (top of doc) before merging any step: `uv run pytest`
-green, mypy/ruff clean (and ideally *stronger* than before), and golden-output
+Run the parity harness (top of doc) before merging any step:
+`uv run pytest -m "not node and not cascade_oc"` green, mypy/ruff clean (and ideally *stronger* than before), and golden-output
 diffs empty for loss/gen_score/experiment/index-dump/report-HTML/report-SVG/
 dashboard-JSON/`--help` against the `target_1_presentation` mock fixture. No live
 `zicato evolve` runs (AGENTS.md rule 1). A non-empty golden diff means the step

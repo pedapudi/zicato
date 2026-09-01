@@ -132,7 +132,7 @@ def _wait_until(predicate, *, timeout_s: float, what: str) -> None:
     raise AssertionError(f"timed out after {timeout_s}s waiting for {what}")
 
 
-@pytest.mark.slow
+@pytest.mark.integration
 def test_sigterm_mid_round_reaps_children_and_releases_lock(tmp_path: Path) -> None:
     workspace, epoch_id = bootstrap_workspace(tmp_path)
     driver = tmp_path / "driver.py"

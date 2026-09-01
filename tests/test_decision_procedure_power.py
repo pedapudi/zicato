@@ -430,6 +430,7 @@ def test_aa_null_calibration_measures_the_noise_floor(monkeypatch, tmp_path):
     assert max_abs > 0.0
 
 
+@pytest.mark.slow
 def test_aa_effective_contract_false_promotion_rate_is_zero(monkeypatch, tmp_path):
     """The evidence-gated contract does not promote a generation over itself.
 
@@ -457,6 +458,7 @@ def test_aa_effective_contract_false_promotion_rate_is_zero(monkeypatch, tmp_pat
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_margin_below_noise_floor_without_evidence_gate_is_unsound(monkeypatch, tmp_path):
     """promote_margin < noise floor + no evidence gate ⇒ noise alone promotes.
 
@@ -521,6 +523,7 @@ def _power(
     return promoted / POWER_TRIALS
 
 
+@pytest.mark.slow
 def test_power_at_planted_deltas(monkeypatch, tmp_path):
     """The effective contract's power curve over 0.5x / 1x / 3x-floor effects.
 
@@ -550,6 +553,7 @@ def test_power_at_planted_deltas(monkeypatch, tmp_path):
     assert rates["small"] <= rates["medium"] <= rates["large"]
 
 
+@pytest.mark.slow
 def test_naive_default_misses_small_effects_the_evidence_gate_catches(monkeypatch, tmp_path):
     """Executable documentation: why the effective contract exists.
 
@@ -829,7 +833,6 @@ def _worker_config(workspace: Path, seed: int) -> RuntimeConfig:
     )
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

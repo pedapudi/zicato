@@ -12,8 +12,13 @@
 #
 # Gates
 # -----
-#   PYTEST         the full test suite (2800+ tests) — the primary
-#                  behavioral characterization. Must pass.
+#   PYTEST         the full test suite — BOTH tiers, ~5990 tests — as the
+#                  primary behavioral characterization. Must pass. The
+#                  explicit -m below restates the pyproject selector minus
+#                  its `not slow` term, because a command-line -m REPLACES
+#                  that selector: a bare `pytest` here would silently gate
+#                  on the default tier alone and skip the thirteen
+#                  statistical and end-to-end tests the oracles live in.
 #   CONTRACT-HASH  the epoch contract hash (+ per-component hashes) for a
 #                  fixed fixture contract is byte-identical to the golden.
 #   CLI-HELP       `zicato --help` and every subcommand `--help` is
@@ -115,8 +120,8 @@ cd "$REPO_ROOT" || exit 2
 
 # --- PYTEST -----------------------------------------------------------------
 if _selected PYTEST; then
-  _banner "PYTEST (full suite — behavioral backbone)"
-  if uv run pytest -q; then
+  _banner "PYTEST (full suite, both tiers — behavioral backbone)"
+  if uv run pytest -q -m "not node and not cascade_oc"; then
     _record PYTEST PASS
   else
     _record PYTEST FAIL

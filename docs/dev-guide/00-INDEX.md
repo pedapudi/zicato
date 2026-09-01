@@ -153,8 +153,9 @@ commit body; a legitimately-moved golden needs the never-bake-a-sibling-change
 rule honored).
 
 ```bash
-uv run pytest tests/ -m "not slow and not node" -q     # 1. fast lane (~15s) — quick signal
-uv run pytest tests/ -q                                # 2. full suite (the default; ~50s)
+uv run pytest tests/ -q                                 # 1. default tier (~1m45s) — quick signal
+uv run pytest tests/ \
+  -m "not node and not cascade_oc" -q                  # 2. both tiers (~7m) — what the gate runs
 uv run ruff format . && uv run ruff check .            # 3. style
 uv run mypy src/zicato/                                # 4. types
 uv run lint-imports                                    # 5. the import contracts

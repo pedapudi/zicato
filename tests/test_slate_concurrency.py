@@ -562,7 +562,6 @@ class _GitDeriveDelayedInner:
         return _experiment(slot, self._contents[slot])
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_composed_real_git_slate_out_of_order_mounts_the_chosen(

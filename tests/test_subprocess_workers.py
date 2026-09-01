@@ -63,9 +63,10 @@ from zicato.tournament.runner import _run_single
 from zicato.tournament.worker_transport import _stamp_replicate_index
 
 # Every test here spawns (or deliberately kills) real worker subprocesses —
-# the process-isolation semantics ARE the coverage. Tagged for the opt-in
-# fast lane (`-m "not slow"`); the full suite still runs them by default.
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
+# the process-isolation semantics ARE the coverage, so none of them may be
+# stubbed. The whole module measures about 25 seconds across 18 tests, so it
+# runs in the default tier.
+pytestmark = [pytest.mark.integration]
 
 # ---------------------------------------------------------------------------
 # Hermeticity fixture

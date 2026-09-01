@@ -290,7 +290,6 @@ def _spawn_holder(permit_root: Path, count: int) -> subprocess.Popen[str]:
     return proc
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 async def test_permit_is_held_across_processes(permit_root: Path) -> None:
     """A permit held by ANOTHER process blocks this one.
@@ -312,7 +311,6 @@ async def test_permit_is_held_across_processes(permit_root: Path) -> None:
     got.release()
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 async def test_killed_holder_leaks_no_permit(permit_root: Path) -> None:
     """``flock`` is released by the kernel on process death.
@@ -420,7 +418,6 @@ async def test_runner_asks_for_a_permit_and_always_releases_it(
     assert released == [True], "the permit must be released on the early-return path too"
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 async def test_two_concurrent_runs_serialise_under_a_one_permit_cap(
     permit_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

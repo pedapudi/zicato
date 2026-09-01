@@ -1,0 +1,50 @@
+name: slow tier
+
+# The seven tests measured at 15 s or more alone — the decision-procedure
+# power harness, the racing convergence oracle, the gauntlet evidence-gate
+# end-to-end run and the cascade smoke run. Together they are about five of
+# the six minutes a full suite takes, which is why a pull request does not
+# run them (.github/workflows/ci.yml runs the default tier).
+#
+# They run here instead: nightly against main, so a regression in one
+# surfaces within a day, and on demand from the Actions tab for anyone who
+# wants the answer sooner. The local merge ladder is unaffected — both
+# `make test` and tools/parity.sh's PYTEST gate still run BOTH tiers, so a
+# contributor who runs the documented pre-commit checklist has already
+# covered these before pushing.
+
+on:
+  schedule:
+    # 07:00 UTC daily. Nothing depends on the exact hour; it is outside the
+    # working day in the maintainer's timezone so a red result is waiting
+    # rather than interrupting.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+jobs:
+  slow-tier:
+    name: slow tier (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync dependencies
+        run: uv sync --all-extras --frozen
+
+      - name: Pytest (slow tier)
+        # A command-line -m REPLACES the pyproject selector, so `not node`
+        # and `not cascade_oc` are restated rather than inherited.
+        run: uv run pytest tests/ -m "slow and not node and not cascade_oc"

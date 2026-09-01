@@ -779,7 +779,7 @@ added a CLI verb.
 cargo fmt --check && cargo clippy --all-targets -- -D warnings
 cargo test -p zicato-supervisor            # includes the new route tests
 uv run pytest tests/ -q -k "control"       # consumer + audit-log coverage
-uv run pytest tests/ -q                    # nothing else regressed
+uv run pytest tests/ -m "not node and not cascade_oc" -q  # nothing else regressed, both tiers
 ```
 
 ---

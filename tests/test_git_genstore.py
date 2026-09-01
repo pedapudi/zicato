@@ -22,10 +22,11 @@ from zicato.core.types import Patch
 from zicato.epoch.genstore import default_generation_store
 from zicato.epoch.git_genstore import GitGenerationStore
 
-# Every test here drives real ``git`` subprocesses — the git-native mapping
-# (branches, tags, worktrees, blobs) IS the coverage. Tagged for the opt-in
-# fast lane (`-m "not slow"`); the full suite still runs them by default.
-pytestmark = [pytest.mark.slow, pytest.mark.integration]
+# Every test here drives real `git` subprocesses — the git-native mapping
+# (branches, tags, worktrees, blobs) IS the coverage, so none of them may be
+# stubbed. The whole module measures under four seconds, so it runs in the
+# default tier.
+pytestmark = [pytest.mark.integration]
 
 
 def _patch(pid: str, new_content: str) -> Patch:

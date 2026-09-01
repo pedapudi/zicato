@@ -65,6 +65,67 @@ _REAL_DEFAULT_PROPOSER_MODULES = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# The slow tier: dropped from the bare default run, and from nothing else.
+# ---------------------------------------------------------------------------
+
+
+def _selects_something(config: pytest.Config) -> bool:
+    """Did this invocation name what it wants to run?
+
+    Three things count as naming. A positional argument — a path, a
+    directory or a node id — means the caller pointed at something; pytest
+    records that it fell back to the configured ``testpaths`` instead, so
+    anything other than that fallback is a selection. An explicit ``-m``
+    means the caller wrote their own marker expression, and the one in
+    ``addopts`` is replaced rather than combined, so honouring the tier on
+    top of it would silently narrow what they asked for. A ``-k`` is a
+    selection by name like any other: someone who types
+    ``pytest -k convergence`` has said which tests they want.
+
+    The command line is read from ``invocation_params.args``, which holds
+    what was typed WITHOUT the ``addopts`` pytest prepends. Reading
+    ``config.option.markexpr`` instead would be wrong: ``addopts`` always
+    sets it, so it can never distinguish the two cases.
+    """
+    if config.args_source is not pytest.Config.ArgsSource.TESTPATHS:
+        return True
+    return any(
+        argument in ("-m", "--markexpr", "-k", "--keyword")
+        or argument.startswith(("--markexpr=", "--keyword="))
+        or (argument.startswith(("-m", "-k")) and not argument.startswith("--"))
+        for argument in config.invocation_params.args
+    )
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Deselect the `slow` tier when, and only when, the run is the bare default.
+
+    The tier exists so the run a contributor gets by typing `pytest` is
+    about a minute rather than seven. It is a scheduling decision and never
+    a coverage one, so the moment anyone names a file, a test or a marker
+    expression, they get what they named:
+
+        pytest                              the default tier
+        pytest tests/test_convergence_known_answer.py   both of its tests
+        pytest tests/x.py::test_y           that test, whatever tier it is in
+        pytest -k convergence               what the name matches, both tiers
+        pytest -m slow                      the tier alone
+        pytest -m "not node and not cascade_oc"         everything
+
+    Implemented here rather than as a `not slow` term in `addopts` because
+    an `addopts` term applies to every invocation, including one that names
+    a `slow` test — which would report green having run nothing.
+    """
+    if not _selects_something(config):
+        kept, dropped = [], []
+        for item in items:
+            (dropped if item.get_closest_marker("slow") else kept).append(item)
+        if dropped:
+            config.hook.pytest_deselected(items=dropped)
+            items[:] = kept
+
+
 @pytest.fixture(autouse=True)
 def _isolate_config_pins() -> Iterator[None]:
     """Clear process-pinned config overrides around every test.

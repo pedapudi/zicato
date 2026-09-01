@@ -52,6 +52,8 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+
 import zicato_examples.target_0_convergence as _t0_pkg
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
@@ -181,6 +183,7 @@ def _assert_evidence_refits_logged(workspace: Path, epoch_id: str, expected: int
     assert all("ci_state" in event.payload for event in refits)
 
 
+@pytest.mark.slow
 def test_gauntlet_promote_confirmed_by_evidence_gate(tmp_path: Path) -> None:
     """A true improvement still promotes — after the defer→replicate loop
     actually ran the crowning pair to CI separation."""
