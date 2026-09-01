@@ -42,16 +42,9 @@ import asyncio
 import json
 from pathlib import Path
 
-import pytest
-
 import zicato_examples.target_0_convergence as _t0_pkg
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato_examples.target_0_convergence import mocks_recombine as rec_mocks
-
-# Every unit here is target_0, whose adapter reads a generation as TEXT,
-# and none of these tests is about the process boundary — so they run
-# through the worker entry in-process (tests/conftest.py).
-pytestmark = pytest.mark.usefixtures("inline_worker")
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
 BOARD_PATH = EXAMPLE_DIR / "board.jsonl"

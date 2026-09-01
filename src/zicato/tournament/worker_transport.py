@@ -15,11 +15,8 @@ those workers:
   snapshot code-only — routed through the workspace's
   :class:`~zicato.epoch.genstore.GenerationStore` so each backend
   materialises the isolated per-run tree its own way;
-* the worker launch itself (:func:`launch_worker`, whose production
-  implementation :func:`spawn_worker_subprocess` is the only place the
-  ``python -m zicato._tournament_worker`` argv is written) and the
-  lifecycle helpers around it (:func:`_terminate_worker`,
-  :func:`_load_worker_result`) plus the worst-case aborted-run synthesis
+* the worker lifecycle helpers (:func:`_terminate_worker`,
+  :func:`_load_worker_result`) and the worst-case aborted-run synthesis
   (:func:`_aborted_loss_profile`);
 * the small shared primitives the runner and the schedulers both reach
   for (telemetry/runtime-state lazy imports, run-id derivation, the live
@@ -38,9 +35,7 @@ import asyncio
 import json
 import logging
 import os
-import sys
-from collections.abc import Awaitable, Callable, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC
 from pathlib import Path
@@ -835,78 +830,6 @@ def _aborted_loss_profile(
         # charge on either synthesis path.
         not_completed_reason=abort_cause,
     )
-
-
-# ---------------------------------------------------------------------------
-# The worker launch — the one seam between the parent and a board unit.
-# ---------------------------------------------------------------------------
-
-#: What a launched worker must present to the parent. The parent waits on
-#: it, reads its exit code, and in the last-resort path signals it — which
-#: is the whole contract, and :class:`asyncio.subprocess.Process` already
-#: satisfies it.
-WorkerLauncher = Callable[..., Awaitable[Any]]
-
-
-async def spawn_worker_subprocess(args_path: Path, *, env: dict[str, str] | None) -> Any:
-    """Run one prepared board unit in its own OS process. THE PRODUCTION PATH.
-
-    ``start_new_session=True`` runs the worker in its OWN session and
-    process-group (it calls ``setsid`` before ``exec``), so the worker leads
-    a group containing itself plus any grandchildren the inner harness
-    spawns (shells, helper tools). The worker records that group's id
-    (``pgid``) on its ActiveRun record, letting the supervisor GROUP-kill the
-    whole tree by negating the pgid rather than leaking grandchildren when it
-    kills the worker pid alone. It also detaches the worker from the
-    orchestrator's controlling terminal so a Ctrl-C / SIGINT to the
-    orchestrator's terminal group is not broadcast straight into every
-    in-flight worker.
-
-    ``env=None`` inherits the orchestrator's full environment; the caller
-    passes a minimal explicit one when ``scrub_worker_env`` is set.
-    """
-    return await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-m",
-        "zicato._tournament_worker",
-        str(args_path),
-        start_new_session=True,
-        env=env,
-    )
-
-
-#: The launcher in force. Production never changes it: a board unit runs in
-#: its own process, which is what makes the wall-clock budget enforceable and
-#: what keeps two generations' source out of one interpreter.
-_launcher: WorkerLauncher = spawn_worker_subprocess
-
-
-@contextmanager
-def use_worker_launcher(launcher: WorkerLauncher) -> Iterator[None]:
-    """Run one block with ``launcher`` in place of the subprocess spawn.
-
-    The seam a test harness uses to execute board units through the same
-    entry, the same args file and the same result file, without paying for
-    an interpreter per unit — see
-    :func:`zicato.testing.worker_inline.inline_worker_launcher`. Restores
-    the previous launcher on the way out, including on an exception, so a
-    failing test cannot leave the boundary swapped for the next one.
-
-    NOT a production knob. Nothing in the runtime calls this; a workspace
-    cannot reach it, and no configuration field selects it.
-    """
-    global _launcher
-    previous = _launcher
-    _launcher = launcher
-    try:
-        yield
-    finally:
-        _launcher = previous
-
-
-async def launch_worker(args_path: Path, *, env: dict[str, str] | None) -> Any:
-    """Launch one prepared board unit through the launcher in force."""
-    return await _launcher(args_path, env=env)
 
 
 async def _terminate_worker(proc: Any) -> None:

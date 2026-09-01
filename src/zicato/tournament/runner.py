@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field, replace
@@ -132,10 +133,7 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _terminate_worker,
     _weights_spec,
     adapter_worker_spec,
-    launch_worker,
     scrubbed_worker_env,
-    spawn_worker_subprocess,
-    use_worker_launcher,
 )
 
 log = logging.getLogger("zicato.tournament.runner")
@@ -582,27 +580,36 @@ async def _run_single(
             )
             return final_loss
 
-        # --- 3. Launch the worker. --- Compose its environment first. By
-        # default ``env=None`` inherits the orchestrator's full environment.
-        # When the operator opts into ``scrub_worker_env`` the worker instead
-        # gets a MINIMAL explicit env (process-essential keys + the
-        # api_key_env names the configured roles need + any passthrough), so a
-        # mutated worker cannot read every credential in the process env.
-        #
-        # The launch itself goes through ``launch_worker``, whose production
-        # implementation spawns the ``python -m zicato._tournament_worker``
-        # subprocess in its own session and process-group
-        # (:func:`~zicato.tournament.worker_transport.spawn_worker_subprocess`
-        # holds that argv and the reasons for it). Everything below this line
-        # depends only on the returned object answering ``wait()`` and
-        # ``returncode``.
+        # --- 3. Spawn the worker subprocess. --- ``start_new_session=True``
+        # runs the worker in its OWN session and process-group (it calls
+        # ``setsid`` before ``exec``), so the worker leads a group containing
+        # itself plus any grandchildren the inner harness spawns (shells,
+        # helper tools). The worker records that group's id (``pgid``) on its
+        # ActiveRun record, letting the supervisor GROUP-kill the whole tree by
+        # negating the pgid rather than leaking grandchildren when it kills the
+        # worker pid alone. It also detaches the worker from the orchestrator's
+        # controlling terminal so a Ctrl-C / SIGINT to the orchestrator's
+        # terminal group is not broadcast straight into every in-flight worker.
+        # Compose the worker's environment. By default ``env=None`` inherits
+        # the orchestrator's full environment. When the operator opts into
+        # ``scrub_worker_env`` the worker instead gets a MINIMAL explicit env
+        # (process-essential keys + the api_key_env names the configured roles
+        # need + any passthrough), so a mutated worker cannot read every
+        # credential in the process env.
         worker_env: dict[str, str] | None = None
         if config.scrub_worker_env:
             worker_env = scrubbed_worker_env(
                 models=_models,
                 extra_env_keys=tuple(config.worker_env_passthrough),
             )
-        proc = await launch_worker(args_path, env=worker_env)
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "zicato._tournament_worker",
+            str(args_path),
+            start_new_session=True,
+            env=worker_env,
+        )
 
         # --- 4. Wait, bounded by budget + GRACE. ---
         killed_by_parent = False

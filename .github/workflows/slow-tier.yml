@@ -1,19 +1,19 @@
-name: slow tier
+name: statistical and end-to-end oracles
 
 # The seven tests measured at 15 s or more alone — the decision-procedure
 # power harness, the racing convergence oracle, the gauntlet evidence-gate
 # end-to-end run and the cascade smoke run. Together they are about five of
-# the six minutes a full suite takes, which is why a pull request does not
-# run them (.github/workflows/ci.yml runs the default tier).
+# the six minutes a full suite takes. This separate workflow keeps their
+# pull-request result visible without delaying the default test job. It also
+# runs nightly against main and on demand from the Actions tab. The stable job
+# names make both supported Python-version results individually visible.
+# Repository policy requires both results before merge.
 #
-# They run here instead: nightly against main, so a regression in one
-# surfaces within a day, and on demand from the Actions tab for anyone who
-# wants the answer sooner. The local merge ladder is unaffected — both
-# `make test` and tools/parity.sh's PYTEST gate still run BOTH tiers, so a
-# contributor who runs the documented pre-commit checklist has already
-# covered these before pushing.
+# The local merge ladder runs the same tests: `make test` and
+# tools/parity.sh's PYTEST gate each run both tiers.
 
 on:
+  pull_request:
   schedule:
     # 07:00 UTC daily. Nothing depends on the exact hour; it is outside the
     # working day in the maintainer's timezone so a red result is waiting
@@ -23,7 +23,7 @@ on:
 
 jobs:
   slow-tier:
-    name: slow tier (${{ matrix.python-version }})
+    name: statistical and end-to-end oracles (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
