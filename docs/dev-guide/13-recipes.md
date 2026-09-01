@@ -1035,11 +1035,13 @@ a different class of break.
    uv run pytest tests/test_decision_procedure_power.py -q
    ```
 
-6. **The full suite.** Fans out across cores via `pytest-xdist` (`-n auto` is the
-   default; the `node` shim is excluded from the in-pytest run):
+6. **The full suite — both tiers.** Fans out across cores via `pytest-xdist`
+   (`-n auto` is the default). The explicit selector is what makes this the
+   FULL suite: a bare `uv run pytest -q` is the default tier alone, which
+   drops the seven tests measured at 15 s or more on their own.
 
    ```bash
-   uv run pytest -q
+   uv run pytest -m "not node and not cascade_oc" -q
    ```
 
 7. **The parity gates and the node suite (the green-gates rule):**

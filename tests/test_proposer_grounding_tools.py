@@ -95,7 +95,6 @@ def git_ws(tmp_path: Path) -> tuple[Path, GitGenerationStore]:
     return ws, store
 
 
-@pytest.mark.slow
 def test_genstore_parent_and_diff_read_surface(git_ws: tuple[Path, GitGenerationStore]) -> None:
     _, store = git_ws
     assert store.parent_generation_id("e1", "v1") == "v0"
@@ -109,7 +108,6 @@ def test_genstore_parent_and_diff_read_surface(git_ws: tuple[Path, GitGeneration
         store.diff_generations("e1", "v0", "v9")
 
 
-@pytest.mark.slow
 def test_read_parent_diff_git_backend(git_ws: tuple[Path, GitGenerationStore]) -> None:
     ws, store = git_ws
     snapshot = store.materialize_snapshot("e1", "v1")
@@ -121,7 +119,6 @@ def test_read_parent_diff_git_backend(git_ws: tuple[Path, GitGenerationStore]) -
     assert '-INSTR = """original"""' in out
 
 
-@pytest.mark.slow
 def test_read_parent_diff_seed_generation(git_ws: tuple[Path, GitGenerationStore]) -> None:
     ws, store = git_ws
     snapshot = store.materialize_snapshot("e1", "v0")
@@ -131,7 +128,6 @@ def test_read_parent_diff_seed_generation(git_ws: tuple[Path, GitGenerationStore
     assert "no prior promotion" in out
 
 
-@pytest.mark.slow
 def test_read_parent_diff_caps_output(git_ws: tuple[Path, GitGenerationStore]) -> None:
     ws, store = git_ws
     # A pathological promotion: replace the span with a huge body.

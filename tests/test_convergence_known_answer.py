@@ -37,6 +37,8 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+
 import zicato_examples.target_0_convergence as _t0_pkg
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato_examples.target_0_convergence import mocks as t0_mocks
@@ -324,6 +326,7 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
     assert all(run_id.startswith("conv-v") for run_id in run_ids)
 
 
+@pytest.mark.slow
 def test_racing_field_best_arm_survives_to_floor(tmp_path: Path) -> None:
     """The racing contract (field 4, replicates 2, evidence pre-gate at
     0.8) drives a real multi-challenger round through subprocess workers:

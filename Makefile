@@ -9,8 +9,8 @@ help:
 	@echo "zicato Makefile targets:"
 	@echo "  install            Install package + all optional dependencies via uv"
 	@echo "  install-hooks      Install the pre-commit git hook into .git/hooks/"
-	@echo "  test               Run pytest (the full suite)"
-	@echo "  test-fast          Run pytest without the slow real-subprocess/server tests"
+	@echo "  test               Run pytest (both tiers — what a merge needs)"
+	@echo "  test-fast          Run pytest (default tier only — the inner loop)"
 	@echo "  node-test          Run the dashboard JS behaviour suite under node"
 	@echo "  lint               Run ruff check"
 	@echo "  import-lint        Run the import-linter library/driver contracts"
@@ -30,14 +30,19 @@ install:
 install-hooks:
 	@cd $(ROOT) && uv run pre-commit install
 
+# The FULL suite: both tiers, which is what a merge needs. The explicit -m
+# REPLACES the pyproject selector rather than intersecting with it, so this
+# line has to restate the two terms the full suite still excludes (the Node
+# shim, which `make node-test` owns, and the opt-in cascade measurement).
 test:
-	@cd $(ROOT) && uv run pytest tests/
+	@cd $(ROOT) && uv run pytest tests/ -m "not node and not cascade_oc"
 
-# The opt-in fast lane: drop the `slow`-marked real-subprocess / real-server
-# tests (their runtime IS their coverage — run `make test` before merging).
-# A command-line -m REPLACES the pyproject `-m 'not node'`, hence both terms.
+# The DEFAULT tier alone — the inner loop. A BARE `pytest` is what drops
+# the seven tests measured at 15 s or more alone (tests/conftest.py), so this
+# names no path: adding one would select it and run the tier too.
+# Run `make test` before merging; CI runs both tiers as separate steps.
 test-fast:
-	@cd $(ROOT) && uv run pytest tests/ -m "not slow and not node"
+	@cd $(ROOT) && uv run pytest
 
 # The dashboard's JavaScript behaviour suite. The in-pytest shim
 # (tests/test_dashboard_js.py) carries the `node` marker and is EXCLUDED

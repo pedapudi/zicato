@@ -359,7 +359,6 @@ print(":".join(leaked))
 """
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_worker_import_does_not_pull_adk_or_litellm() -> None:
     """The worker's import graph stays dependency-light.
@@ -436,7 +435,6 @@ def _write_inner_model_gate_args(
     args_path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_non_adk_adapter_never_resolves_inner_model(tmp_path: Path) -> None:
     """A ``"import"``-kind worker skips ``google.adk`` even with an
@@ -499,7 +497,6 @@ def test_non_adk_adapter_never_resolves_inner_model(tmp_path: Path) -> None:
     assert json.loads(result_path.read_text(encoding="utf-8"))["aborted"] is False
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_no_module_imports_litellm_at_module_scope() -> None:
     """``litellm`` is already lazy — ADK imports it at the first LLM call.

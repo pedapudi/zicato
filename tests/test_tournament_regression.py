@@ -128,7 +128,6 @@ def test_run_regression_suite_returns_passed_when_no_tests_dir(tmp_path: Path) -
     assert result.elapsed_s == 0.0
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_run_regression_suite_passes_on_green_suite(tmp_path: Path) -> None:
     """A snapshot whose pytest suite passes yields ``passed=True``."""
@@ -148,7 +147,6 @@ def test_run_regression_suite_passes_on_green_suite(tmp_path: Path) -> None:
     assert result.elapsed_s > 0.0
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_run_regression_suite_fails_with_failed_ids(tmp_path: Path) -> None:
     """A failing pytest run yields ``passed=False`` + populated failed ids."""
@@ -245,7 +243,6 @@ def test_classify_completed_run_maps_output_and_exit_codes() -> None:
     assert crashed.summary == "pytest exit code 3"
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_run_regression_suite_times_out_on_slow_test(tmp_path: Path) -> None:
     """A test that outlives the timeout maps to ``passed=False`` w/ timeout summary."""

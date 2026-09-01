@@ -411,7 +411,7 @@ def test_spawn_helpers_isolate_children_in_new_sessions(
         assert kwargs.get("start_new_session") is True
 
 
-@pytest.mark.slow
+@pytest.mark.integration
 def test_group_kill_aimed_at_dashboard_child_cannot_reach_evolve(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

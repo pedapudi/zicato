@@ -46,6 +46,7 @@ from tools.cascade_oc import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_cascade_oc_smoke_end_to_end() -> None:
     """A minimal cascade run through every stage — the anti-rot guard.
 

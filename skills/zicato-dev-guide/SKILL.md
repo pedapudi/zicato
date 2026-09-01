@@ -72,8 +72,9 @@ justification in the commit body; a legitimately-moved golden must honor the
 never-bake-a-sibling-change rule).
 
 ```bash
-uv run pytest tests/ -m "not slow and not node" -q      # 1. fast lane (~15s)
-uv run pytest tests/ -q                                 # 2. full suite (default; ~50s)
+uv run pytest tests/ -q                                  # 1. default tier (~1m45s)
+uv run pytest tests/ \
+  -m "not node and not cascade_oc" -q                   # 2. both tiers (~7m) — the gate
 uv run ruff format . && uv run ruff check .             # 3. style
 uv run mypy src/zicato/                                 # 4. types
 uv run lint-imports                                     # 5. import contracts (G5)
@@ -117,7 +118,7 @@ test (that adversarial test is exactly what would have caught bugs #6 and #8).
 
 ```bash
 uv sync --all-extras                                    # G2
-uv run pytest tests/ -m "not slow and not node" -q      # confirm a green fast lane
+uv run pytest tests/ -q                                  # confirm a green default tier
 uv run pytest tests/test_convergence_known_answer.py -q # watch the loop converge (the oracle)
 # then read: docs/dev-guide/00-INDEX.md → 01-orientation.md → the chapter for your task
 ```

@@ -227,7 +227,6 @@ def _runtime_config(workspace: Path) -> RuntimeConfig:
     )
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_runner_threads_pins_into_worker_args_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -280,7 +279,6 @@ def test_runner_threads_pins_into_worker_args_file(
     }
 
 
-@pytest.mark.slow
 @pytest.mark.integration
 def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
     """A real worker subprocess re-pins the args-file pins before running.

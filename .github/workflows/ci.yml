@@ -91,15 +91,27 @@ jobs:
       - name: Mypy
         run: uv run mypy src/zicato/
 
-      - name: Pytest
-        # tools/test_prose_lint.py rides here because the tool lives
-        # outside the `testpaths` root that the bare invocation collects.
-        run: uv run pytest tests/ tools/test_prose_lint.py
+      - name: Pytest (default tier)
+        # The DEFAULT TIER ONLY. A pull request does not run the `slow`
+        # tier: those seven tests are 5 minutes of the 6 a full run takes,
+        # and .github/workflows/slow-tier.yml runs them nightly against
+        # main instead, so a regression in one surfaces within a day rather
+        # than on every branch.
+        #
+        # The exclusion is stated here rather than inherited: the `slow`
+        # tier is deselected only for a BARE `pytest`, and this step names
+        # paths. Stating it is also the honest form for a gate — the step
+        # says what it runs. tools/test_prose_lint.py rides here because
+        # the tool lives outside the `testpaths` root.
+        run: >-
+          uv run pytest tests/ tools/test_prose_lint.py
+          -m "not node and not cascade_oc and not slow"
 
   parity:
     name: parity gates (${{ matrix.python-version }})
-    # PYTEST is skipped: that gate runs the same suite as lint-and-test's
-    # Pytest step (pyproject testpaths = ["tests"]). Every other gate runs.
+    # PYTEST is skipped: lint-and-test's Pytest step already runs the
+    # default tier (pyproject testpaths = ["tests"]), and the `slow` tier
+    # runs nightly in slow-tier.yml. Every other gate runs.
     #
     # Every supported interpreter, not one: a golden is a claim that the
     # bytes are a function of the code and the inputs, and running it on a

@@ -5,7 +5,7 @@
 > pinning philosophy (`tests/_contract_pins.py`) and its countermeasure
 > duty, the two oracles (the known-answer convergence proof and the
 > decision-procedure power harness), the subprocess-worker test support,
-> the markers and lanes (`make test` / `test-fast` / `node-test` / `check`),
+> the markers and tiers (`make test` / `test-fast` / `node-test` / `check`),
 > the `tools/parity.sh` gates one by one, the seven import contracts +
 > the TID251 bans, the Node behaviour-suite conventions, the
 > generation-store conformance session templates, CI, and the pre-commit
@@ -28,7 +28,7 @@
 >
 > | ID | Name | Invariant |
 > |----|------|-----------|
-> | V1 | the full-suite-is-the-default rule | **The full suite is the default; the fast lane is opt-in.** `make test` runs everything. A `slow`/`integration` test's runtime IS its coverage — never a candidate for stubbing. |
+> | V1 | the both-tiers-before-a-merge rule | **A bare `pytest` is the fast tier; a merge needs BOTH tiers, and running them is YOURS to do.** Only a bare `pytest` drops the `slow` tier (seven tests measured at 15 s or more ALONE) — naming a file, a test or a marker expression runs what it names. `make test` and `tools/parity.sh` run both tiers; a pull request runs only the default one, and the `slow` tier runs nightly against main. So the tier is the one part of the suite CI does not check before a merge. An `integration` test's runtime IS its coverage, never a candidate for stubbing. |
 > | V2 | the must-fail-with-the-fix-stashed rule | **A regression test MUST fail with the fix stashed.** A test that passes both before and after a fix proves nothing about the fix. |
 > | V3 | the never-weaken-an-assertion rule | **Never weaken an assertion to make a test pass.** Fix the code, or pin the new value with a measured justification in the commit. A pinned number moves only with a measured reason. |
 > | V4 | the pin-off-and-carry-the-countermeasure rule | **Deterministic contracts pin interacting knobs OFF — AND carry the countermeasure.** Pinning best-of-1 / replicates-1 / gate-off makes a script deterministic, but every shipped default also needs a knob-ON adversarial test. Pinning alone is how the best-of-N tree-mismatch case and the evidence-gate replicate-reuse case hid (`12-bug-casebook.md` cases 6 and 8). |
@@ -57,12 +57,13 @@
 | `tools/parity/lib/*.py` | the gate helpers: `contract_hash.py`, `cli_help.py`, `normalize.py`, `mock_evolve_capture.py`, `test_mock_golden.py`, `test_reindex_golden.py` |
 | `tools/parity/golden/` | the committed golden baselines |
 | `pyproject.toml` | `[tool.pytest.ini_options]` (markers, `addopts`), `[tool.importlinter]` (the five contracts), `[tool.ruff.lint...banned-api]` (the TID251 bans) |
-| `Makefile` | the lane targets (`test` / `test-fast` / `node-test` / `lint` / `import-lint` / `typecheck` / `check`) |
-| `.github/workflows/ci.yml` | the two CI jobs (Python matrix + the Rust supervisor) |
+| `Makefile` | the targets (`test` = both tiers / `test-fast` = the default tier / `node-test` / `lint` / `import-lint` / `typecheck` / `check`) |
+| `.github/workflows/ci.yml` | the pull-request jobs (Python matrix running the DEFAULT tier, parity, + the Rust supervisor) |
+| `.github/workflows/slow-tier.yml` | the `slow` tier, nightly against main and on demand |
 | `src/zicato/dashboard/static/test/run-all.mjs` | the Node behaviour-suite runner (exit-code-honest) |
 
-The suite is large (2800+ Python tests plus the Node suite plus the Rust
-`cargo test`), and it is **process-isolation-clean by construction** —
+The suite is large (about 5,990 Python tests plus the Node suite plus the
+Rust `cargo test`), and it is **process-isolation-clean by construction** —
 `tmp_path` everywhere, dynamic ports via `bind(("127.0.0.1", 0))`,
 tempdir-isolated worker fixtures — so it fans out under `pytest-xdist`
 with no per-test fixes.
@@ -77,40 +78,75 @@ with no per-test fixes.
 
 ---
 
-## 11.1 Lanes and markers
+## 11.1 Tiers and markers
 
-There is ONE default run (the full suite) and one opt-in fast lane. The
-`addopts` in `pyproject.toml` fan out across cores and drop only the Node
-shim:
+The suite runs in two tiers. The DEFAULT tier is what a bare `pytest`
+gives you and what the inner loop uses; the SLOW tier is seven tests, each
+measured at 15 s or more ON ITS OWN. Together they are about five of the
+six minutes a full run takes.
+
+A merge needs both. Running both is the contributor's job: `make test` and
+`tools/parity.sh`'s PYTEST gate each run the whole suite, and the
+pre-commit checklist (§11.11) is where they sit. **A pull request runs only
+the default tier**, and `.github/workflows/slow-tier.yml` runs the `slow`
+tier nightly against main plus on demand from the Actions tab. A regression
+in one of the seven therefore surfaces within a day rather than on the
+branch that caused it — which is the trade the tiering buys, and the reason
+the local ladder is not optional.
 
 ```
-addopts = "-n auto -m 'not node'"
+addopts = "-n auto -m 'not node and not cascade_oc'"
 markers = [
     "node: shells out to the standalone Node test harness (run via `make node-test`)",
-    "slow: real-subprocess / real-server test whose runtime IS the coverage; the fast lane is `-m 'not slow and not node'` (the full suite stays the default run)",
-    "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses)",
+    "slow: one test measured at 15 s or more (statistical characterizations and end-to-end simulations); deselected ONLY by a bare `pytest` (see tests/conftest.py) — naming a file or a test runs it, `-m slow` runs the tier alone, and `make test` and CI run both tiers",
+    "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses); its runtime IS its coverage, so it is never a candidate for stubbing",
+    "cascade_oc: the opt-in evaluation-cascade OC measurement suite (CASCADE.md §4); EXCLUDED from the default run via addopts — run with `-m cascade_oc`",
+    "pi: launches the real pi coding agent from integrations/pi (needs `npm ci` + Node >= 22); SKIPS cleanly when it is not installed, so the default run is unaffected — the CI lane selects it with `-m pi`",
 ]
 ```
 — `pyproject.toml`, `[tool.pytest.ini_options]`
 
-The three markers and what they tag:
+The five markers and what they tag:
 
 | Marker | Tags | In the default run? |
 |---|---|---|
-| `node` | the in-pytest shim (`tests/test_dashboard_js.py`) that re-runs the whole standalone Node suite inside pytest | NO — excluded by `addopts` `-m 'not node'` (it would duplicate `make node-test`) |
-| `slow` | real-subprocess / real-server tests (worker isolation, live server boots, live harmonograf launches, the git-backed generation store) whose runtime IS the coverage | YES (the full suite is the default) |
-| `integration` | any test crossing a process or network boundary | YES |
+| `node` | the in-pytest shim (`tests/test_dashboard_js.py`) that re-runs the whole standalone Node suite inside pytest | NO — it would duplicate `make node-test` |
+| `slow` | one test measured at 15 s or more ALONE (`-n0`) | NO for a BARE `pytest`; YES the moment anything is named (see below) |
+| `cascade_oc` | the opt-in evaluation-cascade measurement suite | NO — run it with `-m cascade_oc` |
+| `pi` | tests that launch the real pi coding agent | YES, but they SKIP unless `integrations/pi` is installed |
+| `integration` | any test crossing a process or network boundary | YES — most are fast |
 
-The Makefile lanes:
+`slow` and `integration` answer different questions and must not be
+conflated. `slow` is about a test's measured RUNTIME, and so about which
+tier schedules it. `integration` is about what a test TOUCHES, and so
+about what may never be stubbed away. All four combinations occur: the
+`cascade_oc` smoke run is slow and touches nothing outside the process,
+`tests/test_subprocess_workers.py` spawns eighteen real workers in about
+25 s total and stays in the default tier.
+
+Membership in `slow` is a MEASUREMENT, and the measurement is SERIAL —
+`pytest -n0 --durations=0 <the test>`, marked when the total reaches 15 s.
+`-n0` is load-bearing. Under `-n auto` twelve workers contend for twelve
+cores while each scripted test spawns workers of its own, so the same test
+reads two to three times longer on a busy box; a tier set from those
+numbers has a membership that depends on what else was running. Six tests
+were tiered that way at 15–17 s; each measures 5.5 to 7.4 s alone, and all
+six are back in the default tier. The serial numbers leave a wide gap — 7.4 s is the
+slowest test outside the tier, 29.2 s the fastest inside it — so nothing
+sits near the line.
+
+`tests/test_slow_tier_registry.py` pins the marked set against a declared
+list of node ids and their measured seconds, so a mark added or dropped
+without its row reds a test instead of silently moving the tier.
+
+The Makefile targets:
 
 ```make
 test:
-	@cd $(ROOT) && uv run pytest tests/
+	@cd $(ROOT) && uv run pytest tests/ -m "not node and not cascade_oc"
 
-# The opt-in fast lane: drop the `slow`-marked real-subprocess / real-server
-# tests (their runtime IS their coverage — run `make test` before merging).
 test-fast:
-	@cd $(ROOT) && uv run pytest tests/ -m "not slow and not node"
+	@cd $(ROOT) && uv run pytest tests/
 
 node-test:
 	@cd $(JS_TEST_DIR) && node run-all.mjs
@@ -119,20 +155,42 @@ check: lint import-lint typecheck test node-test
 ```
 — `Makefile`
 
-> ⚠️ TRAP — a command-line `-m` REPLACES the `pyproject` `-m 'not node'`, it
-> does not AND with it. So the fast lane is `-m "not slow and not node"`
-> (both terms), NOT `-m "not slow"` — the latter re-enables the node shim and
-> re-runs the whole Node suite inside pytest. The `test-fast` target and the
-> `slow` marker's own help string both spell out both terms for this reason.
+**The rule for the `slow` tier, stated once.** A BARE `pytest` is the only
+invocation that drops it. Name anything and you get what you named:
 
-> ⛔ NEVER stub a `slow`-marked test's real subprocess / server / git call to
-> "speed it up". The marker's whole point is that the runtime IS the coverage
-> (the full-suite-is-the-default rule): a worker-isolation test proves a real
-> subprocess writes to a real discarded checkout; a live-server test proves a
-> real port binds. Stub it and
-> you have kept the assertion and deleted the thing it asserts. If the fast
-> lane needs to skip it, that is what the marker is for — the FULL suite stays
-> the default and runs it before every merge.
+```bash
+pytest                                    # the default tier
+pytest tests/test_convergence_known_answer.py   # BOTH of its tests
+pytest tests/x.py::test_y                 # that test, whatever tier it is in
+pytest -k convergence                     # what the name matches, both tiers
+pytest -m slow                            # the tier alone
+pytest -m "not node and not cascade_oc"   # everything
+```
+
+`tests/conftest.py`'s `pytest_collection_modifyitems` deselects `slow`
+items only when the session named nothing at all — no path, no `-k`, no
+`-m`. It lives there
+rather than as a `not slow` term in `addopts` because an `addopts` term
+applies to EVERY invocation, including one that names a `slow` test —
+which would then run nothing and report green. That is not hypothetical:
+under the earlier design `pytest tests/test_convergence_known_answer.py`
+collected one of two tests, and naming the slow test by node id collected
+zero and exited 0. `tests/test_slow_tier_registry.py` pins all four forms.
+
+> ⚠️ TRAP — a command-line `-m` REPLACES the `pyproject` selector, it does
+> not AND with it. So the full suite is `-m "not node and not cascade_oc"`
+> with both terms restated, and the tier alone is
+> `-m "slow and not node and not cascade_oc"` — `-m slow` on its own
+> re-enables the Node shim and the cascade measurement.
+
+> ⛔ NEVER stub an `integration` test's real subprocess / server / git call
+> to "speed it up". That marker's whole point is that the runtime IS the
+> coverage: a worker-isolation test proves a real subprocess writes to a
+> real discarded checkout; a live-server test proves a real port binds. Stub
+> it and you have kept the assertion and deleted the thing it asserts. If a
+> test is genuinely too slow for the inner loop, MEASURE it and mark it
+> `slow` — that moves it to the tier CI still runs, which is the sanctioned
+> way to get it out of your way.
 
 `make check` runs `lint + import-lint + typecheck + test + node-test`; the
 gates are independent (distinct caches, no shared state) so `make -j5 check`
@@ -147,7 +205,7 @@ honest:
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-n auto -m 'not node'"
+addopts = "-n auto -m 'not node and not cascade_oc'"
 pythonpath = ["."]
 ```
 — `pyproject.toml`, `[tool.pytest.ini_options]`
@@ -933,10 +991,12 @@ lists the gates you asked for.
 
 ### 11.7.1 PYTEST
 
-The full suite (2800+ tests) — the primary behavioral characterization. Reds
-legitimately whenever a real behaviour changed or a test broke. This is the
-same run as `make test`; parity runs it as gate one because a golden diff on
-top of a red suite is noise.
+The full suite, BOTH tiers (about 5,990 tests) — the primary behavioral
+characterization. Reds legitimately whenever a real behaviour changed or a
+test broke. The gate spells its selector out (`pytest -q -m "not node and
+not cascade_oc"`) because a bare `pytest` would gate on the default tier
+alone; it is the same run as `make test`. Parity runs it as gate one because
+a golden diff on top of a red suite is noise.
 
 ### 11.7.2 CONTRACT-HASH (incl. checkout-independence)
 
@@ -1401,8 +1461,13 @@ invokes it. The whole module skips when `node` is unavailable.
 
 `.github/workflows/ci.yml` runs one job per gate family. The Python job
 matrixes over 3.11 and 3.12 and runs the gates in order: ruff → import
-contracts → mypy → pytest. Dependencies install with `--frozen` (exactly
-what `uv.lock` pins, failing if the lock is stale — reproducible CI):
+contracts → mypy → the DEFAULT test tier. The `slow` tier is not in this
+job: `.github/workflows/slow-tier.yml` runs it nightly against main and on
+demand, because those seven tests are about five of the six minutes a full
+run takes. The step names its own marker expression rather than leaning on
+the default, because it names paths — and naming anything runs the `slow`
+tier (§11.1). Dependencies install with `--frozen` (exactly what `uv.lock`
+pins, failing if the lock is stale — reproducible CI):
 
 ```yaml
       - name: Sync dependencies
@@ -1413,10 +1478,31 @@ what `uv.lock` pins, failing if the lock is stale — reproducible CI):
         run: uv run lint-imports
       - name: Mypy
         run: uv run mypy src/zicato/
-      - name: Pytest
-        run: uv run pytest tests/ tools/test_prose_lint.py
+      - name: Pytest (default tier)
+        run: >-
+          uv run pytest tests/ tools/test_prose_lint.py
+          -m "not node and not cascade_oc and not slow"
 ```
 — `.github/workflows/ci.yml`
+
+The `slow` tier has a workflow of its own, on a schedule rather than on a
+pull request:
+
+```yaml
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+...
+      - name: Pytest (slow tier)
+        run: uv run pytest tests/ -m "slow and not node and not cascade_oc"
+```
+— `.github/workflows/slow-tier.yml`
+
+`workflow_dispatch` is there so anyone can run the tier from the Actions
+tab without waiting for the small hours — worth doing on a branch that
+touches the decision procedure, the convergence loop or the evidence gate,
+which is where all seven live.
 
 The Rust job builds and tests the supervisor: `cargo fmt --check`,
 `cargo clippy --all-targets -- -D warnings`, `cargo test`. A change that
@@ -1438,17 +1524,18 @@ both plain-`python` runs of a stdlib-only tool.
 ## 11.11 The pre-commit checklist
 
 Copy-paste this before a nontrivial commit. The twelve steps run in order:
-the fast lane for quick signal, the full suite, format and lint, types,
-import contracts, the parity gates, the node suite, the two oracles, the
-Rust supervisor, the line budgets, and the vendor scan. Each step is a gate
-a real regression could hide behind.
+the default tier for quick signal, both tiers together, format and lint,
+types, import contracts, the parity gates, the node suite, the two oracles,
+the Rust supervisor, the line budgets, and the vendor scan. Each step is a
+gate a real regression could hide behind.
 
 ```bash
-# 1. Fast lane — quick signal while you iterate.
-uv run pytest tests/ -m "not slow and not node" -q
+# 1. Default tier — quick signal while you iterate. BARE: naming a path
+#    would select it and run the slow tier with it.
+uv run pytest -q
 
-# 2. Full suite — the default; runs the slow/subprocess/server tests.
-uv run pytest tests/ -q
+# 2. Full suite — BOTH tiers, which is what the merge gate runs.
+uv run pytest tests/ -m "not node and not cascade_oc" -q
 
 # 3. Format + lint (whole tree, the way CI does).
 uv run ruff format . && uv run ruff check .
@@ -1466,6 +1553,7 @@ bash tools/parity.sh
 make node-test ; echo "node exit: $?"
 
 # 8. The two oracles, explicitly (they ride in step 2, pin them here too).
+#    Naming the files runs every test in them, slow tier included.
 uv run pytest tests/test_convergence_known_answer.py \
     tests/test_decision_procedure_power.py -q
 
@@ -2037,10 +2125,10 @@ uv run pytest tests/path::test_name -q      # MUST be GREEN
 ## 11.16 Recipe: add a test that spawns real workers
 
 Some contracts can only be proven by a REAL subprocess (worker isolation,
-budget escalation, config-crossing-the-boundary). These are `slow` /
-`integration` tests whose runtime IS the coverage (the
-full-suite-is-the-default rule). The discipline is
-about staying bounded and leaving nothing behind.
+budget escalation, config-crossing-the-boundary). These are `integration`
+tests whose runtime IS the coverage, so nothing in them may be stubbed. The
+discipline is about staying bounded and leaving nothing behind — which is
+also what keeps them in the default tier, where almost all of them belong.
 
 **Step 1 — Make the worker's behaviour a module-level importable adapter.**
 Under the dotted-path-callable rule, add a named adapter + `make_*` factory to
@@ -2079,9 +2167,13 @@ kill) and `_CooperativeSleepSession` (cancellable `asyncio.sleep` — the
 worker SELF-aborts, exit 0) IS the test matrix: one proves the escalation
 layer, the other proves the cooperative budget.
 
-**Step 3 — Mark it `slow` / `integration`.** So the fast lane drops it and
-the marker documents that its runtime is intentional. Never stub the
-subprocess to speed it up — that deletes the coverage.
+**Step 3 — Mark it `integration`.** The marker documents that a real
+process boundary is the point, so nobody later "speeds it up" by stubbing
+the subprocess away — that would delete the coverage. Add `slow` ONLY if
+`pytest --durations=0` reports the finished test at 15 s or more, and add
+its measured row to `tests/test_slow_tier_registry.py` in the same commit.
+A bounded worker test (step 2) usually lands in single-digit seconds and
+stays in the default tier.
 
 **Step 4 — Set a hard timeout and assert NO LEAK.** The test must bound its
 own wait (the worker's budget + the parent's grace + a margin) so a genuine
@@ -2104,8 +2196,8 @@ the outcome alone can pass for the wrong reason.
 ```bash
 # Run it in isolation, serially, with the real subprocess:
 uv run pytest tests/test_your_worker.py -q -n0
-# Confirm it's in the slow lane (the fast lane must SKIP it):
-uv run pytest tests/test_your_worker.py -m "not slow and not node" -q   # deselected
+# Read its cost, which is what decides its tier:
+uv run pytest tests/test_your_worker.py -q -n0 --durations=0
 # Confirm no leak: after the run, the OS temp dir has no ztw-snap-* left:
 ls ${TMPDIR:-/tmp} | grep ztw-snap && echo "LEAK" || echo "clean"
 ```
@@ -2185,5 +2277,5 @@ where to ADD) a test, by concern.
 | the whole thing, reproducibly, both languages | `.github/workflows/ci.yml` (Python matrix + `cargo test`) |
 
 The single command that runs the most in one shot is `make check` (lint +
-import-lint + typecheck + full suite + node); the parity gates and the two
-oracles ride the pre-commit checklist (§11.11) alongside it.
+import-lint + typecheck + both test tiers + node); the parity gates and the
+two oracles ride the pre-commit checklist (§11.11) alongside it.
