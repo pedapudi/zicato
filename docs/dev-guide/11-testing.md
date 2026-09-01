@@ -235,7 +235,51 @@ pythonpath = ["."]
 > test flakes only in the full run, the first suspect is a shared resource it
 > did not isolate — never "xdist is flaky".
 
-### 11.1.2 Running only what a change can reach
+### 11.1.2 Running a board unit in this interpreter
+
+A tournament run normally executes in its own OS process — that is what
+makes the per-run wall-clock budget enforceable and keeps two generations'
+source out of one interpreter (§11.5). The suite drives about 1,080 of those
+in the default tier, each finishing in milliseconds behind roughly half a
+second of interpreter startup and import, so the boundary rather than the
+work is most of what the tier costs.
+
+`zicato.tournament.worker_transport.use_worker_launcher` is the one seam
+that changes it. Production never touches the seam: `launch_worker` calls
+`spawn_worker_subprocess`, which owns the
+`python -m zicato._tournament_worker` argv and the `start_new_session=True`
+that gives the worker its own process group. A test module opts out of the
+process per unit with one line:
+
+```python
+pytestmark = pytest.mark.usefixtures("inline_worker")
+```
+
+The unit still goes through `zicato._tournament_worker.main`, the same args
+file and the same result file; only the interpreter is shared.
+`tests/test_worker_inline_seam.py` pins the equivalence — the same adapter,
+generation, entry and weights run BOTH ways produce the same loss profile,
+field for field.
+
+> ⛔ NEVER request `inline_worker` for a test whose subject IS the boundary.
+> Worker pids, process groups, signals, budget escalation, supervisor
+> reaping and worker-environment scrubbing are properties of a real child
+> process, and `InlineWorker` RAISES rather than faking any of them — so
+> such a test fails loudly instead of passing without a worker.
+> `test_subprocess_workers.py`, `test_spawn_permit.py`,
+> `test_cli_config_flags.py` and the two oracles keep the real subprocess
+> for this reason: an oracle's worth is that it runs the real thing end to
+> end.
+
+> ⛔ NEVER request it for an adapter that IMPORTS its generation snapshot as
+> Python. Two generations of one module name in a single interpreter is the
+> confusion the subprocess exists to prevent, and `sys.modules` would hand
+> the second run the first one's code. The modules that opt in all drive
+> target_0, whose adapter reads a generation as TEXT.
+
+---
+
+### 11.1.3 Running only what a change can reach
 
 `tools/affected_tests.py` narrows the inner loop below the default tier. It
 diffs a ref range, builds the import graph of `zicato`, `zicato_examples`,

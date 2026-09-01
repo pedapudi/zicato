@@ -109,15 +109,18 @@ def test_a_dynamic_import_the_parser_cannot_evaluate_selects_the_whole_suite(
 # ---------------------------------------------------------------------------
 
 
-def test_the_subprocess_worker_is_an_edge_out_of_the_runner(
+def test_the_subprocess_worker_is_reachable_from_the_runner(
     graph: dict[str, set[str]],
 ) -> None:
-    """`runner` spawns the worker with `-m`, which no import statement shows.
+    """A tournament spawns the worker with `-m`, which no import shows.
 
-    Without this edge a change to the worker would leave every test that
-    drives a real tournament unselected.
+    The edge belongs to whichever module writes the argv, which is
+    `worker_transport.spawn_worker_subprocess`. What the selection depends
+    on is the REACHABILITY: without it, a change to the worker would leave
+    every test that drives a real tournament unselected.
     """
-    assert "zicato._tournament_worker" in graph["zicato.tournament.runner"]
+    assert "zicato._tournament_worker" in graph["zicato.tournament.worker_transport"]
+    assert "zicato._tournament_worker" in at._closure("zicato.tournament.runner", graph)
 
 
 def test_the_dashboard_server_is_an_edge_out_of_its_launchers(
@@ -155,7 +158,7 @@ def test_a_path_named_in_executable_string_data_is_read(table: dict[str, str]) -
 def test_every_traced_data_file_still_has_the_reader_it_claims(
     path: str, reader: str, table: dict[str, str]
 ) -> None:
-    """A traced file is only safe while the search really finds its reader.
+    """A traced file is only safe while the search still finds its reader.
 
     These are the non-Python files answered through the graph rather than
     with the whole suite. If one stops being named by the module named
