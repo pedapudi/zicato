@@ -235,6 +235,42 @@ pythonpath = ["."]
 > test flakes only in the full run, the first suspect is a shared resource it
 > did not isolate — never "xdist is flaky".
 
+### 11.1.2 Running only what a change can reach
+
+`tools/affected_tests.py` narrows the inner loop below the default tier. It
+diffs a ref range, builds the import graph of `zicato`, `zicato_examples`,
+`tests` and `tools` by PARSING (never importing), and prints the test files
+whose transitive imports reach a changed module:
+
+```bash
+make test-affected                      # origin/main...HEAD
+make test-affected RANGE=HEAD~3         # another range
+uv run python tools/affected_tests.py --explain   # why each file, on stderr
+```
+
+Three edges no `import` statement shows are added: a `"-m", "<module>"` pair
+read straight off a spawn's argv (how the tournament runner reaches the
+worker and the CLI reaches the dashboard server), an
+`importlib.import_module` call with a literal argument, and a dotted path a
+test names in its own text to point a fixture at an adapter it never
+imports. Reading the first off the argv rather than from a list of known
+entry points is what keeps a spawn added later from being missed.
+
+Where the graph cannot establish what a change reaches, the answer is the
+WHOLE suite: a change to `tests/conftest.py`, to a `tests/_*.py` harness
+module, to `pyproject.toml`, `uv.lock` or `tools/parity/`, to a file that
+dynamically imports a name the parser cannot evaluate, or to any non-Python
+file whose readers are unknown. Prose is the exception — a document is inert
+unless a module NAMES it in executable string data, which is how editing
+`docs/design/LINE-BUDGET.md` still selects the budget tool's own tests.
+
+> ⛔ NEVER treat this as a gate. An import graph is evidence about what a
+> change can reach; it falls short of a proof, which is why the selector is
+> absent from CI. It shortens the loop while you iterate; `make test`
+> (both tiers) is what a merge needs. `tools/test_affected_tests.py` pins the
+> escape hatches and the added edges, and asserts only in the direction that
+> matters — that a test the change could break is never left out.
+
 ---
 
 ## 11.2 The autouse fixtures — `tests/conftest.py`

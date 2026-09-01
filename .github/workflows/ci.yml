@@ -101,10 +101,14 @@ jobs:
         # The exclusion is stated here rather than inherited: the `slow`
         # tier is deselected only for a BARE `pytest`, and this step names
         # paths. Stating it is also the honest form for a gate — the step
-        # says what it runs. tools/test_prose_lint.py rides here because
-        # the tool lives outside the `testpaths` root.
+        # says what it runs. The three tools/ paths ride here because they
+        # live outside the `testpaths` root: the prose linter's own suite,
+        # the affected-tests selector's, and the guard that holds every
+        # workflow file to what the runner requires — unique step names,
+        # one `run` or `uses` per step, no repeated keys.
         run: >-
           uv run pytest tests/ tools/test_prose_lint.py
+          tools/test_affected_tests.py tools/test_workflows.py
           -m "not node and not cascade_oc and not slow"
 
   parity:

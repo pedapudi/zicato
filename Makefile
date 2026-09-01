@@ -1,6 +1,6 @@
 ROOT := $(shell pwd)
 
-.PHONY: help install install-hooks test test-fast node-test lint import-lint format typecheck check clean supervisor supervisor-test supervisor-check install-supervisor
+.PHONY: help install install-hooks test test-fast test-affected node-test lint import-lint format typecheck check clean supervisor supervisor-test supervisor-check install-supervisor
 
 # Path to the dashboard JS behaviour suite (run standalone under node).
 JS_TEST_DIR := $(ROOT)/src/zicato/dashboard/static/test
@@ -11,6 +11,7 @@ help:
 	@echo "  install-hooks      Install the pre-commit git hook into .git/hooks/"
 	@echo "  test               Run pytest (both tiers — what a merge needs)"
 	@echo "  test-fast          Run pytest (default tier only — the inner loop)"
+	@echo "  test-affected      Run only the tests the branch's change can reach"
 	@echo "  node-test          Run the dashboard JS behaviour suite under node"
 	@echo "  lint               Run ruff check"
 	@echo "  import-lint        Run the import-linter library/driver contracts"
@@ -43,6 +44,15 @@ test:
 # Run `make test` before merging; CI runs both tiers as separate steps.
 test-fast:
 	@cd $(ROOT) && uv run pytest
+
+# The tests the branch can reach, by static import graph — the inner loop
+# narrowed further. NOT a gate: `tools/affected_tests.py` answers with the
+# whole suite whenever it cannot establish what a change reaches, but a
+# graph is not a proof, so `make test` is still what a merge needs. Pass a
+# different range with `RANGE=HEAD~3`.
+RANGE ?= origin/main...HEAD
+test-affected:
+	@cd $(ROOT) && uv run pytest $$(uv run python tools/affected_tests.py --range "$(RANGE)")
 
 # The dashboard's JavaScript behaviour suite. The in-pytest shim
 # (tests/test_dashboard_js.py) carries the `node` marker and is EXCLUDED
