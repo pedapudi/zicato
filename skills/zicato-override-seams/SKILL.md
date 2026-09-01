@@ -1,6 +1,6 @@
 ---
 name: zicato-override-seams
-description: Set up zicato's three override seams when a target or a metric diverges from the defaults — a custom HarnessAdapter for non-ADK targets (hand-written config, no CLI flag), the predicate expectation for board entries needing partial credit or a metrics decomposition instead of a bare pass/fail, and outcome_summarizer_spec for proposer failure categories zicato does not compute. Use when deciding whether you need an override, writing one so zicato can consume what it returns, and wiring it onto the contract. Every seam attaches by DOTTED PATH — zicato imports your callable from your own package, and hashes its source into the epoch contract.
+description: Set up zicato's three override seams when a target or a metric diverges from the defaults — a custom HarnessAdapter for non-ADK targets (hand-written config, no CLI flag), the predicate expectation for board entries needing partial credit or a metrics decomposition instead of a bare pass/fail, and outcome_summarizer_spec for proposer failure categories zicato does not compute. Use when deciding whether you need an override, writing one so zicato can consume what it returns, and wiring it onto the contract. Every seam attaches by DOTTED PATH — zicato imports your callable from your own package, and hashes the source of the two grading seams into the epoch contract; the adapter's is not hashed, so changing it rolls nothing.
 ---
 
 # zicato override seams — custom adapters and scoring
@@ -178,9 +178,19 @@ import-kind `adapter` block into `.zicato/config.json` instead:
   grades the run outside, or the proposer can edit the thing measuring it.
 
 ⚠️ With no `adapter` block, the factory falls back to a top-level
-`adk_entrypoint`; with neither, it raises rather than defaulting. The registered
-harness is a contract input — writing this block, or editing the adapter body
-later, rolls the epoch.
+`adk_entrypoint`; with neither, it raises rather than defaulting.
+
+⚠️ **The epoch contract does not see this seam.** Harness identity is read from
+`adk_entrypoint`, which an import-kind workspace does not set, so the hashed
+entrypoint is the empty string; the `adapter` block is not a contract input and
+the factory's source is not hashed. Swapping `factory` to a different callable,
+or editing the adapter body, therefore leaves the contract hash unchanged, and
+two materially different harnesses can score into one epoch as though they were
+one. Only `mutable_trees` / `source_roots` roll it, being contract inputs in
+their own right. This is unlike the grading seams below, whose source IS hashed.
+Until the contract reads adapter identity, roll the epoch yourself with `zicato
+epoch new <name>` whenever you change the factory path or its behaviour —
+nothing warns you, and scalars compared across the change are not comparable.
 
 ## 2. Board entry scoring: the `predicate` expectation
 
