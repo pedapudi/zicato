@@ -191,6 +191,31 @@ Every authoring choice is annotated with its downstream cost before commit:
 The two builder skills teach the same discipline: surface the cost and the
 epoch roll before every apply.
 
+### 4.1 Configuring holdout queries
+
+The builder's anti-overfitting section controls two related mechanisms. The
+train/holdout settings decide which board entries remain hidden during
+selection. The nested Ladder settings govern repeated access to those hidden
+entries.
+
+| Setting | Operator meaning |
+|---|---|
+| `ladder.enabled` | Mediate holdout confirmation through the release rule and query budget. Disabling it runs every available holdout confirmation without Ladder mediation. |
+| `ladder.threshold` | Minimum training improvement required before a new holdout confirmation can affect promotion. An empty value uses `promote_margin`. |
+| `ladder.budget` | Number of adaptive holdout comparisons available in one epoch. The default is 16. |
+| `ladder.noise_scale` | Additional width added to the release threshold. The default `0.0` adds no calibrated noise. |
+
+One query is the complete crowning comparison on the hidden slice. Its board
+entries, replicates, and model calls affect the cost preview but do not consume
+additional Ladder query units. A withheld comparison still consumes one unit
+because the hidden data was inspected. Budget exhaustion leaves the training
+verdict in force and stops new holdout feedback from changing promotion.
+
+The default budget is not a statistical calibration for every board. Review
+holdout size, noise, expected campaign length, and cross-epoch task reuse when
+changing it. [`OVERFITTING.md`](OVERFITTING.md#what-query-budget-means) defines
+the accounting model and documents the current enforcement limitation.
+
 ---
 
 ## 5. Theming carry-over

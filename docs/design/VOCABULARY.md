@@ -20,6 +20,19 @@ An adapter has exactly two methods of interest to zicato:
 `run_entry(entry, sinks=[...])` and `mutation_points()`. See
 [ARCHITECTURE.md §4.1](ARCHITECTURE.md#41-harnessadapter).
 
+## Adaptive holdout query
+
+One consultation of the hidden holdout slice about a challenger chosen using
+earlier tournament results. The term *query* comes from adaptive data analysis:
+the optimization process asks a statistical question of reused evaluation
+data. One crowning holdout comparison is one query even when it evaluates
+several board entries and makes several model or tool calls. Training runs,
+model calls, tokens, wall-clock limits, and database reads use separate
+accounting. The Ladder charges holdout queries against an epoch-level budget
+because repeated confirmation feedback can let future challengers overfit the
+hidden slice. See
+[OVERFITTING.md §"What query budget means"](OVERFITTING.md#what-query-budget-means).
+
 ## Applier
 
 The component that takes an `Experiment`, resolves every patch's
@@ -151,6 +164,19 @@ harness only — `goldfive.wrap`'s `call_llm=` parameter routes through
 it to the agent code. MUST be distinct from `auxiliary_call_llm`.
 See [EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule).
 
+## Holdout confirmation
+
+The final champion-versus-challenger comparison on board entries withheld from
+the process that chose the challenger. A challenger that won on the training
+slice confirms when it does not meaningfully regress on the holdout.
+Confirmation does not require another improvement on the smaller, noisier
+holdout slice.
+Every tournament structure uses the same confirmation path. A released
+non-confirmation rejects the challenger; an absent holdout leaves the training
+verdict unchanged. See
+[OVERFITTING.md §"What query budget means"](OVERFITTING.md#what-query-budget-means)
+and [SCORING.md §5](SCORING.md#5-the-tournament-promotion-gate).
+
 ## Hypothesis
 
 The mandatory structured pre-run portion of an `Experiment`. Six
@@ -214,6 +240,18 @@ ambient and default-on; a board's `disable_drift` suppresses built-ins
 by `DriftKind`. See
 [BOARD-FORMAT.md §4](BOARD-FORMAT.md#4-process-checks-the-judges-list)
 and [BOARD-AUTHORING.md §3](BOARD-AUTHORING.md).
+
+## Ladder
+
+The governor that limits feedback from repeated adaptive holdout queries. A
+new holdout confirmation can affect promotion only when the challenger's
+training improvement clears the Ladder release threshold. Each consultation
+also consumes one unit from an epoch-level query budget. A withheld query
+reuses the last released confirmation and still consumes budget because the
+holdout was inspected. After exhaustion, no new holdout result affects
+promotion and the training verdict stands. The proposer never receives raw
+holdout entries or per-entry results. See
+[OVERFITTING.md §"What query budget means"](OVERFITTING.md#what-query-budget-means).
 
 ## Lineage
 

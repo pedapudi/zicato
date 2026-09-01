@@ -108,6 +108,39 @@ zicato calls LLMs only through a narrow `call_llm(system, user, model) -> str`
 callable supplied by the caller. No vendor SDK is imported by the library
 itself; bring whatever model you want.
 
+## How the hidden holdout protects promotion
+
+Repeated optimization can overfit a fixed task board even when every score is
+measured correctly. Each proposed edit depends on results from earlier edits,
+so the board gradually becomes training data for the improvement loop.
+
+zicato limits that feedback with a hidden holdout slice. Tournament selection
+and the ordinary promotion gate use the training slice. When a challenger would
+become champion, zicato compares the champion and challenger on the holdout.
+The challenger confirms when it does not meaningfully regress there. Holdout
+confirmation does not require a second improvement; it checks that the
+training improvement generalizes.
+
+Each final comparison against the hidden slice is an **adaptive holdout
+query**. The word *query* comes from statistics: the optimization process asks
+the hidden data one question about a candidate chosen using previous results.
+One holdout comparison counts as one query even when it runs several board
+entries and makes several model or tool calls. Model calls, tokens, wall-clock
+limits, and database operations have separate accounting.
+
+The **Ladder** governor limits what repeated queries reveal. It releases a new
+confirmation result only when the training improvement clears its threshold,
+and it charges each holdout consultation against an epoch-level query budget.
+A withheld result still consumes one query because zicato inspected the hidden
+data. When the budget is exhausted, no further holdout result affects the
+decision; the training verdict stands.
+
+The default budget is an operational limit rather than a universal statistical
+calibration. Board size, noise, feedback visibility, and reuse across epochs
+still determine how much confidence the holdout supports. See
+[`OVERFITTING.md`](docs/design/OVERFITTING.md#what-query-budget-means) for the
+accounting rules, configuration guidance, and known enforcement limitation.
+
 ## Development setup
 
 ```sh
@@ -131,6 +164,7 @@ The full design lives under [`docs/design/`](docs/design/). Read
 - [`docs/design/EPOCHS-AND-JOURNALING.md`](docs/design/EPOCHS-AND-JOURNALING.md) — epoch lifecycle, the `Experiment` artifact (hypothesis + patches + outcome), `journal.md` and the closing analysis pass, cross-epoch lineage.
 - [`docs/design/TELEMETRY.md`](docs/design/TELEMETRY.md) — capturing goldfive's `goldfive.v1.Event` stream via its `JSONLPersistenceSink`, the post-run reducer, the `LossProfile` shape, the emulator's `zicato:emulator` audit lane.
 - [`docs/design/SCORING.md`](docs/design/SCORING.md) — the weighted drift-loss formula, the pass-rate side, the tournament promotion gate (margin on drift + strict monotonicity on pass-rate), fast mode.
+- [`docs/design/OVERFITTING.md`](docs/design/OVERFITTING.md) — why repeated adaptive evaluation overfits a fixed board, how the train/holdout split works, what one holdout query means, and how the Ladder query budget limits feedback from the hidden slice.
 - [`docs/design/TOURNAMENT.md`](docs/design/TOURNAMENT.md) — the competition model: the king-of-the-hill gauntlet (champion vs successive challengers), the dashboard Tournament view (bracket + per-matchup detail), the tournament-detail analytics (verdict transparency, per-entry A/B grid, hypothesis ledger, optimization trajectory, mutation heat map, cost), and the harmonograf split — execution view vs competition view.
 - [`docs/design/SELECTION.md`](docs/design/SELECTION.md) — the decision theory under the tournament: how reinforcement-learning gating, racing, and bracket schedulers make the champion-versus-challenger decision; why zicato's gauntlet is a degenerate elitist iterated race; why brackets (single and double elimination, Swiss) are the wrong primitive here; and the ordered path to replication-based racing (a paired significance gate, winner's-curse confirmation, a trust-region step bound). Diagrams and cited sources.
 - [`docs/design/EMULATOR.md`](docs/design/EMULATOR.md) — the multi-turn user emulator: the two-callable rule (hard error on identity match), sealed context construction, answer-leak heuristic, audit-trail spans.

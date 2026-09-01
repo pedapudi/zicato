@@ -428,10 +428,12 @@ patches the operator agrees with → pass-rate weight is too high).
 
 ## 5. The tournament promotion gate
 
-The promotion gate (`evaluate_gate` in `tournament/gate.py`) decides
-whether the candidate (child) replaces the parent. It applies three
-rules **in order** and promotes only if none rejects. It returns a
-`GateOutcome` with fields:
+The training-slice promotion gate (`evaluate_gate` in `tournament/gate.py`)
+decides whether the candidate (child) is eligible to replace the parent. It
+applies three rules **in order** and returns a provisional promotion only if
+none rejects. A separate hidden-holdout confirmation can revise that
+provisional result before settlement. `evaluate_gate` returns a `GateOutcome`
+with fields:
 
 | `GateOutcome` field | Meaning |
 |---|---|
@@ -506,6 +508,21 @@ widens the gate very little in practice, because non-aborting
 generations all tie at `failure: = 0.0`.
 
 If no rule rejects, the gate returns `decision="promoted"`.
+
+**Crowning holdout confirmation.** A tournament structure first selects its
+leader and runs the three training rules. When the resulting crowning duel
+would promote, zicato compares the champion and challenger on the hidden
+holdout slice. The challenger confirms when its holdout loss and pass behavior
+do not meaningfully regress. It need not improve again on the smaller holdout.
+
+The Ladder governor controls whether the holdout result may revise the
+training verdict. A released non-confirmation changes the result to rejected.
+A released confirmation preserves promotion. A withheld result or exhausted
+query budget leaves the training verdict unchanged. The word *query* counts
+one statistical consultation of the holdout, regardless of how many board
+entries or model calls the comparison requires. See
+[`OVERFITTING.md`](OVERFITTING.md#what-query-budget-means) for the feedback and
+budget rules.
 
 The per-namespace "did this namespace move the wrong way" test is
 `tournament.gate.regressed_namespaces`, and it is public because it is

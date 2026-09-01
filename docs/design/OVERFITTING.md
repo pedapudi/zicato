@@ -8,7 +8,7 @@
 >
 > Shipped and default-on: the **train/holdout board split** with
 > holdout-gated promotion (`board/split.py`), the
-> **Ladder/Thresholdout** noisy-holdout query (`tournament/ladder.py`),
+> **Ladder-mediated holdout feedback** (`tournament/ladder.py`),
 > the **proposer-leakage restrictions** (train-slice-only patterns,
 > aggregated entry ids, withheld inputs), the **generalization-gap
 > detector** (a `zicato health` finding), the **board-rotation cadence**,
@@ -55,6 +55,66 @@ The distinction that organizes the whole note:
 > will eventually fit the *specific board entries* rather than the true
 > quality the board is a proxy for. The two failures are orthogonal:
 > replication fixes the first and does *nothing* for the second.
+
+## What “query budget” means
+
+An **adaptive holdout query** is one consultation of the hidden board slice
+about a challenger selected using earlier tournament results. The term comes
+from adaptive data analysis. It describes access to evaluation data rather
+than an LLM request, database operation, or token purchase.
+
+In zicato, one final champion-versus-challenger comparison on the holdout is
+one query. The comparison can contain several board entries, replicates, model
+calls, and tool calls. Those operations determine compute cost, while the
+whole comparison consumes one unit of the Ladder query budget.
+
+The distinction matters because adaptive feedback changes later candidates.
+After one round reports whether a challenger confirmed, the proposer can use
+that information when producing the next challenger. Repeating the process on
+the same hidden entries gradually turns the holdout into an optimization
+target, even though the proposer never sees an entry or raw score.
+
+The Ladder narrows this feedback channel:
+
+1. Tournament selection and the ordinary gate use the training slice.
+2. A training rejection ends the comparison without consulting the holdout.
+3. A training promotion triggers one holdout comparison when a holdout exists.
+4. The Ladder releases the resulting confirmation only when the measured
+   training improvement clears its release threshold.
+5. Every holdout consultation consumes one budget unit, including a query
+   whose new result is withheld.
+6. After budget exhaustion, no new holdout result affects promotion. The
+   training verdict stands.
+
+| Activity | Ladder queries charged |
+|---|---:|
+| Training-slice tournament matchup | 0 |
+| Training rejection with no holdout access | 0 |
+| One crowning comparison across the complete holdout slice | 1 |
+| Additional board entries, replicates, model calls, or tool calls inside that comparison | 0 additional queries |
+| Holdout result inspected and then withheld | 1 |
+| No holdout slice exists | 0 |
+
+`overfitting.ladder.budget` in `scoring.json` is therefore a limit on adaptive
+access to the hidden evaluation slice. The default is 16 queries per epoch. It
+does not represent money, tokens, or a maximum number of generations. A round
+that never reaches a promotable crowning duel spends no Ladder query.
+
+The configured number is an operational bound. It does not prove that a
+particular holdout remains statistically valid for 16 consultations. That
+claim depends on holdout size, measurement noise, the information released,
+and whether the same underlying tasks were exposed in other epochs. Hash-based
+holdouts rotate across epochs by default, but rotation over a finite board does
+not create fresh tasks. Explicitly tagged holdout entries do not rotate.
+Long-running campaigns need fresh evaluation entries or accounting tied to the
+reused holdout data.
+
+The mechanism intends to reserve budget before accessing the holdout. The
+runner computes the holdout comparison before it checks exhausted state, and
+its state write is best-effort. Until
+[#380](https://github.com/pedapudi/zicato/issues/380) is resolved, the recorded
+remaining budget describes Ladder decision mediation rather than a durable
+proof of the number of holdout comparisons executed.
 
 ---
 
@@ -565,7 +625,7 @@ the runbook: [`PROCESS-EXEMPLARS.md`](PROCESS-EXEMPLARS.md).
 Ranked by leverage-per-effort, with what changes, where it lives, and the
 cost. All seven levers are built. Default-on: the train/holdout board
 split with holdout-gated promotion (`board/split.py`,
-`tournament/gate.py`); the Ladder/Thresholdout noisy-holdout query
+`tournament/gate.py`); the Ladder-mediated, budgeted holdout feedback
 (`tournament/ladder.py`); the proposer-leakage restrictions (train-slice
 patterns, aggregated entry ids, withheld inputs, plus the §11.5
 outcome-marginal channel); the `generalization_gap` loop-health detector
@@ -582,7 +642,7 @@ arrows are noted.
 flowchart TB
     R3["#3 Restrict proposer leakage<br/>(patterns→aggregate, hide inputs)"]
     R1["#1 Train/holdout board split<br/>(holdout-gated promotion)"]
-    R2["#2 Ladder/Thresholdout holdout<br/>(noisy, budgeted query)"]
+    R2["#2 Ladder-mediated holdout<br/>(budgeted confirmation query)"]
     R4["#4 Diff-complexity regularization<br/>(parsimony in gate/loss)"]
     R5["#5 Generalization-gap detector<br/>(zicato health)"]
     R6["#6 Board refresh/rotation cadence<br/>(epoch-roll policy)"]
@@ -636,17 +696,20 @@ TRAIN side keeps its zero-tolerance rule. For commensurable bounds set
 `preflight.holdout_window_note` says so on the pre-flight record when
 either bound looks infeasible.
 
-**#2 — A Ladder/Thresholdout-style noisy, budgeted holdout. (SHIPPED.)**
-*What:* mediate every holdout query through a Ladder rule — release a
-holdout-based promotion signal *only* when the train-measured improvement
-clears a noise threshold, and feed the proposer back only a
-threshold-gated bit, never the raw holdout per-entry result. *Where:* a
-new mechanism between the runner and the gate; `promote_margin` is the
-existing seed of the threshold. *Cost:* noise calibration and a query
-budget to track per epoch; start parameter-free (Ladder's tuning-free
-variant). *Tradeoff:* strictly more conservative promotion (fewer, more
-trustworthy crowns) — which is the point. Depends on the train/holdout
-split.
+**#2 — Ladder-mediated, budgeted holdout feedback. (SHIPPED.)**
+*What:* mediate every holdout query through a Ladder rule. A holdout-based
+promotion signal is released only when the train-measured improvement clears
+the configured threshold. The proposer receives a threshold-gated
+confirmation rather than raw holdout entries or per-entry results. *Where:*
+`tournament/ladder.py` owns the pure release rule and
+`tournament/governance.py` owns the epoch-scoped state. The default threshold
+comes from `promote_margin`; `ladder.noise_scale` can widen it. *Cost:* one
+additional holdout-slice comparison for each promotable crowning duel while
+queries remain available. The configured budget counts those adaptive
+consultations. *Behavior after exhaustion:* no new holdout result revises the
+training verdict. Depends on the train/holdout split. The practical accounting
+and implementation limitation are defined in
+[§"What query budget means"](#what-query-budget-means).
 
 **#3 — Restrict the proposer's per-entry visibility. (SHIPPED.)**
 *What:* §11's restrictions 1–4 — patterns on train only, aggregate
@@ -775,10 +838,11 @@ the persisted placebo outcomes.
   Use both: replicate *within* the train and holdout slices, *and*
   split. The holdout slice doubles as the winner's-curse confirmation set
   (§8) — one slice, two jobs.
-- **Epochs are the overfitting horizon.** The contract hash already makes
-  any board change an epoch boundary; this note adds the *policy* (refresh
-  when the gap opens) and the *discipline* (rotate the holdout) on top of
-  machinery that exists. The optimal-stopping rule
+- **Epochs scope the implementation's state.** The contract hash makes
+  any board change an epoch boundary, and hash-derived holdouts rotate by epoch
+  by default. An epoch roll does not make reused tasks statistically fresh.
+  Refresh the board when the gap opens, and account for any holdout entries
+  reused across epochs. The optimal-stopping rule
   ([`SELECTION-THEORY.md`](SELECTION-THEORY.md) §5) gains a second reason
   to retire a contract: not just diminishing returns, but *measured
   overfitting*.

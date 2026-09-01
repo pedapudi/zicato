@@ -741,7 +741,17 @@ optimistically-biased signal the optimizer can climb. The Ladder
 (`src/zicato/tournament/ladder.py`) is the Blum–Hardt 2015 mechanism for that
 "submit, see score, submit again" loop, in its parameter-free variant.
 
-### 5.1 The two rules
+### 5.1 What counts as a query, and the two rules
+
+Here, a **query** is a statistical consultation of the hidden holdout slice.
+It is not one target-model call, tool call, database query, board entry, or
+replicate. One crowning champion-versus-challenger comparison across the
+holdout consumes one query, however much work that comparison performs.
+
+The term matters at the scheduling boundary. A train rejection consumes no
+query because the holdout is not consulted. A train promotion with a non-empty
+holdout consumes one. A withheld result also consumes one because the runner
+observed the holdout before deciding what feedback to release.
 
 **Release rule.** A holdout-based signal is *released* — allowed to flip a
 train-win to confirmed/rejected — only when the **train-measured** improvement
@@ -770,6 +780,29 @@ learn the gap was inside the band. When the budget is exhausted, nothing is
 released and the state is returned unchanged: the loop degrades to the
 train-only decision, in which a train-win is not holdout-gated at all — the same
 behaviour as holdout confirmation on an empty holdout.
+
+| Runner activity | Query charge |
+|---|---:|
+| train matchup or train rejection | 0 |
+| one complete crowning holdout matchup | 1 |
+| entries, replicates, target calls, and tool calls inside the matchup | 0 additional queries |
+| inspected result that the Ladder withholds | 1 |
+| empty holdout | 0 |
+
+The configured budget bounds feedback within one epoch. It is not a
+distribution-free proof that the holdout supports that many consultations.
+Holdout size, noise, released information, and reuse of the same tasks across
+epochs determine the supported assurance. Hash-derived splits rotate across
+epochs by default. Rotation over one finite board does not create new data,
+and explicitly tagged holdout entries never rotate.
+
+> **Enforcement limitation.** `confirm_crowning_holdout` runs the holdout
+> matchup before `_ladder_mediated_outcome` loads and checks the remaining
+> budget. `_save_ladder_state` is also best-effort. The semantic
+> rule is “reserve one query before access,” but the persisted counter does not
+> yet prove that execution followed that rule. Issue
+> [#380](https://github.com/pedapudi/zicato/issues/380) owns strict loading,
+> atomic reservation, and skipping the matchup at zero budget.
 
 ### 5.2 The released-non-confirmation-is-the-only-flip rule
 
@@ -808,7 +841,9 @@ the slice cannot statistically deliver.
 
 `LadderState` (budget totals, `best_holdout_scalar`, `best_confirmed`) is a
 small frozen object the runner persists across rounds per epoch; the module
-itself is **pure** — no filesystem, no clock, no randomness. The stable
+itself is **pure** — no filesystem, no clock, no randomness. The epoch scope is
+an implementation boundary. It does not make a repeated holdout task fresh,
+so campaign design must account for task reuse across epoch rolls. The stable
 `record.holdout` block the dashboard consumes is assembled by
 `holdout_record` and its shape is frozen (`confirmed`, `train_scalar`,
 `holdout_scalar`, `ladder_released`, `ladder_budget_total`,
@@ -1803,7 +1838,7 @@ state and where each lever lives.
 | # | Lever | Status / default | Home |
 |---|---|---|---|
 | 1 | Train/holdout split + holdout-gated promotion | SHIPPED, default-on; auto-degrades to empty holdout below `min_board_size_for_split` (6) or with `enabled=False`; `holdout_fraction` 0.3; explicit `holdout` tags always win | `src/zicato/board/split.py`, `tournament/gate.py` |
-| 2 | Ladder/Thresholdout noisy budgeted holdout query | SHIPPED, default-on (no-op when holdout empty) | `src/zicato/tournament/ladder.py` (§5) |
+| 2 | Ladder-mediated, budgeted holdout feedback | SHIPPED, default-on (no-op when holdout empty); one query is one complete crowning holdout comparison | `src/zicato/tournament/ladder.py` (§5) |
 | 3 | Restricted proposer visibility | SHIPPED, default-on (`restrict_proposer_visibility`) — patterns train-slice-only, per-entry identities aggregated to counts/rates, exact failing inputs withheld; plus the sanitized outcome-marginal channel | `patterns/`, `proposer/prompts.py`, `analyzer/outcome_marginals.py` |
 | 3b | **Banding** (part of #3) | Δscalar in experiment memory coarsened to `improved` / `flat` / `regressed` buckets via `_bucket_scalar_delta` — never the exact number | `src/zicato/proposer/prompts.py` |
 | 4 | Diff-complexity regularization (parsimony, or minimum description length) | SHIPPED in FULL — both the opt-in loss term (`diff_complexity_weight`, default 0.0, exactly absent when off) AND the complexity-*ceiling* half (`diff_complexity_ceiling`, default 0.0 = off; a structural admissibility veto in `tournament/gate.py::evaluate_gate`, checked before the scalar-margin rung, for a challenger whose diff complexity exceeds the budget) | `scoring/builtins.py::diff_complexity_component`, `scoring/diff_complexity.py`, `tournament/gate.py::evaluate_gate` |
