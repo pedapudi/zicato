@@ -15,6 +15,8 @@ import json
 import math
 from pathlib import Path
 
+import pytest
+
 import zicato_examples.target_0_convergence as _t0_pkg
 from zicato.epoch.lifecycle import _scoring_from_dict, load_epoch, new_epoch
 from zicato.health.diagnostics import detect_margin_below_noise_floor
@@ -24,6 +26,11 @@ from zicato.tournament.calibration import (
     measure_noise_floor,
 )
 from zicato_examples.target_0_convergence import mocks as t0_mocks
+
+# Every unit here is target_0, whose adapter reads a generation as TEXT,
+# and none of these tests is about the process boundary — so they run
+# through the worker entry in-process (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("inline_worker")
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
 AGENT_DIR = EXAMPLE_DIR / "agent"

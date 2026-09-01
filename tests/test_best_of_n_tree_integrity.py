@@ -53,6 +53,11 @@ import zicato_examples.target_0_convergence as _t0_pkg
 from tests import _best_of_n_slate_support as slate_mocks
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 
+# Every unit here is target_0, whose adapter reads a generation as TEXT,
+# and none of these tests is about the process boundary — so they run
+# through the worker entry in-process (tests/conftest.py).
+pytestmark = pytest.mark.usefixtures("inline_worker")
+
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
 AGENT_DIR = EXAMPLE_DIR / "agent"
 BOARD_PATH = EXAMPLE_DIR / "board.jsonl"

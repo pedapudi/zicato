@@ -478,3 +478,28 @@ def static_dir(tmp_path: Path) -> Path:
     d.mkdir()
     (d / "index.html").write_text("<!doctype html><title>z</title>", encoding="utf-8")
     return d
+
+
+@pytest.fixture()
+def inline_worker() -> Iterator[None]:
+    """Run this module's board units in-process instead of one process each.
+
+    Opt in with ``pytestmark = pytest.mark.usefixtures("inline_worker")``.
+    The unit still goes through the worker's own module entry, the same
+    args file and the same result file — only the interpreter is shared.
+    A tournament run is milliseconds of work behind about half a second of
+    interpreter startup and import, so a module that drives hundreds of
+    scripted units spends nearly all of its time on process creation.
+
+    ⛔ NOT for a test whose subject IS the boundary. Worker pids, process
+    groups, signals, budget escalation, supervisor reaping and worker
+    environment scrubbing are all properties of a real child process, and
+    :class:`~zicato.testing.worker_inline.InlineWorker` raises rather than
+    faking any of them. Nor for an adapter that IMPORTS its generation
+    snapshot as Python: two generations of one module name in a single
+    interpreter is what the subprocess exists to prevent.
+    """
+    from zicato.testing.worker_inline import inline_workers
+
+    with inline_workers():
+        yield
