@@ -2028,6 +2028,14 @@ def _reject_outcome() -> GateOutcome:
     )
 
 
+def _reserve_ladder(tmp_path: Path, weights: ScoringWeights):
+    _state, reservation = runner_mod._reserve_ladder_query(
+        tmp_path, "e0", weights.overfitting.ladder
+    )
+    assert reservation is not None
+    return reservation
+
+
 def test_ladder_no_holdout_is_byte_identical(tmp_path: Path) -> None:
     # No holdout slice → the Ladder is a no-op: the train outcome is returned
     # unchanged and ``holdout`` is None (Phase-A / pre-split behaviour).
@@ -2052,15 +2060,17 @@ def test_ladder_released_confirmation_keeps_promote(tmp_path: Path) -> None:
     # A train-win that clears the threshold, with a confirming holdout, stays
     # promoted and populates the block with the shape the dashboard reads.
     train = _promote_outcome()  # train improvement 0.5 >> 0.1 threshold
+    weights = ScoringWeights(promote_margin=0.1)
     outcome, block = runner_mod._ladder_mediated_outcome(
         train_outcome=train,
         parent_agg=_ladder_agg(1.0),
         child_agg=_ladder_agg(0.5),
         holdout_parent_agg=_ladder_agg(1.0),
         holdout_child_agg=_ladder_agg(0.8),  # holdout improved → confirms
-        weights=ScoringWeights(promote_margin=0.1),
+        weights=weights,
         workspace_root=tmp_path,
         epoch_id="e0",
+        reservation=_reserve_ladder(tmp_path, weights),
     )
     assert outcome.decision == "promoted"
     assert block is not None
@@ -2068,9 +2078,12 @@ def test_ladder_released_confirmation_keeps_promote(tmp_path: Path) -> None:
         "confirmed",
         "train_scalar",
         "holdout_scalar",
+        "holdout_consulted",
         "ladder_released",
         "ladder_budget_total",
+        "ladder_budget_before_query",
         "ladder_budget_remaining",
+        "ladder_query_reserved",
         "threshold",
     }
     assert block["confirmed"] is True
@@ -2084,15 +2097,17 @@ def test_ladder_released_nonconfirmation_flips_to_reject(tmp_path: Path) -> None
     # A released holdout that does NOT confirm flips the train-promote to a
     # holdout reject. The champion stands on reject.
     train = _promote_outcome()
+    weights = ScoringWeights(promote_margin=0.1)
     outcome, block = runner_mod._ladder_mediated_outcome(
         train_outcome=train,
         parent_agg=_ladder_agg(1.0),
         child_agg=_ladder_agg(0.5),
         holdout_parent_agg=_ladder_agg(1.0),
         holdout_child_agg=_ladder_agg(5.0),  # holdout regressed hard → reject
-        weights=ScoringWeights(promote_margin=0.1),
+        weights=weights,
         workspace_root=tmp_path,
         epoch_id="e0",
+        reservation=_reserve_ladder(tmp_path, weights),
     )
     assert outcome.decision == "rejected"
     assert "holdout_not_confirmed" in outcome.reason
@@ -2101,28 +2116,30 @@ def test_ladder_released_nonconfirmation_flips_to_reject(tmp_path: Path) -> None
     assert block["ladder_released"] is True
 
 
-def test_ladder_train_reject_does_not_consult_holdout(tmp_path: Path) -> None:
-    # A train reject fires first; the holdout is not consulted (no budget
-    # charged) and the block records confirmed=None with full budget.
+def test_ladder_refuses_holdout_evidence_after_train_reject(
+    tmp_path: Path,
+) -> None:
+    # A train rejection should prevent the holdout run. If a caller supplies
+    # already-observed evidence anyway, mediation rejects the invalid state.
+    from zicato.tournament.governance import LadderStateError
+
     train = _reject_outcome()
-    outcome, block = runner_mod._ladder_mediated_outcome(
-        train_outcome=train,
-        parent_agg=_ladder_agg(1.0),
-        child_agg=_ladder_agg(0.999),
-        holdout_parent_agg=_ladder_agg(1.0),
-        holdout_child_agg=_ladder_agg(0.5),
-        weights=ScoringWeights(promote_margin=0.1),
-        workspace_root=tmp_path,
-        epoch_id="e0",
-    )
-    assert outcome is train
-    assert block is not None
-    assert block["confirmed"] is None
-    assert block["ladder_released"] is False
-    assert block["ladder_budget_remaining"] == block["ladder_budget_total"]
+    with pytest.raises(LadderStateError, match="training gate rejected"):
+        runner_mod._ladder_mediated_outcome(
+            train_outcome=train,
+            parent_agg=_ladder_agg(1.0),
+            child_agg=_ladder_agg(0.999),
+            holdout_parent_agg=_ladder_agg(1.0),
+            holdout_child_agg=_ladder_agg(0.5),
+            weights=ScoringWeights(promote_margin=0.1),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
 
 
-def test_ladder_budget_exhaustion_lets_champion_stand(tmp_path: Path) -> None:
+def test_ladder_budget_exhaustion_leaves_the_train_decision_unchanged(
+    tmp_path: Path,
+) -> None:
     # With budget=1, the first release consumes it; a second train-win is no
     # longer holdout-gated (it promotes on the train rules alone), even when
     # the holdout would have rejected it.
@@ -2143,23 +2160,26 @@ def test_ladder_budget_exhaustion_lets_champion_stand(tmp_path: Path) -> None:
         weights=weights,
         workspace_root=tmp_path,
         epoch_id="e0",
+        reservation=_reserve_ladder(tmp_path, weights),
     )
     assert out1.decision == "promoted"
 
-    # Budget now 0: a holdout that WOULD reject is never released → champion
-    # stands → the train-promote survives.
-    out2, block2 = runner_mod._ladder_mediated_outcome(
+    # Budget now 0: the holdout is not observed, and the train decision stands.
+    state, reservation = runner_mod._reserve_ladder_query(
+        tmp_path, "e0", weights.overfitting.ladder
+    )
+    assert reservation is None
+    out2, block2 = runner_mod._ladder_exhausted_outcome(
         train_outcome=train,
-        parent_agg=_ladder_agg(1.0),
-        child_agg=_ladder_agg(0.5),
-        holdout_parent_agg=_ladder_agg(1.0),
-        holdout_child_agg=_ladder_agg(99.0),
+        train_child_agg=_ladder_agg(0.5),
+        state=state,
         weights=weights,
-        workspace_root=tmp_path,
-        epoch_id="e0",
     )
     assert out2.decision == "promoted"
     assert block2 is not None
+    assert block2["confirmed"] is None
+    assert block2["holdout_scalar"] is None
+    assert block2["holdout_consulted"] is False
     assert block2["ladder_released"] is False
     assert block2["ladder_budget_remaining"] == 0
 
@@ -2205,6 +2225,7 @@ def test_ladder_withhold_within_band_keeps_promote(tmp_path: Path) -> None:
         weights=weights,
         workspace_root=tmp_path,
         epoch_id="e0",
+        reservation=_reserve_ladder(tmp_path, weights),
     )
     assert out1.decision == "promoted"
 
@@ -2219,6 +2240,7 @@ def test_ladder_withhold_within_band_keeps_promote(tmp_path: Path) -> None:
         weights=weights,
         workspace_root=tmp_path,
         epoch_id="e0",
+        reservation=_reserve_ladder(tmp_path, weights),
     )
     assert out2.decision == "promoted"
     assert block2 is not None

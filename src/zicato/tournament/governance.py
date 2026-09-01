@@ -1,185 +1,395 @@
-"""Tournament governance: the promote-gate envelope and the Ladder governor.
+"""Tournament governance: promote-gate decisions and durable Ladder state.
 
-Pure decision helpers split out of :mod:`zicato.tournament.runner`. They
-take already-computed loss profiles / aggregate dicts and turn them into
-:class:`~zicato.tournament.gate.GateOutcome` decisions plus the holdout /
-Ladder evidence block. Nothing here spawns a worker, touches the cache,
-or schedules a board unit — these are the train/holdout slicing
-(:func:`_train_aggs` / :func:`_holdout_aggs` / :func:`_losses_for`), the
-Ladder-mediated holdout confirmation (:func:`_ladder_mediated_outcome`
-plus its state I/O :func:`_load_ladder_state` / :func:`_save_ladder_state`),
-and the regression-rejection builder (:func:`_regression_rejection`).
+The helpers take already-computed aggregates and produce
+:class:`~zicato.tournament.gate.GateOutcome` decisions plus the holdout
+evidence block. The Ladder store atomically reserves and settles the finite
+query budget. Nothing here spawns a worker, touches the unit cache, or
+schedules a board unit.
 
-The runner re-exports every name here, so
-``zicato.tournament.runner._ladder_mediated_outcome`` and its siblings still
-resolve through the runner.
+The runner imports the governance helpers used at its scheduling boundary.
 """
 
 from __future__ import annotations
 
-import logging
+import json
+import math
+import os
+import threading
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import Any, TypeGuard
 
-from zicato.core import (
-    BoardEntry,
-    LossProfile,
-    ScoringWeights,
-    TournamentDecision,
-)
+from zicato.core import ScoringWeights, TournamentDecision
+from zicato.core.types import LadderConfig
+from zicato.core.workspace import ladder_state_path
+from zicato.storage import atomic_write_json, read_json
 from zicato.tournament.gate import GateOutcome
+from zicato.tournament.ladder import (
+    LadderRelease,
+    LadderState,
+    decide_reserved_holdout,
+    effective_threshold,
+    holdout_record,
+    reserve_holdout_query,
+)
 from zicato.tournament.regression import RegressionResult
-from zicato.tournament.scoring import aggregate_generation_score
 
-log = logging.getLogger("zicato.tournament.runner")
-
-
-def _losses_for(
-    board: list[BoardEntry],
-    id_set: set[str],
-    losses: dict[str, LossProfile],
-) -> list[LossProfile]:
-    """Return the loss profiles for ``id_set``, in board order.
-
-    A slice id with no recorded loss on this side is simply skipped — the
-    aggregator and the gate compare whatever overlaps.
-    """
-    return [losses[e.id] for e in board if e.id in id_set and e.id in losses]
+_LADDER_STATE_FORMAT = 2
+_ladder_locks_guard = threading.Lock()
+_ladder_locks: dict[Path, threading.Lock] = {}
 
 
-def _holdout_aggs(
-    board: list[BoardEntry],
-    parent_losses: dict[str, LossProfile],
-    child_losses: dict[str, LossProfile],
-    weights: ScoringWeights,
-    epoch_id: str | None = None,
-    child_diff_size: dict[str, int] | None = None,
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-    """Return the holdout parent/child aggregates, or ``(None, None)``.
-
-    Splits the board into train / holdout ids via
-    :func:`zicato.board.split.split_board`. When the holdout is empty (the
-    board is too small to split, or the split is disabled, or no entry is
-    tagged), returns ``(None, None)`` so the gate's holdout-confirmation
-    step is skipped entirely.
-
-    Otherwise aggregates the parent and child loss profiles restricted to
-    the holdout ids — the confirmation-only slice the proposer never sees.
-    A holdout id with no recorded loss on a side is simply omitted from
-    that side's aggregate (the gate compares whatever overlaps).
-
-    ``child_diff_size`` is the opt-in parsimony / MDL input threaded ONLY into
-    the CHALLENGER (child) aggregate so the diff-complexity term measures the
-    challenger's diff against a champion baseline that pays no parsimony cost.
-    ``None`` (the default, and any contract with ``diff_complexity_weight ==
-    0.0``) leaves the parsimony term out of both aggregates.
-    """
-    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
-
-    seed = rotation_seed(weights.overfitting, epoch_id)
-    _train_ids, holdout_ids = split_board(board, weights.overfitting, seed=seed)
-    if not holdout_ids:
-        return None, None
-    holdout_set = set(holdout_ids)
-    # Preserve board order in each slice (split_board already returns ids in
-    # board order, but iterating the board keeps a single source of truth).
-    parent_holdout = _losses_for(board, holdout_set, parent_losses)
-    child_holdout = _losses_for(board, holdout_set, child_losses)
-    return (
-        aggregate_generation_score(parent_holdout, weights),
-        aggregate_generation_score(child_holdout, weights, diff_size=child_diff_size),
-    )
+class LadderStateError(RuntimeError):
+    """The durable Ladder query budget could not be trusted or updated."""
 
 
-def _train_aggs(
-    board: list[BoardEntry],
-    parent_losses: dict[str, LossProfile],
-    child_losses: dict[str, LossProfile],
-    weights: ScoringWeights,
-    epoch_id: str | None = None,
-    child_diff_size: dict[str, int] | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return the TRAIN-slice parent/child aggregates.
+@dataclass(frozen=True, slots=True)
+class LadderQueryReservation:
+    """Identity of one durable, unsettled holdout-query charge."""
 
-    The train slice drives the three gate rules and steers selection /
-    standings. When the holdout is empty the train slice IS the full board,
-    so these aggregates are byte-identical to the pre-split full-board
-    aggregates — the back-compat invariant.
-
-    ``child_diff_size`` is the opt-in parsimony / MDL input threaded ONLY into
-    the CHALLENGER (child) aggregate (see :func:`_holdout_aggs`). ``None`` (the
-    default / a ``diff_complexity_weight == 0.0`` contract) is byte-identical.
-    """
-    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
-
-    seed = rotation_seed(weights.overfitting, epoch_id)
-    train_ids, _holdout_ids = split_board(board, weights.overfitting, seed=seed)
-    train_set = set(train_ids)
-    parent_train = _losses_for(board, train_set, parent_losses)
-    child_train = _losses_for(board, train_set, child_losses)
-    return (
-        aggregate_generation_score(parent_train, weights),
-        aggregate_generation_score(child_train, weights, diff_size=child_diff_size),
-    )
+    state_path: str
+    state_id: str
+    epoch_id: str
+    reservation_id: str
 
 
-def _load_ladder_state(workspace_root: Path, epoch_id: str, cfg: Any) -> Any:
-    """Read the persisted per-epoch Ladder state, or seed a fresh one.
+@dataclass(frozen=True, slots=True)
+class _PendingLadderReservation:
+    """Durable audit facts for one charged, unsettled query."""
 
-    Best-effort: a missing / unreadable / shape-changed state file (e.g. a
-    budget bump rolled the epoch) seeds a fresh state from the config's
-    budget. The Ladder state is runtime-only — it never enters the contract
-    hash — so re-seeding on a parse failure is always safe.
-    """
-    import json  # noqa: PLC0415
+    reservation_id: str
+    budget_before_query: int
 
-    from zicato.core.workspace import ladder_state_path  # noqa: PLC0415
-    from zicato.tournament.ladder import LadderState  # noqa: PLC0415
 
-    path = ladder_state_path(workspace_root, epoch_id)
+@dataclass(frozen=True, slots=True)
+class _DurableLadderState:
+    """Statistical state plus the identities of charged, unsettled queries."""
+
+    state_id: str
+    state: LadderState
+    pending_reservations: tuple[_PendingLadderReservation, ...] = ()
+
+
+def _cross_process_lock_module() -> ModuleType:
+    """Load the required advisory-lock primitive or fail closed."""
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        return LadderState(
-            budget_total=int(raw["budget_total"]),
-            budget_remaining=int(raw["budget_remaining"]),
-            best_holdout_scalar=(
-                None
-                if raw.get("best_holdout_scalar") is None
-                else float(raw["best_holdout_scalar"])
-            ),
-            best_confirmed=(
-                None if raw.get("best_confirmed") is None else bool(raw["best_confirmed"])
-            ),
+        import fcntl  # noqa: PLC0415
+    except ImportError as exc:
+        raise LadderStateError(
+            "durable Ladder reservations require cross-process file locking"
+        ) from exc
+    return fcntl
+
+
+@contextmanager
+def _ladder_state_lock(path: Path) -> Iterator[None]:
+    """Serialize one epoch's Ladder state within and across processes.
+
+    The workspace lock already prevents two production orchestrators from
+    writing one workspace.  The advisory file lock also protects direct
+    library callers. The process-local lock protects threads. A platform
+    without ``fcntl`` fails closed because it cannot provide the promised
+    cross-process serialization.
+    """
+    with _ladder_locks_guard:
+        local_lock = _ladder_locks.setdefault(path, threading.Lock())
+    with local_lock:
+        fcntl_module = _cross_process_lock_module()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(path.with_suffix(".lock")), os.O_RDWR | os.O_CREAT, 0o644)
+        except OSError as exc:
+            raise LadderStateError(f"cannot lock Ladder state {path}: {exc}") from exc
+        try:
+            fcntl_module.flock(fd, fcntl_module.LOCK_EX)
+            yield
+        except OSError as exc:
+            raise LadderStateError(f"cannot lock Ladder state {path}: {exc}") from exc
+        finally:
+            try:
+                fcntl_module.flock(fd, fcntl_module.LOCK_UN)
+            except OSError:
+                pass
+            os.close(fd)
+
+
+def _ladder_marker_path(path: Path) -> Path:
+    return path.with_name("ladder_state.initialized.json")
+
+
+def _new_identity() -> str:
+    """Return an opaque identity used only to bind durable reservations."""
+    return uuid.uuid4().hex
+
+
+def _valid_identity(value: object) -> TypeGuard[str]:
+    if not isinstance(value, str):
+        return False
+    try:
+        return uuid.UUID(hex=value).hex == value
+    except ValueError:
+        return False
+
+
+def _ladder_state_dict(record: _DurableLadderState) -> dict[str, object]:
+    state = record.state
+    return {
+        "format_version": _LADDER_STATE_FORMAT,
+        "state_id": record.state_id,
+        "budget_total": state.budget_total,
+        "budget_remaining": state.budget_remaining,
+        "best_holdout_scalar": state.best_holdout_scalar,
+        "best_confirmed": state.best_confirmed,
+        "pending_reservations": [
+            {
+                "reservation_id": pending.reservation_id,
+                "budget_before_query": pending.budget_before_query,
+            }
+            for pending in record.pending_reservations
+        ],
+    }
+
+
+def _decode_ladder_state(raw: object, cfg: LadderConfig, path: Path) -> _DurableLadderState:
+    expected = {
+        "format_version",
+        "state_id",
+        "budget_total",
+        "budget_remaining",
+        "best_holdout_scalar",
+        "best_confirmed",
+        "pending_reservations",
+    }
+    if not isinstance(raw, dict) or set(raw) != expected:
+        raise LadderStateError(f"Ladder state {path} has an unsupported shape")
+    version = raw["format_version"]
+    state_id = raw["state_id"]
+    budget_total = raw["budget_total"]
+    budget_remaining = raw["budget_remaining"]
+    best_scalar = raw["best_holdout_scalar"]
+    best_confirmed = raw["best_confirmed"]
+    pending_raw = raw["pending_reservations"]
+    if (
+        type(version) is not int
+        or version != _LADDER_STATE_FORMAT
+        or not _valid_identity(state_id)
+        or type(budget_total) is not int
+        or budget_total != cfg.budget
+        or type(budget_remaining) is not int
+        or not 0 <= budget_remaining <= budget_total
+        or not (
+            best_scalar is None
+            or (type(best_scalar) in (int, float) and math.isfinite(best_scalar))
         )
-    except (OSError, ValueError, KeyError, TypeError):
-        return LadderState.seed(cfg)
-
-
-def _save_ladder_state(workspace_root: Path, epoch_id: str, state: Any) -> None:
-    """Persist the per-epoch Ladder state. Best-effort — never aborts a round."""
-    import json  # noqa: PLC0415
-
-    from zicato.core.workspace import ladder_state_path  # noqa: PLC0415
-
-    path = ladder_state_path(workspace_root, epoch_id)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {
-                    "budget_total": state.budget_total,
-                    "budget_remaining": state.budget_remaining,
-                    "best_holdout_scalar": state.best_holdout_scalar,
-                    "best_confirmed": state.best_confirmed,
-                },
-                indent=2,
-                sort_keys=True,
+        or not (best_confirmed is None or type(best_confirmed) is bool)
+        or ((best_scalar is None) != (best_confirmed is None))
+        or not isinstance(pending_raw, list)
+    ):
+        raise LadderStateError(f"Ladder state {path} has invalid or mismatched values")
+    pending: list[_PendingLadderReservation] = []
+    for item in pending_raw:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"reservation_id", "budget_before_query"}
+            or not _valid_identity(item["reservation_id"])
+            or type(item["budget_before_query"]) is not int
+            or not budget_remaining < item["budget_before_query"] <= budget_total
+        ):
+            raise LadderStateError(f"Ladder state {path} has invalid or mismatched values")
+        pending.append(
+            _PendingLadderReservation(
+                reservation_id=item["reservation_id"],
+                budget_before_query=item["budget_before_query"],
             )
-            + "\n",
-            encoding="utf-8",
         )
-    except OSError:
-        log.debug("ladder: failed to persist state for epoch %s", epoch_id, exc_info=True)
+    reservation_ids = [item.reservation_id for item in pending]
+    budget_positions = [item.budget_before_query for item in pending]
+    if (
+        len(set(reservation_ids)) != len(reservation_ids)
+        or len(set(budget_positions)) != len(budget_positions)
+        or len(pending) > budget_total - budget_remaining
+    ):
+        raise LadderStateError(f"Ladder state {path} has invalid or mismatched values")
+    return _DurableLadderState(
+        state_id=state_id,
+        state=LadderState(
+            budget_total=budget_total,
+            budget_remaining=budget_remaining,
+            best_holdout_scalar=None if best_scalar is None else float(best_scalar),
+            best_confirmed=best_confirmed,
+        ),
+        pending_reservations=tuple(pending),
+    )
+
+
+def _write_ladder_state(path: Path, record: _DurableLadderState) -> None:
+    try:
+        atomic_write_json(path, _ladder_state_dict(record))
+    except (OSError, TypeError, ValueError) as exc:
+        raise LadderStateError(f"cannot persist Ladder state {path}: {exc}") from exc
+
+
+def _write_ladder_marker(path: Path, state_id: str) -> None:
+    try:
+        atomic_write_json(
+            _ladder_marker_path(path),
+            {"format_version": _LADDER_STATE_FORMAT, "state_id": state_id},
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise LadderStateError(f"cannot mark Ladder state initialized at {path}: {exc}") from exc
+
+
+def _load_ladder_state_locked(path: Path, cfg: LadderConfig) -> _DurableLadderState:
+    """Load strictly, atomically initializing only a never-used epoch."""
+    marker_path = _ladder_marker_path(path)
+    try:
+        raw = read_json(path)
+        marker = read_json(marker_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise LadderStateError(f"cannot read Ladder state {path}: {exc}") from exc
+
+    if raw is None:
+        if marker is not None:
+            raise LadderStateError(
+                f"Ladder state {path} is missing after the epoch budget was initialized"
+            )
+        record = _DurableLadderState(state_id=_new_identity(), state=LadderState.seed(cfg))
+        _write_ladder_state(path, record)
+        _write_ladder_marker(path, record.state_id)
+        return record
+
+    record = _decode_ladder_state(raw, cfg, path)
+    if marker is None:
+        # Completing the second half of initialization is safe: the state was
+        # already atomically published, so no capacity can be restored here.
+        _write_ladder_marker(path, record.state_id)
+    elif marker != {
+        "format_version": _LADDER_STATE_FORMAT,
+        "state_id": record.state_id,
+    }:
+        raise LadderStateError(f"Ladder initialization marker {marker_path} is malformed")
+    return record
+
+
+def _load_ladder_state(workspace_root: Path, epoch_id: str, cfg: LadderConfig) -> LadderState:
+    """Strictly read or initialize the epoch-local Ladder state."""
+    path = ladder_state_path(workspace_root, epoch_id)
+    with _ladder_state_lock(path):
+        return _load_ladder_state_locked(path, cfg).state
+
+
+def _reserve_ladder_query(
+    workspace_root: Path, epoch_id: str, cfg: LadderConfig
+) -> tuple[LadderState, LadderQueryReservation | None]:
+    """Durably charge one query before holdout work can start."""
+    path = ladder_state_path(workspace_root, epoch_id)
+    with _ladder_state_lock(path):
+        record = _load_ladder_state_locked(path, cfg)
+        charged = reserve_holdout_query(record.state)
+        if charged is None:
+            return record.state, None
+        reservation_id = _new_identity()
+        charged_record = _DurableLadderState(
+            state_id=record.state_id,
+            state=charged,
+            pending_reservations=(
+                *record.pending_reservations,
+                _PendingLadderReservation(
+                    reservation_id=reservation_id,
+                    budget_before_query=record.state.budget_remaining,
+                ),
+            ),
+        )
+        _write_ladder_state(path, charged_record)
+        return charged, LadderQueryReservation(
+            state_path=str(path.resolve()),
+            state_id=record.state_id,
+            epoch_id=epoch_id,
+            reservation_id=reservation_id,
+        )
+
+
+def _settle_ladder_query(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    reservation: LadderQueryReservation,
+    cfg: LadderConfig,
+    weights: ScoringWeights,
+    train_parent_scalar: float,
+    train_child_scalar: float,
+    holdout_scalar: float,
+    holdout_confirmed: bool,
+) -> tuple[LadderRelease, int]:
+    """Publish a reserved query's release decision without charging twice."""
+    path = ladder_state_path(workspace_root, epoch_id)
+    if reservation.epoch_id != epoch_id or reservation.state_path != str(path.resolve()):
+        raise LadderStateError(f"Ladder reservation no longer matches {path}")
+    with _ladder_state_lock(path):
+        record = _load_ladder_state_locked(path, cfg)
+        if record.state_id != reservation.state_id:
+            raise LadderStateError(f"Ladder reservation no longer matches {path}")
+        pending = next(
+            (
+                item
+                for item in record.pending_reservations
+                if item.reservation_id == reservation.reservation_id
+            ),
+            None,
+        )
+        if pending is None:
+            raise LadderStateError(
+                f"Ladder reservation was already settled or is unknown at {path}"
+            )
+        release = decide_reserved_holdout(
+            record.state,
+            cfg=cfg,
+            weights=weights,
+            train_parent_scalar=train_parent_scalar,
+            train_child_scalar=train_child_scalar,
+            holdout_scalar=holdout_scalar,
+            holdout_confirmed=holdout_confirmed,
+        )
+        remaining_pending = tuple(
+            item
+            for item in record.pending_reservations
+            if item.reservation_id != reservation.reservation_id
+        )
+        _write_ladder_state(
+            path,
+            _DurableLadderState(
+                state_id=record.state_id,
+                state=release.state,
+                pending_reservations=remaining_pending,
+            ),
+        )
+        return release, pending.budget_before_query
+
+
+def _ladder_exhausted_outcome(
+    *,
+    train_outcome: GateOutcome,
+    train_child_agg: dict[str, Any],
+    state: LadderState,
+    weights: ScoringWeights,
+) -> tuple[GateOutcome, dict[str, Any]]:
+    """Return the train decision when no further holdout query is affordable."""
+    return train_outcome, holdout_record(
+        confirmed=None,
+        train_scalar=float(train_child_agg["scalar"]),
+        holdout_scalar=None,
+        consulted=False,
+        released=False,
+        budget_total=state.budget_total,
+        budget_before_query=state.budget_remaining,
+        budget_remaining=state.budget_remaining,
+        query_reserved=False,
+        threshold=effective_threshold(weights.overfitting.ladder, weights),
+    )
 
 
 def _ladder_mediated_outcome(
@@ -192,6 +402,7 @@ def _ladder_mediated_outcome(
     weights: ScoringWeights,
     workspace_root: Path,
     epoch_id: str,
+    reservation: LadderQueryReservation | None = None,
 ) -> tuple[GateOutcome, dict[str, Any] | None]:
     """Apply the Ladder governor to a train-decided gate outcome.
 
@@ -203,27 +414,20 @@ def _ladder_mediated_outcome(
     * **No holdout** (both holdout aggs ``None``): the holdout step is skipped
       entirely; the train outcome is returned with ``holdout=None``, which is
       the decision the train rules alone reach.
-    * **Holdout, train rejected**: a train reject already fires with its
-      specific reason; the holdout is not consulted (no budget charged) and
-      no Ladder state moves. The block records ``confirmed=None``,
-      ``ladder_released=False``, the current budget unchanged.
+    * **Holdout, train rejected**: this is invalid because production callers
+      must reject before they execute the holdout.
     * **Holdout, train promotes, Ladder disabled**: run the raw Phase-A
       confirmation (``holdout_confirms``) directly — every query counts, no
       budget. The block reflects that (``ladder_released`` mirrors whether the
       bit was applied, budget left at its total since nothing is charged).
-    * **Holdout, train promotes, Ladder enabled**: mediate through
-      :func:`zicato.tournament.ladder.query_holdout`. A *released*
-      non-confirmation flips the promote to a holdout reject; a released
-      confirmation (or a withheld / budget-exhausted query — "champion
-      stands") leaves the train promote intact. The proposer is fed back only
-      the threshold-gated bit via the journal, never the raw per-entry result.
+    * **Holdout, train promotes, Ladder enabled**: require the caller's prior
+      durable reservation, then settle the release decision. A released
+      non-confirmation flips the promotion to a holdout rejection; a released
+      confirmation or withheld query leaves the training decision intact.
+      Exhaustion is handled before the matchup starts. The proposer receives
+      only the threshold-gated bit, never the raw per-entry result.
     """
     from zicato.tournament.gate import holdout_confirms  # noqa: PLC0415
-    from zicato.tournament.ladder import (  # noqa: PLC0415
-        effective_threshold,
-        holdout_record,
-        query_holdout,
-    )
 
     # No holdout slice to consult → the train rules decide alone.
     if holdout_parent_agg is None or holdout_child_agg is None:
@@ -232,26 +436,16 @@ def _ladder_mediated_outcome(
     cfg = weights.overfitting.ladder
     train_parent_scalar = float(parent_agg["scalar"])
     train_child_scalar = float(child_agg["scalar"])
-    holdout_scalar = float(holdout_child_agg["scalar"])
     threshold = effective_threshold(cfg, weights)
 
-    # A train reject fires first with its specific reason; we never consult the
-    # holdout (no budget charged, no state move). The block still records the
-    # current budget so the dashboard can render it.
+    # A train reject must stop scheduling before any holdout evidence exists.
+    # Refuse an observed aggregate even if a caller reserved unnecessarily.
     if train_outcome.decision != "promoted":
-        state = _load_ladder_state(workspace_root, epoch_id, cfg) if cfg.enabled else None
-        budget_total = state.budget_total if state is not None else cfg.budget
-        budget_remaining = state.budget_remaining if state is not None else cfg.budget
-        block = holdout_record(
-            confirmed=None,
-            train_scalar=train_child_scalar,
-            holdout_scalar=None,
-            released=False,
-            budget_total=budget_total,
-            budget_remaining=budget_remaining,
-            threshold=threshold,
+        raise LadderStateError(
+            "holdout evidence was observed after the training gate rejected the challenger"
         )
-        return train_outcome, block
+
+    holdout_scalar = float(holdout_child_agg["scalar"])
 
     # The raw Phase-A confirmation bit (computed out of band; the Ladder
     # decides whether it is released this round).
@@ -277,17 +471,25 @@ def _ladder_mediated_outcome(
             confirmed=raw_confirmed,
             train_scalar=train_child_scalar,
             holdout_scalar=holdout_scalar,
+            consulted=True,
             released=True,
             budget_total=cfg.budget,
+            budget_before_query=None,
             budget_remaining=cfg.budget,
+            query_reserved=False,
             threshold=threshold,
         )
         return final, block
 
-    # Ladder enabled → mediate the query.
-    state = _load_ladder_state(workspace_root, epoch_id, cfg)
-    release = query_holdout(
-        state,
+    # Ladder-enabled evidence is valid only after the scheduling boundary
+    # durably reserved its query.  Refuse an unreserved aggregate rather than
+    # trying to charge after the evidence has already been observed.
+    if reservation is None:
+        raise LadderStateError("holdout evidence was observed without a durable reservation")
+    release, budget_before_query = _settle_ladder_query(
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        reservation=reservation,
         cfg=cfg,
         weights=weights,
         train_parent_scalar=train_parent_scalar,
@@ -295,12 +497,11 @@ def _ladder_mediated_outcome(
         holdout_scalar=holdout_scalar,
         holdout_confirmed=raw_confirmed,
     )
-    _save_ladder_state(workspace_root, epoch_id, release.state)
 
-    # A RELEASED non-confirmation flips the promote to a holdout reject. A
-    # released confirmation, or any withheld / budget-exhausted query
-    # ("champion stands" — the holdout stops gating), leaves the train
-    # promote intact.
+    # A released non-confirmation flips the promote to a holdout reject. A
+    # released confirmation or a withheld query leaves the train promote
+    # intact. Budget exhaustion is handled before holdout execution and never
+    # reaches this decision function.
     if release.released and not raw_confirmed:
         final = GateOutcome(
             decision=TournamentDecision.REJECTED,
@@ -316,9 +517,12 @@ def _ladder_mediated_outcome(
         confirmed=release.confirmed,
         train_scalar=train_child_scalar,
         holdout_scalar=release.holdout_scalar,
+        consulted=True,
         released=release.released,
         budget_total=release.state.budget_total,
+        budget_before_query=budget_before_query,
         budget_remaining=release.state.budget_remaining,
+        query_reserved=True,
         threshold=release.threshold,
     )
     return final, block
@@ -354,11 +558,11 @@ def _regression_rejection(
 
 
 __all__ = [
-    "_holdout_aggs",
+    "LadderQueryReservation",
+    "LadderStateError",
+    "_ladder_exhausted_outcome",
     "_ladder_mediated_outcome",
     "_load_ladder_state",
-    "_losses_for",
     "_regression_rejection",
-    "_save_ladder_state",
-    "_train_aggs",
+    "_reserve_ladder_query",
 ]

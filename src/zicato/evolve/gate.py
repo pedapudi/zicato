@@ -115,6 +115,18 @@ class _CrowningHoldout:
     crowning_delta_scalar: float | None = None
 
 
+def _released_holdout_confirmation(block: dict[str, Any] | None) -> bool | None:
+    """Return the released confirmation bit, or ``None`` when none was released."""
+    if (
+        block is None
+        or block.get("holdout_consulted") is not True
+        or block.get("ladder_released") is not True
+    ):
+        return None
+    confirmed = block.get("confirmed")
+    return confirmed if isinstance(confirmed, bool) else None
+
+
 async def _confirm_crowning_on_holdout(
     *,
     decision: Any,
@@ -402,12 +414,14 @@ async def resolve_field_verdict(
     )
     promoted_id = crowning.promoted_id
     reason_override = crowning.reason_override
-    # The crowning holdout release (a populated block always means a holdout
-    # existed and was consulted).
-    if crowning.holdout_block is not None:
+    # The event records information the Ladder released. A consulted query
+    # inside the noise band is charged but emits nothing because its result is
+    # withheld. An exhausted Ladder also emits nothing because no query ran.
+    released_confirmation = _released_holdout_confirmation(crowning.holdout_block)
+    if released_confirmation is not None:
         field_round.round_log.emit(
             "holdout_released",
-            {"confirmed": bool(crowning.holdout_block.get("confirmed"))},
+            {"confirmed": released_confirmation},
             {"generation_id": crowning.challenger_id},
         )
 

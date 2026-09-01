@@ -151,6 +151,133 @@ def test_holdout_confirmation_promotes_and_reports_train_scalar(
     assert result.parent_agg["drift_loss_mean"] == pytest.approx(2.0)
 
 
+def _run_full_with_call_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    train_child_drift: float,
+    weights: ScoringWeights,
+) -> tuple[Any, list[tuple[str, str]]]:
+    calls: list[tuple[str, str]] = []
+
+    async def fake_run_single(
+        *,
+        adapter: Any,
+        generation: Generation,
+        entry: BoardEntry,
+        weights: ScoringWeights,
+        config: RuntimeConfig,
+        workspace_root: Path,
+        epoch_id: str,
+        side: str,
+        match_id: str = "",
+    ) -> LossProfile:
+        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        calls.append((generation.id, entry.id))
+        drift = 2.0 if generation.id == "v0" else train_child_drift
+        return _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=drift)
+
+    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    result = asyncio.run(
+        run_tournament(
+            adapter=object(),
+            parent_gen=_gen(tmp_path, "v0", None),
+            child_gen=_gen(tmp_path, "v1", "v0"),
+            board=_board(),
+            weights=weights,
+            config=runtime_config(tmp_path),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+    return result, calls
+
+
+def test_full_tournament_train_rejection_never_launches_holdout_units(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result, calls = _run_full_with_call_log(
+        monkeypatch,
+        tmp_path,
+        train_child_drift=3.0,
+        weights=ScoringWeights(promote_margin=0.1),
+    )
+
+    assert result.outcome.decision == "rejected"
+    assert all(entry_id != "h0" for _generation_id, entry_id in calls)
+    assert result.holdout is None
+    assert result.holdout_child_scalar is None
+
+    from zicato.core.workspace import ladder_state_path
+
+    assert not ladder_state_path(tmp_path, "e0").exists()
+
+
+def test_full_tournament_exhausted_budget_never_launches_holdout_units(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from zicato.core.types import LadderConfig, OverfittingConfig
+
+    weights = ScoringWeights(
+        promote_margin=0.1,
+        overfitting=OverfittingConfig(ladder=LadderConfig(budget=0)),
+    )
+    result, calls = _run_full_with_call_log(
+        monkeypatch,
+        tmp_path,
+        train_child_drift=1.0,
+        weights=weights,
+    )
+
+    assert result.outcome.decision == "promoted", "the train decision stands at exhaustion"
+    assert all(entry_id != "h0" for _generation_id, entry_id in calls)
+    assert result.holdout is not None
+    assert result.holdout["holdout_consulted"] is False
+    assert result.holdout["ladder_query_reserved"] is False
+    assert result.holdout["ladder_budget_before_query"] == 0
+    assert result.holdout["ladder_budget_remaining"] == 0
+    assert result.holdout_child_scalar is None
+    assert "h0" not in result.per_entry_losses
+
+
+def test_full_tournament_reservation_failure_never_launches_holdout_units(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import zicato.tournament.governance as governance
+    from zicato.tournament.governance import LadderStateError
+
+    def fail_write(_path: Path, _data: object) -> None:
+        raise OSError("state unavailable")
+
+    monkeypatch.setattr(governance, "atomic_write_json", fail_write)
+    calls: list[tuple[str, str]] = []
+
+    async def fake_run_single(
+        *, generation: Generation, entry: BoardEntry, **_kwargs: object
+    ) -> LossProfile:
+        calls.append((generation.id, entry.id))
+        drift = 2.0 if generation.id == "v0" else 1.0
+        return _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=drift)
+
+    monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    with pytest.raises(LadderStateError, match="cannot persist Ladder state"):
+        asyncio.run(
+            run_tournament(
+                adapter=object(),
+                parent_gen=_gen(tmp_path, "v0", None),
+                child_gen=_gen(tmp_path, "v1", "v0"),
+                board=_board(),
+                weights=ScoringWeights(promote_margin=0.1),
+                config=runtime_config(tmp_path),
+                workspace_root=tmp_path,
+                epoch_id="e0",
+            )
+        )
+
+    assert calls
+    assert all(entry_id != "h0" for _generation_id, entry_id in calls)
+
+
 # ---------------------------------------------------------------------------
 # confirm_crowning_holdout — the non-gauntlet structures' champion-gate
 # Ladder-mediated holdout confirmation (OVERFITTING.md §3/§4).
@@ -252,3 +379,93 @@ def test_confirm_crowning_holdout_degrades_byte_identically_without_holdout(
     assert outcome.decision == "promoted"  # the train outcome, untouched
     assert block is None
     assert holdout_scalar is None
+
+
+def test_confirm_crowning_holdout_does_not_launch_after_budget_exhaustion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An exhausted Ladder leaves the train decision standing without access.
+
+    The holdout runner is the access boundary.  Reaching it after the durable
+    query budget reaches zero would reveal uncharged evidence even if the
+    Ladder later withheld that evidence from the decision record.
+    """
+    from zicato.core.types import LadderConfig, OverfittingConfig
+    from zicato.tournament.gate import GateOutcome
+    from zicato.tournament.runner import confirm_crowning_holdout
+
+    async def fail_if_launched(**_kwargs: object) -> Any:
+        pytest.fail("an exhausted Ladder must not launch a holdout matchup")
+
+    monkeypatch.setattr(runner_mod, "run_matchup", fail_if_launched)
+    train_outcome = GateOutcome(
+        decision="promoted", reason="", delta_scalar=-1.0, delta_pass_rate=0.0
+    )
+    weights = ScoringWeights(
+        promote_margin=0.1,
+        overfitting=OverfittingConfig(ladder=LadderConfig(budget=0)),
+    )
+
+    outcome, block, holdout_scalar = asyncio.run(
+        confirm_crowning_holdout(
+            adapter=object(),
+            champion_gen=_gen(tmp_path, "v0", None),
+            challenger_gen=_gen(tmp_path, "v1", "v0"),
+            board=_board(),
+            train_outcome=train_outcome,
+            train_parent_agg=_agg(2.0),
+            train_child_agg=_agg(1.0),
+            weights=weights,
+            config=runtime_config(tmp_path),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+
+    assert outcome is train_outcome
+    assert block is not None
+    assert block["confirmed"] is None
+    assert block["holdout_scalar"] is None
+    assert block["holdout_consulted"] is False
+    assert block["ladder_budget_remaining"] == 0
+    assert block["ladder_query_reserved"] is False
+    assert holdout_scalar is None
+
+
+def test_confirm_crowning_holdout_does_not_launch_when_reservation_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import zicato.tournament.governance as governance
+    from zicato.tournament.gate import GateOutcome
+    from zicato.tournament.governance import LadderStateError
+    from zicato.tournament.runner import confirm_crowning_holdout
+
+    async def fail_if_launched(**_kwargs: object) -> Any:
+        pytest.fail("a failed reservation must not launch a holdout matchup")
+
+    def fail_write(_path: Path, _data: object) -> None:
+        raise OSError("state unavailable")
+
+    monkeypatch.setattr(runner_mod, "run_matchup", fail_if_launched)
+    monkeypatch.setattr(governance, "atomic_write_json", fail_write)
+    with pytest.raises(LadderStateError, match="cannot persist Ladder state"):
+        asyncio.run(
+            confirm_crowning_holdout(
+                adapter=object(),
+                champion_gen=_gen(tmp_path, "v0", None),
+                challenger_gen=_gen(tmp_path, "v1", "v0"),
+                board=_board(),
+                train_outcome=GateOutcome(
+                    decision="promoted",
+                    reason="",
+                    delta_scalar=-1.0,
+                    delta_pass_rate=0.0,
+                ),
+                train_parent_agg=_agg(2.0),
+                train_child_agg=_agg(1.0),
+                weights=ScoringWeights(promote_margin=0.1),
+                config=runtime_config(tmp_path),
+                workspace_root=tmp_path,
+                epoch_id="e0",
+            )
+        )

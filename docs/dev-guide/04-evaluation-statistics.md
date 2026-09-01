@@ -34,7 +34,8 @@
 > 8. **The holdout is confirmation-only and mediated by the Ladder**, the
 >    budgeted holdout-reuse mechanism of §5. It can flip a train-win to reject;
 >    it never promotes, never steers the proposer, and its raw per-entry results
->    never leave the gate.
+>    never leave the gate. Every holdout access follows a durable query
+>    reservation. Exhaustion or reservation failure starts no holdout work.
 > 9. **The evidence gate can only hold a promotion, never force one.** The
 >    protected-incumbent invariant strictly strengthens through it.
 > 10. **Soundness devices and power devices are different things.** The
@@ -796,13 +797,24 @@ epochs determine the supported assurance. Hash-derived splits rotate across
 epochs by default. Rotation over one finite board does not create new data,
 and explicitly tagged holdout entries never rotate.
 
-> **Enforcement limitation.** `confirm_crowning_holdout` runs the holdout
-> matchup before `_ladder_mediated_outcome` loads and checks the remaining
-> budget. `_save_ladder_state` is also best-effort. The semantic
-> rule is “reserve one query before access,” but the persisted counter does not
-> yet prove that execution followed that rule. Issue
-> [#380](https://github.com/pedapudi/zicato/issues/380) owns strict loading,
-> atomic reservation, and skipping the matchup at zero budget.
+The runner enforces the budget at the scheduling boundary. It serializes the
+epoch-local state, atomically publishes a one-query debit, and only then starts
+the holdout matchup. A zero balance skips the matchup, so no fresh holdout
+evidence exists to release. The train decision stands without holdout gating.
+
+The debit creates an opaque reservation identity bound to the epoch-local
+state. The pending record stores the budget before the charge, which later
+supplies the released evidence block. Final publication consumes the record.
+Reusing the identity, or presenting it to another workspace or epoch, raises
+without publishing the holdout result. A mismatched path is rejected before
+the target state is opened. The runner also raises before accessing the
+holdout on a platform that cannot serialize reservations across processes.
+
+The first state creation also writes an initialization marker. A missing state
+is valid only when neither the state nor the marker exists. A malformed state,
+an established state that disappeared, or a failed atomic write raises before
+the holdout runner starts. A crash after reservation may waste the charged
+query. It cannot restore the charge or expose holdout evidence first.
 
 ### 5.2 The released-non-confirmation-is-the-only-flip rule
 
@@ -844,12 +856,20 @@ small frozen object the runner persists across rounds per epoch; the module
 itself is **pure** — no filesystem, no clock, no randomness. The epoch scope is
 an implementation boundary. It does not make a repeated holdout task fresh,
 so campaign design must account for task reuse across epoch rolls. The stable
-`record.holdout` block the dashboard consumes is assembled by
-`holdout_record` and its shape is frozen (`confirmed`, `train_scalar`,
-`holdout_scalar`, `ladder_released`, `ladder_budget_total`,
-`ladder_budget_remaining`, `threshold`); the runner writes
-`record.holdout = None` when there was no holdout to consult at all, so a
-populated block always means a holdout existed.
+`record.holdout` block is assembled by `holdout_record`; the dashboard reads a
+display subset from that durable record. The record contains the released
+confirmation, train and allowed holdout scalars, and the release threshold. It
+also records whether the holdout was consulted, whether the query was durably
+reserved, and the budget before and after the decision.
+The concrete keys are `confirmed`, `train_scalar`, `holdout_scalar`,
+`holdout_consulted`, `ladder_released`, `ladder_budget_total`,
+`ladder_budget_before_query`, `ladder_budget_remaining`,
+`ladder_query_reserved`, and `threshold`.
+
+The runner writes `record.holdout = None` when no holdout slice exists. An
+exhausted budget produces a block with `holdout_consulted=false` and
+`ladder_query_reserved=false`; the block records why no comparison ran without
+claiming fresh evidence.
 
 When the holdout is empty — a board under
 `overfitting.min_board_size_for_split` (default 6) with no explicit `holdout`

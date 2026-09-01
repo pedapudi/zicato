@@ -109,12 +109,27 @@ not create fresh tasks. Explicitly tagged holdout entries do not rotate.
 Long-running campaigns need fresh evaluation entries or accounting tied to the
 reused holdout data.
 
-The mechanism intends to reserve budget before accessing the holdout. The
-runner computes the holdout comparison before it checks exhausted state, and
-its state write is best-effort. Until
-[#380](https://github.com/pedapudi/zicato/issues/380) is resolved, the recorded
-remaining budget describes Ladder decision mediation rather than a durable
-proof of the number of holdout comparisons executed.
+The runner durably reserves one query before it starts the holdout comparison.
+The epoch-local state store serializes reservations, decrements the remaining
+budget, and publishes the charged state through atomic file replacement. A
+zero balance skips the holdout comparison and leaves the training verdict
+unchanged. A malformed, missing established, or unwritable state fails before
+the holdout runner starts.
+
+Each reservation has an opaque identity bound to one epoch-local state file.
+The state records that identity and the budget before the charge until
+settlement consumes both. The persisted budget value supplies the released
+evidence block; callers cannot replace it with a token-supplied value. A
+settled, foreign-workspace, or foreign-epoch identity cannot publish another
+holdout result. Foreign paths are rejected before the target state is opened.
+Platforms that cannot serialize reservations across processes refuse the
+query before accessing the holdout.
+
+A crash after reservation can waste one query. It cannot expose uncharged
+holdout evidence. A crash after the comparison also leaves the charge in
+place, even when the process stops before publishing the release decision.
+The initialization marker distinguishes a never-used epoch from an
+established state file that disappeared.
 
 ---
 
@@ -708,7 +723,7 @@ additional holdout-slice comparison for each promotable crowning duel while
 queries remain available. The configured budget counts those adaptive
 consultations. *Behavior after exhaustion:* no new holdout result revises the
 training verdict. Depends on the train/holdout split. The practical accounting
-and implementation limitation are defined in
+and durable reservation protocol are defined in
 [§"What query budget means"](#what-query-budget-means).
 
 **#3 — Restrict the proposer's per-entry visibility. (SHIPPED.)**

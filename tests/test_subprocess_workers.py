@@ -41,6 +41,7 @@ import pytest
 import zicato.tournament.runner as runner_mod
 from tests._runtime_builders import make_generation
 from tests._subprocess_worker_support import (
+    CompletingAdapter,
     EmittingThenSleepingAdapter,
     SleepingAdapter,
     SnapshotWritingAdapter,
@@ -50,16 +51,26 @@ from tests._subprocess_worker_support import (
 )
 from zicato.core import (
     BoardEntry,
+    DriftCount,
+    Expectation,
+    ExpectationKind,
+    ExpectationResult,
     Generation,
     LossProfile,
     RuntimeConfig,
     ScoringWeights,
     is_infra_abort_cause,
 )
-from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_id_for_unit
+from zicato.core.types import LadderConfig, OverfittingConfig
+from zicato.core.workspace import (
+    events_jsonl_path,
+    ladder_state_path,
+    loss_profile_path,
+    run_id_for_unit,
+)
 from zicato.runtime.paths import active_run_path
 from zicato.runtime.state import ActiveRun
-from zicato.tournament.runner import _run_single
+from zicato.tournament.runner import _run_single, run_tournament
 from zicato.tournament.worker_transport import _stamp_replicate_index
 
 # Every test here spawns (or deliberately kills) real worker subprocesses —
@@ -706,6 +717,90 @@ def test_run_single_spawns_worker_in_new_session(
     # Default: the worker inherits the orchestrator's full env (env=None) —
     # byte-for-byte today's behavior. The scrub is strictly opt-in.
     assert captured["env"] is None
+
+
+def test_full_tournament_persists_charge_before_real_holdout_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The subprocess launch boundary observes the holdout charge on disk."""
+    from zicato.board.split import HOLDOUT_TAG
+    from zicato.telemetry.reducer import write_loss_profile
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    parent = make_generation(workspace, "v0")
+    child = make_generation(workspace, "v1")
+    board = [
+        replace(
+            _entry("train"),
+            expectation=Expectation(kind=ExpectationKind.REGEX, spec=".*"),
+        ),
+        BoardEntry(
+            id="holdout",
+            kind="single_turn",
+            wall_clock_budget_seconds=60,
+            input="hello",
+            expectation=Expectation(kind=ExpectationKind.REGEX, spec=".*"),
+            tags=(HOLDOUT_TAG,),
+        ),
+    ]
+    for entry in board:
+        write_loss_profile(
+            LossProfile(
+                run_id=run_id_for_unit("v0", entry.id),
+                entry_id=entry.id,
+                generation_id="v0",
+                epoch_id="e0",
+                drift_counts=(DriftCount(kind="off_topic", severity="info", count=2),),
+                plan_revisions=0,
+                task_failure_ratio=0.0,
+                runtime_ms=1,
+                wall_clock_budget_exceeded=False,
+                expectation_result=ExpectationResult(kind="predicate", passed=True),
+                drift_loss=2.0,
+                pass_fail=True,
+            ),
+            loss_profile_path(workspace, "e0", "v0", entry.id),
+        )
+
+    launches: list[tuple[str, int | None]] = []
+    real_create = asyncio.create_subprocess_exec
+
+    async def observed_create(*argv: object, **kwargs: object) -> object:
+        args_path = Path(str(argv[3]))
+        args = json.loads(args_path.read_text(encoding="utf-8"))
+        entry_id = str(args["entry"]["id"])
+        state_path = ladder_state_path(workspace, "e0")
+        remaining = None
+        if state_path.exists():
+            remaining = int(json.loads(state_path.read_text(encoding="utf-8"))["budget_remaining"])
+        launches.append((entry_id, remaining))
+        return await real_create(*argv, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", observed_create)
+    weights = ScoringWeights(
+        promote_margin=0.1,
+        overfitting=OverfittingConfig(ladder=LadderConfig(budget=1)),
+    )
+    result = asyncio.run(
+        run_tournament(
+            adapter=CompletingAdapter(),
+            parent_gen=parent,
+            child_gen=child,
+            board=board,
+            weights=weights,
+            config=_config(workspace),
+            workspace_root=workspace,
+            epoch_id="e0",
+        )
+    )
+
+    assert launches == [("train", None), ("holdout", 0)]
+    assert result.holdout is not None
+    assert result.holdout["holdout_consulted"] is True
+    assert result.holdout["ladder_query_reserved"] is True
+    assert result.holdout["ladder_budget_before_query"] == 1
+    assert result.holdout["ladder_budget_remaining"] == 0
 
 
 def test_run_single_scrubs_worker_env_when_opted_in(

@@ -145,8 +145,8 @@ class LadderConfig:
       band. Within the band the previous best is re-reported, so the
       proposer cannot chase board fluctuations.
     * **Budget.** Each holdout query charges a finite per-epoch budget; once
-      exhausted, no further holdout signals are released (the loop degrades
-      to "champion stands" — no holdout-gated promotion).
+      exhausted, the runner schedules no further holdout comparisons. The
+      training verdict then decides the round without holdout gating.
 
     Folded into the contract hash through :class:`OverfittingConfig` →
     :class:`ScoringWeights` (the canonicalizer recurses into nested frozen
@@ -170,8 +170,9 @@ class LadderConfig:
         it explicitly.
     budget:
         Per-epoch holdout-query budget. Each round that consults the holdout
-        charges one. When the budget is exhausted the Ladder stops releasing
-        holdout signals. Must be ``>= 0`` (``0`` releases nothing).
+        charges one. When the budget is exhausted the runner stops consulting
+        the holdout and preserves the training verdict. Must be ``>= 0``
+        (``0`` schedules no holdout comparison).
     noise_scale:
         Width of the noise band added to the threshold. ``0.0`` (default) is
         the parameter-free Ladder — no calibration needed. Reserved for

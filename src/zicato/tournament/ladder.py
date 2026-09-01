@@ -32,9 +32,8 @@ The two rules, applied per holdout query:
    confirmation and the holdout result does NOT count this round.
 2. **Budget.** Every query that *consults the holdout* charges one unit of the
    per-epoch budget. When the budget is exhausted, no further holdout signals
-   are released — the loop degrades to "champion stands": a train-win is no
-   longer holdout-gated, so it promotes on the train rules alone, as it does
-   when there is no holdout at all.
+   are released. The runner stops consulting the holdout, and the train
+   decision stands without holdout gating.
 
 When the holdout is empty (a small board, the split disabled, no tagged
 entry) there is nothing to govern and the Ladder is never consulted, so the
@@ -74,9 +73,9 @@ class LadderState:
         before the first release. Within the noise band the Ladder re-reports
         this value rather than the round's raw holdout scalar.
     best_confirmed:
-        The confirmation bit of the most recent *released* query — what is
-        re-reported when the Ladder withholds. ``None`` until the first
-        release.
+        The confirmation bit from the query that supplied
+        ``best_holdout_scalar``. The pair is re-reported when the Ladder
+        withholds. ``None`` until the first release.
     """
 
     budget_total: int
@@ -187,26 +186,59 @@ def query_holdout(
     previous best confirmation.
 
     Either way, consulting the holdout charges one unit of budget — UNLESS
-    the budget is already exhausted, in which case nothing is released (the
-    loop degrades to "champion stands") and the state is returned unchanged.
+    the budget is already exhausted, in which case nothing is released and
+    the state is returned unchanged.
     """
-    threshold = effective_threshold(cfg, weights)
-
-    # Budget exhausted: stop releasing holdout signals. Nothing is charged
-    # (there is nothing left to charge) and no signal is released — the runner
-    # degrades to the train-only decision ("champion stands"). The re-reported
-    # bit is the last released best, so the dashboard still shows it.
-    if state.budget_remaining <= _BUDGET_FLOOR:
+    charged = reserve_holdout_query(state)
+    if charged is None:
         return LadderRelease(
             released=False,
             confirmed=state.best_confirmed,
             holdout_scalar=state.best_holdout_scalar,
-            threshold=threshold,
+            threshold=effective_threshold(cfg, weights),
             state=state,
         )
+    return decide_reserved_holdout(
+        charged,
+        cfg=cfg,
+        weights=weights,
+        train_parent_scalar=train_parent_scalar,
+        train_child_scalar=train_child_scalar,
+        holdout_scalar=holdout_scalar,
+        holdout_confirmed=holdout_confirmed,
+    )
 
-    # Charge the query (we are consulting the holdout this round).
-    charged = replace(state, budget_remaining=state.budget_remaining - 1)
+
+def reserve_holdout_query(state: LadderState) -> LadderState | None:
+    """Return the state after charging one query, or ``None`` when exhausted.
+
+    Persistence code writes this returned state before it starts work that can
+    observe holdout evidence.  Keeping the charge pure here lets the durable
+    governor enforce that ordering without putting filesystem concerns in the
+    statistical mechanism.
+    """
+    if state.budget_remaining <= _BUDGET_FLOOR:
+        return None
+    return replace(state, budget_remaining=state.budget_remaining - 1)
+
+
+def decide_reserved_holdout(
+    charged: LadderState,
+    *,
+    cfg: LadderConfig,
+    weights: ScoringWeights,
+    train_parent_scalar: float,
+    train_child_scalar: float,
+    holdout_scalar: float,
+    holdout_confirmed: bool,
+) -> LadderRelease:
+    """Apply the release rule to a query whose charge is already durable.
+
+    ``charged`` already reflects the one-unit debit.  This function must not
+    charge again; it only publishes the release/withhold decision and updates
+    the best released confirmation.
+    """
+    threshold = effective_threshold(cfg, weights)
 
     improvement = train_parent_scalar - train_child_scalar
     if improvement >= threshold:
@@ -214,11 +246,11 @@ def query_holdout(
         # this round. Update the best released holdout scalar (lower is better)
         # and the best confirmation bit.
         prev_best = charged.best_holdout_scalar
-        new_best = holdout_scalar if prev_best is None else min(prev_best, holdout_scalar)
+        improves_best = prev_best is None or holdout_scalar <= prev_best
         new_state = replace(
             charged,
-            best_holdout_scalar=new_best,
-            best_confirmed=holdout_confirmed,
+            best_holdout_scalar=holdout_scalar if improves_best else prev_best,
+            best_confirmed=(holdout_confirmed if improves_best else charged.best_confirmed),
         )
         return LadderRelease(
             released=True,
@@ -246,9 +278,12 @@ def holdout_record(
     confirmed: bool | None,
     train_scalar: float | None,
     holdout_scalar: float | None,
+    consulted: bool,
     released: bool,
     budget_total: int,
+    budget_before_query: int | None,
     budget_remaining: int,
+    query_reserved: bool,
     threshold: float,
 ) -> dict[str, object]:
     """Assemble the stable ``record.holdout`` block the dashboard reads.
@@ -260,9 +295,12 @@ def holdout_record(
             "confirmed": bool | None,
             "train_scalar": float | None,
             "holdout_scalar": float | None,
+            "holdout_consulted": bool,
             "ladder_released": bool,
             "ladder_budget_total": int,
+            "ladder_budget_before_query": int | None,
             "ladder_budget_remaining": int,
+            "ladder_query_reserved": bool,
             "threshold": float,
         }
 
@@ -275,9 +313,12 @@ def holdout_record(
         "confirmed": confirmed,
         "train_scalar": train_scalar,
         "holdout_scalar": holdout_scalar,
+        "holdout_consulted": consulted,
         "ladder_released": released,
         "ladder_budget_total": budget_total,
+        "ladder_budget_before_query": budget_before_query,
         "ladder_budget_remaining": budget_remaining,
+        "ladder_query_reserved": query_reserved,
         "threshold": threshold,
     }
 
@@ -285,7 +326,9 @@ def holdout_record(
 __all__ = [
     "LadderRelease",
     "LadderState",
+    "decide_reserved_holdout",
     "effective_threshold",
     "holdout_record",
     "query_holdout",
+    "reserve_holdout_query",
 ]

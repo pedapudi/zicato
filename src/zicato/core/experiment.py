@@ -259,15 +259,17 @@ class OutcomeRecord:
     # Provenance only: flipping fast↔full does not roll the epoch.
     champion_eval_mode: str = "full"
     # Holdout + Ladder evidence for THIS round (OVERFITTING.md §4 / §12 #2).
-    # ``None`` (the default) when there was no holdout to consult — a small
-    # board, the split disabled, or no tagged entry — so a round that never
-    # consulted a holdout carries no block at all. When a holdout was
-    # consulted this is a plain JSON-shaped dict with the stable shape the
-    # dashboard reads (the keys are documented at
+    # ``None`` (the default) when no holdout slice exists — a small board, the
+    # split disabled, or no tagged entry. An exhausted query budget carries a
+    # populated block with ``holdout_consulted=False`` so the record explains
+    # why no comparison ran. This is a plain JSON-shaped dict with the stable
+    # shape documented at
     # :func:`zicato.tournament.ladder.holdout_record`):
     # ``{"confirmed": bool|None, "train_scalar": float|None,
-    #    "holdout_scalar": float|None, "ladder_released": bool,
-    #    "ladder_budget_total": int, "ladder_budget_remaining": int,
+    #    "holdout_scalar": float|None, "holdout_consulted": bool,
+    #    "ladder_released": bool, "ladder_budget_total": int,
+    #    "ladder_budget_before_query": int|None,
+    #    "ladder_budget_remaining": int, "ladder_query_reserved": bool,
     #    "threshold": float}``. Runtime evidence, no part of the contract.
     holdout: dict[str, Any] | None = None
     # Per-generation train/holdout loss + the generalization gap

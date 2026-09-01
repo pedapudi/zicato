@@ -38,9 +38,12 @@
         "generalization_gap": -5.551115123125783e-17,
         "holdout": {
           "confirmed": true,
+          "holdout_consulted": true,
           "holdout_scalar": 0.4,
+          "ladder_budget_before_query": 16,
           "ladder_budget_remaining": 15,
           "ladder_budget_total": 16,
+          "ladder_query_reserved": true,
           "ladder_released": true,
           "threshold": 0.01,
           "train_scalar": 0.4000000000000001
@@ -294,9 +297,12 @@
         "generalization_gap": -1.3877787807814457e-17,
         "holdout": {
           "confirmed": true,
+          "holdout_consulted": true,
           "holdout_scalar": 0.1,
+          "ladder_budget_before_query": 15,
           "ladder_budget_remaining": 14,
           "ladder_budget_total": 16,
+          "ladder_query_reserved": true,
           "ladder_released": true,
           "threshold": 0.01,
           "train_scalar": 0.10000000000000002

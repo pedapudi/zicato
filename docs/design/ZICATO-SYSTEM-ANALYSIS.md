@@ -481,9 +481,9 @@ Multi-contestant structures interpret the same `GateOutcome` per their bracket/S
 
 ### 5. Folding the holdout back in: the final decision
 
-For the gauntlet, `run_tournament` (`src/zicato/tournament/runner.py:1078-1093`) runs `_gate_with_regression` on the **train slice** and then passes that verdict through `_ladder_mediated_outcome`, which governs how often the reused holdout may be queried (Blum–Hardt Ladder: a release only when the *train* improvement clears the threshold, charged against a per-epoch budget). A **released non-confirmation is the only thing that flips a train-promote into a holdout reject**; a confirmation, a withheld query, or an exhausted budget ("champion stands") leaves the train promote intact:
+For the gauntlet, `run_tournament` runs `_gate_with_regression` on the **train slice**. A train promotion durably reserves one query before the holdout slice runs, then `_ladder_mediated_outcome` applies the Blum–Hardt release rule. A **released non-confirmation is the only thing that flips a train promotion into a holdout rejection**. A confirmation or withheld query leaves the train promotion intact. An exhausted budget launches no holdout work, so the train decision stands without fresh evidence:
 
-src/zicato/tournament/governance.py:300-308
+src/zicato/tournament/governance.py:507-516
 ```python
     if release.released and not raw_confirmed:
         final = GateOutcome(
@@ -491,6 +491,7 @@ src/zicato/tournament/governance.py:300-308
             reason=raw_reason,
             delta_scalar=train_outcome.delta_scalar,
             delta_pass_rate=train_outcome.delta_pass_rate,
+            attributable_regressions=train_outcome.attributable_regressions,
         )
     else:
         final = train_outcome
