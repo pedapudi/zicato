@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 456,324 | +47,663 |
-| Production | 197,702 | 200,255 | +2,553 |
-| Production logic | 110,276 | 110,738 | +462 |
+| Total | 408,661 | 457,324 | +48,663 |
+| Production | 197,702 | 200,545 | +2,843 |
+| Production logic | 110,276 | 111,043 | +767 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -215,3 +215,6 @@ dropped rows named.
 | Subprocess-accurate workers and pull-request oracle gates (total) | 456,964 | -640 | 456,324 | Issues #383 and #384: the unsafe in-process worker and its state-restoration suite are removed, so every board-unit test uses the process boundary that enforces isolation and kill semantics. The pull-request workflows add visible statistical, end-to-end, and dashboard JavaScript results with structural tests that pin their triggers and commands. The net reduction includes the deleted launcher seam, its opt-in fixtures, and its equivalence tests. |
 | Subprocess-accurate workers and pull-request oracle gates (production) | 200,531 | -276 | 200,255 | Issues #383 and #384: the inline worker and launcher indirection are removed, and the runner again launches `zicato._tournament_worker` directly with `start_new_session=True`. Pull-request workflow coverage adds no production source. |
 | Subprocess-accurate workers and pull-request oracle gates (production logic) | 110,840 | -102 | 110,738 | Issues #383 and #384: the production reduction is the removed in-process worker state management and launcher indirection. The runner retains the direct subprocess launch required for process isolation. |
+| Durable Ladder query reservations (total) | 456,324 | +1,000 | 457,324 | Issue #380: the tournament runner evaluates the training slice before it schedules holdout work, and a strict epoch-local store atomically charges each permitted holdout query first. Reservation identities, persisted pre-charge budgets, fail-closed locking, strict decoding, and single-use settlement prevent crashes, reuse, or foreign tokens from restoring capacity or publishing uncharged evidence. Most of the increase is adversarial coverage of initialization, write failure, interruption, concurrency, process isolation, exhaustion, release visibility, evidence-pair consistency, and unchanged tournament decisions. |
+| Durable Ladder query reservations (production) | 200,255 | +290 | 200,545 | Issue #380: production code gains the strict reservation store, train-first scheduling, and explicit audit fields. The pure Ladder decision rule remains separate from filesystem state, keeps the stored confirmation paired with its actual best scalar, and the runner starts no holdout work after a train rejection, exhausted budget, failed debit, or unsupported cross-process lock. |
+| Durable Ladder query reservations (production logic) | 110,738 | +305 | 111,043 | Issue #380: executable growth is the atomic state protocol, identity and corruption checks, process serialization, evidence-pair consistency, and the scheduling boundary that makes the debit durable before evidence access. Replaced docstrings and comments make the executable-line delta slightly larger than the total production-line delta. |

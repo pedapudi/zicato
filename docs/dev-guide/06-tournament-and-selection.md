@@ -1359,16 +1359,19 @@ freshness + cost per duel.
 
 ### 6.7.1 `run_tournament` — standalone full A/B
 
-`run_tournament` runs both sides concurrently per entry. The child is
-force-fresh by default, because a freshly proposed generation has no prior
-evaluation. The CHAMPION is cache-read by default, because it is immutable
-within the epoch and can be reused from a prior round or from its seed; the two
+`run_tournament` runs the champion and challenger concurrently within each
+entry. It executes the training slice first and applies the training gate. A
+training rejection schedules no holdout work. A training promotion with an
+enabled Ladder durably reserves one query before the runner schedules the
+holdout slice. An exhausted budget schedules no holdout work and leaves the
+training decision unchanged.
+
+The child is force-fresh by default because a newly proposed generation has no
+prior evaluation. The champion is cache-read by default because it is immutable
+within the epoch and can be reused from a prior round or from its seed. The two
 defaults are the `champion_force_fresh=False`, `force_fresh=True` split. The
-train-slice scalar gates and steers; the holdout is threaded
-separately through the Ladder governor (`_ladder_mediated_outcome`). The
-`force_fresh=False` override is the crash-resume path: the per-unit `loss.json`
-of an interrupted round IS the cache, so completed units cache-HIT and only
-unfinished entries re-run.
+`force_fresh=False` override is the crash-resume path: completed unit records
+are cache hits, so only unfinished entries run again.
 
 ### 6.7.2 `run_matchup` — canonical production duel
 
@@ -1387,11 +1390,12 @@ in the dashboard.
 
 A strategy resolves a leader on the train slice and identifies the final
 champion-gate duel against the reigning champion. This function adds the
-shared Ladder-mediated holdout confirmation: split the
-board, run ONE extra holdout-slice duel (`board_subset=holdout_ids`), feed the
-train verdict + train/holdout aggregates through the shared
-`_ladder_mediated_outcome` at the shared per-epoch `LadderState`. An empty
-holdout returns `(train_outcome, None, None)` immediately.
+shared Ladder-mediated confirmation. It splits the board, atomically reserves
+one query in the shared epoch-local `LadderState`, and then runs one extra duel
+with `board_subset=holdout_ids`. `_ladder_mediated_outcome` publishes the
+release decision after the duel. An empty holdout returns
+`(train_outcome, None, None)` immediately. An exhausted budget returns the
+training outcome with an unconsulted holdout block and launches no duel.
 
 ### 6.7.4 One default gauntlet round, end to end (worked trace)
 

@@ -403,3 +403,41 @@ class TestConfirmCrowningOnHoldout:
         # The champion side's train aggregate is v0's (scalar 3.0).
         assert seen["train_parent_agg"] == {"scalar": 3.0}
         assert seen["train_child_agg"] == {"scalar": 1.0}
+
+
+class TestReleasedHoldoutConfirmation:
+    def test_returns_released_true_and_false_bits(self) -> None:
+        base = {"holdout_consulted": True, "ladder_released": True}
+        assert gate._released_holdout_confirmation({**base, "confirmed": True}) is True
+        assert gate._released_holdout_confirmation({**base, "confirmed": False}) is False
+
+    def test_withheld_query_emits_no_release(self) -> None:
+        block = {
+            "holdout_consulted": True,
+            "ladder_released": False,
+            "confirmed": None,
+        }
+        assert gate._released_holdout_confirmation(block) is None
+
+    def test_unconsulted_or_malformed_release_emits_nothing(self) -> None:
+        assert gate._released_holdout_confirmation(None) is None
+        assert (
+            gate._released_holdout_confirmation(
+                {
+                    "holdout_consulted": False,
+                    "ladder_released": False,
+                    "confirmed": None,
+                }
+            )
+            is None
+        )
+        assert (
+            gate._released_holdout_confirmation(
+                {
+                    "holdout_consulted": True,
+                    "ladder_released": True,
+                    "confirmed": None,
+                }
+            )
+            is None
+        )

@@ -42,18 +42,12 @@ from zicato.logging_stream import current_log_stream_path
 from zicato.runtime.spawn_permit import OPEN_PERMIT, WorkerPermit, acquire_worker_permit
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 
-# ``_load_ladder_state`` / ``_losses_for`` / ``_save_ladder_state`` are
-# re-exported (F401) for back-compat — callers and tests reach them through
-# ``zicato.tournament.runner`` even though the runner body does not call them
-# directly; the governance helpers that do live in ``governance``.
+# Governance helpers used by the scheduling boundary.
 from zicato.tournament.governance import (  # noqa: F401
-    _holdout_aggs,
+    _ladder_exhausted_outcome,
     _ladder_mediated_outcome,
-    _load_ladder_state,
-    _losses_for,
     _regression_rejection,
-    _save_ladder_state,
-    _train_aggs,
+    _reserve_ladder_query,
 )
 from zicato.tournament.regression import run_regression_suite
 
@@ -988,6 +982,19 @@ async def run_tournament(
     # stays byte-identical.
     board = _stamp_judge_only(board, judge_only)
 
+    # A Ladder-enabled holdout must not execute as part of the train board:
+    # the query charge is persisted only after the train gate says the duel is
+    # eligible for confirmation.  Keeping the slices separate also means a
+    # train rejection never consults or charges the holdout.
+    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
+
+    split_seed = rotation_seed(weights.overfitting, epoch_id)
+    train_ids, holdout_ids = split_board(board, weights.overfitting, seed=split_seed)
+    train_id_set = set(train_ids)
+    holdout_id_set = set(holdout_ids)
+    train_board = [entry for entry in board if entry.id in train_id_set]
+    holdout_board = [entry for entry in board if entry.id in holdout_id_set]
+
     # Best-effort tournament-state publication for the live dashboard.
     rt = _runtime_state()
     if rt is not None:
@@ -1025,32 +1032,10 @@ async def run_tournament(
         except Exception:  # noqa: BLE001
             pass
 
-    try:
-        # Board-unit scheduling: each board entry is one unit, and a
-        # full-mode unit runs its champion (parent) and challenger
-        # (child) runs CONCURRENTLY. ``config.parallelism`` bounds the
-        # number of board units in flight — up to 2*parallelism run
-        # subprocesses at once (champion + challenger per unit).
-        #
-        # CHILD (challenger) side — governed by ``force_fresh``. It defaults
-        # to ``True`` (the full A/B semantics: a freshly proposed
-        # generation has no prior evaluation under this contract, so it must
-        # run). The orchestrator's conservative crash-resume passes
-        # ``force_fresh=False`` for the one round it resumes in place: the
-        # persisted per-unit ``loss.json`` of an interrupted round IS the
-        # cache, so the units the interrupted run already completed cache-HIT
-        # and only the unfinished entries re-run — resume is nearly free.
-        #
-        # CHAMPION (parent) side — governed by ``champion_force_fresh``. The
-        # champion is immutable within the epoch, so it is cache-READ by
-        # default (``champion_force_fresh=False``) — reused from a prior round
-        # / its seed-scoring rather than needlessly re-run every round (§2
-        # item 3). The first time it is seen it is a clean MISS and runs once,
-        # then caches. ``champion_force_fresh=True`` re-samples the champion
-        # too (the ``--mode full`` noise-resampling path).
-        #
-        # Both sides are persisted so a later fast round / structure can
-        # reuse them.
+    async def run_board_slice(
+        entries: list[BoardEntry],
+    ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
+        """Evaluate one board slice with the full runner's replicate policy."""
         replicate_count = max(1, replicates)
         replicate_runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
         for replicate_index in range(replicate_count):
@@ -1058,7 +1043,7 @@ async def run_tournament(
                 adapter=adapter,
                 parent_gen=parent_gen,
                 child_gen=child_gen,
-                board=board,
+                board=entries,
                 weights=weights,
                 config=config,
                 workspace_root=workspace_root,
@@ -1069,10 +1054,69 @@ async def run_tournament(
             )
             replicate_runs.append((run_parent, run_child))
         if replicate_count == 1:
-            parent_losses, child_losses = replicate_runs[0]
-        else:
-            parent_losses = _average_losses([r[0] for r in replicate_runs])
-            child_losses = _average_losses([r[1] for r in replicate_runs])
+            return replicate_runs[0]
+        return (
+            _average_losses([run[0] for run in replicate_runs]),
+            _average_losses([run[1] for run in replicate_runs]),
+        )
+
+    holdout_parent_losses: dict[str, LossProfile] = {}
+    holdout_child_losses: dict[str, LossProfile] = {}
+    holdout_parent_agg: dict[str, Any] | None = None
+    holdout_child_agg: dict[str, Any] | None = None
+    holdout_block: dict[str, Any] | None = None
+    try:
+        # Train units execute first.  Only a train promotion can cross the
+        # reservation boundary and schedule the holdout slice.
+        parent_losses, child_losses = await run_board_slice(train_board)
+        parent_agg = aggregate_generation_score(list(parent_losses.values()), weights)
+        child_agg = aggregate_generation_score(
+            list(child_losses.values()), weights, diff_size=child_diff_size
+        )
+        train_outcome = await _gate_with_regression(
+            parent_agg=parent_agg,
+            child_agg=child_agg,
+            child_snapshot_root=child_gen.snapshot_root,
+            weights=weights,
+        )
+        outcome = train_outcome
+
+        if train_outcome.decision == "promoted" and holdout_board:
+            reservation = None
+            ladder_cfg = weights.overfitting.ladder
+            if ladder_cfg.enabled:
+                ladder_state, reservation = _reserve_ladder_query(
+                    workspace_root, epoch_id, ladder_cfg
+                )
+                if reservation is None:
+                    outcome, holdout_block = _ladder_exhausted_outcome(
+                        train_outcome=train_outcome,
+                        train_child_agg=child_agg,
+                        state=ladder_state,
+                        weights=weights,
+                    )
+
+            if not ladder_cfg.enabled or reservation is not None:
+                holdout_parent_losses, holdout_child_losses = await run_board_slice(holdout_board)
+                holdout_parent_agg = aggregate_generation_score(
+                    list(holdout_parent_losses.values()), weights
+                )
+                holdout_child_agg = aggregate_generation_score(
+                    list(holdout_child_losses.values()),
+                    weights,
+                    diff_size=child_diff_size,
+                )
+                outcome, holdout_block = _ladder_mediated_outcome(
+                    train_outcome=train_outcome,
+                    parent_agg=parent_agg,
+                    child_agg=child_agg,
+                    holdout_parent_agg=holdout_parent_agg,
+                    holdout_child_agg=holdout_child_agg,
+                    weights=weights,
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    reservation=reservation,
+                )
     finally:
         if rt is not None:
             state_mod, _ = rt
@@ -1081,46 +1125,11 @@ async def run_tournament(
             except Exception:  # noqa: BLE001
                 pass
 
-    # The scalar that gates promotion and steers selection / standings is
-    # the TRAIN-slice scalar (OVERFITTING.md §12 #1). When the board is too
-    # small to split — the common case and the default-safe degrade — the
-    # train slice IS the full board, so these aggregates are byte-identical
-    # to the pre-split full-board aggregates. The holdout slice (if any) is
-    # confirmation-only and is threaded into the gate separately; it never
-    # becomes the generation's reported score.
-    parent_agg, child_agg = _train_aggs(
-        board, parent_losses, child_losses, weights, epoch_id, child_diff_size=child_diff_size
-    )
-    holdout_parent_agg, holdout_child_agg = _holdout_aggs(
-        board, parent_losses, child_losses, weights, epoch_id, child_diff_size=child_diff_size
-    )
-
-    # The regression check + the three train-slice rules decide on the TRAIN
-    # aggregates only; the holdout is threaded separately through the Ladder
-    # governor (OVERFITTING.md §4 / §12 #2) so its confirmation only *counts*
-    # under the Ladder's release rule + per-epoch query budget. An absent
-    # holdout (small board / split disabled) makes the Ladder a no-op, so the
-    # train rules decide alone.
-    train_outcome = await _gate_with_regression(
-        parent_agg=parent_agg,
-        child_agg=child_agg,
-        child_snapshot_root=child_gen.snapshot_root,
-        weights=weights,
-    )
-    outcome, holdout_block = _ladder_mediated_outcome(
-        train_outcome=train_outcome,
-        parent_agg=parent_agg,
-        child_agg=child_agg,
-        holdout_parent_agg=holdout_parent_agg,
-        holdout_child_agg=holdout_child_agg,
-        weights=weights,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-    )
-
     per_entry_losses: dict[str, tuple[LossProfile, LossProfile]] = {}
-    for entry_id, parent_loss in parent_losses.items():
-        child_loss = child_losses.get(entry_id)
+    all_parent_losses = {**parent_losses, **holdout_parent_losses}
+    all_child_losses = {**child_losses, **holdout_child_losses}
+    for entry_id, parent_loss in all_parent_losses.items():
+        child_loss = all_child_losses.get(entry_id)
         if child_loss is not None:
             per_entry_losses[entry_id] = (parent_loss, child_loss)
 
@@ -1605,16 +1614,13 @@ async def confirm_crowning_holdout(
        the holdout is empty (small board / split disabled / no tagged entry)
        this returns ``(train_outcome, None, None)`` immediately, so the
        train decision is returned unchanged.
-    2. Otherwise run ONE additional duel — champion (``left``) vs survivor
-       (``right``) — restricted to the HOLDOUT slice via ``board_subset``, to
-       measure both sides' holdout-slice aggregates. The holdout is
-       confirmation-only: it never picks the leader.
-    3. Feed the train verdict + train/holdout aggregates through
-       :func:`_ladder_mediated_outcome` — the same per-epoch
-       :class:`~zicato.tournament.ladder.LadderState` at ``ladder_state_path``
-       every strategy shares, so the per-epoch query budget is shared. A released
-       non-confirmation flips the crowning promote to a ``rejected`` outcome
-       (reason ``holdout_not_confirmed``); the champion stands.
+    2. Return a train rejection without holdout access. For a train promotion,
+       reserve one query in the shared epoch-local Ladder state. Exhaustion
+       returns the train decision without launching a matchup.
+    3. Run one additional champion-versus-survivor duel on the holdout slice,
+       then settle the Ladder release decision. A released non-confirmation
+       changes the promotion to ``rejected`` with reason
+       ``holdout_not_confirmed``.
 
     Returns ``(final_outcome, holdout_block, holdout_child_scalar)``:
 
@@ -1622,9 +1628,10 @@ async def confirm_crowning_holdout(
       orchestrator promotes iff it is ``"promoted"``).
     * ``holdout_block`` — the stable Ladder/holdout evidence dict (see
       :func:`zicato.tournament.ladder.holdout_record`) to journal verbatim
-      under ``OutcomeRecord.holdout``; ``None`` when no holdout was consulted.
+      under ``OutcomeRecord.holdout``. Exhaustion produces an unconsulted
+      block; an absent slice or train rejection produces ``None``.
     * ``holdout_child_scalar`` — the challenger's holdout-slice scalar for the
-      per-generation ``generalization_gap``; ``None`` when no holdout existed.
+      per-generation ``generalization_gap``; ``None`` when no matchup ran.
 
     Fast-mode note: ``fast`` is threaded to the holdout duel as the
     internal matchups receive it, so the champion's holdout-slice board units
@@ -1639,6 +1646,24 @@ async def confirm_crowning_holdout(
     if not holdout_ids:
         # No holdout slice: return the train decision unchanged.
         return train_outcome, None, None
+
+    if train_outcome.decision != "promoted":
+        # Holdout confirmation can only veto a train promotion.  A rejected
+        # train duel therefore performs no holdout access and spends no query.
+        return train_outcome, None, None
+
+    reservation = None
+    ladder_cfg = weights.overfitting.ladder
+    if ladder_cfg.enabled:
+        ladder_state, reservation = _reserve_ladder_query(workspace_root, epoch_id, ladder_cfg)
+        if reservation is None:
+            final, block = _ladder_exhausted_outcome(
+                train_outcome=train_outcome,
+                train_child_agg=train_child_agg,
+                state=ladder_state,
+                weights=weights,
+            )
+            return final, block, None
 
     holdout_result = await run_matchup(
         adapter=adapter,
@@ -1667,6 +1692,7 @@ async def confirm_crowning_holdout(
         weights=weights,
         workspace_root=workspace_root,
         epoch_id=epoch_id,
+        reservation=reservation,
     )
     holdout_child_scalar = float(holdout_child_agg["scalar"])
     return final_outcome, holdout_block, holdout_child_scalar

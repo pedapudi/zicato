@@ -195,7 +195,7 @@ def test_withholds_within_noise_band_and_reports_prior_best() -> None:
     assert rel2.state.best_confirmed is True
 
 
-def test_release_keeps_the_lower_best_holdout_scalar() -> None:
+def test_release_keeps_the_confirmation_associated_with_the_best_scalar() -> None:
     cfg = LadderConfig(budget=8)
     weights = _weights(promote_margin=0.1)
     rel1 = _query(
@@ -206,8 +206,8 @@ def test_release_keeps_the_lower_best_holdout_scalar() -> None:
         holdout_scalar=0.4,
         confirmed=True,
     )
-    # A later release with a WORSE (higher) holdout scalar updates the
-    # confirmation bit but keeps the lower best (best = lowest loss seen).
+    # A later release with a worse (higher) holdout scalar reports its own
+    # decision but does not replace the stored best query's evidence pair.
     rel2 = _query(
         rel1.state,
         cfg=cfg,
@@ -219,6 +219,21 @@ def test_release_keeps_the_lower_best_holdout_scalar() -> None:
     assert rel2.released is True
     assert rel2.confirmed is False
     assert rel2.state.best_holdout_scalar == pytest.approx(0.4)  # the lower one stands
+    assert rel2.state.best_confirmed is True
+
+    # A subsequent withheld query re-reports one real prior query, not the
+    # earlier scalar paired with the later release's confirmation bit.
+    rel3 = _query(
+        rel2.state,
+        cfg=cfg,
+        weights=weights,
+        improvement=0.05,
+        holdout_scalar=99.0,
+        confirmed=False,
+    )
+    assert rel3.released is False
+    assert rel3.holdout_scalar == pytest.approx(0.4)
+    assert rel3.confirmed is True
 
 
 def test_improvement_exactly_at_threshold_releases() -> None:
@@ -273,8 +288,8 @@ def test_budget_exhaustion_stops_releasing() -> None:
     assert rel1.released is True
     assert rel1.state.budget_remaining == 0
 
-    # Second query: budget exhausted → NOT released ("champion stands"),
-    # nothing further charged, and the last best confirmation is re-reported.
+    # Second query: budget exhausted → nothing is released or charged, and
+    # the last best confirmation is re-reported.
     rel2 = _query(
         rel1.state,
         cfg=cfg,
@@ -330,18 +345,24 @@ def test_holdout_record_shape() -> None:
         confirmed=True,
         train_scalar=0.5,
         holdout_scalar=0.6,
+        consulted=True,
         released=True,
         budget_total=16,
+        budget_before_query=16,
         budget_remaining=15,
+        query_reserved=True,
         threshold=0.1,
     )
     assert rec == {
         "confirmed": True,
         "train_scalar": 0.5,
         "holdout_scalar": 0.6,
+        "holdout_consulted": True,
         "ladder_released": True,
         "ladder_budget_total": 16,
+        "ladder_budget_before_query": 16,
         "ladder_budget_remaining": 15,
+        "ladder_query_reserved": True,
         "threshold": 0.1,
     }
 
@@ -351,9 +372,12 @@ def test_holdout_record_allows_nulls() -> None:
         confirmed=None,
         train_scalar=None,
         holdout_scalar=None,
+        consulted=False,
         released=False,
         budget_total=16,
+        budget_before_query=None,
         budget_remaining=16,
+        query_reserved=False,
         threshold=0.1,
     )
     assert rec["confirmed"] is None
