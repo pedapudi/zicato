@@ -19,9 +19,9 @@ import pytest
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import pin_deterministic
 from tests._orchestrator_harness import (
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
 )
 from tests.test_orchestrator_multi_challenger import _distinct_field_responses
@@ -431,18 +431,16 @@ def test_multi_challenger_field_gets_extra_placebo_slot(
     through the unchanged strategy + gate, is rejected (its canned score
     equals the champion's), and the real winner is crowned."""
     workspace, epoch_id = _bootstrap_swiss_with_placebo(tmp_path, field_size=2)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     # v1 is the strongest; v3 (the placebo, minted after v1/v2) scores
     # exactly like the champion v0 — identical trees, identical measure.
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5, "v3": 2.0},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
 
     assert outcome.tournament_decision == "promoted"
     assert outcome.proposed_generation_id == "v1"

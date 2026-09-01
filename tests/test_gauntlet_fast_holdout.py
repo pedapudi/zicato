@@ -25,8 +25,8 @@ from pathlib import Path
 import pytest
 
 from tests._orchestrator_harness import (
-    _install_stub_adapter_factory,
-    _make_aux_responder,
+    install_stub_adapter_factory,
+    make_aux_responder,
     run_evolve_once,
 )
 from tests.test_orchestrator_multi_challenger_holdout import (
@@ -46,7 +46,7 @@ def _run_fast_round(workspace: Path, epoch_id: str) -> object:
     """Run one single-challenger round under fast mode."""
 
     return run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(1)), fast_mode=True
+        workspace, epoch_id, make_aux_responder(_distinct_field_responses(1)), fast_mode=True
     )
 
 
@@ -75,7 +75,7 @@ def test_a_holdout_only_improvement_cannot_promote(
     selection, the two are equal and nothing has been shown.
     """
     workspace, epoch_id = _bootstrap(tmp_path, structure="gauntlet", field_size=1)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     _install_per_entry_telemetry_stubs(
         monkeypatch,
         loss_by_gen_entry=_losses(champion=2.0, challenger_train=2.0, challenger_holdout=0.0),
@@ -104,7 +104,7 @@ def test_a_train_win_that_holds_on_the_holdout_still_promotes(
     fast-mode gauntlet promotion before.
     """
     workspace, epoch_id = _bootstrap(tmp_path, structure="gauntlet", field_size=1)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     _install_per_entry_telemetry_stubs(
         monkeypatch,
         loss_by_gen_entry=_losses(champion=2.0, challenger_train=0.5, challenger_holdout=0.5),
@@ -135,7 +135,7 @@ def test_a_train_win_that_regresses_on_the_holdout_is_flipped(
     champion stands.
     """
     workspace, epoch_id = _bootstrap(tmp_path, structure="gauntlet", field_size=1)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     _install_per_entry_telemetry_stubs(
         monkeypatch,
         loss_by_gen_entry=_losses(champion=2.0, challenger_train=0.5, challenger_holdout=5.0),
@@ -164,7 +164,7 @@ def test_the_same_round_in_full_mode_reaches_the_same_verdicts(
     result means, so the holdout-only improvement is refused under both.
     """
     workspace, epoch_id = _bootstrap(tmp_path, structure="gauntlet", field_size=1)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     _install_per_entry_telemetry_stubs(
         monkeypatch,
         loss_by_gen_entry=_losses(champion=2.0, challenger_train=2.0, challenger_holdout=0.0),
@@ -174,7 +174,7 @@ def test_the_same_round_in_full_mode_reaches_the_same_verdicts(
     from zicato.evolve.generation_phase import current_generation
 
     outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(1)), fast_mode=False
+        workspace, epoch_id, make_aux_responder(_distinct_field_responses(1)), fast_mode=False
     )
 
     assert outcome.tournament_decision != "promoted"
@@ -193,7 +193,7 @@ def test_an_empty_holdout_leaves_fast_mode_scoring_the_whole_board(
     workspace, epoch_id = _bootstrap(
         tmp_path, structure="gauntlet", field_size=1, with_holdout_tag=False
     )
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     _install_per_entry_telemetry_stubs(
         monkeypatch,
         loss_by_gen_entry=_losses(champion=2.0, challenger_train=0.5, challenger_holdout=0.5),

@@ -13,9 +13,9 @@ from typing import Any
 import pytest
 
 from tests._orchestrator_harness import (
-    _harness_call_llm,
-    _make_aux_responder,
-    _valid_proposer_response,
+    harness_call_llm,
+    make_aux_responder,
+    valid_proposer_response,
 )
 from zicato.core.types import (
     BoardEntry,
@@ -203,8 +203,8 @@ def test_evolve_n_rounds_writes_heartbeat_and_releases_lock(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
             instance_id="hb-test",
         )
     )
@@ -250,8 +250,8 @@ def test_evolve_n_rounds_advances_progress_seq_and_marks_terminal(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
             instance_id="seq-test",
         )
     )
@@ -282,8 +282,8 @@ def test_evolve_n_rounds_advances_progress_seq_and_marks_terminal(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
             instance_id="seq-test",
         )
     )
@@ -329,8 +329,8 @@ def test_evolve_n_rounds_refuses_when_workspace_locked(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=epoch_id,
-                harness_call_llm=_harness_call_llm,
-                auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+                harness_call_llm=harness_call_llm,
+                auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
                 instance_id="hb-test",
             )
         )

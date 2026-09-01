@@ -42,13 +42,13 @@ from typing import Any
 import pytest
 
 from tests._orchestrator_harness import (
-    _bootstrap_workspace,
-    _harness_call_llm,
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    bootstrap_workspace,
+    harness_call_llm,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 from tests.test_evolve_preflight_gate import _prepare, _set_preflight_gate
 from zicato.epoch.preflight import (
@@ -144,7 +144,7 @@ def test_the_breaker_observes_criticals_only() -> None:
 
 def _canned_losses(monkeypatch: pytest.MonkeyPatch) -> None:
     """Telemetry stubs that let four consecutive rounds all promote."""
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 4.0, "v1": 3.0, "v2": 2.0, "v3": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
@@ -162,9 +162,9 @@ def test_warn_mode_survives_an_all_refuse_preflight_past_the_breaker_threshold(
     operator's explicit ``"warn"``. Now it runs to completion with a loud
     warning, which is what "warn" means.
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _set_preflight_gate(workspace, "warn")
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     _canned_losses(monkeypatch)
 
     from tests.test_evolve_preflight_gate import _install_canned_preflight
@@ -183,8 +183,8 @@ def test_warn_mode_survives_an_all_refuse_preflight_past_the_breaker_threshold(
             rounds=rounds,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()] * rounds),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response()] * rounds),
             stop_reason_out=stop_reason,
         )
     )
@@ -227,8 +227,8 @@ def test_refuse_mode_still_refuses_at_the_pre_flight(
             rounds=3,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()] * 3),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response()] * 3),
             stop_reason_out=stop_reason,
         )
     )
@@ -315,7 +315,7 @@ def _pin_probe_ids(workspace: Path, ids: list[str]) -> None:
 
 
 def _run_once(workspace: Path, epoch_id: str) -> Any:
-    return run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
+    return run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
 
 def test_an_unknown_pinned_probe_id_refuses_the_run_under_the_hard_gate(
@@ -332,10 +332,10 @@ def test_an_unknown_pinned_probe_id_refuses_the_run_under_the_hard_gate(
     Note this drives the REAL pre-flight (no canned verdict): the refusal has
     to survive the whole config → selection → hook chain.
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _set_preflight_gate(workspace, "refuse")
     _pin_probe_ids(workspace, ["no_such_mutation_point"])
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     _canned_losses(monkeypatch)
 
     with pytest.raises(PreflightRefusedError, match="CONFIG ERROR"):
@@ -346,10 +346,10 @@ def test_the_same_typo_only_warns_under_the_default_gate(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Warn mode keeps the recommend-only behaviour it always had."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _set_preflight_gate(workspace, "warn")
     _pin_probe_ids(workspace, ["no_such_mutation_point"])
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     _canned_losses(monkeypatch)
 
     with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):

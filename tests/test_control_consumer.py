@@ -25,13 +25,13 @@ import pytest
 
 import zicato.orchestrator as orch
 from tests._orchestrator_harness import (
-    _bootstrap_workspace,
-    _harness_call_llm,
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    bootstrap_workspace,
+    harness_call_llm,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 from zicato.runtime.control import (
     CMD_PAUSE_EPOCH,
@@ -344,9 +344,9 @@ def test_reject_override_flips_a_would_promote_round(
     The override is recorded as an explicit operator override in the
     OutcomeRecord / journal — never silently.
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -354,9 +354,7 @@ def test_reject_override_flips_a_would_promote_round(
     # Operator queues a reject for the generation this round will mint (v1).
     write_command(workspace, ControlCommand(name=CMD_REJECT_PREFIX, arg="v1"))
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     # The gate would have promoted (child scalar < parent), but the override
     # rejected it.
     assert outcome.tournament_decision == "rejected"
@@ -385,18 +383,16 @@ def test_promote_override_flips_a_would_reject_round(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A child that would REJECT is force-PROMOTED by an operator override."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 0.0, "v1": 5.0},
         canned_pass_by_gen={"v0": True, "v1": False},
     )
     write_command(workspace, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v1"))
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     # The gate would have rejected (child regressed), but the override promoted.
     assert outcome.tournament_decision == "promoted"
     # The current_generation marker WAS bumped to v1.
@@ -418,9 +414,9 @@ def test_override_for_other_generation_does_not_fire(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An override aimed at a different gen leaves the real gate untouched."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -428,9 +424,7 @@ def test_override_for_other_generation_does_not_fire(
     # Override targets v7 — not the v1 this round mints.
     write_command(workspace, ControlCommand(name=CMD_REJECT_PREFIX, arg="v7"))
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     # The gate's own verdict (promote) stands.
     assert outcome.tournament_decision == "promoted"
     body = json.loads(
@@ -451,9 +445,9 @@ def test_skip_round_aborts_evolve_once_cleanly(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A queued skip_round aborts the round before any propose/tournament work."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -462,7 +456,7 @@ def test_skip_round_aborts_evolve_once_cleanly(
 
     # The proposer responder would raise on a SECOND call; a clean skip never
     # proposes, so it is never consulted — a strong signal nothing ran.
-    outcome = run_evolve_once(workspace, epoch_id, _make_aux_responder([]), round_index=2)
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]), round_index=2)
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason.startswith("skip_round")
     assert outcome.proposed_generation_id == ""
@@ -498,7 +492,7 @@ def test_pause_blocks_then_resumes_between_rounds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A pause flag present at the top of the loop blocks until it clears."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
 
     calls: list[int] = []
 
@@ -539,7 +533,7 @@ def test_pause_blocks_then_resumes_between_rounds(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
+            harness_call_llm=harness_call_llm,
             auxiliary_call_llm=_aux_call_llm,
         )
     )
@@ -555,7 +549,7 @@ def test_rubric_replacement_rolls_the_epoch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A rubric_replacement between rounds writes the brief and rolls the epoch."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
 
     seen_epochs: list[str | None] = []
 
@@ -583,7 +577,7 @@ def test_rubric_replacement_rolls_the_epoch(
             workspace_root=workspace,
             epoch_id=None,
             auto_epoch=True,
-            harness_call_llm=_harness_call_llm,
+            harness_call_llm=harness_call_llm,
             auxiliary_call_llm=_aux_call_llm,
         )
     )

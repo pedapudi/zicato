@@ -9,17 +9,17 @@ they are shared scaffolding and not the subject of any single suite.
 
 Three of the stubs carry decisions that are easy to undo by accident:
 
-* :func:`_bootstrap_workspace` pins the DIRECTORY generation-source
+* :func:`bootstrap_workspace` pins the DIRECTORY generation-source
   backend, because it hand-builds the ``epochs/*/generations/v0/snapshot``
   layout and the git default would look for tags this fixture never
   writes. It also pins the deterministic contract knobs from
   :mod:`tests._contract_pins`, since these suites script a single propose
   per round and a single paired run per duel.
-* :func:`_install_stub_adapter_factory` leaves ``make_adapter_from_spec``
+* :func:`install_stub_adapter_factory` leaves ``make_adapter_from_spec``
   real. That is how a worker subprocess and the pre-spend gate's probe
   rebuild the adapter, so stubbing it would hide the reconstruction path
   the tests mean to exercise.
-* :func:`_install_telemetry_stubs` grafts the real
+* :func:`install_telemetry_stubs` grafts the real
   ``split_judge_attributed_kind`` onto the stubbed reducer. The health
   assessment imports it, and its absence was swallowed by a best-effort
   ``try``/``except`` — so without the graft no round wrote a health record
@@ -47,12 +47,12 @@ from zicato.core.types import (
 from zicato.epoch.lifecycle import new_epoch
 
 
-async def _harness_call_llm(system: str, user: str, model: str) -> str:
+async def harness_call_llm(system: str, user: str, model: str) -> str:
     del system, user, model
     return ""
 
 
-def _make_aux_responder(responses: list[str]) -> Any:
+def make_aux_responder(responses: list[str]) -> Any:
     """Return a fresh async aux callable that yields ``responses`` in order."""
     state = {"i": 0}
 
@@ -67,7 +67,7 @@ def _make_aux_responder(responses: list[str]) -> Any:
     return _aux
 
 
-def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
+def bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
     """Create a workspace + one epoch + a v0 baseline snapshot.
 
     The snapshot contains a single Python file with one zicato:mutable
@@ -140,7 +140,7 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
     return workspace, cfg.id
 
 
-def _install_stub_adapter_factory(
+def install_stub_adapter_factory(
     monkeypatch: pytest.MonkeyPatch,
     *,
     bypass_workspace_gate: bool = True,
@@ -181,7 +181,7 @@ def _install_stub_adapter_factory(
         monkeypatch.setattr(zicato.check, "require_workspace_valid", lambda *a, **k: None)
 
 
-def _install_telemetry_stubs(
+def install_telemetry_stubs(
     monkeypatch: pytest.MonkeyPatch,
     *,
     canned_loss_by_gen: dict[str, float],
@@ -344,7 +344,7 @@ def _install_telemetry_stubs(
     monkeypatch.setattr(_runner_mod, "_run_single", _fake_run_single)
 
 
-def _valid_proposer_response() -> str:
+def valid_proposer_response() -> str:
     """A schema-valid response targeting the stub snapshot's marker."""
     return json.dumps(
         {
@@ -402,7 +402,7 @@ def run_evolve_once(
         evolve_once(
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
+            harness_call_llm=harness_call_llm,
             auxiliary_call_llm=auxiliary_call_llm,
             **evolve_kwargs,
         )

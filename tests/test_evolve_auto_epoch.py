@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from tests._orchestrator_harness import _harness_call_llm
+from tests._orchestrator_harness import harness_call_llm
 from zicato.core.types import (
     BoardEntry,
     DriftCount,
@@ -339,7 +339,7 @@ def test_evolve_auto_creates_then_rolls_on_rubric_edit(
             rounds=1,
             workspace_root=workspace,
             epoch_id=None,
-            harness_call_llm=_harness_call_llm,
+            harness_call_llm=harness_call_llm,
             auxiliary_call_llm=_make_aux(),
         )
     )
@@ -358,7 +358,7 @@ def test_evolve_auto_creates_then_rolls_on_rubric_edit(
             rounds=1,
             workspace_root=workspace,
             epoch_id=None,
-            harness_call_llm=_harness_call_llm,
+            harness_call_llm=harness_call_llm,
             auxiliary_call_llm=_make_aux(),
         )
     )
@@ -413,7 +413,7 @@ def test_evolve_no_auto_epoch_errors_on_drift(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=None,
-                harness_call_llm=_harness_call_llm,
+                harness_call_llm=harness_call_llm,
                 auxiliary_call_llm=_make_aux(),
                 auto_epoch=False,
             )
@@ -426,7 +426,7 @@ def test_evolve_no_auto_epoch_errors_on_drift(
             rounds=1,
             workspace_root=workspace,
             epoch_id=None,
-            harness_call_llm=_harness_call_llm,
+            harness_call_llm=harness_call_llm,
             auxiliary_call_llm=_make_aux(),
         )
     )
@@ -437,7 +437,7 @@ def test_evolve_no_auto_epoch_errors_on_drift(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=None,
-                harness_call_llm=_harness_call_llm,
+                harness_call_llm=harness_call_llm,
                 auxiliary_call_llm=_make_aux(),
                 auto_epoch=False,
             )

@@ -30,13 +30,13 @@ from typing import Any
 import pytest
 
 from tests._orchestrator_harness import (
-    _bootstrap_workspace,
-    _harness_call_llm,
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    bootstrap_workspace,
+    harness_call_llm,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 from zicato.core import DriftCount, ExpectationResult, LossProfile, MetricCount, ScoringWeights
 from zicato.epoch.pareto import (
@@ -464,7 +464,7 @@ def test_a_FIELD_round_that_crowns_the_placebo_leaves_the_record_untouched(
     save_frontier(workspace, epoch_id, seeded)
     before = frontier_path(workspace, epoch_id).read_bytes()
 
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     # The placebo (v3, minted last into the slate) has much the best drift, so
     # the crowning duel hands it the championship on the scalar. It is also
     # the most EXPENSIVE, which is what makes this pin discriminating: v2
@@ -474,7 +474,7 @@ def test_a_FIELD_round_that_crowns_the_placebo_leaves_the_record_untouched(
     # whole field, nothing is admissible, and the pin would pass on a
     # technicality whether or not the guard existed.)
     drift_by_gen = {"v0": 2.0, "v1": 1.9, "v2": 1.8, "v3": 0.1}
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen=drift_by_gen,
         canned_pass_by_gen=dict.fromkeys(drift_by_gen, True),
@@ -485,9 +485,7 @@ def test_a_FIELD_round_that_crowns_the_placebo_leaves_the_record_untouched(
         tokens_by_gen={"v0": 1000, "v1": 1000, "v2": 1000, "v3": 1100},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(6))
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(6)))
 
     # The round really did crown the placebo — otherwise this pins nothing.
     assert outcome.tournament_decision == "promoted"
@@ -1147,9 +1145,9 @@ def _drive_round(
     drift_by_gen: dict[str, float],
     tokens_by_gen: dict[str, int],
 ) -> tuple[Path, str, Any]:
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen=drift_by_gen,
         canned_pass_by_gen=dict.fromkeys(drift_by_gen, True),
@@ -1157,7 +1155,7 @@ def _drive_round(
     _install_costed_run_single(monkeypatch, drift_by_gen=drift_by_gen, tokens_by_gen=tokens_by_gen)
 
     outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response() for _ in range(6)])
+        workspace, epoch_id, make_aux_responder([valid_proposer_response() for _ in range(6)])
     )
     return workspace, epoch_id, outcome
 
@@ -1232,10 +1230,10 @@ def test_a_promotion_retires_a_newly_dominated_member_end_to_end(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Round 1 records the cheap loser; round 2's champion dominates it."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
     drift_by_gen = {"v0": 1.0, "v1": 3.0, "v2": 0.5}
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen=drift_by_gen,
         canned_pass_by_gen=dict.fromkeys(drift_by_gen, True),
@@ -1253,8 +1251,8 @@ def test_a_promotion_retires_a_newly_dominated_member_end_to_end(
             rounds=2,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response() for _ in range(20)]),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response() for _ in range(20)]),
             max_consecutive_rejections=3,
         )
     )
@@ -1381,17 +1379,15 @@ def _drive_swiss_round(
     )
 
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen=drift_by_gen,
         canned_pass_by_gen=dict.fromkeys(drift_by_gen, True),
     )
     _install_costed_run_single(monkeypatch, drift_by_gen=drift_by_gen, tokens_by_gen=tokens_by_gen)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
     return workspace, epoch_id, outcome
 
 

@@ -32,11 +32,11 @@ import pytest
 
 from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 from zicato.core.runtime import RoundTokenLedger, RuntimeConfig
 from zicato.core.types import DriftCount, LossProfile
@@ -171,8 +171,8 @@ def _run_one_round(
     if max_tokens_per_round is not None:
         runtime["max_tokens_per_round"] = max_tokens_per_round
     workspace, epoch_id = _bootstrap_multi_entry_workspace(tmp_path, runtime=runtime)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -187,9 +187,7 @@ def _run_one_round(
     stub_reducer = sys.modules["zicato.telemetry.reducer"]
     stub_reducer.write_loss_profile = _real_write_loss_profile  # type: ignore[attr-defined]
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     return workspace, epoch_id, outcome, calls
 
 

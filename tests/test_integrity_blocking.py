@@ -27,12 +27,12 @@ import pytest
 
 from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
-    _bootstrap_workspace,
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    bootstrap_workspace,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 from zicato.evolve.containment import (
     check_containment,
@@ -230,19 +230,17 @@ def test_containment_block_rejects_out_of_bounds_child(
     the snapshot root while the registered tree basename is ``elsewhere``),
     so an otherwise-promotable child is REJECTED with the containment
     reason and the champion stands."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _declare_mutable_trees(workspace, [str(tmp_path / "elsewhere")])
     _set_scoring_flag(workspace, epoch_id, block_on_containment_violation=True)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason.startswith("containment_violation:")
@@ -263,18 +261,16 @@ def test_containment_block_off_promotes_with_alarm_only(
 ) -> None:
     """Default OFF: the identical out-of-bounds child still promotes —
     containment stays the supervisor's alarm-only concern."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _declare_mutable_trees(workspace, [str(tmp_path / "elsewhere")])
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     assert outcome.tournament_decision == "promoted"
 
 
@@ -284,11 +280,11 @@ def test_gate_contradiction_block_refuses_unsupported_promote(
     """Rigged gate: evaluate_gate is patched to PROMOTE a regressing child
     (delta_scalar +1.0 against margin 0.01). With the knob ON the
     orchestrator re-derives the scalar rule pre-persist and refuses."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _set_scoring_flag(workspace, epoch_id, block_on_gate_contradiction=True)
-    _install_stub_adapter_factory(monkeypatch)
+    install_stub_adapter_factory(monkeypatch)
     # Child is WORSE than the parent — a promote is a contradiction.
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 1.0, "v1": 2.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -309,9 +305,7 @@ def test_gate_contradiction_block_refuses_unsupported_promote(
 
     monkeypatch.setattr(_runner_mod, "evaluate_gate", _rigged_gate)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason.startswith("gate_contradiction:")
@@ -324,9 +318,9 @@ def test_gate_contradiction_block_off_keeps_rigged_promote(
 ) -> None:
     """Default OFF: the same rigged promote persists (alarm-only parity —
     the supervisor's out-of-band scan owns the alarm)."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 1.0, "v1": 2.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -347,9 +341,7 @@ def test_gate_contradiction_block_off_keeps_rigged_promote(
 
     monkeypatch.setattr(_runner_mod, "evaluate_gate", _rigged_gate)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     assert outcome.tournament_decision == "promoted"
 
 
@@ -359,23 +351,21 @@ def test_supported_promote_passes_with_both_knobs_on(
     """A genuinely-supported, in-bounds promotion is untouched by the
     blocking modes (no mutable_trees registered ⇒ trivially contained;
     the real gate's delta clears the margin)."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _set_scoring_flag(
         workspace,
         epoch_id,
         block_on_containment_violation=True,
         block_on_gate_contradiction=True,
     )
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     assert outcome.tournament_decision == "promoted"
     marker = workspace / "epochs" / epoch_id / "current_generation"
     assert marker.read_text().strip() == "v1"

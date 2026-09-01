@@ -341,26 +341,24 @@ def test_ceiling_rejects_oversized_challenger_diff_e2e(
     so an otherwise-promotable child is REJECTED with the ceiling reason and
     the champion pointer does not advance."""
     from tests._orchestrator_harness import (
-        _bootstrap_workspace,
-        _install_stub_adapter_factory,
-        _install_telemetry_stubs,
-        _make_aux_responder,
-        _valid_proposer_response,
+        bootstrap_workspace,
+        install_stub_adapter_factory,
+        install_telemetry_stubs,
+        make_aux_responder,
         run_evolve_once,
+        valid_proposer_response,
     )
 
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _set_ceiling(workspace, epoch_id, 1.0)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},  # v1 strictly better — would promote
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason.startswith("diff_complexity_ceiling:")
@@ -375,26 +373,24 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
     """The identical improving child promotes when the ceiling is generous
     (complexity 2 <= 100) — the ceiling only vetoes over-budget diffs."""
     from tests._orchestrator_harness import (
-        _bootstrap_workspace,
-        _install_stub_adapter_factory,
-        _install_telemetry_stubs,
-        _make_aux_responder,
-        _valid_proposer_response,
+        bootstrap_workspace,
+        install_stub_adapter_factory,
+        install_telemetry_stubs,
+        make_aux_responder,
         run_evolve_once,
+        valid_proposer_response,
     )
 
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     _set_ceiling(workspace, epoch_id, 100.0)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     assert outcome.tournament_decision == "promoted"
 
 

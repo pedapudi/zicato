@@ -22,13 +22,13 @@ from typing import Any
 import pytest
 
 from tests._orchestrator_harness import (
-    _bootstrap_workspace,
-    _harness_call_llm,
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    bootstrap_workspace,
+    harness_call_llm,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 
 # ---------------------------------------------------------------------------
@@ -95,9 +95,9 @@ def _install_fake_index(
 
 def test_evolve_once_triggers_index_ingest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A round calls ingest_run per run and ingest_experiment for the child."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -107,7 +107,7 @@ def test_evolve_once_triggers_index_ingest(monkeypatch: pytest.MonkeyPatch, tmp_
     experiment_calls: list[tuple[Any, ...]] = []
     _install_fake_index(monkeypatch, run_calls=run_calls, experiment_calls=experiment_calls)
 
-    run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
+    run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     # Full A/B tournament runs the single board entry under both v0 and
     # v1 → two ingest_run calls.
@@ -132,9 +132,9 @@ def test_evolve_once_survives_index_ingest_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An index-side failure is swallowed; the round still completes."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -151,9 +151,7 @@ def test_evolve_once_survives_index_ingest_failure(
     )
 
     # The round must NOT raise even though every ingest call throws.
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == "promoted"
     # The ingest calls were still attempted (they raised internally).
@@ -169,9 +167,9 @@ def test_evolve_once_runs_without_index_sibling(
     The dual-write is best-effort; an ImportError is caught and the loop
     runs index-free (``zicato repair index`` can rebuild later).
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -191,9 +189,7 @@ def test_evolve_once_runs_without_index_sibling(
 
     monkeypatch.setattr("builtins.__import__", _blocking_import)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == "promoted"
 
@@ -218,9 +214,9 @@ def test_evolve_n_rounds_builds_and_heals_the_index_at_start(
 
     from zicato.index.ingest import validate_index
 
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -235,8 +231,8 @@ def test_evolve_n_rounds_builds_and_heals_the_index_at_start(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=epoch_id,
-                harness_call_llm=_harness_call_llm,
-                auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+                harness_call_llm=harness_call_llm,
+                auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
                 instance_id="preflight-test",
             )
         )
@@ -263,9 +259,9 @@ def test_evolve_n_rounds_heals_a_diverged_index_before_the_first_round(
 
     from zicato.index.ingest import rebuild_index, validate_index
 
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -286,8 +282,8 @@ def test_evolve_n_rounds_heals_a_diverged_index_before_the_first_round(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=epoch_id,
-                harness_call_llm=_harness_call_llm,
-                auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+                harness_call_llm=harness_call_llm,
+                auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
                 instance_id="heal-test",
             )
         )
@@ -312,9 +308,9 @@ def test_the_index_preflight_never_aborts_a_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Best-effort: the index is derived, so a preflight failure is not fatal."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -332,8 +328,8 @@ def test_the_index_preflight_never_aborts_a_run(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
             instance_id="boom-test",
         )
     )
@@ -347,9 +343,9 @@ def test_round_settlement_populates_lineage_derived_columns(
     """Settlement indexes the pending lineage coordinates in the same round."""
     import sqlite3
 
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -363,8 +359,8 @@ def test_round_settlement_populates_lineage_derived_columns(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=epoch_id,
-                harness_call_llm=_harness_call_llm,
-                auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+                harness_call_llm=harness_call_llm,
+                auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
                 instance_id=instance_id,
             )
         )

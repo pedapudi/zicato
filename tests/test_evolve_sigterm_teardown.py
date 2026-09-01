@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._orchestrator_harness import _bootstrap_workspace
+from tests._orchestrator_harness import bootstrap_workspace
 from zicato.runtime.resume import prepare_resume
 
 _DRIVER = """
@@ -134,7 +134,7 @@ def _wait_until(predicate, *, timeout_s: float, what: str) -> None:
 
 @pytest.mark.slow
 def test_sigterm_mid_round_reaps_children_and_releases_lock(tmp_path: Path) -> None:
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
     driver = tmp_path / "driver.py"
     driver.write_text(_DRIVER)
     (tmp_path / "llm_stubs.py").write_text(_LLM_STUBS)

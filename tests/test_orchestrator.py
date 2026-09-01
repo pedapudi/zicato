@@ -26,13 +26,13 @@ import pytest
 
 from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
-    _bootstrap_workspace,
-    _harness_call_llm,
-    _install_stub_adapter_factory,
-    _install_telemetry_stubs,
-    _make_aux_responder,
-    _valid_proposer_response,
+    bootstrap_workspace,
+    harness_call_llm,
+    install_stub_adapter_factory,
+    install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
+    valid_proposer_response,
 )
 from zicato.epoch.lifecycle import new_epoch
 
@@ -103,17 +103,15 @@ def test_evolve_once_promotes_on_improvement(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A child with strictly lower drift_loss and same pass_rate promotes."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == "promoted"
     assert outcome.parent_generation_id == "v0"
@@ -151,7 +149,7 @@ def test_evolve_once_writes_a_real_health_round_report(
     Every other orchestrator test drives the REAL ``zicato.health``
     package (unlike ``test_orchestrator_health.py``, which substitutes its
     own fake ``zicato.health.diagnostics`` module) through this file's
-    shared ``_install_telemetry_stubs`` reducer stub. That stub used to
+    shared ``install_telemetry_stubs`` reducer stub. That stub used to
     omit ``split_judge_attributed_kind``, which ``detect_dead_judge``
     imports — so the real ``assess_loop_health`` raised ``ImportError``
     inside the orchestrator's best-effort wrapper on every one of these
@@ -159,17 +157,15 @@ def test_evolve_once_writes_a_real_health_round_report(
     asserted that file's existence, so the whole health tail silently
     exercised nothing. This pins the fixed behaviour.
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     assert outcome.tournament_decision == "promoted"
 
     report_path = workspace / "epochs" / epoch_id / "health" / "round_1.json"
@@ -192,9 +188,9 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
     """
     from zicato.epoch.lineage import load_lineage
 
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0, "v2": 0.5},
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
@@ -202,7 +198,7 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
 
     # Round 0: v0 -> v1, promoted. Birth round of v1 is 0.
     out0 = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]), round_index=0
+        workspace, epoch_id, make_aux_responder([valid_proposer_response()]), round_index=0
     )
     assert out0.tournament_decision == "promoted"
     assert out0.proposed_generation_id == "v1"
@@ -212,7 +208,7 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
 
     # Round 1: v1 -> v2, promoted. Birth round of v2 is 1; v1 keeps its.
     out1 = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]), round_index=1
+        workspace, epoch_id, make_aux_responder([valid_proposer_response()]), round_index=1
     )
     assert out1.proposed_generation_id == "v2"
 
@@ -246,9 +242,9 @@ def test_evolve_once_fast_mode_degrades_to_full_when_no_cache(
     tournament that round — which scores the parent and writes the
     cache — so subsequent fast rounds have a cache to reuse.
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -259,7 +255,7 @@ def test_evolve_once_fast_mode_degrades_to_full_when_no_cache(
     assert not v0_cache.exists()
 
     outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]), fast_mode=True
+        workspace, epoch_id, make_aux_responder([valid_proposer_response()]), fast_mode=True
     )
 
     assert outcome.tournament_decision == "promoted"
@@ -272,17 +268,15 @@ def test_evolve_once_rejects_when_child_regresses(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A child with higher drift and lower pass_rate does NOT promote."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 0.0, "v1": 5.0},
         canned_pass_by_gen={"v0": True, "v1": False},
     )
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason  # non-empty
@@ -308,9 +302,9 @@ def test_evolve_once_retries_destructive_patch_then_succeeds(
     proposer, which re-proposes a clean patch, and the round proceeds to
     a real tournament decision.
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -320,7 +314,7 @@ def test_evolve_once_retries_destructive_patch_then_succeeds(
     outcome = run_evolve_once(
         workspace,
         epoch_id,
-        _make_aux_responder([_destructive_proposer_response(), _valid_proposer_response()]),
+        make_aux_responder([_destructive_proposer_response(), valid_proposer_response()]),
     )
 
     # The round was NOT wasted — it reached a real tournament decision.
@@ -348,9 +342,9 @@ def test_evolve_once_rejects_when_destructive_patches_exhaust_retries(
     a ``rejected`` outcome whose reason names the post-apply findings,
     rather than crashing the evolve loop.
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -360,7 +354,7 @@ def test_evolve_once_rejects_when_destructive_patches_exhaust_retries(
     outcome = run_evolve_once(
         workspace,
         epoch_id,
-        _make_aux_responder([_destructive_proposer_response() for _ in range(3)]),
+        make_aux_responder([_destructive_proposer_response() for _ in range(3)]),
         max_proposer_retries=2,
     )
 
@@ -382,10 +376,10 @@ def test_evolve_n_rounds_stops_on_consecutive_rejections(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Three rejections in a row should halt the loop early."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
     # Same canned losses → every round rejects.
-    _install_telemetry_stubs(
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 0.0, "v1": 5.0, "v2": 5.0, "v3": 5.0, "v4": 5.0},
         canned_pass_by_gen={"v0": True, "v1": False, "v2": False, "v3": False, "v4": False},
@@ -395,14 +389,14 @@ def test_evolve_n_rounds_stops_on_consecutive_rejections(
 
     # Need a fresh proposer response per round because each call
     # consumes one — supply 10 (more than enough for any path).
-    responses = [_valid_proposer_response() for _ in range(10)]
+    responses = [valid_proposer_response() for _ in range(10)]
     outcomes = asyncio.run(
         evolve_n_rounds(
             rounds=8,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(responses),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder(responses),
             max_consecutive_rejections=3,
         )
     )
@@ -414,15 +408,15 @@ def test_evolve_round_writes_per_patch_layout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The orchestrator persists patches via the per-patch storage layout."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
+    run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     v1 = workspace / "epochs" / epoch_id / "generations" / "v1"
     body = json.loads((v1 / "experiment.json").read_text())
@@ -454,9 +448,9 @@ def test_evolve_once_dumps_mutations_json(monkeypatch: pytest.MonkeyPatch, tmp_p
     ``{id, kind, file, line_start, line_end, content, content_hash}``
     shape — Path fields stringified.
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -464,7 +458,7 @@ def test_evolve_once_dumps_mutations_json(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     from zicato.core.workspace import mutations_json_path
 
-    run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
+    run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     snapshot_path = mutations_json_path(workspace, epoch_id)
     assert snapshot_path.exists()
@@ -505,9 +499,9 @@ def test_evolve_n_rounds_populates_heartbeat_metadata(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The heartbeat carries the real epoch / generation / round during a round."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -521,8 +515,8 @@ def test_evolve_n_rounds_populates_heartbeat_metadata(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
             instance_id="hb-meta",
         )
     )
@@ -562,9 +556,9 @@ def test_evolve_once_regenerates_analysis_report(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """After a round, the comprehensive analysis report is regenerated."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -574,7 +568,7 @@ def test_evolve_once_regenerates_analysis_report(
     # one prose call. The decision-telemetry analyzer makes no LLM call
     # here because the stub telemetry emits no decision events.
     outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response(), _report_response()])
+        workspace, epoch_id, make_aux_responder([valid_proposer_response(), _report_response()])
     )
     assert outcome.tournament_decision == "promoted"
 
@@ -614,9 +608,9 @@ def test_evolve_once_survives_report_generation_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A crash inside report generation never aborts the round."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
@@ -631,9 +625,7 @@ def test_evolve_once_survives_report_generation_failure(
 
     monkeypatch.setattr(_analyzer_pkg, "generate_epoch_report", _boom)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
     # The round still produced its real verdict despite the report crash.
     assert outcome.tournament_decision == "promoted"
     assert outcome.proposed_generation_id == "v1"
@@ -732,14 +724,14 @@ def test_evolve_once_threads_configured_proposer_skill_into_system_prompt(
         'GREETING = "hello"\n'
     )
 
-    _install_stub_adapter_factory(monkeypatch)
-    _install_telemetry_stubs(
+    install_stub_adapter_factory(monkeypatch)
+    install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    aux, systems = _make_recording_aux([_valid_proposer_response()])
+    aux, systems = _make_recording_aux([valid_proposer_response()])
     run_evolve_once(workspace, cfg.id, aux)
 
     assert systems, "the proposer never called the auxiliary LLM"
