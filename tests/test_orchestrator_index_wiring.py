@@ -28,6 +28,7 @@ from tests._orchestrator_harness import (
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 
 # ---------------------------------------------------------------------------
@@ -106,16 +107,7 @@ def test_evolve_once_triggers_index_ingest(monkeypatch: pytest.MonkeyPatch, tmp_
     experiment_calls: list[tuple[Any, ...]] = []
     _install_fake_index(monkeypatch, run_calls=run_calls, experiment_calls=experiment_calls)
 
-    from zicato.orchestrator import evolve_once
-
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
-    )
+    run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
 
     # Full A/B tournament runs the single board entry under both v0 and
     # v1 → two ingest_run calls.
@@ -158,16 +150,9 @@ def test_evolve_once_survives_index_ingest_failure(
         raise_on_experiment=True,
     )
 
-    from zicato.orchestrator import evolve_once
-
     # The round must NOT raise even though every ingest call throws.
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     assert outcome.tournament_decision == "promoted"
@@ -206,15 +191,8 @@ def test_evolve_once_runs_without_index_sibling(
 
     monkeypatch.setattr("builtins.__import__", _blocking_import)
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     assert outcome.tournament_decision == "promoted"

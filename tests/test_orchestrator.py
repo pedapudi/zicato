@@ -32,6 +32,7 @@ from tests._orchestrator_harness import (
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 from zicato.epoch.lifecycle import new_epoch
 
@@ -110,15 +111,8 @@ def test_evolve_once_promotes_on_improvement(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     assert outcome.tournament_decision == "promoted"
@@ -173,15 +167,8 @@ def test_evolve_once_writes_a_real_health_round_report(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     assert outcome.tournament_decision == "promoted"
 
@@ -204,7 +191,6 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
     tests rather than asserted here.)
     """
     from zicato.epoch.lineage import load_lineage
-    from zicato.orchestrator import evolve_once
 
     workspace, epoch_id = _bootstrap_workspace(tmp_path)
     _install_stub_adapter_factory(monkeypatch)
@@ -215,14 +201,8 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
     )
 
     # Round 0: v0 -> v1, promoted. Birth round of v1 is 0.
-    out0 = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-            round_index=0,
-        )
+    out0 = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]), round_index=0
     )
     assert out0.tournament_decision == "promoted"
     assert out0.proposed_generation_id == "v1"
@@ -231,14 +211,8 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
     assert rounds0["v1"] == 0  # minted in round 0
 
     # Round 1: v1 -> v2, promoted. Birth round of v2 is 1; v1 keeps its.
-    out1 = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-            round_index=1,
-        )
+    out1 = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]), round_index=1
     )
     assert out1.proposed_generation_id == "v2"
 
@@ -280,20 +254,12 @@ def test_evolve_once_fast_mode_degrades_to_full_when_no_cache(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
     # No gen_score.json exists for v0 — fast mode must not crash.
     v0_cache = workspace / "epochs" / epoch_id / "generations" / "v0" / "gen_score.json"
     assert not v0_cache.exists()
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-            fast_mode=True,
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]), fast_mode=True
     )
 
     assert outcome.tournament_decision == "promoted"
@@ -314,15 +280,8 @@ def test_evolve_once_rejects_when_child_regresses(
         canned_pass_by_gen={"v0": True, "v1": False},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     assert outcome.tournament_decision == "rejected"
@@ -357,18 +316,11 @@ def test_evolve_once_retries_destructive_patch_then_succeeds(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
     # First response is destructive; the retry is clean.
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_destructive_proposer_response(), _valid_proposer_response()]
-            ),
-        )
+    outcome = run_evolve_once(
+        workspace,
+        epoch_id,
+        _make_aux_responder([_destructive_proposer_response(), _valid_proposer_response()]),
     )
 
     # The round was NOT wasted — it reached a real tournament decision.
@@ -404,19 +356,12 @@ def test_evolve_once_rejects_when_destructive_patches_exhaust_retries(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
     # Every attempt destructive; max_proposer_retries=2 → 3 attempts.
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_destructive_proposer_response() for _ in range(3)]
-            ),
-            max_proposer_retries=2,
-        )
+    outcome = run_evolve_once(
+        workspace,
+        epoch_id,
+        _make_aux_responder([_destructive_proposer_response() for _ in range(3)]),
+        max_proposer_retries=2,
     )
 
     assert outcome.tournament_decision == "rejected"
@@ -477,16 +422,7 @@ def test_evolve_round_writes_per_patch_layout(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
-    )
+    run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
 
     v1 = workspace / "epochs" / epoch_id / "generations" / "v1"
     body = json.loads((v1 / "experiment.json").read_text())
@@ -527,16 +463,8 @@ def test_evolve_once_dumps_mutations_json(monkeypatch: pytest.MonkeyPatch, tmp_p
     )
 
     from zicato.core.workspace import mutations_json_path
-    from zicato.orchestrator import evolve_once
 
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
-    )
+    run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
 
     snapshot_path = mutations_json_path(workspace, epoch_id)
     assert snapshot_path.exists()
@@ -642,20 +570,11 @@ def test_evolve_once_regenerates_analysis_report(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
     # The aux responder serves the proposer first, then the report's
     # one prose call. The decision-telemetry analyzer makes no LLM call
     # here because the stub telemetry emits no decision events.
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [_valid_proposer_response(), _report_response()]
-            ),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response(), _report_response()])
     )
     assert outcome.tournament_decision == "promoted"
 
@@ -712,15 +631,8 @@ def test_evolve_once_survives_report_generation_failure(
 
     monkeypatch.setattr(_analyzer_pkg, "generate_epoch_report", _boom)
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     # The round still produced its real verdict despite the report crash.
     assert outcome.tournament_decision == "promoted"
@@ -827,17 +739,8 @@ def test_evolve_once_threads_configured_proposer_skill_into_system_prompt(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
     aux, systems = _make_recording_aux([_valid_proposer_response()])
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=cfg.id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=aux,
-        )
-    )
+    run_evolve_once(workspace, cfg.id, aux)
 
     assert systems, "the proposer never called the auxiliary LLM"
     assert any(skill_body in s for s in systems)

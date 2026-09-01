@@ -20,7 +20,6 @@ on synthetic losses with no real model / subprocess traffic.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import sqlite3
@@ -32,11 +31,11 @@ import pytest
 # Reuse the fully-mocked harness from the gauntlet orchestrator tests.
 from tests._contract_pins import pin_deterministic
 from tests._orchestrator_harness import (
-    _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 from zicato.core.types import ScoringWeights, TournamentStructure
 from zicato.epoch.lifecycle import new_epoch
@@ -207,16 +206,8 @@ def test_swiss_field_runs_end_to_end_and_promotes(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            # field_size=2 ⇒ two proposer calls, one per challenger.
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     # A challenger from the field was crowned over the champion.
@@ -324,20 +315,11 @@ def test_field_diversity_soft_reject_persists_rejected_outcome(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
     # BOTH challengers are byte-identical (same core_idea + modulating id-set):
     # the second duplicates the first in-flight sibling and is soft-rejected to
     # keep the field diverse.
     dup = _distinct_proposer_response("swap the greeting string", "howdy")
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([dup, dup]),
-        )
-    )
+    run_evolve_once(workspace, epoch_id, _make_aux_responder([dup, dup]))
 
     gens = workspace / "epochs" / epoch_id / "generations"
     # v2 (the duplicate) was soft-rejected; its experiment.json now carries a
@@ -371,15 +353,8 @@ def test_swiss_field_rejects_when_no_challenger_beats_champion(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     assert outcome.tournament_decision == "rejected"
@@ -435,16 +410,8 @@ def test_fast_swiss_reuses_cached_champion(monkeypatch: pytest.MonkeyPatch, tmp_
         champion_run_log=champion_runs,
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-            fast_mode=True,
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2)), fast_mode=True
     )
 
     # The champion (v0) was NOT executed — the cached per-board scalars
@@ -488,17 +455,8 @@ def test_swiss_runs_each_gen_entry_at_most_once_over_multiple_rounds(
         champion_run_log=run_log,
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-            # fast (the default) is the always-on cache; assert it explicitly.
-            fast_mode=True,
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2)), fast_mode=True
     )
 
     # The board has ONE entry; the field is v0 + v1 + v2 = 3 competitors. A
@@ -527,18 +485,11 @@ def test_gauntlet_does_not_take_multi_path(monkeypatch: pytest.MonkeyPatch, tmp_
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
     # A single proposer response suffices iff the gauntlet path (one
     # challenger) ran; the multi path would request a second and the
     # responder would raise on exhaustion.
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     assert outcome.tournament_decision == "promoted"
     assert outcome.proposed_generation_id == "v1"
@@ -561,16 +512,7 @@ def test_field_status_records_applied_challengers(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
-    )
+    run_evolve_once(workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2)))
 
     from zicato.runtime.state import read_active_tournament
 
@@ -610,18 +552,10 @@ def test_field_status_when_all_challengers_rejected(
         canned_pass_by_gen={"v0": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
     # Empty proposer responses exhaust the (zero-retry) budget for every
     # challenger, so the whole field is rejected with a reason.
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(["", ""]),
-            max_proposer_retries=0,
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(["", ""]), max_proposer_retries=0
     )
 
     assert outcome.tournament_decision == "rejected"
@@ -699,25 +633,20 @@ def test_field_status_carries_per_attempt_validation_reason(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
     # Challenger v1 applies; challenger v2 fails BOTH attempts on the same
     # validation error (zero retries → one attempt each here would still
     # reject, but we give 1 retry to prove attempt_reasons accumulates).
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(
-                [
-                    _valid_proposer_response(),  # v1 attempt 1 → applied
-                    _findability_validation_response(),  # v2 attempt 1 → reject
-                    _findability_validation_response(),  # v2 attempt 2 → reject
-                ]
-            ),
-            max_proposer_retries=1,
-        )
+    run_evolve_once(
+        workspace,
+        epoch_id,
+        _make_aux_responder(
+            [
+                _valid_proposer_response(),
+                _findability_validation_response(),
+                _findability_validation_response(),
+            ]
+        ),
+        max_proposer_retries=1,
     )
 
     from zicato.runtime.state import read_active_tournament
@@ -776,16 +705,7 @@ def test_field_status_publishes_proposing_phase_live(
 
     monkeypatch.setattr(field, "_propose_and_apply_challenger", _wrapped)
 
-    from zicato.orchestrator import evolve_once
-
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
-    )
+    run_evolve_once(workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2)))
 
     # Each slot announces "proposing" before it settles to "applied".
     assert ("v1", "proposing") in seen
@@ -867,15 +787,8 @@ def test_applied_inflight_challenger_lineage_reports_pending_then_settles(
 
     monkeypatch.setattr(sel, "resolve_tournament", _tap_resolve)
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     # Mid-flight: BOTH applied challengers reported promoted=None (pending),
@@ -978,15 +891,9 @@ def test_field_override_promotes_a_non_winner(
     _queue_override(workspace, "reject", "v1", reason="too risky")
 
     from zicato.evolve.generation_phase import current_generation
-    from zicato.orchestrator import evolve_once
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     assert outcome.tournament_decision == "promoted"
@@ -1036,15 +943,9 @@ def test_field_override_multi_promote_advances_two(
     _queue_override(workspace, "promote", "v3", reason="co-leader worth keeping")
 
     from zicato.evolve.generation_phase import current_generation
-    from zicato.orchestrator import evolve_once
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(3)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(3))
     )
 
     assert outcome.tournament_decision == "promoted"
@@ -1096,15 +997,9 @@ def test_field_override_rejects_every_challenger_champion_stands(
     _queue_override(workspace, "reject", "v2", reason="regression risk")
 
     from zicato.evolve.generation_phase import current_generation
-    from zicato.orchestrator import evolve_once
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     assert outcome.tournament_decision == "rejected"
@@ -1168,15 +1063,8 @@ def test_rejected_round_summary_carries_the_gate_s_own_scalars(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     assert outcome.tournament_decision == "rejected"
