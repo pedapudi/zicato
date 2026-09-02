@@ -1,31 +1,40 @@
-"""``zicato proposer propose`` — generate a new :class:`Experiment` for the next generation.
+"""``zicato proposer propose`` — run one proposal episode and keep its experiment.
 
-ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` proposes
-an experiment internally on every round. Run ``zicato proposer propose`` by hand
-only to generate (and inspect) a single experiment without running the
-tournament.
+ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` proposes on
+every round. Run this by hand only to see what the proposer does with a
+workspace's current evidence, without spending a tournament on it.
+
+It is the same episode. The command assembles the round's proposal
+context and hands it to the agent the round resolves, which builds its
+request through :func:`zicato.proposer.foe_request.build_request` — so
+what an operator debugs here is what the loop runs, rather than a second
+stitching of the same inputs that drifts from it.
+
+What it includes of the round's inputs, and what it does not:
+
+* Included: the epoch's frozen proposer brief and skills, the mutation
+  manifest enumerated from the parent generation's own snapshot, the
+  cross-run loss patterns, the loss summary, the board's declared judge
+  names, and the settled experiment-memory digest. These are what make a proposal grounded, and
+  every one of them is already train-slice-only and redacted where the
+  round redacts it.
+* Not included: the round's per-round derived channels — the failure-mode
+  profile, the metric priorities, the process exemplars, the genealogy
+  sample and the calibration record. Each is computed by the round from
+  the tournament state it is about to spend, and none is reconstructible
+  outside a round without opening one.
+
+The command is read-only with respect to the loop. It appends nothing
+to the lineage, opens no tournament, records no outcome and reads no
+unit cache. Of the board it reads one thing, the set of declared judge
+names, because that is what makes a predicted movement valid — never an
+entry's content, and so never a holdout entry's content. Its one write
+is the experiment document, under ``epochs/<epoch>/proposals/``, a
+directory nothing in the loop reads.
 
 Standalone command file. Auto-discovered under
 ``zicato/cli/commands/``; intentionally does not import from
 ``zicato.cli`` so discovery stays one-way.
-
-The command stitches together the proposer's inputs from the workspace:
-
-* Workspace config (``<workspace>/config.json``) → source roots, current
-  epoch, model id for the auxiliary LLM.
-* Epoch config (``<workspace>/epochs/<epoch_id>/scoring.json``) and the
-  proposer brief (``<workspace>/epochs/<epoch_id>/brief.md``).
-* Latest generation → mutation manifest. If a ``mutations.json`` is
-  cached for the latest generation, it is read; otherwise the command
-  re-enumerates from the source roots if the enumerator is importable.
-* Cross-run loss patterns. Either read from ``--patterns-from <file>``
-  (JSON) or, when absent and the detectors package is importable, run
-  fresh against the latest generation's loss profiles.
-
-The orchestration is intentionally tolerant of missing sibling
-packages: ``zicato.mutation`` and ``zicato.patterns`` are imported
-lazily so this command file can be installed and exercised before its
-sibling packages land.
 """
 
 from __future__ import annotations
@@ -41,12 +50,11 @@ import click
 from zicato.core.types import MutationPoint, Pattern
 from zicato.core.workspace import (
     epoch_dir,
-    experiment_json_path,
     generation_dir,
 )
-from zicato.epoch.journal import write_experiment
+from zicato.proposer.agent import ProposerContext
 from zicato.proposer.brief import load_brief
-from zicato.proposer.proposer import ProposerError, propose_experiment
+from zicato.proposer.proposer import ProposerError
 from zicato.workspace import WorkspaceLayout, generation_ids, next_generation_id
 from zicato.workspace.config_io import WorkspaceConfig, read_workspace_config
 
@@ -114,56 +122,26 @@ def _list_generations(workspace_dir: Path, epoch_id: str) -> list[str]:
     return generation_ids(WorkspaceLayout.from_root(workspace_dir), epoch_id)
 
 
-def _load_mutations(workspace_dir: Path, epoch_id: str, parent_gen: str) -> list[MutationPoint]:
-    """Load mutation points for the parent generation.
+def _load_mutations(workspace_dir: Path, generation_root: Path) -> list[MutationPoint]:
+    """Enumerate the mutation points of the tree the episode will edit.
 
-    Prefers a cached ``mutations.json`` under the generation directory.
-    Falls back to importing :mod:`zicato.mutation` and re-enumerating
-    against the workspace's source roots. When neither path works,
-    raises a click error pointing the operator at ``zicato inspect mutations``.
+    Read off the parent generation's materialised snapshot rather than
+    the workspace's ``source_roots``, and rather than a cached manifest:
+    the episode edits a copy of that snapshot, and every change it makes
+    is projected back onto these points by path and line range. A
+    manifest describing any other tree names files the projection cannot
+    match, and every proposal would be refused as an edit outside every
+    declared point.
     """
-
-    gen_dir = generation_dir(workspace_dir, epoch_id, parent_gen)
-    cache_path = gen_dir / "mutations.json"
-    if cache_path.exists():
-        try:
-            data = json.loads(cache_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise click.ClickException(f"Could not parse {cache_path}: {exc}") from exc
-        return [
-            MutationPoint(
-                id=item["id"],
-                kind=item["kind"],
-                file=Path(item["file"]),
-                source_root=Path(item["source_root"]),
-                line_start=int(item["line_start"]),
-                line_end=int(item["line_end"]),
-                content=item.get("content", ""),
-                content_hash=item["content_hash"],
-                metadata=dict(item.get("metadata", {})),
-            )
-            for item in data.get("points", [])
-        ]
-
     try:
         mutation_pkg = importlib.import_module("zicato.mutation.enumerator")
-    except ImportError as exc:
-        raise click.ClickException(
-            "No cached mutations.json and zicato.mutation is unavailable. "
-            "Run `zicato inspect mutations --format=json > "
-            f"{cache_path}` first."
-        ) from exc
-    config = _load_workspace_config(workspace_dir)
-    source_roots = [Path(r) for r in config.source_roots]
-    if not source_roots:
-        raise click.ClickException(
-            "Workspace config has no 'source_roots'; cannot enumerate mutations."
-        )
+    except ImportError as exc:  # pragma: no cover - the package ships with zicato
+        raise click.ClickException(f"zicato.mutation is unavailable: {exc}") from exc
+
     from zicato.workspace_loader import activate_mutation_surface  # noqa: PLC0415
 
     activate_mutation_surface(workspace_dir)
-    enumerate_mutations = mutation_pkg.enumerate_mutations
-    return list(enumerate_mutations(source_roots))
+    return list(mutation_pkg.enumerate_mutations([generation_root]))
 
 
 def _load_patterns(
@@ -252,11 +230,66 @@ def _load_custom_judge_names(workspace_dir: Path) -> frozenset[str]:
     return frozenset(names)
 
 
-# This module writes no experiment itself: every write goes through
-# :func:`zicato.epoch.journal.write_experiment`, which owns the per-patch
-# storage layout. Keeping the serialization pattern (asdict / Path
-# coercion) localised in journal.py is what routes every writer of an
-# experiment through one helper.
+def _write_proposal(
+    workspace_dir: Path, epoch_id: str, generation_id: str, experiment: Any
+) -> Path:
+    """Write one debug proposal under the epoch, outside the loop's tree.
+
+    Deliberately NOT
+    :func:`zicato.epoch.journal.write_experiment`: that mints the
+    generation the loop is about to mint, so a debugging run would leave a
+    half-built generation in the epoch's own sequence. A proposal lands in
+    ``proposals/`` instead, named for the generation it was proposed for,
+    where re-running the command overwrites its own last answer and
+    nothing else.
+    """
+    from dataclasses import asdict  # noqa: PLC0415
+
+    out_dir = epoch_dir(workspace_dir, epoch_id) / "proposals"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{generation_id}.json"
+    path.write_text(
+        json.dumps(asdict(experiment), indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _resolve_agent(
+    workspace_dir: Path, config: WorkspaceConfig, epoch_id: str, parent_gen: str
+) -> tuple[Any, Path]:
+    """The agent the round would resolve, and the tree it proposes against.
+
+    Resolved from the same three inputs the round resolves it from — the
+    workspace's declared proposer, the epoch's frozen proposer directory,
+    and the parent generation's materialised snapshot — so a debugging
+    proposal runs the epoch's own proposer rather than a stand-in for it.
+    """
+    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
+    from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
+    from zicato.proposer.agent import build_proposer_agent  # noqa: PLC0415
+    from zicato.proposer.external import external_proposer_config  # noqa: PLC0415
+    from zicato.proposer.skills import resolve_proposer_spec  # noqa: PLC0415
+
+    binding = external_proposer_config(config.raw, workspace_dir)
+    if binding is None:
+        raise click.ClickException(
+            f"{config.path} declares no `proposer` block, so this workspace has "
+            "not said how it proposes. Add one naming the absolute path of the "
+            "Foe binary its proposal episodes run (see docs/design/PROPOSER.md)."
+        )
+    epoch_cfg = load_epoch(workspace_dir, epoch_id)
+    spec = resolve_proposer_spec(epoch_cfg.proposer_path, binding)
+    try:
+        agent = build_proposer_agent(
+            spec, proposer_path=epoch_cfg.proposer_path, external_config=binding
+        )
+        generation_root = default_generation_store(workspace_dir).materialize_snapshot(
+            epoch_id, parent_gen
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    return agent, generation_root
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +407,9 @@ def propose_cmd(
     parent_gen = existing[-1]
     new_gen = next_generation_id(existing)
 
-    mutations = _load_mutations(workspace_dir, epoch_id, parent_gen)
+    agent, generation_root = _resolve_agent(workspace_dir, config, epoch_id, parent_gen)
+
+    mutations = _load_mutations(workspace_dir, generation_root)
     if not mutations:
         raise click.ClickException(
             "No mutation points were enumerated; cannot propose a patch set."
@@ -401,27 +436,30 @@ def propose_cmd(
 
     try:
         experiment = asyncio.run(
-            propose_experiment(
-                epoch_id=epoch_id,
-                parent_generation_id=parent_gen,
-                new_generation_id=new_gen,
-                patterns=patterns,
-                mutations=mutations,
-                brief_text=brief.text,
-                current_loss_summary=loss_summary,
-                aux_call_llm=aux_call_llm,
-                model=model,
-                max_retries=max_retries,
-                forbidden_ids=brief.forbidden_ids,
-                custom_judge_names=custom_judge_names,
-                prior_experiments=prior,
+            agent.propose(
+                ProposerContext(
+                    epoch_id=epoch_id,
+                    parent_generation_id=parent_gen,
+                    new_generation_id=new_gen,
+                    patterns=tuple(patterns),
+                    mutations=tuple(mutations),
+                    brief_text=brief.text,
+                    current_loss_summary=loss_summary,
+                    aux_call_llm=aux_call_llm,
+                    model=model,
+                    max_retries=max_retries,
+                    forbidden_ids=brief.forbidden_ids,
+                    workspace_root=workspace_dir,
+                    generation_root=generation_root,
+                    custom_judge_names=custom_judge_names,
+                    prior_experiments=tuple(prior),
+                )
             )
         )
     except ProposerError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    write_experiment(workspace_dir, epoch_id, new_gen, experiment)
-    out_path = experiment_json_path(workspace_dir, epoch_id, new_gen)
+    out_path = _write_proposal(workspace_dir, epoch_id, new_gen, experiment)
     click.echo(f"Wrote experiment {experiment.id} for {epoch_id}/{new_gen} to {out_path}")
 
 
