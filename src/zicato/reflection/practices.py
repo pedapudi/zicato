@@ -26,7 +26,9 @@ with it (no drift):
 * :func:`generalization_trend` composes
   :func:`zicato.health.diagnostics.detect_generalization_gap`;
 * :func:`promotion_hygiene` composes
-  :func:`zicato.health.diagnostics.detect_margin_below_noise_floor`.
+  :func:`zicato.health.diagnostics.detect_margin_below_noise_floor` and takes
+  the margin-vs-floor arithmetic behind it from
+  :func:`zicato.tournament.calibration.assess_margin_against_floor_record`.
 
 The verdict vocabulary is ``sound`` (an affirmation — reported, never
 suppressed) / ``attend`` (a soft deficiency) / ``unsound`` (an anti-practice
@@ -100,10 +102,6 @@ ADVISORY_DOWNWEIGHT: float = 0.5
 #: Spread of measured judge disagreement rates above which leaving a worse-end
 #: judge at the default weight is worth attending to (ch.04 §10).
 WEIGHT_DIVERGENCE_DELTA: float = 0.2
-
-#: Multiplier applied to the noise floor when recommending a margin clear of it
-#: (BOARD-REFLECTION.md §"margin from noise floor": 2–3× the noise SD).
-MARGIN_FLOOR_MULTIPLE: float = 2.5
 
 # Check ids.
 CHECK_ORACLE_MIX = "oracle_mix"
@@ -914,8 +912,7 @@ def check_promotion_hygiene(
     from zicato.health.diagnostics import detect_margin_below_noise_floor  # noqa: PLC0415
     from zicato.selection.evidence_gate import read_promote_confidence_threshold  # noqa: PLC0415
     from zicato.tournament.calibration import (  # noqa: PLC0415
-        margin_below_floor,
-        recommended_promote_margin_from_floor,
+        assess_margin_against_floor_record,
     )
 
     rationale = "a promotion on a sub-floor margin with no evidence gate promotes noise (§3/§6)."
@@ -940,7 +937,13 @@ def check_promotion_hygiene(
     board_size = len(board_entries)
     min_split = int(getattr(of, "min_board_size_for_split", 6)) if of is not None else 6
     holdout_on = bool(getattr(of, "enabled", False)) and board_size >= min_split
-    below_floor = margin_below_floor(margin, noise_floor)
+    # The whole margin-vs-floor arithmetic — whether the margin sits inside the
+    # noise, what to recommend instead, and whether acting on it would actually
+    # RAISE the gate — comes from the calibration domain (ch.04 §9.4). This
+    # check renders it as a practice verdict; the health detector below renders
+    # the same assessment as a finding.
+    margin_noise = assess_margin_against_floor_record(margin, noise_floor)
+    below_floor = margin_noise is not None
     # Compose the existing detector (translate its finding into the practice).
     mbf = detect_margin_below_noise_floor(noise_floor, margin, gate_on)
     evidence = {
@@ -951,35 +954,18 @@ def check_promotion_hygiene(
         "margin_below_floor": below_floor,
         "margin_below_floor_finding": bool(mbf),
     }
-    if below_floor and not gate_on:
-        floor_max = (
-            float(noise_floor.get("max_abs_delta", 0.0)) if isinstance(noise_floor, dict) else 0.0
-        )
-        # Scale the draw-count-STABLE dispersion, never the range (ch.04 §9.4):
-        # ``max_abs_delta`` grows in K, so a recommendation scaled off it drifts
-        # upward on an unchanged board as calibration improves — and this
-        # recommendation is APPLIABLE (``set_gate``), so the drift lands in the
-        # contract and can push the margin past the measured signal. The range
-        # stays the COMPARISON statistic (``margin_below_floor`` above); only
-        # the recommendation moves. Falls back to the range for a record that
-        # carries no usable ``delta_std``.
-        recommended = round(
-            recommended_promote_margin_from_floor(noise_floor) or MARGIN_FLOOR_MULTIPLE * floor_max,
-            6,
-        )
-        # ...which means the two statistics can DISAGREE, and only in one
-        # direction: the range grows with the calibration draw count K while
-        # the dispersion does not, so a well-measured floor (K ≳ 12 draws) can
-        # put ``max_abs_delta`` above 2.5 × delta_std. The margin then sits
-        # below the range — firing this check — while already clearing 2.5
-        # sigma of the dispersion the gate actually thresholds. Shipping the
-        # smaller number anyway would hand the operator an UNSOUND verdict
-        # whose one-command remedy LOWERS promote_margin: a machine-appliable
-        # gate weakening, emitted by the check whose whole subject is
-        # promoting on noise. Propose nothing there and say why. Provably
-        # unreachable on the no-delta_std path, where the fallback is 2.5 ×
-        # the range and the range already exceeds the margin.
-        raises_margin = recommended > margin
+    if margin_noise is not None and not gate_on:
+        floor_max = margin_noise.max_abs_delta
+        recommended = margin_noise.rounded_recommended_margin
+        # When the floor's two statistics disagree (see
+        # ``MarginNoiseAssessment.recommendation_raises_margin``), shipping the
+        # smaller number would hand the operator an UNSOUND verdict whose
+        # one-command remedy LOWERS promote_margin: a machine-appliable gate
+        # weakening, emitted by the check whose whole subject is promoting on
+        # noise. Propose nothing there and say why. Unreachable on the
+        # no-delta_std path, where the fallback is the range times the multiple
+        # and the range already exceeds the margin.
+        raises_margin = margin_noise.recommendation_raises_margin
         evidence["recommended_promote_margin"] = recommended
         evidence["recommendation_raises_margin"] = raises_margin
         if raises_margin:
@@ -1215,7 +1201,6 @@ def rank_checks_for_report(review: PracticeReview) -> list[PracticeCheck]:
 __all__ = [
     "ADVISORY_DOWNWEIGHT",
     "BUDGET_OUTLIER_FACTOR",
-    "MARGIN_FLOOR_MULTIPLE",
     "MAX_REPLICATE_BUMP",
     "MIN_CRITERION_WORDS",
     "MONOCULTURE_SHARE",
