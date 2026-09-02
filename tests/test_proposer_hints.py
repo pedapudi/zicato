@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests._proposal_evidence import render_proposal_evidence
 from zicato.analyzer.outcome_marginals import OutcomeMarginalSummary
 from zicato.core.types import Experiment, ProposerQualityConfig
 from zicato.proposer.agent import ProposerContext
@@ -27,7 +28,7 @@ from zicato.proposer.hints import (
     hint_for_slot,
     strategy_for_slot,
 )
-from zicato.proposer.prompts import render_failure_mode_profile, render_user_prompt
+from zicato.proposer.prompts import render_failure_mode_profile
 from zicato.testing import make_experiment, make_hypothesis_spec, make_mutation_point, make_patch
 
 # ---------------------------------------------------------------------------
@@ -151,13 +152,13 @@ def test_empty_profile_renders_byte_identical_prompts() -> None:
     to the pre-conditioning behaviour when the profile carries no signal."""
     mutations = (make_mutation_point(id="router__sp"),)
     for i, n in ((0, 3), (1, 3), (2, 3), (4, 5)):
-        historical = render_user_prompt(
+        historical = render_proposal_evidence(
             current_loss_summary="loss=1.0",
             patterns=(),
             mutations=mutations,
             sample_hint=EDIT_CLASS_HINTS[i % len(EDIT_CLASS_HINTS)],
         )
-        conditioned = render_user_prompt(
+        conditioned = render_proposal_evidence(
             current_loss_summary="loss=1.0",
             patterns=(),
             mutations=mutations,

@@ -1,9 +1,11 @@
-"""The external-proposer seam: ``runtime.proposer_agent`` (issue #147 phase 1).
+"""The external-proposer seam: an operator's own ``runtime.proposer_agent``.
 
-Covers the three things the seam has to get right:
+The seam is the loop's single proposer boundary. Its default and only
+supported implementation is the Foe-backed proposer; what these cases
+cover is the other door — a class the operator supplies themselves.
 
-* **resolution** — a dotted path becomes an agent, ahead of both ADK
-  tiers, with an error that names the field when it does not;
+* **resolution** — a dotted path becomes an agent, with an error that
+  names the field when it does not;
 * **identity** — the class's causal surface is folded into the proposer
   contract component, so configuring an external proposer (or changing
   what it runs on) rolls the epoch;
@@ -38,12 +40,12 @@ from zicato.proposer.external import (
 )
 from zicato.proposer.skills import resolve_proposer_spec
 
-#: The canonical form of the built-in default proposer, spelled out. This
-#: literal is the guard: any change to `_canon_proposer`'s shape that
-#: reaches an unconfigured workspace moves every epoch in every workspace.
-BUILTIN_CANON = (
-    '{"agent_id": "builtin:default", "agent_source_sha256": null, "skills": [], "tools": []}'
-)
+#: The canonical form a workspace that declares no proposal runtime
+#: hashes to, spelled out. This literal is the guard: any change to
+#: `_canon_proposer`'s shape that reaches such a workspace moves every
+#: epoch in every workspace, including the ones that can still hash their
+#: contract on a machine with no Foe binary.
+BUILTIN_CANON = '{"agent_id": "builtin:default", "skills": [], "tools": []}'
 
 _DOTTED = "tests.test_proposer_external_seam:StubExternalAgent"
 
@@ -101,14 +103,14 @@ def test_config_is_none_without_the_key() -> None:
 
 def test_config_reads_the_runtime_block() -> None:
     config = external_proposer_config(
-        {"runtime": {"proposer_agent": _DOTTED, "pi_bin": "/opt/pi", "parallelism": 4}},
+        {"runtime": {"proposer_agent": _DOTTED, "instance_id": "ws-1", "parallelism": 4}},
         Path("/ws"),
     )
     assert config is not None
     assert config.dotted_path == _DOTTED
     assert config.workspace_root == Path("/ws")
     # Non-string runtime values are dropped rather than coerced.
-    assert config.options == {"proposer_agent": _DOTTED, "pi_bin": "/opt/pi"}
+    assert config.options == {"proposer_agent": _DOTTED, "instance_id": "ws-1"}
 
 
 def test_build_proposer_agent_resolves_the_external_class_first() -> None:
@@ -173,7 +175,8 @@ def test_skills_survive_alongside_an_external_agent(tmp_path: Path) -> None:
 # -- contract folding --------------------------------------------------------
 
 
-def test_unconfigured_canonical_form_is_unchanged() -> None:
+def test_a_workspace_declaring_no_runtime_canonicalizes_without_one() -> None:
+    """It hashes, and it hashes without asking any binary anything."""
     assert _canon_proposer(None) == BUILTIN_CANON
     assert json.loads(_canon_proposer(None)) == json.loads(BUILTIN_CANON)
 

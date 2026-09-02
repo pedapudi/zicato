@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
+from tests._foe_support import stand_in_proposer_block
 from zicato.check import CheckContext, WorkspaceCheckError, build_report
 from zicato.cli.commands.evolve import evolve_cmd
 from zicato.core.types import ScoringWeights
@@ -111,7 +112,14 @@ def _workspace(
             # No adapter block at all: the pre-factory shape, where the
             # trees live at the config top level.
             config["mutable_trees"] = registered
-    config = {"generation_source_backend": "directory", **config}
+    # Every workspace the gate reads declares how it proposes, because
+    # every workspace that runs a round must: a test whose subject IS a
+    # missing or unfilled runtime overrides the block explicitly.
+    config = {
+        "generation_source_backend": "directory",
+        "proposer": stand_in_proposer_block(root.parent / "foe"),
+        **config,
+    }
     (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
     if scoring is not None or board is not None:
         scoring = dict(scoring or {})
@@ -708,6 +716,88 @@ def test_a_clean_workspace_dry_runs_to_zero_without_spending(tmp_path: Path) -> 
     assert "Nothing was spent." in result.output
     assert "1 board entry" in result.output
     assert "1 mutation point" in result.output
+
+
+def test_a_workspace_declaring_no_proposal_runtime_is_refused(tmp_path: Path) -> None:
+    """No block, no bound class: the round could not open, so the gate says so."""
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={"proposer": None, "adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT}},
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    (root / "config.json").write_text(
+        json.dumps(
+            {
+                k: v
+                for k, v in json.loads((root / "config.json").read_text()).items()
+                if k != "proposer"
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert "proposal_runtime_unusable" in _codes(root)
+
+
+def test_the_scaffold_s_placeholder_binary_is_refused_by_name(tmp_path: Path) -> None:
+    """A freshly initialized workspace is told which field only it can fill."""
+    from zicato.proposer.foe_config import UNSET_BINARY, scaffold_proposer_block
+
+    block = scaffold_proposer_block()
+    block["model"] = {"provider": "example", "model": "a-model"}
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={"proposer": block, "adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT}},
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+
+    report = build_report(CheckContext(root, live_contract=True))
+    assert "proposal_runtime_binary_unset" in {f.code for f in report.findings}
+    summary = next(f.summary for f in report.findings if f.code == "proposal_runtime_binary_unset")
+    assert UNSET_BINARY in summary
+
+
+def test_a_binary_that_is_not_there_is_refused(tmp_path: Path) -> None:
+    """Foe searches no path, so an absolute name that resolves to nothing fails."""
+    block = stand_in_proposer_block(tmp_path / "foe")
+    block["binary"] = str(tmp_path / "nowhere" / "foe")
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={"proposer": block, "adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT}},
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+
+    assert "proposal_runtime_binary_absent" in _codes(root)
+
+
+def test_a_retired_proposer_configuration_is_refused_by_the_gate(tmp_path: Path) -> None:
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "runtime": {"pi_bin": "/opt/removed-runtime/bin/agent"},
+            "adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT},
+        },
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+
+    assert "proposal_runtime_unusable" in _codes(root)
+
+
+def test_an_operator_bound_class_is_left_to_its_own_configuration(tmp_path: Path) -> None:
+    """The seam cannot know what would make someone else's class runnable."""
+    block = stand_in_proposer_block(tmp_path / "foe")
+    block["binary"] = str(tmp_path / "nowhere" / "foe")
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "proposer": block,
+            "runtime": {"proposer_agent": "acme.proposers:HouseProposer"},
+            "adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT},
+        },
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+
+    assert not {c for c in _codes(root) if c.startswith("proposal_runtime")}
 
 
 def test_implicit_evolve_accepts_a_live_drift_only_contract(tmp_path: Path) -> None:

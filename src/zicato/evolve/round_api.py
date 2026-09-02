@@ -83,7 +83,7 @@ def _declared_custom_judge_names(board: list[Any], weights: Any) -> frozenset[st
     * every ``JudgeSpec.name`` on every board entry (``board[*].judges``);
     * every key of :attr:`ScoringWeights.per_judge_weights`.
 
-    Threaded into :func:`zicato.proposer.proposer.propose_experiment` so
+    Threaded into the proposal episode's evidence so
     the hypothesis validator accepts ``drift:<judge_name>`` for a declared
     judge and still rejects an unknown drift kind.
     """

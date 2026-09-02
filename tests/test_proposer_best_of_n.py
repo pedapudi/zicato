@@ -531,22 +531,24 @@ async def test_n1_direct_propose_carries_no_hint() -> None:
     assert inner.hints == [""]
 
 
-def test_sample_hint_renders_a_prompt_section_only_when_set() -> None:
-    from zicato.proposer.prompts import render_user_prompt
+def test_sample_hint_renders_an_evidence_section_only_when_set() -> None:
+    from tests._proposal_evidence import render_proposal_evidence
 
     base_kwargs: dict = {
         "current_loss_summary": "loss=1.0",
         "patterns": (),
         "mutations": _MUTATIONS,
     }
-    plain = render_user_prompt(**base_kwargs)
+    plain = render_proposal_evidence(**base_kwargs)
     assert "Edit-class hint" not in plain
-    # Empty hint is byte-identical to the pre-surface prompt.
-    assert render_user_prompt(**base_kwargs, sample_hint="") == plain
-    hinted = render_user_prompt(**base_kwargs, sample_hint="Prefer the smallest grounded fix.")
+    # An empty hint renders the evidence a hintless sample would get.
+    assert render_proposal_evidence(**base_kwargs, sample_hint="") == plain
+    hinted = render_proposal_evidence(
+        **base_kwargs, sample_hint="Prefer the smallest grounded fix."
+    )
     assert hinted.startswith("## Edit-class hint (this sample)\n")
     assert "Prefer the smallest grounded fix." in hinted
-    # The hint only PREPENDS — the rest of the prompt is unchanged.
+    # The hint only PREPENDS — the rest of the evidence is unchanged.
     assert hinted.endswith(plain)
 
 

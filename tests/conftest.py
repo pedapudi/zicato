@@ -50,22 +50,6 @@ if str(_REPO_ROOT) not in sys.path:
 
 
 # ---------------------------------------------------------------------------
-# Default-proposer pinning for the google-adk-free orchestrator/evolve suite
-# ---------------------------------------------------------------------------
-
-#: Test modules that exercise the REAL default-proposer selection (and so
-#: must NOT have the builtin default pinned to the text shim). They either
-#: assert on the selected agent type or drive the ADK default agent through
-#: their own monkeypatched ``build_default_adk_agent``.
-_REAL_DEFAULT_PROPOSER_MODULES = frozenset(
-    {
-        "test_proposer_agent",
-        "test_proposer_adk_agent",
-    }
-)
-
-
-# ---------------------------------------------------------------------------
 # The slow tier: dropped from the bare default run, and from nothing else.
 # ---------------------------------------------------------------------------
 
@@ -160,50 +144,6 @@ def _isolate_mutation_syntax_table() -> Iterator[None]:
     install_syntax_table(None)
     yield
     install_syntax_table(None)
-
-
-@pytest.fixture(autouse=True)
-def _pin_default_proposer_to_text_shim(
-    request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Pin the builtin-default proposer to the text-shim engine in tests.
-
-    The production DEFAULT proposer is the tool-using ADK agent, which pulls
-    in the optional ``google-adk`` extra and a real model at propose time.
-    The orchestrator / evolve test suites stub the auxiliary callable and
-    assert on tournament / lineage outcomes — they are about the loop, not
-    the proposer model — and the suite contract is that they run without
-    ``google-adk`` or real model traffic.
-
-    This autouse fixture wraps
-    :func:`zicato.proposer.agent.build_proposer_agent` so the builtin-default
-    spec resolves to a text-shim :class:`DefaultProposerAgent` (driven by the
-    stubbed auxiliary callable, exactly as before the default flipped), while
-    EVERY other spec — a custom ``agent.py`` proposer, a skills-only dir —
-    still flows through the real builder. Modules in
-    :data:`_REAL_DEFAULT_PROPOSER_MODULES` opt out so the real selection (and
-    the real ADK default-agent path) is still tested directly there.
-    """
-    module_name = request.module.__name__.rsplit(".", 1)[-1]
-    if module_name in _REAL_DEFAULT_PROPOSER_MODULES:
-        return
-
-    from zicato.core.types import ProposerSpec
-    from zicato.proposer import agent as proposer_agent_mod
-
-    real_build = proposer_agent_mod.build_proposer_agent
-
-    def _build(
-        spec: ProposerSpec,
-        proposer_path: Path | None = None,
-        external_config: Any = None,
-    ) -> Any:
-        if spec == ProposerSpec.default():
-            return proposer_agent_mod.DefaultProposerAgent(spec)
-        return real_build(spec, proposer_path, external_config)
-
-    monkeypatch.setattr(proposer_agent_mod, "build_proposer_agent", _build)
 
 
 # ---------------------------------------------------------------------------

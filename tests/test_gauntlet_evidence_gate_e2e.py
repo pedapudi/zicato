@@ -56,6 +56,7 @@ import pytest
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
+from tests._foe_support import stand_in_proposer_block
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
 from zicato_examples.target_0_convergence import mocks as t0_mocks
@@ -84,6 +85,9 @@ def _bootstrap(tmp_path: Path, replicate_budget: int) -> tuple[Path, str]:
         json.dumps(
             {
                 "instance_id": "default",
+                "proposer": stand_in_proposer_block(
+                    tmp_path / "foe", contents=t0_mocks.GAUNTLET_POLICIES
+                ),
                 "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
@@ -121,7 +125,6 @@ def _bootstrap(tmp_path: Path, replicate_budget: int) -> tuple[Path, str]:
 def _run_one_round(workspace: Path, epoch_id: str) -> list:
     from zicato.evolve.loop import evolve_n_rounds
 
-    t0_mocks.reset()
     return asyncio.run(
         evolve_n_rounds(
             rounds=1,

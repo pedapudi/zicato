@@ -1555,11 +1555,10 @@ function mutationSurfacePanel(sc) {
 function proposerSection(d) {
   const p = d.proposer || {};
   const skills = Array.isArray(p.skills) ? p.skills : [];
-  const isAgent = !!p.has_custom_agent;
   const pq = ((d.scoring || {}).proposer_quality) || {};
   const em = ((d.scoring || {}).experiment_memory) || {};
   return section('Proposer',
-    el('p', { class: 'dn-lede', text: 'Who proposes each challenger: the skill-composed builtin default, a discovered proposer dir, or an explicit path — plus the proposer-quality levers (best-of-N slate, self-critique, cross-epoch memory). Changing the proposer or any lever is a contract edit — it rolls the epoch.' }),
+    el('p', { class: 'dn-lede', text: 'How each challenger is proposed: the proposal runtime this workspace declares, steered by this epoch\'s brief and the skills of its proposer directory — plus the proposer-quality levers (best-of-N slate, self-critique, cross-epoch memory). Changing the proposer directory or any lever is a contract edit — it rolls the epoch.' }),
     proposerPicker(d),
     briefEditor(d),
     controlRow('Best-of-N slate', {
@@ -1608,10 +1607,6 @@ function proposerSection(d) {
       (on) => runOp('set_experiment_memory', { cross_epoch: on }))),
     mutationSurfacePanel(d.scoring || {}),
     el('div', { class: 'dn-bld-panel' }, [
-      el('div', { class: 'dn-bld-kv' }, [
-        el('span', { class: 'dn-bld-k', text: 'mode' }),
-        el('span', { class: 'dn-bld-v', text: isAgent ? 'custom ADK agent' : 'skill-composed default' }),
-      ]),
       el('div', { class: 'dn-bld-kv' }, [
         el('span', { class: 'dn-bld-k', text: 'agent id' }),
         el('span', { class: 'dn-bld-v dn-mono', text: p.agent_id || '—' }),

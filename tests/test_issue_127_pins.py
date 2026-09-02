@@ -1,28 +1,22 @@
-"""Triage pins for issue #127 — ``AttributeError`` conflated with a missing symbol.
+"""``AttributeError`` conflated with a missing symbol, at every loader.
 
-``ADKProposerAgent._load_agent`` wraps ``getattr(module, "agent")`` in a bare
-``except AttributeError`` and reports "has no 'agent' symbol"
-(``src/zicato/proposer/adk_agent.py:322-326``). With a PEP-562 module-level
-``__getattr__`` the attribute access IS the construction, so an
-``AttributeError`` raised while BUILDING the agent — a renamed attribute in a
-dependency, a wrong import path — is reported as an authoring mistake in the
-proposer's own ``agent.py``. Both cases currently produce a byte-identical
-message; only ``__cause__`` (which the operator never sees) tells them apart.
+A loader that wraps ``getattr(module, name)`` in a bare
+``except AttributeError`` cannot tell two different failures apart. With
+a PEP-562 module-level ``__getattr__`` the attribute access IS the
+construction, so an ``AttributeError`` raised while BUILDING the object —
+a renamed attribute in a dependency, a wrong import path — reads as the
+author having forgotten to define the symbol at all. Without care both
+produce a byte-identical message, and only ``__cause__``, which the
+operator never sees, tells them apart. ``zicato.import_path`` was the
+worst of them, re-raising ``from None`` and destroying the traceback.
 
-The same conflation recurs at four sibling loaders. ``zicato.import_path``
-is the worst of them because it re-raises ``from None``, actively discarding
-the original traceback:
-
-* ``src/zicato/import_path.py:85`` — ``from None`` (traceback destroyed)
-* ``src/zicato/adapters/adk.py:1908`` — harness entrypoint, chains ``from exc``
-* ``src/zicato/synthetic/adversarial.py:126`` — chains ``from exc``
-* ``src/zicato/judge_runtime/builder.py:369`` — chains ``from exc``
-
-FIXED: all five sites now route their caught ``AttributeError`` through
-``zicato.import_path.explain_attribute_error``, which distinguishes a
+Every loader now routes its caught ``AttributeError`` through
+:func:`zicato.import_path.explain_attribute_error`, which distinguishes a
 genuine absence from a failure raised inside the access itself, and
-``import_path`` chains ``from exc``. Every test below is a live guard —
-the ``xfail`` markers were removed when the fix landed.
+``import_path`` chains ``from exc``. The guards below hold that at the
+dotted-path loader — the one the proposer seam, the runtime factory and
+the adapter factory all resolve through — and at the adversarial and
+judge-builder resolvers.
 
 ``adapters/adk.py`` has no direct guard here: reaching its ``getattr``
 needs a snapshot-backed ``ADKHarnessAdapter.load``, which is far more
@@ -38,13 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from zicato.core.types import ProposerSpec
-from zicato.proposer.adk_agent import ADKProposerAgent
-from zicato.proposer.proposer import ProposerError
-
-_SPEC = ProposerSpec(agent_id="issue127", tools=(), skills=(), agent_source_sha256=None)
-
-#: A proposer dir whose ``agent`` symbol is provided LAZILY and whose
+#: A module whose ``agent`` symbol is provided LAZILY and whose
 #: construction raises ``AttributeError`` for a reason that has nothing to do
 #: with the symbol being absent.
 _LAZY_AGENT_PY = textwrap.dedent(
@@ -62,65 +50,8 @@ _LAZY_AGENT_PY = textwrap.dedent(
     """
 )
 
-#: A proposer dir that genuinely forgot to define ``agent``.
+#: A module that genuinely forgot to define ``agent``.
 _MISSING_AGENT_PY = "SOMETHING_ELSE = 1\n"
-
-
-def _proposer_dir(tmp_path: Path, name: str, body: str) -> Path:
-    d = tmp_path / name
-    d.mkdir()
-    (d / "agent.py").write_text(body, encoding="utf-8")
-    return d
-
-
-def _load_error(proposer_path: Path) -> ProposerError:
-    agent = ADKProposerAgent(_SPEC, proposer_path=proposer_path)
-    with pytest.raises(ProposerError) as excinfo:
-        agent._load_agent(None)
-    return excinfo.value
-
-
-def test_lazy_construction_failure_is_not_blamed_on_a_missing_symbol(
-    tmp_path: Path,
-) -> None:
-    """A lazily-built ``agent`` that fails to construct must say so.
-
-    The message an operator reads must not assert the symbol is absent when
-    the module provides it lazily and the CONSTRUCTION is what raised.
-    """
-    err = _load_error(_proposer_dir(tmp_path, "lazy", _LAZY_AGENT_PY))
-    message = "\n".join(err.attempts)
-
-    assert "has no 'agent' symbol" not in message
-    # The underlying failure must be legible in what the operator is shown.
-    assert "build_llm_agent" in message
-
-
-def test_genuinely_missing_symbol_still_reports_a_missing_symbol(
-    tmp_path: Path,
-) -> None:
-    """Regression guard: the true missing-symbol case keeps its message.
-
-    Fixing the conflation must not blur the case the message was written for.
-    """
-    err = _load_error(_proposer_dir(tmp_path, "missing", _MISSING_AGENT_PY))
-    message = "\n".join(err.attempts)
-
-    assert "has no 'agent' symbol" in message
-
-
-def test_both_cases_chain_the_original_attribute_error(tmp_path: Path) -> None:
-    """Regression guard: ``__cause__`` is preserved on this loader today.
-
-    Issue #127 claims the chaining is discarded; on THIS site it is not
-    (``raise ... from exc``). The discarding site is ``import_path.py``,
-    pinned separately below.
-    """
-    lazy = _load_error(_proposer_dir(tmp_path, "lazy2", _LAZY_AGENT_PY))
-    missing = _load_error(_proposer_dir(tmp_path, "missing2", _MISSING_AGENT_PY))
-
-    assert isinstance(lazy.__cause__, AttributeError)
-    assert isinstance(missing.__cause__, AttributeError)
 
 
 def test_import_dotted_path_preserves_the_attribute_error_cause(

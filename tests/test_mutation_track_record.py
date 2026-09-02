@@ -24,12 +24,12 @@ from pathlib import Path
 
 import pytest
 
+from tests._proposal_evidence import render_proposal_evidence
 from zicato.index.query import MutationTrackRecord, mutation_point_track_record
 from zicato.index.schema import apply_schema
 from zicato.proposer.prompts import (
     render_mutation_block,
     render_mutation_track_annotation,
-    render_user_prompt,
 )
 from zicato.proposer.tools import (
     DEFAULT_PROPOSER_TOOLS,
@@ -235,10 +235,10 @@ def test_user_prompt_threads_track_records_and_stays_byte_identical_without() ->
         "patterns": (),
         "mutations": (make_mutation_point(id="router__sp"),),
     }
-    plain = render_user_prompt(**kwargs)
-    assert render_user_prompt(**kwargs, mutation_track_records=None) == plain
-    assert render_user_prompt(**kwargs, mutation_track_records={}) == plain
-    annotated = render_user_prompt(**kwargs, mutation_track_records={"router__sp": _record()})
+    plain = render_proposal_evidence(**kwargs)
+    assert render_proposal_evidence(**kwargs, mutation_track_records=None) == plain
+    assert render_proposal_evidence(**kwargs, mutation_track_records={}) == plain
+    annotated = render_proposal_evidence(**kwargs, mutation_track_records={"router__sp": _record()})
     assert "track record: touched:3" in annotated
 
 

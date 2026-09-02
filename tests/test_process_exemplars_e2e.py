@@ -21,10 +21,10 @@ Asserted here, per ``docs/design/PROCESS-EXEMPLARS.md``:
   board input text (the task prompt rides ``run_started.goal_summary``,
   an unlisted case), and no run id reaches the prompt.
 
-The prompt is captured by wrapping the single-shot engine's
-``render_user_prompt`` seam (the target_0 proposer dir is skill-composed,
-so it drives :func:`zicato.proposer.proposer.propose_experiment`
-in-process); the subprocess workers are untouched.
+What the model saw is read back from the workspace's own durable capture
+(:func:`zicato.proposer.input_capture.read_proposer_inputs`, filtered to
+the proposal role), so the assertion is over the text the episode was
+actually given rather than over a patched renderer.
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ import pytest
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
+from tests._foe_support import stand_in_proposer_block
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 
@@ -79,6 +80,9 @@ def _bootstrap(tmp_path: Path) -> tuple[Path, str]:
         json.dumps(
             {
                 "instance_id": "default",
+                "proposer": stand_in_proposer_block(
+                    tmp_path / "foe", contents=t0_mocks.GAUNTLET_POLICIES
+                ),
                 "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
@@ -109,23 +113,9 @@ def _bootstrap(tmp_path: Path) -> tuple[Path, str]:
 def test_exemplar_block_renders_redacted_from_the_first_round(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import zicato.proposer.proposer as proposer_mod
     from zicato.evolve.loop import evolve_n_rounds
-    from zicato.proposer.prompts import render_user_prompt as real_render
-
-    captured: list[str] = []
-
-    def _recording_render(**kwargs: object) -> str:
-        rendered = real_render(**kwargs)  # type: ignore[arg-type]
-        captured.append(rendered)
-        return rendered
-
-    # The single-shot engine (the target_0 proposer dir is skill-composed)
-    # renders its user prompt through this module-level seam, in-process.
-    monkeypatch.setattr(proposer_mod, "render_user_prompt", _recording_render)
 
     workspace, epoch_id = _bootstrap(tmp_path)
-    t0_mocks.reset()
     outcomes = asyncio.run(
         evolve_n_rounds(
             rounds=2,
@@ -143,7 +133,14 @@ def test_exemplar_block_renders_redacted_from_the_first_round(
     assert outcomes[0].tournament_decision == "promoted"
     assert outcomes[1].tournament_decision == "rejected"
 
-    # One captured prompt per round (single-sample proposer, no retries).
+    # The task each round's episode was given, read off the workspace's
+    # own durable capture rather than a patched renderer: this is the text
+    # the model saw. One episode per round (single-sample proposer).
+    from zicato.proposer.input_capture import ROLE_PROPOSAL, read_proposer_inputs
+
+    captured = [
+        r["user"] for r in read_proposer_inputs(workspace, epoch_id) if r["role"] == ROLE_PROPOSAL
+    ]
     assert len(captured) == 2
     round_1, round_2 = captured
 
@@ -159,7 +156,7 @@ def test_exemplar_block_renders_redacted_from_the_first_round(
     # the frequency pattern and the exemplar window renders.
     section_at = round_2.find("## Process exemplars (train slice — redacted event windows)")
     assert section_at != -1, "round 2 rendered no exemplar section"
-    assert "Redaction contract (PROCESS-EXEMPLARS.md)" in round_2
+    assert "Entry ids and task text are stripped" in round_2
     # Positioned directly after the failure-mode profile block.
     profile_at = round_2.find("## Failure-mode profile")
     assert profile_at != -1 and profile_at < section_at

@@ -43,6 +43,34 @@ def test_init_creates_workspace(tmp_path: Path) -> None:
     assert load_lineage(workspace) == {"epochs": []}
 
 
+def test_init_scaffolds_the_proposal_runtime_unfilled(tmp_path: Path) -> None:
+    """A new workspace carries the block to fill in, and nothing runnable.
+
+    Every field is spelled out with its documented default so an operator
+    edits rather than researches, and the one field only they can supply —
+    the absolute path of the Foe binary — is left as a placeholder. Foe
+    searches no path for a binary, so there is nothing sensible to guess.
+    """
+    from zicato.proposer.external import UNSET_BINARY, external_proposer_config
+    from zicato.proposer.foe_config import VIEWER_POLICIES
+
+    workspace = tmp_path / ".zicato"
+    result = CliRunner().invoke(init_cmd, ["--workspace", str(workspace)])
+    assert result.exit_code == 0, result.output
+
+    config = json.loads((workspace / CONFIG_FILENAME).read_text())
+    block = config["proposer"]
+    assert block["binary"] == UNSET_BINARY
+    assert block["budget"]["model_calls"] >= 1
+    assert block["viewer"] in VIEWER_POLICIES
+    assert set(block["model"]) == {"provider", "model", "options"}
+
+    # Until the binary is named, the workspace has not said how it
+    # proposes: the contract still hashes, with no binary present, and a
+    # round refuses to open.
+    assert external_proposer_config(config, workspace) is None
+
+
 def test_init_records_the_generation_source_backend(tmp_path: Path) -> None:
     """A new workspace records which generation store it is built on.
 

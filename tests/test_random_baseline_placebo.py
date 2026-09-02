@@ -18,13 +18,13 @@ import pytest
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import pin_deterministic, resolved_contract_with_proposer
+from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     install_stub_adapter_factory,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
 )
-from tests.test_orchestrator_multi_challenger import _distinct_field_responses
 from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
 from zicato.core.types import OverfittingConfig, ScoringWeights, TournamentStructure
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
@@ -216,6 +216,7 @@ def _bootstrap_t0(tmp_path: Path, *, every_n: int) -> tuple[Path, str]:
         json.dumps(
             {
                 "instance_id": "default",
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "created_at": "2026-07-01T00:00:00Z",
                 "generation_source_backend": "directory",
                 "adapter": {
@@ -246,7 +247,6 @@ def _bootstrap_t0(tmp_path: Path, *, every_n: int) -> tuple[Path, str]:
 def _run_one_round(workspace: Path, epoch_id: str) -> list:
     from zicato.evolve.loop import evolve_n_rounds
 
-    t0_mocks.reset()
     return asyncio.run(
         evolve_n_rounds(
             rounds=1,
@@ -374,6 +374,7 @@ def _bootstrap_swiss_with_placebo(tmp_path: Path, *, field_size: int) -> tuple[P
         json.dumps(
             {
                 "instance_id": "test",
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "created_at": "2026-05-31T00:00:00Z",
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
@@ -440,7 +441,7 @@ def test_multi_challenger_field_gets_extra_placebo_slot(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "promoted"
     assert outcome.proposed_generation_id == "v1"

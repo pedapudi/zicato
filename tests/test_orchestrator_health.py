@@ -33,7 +33,6 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
-    valid_proposer_response,
 )
 
 # ---------------------------------------------------------------------------
@@ -137,7 +136,7 @@ def _run_one_round(
     )
     _install_fake_health(monkeypatch, health=health, calls=calls)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     return workspace, epoch_id, outcome
 
 
@@ -376,7 +375,7 @@ def test_evolve_once_runs_without_health_sibling(
 
     monkeypatch.setattr("builtins.__import__", _blocking_import)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "promoted"
     # No assessment ran → no summary, not critical, no report file.
@@ -480,7 +479,7 @@ def test_evolve_n_rounds_stops_on_consecutive_critical_health(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([valid_proposer_response() for _ in range(4)]),
+            auxiliary_call_llm=make_aux_responder([]),
             max_consecutive_rejections=99,  # isolate the health breaker
         )
     )
@@ -518,7 +517,7 @@ def test_evolve_n_rounds_opt_out_of_health_stop(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([valid_proposer_response() for _ in range(3)]),
+            auxiliary_call_llm=make_aux_responder([]),
             max_consecutive_rejections=99,
             stop_on_degenerate_health=False,
         )

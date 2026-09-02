@@ -326,8 +326,8 @@ call nests under its propose or `slot` span and a judge under `gate`. The
 payload rides the COMPLETED envelope's `summary`, which is the same field the
 structural spans use for `meta`: `_emit_paired_started` stashes the started
 payload by invocation id, and `_emit_paired_completed` folds it in under the
-completed metrics. With no ambient span — a bare `propose_experiment` in a unit
-test, for instance — the parent is empty and the lifeline renders as a root.
+completed metrics. With no ambient span — a bare propose in a unit test,
+for instance — the parent is empty and the lifeline renders as a root.
 
 **Back-compat.** Old `meta_loop_events.jsonl` files still carry blob parents on
 their proposer/judge started lines; harmonograf tolerates them (a non-matching

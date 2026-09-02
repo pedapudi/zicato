@@ -562,7 +562,7 @@ removing a tree does
 ### 3.2.6 proposer — `_canon_proposer` (skills fold in, the tool registry does not)
 
 The sixth canonical form. `_canon_proposer(proposer_path)` resolves the proposer dir
-(or `None` ⇒ the built-in default) to a `ProposerSpec` via
+(or `None`) and the workspace's proposer binding to a `ProposerSpec` via
 `zicato.proposer.skills.resolve_proposer_spec`, then reduces it to a sorted-key
 JSON string (`src/zicato/epoch/contract.py::_canon_proposer`):
 
@@ -572,7 +572,6 @@ JSON string (`src/zicato/epoch/contract.py::_canon_proposer`):
         "agent_id": spec.agent_id,
         "tools": sorted(spec.tools),
         "skills": skills,
-        "agent_source_sha256": spec.agent_source_sha256,
     }
     return json.dumps(canon, sort_keys=True, ensure_ascii=False)
 ```
@@ -584,7 +583,7 @@ What folds in, and what rolls the epoch:
 | `agent_id` | `"builtin:default"` or `"dir:<name>"` | you configure a proposer dir (builtin → dir), or rename the dir |
 | `tools` | the tool names, **sorted** | — (always empty; see the trap below) |
 | `skills` | `[{"name", "sha256"}]` sorted by name; each `sha256` is over the **normalized** body | a semantic skill edit; adding / removing / renaming a skill |
-| `agent_source_sha256` | SHA-256 of a custom `agent.py`'s bytes, or `null` | any byte of the custom agent |
+| `external` | the class's dotted path + the digest of its causal surface; for the Foe agent that digest is the runtime's own contract fingerprint | declaring how the workspace proposes, or any change to what the runtime hashes — the instructions, a tool's description or schema, the grant shape, the budget, the build |
 
 Skill bodies are normalized the same way as the brief (`normalize_skill_body`
 mirrors `_canon_brief`), so a whitespace-only skill edit does not move the hash
@@ -597,14 +596,14 @@ hash (`::test_proposer_hash_stable_across_filesystem_reorder`).
 > ⚠️ TRAP — the `tools` key is present in the canonical form but
 > `ProposerSpec.tools` is **always empty**: `resolve_proposer_spec` sets
 > `tools=()` for both the built-in proposer and any dir proposer, because no
-> proposer declares its tools. The read-only tool REGISTRY
-> (`DEFAULT_PROPOSER_TOOLS`) is zicato *source code*: it ships with the package,
+> proposer declares its tools. The sanctioned tool list
+> (`SANCTIONED_TOOLS`) is zicato *source code*: it ships with the package,
 > is versioned with the code, and is identical for every workspace on a given
-> zicato version. Hashing it would therefore roll every epoch on every zicato
-> upgrade without changing the operator's authored contract. The tools a custom
-> `agent.py` constructs itself DO roll, because that choice lives in
-> `agent_source_sha256`. See 05-proposer.md §"Why tools do NOT fold into the
-> contract hash" for the full argument.
+> zicato version. Hashing it here would therefore roll every epoch on every
+> zicato upgrade without changing the operator's authored contract. What the
+> tools SAY to the model does roll, because that lives in
+> the runtime's own fingerprint, under `external`. See 05-proposer.md
+> §"Why tools do NOT fold into the contract hash" for the full argument.
 
 The built-in default (`proposer_path=None`) produces a stable canonical string.
 An *empty proposer dir* does not canonicalize as the built-in default: its

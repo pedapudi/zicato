@@ -182,8 +182,8 @@ cost-conscious override assigns a smaller engine explicitly:
 The target and emulator trust domains must be distinct. The persona is the
 only private instruction the emulator sees; target internals and the entry's
 expectation are withheld. A `call_llm` engine provides a constrained text
-emulator. Selecting another model engine does not turn the emulator into a Pi
-or tool-using session; that would require a separate restricted emulator
+emulator. Selecting another model engine does not turn the emulator into a
+tool-using session; that would require a separate restricted emulator
 implementation with no repository tools, one fresh session per run, and an
 auditable transcript.
 

@@ -194,7 +194,7 @@ def _load_prior_experiments(
     """Best-effort read of the epoch's settled experiment-memory digest.
 
     The orchestrator threads the result into
-    :func:`zicato.proposer.proposer.propose_experiment` so the proposer
+    the proposal episode's evidence so the proposer
     sees the ``## What's already been tried`` section. Mirrors
     :func:`_ingest_experiment_into_index`: the :mod:`zicato.index` sibling
     may be absent and a missing / stale index must never abort a round, so

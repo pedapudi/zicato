@@ -70,7 +70,7 @@ function freshDraft() {
     ],
     brief: 'be crisper',
     proposer_path: null,
-    proposer: { agent_id: 'default', tools: ['edit'], skills: [{ name: 'compose', description: 'compose a proposer' }], has_custom_agent: false },
+    proposer: { agent_id: 'default', tools: ['edit'], skills: [{ name: 'compose', description: 'compose a proposer' }] },
     holdout: { train_ids: ['waffles', 'picky'], holdout_ids: [] },
   };
 }

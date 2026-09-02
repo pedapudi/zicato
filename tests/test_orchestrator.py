@@ -4,15 +4,14 @@ These tests stub every external dependency (LLM callables, harness
 adapter, telemetry sink, reducer) so the orchestrator can be exercised
 end-to-end without goldfive, google-adk, or any real model traffic.
 
-The DEFAULT proposer is now the tool-using ADK agent, which would pull in
-the optional ``google-adk`` extra and a real model at propose time. These
-tests are about the orchestrator's tournament / promotion / lineage logic,
-not the proposer model, so the shared conftest autouse fixture
-(``_pin_default_proposer_to_text_shim``) pins the builtin-default proposer
-to the text-shim :class:`DefaultProposerAgent` — the same skill-composed
-engine these tests have always driven through the auxiliary callable. The
-real ADK default-agent path is covered by
-``tests/test_proposer_adk_agent.py`` (which gates on ``google.adk``).
+The proposer is not stubbed. These tests are about the orchestrator's
+tournament / promotion / lineage logic rather than about how a candidate
+is invented, but a round cannot open without a proposal runtime, so
+``bootstrap_workspace`` declares the stand-in one
+(:func:`tests._foe_support.stand_in_proposer_block`) and every round runs
+a real Foe episode per candidate against a binary that needs no
+credential, no network and no model. A test whose subject IS a
+misbehaving proposer steers that stand-in through the same helper.
 """
 
 from __future__ import annotations
@@ -25,6 +24,7 @@ from typing import Any
 import pytest
 
 from tests._contract_pins import deterministic_weights
+from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     bootstrap_workspace,
     harness_call_llm,
@@ -32,7 +32,6 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
-    valid_proposer_response,
 )
 from zicato.epoch.lifecycle import new_epoch
 
@@ -56,44 +55,6 @@ from zicato.epoch.lifecycle import new_epoch
 # ---------------------------------------------------------------------------
 
 
-def _destructive_proposer_response() -> str:
-    """A schema-valid response whose patch breaks the snapshot post-apply.
-
-    The patch targets the ``greet_logic`` ``:code`` region — a region body
-    is written verbatim (real control flow the proposer owns), so a
-    truncated block (a dangling ``if``) genuinely fails to parse in place.
-    A span replace can no longer corrupt the snapshot (issue #11): the
-    applier wraps stray-quote prose into a collision-proof literal. So to
-    still exercise the destructive-patch retry path we break a ``:code``
-    region, which is the remaining surface a proposer can legitimately
-    leave unparseable.
-    """
-    return json.dumps(
-        {
-            "hypothesis": {
-                "core_idea": "rewrite the greeting logic",
-                "modulating": ["greet_logic"],
-                "why": "Exercising the destructive-patch retry path.",
-                "expected_drift_movements": [
-                    {"kind": "off_topic", "direction": "decrease", "magnitude": "small"}
-                ],
-                "expected_pass_rate_delta": "+0.0 to +0.1",
-                "risks": "destructive on purpose",
-            },
-            "patches": [
-                {
-                    "mutation_id": "greet_logic",
-                    "op": "replace",
-                    # Truncated control flow — a dangling ``if`` breaks
-                    # Python syntax once written verbatim into the region.
-                    "new_content": "    if",
-                    "rationale": "destructive patch under test",
-                }
-            ],
-        }
-    )
-
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -111,7 +72,7 @@ def test_evolve_once_promotes_on_improvement(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "promoted"
     assert outcome.parent_generation_id == "v0"
@@ -127,9 +88,9 @@ def test_evolve_once_promotes_on_improvement(
     patch_file = v1_dir / "patches" / f"{body['patch_ids'][0]}.json"
     assert patch_file.exists()
 
-    # Snapshot was applied: the new greeting landed.
+    # Snapshot was applied: the episode's edit landed.
     snap_text = (v1_dir / "snapshot" / "agent.py").read_text()
-    assert '"world"' in snap_text
+    assert "hello [v1]" in snap_text
 
     # current_generation marker bumped.
     marker = workspace / "epochs" / epoch_id / "current_generation"
@@ -138,7 +99,7 @@ def test_evolve_once_promotes_on_improvement(
 
     # Journal entry appended.
     journal = (workspace / "epochs" / epoch_id / "journal.md").read_text()
-    assert "swap the greeting string" in journal
+    assert "Tag the greeting literal for candidate v1." in journal
 
 
 def test_evolve_once_writes_a_real_health_round_report(
@@ -165,7 +126,7 @@ def test_evolve_once_writes_a_real_health_round_report(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     assert outcome.tournament_decision == "promoted"
 
     report_path = workspace / "epochs" / epoch_id / "health" / "round_1.json"
@@ -197,9 +158,7 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
     )
 
     # Round 0: v0 -> v1, promoted. Birth round of v1 is 0.
-    out0 = run_evolve_once(
-        workspace, epoch_id, make_aux_responder([valid_proposer_response()]), round_index=0
-    )
+    out0 = run_evolve_once(workspace, epoch_id, make_aux_responder([]), round_index=0)
     assert out0.tournament_decision == "promoted"
     assert out0.proposed_generation_id == "v1"
 
@@ -207,9 +166,7 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
     assert rounds0["v1"] == 0  # minted in round 0
 
     # Round 1: v1 -> v2, promoted. Birth round of v2 is 1; v1 keeps its.
-    out1 = run_evolve_once(
-        workspace, epoch_id, make_aux_responder([valid_proposer_response()]), round_index=1
-    )
+    out1 = run_evolve_once(workspace, epoch_id, make_aux_responder([]), round_index=1)
     assert out1.proposed_generation_id == "v2"
 
     rounds1 = _lineage_round_index(load_lineage(workspace), epoch_id)
@@ -254,9 +211,7 @@ def test_evolve_once_fast_mode_degrades_to_full_when_no_cache(
     v0_cache = workspace / "epochs" / epoch_id / "generations" / "v0" / "gen_score.json"
     assert not v0_cache.exists()
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, make_aux_responder([valid_proposer_response()]), fast_mode=True
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]), fast_mode=True)
 
     assert outcome.tournament_decision == "promoted"
     # The seeding full round wrote the parent's cached aggregate, so a
@@ -276,7 +231,7 @@ def test_evolve_once_rejects_when_child_regresses(
         canned_pass_by_gen={"v0": True, "v1": False},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason  # non-empty
@@ -302,7 +257,9 @@ def test_evolve_once_retries_destructive_patch_then_succeeds(
     proposer, which re-proposes a clean patch, and the round proceeds to
     a real tournament decision.
     """
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    # The episode's first edit is destructive; its verifier reports the
+    # findings and the episode repairs itself on the next turn.
+    workspace, epoch_id = bootstrap_workspace(tmp_path, break_first=1)
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -310,12 +267,7 @@ def test_evolve_once_retries_destructive_patch_then_succeeds(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    # First response is destructive; the retry is clean.
-    outcome = run_evolve_once(
-        workspace,
-        epoch_id,
-        make_aux_responder([_destructive_proposer_response(), valid_proposer_response()]),
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     # The round was NOT wasted — it reached a real tournament decision.
     assert outcome.tournament_decision == "promoted"
@@ -329,20 +281,23 @@ def test_evolve_once_retries_destructive_patch_then_succeeds(
         workspace / "epochs" / epoch_id / "generations" / "v1" / "snapshot" / "agent.py"
     ).read_text()
     ast.parse(snap_text)
-    assert '"world"' in snap_text
-    assert "unterminated" not in snap_text
+    assert "hello [v1]" in snap_text
+    assert "    if\n" not in snap_text
 
 
-def test_evolve_once_rejects_when_destructive_patches_exhaust_retries(
+def test_evolve_once_rejects_when_the_episode_cannot_repair_its_edit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """When every proposer attempt is destructive the round rejects cleanly.
+    """An episode whose verifier is never satisfied rejects the round cleanly.
 
-    The retry budget is bounded — once exhausted the orchestrator emits
-    a ``rejected`` outcome whose reason names the post-apply findings,
-    rather than crashing the evolve loop.
+    The verifier's retries are bounded. Once they are spent the episode
+    ends BLOCKED rather than crashing, and the round settles that as a
+    rejection whose reason names the block — so the evolve loop keeps
+    going and the journal says why nothing was proposed.
     """
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    # Every turn writes the same unparseable edit, so the verifier's
+    # findings can never be answered.
+    workspace, epoch_id = bootstrap_workspace(tmp_path, break_first=99)
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -350,24 +305,12 @@ def test_evolve_once_rejects_when_destructive_patches_exhaust_retries(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    # Every attempt destructive; max_proposer_retries=2 → 3 attempts.
-    outcome = run_evolve_once(
-        workspace,
-        epoch_id,
-        make_aux_responder([_destructive_proposer_response() for _ in range(3)]),
-        max_proposer_retries=2,
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]), max_proposer_retries=2)
 
     assert outcome.tournament_decision == "rejected"
-    # The reason names the bounded-retry exhaustion and the validator
-    # findings, so a journal reader can see what the proposer broke.
-    assert "proposer_retries_exhausted" in outcome.rejection_reason
-    assert "post-apply" in outcome.rejection_reason.lower()
+    assert outcome.rejection_reason
 
     # A clean, append-only journal entry was still written.
-    v1_dir = workspace / "epochs" / epoch_id / "generations" / "v1"
-    body = json.loads((v1_dir / "experiment.json").read_text())
-    assert body["outcome"]["tournament_decision"] == "rejected"
     journal = (workspace / "epochs" / epoch_id / "journal.md").read_text()
     assert journal.strip()  # non-empty — the round left a record
 
@@ -387,16 +330,13 @@ def test_evolve_n_rounds_stops_on_consecutive_rejections(
 
     from zicato.orchestrator import evolve_n_rounds
 
-    # Need a fresh proposer response per round because each call
-    # consumes one — supply 10 (more than enough for any path).
-    responses = [valid_proposer_response() for _ in range(10)]
     outcomes = asyncio.run(
         evolve_n_rounds(
             rounds=8,
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder(responses),
+            auxiliary_call_llm=make_aux_responder([]),
             max_consecutive_rejections=3,
         )
     )
@@ -416,7 +356,7 @@ def test_evolve_round_writes_per_patch_layout(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     v1 = workspace / "epochs" / epoch_id / "generations" / "v1"
     body = json.loads((v1 / "experiment.json").read_text())
@@ -458,7 +398,7 @@ def test_evolve_once_dumps_mutations_json(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     from zicato.core.workspace import mutations_json_path
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     snapshot_path = mutations_json_path(workspace, epoch_id)
     assert snapshot_path.exists()
@@ -516,7 +456,7 @@ def test_evolve_n_rounds_populates_heartbeat_metadata(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
+            auxiliary_call_llm=make_aux_responder([]),
             instance_id="hb-meta",
         )
     )
@@ -538,20 +478,6 @@ def test_evolve_n_rounds_populates_heartbeat_metadata(
 # ---------------------------------------------------------------------------
 
 
-def _report_response() -> str:
-    """A valid four-block prose response for the epoch analysis report."""
-    return (
-        "===ABSTRACT===\n"
-        "The epoch is exercising the orchestrator under test.\n"
-        "===INTRODUCTION===\n"
-        "The inner harness is a stub agent used by the test suite.\n"
-        "===ANALYSIS===\n"
-        "Generation v1 was evaluated against the champion.\n"
-        "===CONCLUSION===\n"
-        "Continue with the next mutation.\n"
-    )
-
-
 def test_evolve_once_regenerates_analysis_report(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -564,12 +490,10 @@ def test_evolve_once_regenerates_analysis_report(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    # The aux responder serves the proposer first, then the report's
-    # one prose call. The decision-telemetry analyzer makes no LLM call
-    # here because the stub telemetry emits no decision events.
-    outcome = run_evolve_once(
-        workspace, epoch_id, make_aux_responder([valid_proposer_response(), _report_response()])
-    )
+    # No auxiliary call is scripted: the per-round refresh re-templates the
+    # publication's data-bearing sections from workspace data and spends no
+    # tokens, and the proposal is a Foe episode rather than an aux call.
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     assert outcome.tournament_decision == "promoted"
 
     # The report landed as analysis.md + analysis.html under the epoch.
@@ -594,8 +518,9 @@ def test_evolve_once_regenerates_analysis_report(
         "## Conclusion & Next Directions",
     ):
         assert section in md_text, section
-    # The LLM prose and the deterministic per-generation data both landed.
-    assert "exercising the orchestrator" in md_text
+    # The round's own data landed: the candidate's hypothesis, as the
+    # episode stated it, and the generation it was stated for.
+    assert "Tag the greeting literal for candidate v1." in md_text
     assert "v1" in md_text
     assert html.read_text().startswith("<!DOCTYPE html>")
 
@@ -625,43 +550,22 @@ def test_evolve_once_survives_report_generation_failure(
 
     monkeypatch.setattr(_analyzer_pkg, "generate_epoch_report", _boom)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     # The round still produced its real verdict despite the report crash.
     assert outcome.tournament_decision == "promoted"
     assert outcome.proposed_generation_id == "v1"
 
 
-def _make_recording_aux(responses: list[str]) -> tuple[Any, list[str]]:
-    """An aux callable that yields ``responses`` in order and records systems.
-
-    Returns the callable paired with a list that accumulates the ``system``
-    argument of each call, so a test can assert what reached the model.
-    """
-    systems: list[str] = []
-    state = {"i": 0}
-
-    async def _aux(system: str, user: str, model: str) -> str:
-        del user, model
-        systems.append(system)
-        i = state["i"]
-        if i >= len(responses):
-            raise AssertionError("stub aux LLM ran out of responses")
-        state["i"] = i + 1
-        return responses[i]
-
-    return _aux, systems
-
-
-def test_evolve_once_threads_configured_proposer_skill_into_system_prompt(
+def test_evolve_once_threads_configured_proposer_skill_into_the_episode(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A skill on the epoch's configured proposer dir reaches the proposer call.
+    """A skill on the epoch's configured proposer dir reaches the episode.
 
     Bootstraps a workspace whose epoch freezes a ``proposers/demo/`` dir
-    carrying one skill, then asserts the skill body lands in the system
-    prompt the orchestrator sends to the auxiliary callable — proving the
-    spec → ``build_proposer_agent`` → ``ProposerContext`` wiring flows the
-    skill through the real evolve path.
+    carrying one skill, then asserts the skill body lands in the
+    instructions the proposal episode ran under — proving the spec →
+    ``build_proposer_agent`` → ``ProposerContext`` wiring flows the skill
+    through the real evolve path, all the way into the model's context.
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
@@ -673,6 +577,7 @@ def test_evolve_once_threads_configured_proposer_skill_into_system_prompt(
                 # Hand-built directory-backend snapshot layout below; pin it.
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
             }
         )
     )
@@ -731,9 +636,13 @@ def test_evolve_once_threads_configured_proposer_skill_into_system_prompt(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    aux, systems = _make_recording_aux([valid_proposer_response()])
-    run_evolve_once(workspace, cfg.id, aux)
+    run_evolve_once(workspace, cfg.id, make_aux_responder([]))
 
-    assert systems, "the proposer never called the auxiliary LLM"
-    assert any(skill_body in s for s in systems)
-    assert any("Proposer skills (composable guidance modules" in s for s in systems)
+    # The durable input capture records exactly what the episode was
+    # given, so this reads the model's own context rather than a proxy.
+    from zicato.proposer.input_capture import read_proposer_inputs
+
+    instructions = [r["system"] for r in read_proposer_inputs(workspace, cfg.id)]
+    assert instructions, "no proposal episode recorded its inputs"
+    assert any(skill_body in text for text in instructions)
+    assert any("Operating procedures for this epoch" in text for text in instructions)

@@ -175,6 +175,7 @@ class TestRoundLogEmitter:
         events = RoundLog(tmp_path, "e1", 3).read()
         assert [event.type for event in events] == [
             "proposal_attempted",
+            "proposal_episode_settled",
             "experiment_minted",
             "patches_applied",
         ]
@@ -182,7 +183,7 @@ class TestRoundLogEmitter:
         # reader groups by one field on every record. ``patches_applied``
         # states the id in its payload too; the repetition is deliberate, and
         # the two cannot disagree because one variable writes both.
-        assert [event.scope.generation_id for event in events] == ["v1", "v1", "v1"]
+        assert [event.scope.generation_id for event in events] == ["v1"] * 4
         assert events[-1].payload["generation_id"] == "v1"
 
     def test_unwritable_log_never_raises(self, tmp_path: Path) -> None:

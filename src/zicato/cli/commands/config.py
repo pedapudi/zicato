@@ -33,10 +33,6 @@ _ROLE_HEADINGS: tuple[tuple[str, str], ...] = (
         "set and restored by zicato itself to hand a value across its own processes",
     ),
     (
-        "external-integration",
-        "inputs and child-process controls required by an optional external tool",
-    ),
-    (
         "secrets-boundary",
         "operator-NAMED variables so credentials stay in the environment, never in files",
     ),

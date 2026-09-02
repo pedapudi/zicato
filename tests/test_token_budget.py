@@ -31,12 +31,12 @@ from typing import Any
 import pytest
 
 from tests._contract_pins import deterministic_weights
+from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     install_stub_adapter_factory,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
-    valid_proposer_response,
 )
 from zicato.core.runtime import RoundTokenLedger, RuntimeConfig
 from zicato.core.types import DriftCount, LossProfile
@@ -75,6 +75,7 @@ def _bootstrap_multi_entry_workspace(
         json.dumps(
             {
                 "instance_id": "test",
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "created_at": "2026-05-14T00:00:00Z",
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
@@ -187,7 +188,7 @@ def _run_one_round(
     stub_reducer = sys.modules["zicato.telemetry.reducer"]
     stub_reducer.write_loss_profile = _real_write_loss_profile  # type: ignore[attr-defined]
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     return workspace, epoch_id, outcome, calls
 
 

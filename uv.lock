@@ -1115,6 +1115,11 @@ wheels = [
 ]
 
 [[package]]
+name = "foe"
+version = "0.2.0"
+source = { git = "https://github.com/pedapudi/foe.git?subdirectory=python&rev=63ba2c61486eaa45c935e720b693209db0670ef5#63ba2c61486eaa45c935e720b693209db0670ef5" }
+
+[[package]]
 name = "frozenlist"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -7021,6 +7026,7 @@ version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "foe" },
     { name = "jsonschema" },
 ]
 
@@ -7034,7 +7040,6 @@ all = [
     { name = "google-adk", extra = ["extensions"] },
     { name = "harmonograf-client" },
     { name = "harmonograf-server" },
-    { name = "mcp" },
     { name = "starlette" },
     { name = "textual" },
     { name = "uvicorn" },
@@ -7048,7 +7053,6 @@ dashboard = [
 dev = [
     { name = "httpx" },
     { name = "import-linter" },
-    { name = "mcp" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -7072,9 +7076,6 @@ goldfive-local-embedding = [
 goldfive-remote = [
     { name = "goldfive" },
 ]
-mcp = [
-    { name = "mcp" },
-]
 observability = [
     { name = "harmonograf-client" },
     { name = "harmonograf-server" },
@@ -7090,6 +7091,7 @@ tui = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
+    { name = "foe", git = "https://github.com/pedapudi/foe.git?subdirectory=python&rev=63ba2c61486eaa45c935e720b693209db0670ef5" },
     { name = "goldfive", marker = "extra == 'goldfive'", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" },
     { name = "goldfive", extras = ["adk"], marker = "extra == 'adk'", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" },
     { name = "goldfive", extras = ["adk", "embedding", "remote"], marker = "extra == 'all'", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" },
@@ -7104,9 +7106,6 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "jsonschema", specifier = ">=4.20" },
-    { name = "mcp", marker = "extra == 'all'", specifier = ">=1.0" },
-    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
@@ -7133,7 +7132,7 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'observability'", specifier = ">=4.0" },
     { name = "zicato-examples", marker = "extra == 'dev'", editable = "examples" },
 ]
-provides-extras = ["goldfive", "goldfive-remote", "goldfive-local-embedding", "adk", "dashboard", "tui", "observability", "mcp", "all", "dev"]
+provides-extras = ["goldfive", "goldfive-remote", "goldfive-local-embedding", "adk", "dashboard", "tui", "observability", "all", "dev"]
 
 [[package]]
 name = "zicato-examples"

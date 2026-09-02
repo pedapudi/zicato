@@ -309,7 +309,6 @@ def _proposer_to_dict(spec: ProposerSpec) -> dict[str, Any]:
         "agent_id": spec.agent_id,
         "tools": list(spec.tools),
         "skills": [{"name": s.name, "description": s.description} for s in spec.skills],
-        "has_custom_agent": spec.agent_source_sha256 is not None,
     }
 
 

@@ -1133,20 +1133,42 @@ def test_proposer_renaming_a_skill_changes_hash(tmp_path: Path) -> None:
     assert h1 != h2
 
 
-def test_proposer_agent_source_edit_changes_hash(tmp_path: Path) -> None:
-    """Editing the custom ``agent.py`` rolls the hash via its source sha."""
+def test_a_scaffolded_workspace_hashes_with_no_binary_anywhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The property the whole scaffold rests on, asserted directly.
+
+    A freshly initialized workspace carries the ``proposer`` block with
+    its binary still a placeholder. Its contract must hash anyway — a
+    contract is more than its proposer, and an operator must be able to
+    read one on a machine that could never run a round. The empty ``PATH``
+    is the literal form of "no Foe anywhere": the identity path shells out
+    to ``foe plan``, so a hash that reached it would fail here.
+    """
     from dataclasses import replace
 
-    base = _write_contract(tmp_path)
-    proposer = _make_proposer(
-        tmp_path, skills={"a.md": _SKILL_A}, agent="def build():\n    return 1\n"
-    )
-    with_proposer = replace(base, proposer_path=proposer)
-    h1 = compute_contract_hash(with_proposer)
+    from zicato.cli.init_cmd import initialize_workspace
+    from zicato.proposer.external import external_proposer_config
 
-    (proposer / "agent.py").write_text("def build():\n    return 2\n")
-    h2 = compute_contract_hash(with_proposer)
-    assert h1 != h2
+    monkeypatch.setenv("PATH", "")
+    workspace = tmp_path / "project" / ".zicato"
+    config = initialize_workspace(workspace, instance_id="scaffold")
+    binding = external_proposer_config(config, workspace)
+    assert binding is None, "an unfilled block must not resolve a runtime"
+
+    inputs = replace(_write_contract(tmp_path), external_proposer=binding)
+    assert len(compute_contract_hash(inputs)) == 64
+
+    # And the reason it hashed is the placeholder, not that hashing never
+    # asks: filling the binary in with a path that is not there makes the
+    # same hash refuse, naming the binary.
+    from zicato.proposer.foe_config import ProposerConfigError
+
+    config["proposer"]["binary"] = str(tmp_path / "bin" / "foe")  # type: ignore[index]
+    filled = external_proposer_config(config, workspace)
+    assert filled is not None
+    with pytest.raises(ProposerConfigError, match="could not report the proposer's"):
+        compute_contract_hash(replace(inputs, external_proposer=filled))
 
 
 def test_proposer_whitespace_only_skill_edit_is_stable(tmp_path: Path) -> None:

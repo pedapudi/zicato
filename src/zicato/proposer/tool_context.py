@@ -26,7 +26,7 @@ generation snapshot to read, the mutation manifest, the epoch's journal)
 as a bound argument, because the custom agent is constructed ONCE at
 import time — long before any round runs — and reused across every
 challenger. The tools therefore read their context from a module-level
-:class:`contextvars.ContextVar`, which :meth:`ADKProposerAgent.propose`
+:class:`contextvars.ContextVar`, which the proposal episode's host
 sets immediately around each agent run via
 :func:`bind_proposer_tool_context`. A ``ContextVar`` (not a plain global)
 is used so concurrent challengers — each running its own agent on its own
@@ -139,7 +139,7 @@ def bind_proposer_tool_context(ctx: ProposerToolContext) -> Iterator[None]:
     value on exit (even on exception), so a concurrent challenger running
     its own agent under its own ``bind_proposer_tool_context`` never sees
     this block's context, and nothing leaks past the block. Used by
-    :class:`ADKProposerAgent` to wrap each ``goldfive.run`` of the custom
+    the proposal episode to wrap each host-tool call of the
     agent.
     """
     token = _TOOL_CONTEXT.set(ctx)
@@ -155,7 +155,7 @@ def _active_context() -> ProposerToolContext:
     A tool called outside a :func:`bind_proposer_tool_context` block has
     no runtime context to read; raising here (rather than returning a
     misleading empty result) makes the misuse obvious — the custom agent
-    must be run through :class:`ADKProposerAgent`, which binds the
+    must be run inside a bound context, which the episode's host tools
     context around the run.
     """
     ctx = _TOOL_CONTEXT.get()
@@ -163,7 +163,7 @@ def _active_context() -> ProposerToolContext:
         raise RuntimeError(
             "proposer tool called with no bound ProposerToolContext; "
             "proposer tools may only be called from within an "
-            "ADKProposerAgent run (see bind_proposer_tool_context)"
+            "a bound proposer tool context (see bind_proposer_tool_context)"
         )
     return ctx
 

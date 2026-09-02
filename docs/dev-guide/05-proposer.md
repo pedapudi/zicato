@@ -1,12 +1,12 @@
 # 05 — The Proposer
 
-> **Covers:** the entire proposer subsystem — the three
-> resolution paths behind `ProposerAgent`, every field of `ProposerContext`, the
-> single-shot engine loop (`propose_experiment`), the structured-output schema and
-> its two-pass validation, best-of-N sampling + screening + critique + the
-> tree/record agreement invariant, the round-log vocabulary the propose step emits,
-> the **restricted-visibility envelope** as a formal spec, the read-only proposer
-> tools registry, and experiment memory (same-epoch + cross-epoch).
+> **Covers:** the entire proposer subsystem — how a proposal resolves
+> behind `ProposerAgent`, every field of `ProposerContext`, the episode loop
+> (edit a working copy, verify it, return a hypothesis), the structured-output
+> schema and its two-pass validation, best-of-N sampling + screening + critique
+> + the tree/record agreement invariant, the round-log vocabulary the propose
+> step emits, the **restricted-visibility envelope** as a formal spec, the
+> proposer's tool surface, and experiment memory (same-epoch + cross-epoch).
 >
 > **Prerequisites:** 02-architecture.md §3 (where the propose step sits in a
 > round — §3.9 is the propose step itself), 03-contract-and-epochs.md §3.2.6
@@ -23,12 +23,14 @@
 >    and 7 of 12-bug-casebook.md (§5.6.5).
 > 3. **A screen can veto, never rank; and it can never fail a propose step**
 >    (§5.6.2).
-> 4. **The proposer is a pure prompt-assembler over caller-supplied inputs** — it
->    never reads the index, the journal, or the board itself on the text-shim
->    path; the orchestrator assembles everything and threads it on the context.
-> 5. **`ProposerError` is the only failure contract.** Every agent implementation
->    raises it when the bounded budget is exhausted; every call site already
->    handles it (rejected-round journaling, narrower fields).
+> 4. **The evidence the proposer sees is assembled by the caller** — the
+>    proposer never reads the index or the board itself; the orchestrator
+>    assembles every channel and threads it on the context, and
+>    `evidence_from_context` projects it rather than re-deriving it.
+> 5. **`ProposerError` is the only failure contract.** Every agent
+>    implementation raises it when it produced no experiment; `ProposerBlocked`
+>    and `ProposerExhausted` are subclasses, so a call site written for the
+>    base class handles all three (rejected-round journaling, narrower fields).
 > 6. **Byte-identical-at-default.** Every optional channel renders the empty
 >    string / omits its section when unused, so a contract that does not opt in
 >    produces byte-identical prompts (and an unchanged contract hash).
@@ -39,14 +41,18 @@
 
 | File | What lives there | Approx. size |
 |---|---|---|
-| `src/zicato/proposer/agent.py` | `ProposerContext` (the frozen call-time bundle), the `ProposerAgent` protocol, `DefaultProposerAgent` (text-shim), `build_proposer_agent` (the 3-way selector) | 486 lines |
-| `src/zicato/proposer/adk_agent.py` | `ADKProposerAgent` — the tool-using agent on ADK's own `Runner` (built-in default AND custom `agent.py` loader), `build_default_adk_agent` | 564 lines |
-| `src/zicato/proposer/proposer.py` | `propose_experiment` — the single-shot compose → call → parse → validate → bounded-retry engine; `ProposerError`; `ExperimentValidator` | 562 lines |
-| `src/zicato/proposer/prompts.py` | Every prompt template + render helper; ALL banding/aggregation happens here (`_aggregate_pattern_detail`, `_bucket_scalar_delta`, `_band_rate`, `_band_quality`, …) | 1561 lines |
+| `src/zicato/proposer/agent.py` | `ProposerContext` (the frozen call-time bundle), the `ProposerAgent` protocol, `build_proposer_agent` (the resolver) | — |
+| `src/zicato/proposer/foe_agent.py` | `FoeProposerAgent` — one Foe episode per candidate: the host tools, the episode lifecycle, the outcome-to-experiment conversion, the contract identity | — |
+| `src/zicato/proposer/foe_request.py` | `build_request` — the ONE request builder, for the loop and the CLI: the charter, the sanctioned tool list, the hypothesis schema, `render_evidence` / `render_task` | — |
+| `src/zicato/proposer/foe_config.py` | The typed `proposer` block (binary, budget, model, viewer) and the refusals for a removed runtime's configuration | — |
+| `src/zicato/proposer/foe_scratch.py` | The disposable working copy, and the projection that reads it back as a patch set over the declared mutation points | — |
+| `src/zicato/proposer/external.py` | The seam that NAMES an implementation and HASHES it — `external_proposer_config`, `resolve_external_spec` | — |
+| `src/zicato/proposer/proposer.py` | The four episode outcomes (`ProposerError`, `ProposerBlocked`, `ProposerExhausted`) and `ExperimentValidator` | — |
+| `src/zicato/proposer/prompts.py` | Every block renderer; ALL banding/aggregation happens here (`_aggregate_pattern_detail`, `_bucket_scalar_delta`, `_band_rate`, `_band_quality`, …) | — |
 | `src/zicato/proposer/structured.py` | `EXPERIMENT_JSON_SCHEMA`, `parse_experiment_json` (two-pass validation), `extract_json_object` (5-stage salvage), `ExperimentParseError`, `PostApplyValidationError` | 880 lines |
 | `src/zicato/proposer/best_of_n.py` | `BestOfNProposerAgent` (slate sampling, screen, revise, critique, heuristic, `_mount_chosen`), `CandidateScreenResult`, `ScreenRunner`, `wrap_with_proposer_quality` | 1743 lines |
 | `src/zicato/proposer/hints.py` | `EDIT_CLASS_HINTS`, `FAILURE_MODE_HINTS`, `hint_for_slot`, `dominant_failure_mode` — the per-slot slate diversifier | 256 lines |
-| `src/zicato/proposer/tools.py` | The read-only tool registry (`DEFAULT_PROPOSER_TOOLS`), `ProposerToolContext`, `bind_proposer_tool_context` (the contextvar seam) | 585 lines |
+| `src/zicato/proposer/tools.py` | The read-only tool implementations, `ProposerToolContext`, `bind_proposer_tool_context` (the contextvar seam) | — |
 | `src/zicato/proposer/brief.py` | `ProposerBrief` / `load_brief` / `enforce_forbidden` — the operator's `brief.md` parser | 217 lines |
 | `src/zicato/proposer/skills.py` | `resolve_proposer_spec`, `load_proposer_skills`, `normalize_skill_body`, `parse_frontmatter` | 169 lines |
 | `src/zicato/core/proposer.py` | `ProposerSpec` / `ProposerSkill` — the hash-ready proposer identity types | — |
@@ -73,7 +79,7 @@ evolve_once (evolve/gauntlet.py)
 ```
 
 The agent itself is built ONCE per evolve invocation:
-`build_proposer_agent(spec, proposer_path)` wrapped by
+`build_proposer_agent(spec, proposer_path, external_config)` wrapped by
 `wrap_with_proposer_quality(inner, weights.proposer_quality)`.
 
 > ⚠️ TRAP — a new `ProposerContext` field must be threaded at BOTH propose sites.
@@ -86,156 +92,143 @@ The agent itself is built ONCE per evolve invocation:
 
 ---
 
-## 5.1 The three resolution paths behind `ProposerAgent`
+## 5.1 How a proposal resolves behind `ProposerAgent`
 
-A proposer is, on disk, a directory `proposers/<name>/` carrying `skills/*.md`
-(zero or more markdown skill modules) and an optional custom `agent.py`.
-`resolve_proposer_spec` (`src/zicato/proposer/skills.py`) resolves that
-directory (or `None`) into a hash-ready `ProposerSpec`;
-`build_proposer_agent` (`src/zicato/proposer/agent.py`) turns the spec into a
-runnable agent. Three outcomes, in **resolution order**:
+Two things decide it, and they live in different files.
 
-| # | Condition on the spec | Agent returned | Engine | Tools? | Model |
-|---|---|---|---|---|---|
-| 1 | `spec.agent_source_sha256 is not None` (the proposer dir ships `agent.py`) | `ADKProposerAgent(spec, proposer_path=<dir>)` | ADK `InMemoryRunner` | whatever the author's `LlmAgent` declares | the author's own `model=` (NOT governed by `--auxiliary-call-llm`) |
-| 2 | `spec == ProposerSpec.default()` (**no proposer dir configured — the DEFAULT**) | `ADKProposerAgent(spec, builtin_default=True)` | ADK `InMemoryRunner` | full read-only registry (`DEFAULT_PROPOSER_TOOLS`) | `ctx.model` — the workspace's auxiliary model string |
-| 3 | a `dir:*` spec with skills but NO `agent.py` (**explicit opt-in**) | `DefaultProposerAgent(spec)` | single-shot text shim over `ctx.aux_call_llm` | none | `ctx.model` via the auxiliary callable |
+A workspace's `config.json` says **how it proposes**: the typed `proposer`
+block (`src/zicato/proposer/foe_config.py`) names the Foe binary its
+episodes run, the budget they run under, the model Foe's transport calls,
+and the viewer policy. An epoch's `proposers/<name>/` directory says
+**how the proposer is steered**: `skills/*.md`, whose bodies are hashed
+into the contract. The directory holds nothing executable.
 
-The selector, verbatim:
+`external_proposer_config` (`src/zicato/proposer/external.py`) reads the
+first, `resolve_proposer_spec` (`skills.py`) reads the second, and
+`resolve_external_spec` joins them into a hash-ready `ProposerSpec`.
+`build_proposer_agent` (`agent.py`) turns that spec into a runnable
+agent:
+
+| Condition | Agent returned | Model |
+|---|---|---|
+| a declared `proposer` block | `FoeProposerAgent(spec=…, config=…)` — one Foe episode per candidate | the `proposer.model` block's, called by Foe's own transport |
+| `runtime.proposer_agent` names a class | that class, constructed `(spec=…, config=…)` | the operator's business |
+| neither | **`ValueError`** naming the block to write | — |
 
 ```python
 # src/zicato/proposer/agent.py — build_proposer_agent (tail)
-    if spec.agent_source_sha256 is not None:
-        if proposer_path is None:
-            raise ValueError(
-                "spec declares a custom proposer agent (agent_source_sha256 is "
-                "set) but no proposer_path was supplied to load "
-                "proposers/<name>/agent.py from"
-            )
-        return ADKProposerAgent(spec=spec, proposer_path=proposer_path)
+    refuse_removed_proposer_directory(proposer_path)
 
-    if spec == ProposerSpec.default():
-        # The DEFAULT proposer: a tool-using ADK agent bound to the
-        # auxiliary model at propose time. No proposer dir was configured.
-        return ADKProposerAgent(spec=spec, builtin_default=True)
-
-    # A configured proposer dir with skills but no custom agent.py — the
-    # skill-composed single-shot engine, the explicit opt-in.
-    return DefaultProposerAgent(spec)
+    if spec.external_path is None:
+        raise ValueError(
+            "the epoch's proposer spec names no proposal runtime: the workspace "
+            "declares no `proposer` block and binds no runtime.proposer_agent "
+            "class. Add a `proposer` block naming the Foe binary this workspace "
+            "proposes with (see docs/design/PROPOSER.md)"
+        )
+    ...
+    cls = load_external_proposer_class(spec.external_path)
+    return cls(spec=spec, config=external_config)
 ```
 
-> ⛔ NEVER assume "the default proposer is the text shim." Parts of
-> `adk_agent.py`'s module docstring still describe it that way and are wrong.
-> The **selector** is the authority: the bare default (no proposer
-> dir) is the **tool-using ADK agent**. Configuring a skills-only proposer dir
-> is what OPTS INTO the text shim — you lose the tools when you do.
+> ⛔ NEVER add a fallback here. A proposer decides what every generation of
+> an epoch will be; choosing one silently would make two epochs
+> incomparable without saying so. The refusal is the feature.
 
-> ⚠️ TRAP — misconfiguration path #1: a spec with `agent_source_sha256` set but
-> no `proposer_path` raises `ValueError` immediately. It does NOT fall back
-> to the default agent — a silently-swapped proposer would evaluate
-> generations under a different rule than the contract hash claims.
+> ⚠️ TRAP — the identity that was HASHED and the agent that RUNS must be
+> resolved from one reading of the workspace. `epoch/contract.py` and
+> `evolve/gauntlet.py` both call `external_proposer_config`, and both pass
+> the result on: the contract hash folds `resolve_external_spec`'s digest,
+> and the round constructs the class from the same binding. Resolving them
+> separately is how a contract comes to describe a proposer that is not the
+> one running.
 
-### 5.1.1 Path 2 in detail — the built-in default (`builtin_default=True`)
+### 5.1.1 What a workspace that declared nothing still does
 
-`ADKProposerAgent._load_agent` (`src/zicato/proposer/adk_agent.py`) resolves the
-agent lazily on first `propose`, in this order:
+`ProposerSpec.default()` — `agent_id = "builtin:default"`, no tools, no
+skills — still exists and still canonicalizes. That is deliberate: a
+contract is more than its proposer, so an epoch whose workspace declares
+no proposal runtime still HASHES, on a machine with no Foe binary
+present. What it cannot do is open a round.
 
-1. An `agent` **injected at construction** wins (the test seam — wire an
-   `LlmAgent` to `zicato.testing.adk_fake.FakeADKModel` and bypass disk).
-2. `builtin_default=True` → `build_default_adk_agent(ctx.model)`, cached on
-   `self.agent`. `ctx` MUST be supplied in this mode (`propose` always does).
-3. Otherwise load `proposers/<name>/agent.py` from `proposer_path` (path 1).
+That split is what keeps `foe plan` — which `contract_identity` shells
+out to — off the path of every contract read. Only a workspace that
+declares a runtime pays for asking the binary its fingerprint, and the
+answer is memoized per binary and document for the life of the process.
 
-`build_default_adk_agent` constructs a native ADK `LlmAgent` named
-`zicato_default_proposer` with the static instruction
-`_DEFAULT_PROPOSER_INSTRUCTION` (how to work: ground with the read-only tools,
-then emit the structured JSON) and `tools=list(DEFAULT_PROPOSER_TOOLS)`:
+### 5.1.2 The episode, in detail
 
-```python
-# src/zicato/proposer/adk_agent.py
-def build_default_adk_agent(model: Any) -> Any:
-    from google.adk.agents import LlmAgent  # noqa: PLC0415
+One `propose()` is one Foe episode, in its own process:
 
-    return LlmAgent(
-        name=_DEFAULT_PROPOSER_AGENT_NAME,
-        model=model,
-        instruction=_DEFAULT_PROPOSER_INSTRUCTION,
-        tools=list(DEFAULT_PROPOSER_TOOLS),
-    )
-```
+1. `scratch_working_copy(generation_root)` mints a disposable writable
+   copy of the parent snapshot under `ztw-pscratch-*`, removed on every
+   exit path. The snapshot itself is never mounted writable.
+2. `build_episode_tools` binds the two host tools to THIS round's
+   snapshot, manifest and copy. `mutation_usage` delegates to the
+   read-only registry; `validate_patches` projects the copy and lints it.
+3. `build_request` composes the contract — instructions (charter + the
+   epoch's brief + its skills), the sanctioned tool list, the read grant
+   (the snapshot) and the write grant (the copy), the budget, and the
+   completion rule — plus the task, which is this round's evidence.
+4. `foe.start_config` launches the binary. The episode's own pid is
+   written to `active_runs` before its first model request, so the
+   supervisor watchdog can end a wedged proposal by the same escalation
+   it uses for a wedged tournament worker (§5.1.4).
+5. The host polices the wall-clock deadline it gave Foe. Reaching it
+   means the process did not honor its own budget, so the host that holds
+   the pipe cancels it and reports `ProposerExhausted("seconds")`.
+6. `_experiment_from` turns the outcome into an experiment or into a
+   refusal (§5.1.3), projecting the working copy onto the declared
+   mutation points to get the patch set.
+7. The caller's post-apply hook (`ctx.validate_experiment`) runs last.
 
-The per-round WHAT (brief + skills + mutation manifest + patterns + loss +
-prior experiments + the JSON-schema demand) is delivered as the agent's run
-**input**, assembled by `_render_task_text` from the SAME two renderers the
-text shim uses (`render_system_prompt` + `render_user_prompt`, concatenated).
-So the tool-using default and the text shim see identical guidance and round
-context — only the execution engine differs.
+> ⚠️ TRAP — the projection reads a point back in the APPLIER's unit, not
+> the enumerator's. For a `.py` span those differ: the enumerator reports
+> whole lines (`PROMPT = """…"""`), the applier rewrites the literal node
+> alone (`"""…"""`). `applier.replacement_source` converts between them.
+> Skip it and every span proposal nests the statement inside its own
+> literal — which is what the round-trip test in
+> `tests/test_proposer_foe_scratch.py` applies its patches to catch.
 
-> ✅ ALWAYS keep `_render_task_text` in lockstep with `propose_experiment`'s
-> prompt assembly when you add a prompt channel. The ADK task
-> text threads these channels: `feedback` (retry), `prior_experiments`,
-> `restrict_visibility`,
-> `custom_judge_names`, `failure_profile`, `process_exemplars`, `sample_hint`,
-> and `mutation_track_records`. Note it does NOT thread the analyzer
-> `insights` block (the tool-using agent reads insights via its `read_insights`
-> tool instead) and does NOT carry the `feedback_prior_output` /
-> `feedback_was_empty` echo carriers (those are text-shim repair-turn
-> machinery). If you add a channel to `render_user_prompt`, decide explicitly
-> whether the ADK path gets it via the prompt or via a tool — and write down
-> which in the docstring.
+### 5.1.3 The four endings
 
-### 5.1.2 Path 1 in detail — the custom `agent.py` loader
+An episode ends **completed**, **blocked**, **exhausted**, or **failed**,
+and each is first-class (`src/zicato/proposer/proposer.py`):
 
-`_load_agent` imports `proposers/<name>/agent.py` **by file path** under a
-synthetic module name `_zicato_proposer_<dirname>` (so a proposer dir off the
-import path still resolves), after prepending the dir to `sys.path` (so the
-module can `from zicato.proposer.tools import ...` AND import sibling helpers
-it ships next to `agent.py`). It then fetches the module-level **`agent`**
-symbol — mirroring the harness adapter's `module:agent` convention. Failures
-raise `ProposerError` with an actionable message (file missing, no import spec,
-no `agent` symbol).
+| Ending | Reaches the round as | What it means |
+|---|---|---|
+| completed | an `Experiment` | the copy became a valid patch set and the hypothesis explains it |
+| blocked | `ProposerBlocked(code, message)` | the proposer found the task impossible, and the code says how |
+| exhausted | `ProposerExhausted(limit)` | the budget ran out with work still in progress; `limit` names the dimension |
+| failed | `ProposerError` | a crash or a protocol failure |
 
-The **collusion guard** here is soft: the hard `is`-identity callable check
-(`zicato.core.workspace.assert_distinct_callables`) does not apply because the
-proposer runs on its OWN model rather than the auxiliary callable. Instead
-`_warn_on_model_collusion` compares the agent's `model` string (or its
-`BaseLlm.model` attribute) against `ctx.model` and logs a WARNING on a match —
-advisory only, never raises. The warning is **intentionally skipped for the
-built-in default** (`if not self.builtin_default:`) because the default runs
-on the operator-configured auxiliary model by design; that match is the
-documented posture rather than an author error.
+`ProposerBlocked` and `ProposerExhausted` subclass `ProposerError`, so a
+handler written for the base class keeps working. Two blocked codes are
+zicato's own reading of Foe's `verification-unsatisfiable`, refined by
+looking at the copy: `edit-outside-mutation-point` when a change lies
+outside every declared point, and `no-groundable-mutation-point` when the
+episode changed nothing. Both are facts the copy can settle and the
+runtime cannot.
 
-### 5.1.3 The shared post-response loop
+A blocked or exhausted round spends no tournament budget. The round log
+records the kind, the code and the message
+(`proposal_episode_settled`), and the scorecard counts them.
 
-Both `ADKProposerAgent.propose` and the text-shim engine run the model's final
-text through the SAME three-step post-response loop, retrying within the same
-`ctx.max_retries + 1` budget:
+### 5.1.4 The supervisor's reach
 
-1. `parse_experiment_json` (`src/zicato/proposer/structured.py`) — §5.4;
-2. forbidden-id enforcement against the emitted patches
-   (`zicato.proposer.brief.enforce_forbidden`);
-3. the caller's optional post-apply validation hook (`ctx.validate_experiment`).
+The episode registers an `ActiveRun` carrying Foe's own pid — not a
+wrapper's — plus its process group, its deadline, and the path of its
+episode log. There is no second Python worker around it, because two
+lifecycle authorities over one subprocess make cancellation ambiguous
+exactly when it matters.
 
-A failure at any step is retryable: its message becomes the next attempt's
-`feedback`. After the budget is exhausted, `ProposerError(attempts)` carries
-the per-attempt error trail. On the ADK path, each run is wrapped in
-`bind_proposer_tool_context(tool_ctx)` so the read-only tools resolve this
-round's snapshot / manifest / journal (§5.9). The auxiliary callable
-(`ctx.aux_call_llm`) is **never** invoked by the ADK path.
-
-> ⚠️ TRAP — the ADK path's per-attempt error handling wraps the WHOLE agent run
-> in one `except Exception` (`"proposer agent run raised ..."`) — there is no
-> aux-timeout wrapper (`aux_call_timeout_s()`) around an ADK run the way there
-> is around a text-shim call. A wedged custom agent is bounded only by the ADK
-> runner's own behaviour plus the orchestrator-level round machinery. Do not
-> "fix" this by adding `asyncio.wait_for` around `_run_agent_once` without
-> deciding what a half-finished tool-calling session means — that is a design
-> change rather than a bug fix.
-
-**Tests:** `tests/test_proposer_agent.py` (selector + text shim),
-`tests/test_proposer_adk_agent.py` (builtin-default + custom loading + the
-post-response loop on a fake ADK model), `tests/test_proposer_skills.py`
-(spec resolution + frontmatter + normalization).
+**Tests:** `tests/test_proposer_agent.py` (what the builder resolves and
+what it refuses), `tests/test_proposer_foe_agent.py` (the episode, all
+four endings, the watchdog registration, the holdout exclusion),
+`tests/test_proposer_foe_config.py` (the block, and the refusals),
+`tests/test_proposer_foe_scratch.py` (the copy and the projection),
+`tests/test_proposer_skills.py` (spec resolution + frontmatter +
+normalization).
 
 ---
 
@@ -262,37 +255,37 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `new_generation_id` | `str` | orchestrator (`_next_generation_id`, or the resume plan's reused id) | `Experiment.generation_id`; `Experiment.id = f"exp_{epoch}_{gen}"` | MACHINERY |
 | `patterns` | `tuple[Pattern, ...]` | orchestrator: `detect_patterns` over the **TRAIN slice only** | `render_pattern_block` (prompt), `_targets_observed_failure` (best-of-N heuristic), exemplar anchors | SANITIZED under `restrict_visibility` (identity keys stripped → `entries_affected=N`); **train-only** |
 | `mutations` | `tuple[MutationPoint, ...]` | orchestrator: `enumerate_mutations` over the adapter's mutable trees | `render_mutation_block` (prompt), `parse_experiment_json` cross-checks, tools context (`list_mutation_points`, escape-guard roots) | IDENTITY-FREE (code spans, unrelated to the board split) |
-| `brief_text` | `str` | orchestrator: `load_brief(brief.md).text` | `render_system_prompt` (spliced verbatim) | IDENTITY-FREE (operator-authored) |
+| `brief_text` | `str` | orchestrator: `load_brief(brief.md).text` | `instruction_sections` → the episode's `70-brief` section (spliced verbatim) | IDENTITY-FREE (operator-authored) |
 | `current_loss_summary` | `str` | orchestrator: `_render_loss_summary(TRAIN losses)` — one line: `drift_loss_mean=… over N runs, pass_rate=…` | user prompt `## Current loss summary` | AGGREGATED (board-wide means only; train-only) |
-| `aux_call_llm` | `(system, user, model) -> Awaitable[str]` | orchestrator from `RuntimeConfig` | text-shim engine; best-of-N **critic**. NEVER the ADK agent | MACHINERY |
-| `model` | `str = ""` | orchestrator: `workspace_config["auxiliary_model"]` | forwarded to `aux_call_llm`; the builtin-default ADK agent's `model=`; collusion smell-test | MACHINERY |
-| `max_retries` | `int = 2` | orchestrator (`max_proposer_retries`) | both engines: `total_attempts = max_retries + 1` | MACHINERY |
-| `forbidden_ids` | `tuple[str, ...] = ()` | orchestrator: `brief.forbidden_ids` (parsed from `# Forbidden edits` bullets) | `enforce_forbidden` in both engines; re-checked post-propose by `check_patch_manifest_and_forbidden` | IDENTITY-FREE |
-| `workspace_root` | `Path \| None = None` | orchestrator | text shim: `load_latest_insights`; ADK: tools context root + generation-root resolution; `None` ⇒ no insights, tools degrade | MACHINERY |
-| `validate_experiment` | `ExperimentValidator \| None = None` | orchestrator: `build_post_apply_validator(...)` (`src/zicato/evolve/round.py`) | both engines (post-parse hook); best-of-N `_mount_chosen` / `_revalidate` — the shared hook is what mounts the canonical `next_id` tree | MACHINERY |
+| `aux_call_llm` | `(system, user, model) -> Awaitable[str]` | orchestrator from `RuntimeConfig` | the best-of-N **critic** and the LLM recombination merge. NEVER the proposal episode | MACHINERY |
+| `model` | `str = ""` | orchestrator: `workspace_config["auxiliary_model"]` | forwarded to `aux_call_llm`; the collusion smell-test. NOT the episode's model, which the `proposer` block names | MACHINERY |
+| `max_retries` | `int = 2` | orchestrator (`max_proposer_retries`) | the episode's `verify_retries`: how many turns of verifier findings it gets before ending blocked | MACHINERY |
+| `forbidden_ids` | `tuple[str, ...] = ()` | orchestrator: `brief.forbidden_ids` (parsed from `# Forbidden edits` bullets) | `enforce_forbidden` after the episode; re-checked post-propose by `check_patch_manifest_and_forbidden` | IDENTITY-FREE |
+| `workspace_root` | `Path \| None = None` | orchestrator | the host tools' context root; where the episode log and the input capture land; `None` ⇒ the capture is a no-op | MACHINERY |
+| `validate_experiment` | `ExperimentValidator \| None = None` | orchestrator: `build_post_apply_validator(...)` (`src/zicato/evolve/round.py`) | the agent, after the episode; best-of-N `_mount_chosen` / `_revalidate` — the shared hook is what mounts the canonical `next_id` tree | MACHINERY |
 | `scratch_validator_factory` | `Callable[[], tuple[ExperimentValidator, Callable[[], None]]] \| None = None` | orchestrator: `build_scratch_validator_factory(...)` (`src/zicato/evolve/round.py`) | best-of-N only: one `(validate, cleanup)` lease per slate slot, each over its OWN disjoint scratch tree, so the slate can gather. `None` ⇒ the wrapper falls back to `validate_experiment` and runs the slate serially | MACHINERY |
-| `meta_loop_emitter` | `MetaLoopEmitter \| None = None` | orchestrator (one per `evolve_n_rounds`) | text shim only: `proposer_call_started`/`proposer_call_completed` bookends per attempt | MACHINERY (telemetry, best-effort) |
+| `meta_loop_emitter` | `MetaLoopEmitter \| None = None` | orchestrator (one per `evolve_n_rounds`) | `proposer_call_started`/`proposer_call_completed` bookends, one pair per EPISODE | MACHINERY (telemetry, best-effort) |
 | `custom_judge_names` | `frozenset[str] \| None = None` | orchestrator: `_declared_custom_judge_names(board, weights)` (board `JudgeSpec.name` ∪ `per_judge_weights` keys) | `parse_experiment_json` (drift-metric validation) ONLY — permissive by design, including zero-weight judges, so the prompt-side priority filter can never turn an accepted movement into a burned retry; the prompt vocabulary comes from `metric_priorities` | IDENTITY-FREE (judge names are contract identity rather than board-entry identity) |
 | `prior_experiments` | `tuple[PriorExperiment, ...] = ()` | orchestrator: `_load_prior_experiments` (+ the field loop appends in-flight `siblings`) | `render_prior_experiments_block` (prompt); `recent_prediction_accuracy` (best-of-N calibration) | BANDED under `restrict_visibility` (Δscalar bucketed; accuracy always banded); curated + capped at 12 (§5.10) |
-| `restrict_visibility` | `bool = False` (context default) — **default-ON in production** via `weights.overfitting.restrict_proposer_visibility` | orchestrator from the contract | `render_user_prompt` → `render_pattern_block(restrict=…)`, `_render_prior_experiment_line(restrict=…)`; the best-of-N critic re-renders under the SAME flag | MACHINERY (the envelope switch itself) |
+| `restrict_visibility` | `bool = False` (context default) — **default-ON in production** via `weights.overfitting.restrict_proposer_visibility` | orchestrator from the contract | `render_evidence` → `render_pattern_block(restrict=…)`, `_render_prior_experiment_line(restrict=…)`; the best-of-N critic renders the SAME evidence | MACHINERY (the envelope switch itself) |
 | `failure_profile` | `str = ""` | orchestrator: `_render_failure_profile(TRAIN losses, weights)` — pre-rendered, **already banded** | spliced as `## Failure-mode profile`; `hint_for_slot` parses its stable line shapes for the dominant mode | BANDED + AGGREGATED (every number through `_band_rate`/`_band_quality`; board-anonymous by construction) |
 | `metric_priorities` | `str = ""` | orchestrator: `render_metric_priorities_block(build_metric_priorities(board, weights, losses))` — pre-rendered, **already banded** | replaces the flat vocabulary inside `## Valid expectation targets`; also threaded into the recombination merge prompt | BANDED (within-channel weight ratios only — the raw coefficients are the objective function and stay orchestrator-side, §5.8) |
 | `process_exemplars` | `str = ""` | orchestrator: `_render_process_exemplars_block` — **opt-in** (`proposer_quality.process_exemplars > 0`), best-effort | spliced as `## Process exemplars` directly after the failure profile; also fed to the critic | REDACTED (the four redaction rules, §5.8.3); train-only; empty at default |
-| `sample_hint` | `str = ""` | the **best-of-N wrapper** (`replace(ctx, sample_hint=hint_for_slot(i, n, profile))`) — never the orchestrator | `render_user_prompt` → `## Edit-class hint (this sample)` at the very top | IDENTITY-FREE (static instruction strings only) |
-| `slot_index` | `int \| None = None` | the **best-of-N wrapper** (`replace(ctx, slot_index=sample)` in `_run_one_slot`) — never the orchestrator | the input capture only (§5.5.1), to tell one slot's records from a sibling's in the epoch's shared capture file; reaches NO renderer | MACHINERY |
-| `revise_feedback` | `str = ""` | the **best-of-N wrapper**, only on the ONE all-vetoed revise re-sample (`_render_revise_feedback`) | both engines seed the FIRST attempt's `feedback` slot with it; retries overwrite it | AGGREGATED (composed solely of counts-only screen reason strings + static text) |
+| `sample_hint` | `str = ""` | the **best-of-N wrapper** (`replace(ctx, sample_hint=hint_for_slot(i, n, profile))`) — never the orchestrator | `render_evidence` → `## Edit-class hint (this sample)` at the very top | IDENTITY-FREE (static instruction strings only) |
+| `slot_index` | `int \| None = None` | the **best-of-N wrapper** (`replace(ctx, slot_index=sample)` in `_run_one_slot`) — never the orchestrator | the input capture (§5.5.1), the episode log's directory name, and the task's `## This episode` block, which is what tells one slot's episode from a sibling's | MACHINERY |
+| `revise_feedback` | `str = ""` | the **best-of-N wrapper**, only on the ONE all-vetoed revise re-sample (`_render_revise_feedback`) | `render_evidence` → `## Why the previous attempt was set aside`, at the top of the task | AGGREGATED (composed solely of counts-only screen reason strings + static text) |
 | `mutation_track_records` | `Mapping[str, MutationTrackRecord] \| None = None` | orchestrator: `_load_mutation_track_records` (best-effort index read, `{}` on failure) | `render_mutation_block(track_records=…)` — one banded advisory line per manifest entry; the `mutation_track_record` tool renders the same shape | BANDED + AGGREGATED ("experiments touching this point"; Δscalar bucketed; never causal) |
 | `round_event_emitter` | `Callable[[str, dict], None] \| None = None` | orchestrator: `_RoundLogEmitter.emit` | best-of-N wrapper via `_emit_round_event` (guarded — a raising emitter never fails a propose) | MACHINERY |
 | `screen_candidates` | `ScreenRunner \| None = None` | orchestrator: `_build_candidate_screen_runner` — ONE closure per round, only when `screen_entries > 0 AND best_of_n > 1` | best-of-N wrapper: `_screen_slate`, `_screen_replacement` | MACHINERY (its OUTPUT strings are AGGREGATED counts-only by the `CandidateScreenResult.reason` contract) |
 | `recombine_pair` | `RecombinationPair \| None = None` | orchestrator: `_build_recombination_pair` — ONE selection per round at the screen-builder site, only when `proposer_quality.recombine AND best_of_n > 1`; `_recombine_pair_for_slot` threads it to the FIELD's slot-0 challenger only | best-of-N wrapper: the last slate slot mints its patch union (§5.6.11) instead of sampling the LLM | MACHINERY (carries counts + patches + hypothesis TEXT only — entry ids never leave the builder; the improved/regressed sets are intersected with the current TRAIN board inside `_build_recombination_pair` and discarded) |
-| `genealogy` | `tuple[GenealogyItem, ...] = ()` | orchestrator: `_build_genealogy_items` — ONE sampling per round at the screen-builder site, only when `proposer_quality.genealogy > 0`; ALL best-of-N slots (and the critic) see the SAME items | `render_user_prompt` → `render_genealogy_block` → spliced as `## Candidate genealogy` directly above `## What's already been tried` (§5.6.13) | BANDED + REDACTED (whole-candidate outcomes through `_bucket_scalar_delta`; proposer-authored core ideas + capped diff excerpts; NO entry ids, NO per-entry results, NO exact deltas — candidate genealogy, never board data; empty at default) |
+| `genealogy` | `tuple[GenealogyItem, ...] = ()` | orchestrator: `_build_genealogy_items` — ONE sampling per round at the screen-builder site, only when `proposer_quality.genealogy > 0`; ALL best-of-N slots (and the critic) see the SAME items | `render_evidence` → `render_genealogy_block` → spliced as `## Candidate genealogy` directly above `## What's already been tried` (§5.6.13) | BANDED + REDACTED (whole-candidate outcomes through `_bucket_scalar_delta`; proposer-authored core ideas + capped diff excerpts; NO entry ids, NO per-entry results, NO exact deltas — candidate genealogy, never board data; empty at default) |
 
 > ✅ ALWAYS give a new `ProposerContext` field a default that renders
 > byte-identically when unset. That is not a style preference — it is the
 > compatibility contract that lets every standalone caller (tests, the CLI
-> `propose` command, older orchestrator paths) keep producing identical
-> prompts, and it keeps the contract hash honest (an absent channel adds
-> nothing to any canonical form).
+> `propose` command) keep producing identical tasks, and it keeps the
+> contract hash honest (an absent channel adds nothing to any canonical
+> form).
 
 > ⛔ NEVER put raw per-entry material on the context "for the agent to filter
 > later." The context IS the envelope boundary on the agent side: everything on
@@ -305,75 +298,65 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 
 ---
 
-## 5.3 The engine loop — `propose_experiment`
+## 5.3 The episode loop
 
-`src/zicato/proposer/proposer.py::propose_experiment` is the single-shot
-text-shim engine (`DefaultProposerAgent` delegates to it 1:1; the ADK agent
-reimplements the same loop over agent runs). The loop, per attempt (at most
-`max_retries + 1` attempts; default 2 retries ⇒ 3 LLM calls worst case):
+`FoeProposerAgent.propose` (`src/zicato/proposer/foe_agent.py`) runs one
+episode per call. Where the repair happens is the thing to hold onto: the
+model fixes its own work *inside* the episode, and zicato's checks are
+what remains outside it.
 
 ```
-render_system_prompt(brief, skills)                # once, loop-invariant
-insights = load_latest_insights(...)               # once, "" when absent
-prior_experiments materialised to a list           # once, loop-invariant
-feedback = revise_feedback                         # SEED (empty for non-revise)
-for attempt in range(max_retries + 1):
-    user_prompt = render_user_prompt(..., feedback, feedback_prior_output,
-                                     feedback_was_empty, ...)
-    response = await wait_for(aux_call_llm(sys, user, model),
-                              timeout=aux_call_timeout_s())
-    experiment = parse_experiment_json(response, ...)      # two-pass (§5.4)
-    enforce_forbidden(experiment.patches, forbidden_ids)   # content check
-    findings = await validate_experiment(experiment)       # post-apply hook
-    if all clear: return experiment
-raise ProposerError(attempt_errors)
+build_request(...)                 # instructions + task + grants + budget
+foe.start_config(...)              # one process; its pid → active_runs
+  ├─ the episode reads, greps, edits the copy
+  ├─ validate_patches               # the completion rule: project + lint
+  │    findings → back to the model, up to `verify_retries` turns
+  │    retries spent → the episode ends BLOCKED
+  └─ return {hypothesis}            # the model never drafts a patch document
+project_onto_mutation_points(...)  # the copy IS the patch set
+parse_experiment_json(...)         # two-pass (§5.4)
+enforce_forbidden(...)             # the brief's forbidden-edits list
+await ctx.validate_experiment(...) # the post-apply hook (§5.3.3)
 ```
 
-### 5.3.1 The failure classes and the feedback/echo semantics
+`ctx.max_retries` becomes the episode's `verify_retries`. It bounds turns
+inside one episode rather than whole re-proposals, which is why a broken
+edit costs a turn instead of a round: the model sees the finding and the
+file it wrote, and does not have to be re-sent the round's whole evidence.
 
-Each failure class sets `feedback` (always) and manages the two **repair-turn
-carriers** — `feedback_prior_output` (the prior raw response, echoed back
-truncated to 800 chars) and `feedback_was_empty` (the "you spent your whole
-output budget on reasoning" flag) — differently. Getting the carrier rules
-wrong makes retries WORSE (a stale echo teaches the model to reproduce an old
-mistake), so they are enumerable:
+### 5.3.1 Where each failure is caught, and by whom
 
-| Failure class | `feedback` | `feedback_prior_output` | `feedback_was_empty` | Why |
-|---|---|---|---|---|
-| aux call **timeout** (`aux_call_timeout_s()` elapsed) | the timeout message | **cleared** | **cleared** | no response was produced — a stale prior output must never be echoed |
-| aux call **raised** (opaque LLM error) | `"auxiliary LLM call raised {type}: {exc}"` | **cleared** | **cleared** | same — nothing to echo |
-| **parse failure** (`ExperimentParseError`) | the parse error verbatim | **set to the raw response** | set iff the response was empty/whitespace | a SHAPE failure: the model must see the stray `<think>` block / prose / fence it actually produced; an empty response gets the targeted "skip all reasoning, emit now" variant |
-| **forbidden-id violation** (`enforce_forbidden` non-empty) | `"patches violate proposer-brief forbidden-edits list: …"` | **cleared** | **cleared** | well-formed JSON — a CONTENT failure; the feedback already names the offending ids, and a stale parse-failure echo must not leak in |
-| **post-apply findings** (hook returned non-empty, or raised `PostApplyValidationError`) | `"patches failed post-apply validation: …"` | **cleared** | **cleared** | content failure; the validator findings are the actionable signal |
+| Failure | Caught by | The proposer sees | Reaches the round as |
+|---|---|---|---|
+| an edit outside every declared point | `validate_patches`, via the projection | the path and line range of each offender | a turn; past the retries, `ProposerBlocked("edit-outside-mutation-point")` |
+| a copy that changed nothing | `validate_patches` | "change a declared point before returning, or report a block" | a turn; past the retries, `ProposerBlocked("no-groundable-mutation-point")` |
+| a patch set that fails the linter (A1–A4) | `validate_patches`, via `zicato.proposer.validate` | one finding per problem | a turn; past the retries, blocked |
+| a hypothesis predicting no movement | the runtime, at the value boundary (`HYPOTHESIS_SCHEMA`'s `anyOf`) | the schema violation | a turn |
+| a hypothesis naming an undeclared judge | `parse_experiment_json`, after the episode | — | `ProposerError` |
+| a patch touching a forbidden id | `enforce_forbidden`, after the episode | — | `ProposerError` |
+| a patch that breaks the child snapshot | the post-apply hook, after the episode | — | `ProposerError` |
+| the episode outliving its wall clock | the host holding the pipe | the cancel | `ProposerExhausted("seconds")` |
+| the binary dying, or a transport error | `foe.Handle.wait` | — | `ProposerError` |
 
-The rendered repair section (`render_user_prompt`, `feedback` non-empty) is
-prepended ABOVE everything else and has three variants:
+The pattern is worth stating: **a failure the model could still act on is
+reported inside the episode; a failure it could not is raised after it.**
+Moving one across that line changes what a round costs.
 
-- plain: the reason, indented, plus the "ONLY the JSON object" reminder;
-- **empty-response variant** (`feedback_was_empty`): adds "Do NOT think step by
-  step… emit the JSON object IMMEDIATELY as the very first thing you write";
-- **echo variant** (`feedback_prior_output` non-empty): adds "Your previous
-  output was:" + the truncated echo (`_truncate_prior_output`, cap
-  `_FEEDBACK_PRIOR_OUTPUT_LIMIT_CHARS = 800`).
-
-> ⚠️ TRAP — the error messages ARE the retry protocol.
-> `ExperimentParseError`'s docstring says it plainly: "Callers should NOT
-> mutate the message before appending it to the next user prompt — the wording
-> is tuned to elicit a corrected response." If you rephrase a validator or
-> parser message, you are changing model-facing repair instructions; check
-> `tests/test_proposer_proposer.py` and `tests/test_proposer_structured.py`
-> before and after.
+> ⚠️ TRAP — the schema and the parser must agree. `HYPOTHESIS_SCHEMA`
+> states zicato's "at least one predicted movement" rule as an `anyOf`
+> BECAUSE the runtime checks the returned value at the boundary: a
+> hypothesis the runtime accepts and `parse_experiment_json` then rejects
+> costs the whole episode rather than one turn. If you add a rule to the
+> parser, ask whether the schema can carry it — `foe/docs/config.md` lists
+> the subset the runtime enforces.
 
 ### 5.3.2 `revise_feedback` seeding
 
-`feedback = revise_feedback` **before the loop** means the FIRST attempt of a
-screen-informed revise (§5.6.4) already renders the repair section — the same
-`feedback` slot a validation failure would populate on retry — with the
-slate's counts-only veto summary. For every non-revise call `revise_feedback`
-is `""`, `feedback` starts empty, and the first prompt renders byte-identically
-to one assembled without the channel. Subsequent retries overwrite the seed
-with their own concrete errors. The ADK agent seeds
-identically (`feedback = ctx.revise_feedback` in `ADKProposerAgent.propose`).
+`ProposalEvidence.revise_feedback` renders a `## Why the previous attempt
+was set aside` block at the TOP of the task — the screen-informed revise
+(§5.6.4) seeds it with the slate's counts-only veto summary, so the one
+bounded re-sample starts as a genuine repair turn. For every non-revise
+call it is `""` and the block is omitted.
 
 ### 5.3.3 The post-apply validation hook (`validate_experiment`)
 
@@ -433,22 +416,36 @@ The parent generation's source tree is pre-warmed once by the factory, so the
 concurrent slot derives find it materialized and only READ it — they race on
 nothing. This factory never writes the canonical tree.
 
-### 5.3.4 Timeouts and telemetry
+### 5.3.4 Budgets and telemetry
 
-Every text-shim LLM call is bounded by `aux_call_timeout_s()`
-(`src/zicato/aux_timeout.py` — the typed-config knob the `--aux-call-timeout`
-CLI flag pins). Each attempt emits a paired `proposer_call_started` /
-`proposer_call_completed` on the meta-loop session when an emitter is wired
-(`invocation_id` correlates the pair; outcomes: `"completed"`, `"timeout"`,
-`"error:{Type}"`). Every emit is guarded — a misconfigured emitter cannot
-regress the proposer. Tests: `tests/test_meta_loop_emitter.py`,
-`tests/test_aux_timeout.py`.
+An episode is bounded twice, by the same number. `proposer.budget.seconds`
+is the deadline Foe enforces from inside; the host polices the same
+deadline from outside, because reaching it means the process did not honor
+its own. The other dimensions (`model_calls`, `input_tokens`,
+`output_tokens`) are Foe's alone, and all four are part of what Foe
+fingerprints — raising one rolls the epoch, which is the intended reading:
+a proposer with twelve model calls investigates differently from one with
+three.
+
+Each episode emits a paired `proposer_call_started` /
+`proposer_call_completed` on the meta-loop session when an emitter is
+wired (`invocation_id` correlates the pair; the completed outcome carries
+how the episode ended: `"completed"`, `"blocked:{code}"`,
+`"exhausted:{limit}"`, `"timeout"`, `"error:Failed"`). One episode is one
+call from this side — the turns inside it are Foe's transcript — so the
+pair brackets the episode rather than a model request. Every emit is
+guarded: a misconfigured emitter cannot regress the proposer. The episode
+also writes one durable input-capture record carrying the exact
+instructions and task it ran under. Tests:
+`tests/test_meta_loop_emitter.py`, `tests/test_proposer_input_capture.py`.
 
 ### 5.3.5 `ProposerError` — the one failure contract
 
 `ProposerError.attempts` is the per-attempt error list in call order; the
-message joins them (`attempt 1: …`). Consumers, all of which you must keep
-working if you touch the shape:
+message joins them (`attempt 1: …`), and `.outcome` carries the typed
+ending (§5.1.3). `ProposerBlocked` and `ProposerExhausted` subclass it, so
+every consumer below keeps working for all three. Consumers, all of which
+you must keep working if you touch the shape:
 
 - the gauntlet path folds it into a **rejected round**
   (`_rejected_proposer_experiment` + `_persist_rejected_round` — a clean
@@ -460,7 +457,10 @@ working if you touch the shape:
 - the best-of-N wrapper re-raises the LAST inner error when the whole slate
   failed, so single-sample call sites see the identical contract;
 - `_propose_child` emits one `proposal_attempted` round-log event **per failed
-  attempt** off `exc.attempts` before re-raising.
+  attempt** off `exc.attempts`, plus one `proposal_episode_settled` carrying
+  `exc.outcome`'s kind, code and message, before re-raising. The ENDING is
+  recorded as its own fact rather than inferred from the last message,
+  because a block, a spent budget and a crash want different remedies.
 
 ### 5.3.6 Failure-modes catalog — what the logs mean
 
@@ -470,17 +470,18 @@ should crash an evolve loop; if one does, that is the bug.
 
 | Observation | What happened | Where handled |
 |---|---|---|
-| `proposer failed after N attempt(s): attempt 1: empty response…` in a rejected round's journal entry | the model burned its output budget on reasoning every attempt; the empty-variant repair prompt did not rescue it | gauntlet: `_persist_rejected_round`; the round journals `rejected` with `proposer_retries_exhausted` |
-| `attempt k: schema violation at hypothesis/modulating: …` | shape failure at pass 1; the next attempt carried the JSON-pointer path | §5.4.2 |
+| `proposer failed after N attempt(s): …` in a rejected round's journal entry | the episode produced no experiment; the trail says which of the four endings and why | gauntlet: `_persist_rejected_round`; the round journals `rejected` |
+| `attempt k: schema violation at hypothesis/modulating: …` | shape failure at pass 1 — a hypothesis the runtime's own schema did not catch | §5.4.2 |
 | `attempt k: patch[0]: unknown mutation_id '…'` | the model targeted an id not in the manifest — usually it hallucinated a plausible-sounding id or reused one from the memory digest that the current manifest does not carry | §5.4.3; also re-checked post-propose by `check_patch_manifest_and_forbidden`, which RAISES `ValueError` (a hard error — by then the proposer already validated, so a stale id means the manifest changed under the round) |
 | `attempt k: patches violate proposer-brief forbidden-edits list: …` | the brief's `# Forbidden edits` section named the id; the retry feedback names the offending ids | §5.3.1 row 4 |
 | `attempt k: patches failed post-apply validation: …` | the patch applied but broke the snapshot (dropped import / marker / syntax); `derive_generation` or `validate_post_apply` findings fed back | §5.3.3 |
-| `attempt k: derive_generation rejected the patch set: …` | `apply_patches`' own post-apply syntax gate raised `ValueError` — surfaced as a single retryable finding rather than crashing the loop | `build_post_apply_validator` step 2 |
-| `attempt k: auxiliary LLM call timed out after Ns` | `aux_call_timeout_s()` fired; the next attempt re-asks with the timeout message as feedback, echo carriers cleared | §5.3.1 row 1 |
+| `attempt k: derive_generation rejected the patch set: …` | `apply_patches`' own post-apply syntax gate raised `ValueError` — surfaced as a single finding rather than crashing the loop | `build_post_apply_validator` step 2 |
+| `proposal episode for … outlived its Ns budget; cancelling pid …` (WARNING) | the episode ignored the deadline Foe was given, so the host that holds the pipe ended it; the round sees `ProposerExhausted("seconds")` | §5.3.4 |
+| `blocked (no-groundable-mutation-point): …` in a rejected round | the episode's verifier was never satisfied, or it reported a block itself; NO tournament budget was spent | §5.1.3 |
 | `multi-challenger field: proposer could not produce a valid challenger for …; the field runs without it` (WARNING) | one field slot exhausted its budget; the strategy resolves over a narrower field; the dashboard shows the slot `rejected` with full `attempt_reasons` | `_propose_and_apply_challenger` |
 | `candidate screen failed (…); selecting unscreened` (DEBUG) | the guarded screen degrade — runner raised or returned a malformed result; selection proceeded byte-identically to an unscreened round | §5.6.2 clause 3 |
 | `screen-informed revise produced no replacement (…); degrading to critic-over-all` (DEBUG) | the `"unavailable"` revise outcome; nothing to restore — the failed revise wrote only its own scratch tree | §5.6.4 |
-| `proposer agent model '…' equals the auxiliary model string; …` (WARNING) | the custom-agent collusion smell test — advisory, author responsibility | §5.1.2 |
+| `proposer agent model '…' equals the auxiliary model string; …` (WARNING) | the collusion smell test — advisory, operator responsibility | §5.1 |
 | `prior_experiments_for_epoch skipped for …` / `mutation_point_track_record skipped …` (DEBUG) | best-effort index reads degraded; the prompt omits the section / manifest renders unannotated | §5.10.1 |
 | `process-exemplar extraction skipped: …` (DEBUG) | the opt-in exemplar channel failed best-effort; prompt renders without the section | §5.8.3 |
 
@@ -541,17 +542,14 @@ yields `()`.
 
 ```python
 # src/zicato/proposer/skills.py — resolve_proposer_spec (tail)
-    return ProposerSpec(
-        agent_id=f"dir:{proposer_path.name}",
-        tools=(),
-        skills=skills,
-        agent_source_sha256=agent_source_sha256,
-    )
+    return ProposerSpec(agent_id=f"dir:{proposer_path.name}", tools=(), skills=skills)
 ```
 
-`agent_source_sha256` is the SHA-256 of `agent.py`'s BYTES when the file
-exists (any byte edit rolls the epoch), else `None` (⇒ the skills-composed
-text-shim path).
+A directory that still ships an `agent.py` resolves fine here — the skills
+are still the epoch's, and the contract still hashes — but
+`build_proposer_agent` refuses to build from it, naming the removed
+runtime. The refusal is at build time so the operator learns before a
+round opens rather than after.
 
 `normalize_skill_body` mirrors the brief normalizer (`_canon_brief`): CRLF →
 LF, per-line trailing-whitespace strip, leading/trailing blank lines dropped —
@@ -560,11 +558,14 @@ newline) leave the contract hash unchanged while a semantic edit moves it."
 The RENDERED skill body (`render_skills_block`) is the verbatim file body —
 normalization applies only at hash time.
 
-Rendering: `render_system_prompt(brief, skills)` appends, after the brief
-block, `Proposer skills (composable guidance modules — follow them as
-operating procedure for this epoch):` then one
-`### <name> — <description>` heading + body per skill. Empty skills tuple
-appends nothing (byte-identical prompt).
+Rendering: `instruction_sections(brief, skills)`
+(`src/zicato/proposer/foe_request.py`) puts the brief in section
+`70-brief` and the skills in `80-skills`, so the runtime — which orders
+sections lexicographically — shows the operator's goal before the
+procedures for reaching it. The skills body is
+`render_skills_block(skills)`, one `### <name> — <description>` heading +
+body per skill. An empty skills tuple declares no section at all, so
+there is nothing for the fingerprint to move on.
 
 > ✅ ALWAYS run `tests/test_proposer_skills.py` and
 > `tests/test_epoch_contract.py` together when touching skills: the first
@@ -688,7 +689,7 @@ the model exactly which bare names and `drift:<kind>` forms will validate —
 "the prompt and the gate agree by construction."
 
 > ✅ ALWAYS thread `custom_judge_names` to BOTH `parse_experiment_json` and
-> `render_user_prompt` from the same source
+> `render_evidence` from the same source
 > (`_declared_custom_judge_names(board, weights)` in the orchestrator). If the
 > two drift apart, the proposer is told a name that then fails validation —
 > a retry-loop tax on every round. Tests:
@@ -731,15 +732,15 @@ future proposals as an advisory calibration signal. The full loop:
 
 ---
 
-## 5.5 The prompt — what the model actually sees
+## 5.5 The task — what the model actually sees
 
-Assembled by `render_user_prompt` (`src/zicato/proposer/prompts.py`). Sections
-in final top-to-bottom order (prefixes stack in reverse prepend order —
-read the function bottom-up to predict placement):
+Assembled by `render_task` (`src/zicato/proposer/foe_request.py`), which is
+the episode block plus `render_evidence`. Sections in top-to-bottom order:
 
 | Order | Section | Present when | Source |
 |---|---|---|---|
-| 1 | `## Previous attempt was rejected` (+ empty-response or echo variant) | `feedback` non-empty (a retry, or a revise seed) | §5.3.1 |
+| 0 | `## This episode` — both tree roots, and the candidate (and slate slot) being produced | always | `render_episode_block` |
+| 1 | `## Why the previous attempt was set aside` | `revise_feedback` non-empty (§5.3.2) | `_render_revise_feedback` |
 | 2 | `## Edit-class hint (this sample)` | `sample_hint` non-empty (a best-of-N slot) | `hint_for_slot` |
 | 3 | `## Recent telemetry insights` | insights file exists for the epoch | `load_latest_insights` |
 | 4 | `## Failure-mode profile (this round, aggregate — train slice)` | `failure_profile` non-empty | `render_failure_mode_profile` |
@@ -748,12 +749,17 @@ read the function bottom-up to predict placement):
 | 7 | `## Current loss summary` | always | `current_loss_summary` |
 | 8 | `## Valid expectation targets` | always | `render_metric_targets_block` — the priority-ordered body from `metric_priorities` when the caller supplied one, else the flat membership list |
 | 9 | `## Patterns observed (advisory…)` | always (`"(no patterns detected …)"` when empty) | `render_pattern_block` |
-| 10 | `## Mutation points (only these ids are valid patch targets)` | always (`"(no mutation points available)"` when empty) | `render_mutation_block` (+ optional per-point track-record lines) |
-| 11 | the "Propose ONE experiment now… first character MUST be `{`" epilogue | always | `USER_PROMPT_TEMPLATE` |
+| 10 | `## Mutation points (only these may change)` | always (`"(no mutation points available)"` when empty) | `render_mutation_block` (+ optional per-point track-record lines) |
+| 11 | "Change the working copy now, verify it, and return your hypothesis." | always | `render_task` |
 
-The system prompt (`render_system_prompt`) is `SYSTEM_PROMPT_TEMPLATE` with
-the brief body spliced verbatim (empty brief renders `(empty)`), plus a
-`Proposer skills` section appended AFTER the brief when `skills` is non-empty.
+The INSTRUCTIONS are a different document, and a hashed one:
+`instruction_sections` returns the charter (`CHARTER_SECTIONS` — what a
+proposer is for, where it works, what it may change, how it verifies, what
+it returns, when to report a block), then the epoch's brief, then its
+skills. Every word of it is model-visible AND part of what Foe
+fingerprints, so rewording a charter section rolls the epoch. That is the
+intended reading; doing it by accident is what keeping the sections in one
+constant prevents.
 
 Two rendering rules worth internalizing:
 
@@ -768,13 +774,15 @@ Two rendering rules worth internalizing:
   what makes knob-off rounds byte-identical, and every new channel must follow
   it.
 
-> ⚠️ TRAP — prompt templates in this file are `str.format` templates:
-> literal braces are `{{`/`}}`. The file carries a module-wide
-> `# ruff: noqa: E501` because the one-shot example's lines exceed the line
-> limit BY DESIGN — do not "fix" the long lines; breaking the example changes
-> what the model sees. Any prompt edit must run
-> `tests/test_proposer_prompts.py` (which pins section ordering, banding, and
-> the byte-identical-at-default properties).
+> ⚠️ TRAP — the task is not fingerprinted and the instructions are. A
+> per-round value in the task (a path, a candidate id, this round's
+> evidence) cannot move the proposer's contract identity; the same value in
+> the instructions would move it every round and roll the epoch every time.
+> That is why `## This episode` names the trees rather than the charter
+> doing it. Any change here must run `tests/test_proposer_prompts.py`
+> (section ordering, banding, the omit-at-default properties) and
+> `tests/test_proposer_contract_identity.py` (what does and does not move
+> the fingerprint).
 
 ### 5.5.1 Reading back what the proposer saw
 
@@ -790,19 +798,28 @@ spelled-out filename). Read it back with
 `read_proposer_inputs(workspace_root, epoch_id)`, which yields records
 oldest-first.
 
-One line per call, at all four sites, tagged by `role`:
+One line per call, at all three sites, tagged by `role`:
 
 | `role` | Site | What the record holds |
 |---|---|---|
-| `proposal` | the text shim's retry loop (`proposer.py`) | `render_system_prompt` + `render_user_prompt`, one record per attempt |
-| `proposal` | the default ADK agent (`adk_agent.py`) | `_render_task_text`; `system` is EMPTY because the agent owns its static instruction |
+| `proposal` | the proposal episode (`foe_agent.py`) | the joined instruction sections as `system`, the task as `user` — one record per EPISODE, since the turns inside it are Foe's own transcript |
 | `critique` | best-of-N selection (`best_of_n.py`) | `_CRITIC_SYSTEM_PROMPT` + the critic's slate prompt |
 | `recombine_merge` | the LLM merge slot (`best_of_n.py`) | `render_recombine_merge_prompt`'s two halves |
 
 Each record also carries `ts`, the lineage coordinates (`epoch_id`,
-`parent_generation_id`, `new_generation_id`), the `model` string, the
-`attempt` index where the site retries, and the `slot` index where the call
-belongs to a best-of-N slate.
+`parent_generation_id`, `new_generation_id`), the `model` string, and the
+`slot` index where the call belongs to a best-of-N slate.
+
+> ✅ ALWAYS read proposal spend off this file rather than off a mock. One
+> `ROLE_PROPOSAL` record is one episode, so
+> `sum(1 for r in read_proposer_inputs(ws, epoch) if r["role"] == ROLE_PROPOSAL)`
+> is what a round cost — the workspace's own account, which the recombination
+> cost-neutrality tests measure against.
+
+The episode's own transcript is a second, richer artifact: Foe writes it to
+`epochs/{epoch_id}/episodes/{generation_id}[-{slot}]/episode.jsonl`, and it
+carries every turn, tool call and result rather than just the opening
+context.
 
 Four properties to preserve when touching this:
 
@@ -842,19 +859,12 @@ contract is `best_of_n = 3` with `critique_enabled = True`
 (scripted/deterministic proposers do). Changing any knob rolls the
 epoch — a proposer that samples a slate proposes under a different rule.
 
-An inner proposer may implement `NativeSlateProposer.propose_slate`. In that
-case the wrapper returns `NativeSlateAdapter`, and the proposer owns the
-session boundary while reusing the same screen, selector, event, and mount
-machinery. Pi uses this seam to keep all samples, the critique, retries, and
-the optional revise in one process. Its critique asks the warm session to use
-the structured `select_candidate` tool; Python range-checks the index, so
-free-form parsing cannot select the wrong candidate.
-Stage-specific generate/review model overrides are rejected on this path,
-because honoring either would silently break the one-session claim.
-That session belongs to exactly one proposal slate and is never shared across
-board entries, runs, challengers, or rounds. Its sole input remains the
-restricted `ProposerContext`; this capability does not extend to target,
-emulator, judge, or adjudicator roles.
+Every slot is its own episode, in its own process, with its own working
+copy. That is what makes the slate genuinely independent — nothing is
+carried between slots but the edit-class hint that tells them apart — and
+what lets `_gather_slate` run them concurrently without a shared session to
+serialize on. Fork slates, where a runtime branches one warm session into
+N, are deliberately not built here (issue #301).
 
 The full `propose` flow when N > 1:
 
@@ -1111,8 +1121,9 @@ the chosen sub-index back to slate coordinates. Two selectors:
 
 **The critic** (when `critique_enabled` and an aux callable exists): ONE cheap
 LLM call. Its user prompt = the SAME restricted round context the proposer saw
-(re-rendered through `render_user_prompt` under the SAME `restrict_visibility`
-flag, including the failure profile and the redacted exemplar block) + the
+— literally the same evidence, projected off the same context by
+`evidence_from_context` and rendered by the same `render_evidence`, including
+the failure profile and the redacted exemplar block — + the
 compact candidate slate (`_render_candidate_slate`: index, core idea, targets,
 per-patch op + rationale, diff size — the proposer's own outputs, already
 inside the envelope) + the optional calibration note (§5.4.6) + the optional
@@ -1152,13 +1163,12 @@ declared `CritiqueSelected.slate` type — the decoder re-tuples top-level lists
 on read, so emitting a list would leave a written event unequal to its own
 decoded form.
 
-On the `pi` path the index and the rationale come back as separate structured
-fields of the `select_candidate` tool call, and they are parsed with DIFFERENT
-strictness: an unusable index degrades the selection to the heuristic, while an
-unusable rationale is dropped on its own. A note about a decision must never
-veto the decision. The session records the rationale only after the index
-clears its range check, so it never carries a sentence for a choice it
-rejected. It is PROVENANCE:
+The index and the rationale are parsed with DIFFERENT strictness: an
+unusable index degrades the selection to the heuristic, while an unusable
+rationale is dropped on its own. A note about a decision must never veto
+the decision, and the rationale is recorded only after the index clears its
+range check, so it never carries a sentence for a choice that was rejected.
+It is PROVENANCE:
 nothing in the loop reads it back, and truncation costs a reader the end of a
 sentence and costs the step nothing. Its visibility envelope is the critic's
 own — the critic can only paraphrase what it was shown, and it was shown
@@ -1214,9 +1224,10 @@ change; every trap in this chapter appears in situ here.
 
 ```
 evolve invocation start (once):
-  resolve_proposer_spec(None)          → ProposerSpec.default()        skills.py
-  build_proposer_agent(spec, None)     → ADKProposerAgent(builtin_default=True)
-  wrap_with_proposer_quality(agent, q) → BestOfNProposerAgent(inner=…, n=3)
+  external_proposer_config(config, root) → the workspace's proposer binding
+  resolve_proposer_spec(None, binding)   → ProposerSpec(external:foe, …)  skills.py
+  build_proposer_agent(spec, None, binding) → FoeProposerAgent(spec, config)
+  wrap_with_proposer_quality(agent, q)   → BestOfNProposerAgent(inner=…, n=3)
 
 per round (evolve_once, evolve/gauntlet.py):
   mutations   = enumerate_mutations(adapter mutable trees)
@@ -1234,15 +1245,18 @@ per round (evolve_once, evolve/gauntlet.py):
     3 slots gather concurrently (propose_parallelism=4); slot 0 shown:
     slot 0: replace(ctx, sample_hint=hint_for_slot(0,3,profile),
                     validate_experiment=<its own scratch lease>)
-      ADKProposerAgent.propose:
-        _load_agent(ctx) → build_default_adk_agent(ctx.model)   # cached after slot 0
-        tool_ctx = ProposerToolContext(root, parent snapshot, epoch, manifest, parent_id)
-        task = _render_task_text(spec, slot_ctx, feedback="")
-        with bind_proposer_tool_context(tool_ctx):
-            text = _run_agent_once(agent, task)   # ADK InMemoryRunner, fresh session
+      FoeProposerAgent.propose:
+        scratch_working_copy(parent snapshot) → /tmp/ztw-pscratch-*   ← the EDIT tree
+        build_episode_tools(…)  → mutation_usage + validate_patches, bound to this round
+        request = build_request(config, brief, skills, evidence, read=snapshot,
+                                write=copy, verify_retries=ctx.max_retries)
+        capture the instructions + task → proposer_inputs.jsonl
+        foe.start_config(…)   → one process; its pid → active_runs
+            └ the episode edits the copy, calls validate_patches, returns
+        project_onto_mutation_points(copy vs snapshot) → the patch set
         parse_experiment_json → enforce_forbidden → scratch validate(candidate)
             └ derive_scratch applies into /tmp/ztw-slate-*/child   ← slot 0's OWN tree
-      lease cleanup removes the scratch parent
+      the working copy and the scratch lease are both removed
     slots 1, 2: … each into its own disjoint scratch tree
     post-gather pass, SLOT order: emit candidate_sampled {i, n:3} ×3
     screen: None → unscreened
@@ -1264,12 +1278,12 @@ per round (evolve_once, evolve/gauntlet.py):
 Points where the trace changes under non-default knobs:
 
 - `best_of_n: 1` → the wrapper is not even constructed; ONE
-  `ADKProposerAgent.propose` straight through the shared
+  `FoeProposerAgent.propose` straight through the shared
   `validate_experiment` hook — no slate events, no critique, no scratch, and
   the canonical tree is written by that one validation.
-- a skills-only proposer dir → `DefaultProposerAgent`; the inner engine is
-  `propose_experiment` over `aux_call_llm` with per-attempt meta-loop
-  bookends and the `aux_call_timeout_s()` bound; no tools.
+- a proposer dir with skills → the same agent, with an `80-skills` section
+  in the episode's instructions and the skill bodies folded into the
+  contract hash.
 - `screen_entries: 4` → after slot 2, `_screen_slate` runs each candidate on
   the rotating 4-entry train panel at replicate 3000 (+3001 confirms);
   `candidate_screened` × 3 events; survivors feed selection; all-vetoed
@@ -1785,10 +1799,11 @@ this checklist. If you cannot tick every box, the channel does not ship:
    id / task text / holdout entry in the channel's raw inputs and asserts the
    rendered block does not contain it (`tests/test_process_exemplars.py` and
    `tests/test_proposer_prompts.py` are the models).
-8. **Critic parity?** Decide explicitly whether the critic sees it (it should,
-   if the proposer does) and thread it into `_critique`'s
-   `render_user_prompt` call.
-9. **ADK parity?** Decide whether `_render_task_text` threads it (§5.1.1).
+8. **On `ProposalEvidence`?** A channel reaches the model only through that
+   dataclass and `evidence_from_context`'s projection. Adding it there is
+   also what gives the critic parity for free: the critic renders the same
+   evidence, so a channel the proposer sees is one the critic sees, and one
+   it does not cannot arrive unbanded.
 
 ### 5.8.8 Envelope audit playbook
 
@@ -1822,32 +1837,37 @@ walk §5.8.7 by hand.
 
 ---
 
-## 5.9 The proposer tools registry
+## 5.9 The proposer's tool surface
 
-`src/zicato/proposer/tools.py` ships the read-only tools a tool-using proposer
-(the built-in default, or any custom `agent.py`) may call while it reasons.
-They are plain module-level functions — ADK wraps each as a `FunctionTool` —
-so a custom agent simply does
-`tools=list(DEFAULT_PROPOSER_TOOLS)`.
+What an episode may do is a closed list, asserted by name
+(`SANCTIONED_TOOLS`, `src/zicato/proposer/foe_request.py`): `read`, `grep`,
+`edit` and `block` are Foe's own built-ins, bounded by the grants; the two
+host tools `mutation_usage` and `validate_patches` are answered by zicato
+over the host protocol.
+
+`src/zicato/proposer/tools.py` ships the read-only implementations behind
+`mutation_usage`, plus the tool bodies the validator and the CLI reuse.
+They are plain module-level functions reading a bound per-round context.
 
 ### 5.9.1 The contextvar binding
 
-A tool function cannot carry per-round context as a bound argument: the custom
-agent is constructed ONCE (at import / first propose) and reused across every
-challenger. The tools therefore read a module-level
+A tool function cannot carry per-round context as a bound argument: the
+implementations are module-level and reused across every challenger. The
+tools therefore read a module-level
 `contextvars.ContextVar[ProposerToolContext | None]`. That plumbing lives in
 `zicato/proposer/tool_context.py` and is re-exported from
 `zicato/proposer/tools.py`, so `from zicato.proposer.tools import
 ProposerToolContext, bind_proposer_tool_context` stays the import site; the
 split exists so `validate.py` can reach the context without
 importing the tool bodies (see the callout at the end of §5.9.2). The
-contextvar is what `ADKProposerAgent.propose` sets around each agent run via
+contextvar is what the episode's host tools set around each call via
 `bind_proposer_tool_context(tool_ctx)` — set on entry, **reset to the prior
 value on exit even on exception**. A `ContextVar` rather than a plain global
-means concurrent challengers — each agent on its own asyncio task — never leak
-context into one another. A tool called with no bound context raises a clear
-`RuntimeError` ("proposer tools may only be called from within an
-ADKProposerAgent run") rather than returning a misleading empty result.
+means concurrent challengers — each episode serviced on its own asyncio task
+— never leak context into one another. A tool called with no bound context
+raises a clear `RuntimeError` ("proposer tools may only be called from within
+a bound proposer tool context") rather than returning a misleading empty
+result.
 
 `ProposerToolContext` fields: `workspace_root` (journal/insights/index
 lookups), `generation_root` (the PARENT snapshot the read/grep tools resolve
@@ -1873,25 +1893,15 @@ empty degrades that tool to an explicit "coordinates unavailable" answer).
 | `train_slice_agent_profile()` | per agent role: banded incidence of invocation, of attributed drift, and of being steered | as above; agent names are open-vocabulary, so each passes through `scrub_identity` then `truncate_free_text` | as above |
 | `train_slice_process_profile()` | banded incidence of the process-failure payload cases (`task_failed` / `task_blocked` / `task_cancelled` / `plan_revised`) | as above; case names are goldfive's closed payload-oneof vocabulary and carry no content of their own | as above |
 
-The registry is also served over MCP (`zicato/proposer/mcp_server.py`) for a
-proposer that is not an in-process ADK agent. That server **derives its tool
-list by reflecting over `DEFAULT_PROPOSER_TOOLS`** and dispatches into the same
-functions inside the same `bind_proposer_tool_context` block, so it neither
-narrows nor widens the surface and the escape guard gets no second
-implementation. The sanctioned-surface question is therefore decided in
-`tools.py` and nowhere else. One server per challenger process: the context var
-is process-wide, so a shared server would cross-bind concurrent rounds.
-
-**The external proposer is not wired to it.** `SANCTIONED_TOOLS` in
-`zicato/proposer/pi_agent.py` is `("propose_experiment",)` — the
-terminating structured-output tool and nothing else — and the envelope
-assertion in `tests/test_proposer_pi_envelope.py` pins exactly that. Connecting
-the two is a separate step by design, and `pi_agent.py`'s module docstring
-states its shape: override `PiProposerAgent.tool_flags` to return the server's
-launch flags and declare the exposed names in `SANCTIONED_TOOLS`. Both are read
-by the launch *and* by the contract identity, so widening the external
-proposer's tool surface rolls the epoch by construction — which is why the
-wiring must go through those two constants rather than around them.
+The registry is the in-process surface, reached by a proposer running in
+zicato's own interpreter. It is not what a Foe episode calls: an episode's
+tool list is declared in its execution contract and its two host tools are
+built per episode (`zicato/proposer/foe_agent.py`), which is what lets the
+same functions serve a sandboxed subprocess. Both routes dispatch inside the
+same `bind_proposer_tool_context` block, so the escape guard has one
+implementation and the sanctioned-surface question is decided in `tools.py`
+and nowhere else. One binding per challenger: the context var is
+process-wide, so a shared binding would cross-bind concurrent rounds.
 
 **The `mutable_roots` path-shape lesson** (read this before touching path
 resolution): `list_mutation_points` advertises files **relative to the whole
@@ -1950,31 +1960,34 @@ still cheap.
 pins that this stays the ONLY comparison site; plenty of mentions with zero
 readers is how a docstring's claim goes unchecked.
 
-### 5.9.3 Why tools do NOT fold into the contract hash
+### 5.9.3 What of the tool surface folds into the contract hash
 
 `_canon_proposer` (`src/zicato/epoch/contract.py`) canonicalizes
-`{agent_id, tools (sorted), skills (name + normalized-body sha),
-agent_source_sha256}`. The `tools` field is present in the canonical form —
-but `ProposerSpec.tools` is **always empty**
-(`resolve_proposer_spec` sets `tools=()`; the field is reserved for a future
-tool declaration), for both the builtin and any dir proposer. The REGISTRY itself
-(`DEFAULT_PROPOSER_TOOLS`) is zicato source code: it ships with the package,
-is versioned with the code, and is identical for every workspace on a given
-zicato version — so hashing it would roll every epoch on every zicato upgrade
-without changing the contract the operator authored. What DOES roll the epoch:
-the agent identity (`builtin:default` vs `dir:<name>`), a semantic skill edit
-(whitespace normalized away by `normalize_skill_body`), and any byte of a
-custom `agent.py` (`agent_source_sha256`) — including which tools that custom
-agent chooses to construct itself with, since that choice lives in its source.
+`{agent_id, tools (sorted), skills (name + normalized-body sha)}`, plus an
+`external` key carrying the implementing class and the digest of its causal
+surface. For the Foe agent that digest is the RUNTIME's own contract
+fingerprint, and Foe hashes every tool's name, description, instruction and
+schema into it — so rewording `VALIDATE_PATCHES_DESCRIPTION` rolls the
+epoch, and so does adding a tool to `SANCTIONED_TOOLS`.
 
-> ⚠️ TRAP — adding a tool to `DEFAULT_PROPOSER_TOOLS` changes the DEFAULT
-> proposer's behaviour without rolling any epoch. That is the accepted
-> trade-off described above, but it means a mid-epoch zicato upgrade can
-> change what the default proposer can read. Note it in the changelog and
-> never make a new tool's OUTPUT wider than the envelope (§5.8.7 checklist
-> applies to tool outputs exactly as to prompt channels — the
-> `mutation_track_record` tool is the worked precedent: it emits the same
-> banded shape the manifest annotation does).
+That is the inversion worth understanding. Reconstructing the surface from
+outside cannot see a description reworded inside the runtime; asking the
+runtime closes the gap exactly. `ProposerSpec.tools` is still present in the
+canonical form and is now read off the SAME identity mapping that is hashed
+(`resolve_external_spec` takes it from `identity["tools"]`), so the
+sanctioned set and the hashed set cannot drift apart.
+
+What is deliberately NOT hashed is the resolved grant PATHS: only their
+shape is. A round's snapshot and its working copy live at paths that differ
+every round, and hashing them would roll the epoch on every round while
+saying nothing about how the proposer reasons.
+
+> ⚠️ TRAP — a new tool's OUTPUT must be inside the envelope (§5.8.7's
+> checklist applies to tool outputs exactly as to task channels), and its
+> DESCRIPTION is model-visible and hashed. The `mutation_usage` host tool is
+> the worked precedent on both counts: it emits the same banded shape the
+> manifest annotation does, and its description lives in one module-level
+> constant so rewording it is a deliberate act.
 
 ---
 
@@ -2061,8 +2074,9 @@ read-only grounding capability.
    `src/zicato/proposer/tools.py`. Signature: JSON-friendly positional args,
    `-> str`. First line of the body: `ctx = _active_context()` — never accept
    the context as a parameter (the agent is constructed once; §5.9.1). The
-   docstring is model-facing (ADK surfaces it as the tool description): state
-   what it returns, what raises, and the caps.
+   docstring is model-facing (the tool's description is built from it, and
+   Foe HASHES that description): state what it returns, what raises, and the
+   caps — and know that rewording it rolls the epoch.
 2. **Sandbox every read.** Anything that touches the snapshot goes through
    `_resolve_under_mutable_roots` or delegates to `grep_mutable` (the
    `mutation_usage` precedent — `re.escape` + the existing escape guard and
@@ -2083,11 +2097,12 @@ read-only grounding capability.
    list_mutation_points) are valid"`) — the agent retries with a corrected
    call. Missing-but-legitimate state returns an explicit sentinel string
    (`""`, `"(no matches)"`, a zeroed record), never an exception.
-6. **Register it**: append to `DEFAULT_PROPOSER_TOOLS` and `__all__`. If the
-   default proposer should be TOLD about it, extend
-   `_DEFAULT_PROPOSER_INSTRUCTION` in `src/zicato/proposer/adk_agent.py` with
-   one `- call \`<tool>\` to …` bullet (keep it one line; the instruction is
-   static contract-independent text).
+6. **Register it**: add the name to `SANCTIONED_TOOLS` and, for a host tool,
+   build it in `build_episode_tools` with its description in a module-level
+   constant beside `MUTATION_USAGE_DESCRIPTION`. Both are model-visible and
+   hashed, so the registration IS a contract edit — say so in the changelog.
+   If the proposer should be TOLD when to reach for it, extend the relevant
+   `CHARTER_SECTIONS` entry with one sentence.
 7. **Lazy-import anything heavy** inside the function body (`# noqa: PLC0415`
    — the module must stay importable without optional extras; every existing
    tool models this).
@@ -2101,12 +2116,12 @@ read-only grounding capability.
    ```bash
    uv sync --all-extras
    uv run pytest tests/test_proposer_tools.py tests/test_proposer_grounding_tools.py \
-       tests/test_proposer_adk_agent.py -x -q
+       tests/test_proposer_foe_agent.py tests/test_proposer_contract_identity.py -x -q
    uv run ruff check src/zicato/proposer/tools.py && uv run mypy src/zicato/proposer/tools.py
    # prove the contract hash did NOT move for an unchanged workspace:
    uv run pytest tests/test_epoch_contract.py -q
    ```
-   If you skipped step 5's `ValueError` wording, the agent gets a generic ADK
+   If you skipped step 5's `ValueError` wording, the agent gets a generic
    tool-error and burns retries guessing; if you skipped step 7, `import
    zicato.proposer.agent` starts requiring `google-adk` everywhere and the
    text-shim path breaks in minimal environments.
@@ -2140,14 +2155,15 @@ content with its own design doc).
    `_render_failure_profile`), wrapped in `best_effort` so a channel failure
    never aborts a round, gated on its knob so the off state does zero work.
 5. **Thread it as an opaque string**: a new `ProposerContext` field with
-   default `""` + docstring stating the envelope class; forward it in
-   `DefaultProposerAgent.propose`, `propose_experiment`'s signature +
-   `render_user_prompt` call, `_render_task_text` (ADK parity — or document
-   why not), and `_critique`'s restricted re-render (critic parity). Add it
-   to `_propose_child` and BOTH its call sites (§5.0 trap).
-6. **Splice in `render_user_prompt`** with the empty-string sentinel and an
-   explicit position (remember: prefixes stack in reverse prepend order —
-   §5.5's table is the authority; update it in this guide). If the content is
+   default `""` + docstring stating the envelope class; a matching
+   `ProposalEvidence` field; and one line in `evidence_from_context`. That
+   projection is also what gives the critic parity for free — it renders the
+   same evidence. Add the context field to `_propose_child` and BOTH its call
+   sites (§5.0 trap).
+6. **Splice in `render_evidence`** with the empty-string sentinel and an
+   explicit position (§5.5's table is the authority; update it in this
+   guide). Put it in the TASK, never the instructions: a per-round value in
+   the instructions would roll the epoch every round. If the content is
    redacted material, prepend a banner restating the redaction contract (the
    process-exemplars precedent) so the model reads it as anonymized
    mechanism rather than named evidence.
@@ -2249,28 +2265,44 @@ the proposer's default is 0).
 ## 5.14 The standalone `zicato proposer propose` command
 
 `src/zicato/cli/commands/propose.py` — ADVANCED / DEBUGGING, off the happy
-path (`zicato evolve` proposes internally every round). Run it by hand to
-mint and inspect ONE experiment without a tournament. Differences from the
-evolve path a weaker agent must know before "testing a proposer change" with
-it:
+path (`zicato evolve` proposes internally every round). Run it by hand to see
+what the proposer does with a workspace's current evidence, without spending
+a tournament on it.
 
-- it calls **`propose_experiment` directly** — the text-shim engine — NOT
-  `build_proposer_agent`, so it exercises neither the ADK default agent nor
-  the best-of-N wrapper. A change in `adk_agent.py` / `best_of_n.py` is
-  invisible to it;
-- inputs are stitched from the workspace: cached `mutations.json` (or a fresh
-  enumeration), `--patterns-from <file>` (or fresh detectors), the epoch's
-  `brief.md` (falling back to `rubric.md` when only that file exists);
+It is the **same episode**: the command resolves the agent through
+`build_proposer_agent` and hands it a `ProposerContext`, so the request it
+builds is the request the loop builds. What differs is what it does around
+that episode:
+
+- the mutation manifest is enumerated from the parent generation's own
+  SNAPSHOT (the tree the episode edits), the patterns come from
+  `--patterns-from <file>` or fresh detectors, and the brief from the
+  epoch's `brief.md` (falling back to `rubric.md` when only that exists);
+- the round's per-round DERIVED channels are absent — the failure-mode
+  profile, the metric priorities, the process exemplars, the genealogy
+  sample and the calibration record. Each is computed by a round from the
+  tournament state it is about to spend, and none is reconstructible
+  outside one;
 - there is **no post-apply validation hook** wired (no snapshot is derived),
-  so a destructive patch that evolve would bounce in one retry survives here;
-- the result is written via `write_experiment` — I/O stays at the CLI layer
-  by design ("the orchestrator does NOT write the resulting Experiment to
-  disk — that is the CLI's job"), which is why the engine is testable with
-  stub callables and no tmpdir bookkeeping.
+  so a destructive patch that the round would bounce inside the episode
+  survives here;
+- the **best-of-N wrapper is not interposed**, so no slate, no screen and no
+  critique run;
+- the result lands in `epochs/<epoch>/proposals/<generation>.json` — a
+  directory nothing in the loop reads. It is deliberately NOT the journal:
+  writing through `write_experiment` would mint the generation the loop is
+  about to mint, leaving a half-built generation in the epoch's own
+  sequence.
 
-> ⚠️ TRAP — do not conclude "my proposer change works" from `zicato proposer propose`
-> alone. It bypasses the agent selector, the wrapper, the screen, and the
-> validate hook. The e2e truth is
+Everything else about the loop is left alone, and
+`tests/test_cli_propose.py` pins it: no board entry reaches the episode —
+not the holdout's and not the train slice's — no tournament is opened, no
+outcome or lineage generation is recorded, and every file the loop reads is
+byte-identical afterwards.
+
+> ⚠️ TRAP — do not conclude "my proposer change works" from `zicato proposer
+> propose` alone. It exercises the episode but not the slate, the screen or
+> the validate hook. The e2e truth is
 > `tests/test_best_of_n_tree_integrity.py` +
 > `tests/test_orchestrator_multi_challenger.py` — and never a live evolve run
 > without the operator's explicit go-ahead.
@@ -2283,14 +2315,18 @@ Where to add (and what will catch) a regression, by concern:
 
 | Concern | Tests |
 |---|---|
-| engine loop, retries, feedback/echo carriers, revise seeding | `tests/test_proposer_proposer.py` |
+| the episode: four endings, watchdog registration, holdout exclusion, budget | `tests/test_proposer_foe_agent.py` |
+| the working copy and the projection that reads it back | `tests/test_proposer_foe_scratch.py` |
+| the `proposer` block, and the refusals for a removed runtime | `tests/test_proposer_foe_config.py` |
+| what moves the proposer's contract fingerprint, and what does not | `tests/test_proposer_contract_identity.py` |
+| the outcome vocabulary and its round-log / scorecard readers | `tests/test_proposer_episode_outcomes.py` |
 | salvage + two-pass validation, op discrimination, ranges/domains | `tests/test_proposer_structured.py` |
 | judge-name normalization + metric movements | `tests/test_proposer_structured_metric_movements.py` |
-| prompt sections, ordering, banding, byte-identical-at-default | `tests/test_proposer_prompts.py` |
+| task sections, ordering, banding, omit-at-default | `tests/test_proposer_prompts.py` |
 | brief parsing + forbidden enforcement | `tests/test_proposer_brief.py` |
 | skills / frontmatter / spec resolution | `tests/test_proposer_skills.py` |
-| agent selector + text shim | `tests/test_proposer_agent.py` |
-| ADK agent (builtin + custom + post-response loop) | `tests/test_proposer_adk_agent.py` |
+| what the builder resolves, and what it refuses | `tests/test_proposer_agent.py` |
+| the standalone propose command, and what it must not touch | `tests/test_cli_propose.py` |
 | tools: sandbox, caps, contextvar, error texts | `tests/test_proposer_tools.py`, `tests/test_proposer_grounding_tools.py` |
 | best-of-N: slate, critique, heuristic, screen wiring, revise | `tests/test_proposer_best_of_n.py` |
 | the tree/record agreement invariant, end to end with subprocess workers | `tests/test_best_of_n_tree_integrity.py` (+ the scripted slates in `tests/_best_of_n_slate_support.py`) |

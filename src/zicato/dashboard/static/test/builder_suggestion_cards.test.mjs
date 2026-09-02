@@ -40,7 +40,7 @@ function freshDraft() {
     board: [{ id: 'entryA', kind: 'single_turn', budget_s: 60, input: 'hi' }],
     board_meta: { disable_drift: [], judge_only: false },
     brief: 'steer', proposer_path: null,
-    proposer: { agent_id: 'default', tools: [], skills: [], has_custom_agent: false },
+    proposer: { agent_id: 'default', tools: [], skills: [] },
     holdout: { train_ids: ['entryA'], holdout_ids: [] },
   };
 }

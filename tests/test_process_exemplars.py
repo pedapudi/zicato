@@ -632,19 +632,22 @@ def test_prompt_byte_identical_when_knob_off() -> None:
     and an explicit empty string render the SAME bytes — no section, no
     extra newline (the contract-hash half lives in
     test_contract_hash_stable_at_default_and_rolls_on_opt_in)."""
-    from zicato.proposer.prompts import render_user_prompt
+    from tests._proposal_evidence import render_proposal_evidence
 
-    without = render_user_prompt(**_prompt_kwargs())  # type: ignore[arg-type]
-    empty = render_user_prompt(**_prompt_kwargs(process_exemplars=""))  # type: ignore[arg-type]
+    without = render_proposal_evidence(**_prompt_kwargs())  # type: ignore[arg-type]
+    empty = render_proposal_evidence(  # type: ignore[arg-type]
+        **_prompt_kwargs(process_exemplars="")
+    )
     assert without == empty
     assert "Process exemplars" not in without
 
 
 def test_prompt_splices_exemplars_after_failure_profile() -> None:
-    from zicato.proposer.prompts import render_process_exemplars, render_user_prompt
+    from tests._proposal_evidence import render_proposal_evidence
+    from zicato.proposer.prompts import render_process_exemplars
 
     block = render_process_exemplars([_sample_exemplar()])
-    rendered = render_user_prompt(
+    rendered = render_proposal_evidence(
         **_prompt_kwargs(
             failure_profile="- looping: ~40%",
             process_exemplars=block,
@@ -658,43 +661,24 @@ def test_prompt_splices_exemplars_after_failure_profile() -> None:
     # Order: insights, failure profile, process exemplars, ... template.
     assert insights_at < profile_at < exemplars_at < loss_at
     # The banner restates the redaction contract next to the windows.
-    assert "Redaction contract (PROCESS-EXEMPLARS.md)" in rendered
+    assert "Entry ids and task text are stripped" in rendered
     assert "never WHICH board entry" in rendered
 
 
-def test_proposer_context_forwards_process_exemplars() -> None:
-    """The DefaultProposerAgent engine threads ctx.process_exemplars into
-    the rendered user prompt (the ADK engine shares render_user_prompt)."""
-    import asyncio
+def test_the_episode_task_carries_the_context_s_process_exemplars() -> None:
+    """The channel reaches the model: the context's block lands in the task.
 
-    from zicato.core.types import MutationPoint, ProposerSpec
-    from zicato.proposer.agent import DefaultProposerAgent, ProposerContext
+    ``evidence_from_context`` is a projection rather than a
+    re-derivation, so what the orchestrator assembled is what the episode
+    is shown — and this is the end of that thread.
+    """
+    from zicato.core.types import MutationPoint
+    from zicato.proposer.agent import ProposerContext
+    from zicato.proposer.foe_agent import evidence_from_context
+    from zicato.proposer.foe_request import render_evidence
 
-    seen: list[str] = []
-
-    async def _aux(system: str, user: str, model: str) -> str:
-        seen.append(user)
-        return json.dumps(
-            {
-                "hypothesis": {
-                    "core_idea": "x",
-                    "modulating": ["m1"],
-                    "why": "y",
-                    "expected_drift_movements": [
-                        {"kind": "off_topic", "direction": "decrease", "magnitude": "small"}
-                    ],
-                    "expected_pass_rate_delta": "+0.1",
-                },
-                "patches": [
-                    {
-                        "mutation_id": "m1",
-                        "op": "replace",
-                        "new_content": "new",
-                        "rationale": "r",
-                    }
-                ],
-            }
-        )
+    async def _unused(system: str, user: str, model: str) -> str:  # pragma: no cover
+        raise AssertionError("an episode never calls the auxiliary text shim")
 
     ctx = ProposerContext(
         epoch_id="ep1",
@@ -715,13 +699,12 @@ def test_proposer_context_forwards_process_exemplars() -> None:
         ),
         brief_text="brief",
         current_loss_summary="ok",
-        aux_call_llm=_aux,
+        aux_call_llm=_unused,
         process_exemplars="- exemplar 1/1 — pattern drift_kind_frequency (drift kind 'x'):",
     )
-    agent = DefaultProposerAgent(ProposerSpec.default())
-    asyncio.run(agent.propose(ctx))
-    assert len(seen) == 1
-    assert "## Process exemplars (train slice — redacted event windows)" in seen[0]
+    rendered = render_evidence(evidence_from_context(ctx))
+    assert "## Process exemplars (train slice — redacted event windows)" in rendered
+    assert "exemplar 1/1" in rendered
 
 
 # ---------------------------------------------------------------------------

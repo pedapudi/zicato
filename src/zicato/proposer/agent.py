@@ -1,46 +1,29 @@
-"""The :class:`ProposerAgent` abstraction over the structured proposer.
+"""The :class:`ProposerAgent` seam the round drives, and its builder.
 
 Spec resolution (:mod:`zicato.proposer.skills`) turns a proposer dir (or
 ``None``) into a hash-ready :class:`~zicato.core.types.ProposerSpec` — an
-agent identity plus its skills. This module turns that spec into something
-callable: it wraps the single-shot
-:func:`zicato.proposer.proposer.propose_experiment` engine behind a
-uniform :class:`ProposerAgent` protocol, threads a proposer's *skills*
-into the prompt the engine sends, and exposes a builder that the
-orchestrator drives at each propose site.
+agent identity plus its skills. This module turns that spec into
+something callable.
 
 Two halves:
 
-* :class:`ProposerContext` — a frozen bundle of everything
-  :func:`propose_experiment` needs as call-time inputs. The orchestrator
-  assembles one per challenger and hands it to the agent; the agent
-  decides how to turn it into an :class:`~zicato.core.types.Experiment`.
-* :class:`ProposerAgent` / :class:`DefaultProposerAgent` /
-  :func:`build_proposer_agent` — the protocol, the skills-aware built-in
-  implementation, and the spec→agent builder.
+* :class:`ProposerContext` — a frozen bundle of everything one proposal
+  needs as call-time inputs. The orchestrator assembles one per
+  challenger and hands it to the agent; the agent decides how to turn it
+  into an :class:`~zicato.core.types.Experiment`.
+* :class:`ProposerAgent` / :func:`build_proposer_agent` — the one-method
+  protocol, and the builder that resolves a spec to the class that
+  implements it.
 
-Two agent implementations ship here. The
-:class:`~zicato.proposer.adk_agent.ADKProposerAgent` is a native ADK agent
-that declares its own ``model=`` and runs on ADK's own ``Runner`` (NOT the
-auxiliary text shim, which cannot express the function calls a tool-using
-agent needs); :class:`DefaultProposerAgent` is the single-shot text-shim
-path that drives :func:`propose_experiment` over the auxiliary callable.
-
-:func:`build_proposer_agent` selects between them:
-
-* **no proposer dir configured (the DEFAULT)** ⇒ the tool-using
-  ``ADKProposerAgent`` in ``builtin_default`` mode, bound to the auxiliary
-  model and the full read-only proposer tool registry. The default proposer
-  reads the world while it reasons;
-* **a proposer dir with a custom ``agent.py``**
-  (``spec.agent_source_sha256`` is set) ⇒ ``ADKProposerAgent`` loading that
-  author-owned agent from disk;
-* **a proposer dir with skills but no ``agent.py``** ⇒ the skill-composed
-  ``DefaultProposerAgent`` — the EXPLICIT opt-in into the single-shot
-  text-shim engine.
-
-The ADK module is imported lazily so importing this module never forces the
-optional ``google-adk`` extra.
+There is one supported implementation,
+:class:`~zicato.proposer.foe_agent.FoeProposerAgent`, and one way to
+reach it: the workspace declares a ``proposer`` block and the seam in
+:mod:`zicato.proposer.external` resolves that to the Foe-backed agent. An
+operator may bind a class of their own through
+``runtime.proposer_agent``; ``docs/design/PROPOSER.md`` states the trust
+boundary such a class runs under. A workspace that declares neither has
+not said how it proposes, and a round refuses to open rather than
+choosing for it.
 """
 
 from __future__ import annotations
@@ -55,10 +38,9 @@ from zicato.core.types import (
     MutationPoint,
     Pattern,
     PriorExperiment,
-    ProposerQualityConfig,
     ProposerSpec,
 )
-from zicato.proposer.proposer import ExperimentValidator, propose_experiment
+from zicato.proposer.proposer import ExperimentValidator
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.index.query import MutationTrackRecord
@@ -74,7 +56,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only import
 class ProposerContext:
     """Call-time inputs for one proposer invocation.
 
-    Bundles exactly what :func:`zicato.proposer.proposer.propose_experiment`
+    Bundles the call-time inputs one proposal needs — the lineage
     needs as keyword arguments — the lineage coordinates, the advisory
     inputs (patterns, mutation manifest, loss summary, prior experiments),
     the auxiliary-LLM seam, and the bounded-retry / validation knobs. The
@@ -86,8 +68,8 @@ class ProposerContext:
     The iterable inputs are stored as tuples so a context is a stable,
     re-readable value — an agent may consult them across retries without
     exhausting a generator. The field set and types mirror the
-    :func:`propose_experiment` signature one-for-one; see that function's
-    docstring for the per-field semantics.
+    :class:`~zicato.proposer.foe_request.ProposalEvidence` projection
+    one-for-one; see :func:`~zicato.proposer.foe_agent.evidence_from_context`.
     """
 
     epoch_id: str
@@ -105,7 +87,7 @@ class ProposerContext:
     #: The PARENT generation's materialised snapshot — the tree this round is
     #: about to patch, resolved by the orchestrator through the generation
     #: store's path convention and threaded here so a tool-using proposer
-    #: does not re-derive it. :class:`~zicato.proposer.adk_agent.ADKProposerAgent`
+    #: does not re-derive it. The proposal episode
     #: binds it onto the tool context, and the external-proposer launch
     #: forwards it into the MCP server's per-round context file.
     #:
@@ -175,7 +157,7 @@ class ProposerContext:
     #: champion's promoted spine; inspirations = diverse rejected reign
     #: candidates by mutation-id-set dissimilarity) and rendered by
     #: :func:`~zicato.proposer.prompts.render_genealogy_block` inside
-    #: ``render_user_prompt``; when the render is non-empty a
+    #: :func:`~zicato.proposer.foe_request.render_evidence`; when the render is non-empty a
     #: ``## Candidate genealogy`` section is spliced directly above the
     #: experiment-memory block so the proposer can evolve in context — extend a
     #: promoted line or re-frame a rejected one. Each item is already BANDED
@@ -192,7 +174,8 @@ class ProposerContext:
     #: settled hypotheses graded by the prediction-accuracy grader —
     #: :func:`~zicato.tournament.detail.hypothesis_ledger`) and rendered by
     #: :func:`~zicato.proposer.prompts.render_calibration_block` inside
-    #: ``render_user_prompt``; when non-empty a ``## Prediction calibration``
+    #: :func:`~zicato.proposer.foe_request.render_evidence`; when non-empty a
+    #: ``## Prediction calibration``
     #: section is spliced above the experiment-memory block so the proposer
     #: sees its OWN miss pattern and hypothesizes more honestly. Already banded
     #: (whole-candidate outcomes through ``improved``/``flat``/``regressed``) +
@@ -308,179 +291,59 @@ class ProposerAgent(Protocol):
     async def propose(self, ctx: ProposerContext) -> Experiment: ...
 
 
-class NativeSlateProposer(ProposerAgent, Protocol):
-    """A proposer that can keep best-of-N work inside its own session."""
-
-    async def propose_slate(
-        self, ctx: ProposerContext, config: ProposerQualityConfig
-    ) -> Experiment: ...
-
-
-@dataclass(frozen=True)
-class DefaultProposerAgent:
-    """The built-in single-shot proposer, made skills-aware.
-
-    Wraps :func:`zicato.proposer.proposer.propose_experiment` — the
-    compose-prompts → call-aux-LLM → parse → bounded-retry engine — and
-    threads the proposer spec's :attr:`~zicato.core.types.ProposerSpec.skills`
-    into the system prompt. With no skills (the built-in default spec) the
-    behaviour is byte-identical to a bare :func:`propose_experiment` call,
-    so configuring no proposer changes nothing.
-    """
-
-    spec: ProposerSpec
-
-    async def propose(self, ctx: ProposerContext) -> Experiment:
-        return await propose_via_engine(spec=self.spec, ctx=ctx, aux_call_llm=ctx.aux_call_llm)
-
-
-async def propose_via_engine(
-    *,
-    spec: ProposerSpec,
-    ctx: ProposerContext,
-    aux_call_llm: Callable[[str, str, str], Awaitable[str]],
-) -> Experiment:
-    """Run the single-shot engine over ``ctx``, against a chosen callable.
-
-    The one place a :class:`ProposerContext` is unpacked into
-    :func:`~zicato.proposer.proposer.propose_experiment`'s keyword
-    arguments. ``aux_call_llm`` is a parameter rather than being read off
-    the context because the transport is the only thing that varies:
-    :class:`DefaultProposerAgent` passes ``ctx.aux_call_llm`` (the text
-    shim), while :class:`~zicato.proposer.pi_agent.PiProposerAgent` passes
-    a live RPC session's ``call``. Everything downstream of that choice —
-    the bounded retry, the repair turns, the forbidden-id enforcement, the
-    post-apply validation hook, the meta-loop bookends — is identical for
-    both by construction rather than by two implementations agreeing.
-    """
-    return await propose_experiment(
-        epoch_id=ctx.epoch_id,
-        parent_generation_id=ctx.parent_generation_id,
-        new_generation_id=ctx.new_generation_id,
-        patterns=ctx.patterns,
-        mutations=ctx.mutations,
-        brief_text=ctx.brief_text,
-        current_loss_summary=ctx.current_loss_summary,
-        aux_call_llm=aux_call_llm,
-        model=ctx.model,
-        max_retries=ctx.max_retries,
-        forbidden_ids=ctx.forbidden_ids,
-        workspace_root=ctx.workspace_root,
-        validate_experiment=ctx.validate_experiment,
-        meta_loop_emitter=ctx.meta_loop_emitter,
-        custom_judge_names=ctx.custom_judge_names,
-        prior_experiments=ctx.prior_experiments,
-        skills=spec.skills,
-        restrict_visibility=ctx.restrict_visibility,
-        failure_profile=ctx.failure_profile,
-        metric_priorities=ctx.metric_priorities,
-        process_exemplars=ctx.process_exemplars,
-        genealogy=ctx.genealogy,
-        calibration=ctx.calibration,
-        sample_hint=ctx.sample_hint,
-        mutation_track_records=ctx.mutation_track_records,
-        revise_feedback=ctx.revise_feedback,
-        slot_index=ctx.slot_index,
-    )
-
-
 def build_proposer_agent(
     spec: ProposerSpec,
     proposer_path: Path | None = None,
     external_config: ExternalProposerConfig | None = None,
 ) -> ProposerAgent:
-    """Build the :class:`ProposerAgent` for a resolved proposer spec.
+    """Build the :class:`ProposerAgent` a resolved proposer spec names.
 
-    Four outcomes, in resolution order:
+    The spec's ``external_path`` is the class; ``external_config`` is what
+    it was hashed from. Both come from
+    :func:`~zicato.proposer.external.external_proposer_config`, so the
+    identity folded into the epoch's contract and the agent that runs are
+    resolved from one reading of the workspace.
 
-    0. **External agent** — when ``runtime.proposer_agent`` named a class
-       (``spec.external_path`` is set), this imports it and constructs it
-       with ``(spec=..., config=...)``. It resolves FIRST because it is
-       the one tier that is not an ADK agent at all: the class owns its
-       own process, transport and tool surface, and zicato drives it
-       through the same one-method :class:`ProposerAgent` protocol. See
-       :mod:`zicato.proposer.external`.
-
-    1. **Custom ADK agent** — when the proposer dir ships a
-       ``proposers/<name>/agent.py`` (``spec.agent_source_sha256`` is set),
-       this returns an :class:`~zicato.proposer.adk_agent.ADKProposerAgent`
-       that loads that author-owned agent from disk. ``proposer_path`` is
-       the dir the module is loaded from; the orchestrator threads the same
-       frozen ``proposer_path`` it resolved the spec from.
-
-    2. **Built-in default (the DEFAULT)** — when a contract configures NO
-       proposer dir, ``spec`` is :meth:`ProposerSpec.default` (agent id
-       ``"builtin:default"``). This returns an
-       :class:`~zicato.proposer.adk_agent.ADKProposerAgent` in
-       ``builtin_default`` mode: a native ADK tool-using agent
-       (:func:`~zicato.proposer.adk_agent.build_default_adk_agent`) bound to
-       the workspace's auxiliary model and the full read-only proposer tool
-       registry. The DEFAULT proposer therefore reads the world (the parent
-       snapshot, the journal, the analyzer insights) while it reasons, on
-       ADK's own ``Runner`` — NOT the single-shot text shim.
-
-    3. **Skill-composed default (EXPLICIT opt-in)** — a ``dir:*`` proposer
-       that carries *no* custom agent module (``spec.agent_source_sha256``
-       is ``None``) but DOES configure a proposer dir (e.g. to drop
-       ``skills/*.md``). This returns a :class:`DefaultProposerAgent`, the
-       single-shot text-shim engine, steered purely through its skills over
-       the auxiliary callable. Configuring a proposer dir is the explicit
-       opt-in into this path; an unconfigured proposer gets the tool-using
-       agent instead.
-
-    Every ``google.adk`` import is lazy, so importing this module never
-    forces the optional ``google-adk`` extra — only constructing an
-    ``ADKProposerAgent``'s agent (at first ``propose``) pulls it in.
+    ``proposer_path`` is the epoch's proposer directory. It carries the
+    skills the spec already hashed and is checked here for the one thing
+    it may not hold — an executable ``agent.py``, which ran on a
+    proposer runtime that was removed.
 
     Raises
     ------
     ValueError
-        When the spec carries a custom agent module but no
-        ``proposer_path`` was supplied to load it from, or when it carries
-        an ``external_path`` but no ``external_config`` to resolve it
-        against — misconfigurations the caller must fix rather than
-        silently fall back to the default.
+        The spec names no proposer at all (the workspace declared no
+        ``proposer`` block), or names one without the configuration to
+        construct it. Both are misconfigurations the caller must fix
+        rather than have a default chosen for it.
+    ProposerConfigError
+        The proposer directory carries a removed executable agent module.
     """
-    if spec.external_path is not None:
-        from zicato.proposer.external import load_external_proposer_class  # noqa: PLC0415
+    from zicato.proposer.foe_config import refuse_removed_proposer_directory  # noqa: PLC0415
 
-        if external_config is None:
-            raise ValueError(
-                "spec declares an external proposer agent (external_path is "
-                f"{spec.external_path!r}) but no external_config was supplied "
-                "to construct it with"
-            )
-        cls = load_external_proposer_class(spec.external_path)
-        return cls(spec=spec, config=external_config)  # type: ignore[call-arg]
+    refuse_removed_proposer_directory(proposer_path)
 
-    # Lazy import: ADKProposerAgent pulls in the optional google-adk extra
-    # only when its agent is actually built (at first propose), so importing
-    # this module stays dependency-light.
-    from zicato.proposer.adk_agent import ADKProposerAgent  # noqa: PLC0415
+    if spec.external_path is None:
+        raise ValueError(
+            "the epoch's proposer spec names no proposal runtime: the workspace "
+            "declares no `proposer` block and binds no runtime.proposer_agent "
+            "class. Add a `proposer` block naming the Foe binary this workspace "
+            "proposes with (see docs/design/PROPOSER.md)"
+        )
+    if external_config is None:
+        raise ValueError(
+            f"spec names the proposer agent {spec.external_path!r} but no "
+            "external_config was supplied to construct it with"
+        )
 
-    if spec.agent_source_sha256 is not None:
-        if proposer_path is None:
-            raise ValueError(
-                "spec declares a custom proposer agent (agent_source_sha256 is "
-                "set) but no proposer_path was supplied to load "
-                "proposers/<name>/agent.py from"
-            )
-        return ADKProposerAgent(spec=spec, proposer_path=proposer_path)
+    from zicato.proposer.external import load_external_proposer_class  # noqa: PLC0415
 
-    if spec == ProposerSpec.default():
-        # The DEFAULT proposer: a tool-using ADK agent bound to the
-        # auxiliary model at propose time. No proposer dir was configured.
-        return ADKProposerAgent(spec=spec, builtin_default=True)
-
-    # A configured proposer dir with skills but no custom agent.py — the
-    # skill-composed single-shot engine, the explicit opt-in.
-    return DefaultProposerAgent(spec)
+    cls = load_external_proposer_class(spec.external_path)
+    return cls(spec=spec, config=external_config)  # type: ignore[call-arg]
 
 
 __all__ = [
-    "DefaultProposerAgent",
     "ProposerAgent",
     "ProposerContext",
     "build_proposer_agent",
-    "propose_via_engine",
 ]

@@ -42,7 +42,6 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
-    valid_proposer_response,
 )
 from zicato.telemetry.reducer import read_loss_profile as _REAL_READ_LOSS
 from zicato.telemetry.reducer import write_loss_profile as _REAL_WRITE_LOSS
@@ -112,7 +111,7 @@ def test_resume_reuses_completed_units_without_rerun(
 
     monkeypatch.setattr(settlement_module, "commit_field_settlement", _stop_before_receipt)
     with pytest.raises(RuntimeError, match="injected crash before settlement receipt"):
-        run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+        run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     monkeypatch.setattr(settlement_module, "commit_field_settlement", real_commit)
 
     gens = workspace / "epochs" / epoch_id / "generations"
@@ -190,7 +189,7 @@ def test_clean_workspace_evolve_is_unchanged(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
+            auxiliary_call_llm=make_aux_responder([]),
         )
     )
 

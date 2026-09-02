@@ -3,7 +3,7 @@
 :class:`FakeADKModel` is a :class:`~google.adk.models.BaseLlm` that yields
 canned :class:`~google.adk.models.LlmResponse`s from a pre-loaded script —
 no network, no real model. It exists to drive
-:class:`~zicato.proposer.adk_agent.ADKProposerAgent` (and any other
+an ADK-backed system under test (and any other
 ADK-agent test) through a deterministic conversation: a tool-call turn
 followed by a final JSON turn, multiple tool turns, or a single final
 turn, exactly as the test scripts it.
@@ -14,7 +14,7 @@ Each script step is one of:
   carries a single ``function_call`` part. ADK's runner invokes the named
   tool, appends the tool's ``FunctionResponse``, and re-invokes the model;
   the NEXT script step answers that re-invocation. This is how a test
-  proves a :data:`~zicato.proposer.tools.DEFAULT_PROPOSER_TOOLS` tool is
+  proves a read-only proposer tool is
   actually called.
 * :class:`TextTurn(text)` — yields a response whose content is a single
   text part (the proposer's final ``{hypothesis, patches}`` JSON, or a

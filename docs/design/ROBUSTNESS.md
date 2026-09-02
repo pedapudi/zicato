@@ -763,11 +763,9 @@ two call sites.
 
 ```python
 # in zicato.proposer
-async def propose_experiment(...) -> Experiment:
-    response = await aux_call_llm_with_budget(
-        system=PROPOSER_SYSTEM_PROMPT,
-        user=render_proposer_prompt(...),
-        model=auxiliary_model,
+async def propose(self, ctx: ProposerContext) -> Experiment:
+    outcome = await run_episode_with_budget(
+        request=build_request(...),
         budget_s=120.0,
     )
     return parse_experiment(response)

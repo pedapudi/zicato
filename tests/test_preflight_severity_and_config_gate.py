@@ -48,7 +48,6 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
-    valid_proposer_response,
 )
 from tests.test_evolve_preflight_gate import _prepare, _set_preflight_gate
 from zicato.epoch.preflight import (
@@ -184,7 +183,7 @@ def test_warn_mode_survives_an_all_refuse_preflight_past_the_breaker_threshold(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([valid_proposer_response()] * rounds),
+            auxiliary_call_llm=make_aux_responder([]),
             stop_reason_out=stop_reason,
         )
     )
@@ -228,7 +227,7 @@ def test_refuse_mode_still_refuses_at_the_pre_flight(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([valid_proposer_response()] * 3),
+            auxiliary_call_llm=make_aux_responder([]),
             stop_reason_out=stop_reason,
         )
     )
@@ -315,7 +314,7 @@ def _pin_probe_ids(workspace: Path, ids: list[str]) -> None:
 
 
 def _run_once(workspace: Path, epoch_id: str) -> Any:
-    return run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    return run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
 
 def test_an_unknown_pinned_probe_id_refuses_the_run_under_the_hard_gate(

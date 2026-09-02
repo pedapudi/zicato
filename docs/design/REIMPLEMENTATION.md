@@ -251,13 +251,11 @@ machinery (`:334-496`) into `judge_runtime/judge_only.py` (it is goldfive-steeri
 knowledge rather than adapter knowledge). Collapse the 3 near-identical per-kind drivers
 + 3× inline `_PerTurnCaller` into one `_goldfive_call` helper + one caller.
 
-**3f. proposer.** `prompts.py` (849) → `templates.py` (constants) + `render.py`
-(block renderers) + `visibility.py` (the `_bucket_scalar_delta`/`_band_*`
-overfitting-coarsening logic that isn't templating) + a typed `UserPrompt`
-section-list assembler (replaces `render_user_prompt`'s 13-arg fixed-order string
-prepends — golden-prompt tests required to prove byte-parity). `structured.py`
-(743) → `salvage.py` (LLM-response text recovery) + `validate.py` (experiment
-schema/semantic validation).
+**3f. proposer.** `prompts.py` → `render.py` (block renderers) +
+`visibility.py` (the `_bucket_scalar_delta`/`_band_*` overfitting-coarsening
+logic that isn't templating). `structured.py` (743) → `salvage.py`
+(LLM-response text recovery) + `validate.py` (experiment schema/semantic
+validation).
 
 **3g. mutation + index.** `mutation/applier.py` (733) → extract the ~10
 Python-literal-surgery helpers into `mutation/literal_surgery.py`. Move

@@ -32,7 +32,6 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
-    valid_proposer_response,
 )
 from zicato.evolve.containment import (
     check_containment,
@@ -240,7 +239,7 @@ def test_containment_block_rejects_out_of_bounds_child(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason.startswith("containment_violation:")
@@ -270,7 +269,7 @@ def test_containment_block_off_promotes_with_alarm_only(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     assert outcome.tournament_decision == "promoted"
 
 
@@ -305,7 +304,7 @@ def test_gate_contradiction_block_refuses_unsupported_promote(
 
     monkeypatch.setattr(_runner_mod, "evaluate_gate", _rigged_gate)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason.startswith("gate_contradiction:")
@@ -341,7 +340,7 @@ def test_gate_contradiction_block_off_keeps_rigged_promote(
 
     monkeypatch.setattr(_runner_mod, "evaluate_gate", _rigged_gate)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     assert outcome.tournament_decision == "promoted"
 
 
@@ -365,7 +364,7 @@ def test_supported_promote_passes_with_both_knobs_on(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     assert outcome.tournament_decision == "promoted"
     marker = workspace / "epochs" / epoch_id / "current_generation"
     assert marker.read_text().strip() == "v1"

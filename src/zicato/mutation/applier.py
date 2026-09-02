@@ -197,6 +197,35 @@ def _resolve_string_literal_node(
     return best
 
 
+def _node_span(lines: list[str], node: ast.expr | ast.stmt) -> tuple[int, int, int, int]:
+    """The ``(line_start, start_index, line_end, end_index)`` a node covers.
+
+    ``ast`` reports UTF-8 BYTE columns, while ``str`` slices use Unicode
+    character indexes. Each boundary is converted on its own source line
+    before slicing, so a non-ASCII identifier before the target literal
+    does not shift the edit into the literal itself.
+    """
+    line_start = node.lineno
+    line_end = node.end_lineno or line_start
+    col_end = node.end_col_offset
+    if col_end is None:
+        # Fall back to end-of-line if the parser didn't give us a column.
+        col_end = len(lines[line_end - 1].rstrip("\n").rstrip("\r").encode("utf-8"))
+    start_index = _byte_column_to_character_index(lines[line_start - 1], node.col_offset)
+    end_index = _byte_column_to_character_index(lines[line_end - 1], col_end)
+    return line_start, start_index, line_end, end_index
+
+
+def _node_text(file_path: Path, node: ast.expr | ast.stmt) -> str:
+    """The source ``node`` covers, exactly as it stands in ``file_path``."""
+    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    line_start, start_index, line_end, end_index = _node_span(lines, node)
+    if line_start == line_end:
+        return lines[line_start - 1][start_index:end_index]
+    middle = "".join(lines[line_start : line_end - 1])
+    return lines[line_start - 1][start_index:] + middle + lines[line_end - 1][:end_index]
+
+
 def _replace_node_text(
     file_path: Path,
     node: ast.expr | ast.stmt,
@@ -204,27 +233,42 @@ def _replace_node_text(
 ) -> None:
     """Replace the substring covered by ``node`` with ``new_text``."""
 
-    text = file_path.read_text(encoding="utf-8")
-    lines = text.splitlines(keepends=True)
-    line_start = node.lineno
-    line_end = node.end_lineno or line_start
-    col_start = node.col_offset
-    col_end = node.end_col_offset
-    if col_end is None:
-        # Fall back to end-of-line if the parser didn't give us a column.
-        col_end = len(lines[line_end - 1].rstrip("\n").rstrip("\r").encode("utf-8"))
-
-    # ``ast`` reports UTF-8 BYTE columns, while ``str`` slices use Unicode
-    # character indexes. Convert each boundary on its own source line before
-    # slicing so a non-ASCII identifier before the target literal does not
-    # shift the edit into the literal itself.
-    start_line = lines[line_start - 1]
-    end_line = lines[line_end - 1]
-    start_index = _byte_column_to_character_index(start_line, col_start)
-    end_index = _byte_column_to_character_index(end_line, col_end)
-    before = "".join(lines[: line_start - 1]) + start_line[:start_index]
-    after = end_line[end_index:] + "".join(lines[line_end:])
+    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    line_start, start_index, line_end, end_index = _node_span(lines, node)
+    before = "".join(lines[: line_start - 1]) + lines[line_start - 1][:start_index]
+    after = lines[line_end - 1][end_index:] + "".join(lines[line_end:])
     _write_text_writable(file_path, before + new_text + after)
+
+
+def replacement_source(point: MutationPoint) -> str:
+    """The ``new_content`` a patch needs to reproduce ``point`` as it stands.
+
+    The inverse of :func:`apply_patch` for a point read off a tree, and
+    the two units are not the same. The enumerator reports a point by
+    WHOLE LINES, so a ``.py`` span's content is the statement around the
+    literal (``PROMPT = \"\"\"Be terse.\"\"\"``); the applier rewrites the
+    literal NODE alone, so its ``new_content`` is the literal source
+    (``\"\"\"Be terse.\"\"\"``). Handing one where the other is expected
+    nests the statement inside its own literal.
+
+    Every other shape — a non-Python span, a code region, a whole file —
+    is written by the applier verbatim over the lines the enumerator
+    reported, so for those the point's content is already the unit.
+
+    Used by :func:`zicato.proposer.foe_scratch.project_onto_mutation_points`
+    to turn an edited working copy back into a patch set that applies to
+    the tree it was copied from.
+    """
+    if point.kind == "span" and point.file.suffix == ".py":
+        marker_line = _resolve_marker_line(point.file, point.id)
+        node = (
+            _resolve_string_literal_node(point.file, marker_line)
+            if marker_line is not None
+            else None
+        )
+        if node is not None:
+            return _node_text(point.file, node)
+    return point.content
 
 
 def _byte_column_to_character_index(line: str, byte_column: int) -> int:

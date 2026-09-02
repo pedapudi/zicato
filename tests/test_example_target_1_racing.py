@@ -50,6 +50,7 @@ import pytest
 # ``zicato_examples`` is resolved through the installed examples package so
 # the test is independent of where the examples distribution lives on disk.
 import zicato_examples.target_1_presentation as _t1_pkg
+from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     install_stub_adapter_factory,
     install_telemetry_stubs,
@@ -251,6 +252,7 @@ def bootstrap_example_workspace(
         json.dumps(
             {
                 "instance_id": "test",
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "created_at": "2026-05-31T00:00:00Z",
                 # Hand-built directory-backend snapshot layout below; pin it
                 # so the git default does not look for git tags this fixture

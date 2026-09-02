@@ -75,6 +75,7 @@ async def _regenerate_epoch_report(
 #: (``test_round_log_emission.py``).
 _ROUND_LOG_STEP: dict[str, str] = {
     "proposal_attempted": "propose",
+    "proposal_episode_settled": "propose",
     "candidate_sampled": "propose",
     "candidate_screened": "propose",
     "critique_selected": "propose",

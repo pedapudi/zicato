@@ -1,25 +1,28 @@
-"""Tests for the proposer system-prompt skills injection.
+"""Tests for the blocks a proposal episode's instructions and task carry.
 
-The skills block is the Phase 2a surface by which a proposer's
-operator-authored guidance modules reach the model. These tests pin two
-invariants: the no-skills path is byte-identical to the pre-skills prompt
-(so every existing caller is unaffected), and a non-empty skills tuple
-appends each skill's name / description / body AFTER the brief block.
+The skills block is the surface by which a proposer's operator-authored
+guidance modules reach the model; the pattern, experiment-memory and
+expectation-target blocks are how the round's evidence does. These pin
+what each renders, and — for the two that redact — what they withhold
+when the proposer's visibility is restricted.
 """
 
 from __future__ import annotations
 
+from tests._proposal_evidence import render_proposal_evidence
 from zicato.core.types import ProposerSkill
-from zicato.proposer.prompts import render_skills_block, render_system_prompt
+from zicato.proposer.foe_request import SKILLS_SECTION, instruction_sections
+from zicato.proposer.prompts import render_skills_block
 
 _BRIEF = "# Proposer brief\n- Prefer concrete deltas.\n"
 
 
-def test_no_skills_is_byte_identical_to_bare_render() -> None:
-    # The default-argument call and the explicit empty-tuple call must
-    # both reproduce the pre-skills prompt exactly — no trailing section,
-    # no extra newline — so every existing caller / test is unaffected.
-    assert render_system_prompt(_BRIEF, ()) == render_system_prompt(_BRIEF)
+def test_no_skills_declares_no_skills_section() -> None:
+    # A proposer dir with no skills leaves the episode's instructions
+    # exactly as the charter and brief left them: no empty section, and
+    # nothing for the fingerprint to move on.
+    assert instruction_sections(_BRIEF, ()) == instruction_sections(_BRIEF, [])
+    assert SKILLS_SECTION not in instruction_sections(_BRIEF, ())
 
 
 def test_render_skills_block_empty_is_empty_string() -> None:
@@ -39,19 +42,20 @@ def test_skills_appear_after_the_brief() -> None:
             body="Prefer edits that shrink prompts over edits that grow them.",
         ),
     )
-    rendered = render_system_prompt(_BRIEF, skills)
+    sections = instruction_sections(_BRIEF, skills)
 
-    # The brief body still lands verbatim, and the skills section follows it.
+    # The brief body lands verbatim in its own section, and the skills
+    # section sorts after it — which is the order the runtime assembles
+    # the instructions in.
+    rendered = "\n\n".join(sections[key] for key in sorted(sections))
     assert "Prefer concrete deltas." in rendered
     brief_at = rendered.index("Prefer concrete deltas.")
-    skills_header_at = rendered.index("Proposer skills (composable guidance modules")
-    assert brief_at < skills_header_at
+    assert brief_at < rendered.index("Operating procedures for this epoch")
 
     for skill in skills:
         assert skill.name in rendered
         assert skill.description in rendered
         assert skill.body in rendered
-        # Each skill's heading and body land after the brief block.
         assert rendered.index(skill.body) > brief_at
 
 
@@ -75,7 +79,6 @@ from zicato.proposer.prompts import (  # noqa: E402
     render_metric_targets_block,
     render_pattern_block,
     render_prior_experiments_block,
-    render_user_prompt,
 )
 
 
@@ -208,7 +211,7 @@ def test_metric_targets_block_no_judges_renders_explicit_notice() -> None:
     assert "drift:<kind>" in block
 
 
-def test_user_prompt_includes_valid_expectation_targets_for_declared_judges() -> None:
+def test_evidence_includes_valid_expectation_targets_for_declared_judges() -> None:
     from pathlib import Path
 
     mutation = MutationPoint(
@@ -222,13 +225,13 @@ def test_user_prompt_includes_valid_expectation_targets_for_declared_judges() ->
         content_hash="h",
         metadata={},
     )
-    rendered = render_user_prompt(
+    rendered = render_proposal_evidence(
         current_loss_summary="loss is high",
         patterns=[],
         mutations=[mutation],
         custom_judge_names=["file_findability"],
     )
-    # The dedicated section header is present in the assembled user prompt.
+    # The dedicated section header is present in the assembled evidence.
     assert "## Valid expectation targets" in rendered
     # The declared judge, the correct shape, and the drift-kind enumeration
     # all reach the model in the rendered prompt.

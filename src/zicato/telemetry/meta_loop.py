@@ -507,7 +507,7 @@ class MetaLoopEmitter:
         # ambient parent (the proposer's propose / slot span, a judge's gate
         # span), NOT the payload. The payload is stashed so it rides the
         # COMPLETED envelope's ``summary`` (the structural-span convention).
-        # Absent an ambient span (a bare ``propose_experiment`` in a test) the
+        # Absent an ambient span (a bare propose in a test) the
         # parent is empty — the detached-root behaviour, preserved.
         parent = _current_span_id.get()
         self._pending_payloads[invocation_id] = dict(payload)

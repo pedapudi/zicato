@@ -44,6 +44,7 @@ from pathlib import Path
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
+from tests._foe_support import stand_in_proposer_block
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato_examples.target_0_convergence import mocks_recombine as rec_mocks
 
@@ -128,6 +129,9 @@ def _bootstrap_workspace(
         json.dumps(
             {
                 "instance_id": "default",
+                "proposer": stand_in_proposer_block(
+                    tmp_path / "foe", contents=rec_mocks.SLATE_POLICIES
+                ),
                 "created_at": "2026-07-01T00:00:00Z",
                 "generation_source_backend": "directory",
                 "adapter": ADAPTER_BLOCK,
@@ -166,11 +170,26 @@ def _run_rounds(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=t0_mocks.harness_llm,
-            auxiliary_call_llm=rec_mocks.aux_llm,
+            auxiliary_call_llm=t0_mocks.aux_llm,
             auto_epoch=False,
             max_consecutive_rejections=max_consecutive_rejections,
         )
     )
+
+
+def _proposal_episodes(workspace: Path, epoch_id: str) -> int:
+    """How many proposal episodes this epoch actually ran.
+
+    Read off the durable proposer-input capture, filtered to the proposal
+    role: the workspace's own account of what it spent, rather than a
+    counter kept by the stand-in that answered the episodes. The critique
+    and merge calls are recorded there too, under their own roles, and
+    are not episodes.
+    """
+    from zicato.proposer.input_capture import ROLE_PROPOSAL, read_proposer_inputs
+
+    records = read_proposer_inputs(workspace, epoch_id)
+    return sum(1 for r in records if r.get("role") == ROLE_PROPOSAL)
 
 
 def test_recombination_promotes_where_singles_reject(tmp_path: Path) -> None:
@@ -178,7 +197,6 @@ def test_recombination_promotes_where_singles_reject(tmp_path: Path) -> None:
     workspace, epoch_id = _bootstrap_workspace(
         tmp_path, promote_margin=PROMOTE_MARGIN, recombine=True
     )
-    rec_mocks.reset()
     outcomes = _run_rounds(workspace, epoch_id, 3)
 
     # --- (a) The decision sequence: two sub-margin rejects, one promote.
@@ -234,10 +252,10 @@ def test_recombination_promotes_where_singles_reject(tmp_path: Path) -> None:
     ]
     assert [s.recombined for s in sampled] == [False, True]
 
-    # --- (e) The COST-NEUTRALITY counter: the mint REPLACED round 3's last
-    # slot's auxiliary propose call. Rounds 1-2 spent BEST_OF_N calls each;
-    # round 3 spent exactly BEST_OF_N - 1.
-    assert rec_mocks.proposer_calls() == 2 * BEST_OF_N + (BEST_OF_N - 1)
+    # --- (e) The COST-NEUTRALITY measurement: the mint REPLACED round 3's
+    # last slot's proposal episode. Rounds 1-2 ran BEST_OF_N episodes each;
+    # round 3 ran exactly BEST_OF_N - 1.
+    assert _proposal_episodes(workspace, epoch_id) == 2 * BEST_OF_N + (BEST_OF_N - 1)
 
     # The promoted head advanced to the union.
     marker = workspace / "epochs" / epoch_id / "current_generation"
@@ -266,7 +284,6 @@ def test_stall_control_same_script_recombine_off_stays_v0(tmp_path: Path) -> Non
     workspace, epoch_id = _bootstrap_workspace(
         tmp_path, promote_margin=PROMOTE_MARGIN, recombine=False
     )
-    rec_mocks.reset()
     outcomes = _run_rounds(workspace, epoch_id, 3)
 
     assert [o.tournament_decision for o in outcomes] == ["rejected", "rejected", "rejected"]
@@ -284,7 +301,7 @@ def test_stall_control_same_script_recombine_off_stays_v0(tmp_path: Path) -> Non
     for gid in ("v1", "v2", "v3"):
         assert read_experiment(workspace, epoch_id, gid).recombined_from == ()
     # Off-knob rounds spend the full slate budget every round.
-    assert rec_mocks.proposer_calls() == 3 * BEST_OF_N
+    assert _proposal_episodes(workspace, epoch_id) == 3 * BEST_OF_N
 
 
 def test_pair_dedup_a_persisted_rejected_union_never_reminits(tmp_path: Path) -> None:
@@ -300,7 +317,6 @@ def test_pair_dedup_a_persisted_rejected_union_never_reminits(tmp_path: Path) ->
     workspace, epoch_id = _bootstrap_workspace(
         tmp_path, promote_margin=DEDUP_MARGIN, recombine=True
     )
-    rec_mocks.reset()
     # Rounds 1-3 all reject, so the consecutive-rejection breaker must be
     # disabled for round 4 to run (the round under test).
     outcomes = _run_rounds(workspace, epoch_id, 4, max_consecutive_rejections=0)
@@ -327,4 +343,4 @@ def test_pair_dedup_a_persisted_rejected_union_never_reminits(tmp_path: Path) ->
     assert round4.proposal.recombined_sampled == 0
     assert round4.proposal.candidates_sampled == BEST_OF_N
     # Cost: rounds 1-2 full slate, round 3 saved one call, round 4 full.
-    assert rec_mocks.proposer_calls() == 2 * BEST_OF_N + (BEST_OF_N - 1) + BEST_OF_N
+    assert _proposal_episodes(workspace, epoch_id) == 2 * BEST_OF_N + (BEST_OF_N - 1) + BEST_OF_N

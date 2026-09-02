@@ -54,6 +54,7 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, ClassVar
 
+from zicato.core.types import ProposerEpisodeOutcome
 from zicato.util.iso_time import now_iso as _now_iso
 from zicato.workspace import WorkspaceLayout
 
@@ -116,6 +117,29 @@ class ProposalAttempted:
     TYPE: ClassVar[str] = "proposal_attempted"
     errors: tuple[str, ...] = ()
     slot_index: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProposalEpisodeSettled:
+    """One proposal episode reached one of its four outcomes.
+
+    ``kind`` is a :data:`~zicato.core.types.ProposerOutcomeKind`. For a
+    blocked episode ``code`` is a
+    :data:`~zicato.core.types.ProposerBlockedCode`; for an exhausted one
+    it is the budget dimension that ran out; it is empty otherwise.
+    ``message`` is what the episode said, redacted the way every
+    proposer-facing string is.
+
+    The three non-completing endings mean different remedies — the
+    mutation surface or the brief, the budget, or a defect — and a round
+    that recorded only "the proposer gave up" could not tell an operator
+    which. This event is where that distinction lands durably.
+    """
+
+    TYPE: ClassVar[str] = "proposal_episode_settled"
+    kind: str = "failed"
+    code: str = ""
+    message: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,6 +400,7 @@ EVENT_TYPES: dict[str, type] = {
     for cls in (
         RoundOpened,
         ProposalAttempted,
+        ProposalEpisodeSettled,
         CandidateSampled,
         CandidateScreened,
         CritiqueSelected,
@@ -397,6 +422,7 @@ EVENT_TYPES: dict[str, type] = {
 RoundEvent = (
     RoundOpened
     | ProposalAttempted
+    | ProposalEpisodeSettled
     | CandidateSampled
     | CandidateScreened
     | CritiqueSelected
@@ -761,6 +787,10 @@ class ProposalSession:
     candidate screen (one ``candidate_screened`` event per slate
     candidate); both stay ``0`` for a round whose contract does not opt
     into screening.
+
+    ``episode_outcomes`` holds how each of the round's proposal episodes
+    ended, in the order they settled. It is what tells a blocked round
+    from an exhausted one and from a crash, which ``errors`` alone cannot.
     """
 
     attempts: int = 0
@@ -772,6 +802,7 @@ class ProposalSession:
     critique_index: int | None = None
     critique_reason: str = ""
     experiment_ids: tuple[str, ...] = ()
+    episode_outcomes: tuple[ProposerEpisodeOutcome, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -847,6 +878,7 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
     critique_index: int | None = None
     critique_reason = ""
     experiment_ids: list[str] = []
+    episode_outcomes: list[ProposerEpisodeOutcome] = []
     generation_ids: list[str] = []
     entrypoint_files: dict[str, str] = {}
     never_imported_trees: dict[str, tuple[str, ...]] = {}
@@ -871,6 +903,14 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
         elif isinstance(event, ProposalAttempted):
             attempts += 1
             errors.extend(event.errors)
+        elif isinstance(event, ProposalEpisodeSettled):
+            episode_outcomes.append(
+                ProposerEpisodeOutcome(
+                    kind=event.kind,  # type: ignore[arg-type]
+                    code=event.code,
+                    message=event.message,
+                )
+            )
         elif isinstance(event, CandidateSampled):
             candidates += 1
             if event.recombined:
@@ -927,6 +967,7 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
             critique_index=critique_index,
             critique_reason=critique_reason,
             experiment_ids=tuple(experiment_ids),
+            episode_outcomes=tuple(episode_outcomes),
         ),
         generation_ids=tuple(generation_ids),
         harness_entrypoint_files=dict(entrypoint_files),
@@ -950,6 +991,7 @@ __all__ = [
     "round_log_path",
     "RoundOpened",
     "ProposalAttempted",
+    "ProposalEpisodeSettled",
     "CandidateSampled",
     "CandidateScreened",
     "CritiqueSelected",

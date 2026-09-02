@@ -1,34 +1,31 @@
 # ruff: noqa: E501
-# This module is a prompt template — several lines inside the embedded
-# one-shot JSON example exceed the project line limit by design. Breaking
-# the example across lines would change what the model sees, so the
-# whole file is exempted from E501 rather than splitting prompt content.
-"""System + user prompt templates for the structured proposer.
+# One model-visible line in the metric-targets block — the worked
+# "metric_name" example a proposer copies — exceeds the project line limit.
+# Wrapping it would change what the model reads, so the file is exempted
+# rather than the example split.
+"""The blocks a proposal episode's evidence is rendered from.
 
-The proposer is asked to emit a single JSON object containing a typed
-hypothesis and a list of patches. The schema description in the system
-prompt is verbose by design — LLM compliance with JSON-only output
-improves materially when the prompt is explicit about what counts as a
-valid response and shows a one-shot worked example.
+Every channel the round assembles reaches the model through one of the
+renderers here, and every band, bucket and aggregation the
+restricted-visibility envelope requires is applied at this boundary — see
+``docs/design/OVERFITTING.md`` §11. A channel that renders raw per-entry
+material here has leaked, whatever the caller intended.
 
-Two layers of templating:
+Each renderer returns the empty string for its no-data case, which is the
+sentinel meaning "omit the section entirely". That convention is what
+makes a round that opts into none of the optional channels render the
+three blocks that are always present and nothing else.
 
-* :data:`SYSTEM_PROMPT_TEMPLATE` — operator-tone scaffolding, schema
-  description, and an embedded one-shot example. The proposer-brief body
-  is spliced in verbatim so the operator's free-form guidance reaches
-  the model.
-* :data:`USER_PROMPT_TEMPLATE` — per-round payload: loss summary,
-  observed patterns, mutation-point manifest. The body is filled in by
-  the orchestrator at call time.
-
-Rendering helpers (:func:`render_pattern_block`,
-:func:`render_mutation_block`, :func:`render_system_prompt`,
-:func:`render_user_prompt`) keep the formatting logic out of the
-orchestrator.
+The one prompt this module still templates whole is the LLM-guided
+recombination merge (:data:`MERGE_SYSTEM_PROMPT_TEMPLATE`), which is a
+single JSON answer rather than an episode. The episode's own instructions
+and task are assembled in :mod:`zicato.proposer.foe_request`, from the
+blocks here.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import textwrap
 from collections.abc import Iterable, Mapping
@@ -54,164 +51,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only import
 #: large span; it is generous enough that every real mutation point
 #: (a prompt body, a docstring, a kwarg literal) is shown in full.
 _MUTATION_CONTENT_LIMIT_CHARS = 8000
-
-
-SYSTEM_PROMPT_TEMPLATE = """\
-You are a careful improvement-proposer for a multi-agent system. Your
-job is to look at how the current generation of the inner harness has
-been performing on the evaluation board, decide what to change next,
-and emit a single JSON object describing one experiment.
-
-You will receive in the user message:
-- A short human-readable summary of the current generation's loss.
-- A list of cross-run patterns observed by automated detectors. Each
-  pattern carries a kind, a summary, structured detail, and a suggested
-  set of mutation-point ids that might be relevant.
-- A list of mutation points available for edit. Each mutation point has
-  a stable id, a kind ("span" or "file"), a file path, a snippet of its
-  current content, and optional metadata constraints (numeric ranges,
-  enum domains, required placeholders). ONLY these ids are valid patch
-  targets.
-
-You will return a single JSON object (no surrounding prose, no
-markdown fences) with two top-level keys: "hypothesis" and "patches".
-
-The "hypothesis" object MUST contain:
-- "core_idea" (string): one sentence describing what is being modulated.
-- "modulating" (array of strings, non-empty): the mutation-point ids
-  this hypothesis is touching. Every id MUST exist in the supplied
-  manifest.
-- "why" (string): pattern-driven rationale — why you believe this edit
-  will move the loss in the expected direction.
-- "expected_drift_movements" (array, optional): per-drift-kind
-  directional predictions. Each entry is an object with:
-    * "kind" (string) — a registered goldfive drift-kind string
-      (e.g. "off_topic", "looping_reasoning", "tool_error").
-    * "direction" — one of "decrease", "increase", "neutral",
-      "decrease_or_neutral", "increase_or_neutral".
-    * "magnitude" — one of "small", "medium", "large".
-  Include only kinds you are making claims about; silence implies
-  "no claim".
-- "expected_metric_movements" (array, optional): per-namespaced-metric
-  directional predictions. Generalises expected_drift_movements to
-  arbitrary metric namespaces beyond drift (cost, rubric, latency,
-  output, schema, ...). Each entry is an object with:
-    * "metric_name" (string) — a namespaced metric name like
-      "drift:off_topic", "cost:tokens_spent", "rubric:slide_structure",
-      "latency:p95_turn_ms", or "schema:failures".
-    * "direction" — same enum as expected_drift_movements.
-    * "magnitude" — same enum as expected_drift_movements.
-  Either expected_drift_movements OR expected_metric_movements (or
-  both) MUST be present and non-empty. Prefer expected_metric_movements
-  for cost / rubric / latency / schema / output objectives.
-  IMPORTANT — declared board judges: to predict a DECLARED BOARD JUDGE
-  moving (a judge named in this board's scoring), set "metric_name" to
-  the judge's BARE name (e.g. "file_findability") — NOT "drift:<name>",
-  "custom:<name>", or "drift:custom:<name>". The user message lists this
-  board's declared judges and the valid built-in drift kinds under
-  "## Valid expectation targets"; reference only names from that section.
-- "expected_pass_rate_delta" (string): predicted change in the board-
-  wide pass rate as free text (e.g. "+0.05 to +0.15"). Free text
-  is intentional — express the uncertainty band naturally.
-- "risks" (string, optional): one-paragraph description of failure
-  modes you anticipate and any mitigations baked into the patches.
-
-The "patches" array MUST contain at least one patch object. Each patch
-has:
-- "mutation_id" (string): the id of the target mutation point. MUST
-  appear in the supplied manifest. MUST NOT appear in the proposer
-  brief's forbidden-edits list.
-- "op" — one of "replace", "set_numeric", "set_enum".
-- "new_content" (string): required when op is "replace"; forbidden
-  otherwise. A "span" point is a single string literal (a prompt body,
-  a tool docstring, a kwarg value). For an op="replace" on a span,
-  "new_content" MUST be ONLY the replacement text for that one string
-  literal — the prose / docstring body itself. Do NOT restate the
-  surrounding code: no function signature, no ``import`` lines, no
-  ``# zicato:mutable`` marker comment, no other mutation points. The
-  harness owns the literal's quoting and indentation; you only supply
-  the inner text. Emitting surrounding code here will drop imports and
-  markers and the patch will be rejected. The mutation point's "current
-  content" block shows you the full span you are replacing — match its
-  scope exactly.
-- "new_numeric" (number): required when op is "set_numeric"; forbidden
-  otherwise. Must fall inside any numeric range declared in the
-  mutation point's metadata ("min" / "max" keys).
-- "new_enum" (string): required when op is "set_enum"; forbidden
-  otherwise. Must appear in any enum domain declared in the mutation
-  point's metadata ("enum" key, comma-separated).
-- "rationale" (string): one sentence explaining why this specific patch
-  is being applied. Joined with the broader hypothesis in the journal
-  but stored per-patch.
-
-Style — formatting expectations for "new_content":
-- Break "new_content" prose into lines of roughly 80-100 characters
-  using real newline characters (encoded as "\\n" inside the JSON
-  string). Long unbroken single-line prompts are unreadable in the
-  patch-diff view and are a known reviewer-friction point.
-- Break at natural boundaries — sentence ends, clause boundaries
-  before conjunctions, after a colon introducing a list — not in the
-  middle of a placeholder like ``{{agent_list}}`` or an identifier.
-- Do NOT add a leading or trailing blank line. Do NOT indent the
-  lines — the harness re-anchors indentation when it splices the
-  replacement back into the surrounding code. You only supply the
-  inner text of the span.
-- This style applies to any op="replace" patch whose "new_content" is
-  longer than ~120 characters of prose. Short prompts (a one-line
-  instruction, an enum value, a short docstring) stay on one line.
-
-A response that is NOT a single JSON object matching this schema will
-be rejected and you will be asked to retry. Do not wrap the JSON in
-markdown code fences. Do not preface the JSON with prose. The first
-character of your response MUST be "{{" and the last MUST be "}}".
-
-One-shot example of a valid response:
-
-{{
-  "hypothesis": {{
-    "core_idea": "Tighten the router's instruction to stop relaying off-topic preambles.",
-    "modulating": ["router__system_prompt"],
-    "why": "Pattern 'drift_kind_frequency' shows off_topic dominates this generation; the router's system prompt invites unbounded preambles.",
-    "expected_drift_movements": [
-      {{"kind": "off_topic", "direction": "decrease", "magnitude": "medium"}},
-      {{"kind": "looping_reasoning", "direction": "neutral", "magnitude": "small"}}
-    ],
-    "expected_pass_rate_delta": "+0.05 to +0.10",
-    "risks": "Tightening may suppress legitimate clarifying preambles; if pass rate regresses, the next round can relax the constraint."
-  }},
-  "patches": [
-    {{
-      "mutation_id": "router__system_prompt",
-      "op": "replace",
-      "new_content": "You are the router. Route the user message to one of {{agent_list}}.\\nDo not include preambles, greetings, or explanations.\\nRespond with only the chosen agent name.",
-      "rationale": "Removing preamble license should cut off_topic events at their most common entry point."
-    }}
-  ]
-}}
-
-Proposer brief (operator-edited guidance for this epoch):
-
-{brief_text}
-"""
-
-
-USER_PROMPT_TEMPLATE = """\
-## Current loss summary
-{current_loss_summary}
-
-## Valid expectation targets (what a hypothesis movement may reference)
-{metric_targets_block}
-
-## Patterns observed (advisory; you may address none, some, or all)
-{pattern_block}
-
-## Mutation points (only these ids are valid patch targets)
-{mutation_block}
-
-Propose ONE experiment now. Respond with the JSON object only — no
-surrounding prose, no markdown fences. The first character of your
-response MUST be "{{" and the last MUST be "}}".
-"""
 
 
 #: Detector ``detail`` keys that leak per-entry IDENTITY to the proposer —
@@ -1109,340 +948,48 @@ def render_skills_block(skills: Iterable[ProposerSkill]) -> str:
     return "\n\n".join(blocks)
 
 
-def render_system_prompt(
-    brief_text: str,
-    skills: tuple[ProposerSkill, ...] = (),
-) -> str:
-    """Build the system prompt with the proposer-brief body spliced in.
+#: The system prompt of the one proposal that is still a single JSON
+#: answer: the LLM-guided recombination merge (PROPOSER.md §2.6.1). A
+#: merge composes two patch sets that were already authored and validated,
+#: so it needs the response shape and the epoch's brief rather than the
+#: proposal charter a Foe episode runs under. The shape is stated as the
+#: parser's own schema, so the two cannot drift.
+MERGE_SYSTEM_PROMPT_TEMPLATE = """\
+You merge two already-authored improvement proposals for a multi-agent
+system into a single experiment. You answer with one JSON object and
+nothing else: no surrounding prose, no markdown fences. The first
+character of your response MUST be "{{" and the last MUST be "}}".
 
-    The proposer-brief body is inserted verbatim so the operator's prose
-    guidance reaches the model alongside the structured forbidden /
-    preferred lists.
+The object conforms to this JSON Schema:
 
-    ``skills`` are the resolved proposer skill modules (see
-    :class:`zicato.core.types.ProposerSkill`). When non-empty, a
-    ``Proposer skills`` section is appended AFTER the brief block so the
-    operator's composable guidance modules reach the model as operating
-    procedure for the epoch. Empty (the default) appends nothing — a caller
-    that supplies no skills renders a byte-identical prompt to before this
-    surface existed, so every standalone caller is unaffected.
-    """
+{schema}
 
-    base = SYSTEM_PROMPT_TEMPLATE.format(brief_text=brief_text.strip() or "(empty)")
-    skills_block = render_skills_block(skills)
-    if not skills_block:
-        return base
-    return (
-        f"{base}\n"
-        "Proposer skills (composable guidance modules — follow them as "
-        "operating procedure for this epoch):\n\n"
-        f"{skills_block}\n"
+Beyond the schema:
+- Every "mutation_id" MUST appear in the mutation manifest the user
+  message lists, and MUST NOT appear in the brief's forbidden-edits list.
+- At least one of "expected_drift_movements" or
+  "expected_metric_movements" MUST be present and non-empty, and every
+  name in them MUST come from the user message's valid expectation
+  targets. To predict a declared board judge moving, use its BARE name.
+- For a "replace" on a span point, "new_content" is the replacement text
+  for that one string literal and nothing around it — no signature, no
+  import line, no ``zicato:mutable`` marker, no other mutation point. The
+  harness owns the literal's quoting and indentation.
+
+Proposer brief (operator-edited guidance for this epoch):
+
+{brief_text}
+"""
+
+
+def render_merge_system_prompt(brief_text: str) -> str:
+    """The merge system prompt, with the parser's schema and the brief."""
+    from zicato.proposer.structured import EXPERIMENT_JSON_SCHEMA  # noqa: PLC0415
+
+    return MERGE_SYSTEM_PROMPT_TEMPLATE.format(
+        schema=json.dumps(EXPERIMENT_JSON_SCHEMA, indent=2, sort_keys=True),
+        brief_text=brief_text.strip() or "(no brief)",
     )
-
-
-#: How much of the model's prior raw response to echo back on a repair
-#: turn. Enough to show the model the SHAPE of what it produced (the stray
-#: ``<think>`` block, the prose preamble, the trailing commentary) without
-#: blowing the context budget — the failure mode is almost always visible
-#: in the opening few hundred characters.
-_FEEDBACK_PRIOR_OUTPUT_LIMIT_CHARS = 800
-
-
-def _truncate_prior_output(text: str) -> str:
-    """Clip a prior raw response for echo-back on a repair turn."""
-
-    clipped = text[:_FEEDBACK_PRIOR_OUTPUT_LIMIT_CHARS]
-    if len(text) > _FEEDBACK_PRIOR_OUTPUT_LIMIT_CHARS:
-        clipped = clipped.rstrip() + "\n[... truncated ...]"
-    return clipped
-
-
-def render_user_prompt(
-    *,
-    current_loss_summary: str,
-    patterns: Iterable[Pattern],
-    mutations: Iterable[MutationPoint],
-    feedback: str = "",
-    feedback_prior_output: str = "",
-    feedback_was_empty: bool = False,
-    insights: str = "",
-    prior_experiments: Iterable[PriorExperiment] = (),
-    restrict_visibility: bool = False,
-    custom_judge_names: Iterable[str] = (),
-    metric_priorities: str = "",
-    failure_profile: str = "",
-    process_exemplars: str = "",
-    genealogy: Iterable[GenealogyItem] = (),
-    calibration: CalibrationSummary | None = None,
-    sample_hint: str = "",
-    mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
-) -> str:
-    """Build the user prompt for one proposer call.
-
-    Parameters
-    ----------
-    current_loss_summary:
-        Short free-text summary of the previous generation's losses.
-    patterns:
-        Iterable of :class:`Pattern` to surface to the proposer.
-    mutations:
-        Iterable of :class:`MutationPoint` — the valid patch targets.
-    feedback:
-        Optional retry feedback. When non-empty, a repair section is
-        prepended explaining the previous failure so the model can
-        correct itself. This turns each retry into a genuine repair turn
-        rather than a blind re-ask.
-    feedback_prior_output:
-        The model's PRIOR raw response, echoed back (truncated) on a
-        repair turn so the model can see exactly what it produced — the
-        stray ``<think>`` block, the prose preamble, the trailing
-        commentary. Only rendered when ``feedback`` is also non-empty.
-    feedback_was_empty:
-        When ``True``, the prior response was empty (the model most likely
-        spent its entire output budget on reasoning). The repair section
-        switches to a targeted instruction: skip ALL reasoning and emit
-        the JSON object immediately. Only consulted when ``feedback`` is
-        non-empty.
-    insights:
-        Optional markdown body produced by the decision-telemetry
-        analyzer (see :func:`zicato.analyzer.load_latest_insights`).
-        When non-empty, a ``## Recent telemetry insights`` section is
-        prepended to the body so the next round's proposer sees the
-        previous round's LLM-summarised observations alongside the
-        detector patterns.
-    prior_experiments:
-        Optional iterable of :class:`PriorExperiment` — the
-        experiment-memory digest (settled cross-round history plus this
-        round's in-flight siblings) assembled by the orchestrator. When
-        non-empty, a ``## What's already been tried`` section is inserted
-        after ``## Recent telemetry insights`` and before
-        ``## Current loss summary`` so the proposer can avoid repeating
-        known failures and build on known wins. Empty (the default) omits
-        the section entirely, mirroring the insights and pattern blocks —
-        so a caller that supplies no prior experiments renders a
-        byte-identical prompt to before this surface existed.
-    restrict_visibility:
-        When ``True`` (the default-on
-        :attr:`~zicato.core.types.OverfittingConfig.restrict_proposer_visibility`
-        posture), the pattern block aggregates per-entry identities to
-        counts/rates and the experiment-memory Δscalar is coarsened to
-        buckets (OVERFITTING.md §11). ``False`` (the default here so call
-        sites that have not adopted the flag are unaffected) renders both
-        verbatim, byte-for-byte as before this lever existed.
-    custom_judge_names:
-        The declared board judges for the active contract (board
-        ``JudgeSpec.name`` ∪ ``per_judge_weights`` keys), threaded by the
-        orchestrator from the same source it passes to the structured
-        validator. Rendered into the ``## Valid expectation targets`` block
-        via :func:`render_metric_targets_block` so the proposer is told, for
-        THIS board, the exact ``metric_name`` to use for a declared judge
-        (its bare name) and the valid built-in drift kinds — keeping the
-        prompt and the validator's accepted forms in lockstep. Empty (the
-        default) renders an explicit "no custom judges" notice alongside the
-        always-present drift-kind enumeration.
-    metric_priorities:
-        Optional pre-rendered priority-aware form of that same block
-        (:func:`render_metric_priorities_block`, built orchestrator-side from
-        the frozen :class:`~zicato.core.scoring_config.ScoringWeights`). When
-        non-empty it REPLACES the membership rendering, so the proposer sees
-        what the contract rewards — targets ordered by weight within each
-        channel, zero-weight targets absent — instead of one flat alphabetical
-        list in which a quadruple-weight judge and a switched-off one look
-        identical. Empty (the default, and every caller holding no weights)
-        renders the membership form byte-for-byte.
-    failure_profile:
-        Optional pre-rendered, train-slice-only, BUCKETED outcome-marginal
-        block (Capability 2 of issue #18 — built by
-        :func:`~zicato.proposer.prompts.render_failure_mode_profile` from an
-        :class:`~zicato.analyzer.outcome_marginals.OutcomeMarginalSummary`).
-        When non-empty, a ``## Failure-mode profile (this round, aggregate —
-        train slice)`` section is prepended (after the telemetry insights,
-        before ``## What's already been tried``) so the proposer can target
-        *why* answers are wrong, not just *that* a scalar moved. The string
-        is already board-anonymized + banded by its renderer — this function
-        only splices it. Empty (the default) omits the section entirely, so a
-        caller that supplies no profile renders a byte-identical prompt to
-        before this surface existed.
-    process_exemplars:
-        Optional pre-rendered, train-slice-only, REDACTED process-exemplar
-        block (the opt-in ``proposer_quality.process_exemplars`` channel —
-        ``docs/design/PROCESS-EXEMPLARS.md``; built by
-        :func:`render_process_exemplars` from the extractor's already-
-        redacted windows). When non-empty, a ``## Process exemplars``
-        section is spliced in DIRECTLY AFTER the failure-mode profile,
-        headed by a banner restating the redaction contract, so the
-        proposer can see HOW a detected failure unfolds — never WHICH
-        board entry it unfolded on. The string is already redacted by the
-        extractor's mechanical rules; this function only splices it.
-        Empty (the default — every knob-off round) omits the section
-        entirely, rendering a byte-identical prompt to before this
-        surface existed.
-    genealogy:
-        Optional sampled genealogy items (the opt-in
-        ``proposer_quality.genealogy`` channel — ``docs/design/PROPOSER.md``
-        §2.7; produced by :func:`zicato.proposer.genealogy.sample_genealogy`).
-        Rendered here through :func:`render_genealogy_block` and, when the
-        result is non-empty, spliced as a ``## Candidate genealogy`` section
-        DIRECTLY ABOVE ``## What's already been tried`` so the proposer can
-        extend a winning line or re-frame a rejected one (in-context
-        evolution). The items are already banded + capped by the sampler (no
-        entry ids, no per-entry results, no exact deltas, nothing
-        holdout-derived); this function only renders + splices them. Empty (the
-        default — every knob-off round) omits the section entirely, rendering a
-        byte-identical prompt to before this surface existed.
-    calibration:
-        Optional per-reign prediction-calibration summary (the opt-in
-        ``proposer_quality.calibration_feedback`` channel —
-        ``docs/design/PROPOSER.md`` §2.8; produced by
-        :func:`zicato.proposer.calibration.sample_calibration`). Rendered here
-        through :func:`render_calibration_block` and, when the result is
-        non-empty, spliced as a ``## Prediction calibration`` section DIRECTLY
-        ABOVE ``## What's already been tried`` so the proposer sees how its own
-        past predictions landed. The summary is already banded + capped by the
-        sampler (no entry ids, no per-entry results, no exact deltas — only the
-        proposer's own core ideas + hit/miss verdicts + aggregate counts); this
-        function only renders + splices it. ``None`` (the default — every
-        knob-off round, and any round with no graded history) omits the section
-        entirely, rendering a byte-identical prompt to before this surface
-        existed.
-    sample_hint:
-        Optional per-sample edit-class steering line (the best-of-N slate
-        diversifier — see :data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`).
-        When non-empty, an ``## Edit-class hint (this sample)`` section is
-        prepended at the very top of the body so each slate slot explores a
-        DIFFERENT edit strategy rather than re-rolling one. A STATIC
-        instruction string carrying no board identity, so it composes with
-        the restricted-visibility envelope untouched. Empty (the default —
-        every single-sample call) omits the section entirely, rendering a
-        byte-identical prompt to before this surface existed.
-    mutation_track_records:
-        Optional per-mutation-point track records (the fertility map —
-        :func:`zicato.index.query.mutation_point_track_record`, assembled
-        best-effort by the orchestrator from the analytical index). Each
-        manifest entry with a record gains one compact, BANDED advisory
-        line (:func:`render_mutation_track_annotation`) — aggregate counts
-        and bucketed Δscalar only, honestly labelled as "experiments
-        touching this point" (multi-patch experiments confound credit;
-        never causal) — inside the restricted-visibility envelope. ``None``
-        / empty (the default) renders a byte-identical manifest to before
-        this surface existed.
-    """
-
-    body = USER_PROMPT_TEMPLATE.format(
-        current_loss_summary=current_loss_summary.strip() or "(no loss summary)",
-        metric_targets_block=render_metric_targets_block(custom_judge_names, metric_priorities),
-        pattern_block=render_pattern_block(patterns, restrict=restrict_visibility),
-        mutation_block=render_mutation_block(mutations, track_records=mutation_track_records),
-    )
-    prior_block = render_prior_experiments_block(prior_experiments, restrict=restrict_visibility)
-    if prior_block:
-        prior_prefix = (
-            "## What's already been tried (this epoch — avoid repeating "
-            f"failures, build on wins)\n\n{prior_block}\n\n"
-        )
-        body = prior_prefix + body
-    calibration_block = render_calibration_block(calibration)
-    if calibration_block.strip():
-        # Spliced so it lands DIRECTLY ABOVE the experiment-memory block (and
-        # below the genealogy block) — the proposer's own prediction track
-        # record, framing the "what's been tried" list. The banner names the
-        # channel; the sampler has already banded every outcome and reduced the
-        # grades to hit/miss verdicts + aggregate counts (no board data).
-        calibration_prefix = (
-            "## Prediction calibration (this reign — your own settled hypotheses)\n"
-            "How your falsifiable movement predictions landed against realized "
-            "outcomes. Claim\n"
-            "text is your own; outcomes are banded (improved / flat / regressed). "
-            "Predict more\n"
-            "honestly — do not over-claim movements your track record says you miss.\n"
-            f"{calibration_block.strip()}\n\n"
-        )
-        body = calibration_prefix + body
-    genealogy_block = render_genealogy_block(genealogy)
-    if genealogy_block.strip():
-        # Spliced so it lands DIRECTLY ABOVE the experiment-memory block in the
-        # final prompt (prefixes stack in reverse prepend order) — the lineage
-        # the proposer builds on / diverges from, framing the "what's been
-        # tried" list below it. The banner names the channel; the sampler has
-        # already banded every outcome and capped every excerpt.
-        genealogy_prefix = (
-            "## Candidate genealogy (this reign — in-context evolution)\n"
-            "Promoted ancestors to build on and diverse rejected ideas to "
-            "re-frame. Outcomes are\n"
-            "banded (improved / flat / regressed); diffs are the proposer's "
-            "own edits, excerpted.\n"
-            f"{genealogy_block.strip()}\n\n"
-        )
-        body = genealogy_prefix + body
-    if process_exemplars.strip():
-        # Spliced so it lands DIRECTLY AFTER the failure-mode profile in the
-        # final prompt (prefixes stack in reverse prepend order). The banner
-        # restates the redaction contract so the model reads the windows as
-        # anonymized mechanism, not as named board evidence.
-        exemplars_prefix = (
-            "## Process exemplars (train slice — redacted event windows)\n"
-            "Redaction contract (PROCESS-EXEMPLARS.md): entry ids and task "
-            "text stripped, task ids\n"
-            "anonymized per window, free text truncated, model outputs "
-            "withheld. These show HOW a\n"
-            "detected failure unfolds — never WHICH board entry it unfolded "
-            "on.\n"
-            f"{process_exemplars.strip()}\n\n"
-        )
-        body = exemplars_prefix + body
-    if failure_profile.strip():
-        failure_prefix = (
-            "## Failure-mode profile (this round, aggregate — train slice)\n"
-            f"{failure_profile.strip()}\n\n"
-        )
-        body = failure_prefix + body
-    if insights.strip():
-        insights_prefix = f"## Recent telemetry insights\n{insights.strip()}\n\n"
-        body = insights_prefix + body
-    if sample_hint.strip():
-        # The best-of-N slate diversifier: this sample's edit-class steering,
-        # read first so the slot's strategy frames everything below it.
-        hint_prefix = f"## Edit-class hint (this sample)\n{sample_hint.strip()}\n\n"
-        body = hint_prefix + body
-    if feedback:
-        sections = [
-            "## Previous attempt was rejected",
-            "Your previous response failed to parse. Reason:",
-            "",
-            f"    {feedback}",
-            "",
-        ]
-        if feedback_was_empty:
-            # Targeted variant: an empty response means the model most
-            # likely burned its whole output budget on reasoning before
-            # ever reaching the JSON. Tell it to skip reasoning entirely.
-            sections += [
-                "Your previous output was EMPTY — you most likely spent your entire "
-                "output budget on reasoning before emitting any JSON.",
-                "",
-                "Do NOT think step by step. Do NOT emit any <think>/<thinking>/"
-                "<reasoning> block. Skip all reasoning and emit the JSON object "
-                "IMMEDIATELY as the very first thing you write.",
-                "",
-            ]
-        elif feedback_prior_output.strip():
-            echoed = textwrap.indent(_truncate_prior_output(feedback_prior_output), "    ")
-            sections += [
-                "Your previous output was:",
-                "",
-                echoed,
-                "",
-            ]
-        sections += [
-            "Respond with ONLY the JSON object — no <think>/<thinking>/<reasoning> "
-            "blocks, no markdown code fences, no prose before or after it. The "
-            'first character of your response MUST be "{" and the last MUST be '
-            '"}". The top-level keys must be exactly "hypothesis" and "patches".',
-            "",
-            "",
-        ]
-        return "\n".join(sections) + body
-    return body
 
 
 def _render_merge_patches(patches: tuple[Patch, ...]) -> str:
@@ -1480,8 +1027,8 @@ def render_recombine_merge_prompt(
 
     The prompt-side surface of the WS-MERGE ``recombine_merge = "llm"`` mode
     (PROPOSER.md §2.6.1). The SYSTEM prompt is the SAME schema-carrying
-    proposer system prompt (:func:`render_system_prompt` with the epoch brief),
-    so the response is a proposal like any other and flows through the normal
+    schema-carrying system prompt (:func:`render_merge_system_prompt` with the
+    epoch brief), so the response flows through the normal
     :func:`zicato.proposer.structured.parse_experiment_json` path. The USER
     prompt frames the MERGE task from the envelope-clean :class:`RecombinationPair`:
 
@@ -1501,7 +1048,7 @@ def render_recombine_merge_prompt(
     exploration; the wrapper does not hold the resolved skill modules) — the
     epoch brief, which carries the forbidden-edits guidance, IS included.
     """
-    system_prompt = render_system_prompt(brief_text)
+    system_prompt = render_merge_system_prompt(brief_text)
     targets_block = render_metric_targets_block(custom_judge_names, metric_priorities)
     mutation_block = render_mutation_block(mutations)
     a_outcome = pair.a_banded_outcome or "unsettled"
@@ -1539,8 +1086,7 @@ def render_recombine_merge_prompt(
 
 
 __all__ = [
-    "SYSTEM_PROMPT_TEMPLATE",
-    "USER_PROMPT_TEMPLATE",
+    "MERGE_SYSTEM_PROMPT_TEMPLATE",
     "MetricPriorities",
     "ScoredTarget",
     "band_rate",
@@ -1556,6 +1102,5 @@ __all__ = [
     "render_mutation_block",
     "render_prior_experiments_block",
     "render_skills_block",
-    "render_system_prompt",
-    "render_user_prompt",
+    "render_merge_system_prompt",
 ]

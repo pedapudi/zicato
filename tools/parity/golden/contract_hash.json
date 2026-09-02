@@ -5,10 +5,10 @@
     "brief": "466a5a9c2d1569fa8cfa8e0fe2dea135395af1d1cc42bc19ad146dd4ccc59eff",
     "evaluator_revision": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
     "mutable_trees": "d4f0bc5a29de06b510f9aa428f1eedba926012b591fef7a518e776a7c9bd1824",
-    "proposer": "de6fb5da86f4c9df7de8bddaedff5966b5d36ff9faacb71e9f43f6dea83aae0e",
+    "proposer": "f7f723a0732e61425942cbeed48c69712a0fe503f72ee76ec8b19445879dc833",
     "scoring": "5564775cb446b594be543cc3b8c994e49fde11edbd81ac6b8964fead8578af53"
   },
-  "contract_hash": "cc0d83e849d6430fa928ab1735a2a15ee66172ad69722ed477ea8c48bd8af5ee",
+  "contract_hash": "885e9f29843357c3bf0063cf3e4f7e31f30a8bccfc88271a656fd531ce94e484",
   "entrypoint": "zicato_examples.target_1_presentation.agent:root_agent",
   "fixture": "target_1_presentation",
   "mutable_trees": [

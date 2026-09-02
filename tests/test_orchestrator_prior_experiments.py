@@ -17,70 +17,41 @@ import pytest
 from tests._orchestrator_harness import (
     install_stub_adapter_factory,
     install_telemetry_stubs,
+    make_aux_responder,
     run_evolve_once,
 )
 from tests.test_orchestrator_multi_challenger import _bootstrap_swiss_workspace
 
 
-def _response_with_core_idea(core_idea: str) -> str:
-    """A schema-valid proposer response targeting the stub ``greeting`` marker."""
-    return json.dumps(
-        {
-            "hypothesis": {
-                "core_idea": core_idea,
-                "modulating": ["greeting"],
-                "why": "exercising the sibling-accumulation path",
-                "expected_drift_movements": [
-                    {"kind": "off_topic", "direction": "decrease", "magnitude": "small"}
-                ],
-                "expected_pass_rate_delta": "+0.0 to +0.1",
-                "risks": "harmless",
-            },
-            "patches": [
-                {
-                    "mutation_id": "greeting",
-                    "op": "replace",
-                    "new_content": '"world"',
-                    "rationale": "different greeting word",
-                }
-            ],
-        }
-    )
+def _episode_tasks(workspace: Path, epoch_id: str) -> list[str]:
+    """The task each proposal episode was given, in the order they ran.
 
-
-class _CapturingFieldLLM:
-    """Yields scripted proposer responses in order, recording each
-    PROPOSER user prompt.
-
-    The auxiliary callable is shared by the proposer and the end-of-round
-    epoch-report writer, so we record only the proposer prompts (the ones
-    carrying the mutation manifest) and return a benign placeholder for
-    any post-field report call so the round finishes cleanly.
+    Read off the workspace's own durable capture rather than a patched
+    renderer, so what is asserted is what the model saw.
     """
+    from zicato.proposer.input_capture import ROLE_PROPOSAL, read_proposer_inputs
 
-    def __init__(self, responses: list[str]) -> None:
-        self._responses = list(responses)
-        self.proposer_prompts: list[str] = []
-
-    async def __call__(self, system: str, user: str, model: str) -> str:
-        # The proposer's user prompt is the only one carrying the mutation
-        # manifest; the report writer's prompt does not.
-        is_proposer = "## Mutation points" in user
-        if is_proposer:
-            self.proposer_prompts.append(user)
-            if not self._responses:
-                raise AssertionError("stub aux LLM ran out of proposer responses")
-            return self._responses.pop(0)
-        # Non-proposer (epoch-report) call — return harmless prose.
-        return "report placeholder"
+    return [
+        record["user"]
+        for record in read_proposer_inputs(workspace, epoch_id)
+        if record["role"] == ROLE_PROPOSAL
+    ]
 
 
 def test_field_accumulates_in_flight_siblings(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Challenger k's prompt carries the in-flight core-ideas of the
+    """Challenger k's task carries the in-flight core ideas of the
     siblings minted before it this round."""
-    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
+    ideas = {
+        "v1": {"idea": "challenger-A tighten coordinator routing"},
+        "v2": {"idea": "challenger-B require source citations"},
+        "v3": {"idea": "challenger-C terser specialist descriptions"},
+    }
+    idea_a, idea_b, idea_c = (ideas[k]["idea"] for k in ("v1", "v2", "v3"))
+    workspace, epoch_id = _bootstrap_swiss_workspace(
+        tmp_path, field_size=3, rounds_n=1, hypotheses=ideas
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -88,24 +59,14 @@ def test_field_accumulates_in_flight_siblings(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
     )
 
-    idea_a = "challenger-A tighten coordinator routing"
-    idea_b = "challenger-B require source citations"
-    idea_c = "challenger-C terser specialist descriptions"
-    aux = _CapturingFieldLLM(
-        [
-            _response_with_core_idea(idea_a),
-            _response_with_core_idea(idea_b),
-            _response_with_core_idea(idea_c),
-        ]
-    )
+    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
-    run_evolve_once(workspace, epoch_id, aux)
-
-    assert len(aux.proposer_prompts) == 3
-    p0, p1, p2 = aux.proposer_prompts
+    tasks = _episode_tasks(workspace, epoch_id)
+    assert len(tasks) == 3
+    p0, p1, p2 = tasks
 
     # The first challenger has no prior settled history and no siblings yet,
-    # so its prompt carries none of the round's core-ideas.
+    # so its task carries none of the round's core ideas.
     assert idea_a not in p0
     assert "What's already been tried" not in p0
 
@@ -123,9 +84,18 @@ def test_field_accumulates_in_flight_siblings(
 def test_failed_challenger_contributes_no_sibling(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A challenger whose proposer fails has no hypothesis to share, so it
-    contributes no in-flight sibling line to the next challenger's prompt."""
-    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    """A challenger whose episode produced nothing has no hypothesis to
+    share, so it contributes no in-flight sibling line to the next
+    challenger's task."""
+    # The first challenger's episode predicts an undeclared judge, so its
+    # hypothesis is refused and no experiment is minted; the second
+    # proposes normally.
+    workspace, epoch_id = _bootstrap_swiss_workspace(
+        tmp_path,
+        field_size=2,
+        rounds_n=1,
+        hypotheses={"v1": {"predict": "drift:not_a_declared_judge"}},
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -133,18 +103,13 @@ def test_failed_challenger_contributes_no_sibling(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    idea_b = "challenger-B require source citations"
-    # First challenger's response is empty (proposer fails with zero
-    # retries); the second is valid.
-    aux = _CapturingFieldLLM(["", _response_with_core_idea(idea_b)])
+    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
-    run_evolve_once(workspace, epoch_id, aux, max_proposer_retries=0)
-
-    assert len(aux.proposer_prompts) == 2
-    _, p1 = aux.proposer_prompts
-    # The second challenger sees no in-flight sibling — the first failed and
-    # produced no hypothesis — so the section is omitted entirely.
-    assert "What's already been tried" not in p1
+    tasks = _episode_tasks(workspace, epoch_id)
+    assert len(tasks) == 2
+    # The second challenger sees no in-flight sibling — the first produced
+    # no hypothesis — so the section is omitted entirely.
+    assert "What's already been tried" not in tasks[1]
 
 
 def test_duplicate_sibling_is_soft_rejected_for_field_diversity(
@@ -157,7 +122,16 @@ def test_duplicate_sibling_is_soft_rejected_for_field_diversity(
     Two of three challengers are byte-identical proposals; the duplicate is
     dropped from the run slate and recorded with a ``field_diversity_duplicate``
     reason, leaving exactly two DISTINCT challengers to run."""
-    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
+    idea_a = "challenger-A tighten the greeting"
+    idea_b = "challenger-B require a citation"
+    # Challengers v1 and v2 state the SAME core idea over the same
+    # mutation point; v3 is distinct. The duplicate (v2) must be rejected.
+    workspace, epoch_id = _bootstrap_swiss_workspace(
+        tmp_path,
+        field_size=3,
+        rounds_n=1,
+        hypotheses={"v1": {"idea": idea_a}, "v2": {"idea": idea_a}, "v3": {"idea": idea_b}},
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -165,21 +139,9 @@ def test_duplicate_sibling_is_soft_rejected_for_field_diversity(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
     )
 
-    idea_a = "challenger-A tighten the greeting"
-    idea_b = "challenger-B require a citation"
-    # Challenger 0 and 1 are IDENTICAL (same core idea + same modulating id);
-    # challenger 2 is distinct. The duplicate (challenger 1) must be rejected.
-    aux = _CapturingFieldLLM(
-        [
-            _response_with_core_idea(idea_a),
-            _response_with_core_idea(idea_a),  # duplicate of challenger 0
-            _response_with_core_idea(idea_b),
-        ]
-    )
-
     from zicato.runtime.state import read_active_tournament
 
-    run_evolve_once(workspace, epoch_id, aux)
+    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     active = read_active_tournament(workspace)
     assert active is not None
@@ -192,11 +154,12 @@ def test_duplicate_sibling_is_soft_rejected_for_field_diversity(
     assert reasons.get("v2") == "field_diversity_duplicate"
     assert by_gen.get("v3") == "applied"
 
-    # The duplicate did NOT become an in-flight sibling — the third (distinct)
-    # challenger's prompt carries only challenger-A's idea, never a second copy.
-    assert len(aux.proposer_prompts) == 3
-    p2 = aux.proposer_prompts[2]
-    assert p2.count(idea_a) == 1  # the single surviving sibling, not two
+    # The duplicate did NOT become an in-flight sibling — the third
+    # (distinct) challenger's task carries challenger-A's idea once as a
+    # sibling line, beside the copy it states as its own hypothesis.
+    tasks = _episode_tasks(workspace, epoch_id)
+    assert len(tasks) == 3
+    assert tasks[2].count(idea_a) == 1  # the single surviving sibling, not two
 
 
 def test_same_ids_different_idea_is_not_a_duplicate(
@@ -205,7 +168,16 @@ def test_same_ids_different_idea_is_not_a_duplicate(
     """Two challengers targeting the SAME mutation id with genuinely DIFFERENT
     ideas are distinct experiments — neither is soft-rejected (the constraint
     dedups by id-set AND core idea, not by id alone)."""
-    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    # Same mutation point, genuinely different ideas.
+    workspace, epoch_id = _bootstrap_swiss_workspace(
+        tmp_path,
+        field_size=2,
+        rounds_n=1,
+        hypotheses={
+            "v1": {"idea": "tighten the greeting tone"},
+            "v2": {"idea": "shorten the greeting length"},
+        },
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -213,16 +185,9 @@ def test_same_ids_different_idea_is_not_a_duplicate(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    aux = _CapturingFieldLLM(
-        [
-            _response_with_core_idea("tighten the greeting tone"),
-            _response_with_core_idea("shorten the greeting length"),  # same id, different idea
-        ]
-    )
-
     from zicato.runtime.state import read_active_tournament
 
-    run_evolve_once(workspace, epoch_id, aux)
+    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     active = read_active_tournament(workspace)
     assert active is not None
@@ -254,6 +219,13 @@ def _set_runtime_diversity_tolerance(workspace: Path, tolerance: float) -> None:
     cfg_path.write_text(json.dumps(cfg))
 
 
+_VARIANT_IDEAS = {
+    "v1": {"idea": "variant-A shorten the greeting"},
+    "v2": {"idea": "variant-B warm up the greeting"},
+    "v3": {"idea": "variant-C formalize the greeting"},
+}
+
+
 def test_overlap_soft_reject_fires_under_diversity_tolerance(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -267,7 +239,9 @@ def test_overlap_soft_reject_fires_under_diversity_tolerance(
     distinct core ideas only the FIRST is kept; the rest are overlap soft-
     rejected, leaving a one-challenger field rather than three near-identical
     experiments."""
-    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
+    workspace, epoch_id = _bootstrap_swiss_workspace(
+        tmp_path, field_size=3, rounds_n=1, hypotheses=_VARIANT_IDEAS
+    )
     _set_runtime_diversity_tolerance(workspace, 0.5)
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
@@ -276,19 +250,11 @@ def test_overlap_soft_reject_fires_under_diversity_tolerance(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
     )
 
-    # Three DISTINCT ideas — the exact-duplicate guard never fires; only the
-    # id-overlap guard can reject here.
-    aux = _CapturingFieldLLM(
-        [
-            _response_with_core_idea("variant-A shorten the greeting"),
-            _response_with_core_idea("variant-B warm up the greeting"),
-            _response_with_core_idea("variant-C formalize the greeting"),
-        ]
-    )
-
+    # The three ideas are DISTINCT — the exact-duplicate guard never
+    # fires; only the id-overlap guard can reject here.
     from zicato.runtime.state import read_active_tournament
 
-    run_evolve_once(workspace, epoch_id, aux)
+    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     active = read_active_tournament(workspace)
     assert active is not None
@@ -319,7 +285,9 @@ def test_overlap_enforcement_absent_is_byte_compatible(
     challengers ALL apply (no overlap guard) and no ``diversity_status`` key is
     written onto any field-status record — the default-off path is byte-
     compatible with today."""
-    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=3, rounds_n=1)
+    workspace, epoch_id = _bootstrap_swiss_workspace(
+        tmp_path, field_size=3, rounds_n=1, hypotheses=_VARIANT_IDEAS
+    )
     # Deliberately do NOT set diversity_tolerance.
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
@@ -328,17 +296,9 @@ def test_overlap_enforcement_absent_is_byte_compatible(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
     )
 
-    aux = _CapturingFieldLLM(
-        [
-            _response_with_core_idea("variant-A shorten the greeting"),
-            _response_with_core_idea("variant-B warm up the greeting"),
-            _response_with_core_idea("variant-C formalize the greeting"),
-        ]
-    )
-
     from zicato.runtime.state import read_active_tournament
 
-    run_evolve_once(workspace, epoch_id, aux)
+    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     active = read_active_tournament(workspace)
     assert active is not None

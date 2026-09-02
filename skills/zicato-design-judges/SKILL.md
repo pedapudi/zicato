@@ -188,8 +188,8 @@ Judge only the bounded observable event stream or output; never reach into
 target state.
 
 These are constrained text or structured-response roles. Assigning them a
-model-form engine does not turn them into Pi sessions or grant repository
-tools. That narrow protocol is intentional: a judge should return a bounded
+model-form engine does not turn them into tool-using sessions or grant
+repository tools. That narrow protocol is intentional: a judge should return a bounded
 verdict, and an adjudicator should audit a frozen evidence package. A future
 agentic auditor would be a separate implementation with a declared, read-only
 tool surface and explicit visibility policy rather than an engine substitution.

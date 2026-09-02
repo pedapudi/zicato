@@ -206,9 +206,20 @@ async def _propose_child(
         if round_emitter is not None:
             for attempt_error in exc.attempts:
                 round_emitter.emit("proposal_attempted", {"errors": (str(attempt_error),)}, scope)
+            # How the episode ENDED, beside the attempts that led there. A
+            # block, an exhausted budget and a crash all reach this handler
+            # and all want different remedies, so the ending is recorded as
+            # its own fact rather than inferred from the last message.
+            outcome = exc.outcome
+            round_emitter.emit(
+                "proposal_episode_settled",
+                {"kind": outcome.kind, "code": outcome.code, "message": outcome.message},
+                scope,
+            )
         raise
     if round_emitter is not None:
         round_emitter.emit("proposal_attempted", {}, scope)
+        round_emitter.emit("proposal_episode_settled", {"kind": "completed"}, scope)
         round_emitter.emit("experiment_minted", {"experiment_id": experiment.id}, scope)
         # The proposer's validate hook derived + validated the child tree
         # before a successful return, so the patches are applied by here.
@@ -275,7 +286,7 @@ async def _propose_and_apply_challenger(
     caller uses to re-publish the live envelope as each slot resolves.
 
     ``prior_experiments`` is the caller-assembled experiment-memory digest
-    threaded into the inner :func:`propose_experiment` call — the settled
+    threaded into the proposal episode's evidence — the settled
     cross-round history plus this round's already-minted in-flight
     siblings — so each challenger diversifies away from both known
     failures and its just-proposed cohort. Empty by default.

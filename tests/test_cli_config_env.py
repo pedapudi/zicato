@@ -43,7 +43,6 @@ def test_config_env_reports_the_merited_set() -> None:
     for role in (
         "harness-contract",
         "internal-handoff",
-        "external-integration",
         "secrets-boundary",
         "test-toggle",
     ):
@@ -76,8 +75,6 @@ def test_config_env_golden_text_shape() -> None:
     assert "ZICATO_RUN_SCRATCH_DIR" in text
     assert "ZICATO_HARMONOGRAF_URL" in text
     assert "ZICATO_HARMONOGRAF_GRPC" in text
-    assert "ZICATO_PROPOSER_TOOL_CONTEXT" in text
-    assert "PI_CODING_AGENT_DIR" in text
     assert "<models.<role>.api_key_env>" in text
     assert "<scoring.goldfive.{embedding,judge}.api_key_env>" in text
     assert "<runtime.worker_env_passthrough>" in text

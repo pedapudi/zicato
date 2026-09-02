@@ -144,9 +144,10 @@ zicato already handles reasoning text in three places, all of them
   `zicato/proposer/structured.py`) — distinguishes an empty response
   ("likely spent its entire output budget on reasoning") from a malformed one,
   so the retry feedback can target the failure mode.
-- **The empty-response repair prompt** (`render_user_prompt`,
-  `feedback_was_empty`, `zicato/proposer/prompts.py`) — the advisory
-  "skip all reasoning" turn described in §2.3.
+- **The verifier's findings turn** (`foe.Verified`, declared by
+  `build_contract` in `zicato/proposer/foe_request.py`) — the repair the
+  episode is given when its working copy does not read back as a
+  well-formed patch set, described in §2.3.
 
 Those three are the whole of it. Nothing in the **seam** itself — `CallLLM`,
 the runtime binding, the ADK text shim (`zicato/adapters/adk.py`) — knows that

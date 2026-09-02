@@ -1686,6 +1686,7 @@
           "candidates_screened": 0,
           "critique_index": null,
           "critique_reason": "",
+          "episode_outcomes": [],
           "errors": [],
           "experiment_ids": [
             "exp-1"
@@ -1763,6 +1764,7 @@
           "candidates_screened": 0,
           "critique_index": null,
           "critique_reason": "",
+          "episode_outcomes": [],
           "errors": [],
           "experiment_ids": [
             "exp-2"
@@ -1840,6 +1842,7 @@
           "candidates_screened": 0,
           "critique_index": null,
           "critique_reason": "",
+          "episode_outcomes": [],
           "errors": [],
           "experiment_ids": [
             "exp-10"
