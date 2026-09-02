@@ -134,7 +134,10 @@ class HealthConfig:
         Fraction-of-board-entries-without-an-expectation threshold for
         :func:`~zicato.health.diagnostics.detect_no_expectations`. The
         detector fires when the fraction is strictly greater than this.
-        A fraction in ``[0, 1]``.
+        A fraction in ``[0, 1]``. The pre-spend workspace gate raises its
+        board-coverage advisory at the same threshold — both read it
+        through
+        :func:`~zicato.board.expectation_coverage.measure_expectation_coverage`.
     stalled_rejects:
         Number of consecutive ``rejected`` generations
         :func:`~zicato.health.diagnostics.detect_stalled_loop` treats as

@@ -7,8 +7,8 @@ that cannot be read.
 
 Findings carry one of two severities and the difference is what they
 prove. A stop proves the round cannot produce a valid measurement, and
-raises. An advisory proves only that something the operator declared
-contributes nothing — worth saying, but not a reason to refuse a
+raises. An advisory proves only that the round will measure less than the
+operator most likely intended — worth saying, but not a reason to refuse a
 workspace that runs today. The severity of a code is fixed, in
 :data:`~zicato.check.validators.ADVISORY_CODES`, so "does this stop the
 run?" has one answer in one place.

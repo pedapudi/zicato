@@ -112,10 +112,21 @@ modules; tests patch those owners directly.
 
    Findings come in two severities. A finding that proves the round cannot
    produce a valid measurement raises `WorkspaceCheckError`. A finding that
-   proves only that something declared contributes nothing — a stale tree
-   path, a span marker binding to no literal — is advisory: reported and
-   logged, never a refusal, because those workspaces run correctly today.
-   The severity of a code is fixed in `check.validators.ADVISORY_CODES`.
+   proves only that the round will measure less than the operator most
+   likely intended — a stale tree path, a span marker binding to no
+   literal, a board whose entries mostly carry no expectation — is
+   advisory: reported and logged, never a refusal, because those
+   workspaces run correctly today. The severity of a code is fixed in
+   `check.validators.ADVISORY_CODES`.
+
+   The board-coverage advisory (`no_expectations`) is the one finding the
+   gate shares with the loop-health report. Its rule — which entries count
+   as ungraded, and the `health.no_expectations_fraction` their fraction
+   must exceed — is declared once, in
+   `zicato.board.expectation_coverage.measure_expectation_coverage`, and
+   read by both the validator and `health.diagnostics`. The gate says it
+   before the first round is paid for; the health report says it again
+   once rounds have run.
 3. **Contract-hash auto-epoching, ONCE.** When `epoch_id is None` and
    `auto_epoch` is true, `_orch.ensure_epoch_for_contract(...)` resolves
    (and, on drift, rolls) the epoch; the resolved id is pinned for every

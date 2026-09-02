@@ -288,6 +288,12 @@ full list). Run it first; it is cheap and read-only:
 # exit 1 == a critical finding is present; do NOT trust the lineage until fixed.
 ```
 
+`no_expectations` needs no round to detect, so `zicato evolve --dry-run`
+reports it too, as an advisory naming the entries that grade nothing.
+Both surfaces apply one rule and one threshold
+(`health.no_expectations_fraction`), so an audit run before the first
+round says what the health report will say after it.
+
 Two more read-only checks automate audit items `health` does not cover:
 
 ```sh

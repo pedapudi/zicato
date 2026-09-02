@@ -260,6 +260,34 @@ def test_no_expectations_fires_past_threshold() -> None:
     assert findings[0].detail["entries_without_expectation"] == 3
 
 
+def test_no_expectations_reports_the_same_text_and_payload_as_ever() -> None:
+    """The wording and the JSON are consumed downstream, so pin both.
+
+    The rule this detector applies is shared with the pre-spend gate,
+    which words its own advisory differently. Nothing about that sharing
+    may move the report the health surface has always produced: the
+    dashboard, the analytical index and the parity captures all read
+    these exact bytes.
+    """
+    board = [
+        _board_entry("e2", with_expectation=False),
+        _board_entry("e1", with_expectation=False),
+        _board_entry("e3", with_expectation=True),
+    ]
+    (finding,) = detect_no_expectations(board)
+    assert finding.summary == (
+        "2/3 board entries (67%) have no expectation — "
+        "the pass/fail side of the loss is mostly absent"
+    )
+    assert finding.detail == {
+        "entries_without_expectation": 2,
+        "total_entries": 3,
+        "fraction": 2 / 3,
+        "threshold": 0.5,
+        "entry_ids_without_expectation": ["e1", "e2"],
+    }
+
+
 def test_no_expectations_silent_at_or_below_threshold() -> None:
     # Exactly half have no expectation: 0.5 is not strictly greater.
     board = [

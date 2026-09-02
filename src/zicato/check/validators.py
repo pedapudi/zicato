@@ -12,10 +12,10 @@ Two severities, and the line between them is what the finding proves:
   duplicated mutation id, no surface at all, an adapter no worker can
   rebuild, an unreadable contract, a role whose credential is not set, or
   declared contract behavior that the selected adapter cannot execute;
-* an **advisory** identifies stale annotations that contribute nothing — a
-  stale tree path or a span marker that binds to no literal. Those workspaces
-  run today, and turning stale-annotation hygiene into a refusal would stop
-  runs that were fine.
+* an **advisory** identifies something that will run and measure less than
+  the operator most likely intended — a stale tree path, a span marker that
+  binds to no literal, a board whose entries mostly grade nothing. Those
+  workspaces run today, and refusing them would stop runs that were fine.
 
 The one thing a validator must never do is guess. A check that cannot
 tell a defect from a legitimate configuration does not belong here at
@@ -55,6 +55,7 @@ ADVISORY_CODES: frozenset[str] = frozenset(
         "tree_enumerates_to_nothing",
         "unbound_span_marker",
         "goldfive_endpoint_revision_unset",
+        "no_expectations",
     }
 )
 
@@ -700,6 +701,54 @@ def _unresolvable(
         yield (code, f"{where} does not resolve: {dotted}", {**(extra or {}), "error": str(exc)})
 
 
+#: How many ungraded entry ids the coverage advisory names before it
+#: switches to counting the rest. The finding's detail always carries the
+#: complete list; the summary is one log line, which a large board would
+#: otherwise fill.
+_NAMED_ENTRY_LIMIT = 5
+
+
+def _named_entries(entry_ids: tuple[str, ...]) -> str:
+    """Render the first :data:`_NAMED_ENTRY_LIMIT` ids, then the remainder."""
+    shown = ", ".join(entry_ids[:_NAMED_ENTRY_LIMIT])
+    remaining = len(entry_ids) - _NAMED_ENTRY_LIMIT
+    return f"{shown} and {remaining} more" if remaining > 0 else shown
+
+
+def board_expectation_coverage(ctx: CheckContext) -> Iterator[Defect]:
+    """Most of the board carries no expectation, so most of it grades nothing.
+
+    An entry with no expectation contributes drift loss alone. A board
+    where most entries carry none runs correctly — drift loss needs no
+    ground truth — so this is an advisory rather than a stop, and the
+    same board is reported again after the round as the ``no_expectations``
+    loop-health finding. It belongs here as well because the property is
+    static: it is provable from the board file, and an operator who meant
+    to attach expectations should learn it before paying for a round
+    instead of from the health report afterwards.
+
+    What counts as ungraded, and the threshold the ungraded fraction must
+    exceed, are
+    :func:`~zicato.board.expectation_coverage.measure_expectation_coverage`
+    — the same rule the health detector applies, read through the same
+    workspace ``health`` block, so the two surfaces cannot disagree about
+    one board.
+    """
+    if ctx.board_error is not None or not ctx.has_evaluation_contract or not ctx.board:
+        return
+    from zicato.board.expectation_coverage import measure_expectation_coverage  # noqa: PLC0415
+
+    coverage = measure_expectation_coverage(ctx.board, ctx.health_config)
+    if not coverage.reportable:
+        return
+    yield (
+        "no_expectations",
+        f"{len(coverage.ungraded_ids)}/{coverage.total} board entries have no expectation, "
+        f"so nothing grades what they produce: {_named_entries(coverage.ungraded_ids)}",
+        coverage.finding_detail(),
+    )
+
+
 #: Every validator, in report order. Append to extend.
 VALIDATORS: tuple[Callable[[CheckContext], Iterator[Defect]], ...] = (
     duplicate_ids,
@@ -711,6 +760,7 @@ VALIDATORS: tuple[Callable[[CheckContext], Iterator[Defect]], ...] = (
     epoch_implementation_identity,
     frozen_epoch_contract_identity,
     contract_integrity,
+    board_expectation_coverage,
 )
 
 

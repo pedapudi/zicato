@@ -9,9 +9,10 @@ spending anything.
 :mod:`zicato.check.validators` holds every check: a duplicated mutation
 id, a surface the proposer cannot edit, an adapter no worker can
 rebuild, a configured model role whose credential is not set, a board or
-scoring that cannot be read. All of them are provable from the workspace
-alone; most stop the run, and the few that only prove a declared thing
-contributes nothing are reported as advisories instead.
+scoring that cannot be read, a board whose entries mostly grade nothing.
+All of them are provable from the workspace alone; most stop the run, and
+the few that prove only that the round will measure less than the
+operator most likely intended are reported as advisories instead.
 
 No model is called and no board entry runs, so the cost does not grow
 with the board or with the target.
