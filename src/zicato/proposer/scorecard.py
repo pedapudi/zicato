@@ -87,6 +87,7 @@ from zicato.epoch.round_log import (
     CandidateScreened,
     GateEvaluated,
     ProposalAttempted,
+    ProposalEpisodeSettled,
     RoundLog,
     RoundLogEnvelope,
     RoundOpened,
@@ -109,6 +110,16 @@ UNCLASSIFIED: str = "unclassified"
 
 #: The terminal round decision that counts a proposal as ACCEPTED.
 _PROMOTED: str = "promoted"
+
+#: How each episode outcome kind is labelled on the card. The three that
+#: keep their own word do; ``failed`` reads as ``errored``, which is the
+#: word the card has always used for a round the proposer crashed in.
+_OUTCOME_LABEL: dict[str, str] = {
+    "completed": "completed",
+    "blocked": "blocked",
+    "exhausted": "exhausted",
+    "failed": "errored",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +264,16 @@ class ProposerScorecard:
     validator_failure_rates: dict[str, Rate] = field(default_factory=dict)
     screen_veto_rate: Rate = field(default_factory=Rate)
     revision_success_rate: Rate = field(default_factory=Rate)
+    #: How the epoch's proposal episodes ended, counted by outcome kind:
+    #: completed, blocked, exhausted, errored. A round that produced no
+    #: experiment says which of the three non-completing endings it
+    #: reached, because each names a different remedy.
+    episode_outcomes: dict[str, int] = field(default_factory=dict)
+    #: Blocked episodes counted by their cause, one key per
+    #: :data:`~zicato.core.types.ProposerBlockedCode` the epoch saw.
+    blocked_codes: dict[str, int] = field(default_factory=dict)
+    #: Exhausted episodes counted by the budget dimension that ran out.
+    exhausted_limits: dict[str, int] = field(default_factory=dict)
     margins: MarginStats = field(default_factory=MarginStats)
     cost: CostAggregate = field(default_factory=CostAggregate)
     mutation_sites: tuple[MutationSiteRecord, ...] = ()
@@ -272,6 +293,9 @@ class ProposerScorecard:
             },
             "screen_veto_rate": self.screen_veto_rate.to_json(),
             "revision_success_rate": self.revision_success_rate.to_json(),
+            "episode_outcomes": dict(sorted(self.episode_outcomes.items())),
+            "blocked_codes": dict(sorted(self.blocked_codes.items())),
+            "exhausted_limits": dict(sorted(self.exhausted_limits.items())),
             "margins": self.margins.to_json(),
             "cost": self.cost.to_json(),
             "mutation_sites": [s.to_json() for s in self.mutation_sites],
@@ -479,6 +503,9 @@ def read_epoch_scorecard(workspace_root: Path, epoch_id: str) -> ProposerScoreca
     vetoes = 0
     revise_screened = 0
     revise_survived = 0
+    episode_outcomes: dict[str, int] = {}
+    blocked_codes: dict[str, int] = {}
+    exhausted_limits: dict[str, int] = {}
     candidates_sampled = 0
     board_units = 0
     promotions = 0
@@ -487,6 +514,13 @@ def read_epoch_scorecard(workspace_root: Path, epoch_id: str) -> ProposerScoreca
             event = envelope.event
             if isinstance(event, ProposalAttempted):
                 attempt_errors.append(event.errors)
+            elif isinstance(event, ProposalEpisodeSettled):
+                kind = _OUTCOME_LABEL.get(event.kind, event.kind)
+                episode_outcomes[kind] = episode_outcomes.get(kind, 0) + 1
+                if event.kind == "blocked" and event.code:
+                    blocked_codes[event.code] = blocked_codes.get(event.code, 0) + 1
+                elif event.kind == "exhausted" and event.code:
+                    exhausted_limits[event.code] = exhausted_limits.get(event.code, 0) + 1
             elif isinstance(event, CandidateScreened):
                 screened += 1
                 if event.vetoed:
@@ -520,6 +554,9 @@ def read_epoch_scorecard(workspace_root: Path, epoch_id: str) -> ProposerScoreca
         },
         screen_veto_rate=Rate(k=vetoes, n=screened),
         revision_success_rate=Rate(k=revise_survived, n=revise_screened),
+        episode_outcomes=episode_outcomes,
+        blocked_codes=blocked_codes,
+        exhausted_limits=exhausted_limits,
         margins=_margin_stats(gates),
         cost=CostAggregate(
             accepted=promotions,

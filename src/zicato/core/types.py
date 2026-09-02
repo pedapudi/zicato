@@ -124,6 +124,12 @@ from zicato.core.patterns import (
     Pattern,
 )
 from zicato.core.proposer import (
+    FOE_BLOCKED_CODES,
+    PROPOSER_BLOCKED_CODES,
+    PROPOSER_BUDGET_DIMENSIONS,
+    ProposerBlockedCode,
+    ProposerEpisodeOutcome,
+    ProposerOutcomeKind,
     ProposerSkill,
     ProposerSpec,
 )
@@ -200,6 +206,12 @@ __all__ = [
     "PriorExperiment",
     "EXPERIMENT_MEMORY_MAX_ENTRIES",
     # Proposer
+    "FOE_BLOCKED_CODES",
+    "PROPOSER_BLOCKED_CODES",
+    "PROPOSER_BUDGET_DIMENSIONS",
+    "ProposerBlockedCode",
+    "ProposerEpisodeOutcome",
+    "ProposerOutcomeKind",
     "ProposerSkill",
     "ProposerSpec",
     # Epoch / generation

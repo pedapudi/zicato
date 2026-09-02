@@ -206,9 +206,20 @@ async def _propose_child(
         if round_emitter is not None:
             for attempt_error in exc.attempts:
                 round_emitter.emit("proposal_attempted", {"errors": (str(attempt_error),)}, scope)
+            # How the episode ENDED, beside the attempts that led there. A
+            # block, an exhausted budget and a crash all reach this handler
+            # and all want different remedies, so the ending is recorded as
+            # its own fact rather than inferred from the last message.
+            outcome = exc.outcome
+            round_emitter.emit(
+                "proposal_episode_settled",
+                {"kind": outcome.kind, "code": outcome.code, "message": outcome.message},
+                scope,
+            )
         raise
     if round_emitter is not None:
         round_emitter.emit("proposal_attempted", {}, scope)
+        round_emitter.emit("proposal_episode_settled", {"kind": "completed"}, scope)
         round_emitter.emit("experiment_minted", {"experiment_id": experiment.id}, scope)
         # The proposer's validate hook derived + validated the child tree
         # before a successful return, so the patches are applied by here.

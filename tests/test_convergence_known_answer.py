@@ -281,7 +281,13 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
         # One unit_completed per (entry, side): 5 board entries x 2 sides.
         types = [e.type for e in events]
         assert types == (
-            ["round_opened", "proposal_attempted", "experiment_minted", "patches_applied"]
+            [
+                "round_opened",
+                "proposal_attempted",
+                "proposal_episode_settled",
+                "experiment_minted",
+                "patches_applied",
+            ]
             + ["unit_completed"] * (2 * BOARD_SIZE)
             + ["gate_evaluated", "decision_recorded", "round_closed"]
         ), f"round {round_index}: {types}"

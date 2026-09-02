@@ -956,6 +956,9 @@
           "value": null,
           "provisional": false
         },
+        "episode_outcomes": {},
+        "blocked_codes": {},
+        "exhausted_limits": {},
         "margins": {
           "n": 0,
           "unmeasured": 0,

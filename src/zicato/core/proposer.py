@@ -1,4 +1,4 @@
-"""Proposer types: the resolved proposer identity + its markdown skills.
+"""Proposer types: its identity, its skills, and how an episode can end.
 
 Split out of :mod:`zicato.core.types`; re-exported from there and from
 :mod:`zicato.core` so existing import paths keep working.
@@ -6,10 +6,133 @@ Split out of :mod:`zicato.core.types`; re-exported from there and from
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Literal
 
 # ---------------------------------------------------------------------------
-# Proposer
+# How a proposal episode ends
+# ---------------------------------------------------------------------------
+
+#: The four ways one proposal episode can end, which is Foe's own outcome
+#: vocabulary (``foe/docs/design.md``, "The episode") read in zicato's
+#: terms. A **completed** episode produced an :class:`Experiment`. A
+#: **blocked** one recognized that it cannot proceed and says why with a
+#: code from :data:`PROPOSER_BLOCKED_CODES`. An **exhausted** one ran out
+#: of budget with work still in progress, and names the dimension that
+#: ran out. A **failed** one crashed or broke the protocol.
+#:
+#: Blocked and exhausted are neither each other nor failures, and the
+#: distinction is what makes the remedy addressable: a block is a fact
+#: about the mutation surface or the brief, exhaustion is a fact about the
+#: budget, and a failure is a defect.
+ProposerOutcomeKind = Literal["completed", "blocked", "exhausted", "failed"]
+
+#: Why a proposal episode reported that it cannot proceed. A closed set:
+#: a supervising round routes on it, and the proposer scorecard counts it,
+#: so a code that means something new is added here rather than spelled
+#: freely at a call site.
+#:
+#: Four are zicato's own conditions. ``no-groundable-mutation-point``: no
+#: declared mutation point matches the brief's failure mode.
+#: ``verification-unsatisfiable``: the patch verifier's retries were spent
+#: with findings still present. ``edit-outside-mutation-point``: the
+#: proposer edited its scratch copy outside every declared point.
+#: ``ambiguous-brief``: the brief admits incompatible readings. The rest
+#: are conditions the runtime detects and reports, and each is spelled as
+#: Foe spells it so a log read against either vocabulary reads the same.
+ProposerBlockedCode = Literal[
+    "no-groundable-mutation-point",
+    "verification-unsatisfiable",
+    "edit-outside-mutation-point",
+    "ambiguous-brief",
+    "missing-capability",
+    "looping-tool-call",
+    "looping-reasoning",
+    "child-blocked",
+    "recovery-exhausted",
+    "recovery-failed",
+]
+
+#: :data:`ProposerBlockedCode` as a runtime-checkable set.
+PROPOSER_BLOCKED_CODES: frozenset[str] = frozenset(
+    {
+        "no-groundable-mutation-point",
+        "verification-unsatisfiable",
+        "edit-outside-mutation-point",
+        "ambiguous-brief",
+        "missing-capability",
+        "looping-tool-call",
+        "looping-reasoning",
+        "child-blocked",
+        "recovery-exhausted",
+        "recovery-failed",
+    }
+)
+
+#: Every code Foe's closed vocabulary admits
+#: (``foe/docs/log-format.md``, "Blocked codes"), mapped onto zicato's.
+#: Complete by construction: a Foe release that adds a code fails the
+#: coverage test rather than reaching a round as an unrouted string.
+#:
+#: Two mappings are readings rather than renamings. Foe's
+#: ``goal-unreachable`` means the model reported the task cannot be
+#: completed as stated, and the task here is to ground a change in a
+#: declared mutation point, so the zicato reading is
+#: ``no-groundable-mutation-point``. Foe's ``ambiguous-task`` is
+#: ``ambiguous-brief``, because the brief is the task's text.
+FOE_BLOCKED_CODES: Mapping[str, ProposerBlockedCode] = {
+    "looping-tool-call": "looping-tool-call",
+    "looping-reasoning": "looping-reasoning",
+    "goal-unreachable": "no-groundable-mutation-point",
+    "ambiguous-task": "ambiguous-brief",
+    "missing-capability": "missing-capability",
+    "verification-unsatisfiable": "verification-unsatisfiable",
+    "child-blocked": "child-blocked",
+    "recovery-exhausted": "recovery-exhausted",
+    "recovery-failed": "recovery-failed",
+}
+
+#: The budget dimensions an exhausted episode can name, which are Foe's
+#: (``foe/docs/log-format.md``, "Exhausted limits"). Recorded verbatim so
+#: the scorecard can say which allowance to raise.
+PROPOSER_BUDGET_DIMENSIONS: tuple[str, ...] = (
+    "model_calls",
+    "input_tokens",
+    "output_tokens",
+    "context_window",
+    "seconds",
+    "depth",
+    "episodes",
+    "concurrency",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ProposerEpisodeOutcome:
+    """How one proposal episode ended, in a shape a round can record.
+
+    Fields
+    ------
+    kind:
+        One of :data:`ProposerOutcomeKind`.
+    code:
+        For a blocked episode, a :data:`ProposerBlockedCode`. For an
+        exhausted one, the budget dimension that ran out. Empty for a
+        completed or failed episode.
+    message:
+        What the episode said about the ending, redacted the way every
+        proposer-facing string is: no board-entry id and no entry text.
+        Empty when the ending carried no message.
+    """
+
+    kind: ProposerOutcomeKind
+    code: str = ""
+    message: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Proposer identity
 # ---------------------------------------------------------------------------
 
 

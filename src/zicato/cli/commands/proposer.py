@@ -110,6 +110,18 @@ def _render_card(card: ProposerScorecard) -> str:
         f"  rounds        {card.rounds} ({card.rounds_complete} complete)"
         f" · {card.proposals} proposal attempt(s)",
         "",
+        "Proposal episodes by outcome",
+    ]
+    # Every kind is shown, including the ones this epoch never reached, so a
+    # zero reads as "did not happen" rather than as a missing row.
+    for kind in ("completed", "blocked", "exhausted", "errored"):
+        lines.append(f"  {kind:<14}{card.episode_outcomes.get(kind, 0)}")
+    for code, count in sorted(card.blocked_codes.items()):
+        lines.append(f"    blocked: {code:<34}{count}")
+    for limit, count in sorted(card.exhausted_limits.items()):
+        lines.append(f"    exhausted: {limit:<32}{count}")
+    lines += [
+        "",
         "Validator failures per proposal attempt",
     ]
     for code, rate in sorted(payload["validator_failure_rates"].items()):
