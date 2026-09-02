@@ -677,10 +677,9 @@ def _summarise_loop_health(health: LoopHealth) -> tuple[str, bool]:
     — when the detector wrote one — the ``detail["recommendation"]`` saying
     what to change. The recommendation has to be read out of ``detail``
     explicitly, because it is one key of a structured dict rather than a
-    field of the finding: without that read the line would omit the
-    remediation that fifteen of the nineteen detectors compose no further
-    than the round's health JSON (issue #129). Still one line — the clip
-    keeps it that way.
+    field of the finding: without that read the remediation would travel no
+    further than the round's health JSON (issue #129). Still one line — the
+    clip keeps it that way.
     """
     findings = list(health.findings)
     critical = [f for f in findings if f.severity.upper() == "CRITICAL"]

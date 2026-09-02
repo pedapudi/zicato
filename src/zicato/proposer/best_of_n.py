@@ -692,8 +692,9 @@ class BestOfNProposerAgent:
     depth_model: str | None = None
     #: Slate-gather concurrency cap — the ``asyncio.Semaphore`` size for the
     #: best-of-N sampling fan-out (threaded from
-    #: :attr:`~zicato.core.runtime.RuntimeConfig.propose_parallelism`). ``1``
-    #: (the default, and every context that pins it) runs the slate serially;
+    #: :attr:`~zicato.core.runtime.RuntimeConfig.propose_parallelism`, whose
+    #: own default is ``4``). ``1`` — this field's default, so a construction
+    #: that passes nothing gets it — runs the slate serially;
     #: the deterministic post-gather pass makes any value produce the SAME
     #: slate + event stream regardless of slot completion order. Effectively capped at ``best_of_n``
     #: (never more tasks than slots).
@@ -1646,12 +1647,12 @@ def wrap_with_proposer_quality(
     depth_model: str | None = None,
     propose_parallelism: int = 1,
 ) -> ProposerAgent:
-    """Interpose best-of-N + self-critique only when an operator opts in.
+    """Interpose best-of-N + self-critique unless the contract opts out.
 
-    Returns ``inner`` UNCHANGED when ``config.best_of_n <= 1`` (the default),
-    so a contract that does not opt in pays nothing — there is not even a
-    wrapper object in the call path.
-    Otherwise wraps ``inner`` in a :class:`BestOfNProposerAgent`. The
+    Returns ``inner`` UNCHANGED when ``config.best_of_n <= 1`` — the opt-out a
+    contract pins to get the historical single-sample proposer — so a contract
+    that pins it pays nothing: there is not even a wrapper object in the call
+    path. Otherwise wraps ``inner`` in a :class:`BestOfNProposerAgent`. The
     orchestrator calls this once per evolve invocation, right after it builds
     the epoch's proposer agent.
 
@@ -1675,10 +1676,12 @@ def wrap_with_proposer_quality(
     ``ctx.model`` at its own value.
 
     ``propose_parallelism`` (typically ``config.propose_parallelism`` off the
-    :class:`RuntimeConfig`) sizes the slate-sampling gather's semaphore. ``1``
-    (the default) runs the slate serially; the deterministic post-gather pass
-    makes any value produce the SAME slate + event stream regardless of slot
-    completion order. Irrelevant on the ``best_of_n <= 1`` pass-through.
+    :class:`RuntimeConfig`, whose own default is ``4``) sizes the
+    slate-sampling gather's semaphore. ``1`` — this parameter's default, so a
+    caller that passes nothing gets it — runs the slate serially; the
+    deterministic post-gather pass makes any value produce the SAME slate +
+    event stream regardless of slot completion order. Irrelevant on the
+    ``best_of_n <= 1`` pass-through.
     """
     if config.best_of_n <= 1:
         return inner

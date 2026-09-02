@@ -1,8 +1,6 @@
 """Round-pipeline **ingest** stage — the live SQLite analytical index IO.
 
-Split out of :mod:`zicato.orchestrator` as part of the Finding-2 typed
-round-pipeline decomposition (``docs/design/REIMPLEMENTATION.md``). This is
-the pipeline's *ingest* seam: the best-effort dual-write that keeps
+This is the round pipeline's *ingest* seam: the best-effort dual-write that keeps
 ``index.db`` reflecting each generation's ``experiment.json`` as the loop
 runs, plus the paired index *reads* the propose stage threads back into the
 proposer (prior-experiment memory + mutation track records).
@@ -14,9 +12,8 @@ on disk stays canonical and ``zicato repair index`` can always rebuild the index
 from scratch, so a hiccup in this stage never aborts a round.
 
 Callers import this owner directly; the dispatcher does not re-export private
-index helpers. The
-module logger is named ``zicato.orchestrator`` so the emitted ``debug``
-records are byte-identical to the pre-split ones.
+index helpers. The module logger is named ``zicato.orchestrator``, so a log
+record names the orchestrator wherever the index write lives.
 """
 
 from __future__ import annotations
