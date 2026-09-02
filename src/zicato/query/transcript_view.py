@@ -20,6 +20,7 @@ from typing import Any
 
 from zicato.query.events_index import (
     find_generation_entry_events,
+    find_proposal_episode_log,
     find_run_events_path,
     resolve_transcript_events,
 )
@@ -75,14 +76,28 @@ def resolve_conversation(
     gen: str | None = None,
     entry: str | None = None,
     epoch: str | None = None,
+    slot: int | None = None,
 ) -> Path | None:
-    """Resolve by deterministic generation and entry before opaque run id."""
+    """Resolve by deterministic generation and entry before opaque run id.
+
+    A generation named WITHOUT a board entry resolves to its proposal
+    episode. A generation has two kinds of conversation: one per board entry
+    it was evaluated on, and the single Foe episode that proposed it. The
+    entry coordinate is what tells them apart, so a caller that omits it is
+    asking for the proposal. ``slot`` names one best-of-N slate slot; without
+    it the lowest-numbered slot answers.
+    """
     events_path: Path | None = None
     if gen and entry:
         events_path = resolve_transcript_events(paths, epoch or "", gen, entry, run_id=run_id)
         if events_path is None:
             # Strict to the entry's own run dir — never a sibling's.
             events_path = find_generation_entry_events(paths, gen, entry)
+    elif gen:
+        # The episode log or nothing: a proposal transcript is served from a
+        # Foe episode and from no other source, so an absent episode must not
+        # fall through to some run's event stream.
+        return find_proposal_episode_log(paths, epoch or "", gen, slot_index=slot)
     if events_path is None:
         events_path = find_run_events_path(paths, run_id)
     return events_path

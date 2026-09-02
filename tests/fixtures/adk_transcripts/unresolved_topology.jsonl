@@ -1,0 +1,8 @@
+{"runId": "adk-unresolved", "sequence": 1, "emittedAt": "2026-01-05T11:00:00Z", "runStarted": {"goalSummary": "Reconcile the ledger."}}
+{"runId": "adk-unresolved", "sequence": 2, "emittedAt": "2026-01-05T11:00:01Z", "agentInvocationStarted": {"invocationId": "inv-a", "agentName": "reconciler", "parentInvocationId": ""}}
+{"runId": "adk-unresolved", "sequence": 3, "emittedAt": "2026-01-05T11:00:02Z", "agentInvocationStarted": {"invocationId": "inv-orphan", "agentName": "auditor", "parentInvocationId": "inv-never-started"}}
+{"runId": "adk-unresolved", "sequence": 4, "emittedAt": "2026-01-05T11:00:03Z", "agentInvocationStarted": {"invocationId": "inv-loop-one", "agentName": "left", "parentInvocationId": "inv-loop-two"}}
+{"runId": "adk-unresolved", "sequence": 5, "emittedAt": "2026-01-05T11:00:04Z", "agentInvocationStarted": {"invocationId": "inv-loop-two", "agentName": "right", "parentInvocationId": "inv-loop-one"}}
+{"runId": "adk-unresolved", "sequence": 6, "emittedAt": "2026-01-05T11:00:05Z", "invocationBoundaryExited": {"invocationId": "inv-a", "agentName": "host", "reason": "tool_error: the ledger source was unreachable"}}
+{"runId": "adk-unresolved", "sequence": 7, "emittedAt": "2026-01-05T11:00:06Z", "invocationCancelled": {"invocationId": "inv-orphan", "detail": "operator stopped the run"}}
+{"runId": "adk-unresolved", "sequence": 8, "emittedAt": "2026-01-05T11:00:07Z", "runAborted": {"reason": "the ledger source was unreachable"}}

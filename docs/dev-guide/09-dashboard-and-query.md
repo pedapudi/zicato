@@ -65,7 +65,8 @@ server + the JS). Nothing in the library knows the driver exists.
 | `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view`, `build_drift_movements` | 56 KB |
 | `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_detail`, `build_matchup_grid` | 51 KB |
 | `src/zicato/query/{judge,hypothesis,lineage,events_index,run_log}_view.py` | per-judge matrices, hypothesis/calibration accuracy, lineage feed, `/api/environment` coalescer + meta-loop ledger, the run-log tail. `judge_view.build_per_entry_for_generation` serves the dossier; its `facet_scores` block comes from `eval_view.facet_scores_for_generation` | — |
-| `src/zicato/query/transcript_reconstruction.py` | `reconstruct_transcript` — one goldfive `events.jsonl` → an ordered `Transcript` | 31 KB |
+| `src/zicato/query/transcript_reconstruction.py` | `reconstruct_transcript` — one goldfive `events.jsonl` or one Foe `episode.jsonl` → an ordered `Transcript` | 38 KB |
+| `src/zicato/query/foe_episode.py` | `is_episode_log`, `read_episode_log`, `derive_messages` — the envelope and the derived-message rule of the Foe episode log | 361 lines |
 | `src/zicato/query/board_scan.py` | `iter_board_rows` + the `board_entry_id` / `board_entry_tags` guards — the tolerant raw `board.jsonl` walk shared by the judge-name union and the facet-tag read. Per-ROW degrade: `load_board` VALIDATES, so one stale entry would blank a whole read model | ~75 lines |
 | `src/zicato/dashboard/server.py` | `create_app` (routes + `read_only`), `run` (port walk + harmonograf), static serving with ETag revalidation | 575 lines |
 | `src/zicato/dashboard/endpoints.py` | `make_endpoints` (the per-surface factories), `_is_safe_id` / `_is_safe_tournament_id`, the control POST handlers | 62 KB |
@@ -2207,18 +2208,28 @@ per-section endpoints and does not poll on a tight timer:
 
 ### 9.14.1 Transcript reconstruction
 
-`query/transcript_reconstruction.py::reconstruct_transcript` turns one goldfive
-`events.jsonl` into an ordered `Transcript` (turns + margin annotations). It
+`query/transcript_reconstruction.py::reconstruct_transcript` turns one run's
+event file into an ordered `Transcript` (turns + margin annotations). It
 is pure (the only I/O is the file the caller hands in) and tolerant — a
 malformed/truncated line is skipped, a missing file yields an empty
 transcript, mirroring the reducer's plain-JSON fallback and the supervisor's
-run-log tailer that parse the same growing file. It handles both goldfive
-envelope shapes (camelCase persistence-sink keys and the reducer's
-normalized `{kind, payload, ...}`), reusing `to_snake` (§9.3.4) for key
-normalization so the transcript speaks the one stable vocabulary. It is
-library code: the two query readers that serve the conversation surfaces
-(`transcript_view`, `conversations_view`) import it directly, as does the
-run_id endpoint.
+run-log tailer that parse the same growing file. It is library code: the two
+query readers that serve the conversation surfaces (`transcript_view`,
+`conversations_view`) import it directly, as does the run_id endpoint.
+
+The file's first line selects the reader. A goldfive `events.jsonl` takes the
+ADK path, which handles both envelope shapes (camelCase persistence-sink keys
+and the reducer's normalized `{kind, payload, ...}`), reusing `to_snake`
+(§9.3.4) for key normalization so the transcript speaks the one stable
+vocabulary. A file opening with `episode/start` at `seq` 0 is a Foe episode
+log and takes the other path, through `query/foe_episode.py`. That reader
+rewrites no key — a `data` payload holds tool arguments the model wrote — and
+implements the derived-message rule the log format specifies, so an episode
+always reconstructs at `fidelity: "exact"`. A proposal transcript is served
+from an episode log and from no other source: `resolve_conversation` reads a
+generation named without a board entry as a request for its proposal episode,
+which `events_index.find_proposal_episode_log` resolves under the epoch's
+`episodes/`.
 
 The transcript reader also owns the conversation execution outline. Turns carry
 `activity_ids`; the top-level `execution` object carries the referenced nodes,
