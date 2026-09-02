@@ -101,7 +101,7 @@ def test_selecting_another_model_leaves_the_hash_alone(tmp_path: Path) -> None:
     base = _identity(tmp_path, _workspace(tmp_path))
     other = _identity(
         tmp_path,
-        _workspace(tmp_path, model={"provider": "anthropic", "model": "some-other-model"}),
+        _workspace(tmp_path, model={"provider": "example", "model": "some-other-model"}),
     )
     assert other["contract_fingerprint"] == base["contract_fingerprint"]
 

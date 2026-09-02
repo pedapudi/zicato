@@ -66,6 +66,14 @@ DEFAULT_PROPOSER_AGENT = "zicato.proposer.foe_agent:FoeProposerAgent"
 #: no dependency on the Foe configuration it merely detects.
 PROPOSER_BLOCK_KEY = "proposer"
 
+#: What ``zicato init`` writes for the block's binary, and the one value
+#: that makes a declared block read as UNDECLARED. Foe resolves no binary
+#: by searching — an episode's grants are absolute — so the scaffold has
+#: nothing sensible to guess and leaves a placeholder. A workspace still
+#: carrying it has a form rather than an answer: its contract hashes,
+#: binary-free, and the pre-spend gate names the field to fill.
+UNSET_BINARY = "/path/to/foe"
+
 #: Label used in ``import_dotted_path`` errors, so a bad path points the
 #: operator at the field that produced it.
 _IMPORT_LABEL = f"runtime.{PROPOSER_AGENT_KEY}"
@@ -142,14 +150,18 @@ def external_proposer_config(
     zicato's only supported implementation of the protocol.
 
     A workspace that does neither has not declared how it proposes, and
-    ``None`` says so. Its epoch still hashes — a contract is more than its
-    proposer — but a round refuses to open, naming the block to write.
+    ``None`` says so. So does one whose block still carries the scaffold's
+    :data:`UNSET_BINARY`: a form is not an answer. Either way its epoch
+    still hashes — a contract is more than its proposer, and hashing must
+    not need a binary that is not there — but a round refuses to open,
+    naming the field to fill.
     """
     runtime = workspace_config.get("runtime")
     runtime = runtime if isinstance(runtime, Mapping) else {}
     dotted = str(runtime.get(PROPOSER_AGENT_KEY) or "")
     if not dotted:
-        if not isinstance(workspace_config.get(PROPOSER_BLOCK_KEY), Mapping):
+        block = workspace_config.get(PROPOSER_BLOCK_KEY)
+        if not isinstance(block, Mapping) or str(block.get("binary") or "") == UNSET_BINARY:
             return None
         dotted = DEFAULT_PROPOSER_AGENT
     options = {str(k): str(v) for k, v in runtime.items() if isinstance(v, str)}
@@ -240,6 +252,7 @@ __all__ = [
     "DEFAULT_PROPOSER_AGENT",
     "PROPOSER_AGENT_KEY",
     "PROPOSER_BLOCK_KEY",
+    "UNSET_BINARY",
     "ExternalProposerAgent",
     "ExternalProposerConfig",
     "external_agent_id",

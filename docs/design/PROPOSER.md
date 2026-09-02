@@ -576,7 +576,7 @@ A workspace declares its proposer in one block of its `config.json`:
 "proposer": {
   "binary": "/usr/local/bin/foe",
   "budget": {"model_calls": 12, "seconds": 900},
-  "model": {"provider": "anthropic", "model": "claude-opus-5",
+  "model": {"provider": "example", "model": "example-model",
             "options": {"api_key_file": "/home/me/.config/foe/key.json"}},
   "viewer": "off"
 }
@@ -599,6 +599,33 @@ coding-agent integration, a `runtime.proposer_agent` pointing back into
 zicato's own proposer namespace at anything but the Foe agent, a
 `proposers/<name>/agent.py` module — is refused with the key, what was
 removed, and this document, rather than silently running something else.
+
+### Scaffolded, then filled in
+
+`zicato init` writes the block complete but not yet runnable: every
+decision spelled out with its documented default, and `binary` left as
+the placeholder `/path/to/foe`. Foe resolves no binary by searching —
+an episode's grants are absolute, so a relative or searched spelling
+would mean different things to the loop and to a worker — and there is
+therefore nothing sensible for the scaffold to guess.
+
+A block still carrying that placeholder reads as **undeclared**: the
+workspace has a form rather than an answer. Its contract still hashes,
+with no binary present, and a round refuses to open. The pre-spend gate
+(`zicato check`, and the gate every `evolve` runs) is where an operator
+is told, by the `proposal_runtime_binary_unset` finding naming the field.
+The same gate reports `proposal_runtime_binary_absent` and
+`proposal_runtime_binary_not_executable` for a path that is filled in but
+wrong, `proposal_runtime_unusable` for a block that will not parse or that
+still configures a removed runtime — and reports nothing at all when an
+operator has bound a class of their own, because the seam cannot know what
+would make someone else's class runnable.
+
+What the gate does NOT prove is that the binary runs, that its build
+matches the pinned package, or that the credential is accepted. The first
+two are settled when the epoch's contract hash is computed, which asks the
+binary for its fingerprint; the third needs a round trip this gate does not
+make.
 
 ### The envelope, by construction
 

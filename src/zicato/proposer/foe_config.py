@@ -7,7 +7,7 @@ about that episode is declared in one block of its ``config.json``::
       "binary": "/usr/local/bin/foe",
       "budget": {"model_calls": 12, "seconds": 900,
                  "input_tokens": 400000, "output_tokens": 60000},
-      "model": {"provider": "anthropic", "model": "claude-opus-5",
+      "model": {"provider": "example", "model": "example-model",
                 "options": {"api_key_file": "/home/me/.config/foe/key.json"}},
       "viewer": "off"
     }
@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from zicato.proposer.external import DEFAULT_PROPOSER_AGENT
+from zicato.proposer.external import DEFAULT_PROPOSER_AGENT, UNSET_BINARY
 
 #: The ``config.json`` key holding everything below.
 PROPOSER_BLOCK_KEY = "proposer"
@@ -181,6 +181,38 @@ def _optional_int(block: Mapping[str, Any], key: str, where: str) -> int | None:
     return value
 
 
+def scaffold_proposer_block() -> dict[str, Any]:
+    """The ``proposer`` block a freshly initialized workspace carries.
+
+    Complete but not yet runnable: every decision is spelled out with the
+    documented default so an operator edits rather than researches, and
+    :data:`UNSET_BINARY` marks the one field only they can fill.
+    """
+    defaults = FoeBudget()
+    return {
+        "binary": UNSET_BINARY,
+        "budget": {
+            "model_calls": defaults.model_calls,
+            "seconds": defaults.seconds,
+        },
+        "model": {
+            "provider": "<foe provider>",
+            "model": "<model id>",
+            "options": {"api_key_file": "<absolute path of the credential file Foe reads>"},
+        },
+        "viewer": "off",
+        "_guide": {
+            "binary": "absolute path of the foe binary this workspace's episodes run",
+            "budget": "what one proposal episode may spend; raising any dimension rolls the epoch",
+            "model": (
+                "the provider and model Foe's transport calls; the credential is a FILE "
+                "Foe reads, named under options, never an environment variable"
+            ),
+            "viewer": f"when a finished episode is served: {', '.join(VIEWER_POLICIES)}",
+        },
+    }
+
+
 def load_foe_proposer_config(
     workspace_config: Mapping[str, Any],
     workspace_root: Path | None = None,
@@ -292,6 +324,7 @@ def refuse_removed_proposer_directory(proposer_path: Path | None) -> None:
 
 __all__ = [
     "PROPOSER_BLOCK_KEY",
+    "UNSET_BINARY",
     "REMOVED_RUNTIME_KEYS",
     "BUILT_IN_PROPOSER_NAMESPACE",
     "VIEWER_POLICIES",
@@ -302,4 +335,5 @@ __all__ = [
     "load_foe_proposer_config",
     "refuse_removed_proposer_configuration",
     "refuse_removed_proposer_directory",
+    "scaffold_proposer_block",
 ]

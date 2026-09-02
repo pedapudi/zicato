@@ -201,22 +201,22 @@ def steering(request: dict[str, Any]) -> dict[str, Any]:
 
     A workspace steers the stand-in through its ``proposer.model.options``
     (see :func:`tests._foe_support.stand_in_proposer_block`), which the
-    runtime forwards to the transport as the request's ``options``. Two
-    ``idea`` fixes the core idea every candidate states, which is how a
-    field's siblings are made to duplicate each other on purpose.
-    ``break_first`` is a count of leading turns that write an edit the
-    verifier must reject, and ``refuse`` is a blocked code the episode
-    reports instead of proposing at all. ``predict`` names the metric
-    every hypothesis
-    claims will move, which is how a test drives a hypothesis the round's
-    validator refuses. ``hypotheses`` is a JSON mapping from candidate id
-    to either of those two keys, for a field that wants them to differ by
-    candidate rather than across the board. ``contents`` is a JSON
-    mapping from candidate id — or ``<candidate>#<slate slot>`` — to the
-    literal bodies that candidate writes,
-    ``{"v1": {"style_rules": "verbose-prose"}}``, which is how a
-    known-answer harness scripts the exact tree each candidate produces
-    instead of taking the mechanical tag.
+    runtime forwards to the transport as the request's ``options``. Five
+    keys are read:
+
+    * ``idea`` fixes the core idea every candidate states, which is how a
+      field's siblings are made to duplicate each other on purpose.
+    * ``predict`` names the metric every hypothesis claims will move,
+      which drives a hypothesis the round's validator refuses.
+    * ``hypotheses`` maps a candidate id to either of those two keys, for
+      a field whose slots must differ.
+    * ``break_first`` counts leading turns that write an edit the verifier
+      must reject; ``refuse`` is a blocked code the episode reports
+      instead of proposing at all.
+    * ``contents`` maps a candidate id — or ``<candidate>#<slate slot>`` —
+      to the literal bodies that candidate writes,
+      ``{"v1": {"style_rules": "verbose-prose"}}``: how a known-answer
+      harness scripts the exact tree each candidate produces.
     """
     options = request.get("options")
     return options if isinstance(options, dict) else {}

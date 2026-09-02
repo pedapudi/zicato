@@ -117,6 +117,10 @@ def initialize_workspace(
         DEFAULT_GENERATION_SOURCE_BACKEND,
         KNOWN_GENERATION_SOURCE_BACKENDS,
     )
+    from zicato.proposer.foe_config import (  # noqa: PLC0415
+        PROPOSER_BLOCK_KEY,
+        scaffold_proposer_block,
+    )
 
     source_backend = DEFAULT_GENERATION_SOURCE_BACKEND
     if force:
@@ -143,6 +147,13 @@ def initialize_workspace(
         "instance_id": instance_id,
         "created_at": _utcnow_iso(),
         GENERATION_SOURCE_BACKEND_KEY: source_backend,
+        # How this workspace proposes. Written complete but not yet
+        # runnable: a round refuses to open until an operator names the
+        # absolute path of the Foe binary its episodes run, and the
+        # pre-spend gate says so by name rather than letting the round
+        # discover it. Foe searches no path for a binary, so there is
+        # nothing sensible to guess here.
+        PROPOSER_BLOCK_KEY: scaffold_proposer_block(),
         "models": {
             "engines": {},
             "roles": {},

@@ -25,7 +25,7 @@ from zicato.proposer.foe_config import (
 def _config(**overrides: object) -> dict[str, object]:
     block: dict[str, object] = {
         "binary": "/usr/local/bin/foe",
-        "model": {"provider": "anthropic", "model": "claude-opus-5"},
+        "model": {"provider": "example", "model": "example-model"},
     }
     block.update(overrides)
     return {"proposer": block}
@@ -34,7 +34,7 @@ def _config(**overrides: object) -> dict[str, object]:
 def test_a_minimal_block_takes_the_documented_defaults() -> None:
     config = load_foe_proposer_config(_config())
     assert config.binary == Path("/usr/local/bin/foe")
-    assert config.model.provider == "anthropic"
+    assert config.model.provider == "example"
     assert config.viewer == "off"
     assert config.budget == FoeBudget()
 
@@ -65,8 +65,8 @@ def test_a_credential_travels_as_a_file_named_in_the_model_options() -> None:
     config = load_foe_proposer_config(
         _config(
             model={
-                "provider": "anthropic",
-                "model": "claude-opus-5",
+                "provider": "example",
+                "model": "example-model",
                 "options": {"api_key_file": "/home/me/.config/foe/key.json"},
             }
         )
@@ -96,7 +96,7 @@ def test_a_budget_below_one_model_call_is_refused() -> None:
 
 def test_a_model_block_with_no_provider_is_refused() -> None:
     with pytest.raises(ProposerConfigError, match="proposer.model.provider"):
-        load_foe_proposer_config(_config(model={"model": "claude-opus-5"}))
+        load_foe_proposer_config(_config(model={"model": "example-model"}))
 
 
 @pytest.mark.parametrize("key", ["pi_bin", "pi_integration_dir"])
