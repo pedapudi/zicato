@@ -35,11 +35,11 @@ from zicato.runtime._storage import (
     active_run_key,
     active_runs_prefix,
     active_tournament_key,
-    backend_for,
     heartbeat_key,
     kill_request_key,
 )
 from zicato.runtime.paths import ensure_runtime_dirs
+from zicato.storage import workspace_backend
 
 # The active-tournament live state is an append-only event log rather than a
 # mutable snapshot. The public helpers below delegate to
@@ -249,7 +249,7 @@ class Heartbeat:
 
 def read_heartbeat(workspace_root: Path) -> Heartbeat | None:
     """Read ``heartbeat.json`` or return ``None`` if it does not exist."""
-    raw = backend_for(workspace_root).read_json(heartbeat_key())
+    raw = workspace_backend(workspace_root, start=False).read_json(heartbeat_key())
     if raw is None:
         return None
     return Heartbeat.from_dict(raw)
@@ -262,7 +262,7 @@ def write_heartbeat(workspace_root: Path, hb: Heartbeat) -> None:
     callers don't need to call :func:`ensure_runtime_dirs` first.
     """
     ensure_runtime_dirs(workspace_root)
-    backend_for(workspace_root).write_json(heartbeat_key(), hb.to_dict())
+    workspace_backend(workspace_root, start=False).write_json(heartbeat_key(), hb.to_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +391,7 @@ def list_active_runs(workspace_root: Path) -> list[ActiveRun]:
     are skipped — the storage backend's :meth:`~zicato.storage.StorageBackend.list_keys`
     excludes the ``.tmp`` artefacts an atomic write leaves behind.
     """
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     out: list[ActiveRun] = []
     for key in backend.list_keys(active_runs_prefix()):
         raw = backend.read_json(key)
@@ -404,12 +404,13 @@ def list_active_runs(workspace_root: Path) -> list[ActiveRun]:
 def write_active_run(workspace_root: Path, run: ActiveRun) -> None:
     """Atomically write one run's state file."""
     ensure_runtime_dirs(workspace_root)
-    backend_for(workspace_root).write_json(active_run_key(run.run_id), run.to_dict())
+    backend = workspace_backend(workspace_root, start=False)
+    backend.write_json(active_run_key(run.run_id), run.to_dict())
 
 
 def remove_active_run(workspace_root: Path, run_id: str) -> None:
     """Delete one run's state file. Idempotent if already gone."""
-    backend_for(workspace_root).delete(active_run_key(run_id))
+    workspace_backend(workspace_root, start=False).delete(active_run_key(run_id))
 
 
 def request_worker_kill(workspace_root: Path, run_id: str) -> None:
@@ -426,7 +427,7 @@ def request_worker_kill(workspace_root: Path, run_id: str) -> None:
     timestamp for the supervisor's audit log.
     """
     ensure_runtime_dirs(workspace_root)
-    backend_for(workspace_root).write_json(
+    workspace_backend(workspace_root, start=False).write_json(
         kill_request_key(run_id),
         {"run_id": run_id, "requested_at": _utc_now_iso()},
     )
@@ -439,7 +440,7 @@ def clear_worker_kill_request(workspace_root: Path, run_id: str) -> None:
     also clears it on cleanup so a marker never outlives its run (a
     recycled run id must not inherit a stale request).
     """
-    backend_for(workspace_root).delete(kill_request_key(run_id))
+    workspace_backend(workspace_root, start=False).delete(kill_request_key(run_id))
 
 
 def touch_active_run_progress(workspace_root: Path, run_id: str) -> None:
@@ -451,7 +452,7 @@ def touch_active_run_progress(workspace_root: Path, run_id: str) -> None:
     and the cleanup beat the event hook), the call is a no-op rather
     than an error — that race is benign.
     """
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     key = active_run_key(run_id)
     raw = backend.read_json(key)
     if raw is None:
@@ -786,7 +787,7 @@ def read_active_tournament_snapshot(workspace_root: Path) -> ActiveTournament | 
     snapshot. Nothing writes this file; for the live view use
     :func:`read_active_tournament`, which folds the event log.
     """
-    raw = backend_for(workspace_root).read_json(active_tournament_key())
+    raw = workspace_backend(workspace_root, start=False).read_json(active_tournament_key())
     if raw is None:
         return None
     return ActiveTournament.from_dict(raw)

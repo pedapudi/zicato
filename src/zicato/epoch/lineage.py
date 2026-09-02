@@ -72,10 +72,10 @@ from typing import Any
 from zicato.core.types import EpochConfig, Generation
 from zicato.epoch._storage import (
     RECORD_FORMAT_VERSION,
-    backend_for,
     check_record_format,
     lineage_key,
 )
+from zicato.storage import workspace_backend
 
 
 def _empty() -> dict[str, Any]:
@@ -97,7 +97,7 @@ def _load_raw(workspace_root: Path) -> dict[str, Any]:
     interpret — collapsing it to the empty DAG would silently drop
     history, so it refuses loudly instead.
     """
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     try:
         d = backend.read_json(lineage_key())
     except (OSError, json.JSONDecodeError):
@@ -115,7 +115,7 @@ def _save_raw(workspace_root: Path, raw: dict[str, Any]) -> None:
     is rewritten atomically on each mutation, so the stamp rides along.
     """
     raw["format_version"] = RECORD_FORMAT_VERSION
-    backend_for(workspace_root).write_json(lineage_key(), raw)
+    workspace_backend(workspace_root, start=False).write_json(lineage_key(), raw)
 
 
 def _find_epoch(raw: dict[str, Any], epoch_id: str) -> dict[str, Any] | None:

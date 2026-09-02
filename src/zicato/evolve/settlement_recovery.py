@@ -22,7 +22,6 @@ from typing import Any, Literal
 
 from zicato.core.types import OutcomeRecord
 from zicato.core.workspace import field_tournament_path
-from zicato.epoch._storage import backend_for
 from zicato.epoch.journal import (
     append_journal_entry_once,
     outcome_from_dict,
@@ -35,6 +34,7 @@ from zicato.epoch.lineage import (
 )
 from zicato.evolve import generation_phase
 from zicato.evolve.dashboard_projection import _write_field_tournament_record
+from zicato.storage import workspace_backend
 from zicato.workspace import WorkspaceLayout
 
 log = logging.getLogger("zicato.orchestrator")
@@ -98,7 +98,7 @@ def commit_field_settlement(
     validated = _validate_settlement(workspace_root, intent)
     if intent.get("state") != "pending":
         raise RuntimeError("a new field settlement must start in pending state")
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     key = field_settlement_intent_key(validated.epoch_id, validated.round_index)
     existing = backend.read_json(key)
     if existing is not None:
@@ -211,14 +211,14 @@ def replay_field_settlement(
 
     if receipt["index_projection"]["state"] == "pending":
         _project_settlement_index(workspace_root, settlement, receipt)
-        backend_for(workspace_root).write_json(
+        workspace_backend(workspace_root, start=False).write_json(
             field_settlement_intent_key(settlement.epoch_id, settlement.round_index),
             receipt,
         )
         _checkpoint(crash_checkpoint, "index_projection")
 
     receipt["state"] = "committed"
-    backend_for(workspace_root).write_json(
+    workspace_backend(workspace_root, start=False).write_json(
         field_settlement_intent_key(settlement.epoch_id, settlement.round_index),
         receipt,
     )
@@ -283,7 +283,7 @@ def record_promotion_hook_delivery(
     ``succeeded`` or ``failed`` after the awaited call returns.
     """
     key = field_settlement_intent_key(epoch_id, round_index)
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     raw = backend.read_json(key)
     if not isinstance(raw, dict):
         raise RuntimeError(f"field settlement receipt {key!r} is missing or malformed")
@@ -408,7 +408,7 @@ def _stored_receipt_locations(
     epoch_id: str | None = None,
 ) -> Iterator[tuple[Any, str, str, int]]:
     """Yield each receipt key with the epoch and round encoded by its namespace."""
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     epoch_namespaces = (
         (f"epochs/{epoch_id}",) if epoch_id else tuple(backend.list_namespaces("epochs"))
     )
@@ -722,7 +722,8 @@ def _validate_existing_field_record(
     if not path.exists():
         return
     try:
-        raw = backend_for(workspace_root).read_json(path.relative_to(workspace_root).as_posix())
+        backend = workspace_backend(workspace_root, start=False)
+        raw = backend.read_json(path.relative_to(workspace_root).as_posix())
     except Exception as exc:
         raise RuntimeError(
             f"existing field settlement tournament record {path} is unreadable"

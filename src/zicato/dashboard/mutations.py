@@ -81,7 +81,7 @@ from zicato.epoch.journal import read_generation_patches
 from zicato.mutation.enumerator import enumerate_mutations
 from zicato.query import WorkspacePaths
 from zicato.query.paths import layout_of
-from zicato.storage import default_backend
+from zicato.storage import workspace_backend
 from zicato.workspace import generation_ids, natural_key
 from zicato.workspace_loader import activate_mutation_surface
 
@@ -432,7 +432,8 @@ def _recorded_patch(
 ) -> Any | None:
     """The recorded :class:`~zicato.core.types.Patch` behind one patch id."""
     try:
-        record = read_generation_patches(default_backend(workspace_root), epoch_id, generation_id)
+        backend = workspace_backend(workspace_root, start=True)
+        record = read_generation_patches(backend, epoch_id, generation_id)
     except (FileNotFoundError, OSError, ValueError):
         return None
     for patch in record.patches:
@@ -494,7 +495,7 @@ def _patching_generations(
     once per id it patched.
     """
     by_mutation: dict[str, list[dict[str, Any]]] = {}
-    backend = default_backend(workspace_root)
+    backend = workspace_backend(workspace_root, start=True)
     for generation_id in generation_ids:
         if generation_id == _BASELINE_GENERATION:
             continue
@@ -757,7 +758,8 @@ def reconstructed_spans(
     """
     store, _store_error = _resolve_store(paths)
     try:
-        record = read_generation_patches(default_backend(paths.root), epoch_id, generation_id)
+        backend = workspace_backend(paths.root, start=True)
+        record = read_generation_patches(backend, epoch_id, generation_id)
     except (FileNotFoundError, OSError, ValueError):
         return []
     if not record.patches:

@@ -56,13 +56,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from zicato.runtime._storage import (
-    active_tournament_key,
-    active_tournament_log_key,
-    backend_for,
-)
+from zicato.runtime._storage import active_tournament_key, active_tournament_log_key
 from zicato.runtime.channel import EventLog
 from zicato.runtime.paths import ensure_runtime_dirs
+from zicato.storage import workspace_backend
 
 # Event type tokens — the single producer + the fold agree on these.
 SNAPSHOT = "Snapshot"
@@ -73,7 +70,7 @@ PROJECTED_UPDATE = "ProjectedUpdate"
 
 def _log(workspace_root: Path) -> EventLog:
     """Bind the active-tournament :class:`EventLog` for a workspace."""
-    return EventLog(backend_for(workspace_root), active_tournament_log_key())
+    return EventLog(workspace_backend(workspace_root, start=False), active_tournament_log_key())
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +140,7 @@ def clear_log(workspace_root: Path) -> None:
     A cleared tournament must read ``None`` from BOTH the log and the
     fallback snapshot, so clearing removes both keys.
     """
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     backend.delete(active_tournament_log_key())
     backend.delete(active_tournament_key())
 
