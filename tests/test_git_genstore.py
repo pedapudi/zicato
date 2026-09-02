@@ -198,6 +198,19 @@ def test_patch_metadata_travels_in_the_commit_message(
     assert "p-meta" in message
 
 
+def test_parent_generation_id_is_read_back_from_that_block(
+    seeded_store: GitGenerationStore,
+) -> None:
+    """The lineage pointer survives the round trip, and a seed reports none."""
+    store = seeded_store
+    store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""next"""')])
+
+    assert store.parent_generation_id("e1", "v1") == "v0"
+    assert store.parent_generation_id("e1", "v0") is None
+    with pytest.raises(FileNotFoundError):
+        store.parent_generation_id("e1", "v9")
+
+
 # ---------------------------------------------------------------------------
 # worktrees
 # ---------------------------------------------------------------------------

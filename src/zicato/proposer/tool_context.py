@@ -1,35 +1,26 @@
-"""The per-round context the proposer tools resolve against.
+"""The per-round context the two host tools resolve against.
 
-Split out of :mod:`zicato.proposer.tools` so the context plumbing can be
-imported WITHOUT importing the tool bodies. Two reasons, both structural:
-
-* :mod:`zicato.proposer.validate` needs the bound context but must be
-  provably unable to reach the board. The read tools pull in the analyzer
-  (for ``read_insights``), which pulls in the board loader, so importing
-  ``tools`` for the context alone would have put ``zicato.board`` in the
-  validator's import closure and made the "no path to board data" contract
-  in ``pyproject.toml`` unsatisfiable for a reason that says nothing about
-  what the validator does.
-* ``tools`` imports ``validate`` to put ``validate_patches`` in
-  :data:`~zicato.proposer.tools.DEFAULT_PROPOSER_TOOLS`. With the context
-  here, that dependency is a straight line — ``tools -> validate ->
-  tool_context`` — instead of a cycle.
-
-Every public name here is re-exported from :mod:`zicato.proposer.tools`,
-which remains the import site the rest of the codebase and every custom
-``agent.py`` uses.
+Both tools an episode is served — :func:`zicato.proposer.tools.mutation_usage`
+and :func:`zicato.proposer.validate.validate_patches` — answer about *this*
+round's snapshot and manifest, and neither can take that as an argument (see
+below). The context they read lives here, in a module of its own, so
+:mod:`zicato.proposer.validate` can import it without importing the tool
+bodies. The validator must be provably unable to reach the board; a contract
+in ``pyproject.toml`` and a runtime closure pin in
+``tests/test_proposer_validate.py`` hold it to that. Importing a sibling for
+the context alone would put that sibling's whole closure inside the property
+being proved.
 
 Why a context var
 -----------------
 A tool function cannot carry the per-round runtime context (which
-generation snapshot to read, the mutation manifest, the epoch's journal)
-as a bound argument, because the custom agent is constructed ONCE at
-import time — long before any round runs — and reused across every
-challenger. The tools therefore read their context from a module-level
-:class:`contextvars.ContextVar`, which the proposal episode's host
-sets immediately around each agent run via
+generation snapshot to read, the mutation manifest) as a bound argument,
+because the implementations are module-level and reused across every
+challenger. They therefore read their context from a module-level
+:class:`contextvars.ContextVar`, which the proposal episode's host sets
+immediately around each tool call via
 :func:`bind_proposer_tool_context`. A ``ContextVar`` (not a plain global)
-is used so concurrent challengers — each running its own agent on its own
+is used so concurrent challengers — each running its own episode on its own
 asyncio task — never leak context into one another: a child task started
 under one ``bind_proposer_tool_context`` block sees that block's value,
 and the reset on block exit restores the prior value.
@@ -48,35 +39,32 @@ from zicato.core.types import MutationPoint
 
 @dataclass(frozen=True)
 class ProposerToolContext:
-    """The per-round runtime context a proposer tool reads.
+    """The per-round runtime context a host tool reads.
 
-    Set immediately around each agent run by
-    :func:`bind_proposer_tool_context` and read by every tool via the
-    module-level context var. Frozen so a bound context is a stable,
-    re-readable value across the agent's tool calls within one round.
+    Set immediately around each tool call by
+    :func:`bind_proposer_tool_context` and read through the module-level
+    context var. Frozen so a bound context is a stable, re-readable value
+    across the episode's tool calls within one round.
 
     Fields
     ------
     workspace_root:
-        The ``.zicato/`` workspace root — used to resolve the epoch's
-        journal / insights paths.
+        The ``.zicato/`` workspace root. ``validate_patches`` resolves the
+        workspace's declared static checks and its load probe from it.
     generation_root:
-        The parent generation's snapshot directory. ``read_mutable_file``
-        and ``grep_mutable`` resolve relative paths under this root's
-        mutable subtrees.
+        The parent generation's snapshot directory — the tree
+        ``mutation_usage`` searches and the tree ``validate_patches``
+        re-enumerates a draft against.
     epoch_id:
-        The active epoch's id — the journal / insights lookups key on it.
+        The epoch the round belongs to — one half of the round coordinates
+        the context is stamped with. No tool resolves anything from it.
     mutations:
-        The resolved mutation manifest for this round — exactly the
-        :class:`MutationPoint` tuple the default proposer is offered.
-        ``list_mutation_points`` renders it; the read/grep tools derive
-        the mutable subtrees from its ``source_root`` set.
+        The resolved mutation manifest for this round — the
+        :class:`MutationPoint` tuple the episode may address a patch to.
     generation_id:
         The id of the generation ``generation_root`` snapshots — the round's
-        champion (the proposer's PARENT generation). Lets ``read_parent_diff``
-        resolve the generation-store coordinates of the tree the tools are
-        already reading. Empty (the default when no id is supplied) degrades
-        that tool to an explicit "coordinates unavailable" answer.
+        champion (the proposer's PARENT generation). Carried alongside
+        ``epoch_id`` for the same reason.
     """
 
     workspace_root: Path
@@ -84,45 +72,6 @@ class ProposerToolContext:
     epoch_id: str
     mutations: tuple[MutationPoint, ...]
     generation_id: str = ""
-
-    def mutable_roots(self) -> tuple[Path, ...]:
-        """Return the mutable surface roots under the snapshot.
-
-        Always includes the whole :attr:`generation_root` (the snapshot
-        root) FIRST, then each distinct mutable subtree the manifest's
-        :attr:`MutationPoint.source_root` values re-base onto it by
-        basename (the same re-basing :meth:`ADKHarnessAdapter.mutable_subpaths`
-        does — a snapshot copies each registered tree under its basename).
-
-        Why the snapshot root is always present
-        ---------------------------------------
-        :func:`list_mutation_points` advertises every mutable file RELATIVE TO
-        THE WHOLE SNAPSHOT (``file.relative_to(generation_root)`` — e.g.
-        ``agent/prompts.py``). Admitting ONLY the narrower declared subtree as
-        a readable root when an adapter declares one (``source_root`` basename
-        ``agent`` → root ``<snapshot>/agent``) would make the very path the
-        manifest hands the proposer resolve to
-        ``<snapshot>/agent/agent/prompts.py``, which is not a file, and raise.
-        Only the bare subtree-relative ``prompts.py`` would resolve. The
-        mismatch would be UNCONDITIONAL, since the surface is identical every
-        round, and it shows up as soon as the proposer issues the
-        manifest-advertised snapshot-relative form rather than a bare
-        filename. Anchoring the
-        snapshot root makes the snapshot-relative path resolve too, so the read
-        does not depend on which path shape the proposer picked; keeping the
-        subtree roots lets the bare subtree-relative form resolve too. The
-        escape guard in :func:`_resolve_under_mutable_roots` still
-        rejects any ``..`` traversal out of whichever root matched, so widening
-        the accepted roots never widens the readable surface beyond the
-        snapshot.
-        """
-        root = self.generation_root.resolve()
-        seen: dict[str, Path] = {str(root): root}
-        for mp in self.mutations:
-            candidate = root / Path(mp.source_root).name
-            if candidate.exists():
-                seen.setdefault(str(candidate), candidate)
-        return tuple(seen.values())
 
 
 _TOOL_CONTEXT: contextvars.ContextVar[ProposerToolContext | None] = contextvars.ContextVar(
@@ -154,15 +103,14 @@ def _active_context() -> ProposerToolContext:
 
     A tool called outside a :func:`bind_proposer_tool_context` block has
     no runtime context to read; raising here (rather than returning a
-    misleading empty result) makes the misuse obvious — the custom agent
-    must be run inside a bound context, which the episode's host tools
-    context around the run.
+    misleading empty result) makes the misuse obvious — an episode's host
+    tools bind the context around every call they answer.
     """
     ctx = _TOOL_CONTEXT.get()
     if ctx is None:
         raise RuntimeError(
             "proposer tool called with no bound ProposerToolContext; "
-            "proposer tools may only be called from within an "
+            "proposer tools may only be called from within "
             "a bound proposer tool context (see bind_proposer_tool_context)"
         )
     return ctx

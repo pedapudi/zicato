@@ -823,11 +823,11 @@ Two structural consequences follow:
   instead of forcing an exemption, and it contains `adapter.load`'s arbitrary
   operator code (which can hang, or leave import side effects) in a child
   process with a timeout.
-- **The context plumbing lives in `tool_context.py`.** Importing
-  `zicato.proposer.tools` merely to reach `_active_context` would drag the
-  analyzer — and through it the board loader — into the validator's import
-  closure, making the contract unsatisfiable for a reason that says nothing
-  about what the validator does.
+- **The context plumbing lives in `tool_context.py`.** Both host tools read
+  the round's snapshot and manifest from one bound context, and the validator
+  imports that module rather than its sibling `zicato.proposer.tools`.
+  Importing a sibling for the context alone would put that sibling's whole
+  closure inside the property being proved.
 
 `zicato.scoring` and `zicato.tournament` are **not** on the forbidden list:
 every module in the repo reaches them through
@@ -922,232 +922,6 @@ clearer message, so that one fault costs one fix rather than two.
 > `finally`, and never touches the tree the round is about to patch. That
 > prefix is distinct from `ztw-slate-*` so the round pipeline's
 > stale-slate sweep can never reap a live validation.
-
----
-
-## 2.11 The redacted query surface
-
-Every channel in §2.5–§2.8 is **pushed**: the orchestrator samples, bands, and
-renders it before the proposer sees a byte. A pushed channel gives the proposer
-no way to ask a follow-up question, though diagnosing *why* the harness fails
-is its job. This surface (`src/zicato/proposer/redacted_query.py`) makes a
-small, provably-clean part of the same corpus **pulled**, under the same
-privacy envelope.
-
-Three tools, all banded per-entry incidence over the champion's train slice:
-
-| Tool | Answers |
-|---|---|
-| `train_slice_drift_profile()` | which drift kinds fire, at which severities, and whether a mode is broad or narrow |
-| `train_slice_agent_profile()` | which agent role a failure localises to — invoked / drifting / being steered |
-| `train_slice_process_profile()` | how runs unfold — task failures, blocks, cancellations, plan revisions |
-
-`restrict_proposer_visibility` exists to stop the proposer memorising "entry 47
-wants X", and not to stop it from understanding mechanism. This surface supplies
-the mechanism without widening the envelope by a byte.
-
-### The redaction contract
-
-The design invariant is §2.5's: **feed the MARGINAL, never the JOINT.** The
-proposer may learn an aggregate property of the *harness's* behaviour; it must
-never be able to reconstruct any board entry. Concretely, six commitments, each
-independently testable:
-
-1. **Train slice only, derived — never trusted.** No caller passes a slice in.
-   Each tool re-derives the partition itself from `workspace_root` + `epoch_id`
-   through the same `rotation_seed` → `split_board` pair the tournament runner
-   uses, so this surface cannot see a wider slice than the one the round's
-   patterns and loss summary were computed over.
-2. **Fail closed.** No board, no `scoring.json`, an unparseable either, no
-   epoch id, an empty train slice — every failure path returns
-   `status: "train slice unavailable"` with a reason and **no data**. There is
-   no whole-board fallback; a silently-widened slice is the failure this
-   module exists to prevent.
-3. **Two independent gates.** Gate 1 opens only train-slice entries' event
-   files. Gate 2 (`drop_out_of_slice`) re-filters the collected results by
-   entry id afterwards. A single gate is one refactor away from being
-   bypassed, because a view that arrives "already filtered" is trusted once
-   and then silently is not.
-4. **Default-deny reads, with no free-text field admitted at all.** Only a
-   narrow allowlist of closed-vocabulary event fields (drift kind, severity,
-   steering outcome, intervention level, judge classification) plus harness-side
-   agent labels is read; every other payload case, and every unlisted field of
-   a listed case, is dropped and its strings join the identity corpus. This
-   allowlist is *narrower* than the process-exemplar channel's payload
-   allowlist, because that channel is capped at a couple of windows per round
-   while this one is queryable on demand. It is what makes
-   `run_started.goal_summary` (the task prompt) and every completion summary
-   (model output) **structurally unreachable** rather than merely scrubbed.
-   The open-vocabulary labels that do survive pass through `scrub_identity`
-   then `truncate_free_text`, the free-text truncation and identity-corpus
-   scrub primitives shared with the exemplar channel through
-   `src/zicato/analyzer/redaction.py`.
-5. **Banded, and per-entry incidence rather than per-event counts.** Every
-   figure is a rate coarsened through the existing band vocabulary, and each
-   entry contributes at most once to each rate, so one chatty run cannot
-   dominate a figure and no per-entry magnitude is recoverable. Results are
-   ordered by band then name, so neither the value nor the ordering hands back
-   a fine-grained response surface (OVERFITTING.md §11).
-6. **Stable within a reign.** The champion's event files do not change between
-   rounds, so re-asking returns byte-identical answers until the champion
-   changes. There is no round-over-round signal to hill-climb — the same
-   argument PROCESS-EXEMPLARS.md §2 makes for its refresh semantics.
-
-Entry ids are used to LOCATE files and are never emitted. The tools are
-best-effort by contract: a missing file, a malformed line, an unknown payload
-are all tolerated, never raised — a diagnostic read must never abort a round.
-
-### Why no query-layer view is exposed
-
-Issue #147 §6 framed this as "expose `zicato/query/` views … through the same
-mechanical redaction". No `zicato/query/` view is exposed; every one is
-excluded, and the surface is three purpose-built aggregators over the
-champion's train-slice `events.jsonl` — the same source `extract_process_exemplars`
-reads, differing only in folding events into counts instead of windowing them.
-
-The audit behind that exclusion runs as follows:
-
-> The query layer splits into two halves, and neither half can be redacted
-> into this envelope. Its *aggregate* views (`gate_view`, the per-judge
-> tables) are keyed by generation with no entry id in the row, so there is
-> nothing to filter on: they cannot be narrowed to the train slice, and a
-> champion's generation-wide numbers include the holdout runs the promote
-> gate played. Its *entry-scoped* views do carry the key, but an entry-keyed
-> row is the joint distribution the envelope exists to withhold, and
-> filtering one to the train slice still leaves per-entry data in hand. The
-> only shape that satisfies both constraints — narrowable to the slice AND
-> aggregable to a marginal — is the raw per-run event file, which is
-> entry-scoped at the *file path* level and content-free at the *field* level
-> once a default-deny allowlist is applied.
-
-A redacted *view* would be a filter argued to be sufficient. A purpose-built
-*aggregator* over a default-deny field allowlist is a surface where a leak has
-no path to take.
-
-### What is not exposed
-
-The per-view exclusion list:
-
-- **`transcript_view`** (`build_run_transcript`, `resolve_conversation`,
-  `empty_run_transcript`) — reconstructs the model's turn-by-turn
-  conversation; it *is* task text and model output.
-- **`conversations_view`** (`build_matchup_conversations`) — same payload,
-  paired per matchup; free-form model output is dropped rather than
-  scrubbed.
-- **`trace_view`** (`build_trace_detail`, `build_trace_list`,
-  `build_suggestion_provenance`) — carries reflection/suggestion prose, which
-  quotes board inputs and candidate outputs verbatim.
-- **`judge_view` per-judge family** (`build_per_judge_for_generation`,
-  `build_per_judge_for_run`, `build_per_judge_trend`,
-  `build_per_judge_comparison`) — a judge may be attached to a single board
-  entry, so a per-judge figure can be a per-entry measurement presented as an
-  aggregate; it is also generation-wide (train plus holdout) with no entry key
-  to filter on.
-- **`judge_view` per-entry family** (`build_per_entry_for_generation`,
-  `build_expectation_outcomes_for_run`, `resolve_run_id_for_entry`,
-  `build_run_header`) — an entry-keyed row is the joint distribution rather
-  than a marginal; the entry id is the payload.
-- **`judge_view` search** (`build_search_results`) — free-text search over
-  board/run content; an arbitrary-query read of the corpus is the exact leak
-  vector.
-- **`gate_view`** (`_drift_counts_for_generation`, `build_gate_breakdown`,
-  `build_drift_movements`, `build_score_trajectory`, `build_health_report`,
-  `build_rating_view`) — generation-scoped with **no entry key**, so it cannot
-  be narrowed to the train slice; the drift counts mix holdout runs in and the
-  gate/score views expose the exact holdout-confirmation numbers.
-- **`epoch_view`** (`build_epoch_view`, `build_epoch_analysis`,
-  `compute_board_split`, `_parse_board`, `_board_input_preview`) — renders the
-  board itself: entry ids, input previews, and the train/holdout membership map.
-- **`eval_view`** (`build_eval_matrix`, `build_eval_dossier`,
-  `build_eval_health`) — per-entry × per-candidate matrix; the joint by
-  construction.
-- **`tournament_view` / `racing_view` / `rounds_view` / `loop_view`** —
-  bracket, matchup and board-slice views keyed by entry id and by
-  holdout-confirmed outcomes.
-- **`reflection_view`** (`build_judge_scorecards`, `build_adjudication_xray`,
-  `entry_candidate_matrix`, `build_practice_review`) — adjudicated per-entry
-  evidence, entry-keyed and quoting run content.
-- **`run_log` / `log_stream` / `events_index` raw readers** (`build_run_log`,
-  `tail_records`, `build_log_view`, `resolve_transcript_events`,
-  `read_run_result`) — unredacted event/log passthrough; there is no allowlist
-  between them and `run_started.goal_summary`.
-- **`journal_view`, `hypothesis_view`, `lineage_view`, `decisions`,
-  `runtime_view`, `paths`** — excluded as out of scope rather than as leaks:
-  either already reachable through an existing proposer channel (journal,
-  prior experiments) or carrying no mechanism signal worth a new surface.
-
-If a future channel needs one of these, the remedy is to build a redacted
-aggregate over it, a new marginal, rather than to expose the view and filter
-its rows.
-
-### Known limits of the banding
-
-Two caveats apply:
-
-- **On a small train slice the bands are nearly lossless.** `band_rate` rounds
-  to 10% steps, so with four train entries `1/4` reads `~30%` and the band
-  recovers the count. The memorization resistance on this surface comes mostly
-  from the AGGREGATION — per-entry membership sets, so one chatty run cannot
-  dominate a figure and no per-entry magnitude survives — rather than from the
-  band width. A workspace with a very small board gets correspondingly less
-  from the banding.
-- **Two exact integers are emitted**, `train_slice_entries` and
-  `entries_with_events`. Both are constant within a reign (the split rotates
-  per epoch; the champion's files do not change between rounds), and the
-  proposer already sees the train run count verbatim in its loss summary
-  (`over N runs`). They are not a round-over-round response surface **as long
-  as the slice stays per-epoch** — if rotation ever becomes per-round, these
-  two need banding too.
-
-### Enforcement
-
-`tests/test_proposer_redacted_query.py` is an **identity-leak probe** rather
-than a smoke test. The fixture plants unmistakable sentinel strings as every
-board entry id, task prompt, model output, and holdout value — including a
-drift `detail` that quotes the task prompt verbatim, which is the case the
-identity-corpus scrub exists for — then loops over the module's own exported
-`REDACTED_QUERY_TOOLS` tuple. It asserts that no sentinel appears in any
-output.
-Looping over the tuple rather than a transcribed list covers a newly-added tool
-automatically, so no tool can skip the probe. Because a leak probe passes
-vacuously when the tools
-return nothing, the same file pins the positive content too — the aggregates
-must actually be present, and banded, while the sentinels are not.
-
-**`src/zicato/analyzer/redaction.py` is the single source of truth for the
-free-text truncation and identity-corpus scrub primitives**
-(`truncate_free_text`, `scrub_identity`, `iter_string_leaves`, and their
-constants). It has two consumers — the process-exemplar channel and this
-surface — and sharing them is what makes both apply byte-identical redaction.
-`PROCESS-EXEMPLARS.md` §3 is normative for what the four redaction rules mean.
-The payload allowlist and the window-local identity anonymizer stay in
-`process_exemplars.py`, because both are bound to the exemplar window's own
-structure. Order is load-bearing wherever they are used: **scrub first,
-truncate second** — truncation only removes
-characters and puts the elision marker between head and tail, so a scrubbed
-string can never re-form an identity across the split.
-
-Two notes for a future editor:
-
-- **Gate 2 (`drop_out_of_slice`) catches nothing on any current path, and that
-  is the point.** Gate 1 — opening only train-slice event files — is
-  sufficient on every path. Gate 2 exists for the refactor where someone
-  routes in a result set that arrives "already filtered" and is trusted once.
-  Its test feeds it a row gate 1 could never produce, so that it stays alive
-  independently. **Do not delete it as dead code.**
-- **`_load_events` / `_payload` are duplicated** (about 30 lines) between
-  `process_exemplars.py` and `redacted_query.py`. The duplication is
-  intentional: the two allowlists differ, and a self-contained parser inside
-  the security-critical module is preferred to a shared one. A consolidation
-  is a reasonable follow-up, but it must move the *whole* reader rather than
-  half of it, because a shared parser paired with a per-consumer allowlist
-  invites the wrong allowlist being applied.
-
-A **parameterized drill-down** (a per-drift-kind × agent cross-tab) is a
-plausible extension and is not built. A zero-arg tool has no input to validate
-and therefore no oracle surface, and a provably clean surface is worth more
-than the extra resolution. Revisit it only with the widened envelope documented
-before the code.
 
 ---
 
@@ -1314,9 +1088,9 @@ compared-against, remedy, remedy-safety) where the **remedy is a ready-to-apply
 
 The **investigation substrate is pluggable**: `InvestigationSource` returns an
 `Investigation`, and `ScorecardInvestigation` reads the scorecard plus a
-BANDED history of prior epochs. A richer substrate — the redacted query
-surface (§2.11) — implements the same protocol and returns the same
-`Investigation`, so it drops in without reshaping a persisted record. Historical
+BANDED history of prior epochs. A richer substrate implements the same
+protocol and returns the same `Investigation`, so one drops in without
+reshaping a persisted record. Historical
 rates are banded through `band_rate` for the same reason the failure-mode
 channel bands its marginals (§2.5): the comparison slot is the one number a
 drafting model reads round over round, and the exact rate would be a response
@@ -1404,7 +1178,6 @@ already rolled the hash on its own.
 | The proposer brief (per-epoch operator steering) vs the proposer (the agent) | [EPOCHS-AND-JOURNALING.md §1](EPOCHS-AND-JOURNALING.md#1-epoch-concept), `skills/zicato-write-brief` |
 | The hypothesis schema the proposer must emit | [EPOCHS-AND-JOURNALING.md §3](EPOCHS-AND-JOURNALING.md) |
 | Selection / tournament the proposer feeds | [SELECTION.md](SELECTION.md), [TOURNAMENT-STRUCTURES.md](TOURNAMENT-STRUCTURES.md) |
-| The copy-me tool-using proposer agent | [`examples/zicato_examples/proposer_with_tools/agent.py`](../../examples/zicato_examples/proposer_with_tools/agent.py) |
 | The failure-mode feedback channel — anti-leakage (train-slice, banded, identity-free) | [OVERFITTING.md §11](OVERFITTING.md), `src/zicato/analyzer/outcome_marginals.py` |
 | The `zicato epoch register` command reference | [CLI.md](CLI.md) |
 | The post-apply check codes the scorecard classifies on (§6.1) | [MUTATION-SURFACE.md](MUTATION-SURFACE.md), `src/zicato/mutation/validator.py` |

@@ -82,11 +82,9 @@ def _field(name: str, text: str) -> str:
     multi-line ``core_idea`` would visually swallow the field after it.
 
     Nothing is dropped here. ``journal.md`` is append-only and is the one
-    durable surface the proposer can read its own prior reasoning back
-    from, so a truncation at write time is permanent; budget-limited
-    consumers cap on READ instead (see
-    ``zicato.proposer.tools._JOURNAL_LIMIT_CHARS`` and the analysis /
-    report readers).
+    durable surface a round's reasoning is read back from, so a truncation
+    at write time is permanent; budget-limited consumers cap on READ
+    instead (the analysis and report readers).
     """
     text = text.strip()
     if "\n" not in text:

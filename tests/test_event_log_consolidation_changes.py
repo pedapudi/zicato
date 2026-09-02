@@ -1,6 +1,6 @@
 """What reading the event log through one reader changed, one test per change.
 
-Before this, nine modules resolved an event line independently. Each test
+Before this, each consumer resolved an event line independently. Each test
 under a "Change" heading names a line shape they answered differently, the
 consumer whose output moved, and what it now says; every one of those
 fails against the readers this replaces. The two at the end pin answers
@@ -18,7 +18,6 @@ import pytest
 from zicato.analyzer.aggregator import aggregate_decision_events
 from zicato.analyzer.process_exemplars import _load_events
 from zicato.core import DIALECT_ADK_EVENTS, DIALECT_GOLDFIVE, BoardEntry
-from zicato.proposer.redacted_query import _read_events
 from zicato.query.run_log import _tail_events
 from zicato.query.transcript_reconstruction import reconstruct_transcript
 from zicato.reflection.trace_import import sniff_dialect
@@ -63,16 +62,6 @@ def test_the_loss_reducer_reads_a_normalized_line_as_its_own_case(tmp_path: Path
 def test_the_exemplar_extractor_reads_a_normalized_line_as_its_own_case(tmp_path: Path) -> None:
     path = _write(tmp_path / "events.jsonl", [_NORMALIZED])
     assert [r.case for r in _load_events(path)] == ["drift_detected"]
-
-
-def test_the_redacted_query_reads_a_normalized_line_as_its_own_case(tmp_path: Path) -> None:
-    """The case name gates the read allowlist, so this also gates redaction.
-
-    Under the old reading the case was ``payload``, which is in no policy,
-    so the line contributed nothing to the proposer's process profile.
-    """
-    path = _write(tmp_path / "events.jsonl", [_NORMALIZED])
-    assert [r.case for r in _read_events(path)] == ["drift_detected"]
 
 
 def test_a_normalized_decision_event_is_counted_by_the_aggregator(tmp_path: Path) -> None:

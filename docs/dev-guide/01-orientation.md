@@ -934,9 +934,9 @@ member; installed editable by `uv sync --all-extras`; never shipped in
 the zicato wheel). It holds the dogfood targets: the deterministic
 planted-defect convergence recipe (`target_0_convergence`, with steps in
 its `RUN.md`); the presentation agent (`target_1_presentation`);
-goldfive's steering layer (`target_2_goldfive_steering`); and a tool-using
-proposer (`proposer_with_tools`). The convergence recipe reaches no model
-endpoint, which is why the live-run go-ahead rule (§4) sanctions it as the
+goldfive's steering layer (`target_2_goldfive_steering`); and an agent
+configuration target (`target_4_agent_config`). The convergence recipe
+reaches no model endpoint, which is why the live-run go-ahead rule (§4) sanctions it as the
 end-to-end vehicle.
 
 **`skills/`** — one directory per operator skill, each a `SKILL.md`

@@ -28,7 +28,6 @@ from pathlib import Path
 import pytest
 
 from zicato.proposer.tool_context import ProposerToolContext, bind_proposer_tool_context
-from zicato.proposer.tools import DEFAULT_PROPOSER_TOOLS
 from zicato.proposer.validate import (
     STATIC_CHECKS,
     declared_static_checks,
@@ -175,11 +174,6 @@ def test_accepts_both_the_bare_array_and_the_wrapped_object(
     wrapped = _validate(ctx, {"patches": patches})
     assert bare["ok"] is True
     assert wrapped["ok"] is True
-
-
-def test_registered_in_the_default_tool_set(ctx: ProposerToolContext) -> None:
-    """The ADK default proposer gets the closed loop, not just an external one."""
-    assert validate_patches in DEFAULT_PROPOSER_TOOLS
 
 
 @pytest.mark.parametrize(

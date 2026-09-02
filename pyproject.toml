@@ -217,7 +217,6 @@ select = [
 "zicato.workspace_loader._scoring_weights_from_dict".msg = "promoted: use zicato.workspace_loader.scoring_weights_from_dict"
 "zicato.analyzer.aggregator._to_snake".msg = "deleted: use zicato.telemetry.event_log.to_snake"
 "zicato.analyzer.process_exemplars._to_snake".msg = "deleted: use zicato.telemetry.event_log.to_snake"
-"zicato.proposer.redacted_query._to_snake".msg = "deleted: use zicato.telemetry.event_log.to_snake"
 "zicato.telemetry.reducer._camel_to_snake".msg = "deleted: use zicato.telemetry.event_log.to_snake"
 "zicato.query.transcript_reconstruction._snake_deep".msg = "deleted: use zicato.telemetry.event_log.snake_deep"
 "zicato.adapters.adk._entry_judge_only".msg = "promoted: use zicato.adapters.entry_judge_only"

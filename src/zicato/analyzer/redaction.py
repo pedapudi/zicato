@@ -3,25 +3,20 @@
 These functions are the *shared* half of the default-deny redaction the
 process-exemplar channel introduced. ``docs/design/PROCESS-EXEMPLARS.md``
 §3 stays NORMATIVE for rules R1–R4; this module is only where the two
-rules that are pure string transforms live, so both consumers apply
-byte-identical redaction:
-
-* :mod:`zicato.analyzer.process_exemplars` — the drift-anchored, redacted
-  event windows rendered into the proposer prompt (R1 payload allowlist
-  and R2 window-local anonymization stay there, since both are bound to
-  the exemplar window's own structure);
-* :mod:`zicato.proposer.redacted_query` — the proposer's on-demand
-  redacted query surface over the train slice, which emits only closed
-  vocabulary plus a small number of harness-side labels and passes every
-  one of those labels through the same scrub/truncate pair.
+rules that are pure string transforms live, held apart from their one
+consumer so that a second consumer redacts byte-identically rather than
+approximately. That consumer is :mod:`zicato.analyzer.process_exemplars` —
+the drift-anchored, redacted event windows rendered into the proposer's
+evidence. R1 (the payload allowlist) and R2 (window-local anonymization)
+stay there, since both are bound to the exemplar window's own structure.
 
 The two rules implemented here:
 
 * **R3** :func:`truncate_free_text` — head/tail elision at a fixed cap.
 * **R4** :func:`scrub_identity` — replace every identity fragment / token
   in a kept string with :data:`WITHHELD`. :func:`iter_string_leaves` is
-  the corpus-building helper each consumer uses to reach the string
-  leaves of a nested payload.
+  the corpus-building helper a consumer uses to reach the string leaves
+  of a nested payload.
 
 ORDER IS LOAD-BEARING: scrub FIRST, truncate SECOND (see the
 :func:`truncate_free_text` docstring). No LLM redactor, ever — every rule
