@@ -222,11 +222,12 @@ record's shape, which makes it a design change rather than a rendering fix.
   proposer (01-orientation.md §4; the formal spec is 05-proposer.md §5.8). A health detector is not inside that
   envelope.
 - ⚠️ **A detector must never raise into `assess_loop_health`.** The whole health
-  subsystem is best-effort — the orchestrator lazy-imports it and degrades to
-  `("", False)` if the `zicato.health` sibling is absent (mypy treats it as an
-  optional module for that reason). A detector that raises on malformed
-  input turns a best-effort surface into a crash. Guard your parsing; return
-  `[]` on data you cannot read.
+  subsystem is best-effort: the orchestrator runs the assessment inside a
+  catch-all boundary and degrades to `("", False)` — no summary, no round
+  report — the moment anything in it raises. A detector that raises on
+  malformed input therefore costs the round its entire health report, every
+  other detector's findings included. Guard your parsing; return `[]` on data
+  you cannot read.
 - ⚠️ **Keep it pure and deterministic.** No clock, no RNG, no filesystem read
   inside the detector — the report is re-rendered and re-persisted, and a
   non-deterministic detector makes the round report churn.

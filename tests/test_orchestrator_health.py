@@ -7,10 +7,12 @@ accumulated losses + experiments + board, writes the resulting
 on a CRITICAL finding — logs a prominent stderr WARNING. The latest
 health summary rides home on the :class:`EvolveRoundOutcome`.
 
-These tests mock the (parallel-landing) ``zicato.health`` sibling with a
-small dataclass-shaped ``LoopHealth`` / ``Finding`` pair and assert the
-orchestrator's behaviour. Everything is stub-driven — no goldfive, no
-real LLM.
+These tests pin ``assess_loop_health`` to a chosen report — built from the
+real :class:`~zicato.health.diagnostics.LoopHealth` and
+:class:`~zicato.health.diagnostics.HealthFinding`, so what the orchestrator
+reads off a finding is what a detector actually writes — and assert the
+orchestrator's behaviour. Everything is stub-driven — no goldfive, no real
+LLM.
 """
 
 from __future__ import annotations
@@ -18,9 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
-import types
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,93 +34,62 @@ from tests._orchestrator_harness import (
     make_aux_responder,
     run_evolve_once,
 )
+from zicato.health.diagnostics import HealthFinding, LoopHealth
 
 # ---------------------------------------------------------------------------
-# Fake zicato.health.diagnostics sibling
+# A pinned loop-health assessment
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _FakeFinding:
-    """Minimal stand-in for the health sibling's finding type."""
+def _report(*findings: HealthFinding, healthy: bool) -> LoopHealth:
+    """A ``LoopHealth`` carrying ``findings``, as a real assessment returns one.
 
-    severity: str
-    message: str
-    #: The real ``HealthFinding`` carries a stable ``code`` + ``summary`` +
-    #: structured ``detail``; defaulted here so the many existing tests that
-    #: build ``_FakeFinding(severity=, message=)`` keep working, while the
-    #: dead-judge warning test can set them.
-    code: str = ""
-    summary: str = ""
-    detail: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class _FakeLoopHealth:
-    """Minimal stand-in for ``zicato.health.diagnostics.LoopHealth``."""
-
-    healthy: bool
-    findings: tuple[_FakeFinding, ...] = field(default_factory=tuple)
+    ``epoch_id`` and ``checked_at`` are placeholders: the persisted round
+    report is stamped with the round's own epoch id and assessment time by
+    ``_loop_health_to_json``, so the report's own values never reach an
+    assertion here.
+    """
+    return LoopHealth(
+        epoch_id="pinned",
+        findings=findings,
+        healthy=healthy,
+        checked_at="2026-01-01T00:00:00+00:00",
+    )
 
 
-def _install_fake_health(
+def _pin_health_assessment(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    health: _FakeLoopHealth,
+    health: LoopHealth,
     calls: list[tuple[Any, ...]],
 ) -> None:
-    """Install a fake ``zicato.health`` package returning ``health``.
+    """Pin ``assess_loop_health`` to return ``health`` instead of assessing.
 
-    Every ``assess_loop_health`` invocation is recorded in ``calls`` so
-    the test can assert on the arguments the orchestrator passed.
+    Every invocation is recorded in ``calls`` so the test can assert on the
+    arguments the orchestrator passed. The rest of :mod:`zicato.health` —
+    the workspace readers in :mod:`zicato.health.inputs` above all — stays
+    real.
     """
-    diagnostics_mod = types.ModuleType("zicato.health.diagnostics")
+    import zicato.health.diagnostics as diagnostics
 
     def assess_loop_health(
         losses_by_generation: dict[str, list[Any]],
         experiments: list[Any],
         board_entries: list[Any],
         epoch_id: str,
-        config: Any | None = None,
-        max_generations_per_contract: int | None = None,
-        noise_floor: dict[str, Any] | None = None,
-        promote_margin: float | None = None,
-        evidence_gate_on: bool = True,
-        preflight: dict[str, Any] | None = None,
-        # Tolerant tail: the orchestrator threads further health inputs as
-        # they land (``preflight_gate``, the runtime-event pairs), and this
-        # stub exists to assert the call, not the signature.
-        **_extra: Any,
-    ) -> _FakeLoopHealth:
-        del config
+        **_kwargs: Any,
+    ) -> LoopHealth:
         calls.append((losses_by_generation, experiments, board_entries, epoch_id))
         return health
 
-    diagnostics_mod.assess_loop_health = assess_loop_health  # type: ignore[attr-defined]
-    diagnostics_mod.LoopHealth = _FakeLoopHealth  # type: ignore[attr-defined]
-
-    # zicato.health.inputs is real, dependency-light, side-effect-free
-    # workspace-reading code that ships in the same package as
-    # diagnostics — unlike diagnostics (faked here to control the report
-    # this test asserts on), there is no scenario where it is genuinely
-    # absent, so the orchestrator's ``_assess_and_persist_loop_health``
-    # (and ``_warn_margin_below_noise_floor``) import the real module.
-    import zicato.health.inputs as inputs_mod
-
-    health_pkg = types.ModuleType("zicato.health")
-    health_pkg.diagnostics = diagnostics_mod  # type: ignore[attr-defined]
-    health_pkg.inputs = inputs_mod  # type: ignore[attr-defined]
-
-    monkeypatch.setitem(sys.modules, "zicato.health", health_pkg)
-    monkeypatch.setitem(sys.modules, "zicato.health.diagnostics", diagnostics_mod)
-    monkeypatch.setitem(sys.modules, "zicato.health.inputs", inputs_mod)
+    monkeypatch.setattr(diagnostics, "assess_loop_health", assess_loop_health)
 
 
 def _run_one_round(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     *,
-    health: _FakeLoopHealth,
+    health: LoopHealth,
     calls: list[tuple[Any, ...]],
 ) -> tuple[Path, str, Any]:
     """Bootstrap a workspace, install stubs, run one evolve round.
@@ -134,7 +103,7 @@ def _run_one_round(
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
-    _install_fake_health(monkeypatch, health=health, calls=calls)
+    _pin_health_assessment(monkeypatch, health=health, calls=calls)
 
     outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     return workspace, epoch_id, outcome
@@ -150,7 +119,7 @@ def test_evolve_once_writes_health_round_report(
 ) -> None:
     """evolve_once writes epochs/{epoch}/health/round_N.json."""
     calls: list[tuple[Any, ...]] = []
-    health = _FakeLoopHealth(healthy=True, findings=())
+    health = _report(healthy=True)
     workspace, epoch_id, _ = _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
 
     # The child generation is v1, so the report is round_1.json.
@@ -182,9 +151,13 @@ def test_evolve_once_health_summary_on_outcome(
 ) -> None:
     """The EvolveRoundOutcome carries the round's health summary."""
     calls: list[tuple[Any, ...]] = []
-    health = _FakeLoopHealth(
+    health = _report(
+        HealthFinding(
+            code="flat_drift_signal",
+            severity="warning",
+            summary="loss variance shrinking",
+        ),
         healthy=False,
-        findings=(_FakeFinding(severity="WARNING", message="loss variance shrinking"),),
     )
     _, _, outcome = _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
 
@@ -199,14 +172,13 @@ def test_evolve_once_critical_finding_logs_warning(
 ) -> None:
     """A CRITICAL finding logs a prominent warning and flags the outcome."""
     calls: list[tuple[Any, ...]] = []
-    health = _FakeLoopHealth(
-        healthy=False,
-        findings=(
-            _FakeFinding(
-                severity="CRITICAL",
-                message="degenerate scoring: every generation scores identically",
-            ),
+    health = _report(
+        HealthFinding(
+            code="degenerate_scoring",
+            severity="critical",
+            summary="degenerate scoring: every generation scores identically",
         ),
+        healthy=False,
     )
 
     with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
@@ -241,17 +213,14 @@ def test_evolve_once_dead_judge_finding_logs_loud_warning(
     passed.
     """
     calls: list[tuple[Any, ...]] = []
-    health = _FakeLoopHealth(
-        healthy=False,
-        findings=(
-            _FakeFinding(
-                severity="WARNING",
-                message="2 board-declared judge(s) never fired",
-                code="dead_judge",
-                summary="2 board-declared judge(s) never fired across all 3 runs",
-                detail={"dead_judges": ["audience_appropriate", "no_fabricated_numbers"]},
-            ),
+    health = _report(
+        HealthFinding(
+            code="dead_judge",
+            severity="warning",
+            summary="2 board-declared judge(s) never fired across all 3 runs",
+            detail={"dead_judges": ["audience_appropriate", "no_fabricated_numbers"]},
         ),
+        healthy=False,
     )
 
     with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
@@ -282,20 +251,17 @@ def test_evolve_once_tree_never_imported_logs_loud_warning(
     as the dead-judge alarm, for the same reason.
     """
     calls: list[tuple[Any, ...]] = []
-    health = _FakeLoopHealth(
-        healthy=False,
-        findings=(
-            _FakeFinding(
-                severity="WARNING",
-                message="a mutable tree was never imported",
-                code="tree_never_imported",
-                summary=(
-                    "mutations to tree goldfive cannot have been under test in "
-                    "generation v3: no run of that generation ever imported goldfive"
-                ),
-                detail={"generation_id": "v3", "tree": "goldfive"},
+    health = _report(
+        HealthFinding(
+            code="tree_never_imported",
+            severity="warning",
+            summary=(
+                "mutations to tree goldfive cannot have been under test in "
+                "generation v3: no run of that generation ever imported goldfive"
             ),
+            detail={"generation_id": "v3", "tree": "goldfive"},
         ),
+        healthy=False,
     )
 
     with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
@@ -319,9 +285,9 @@ def test_evolve_once_no_dead_judge_warning_when_absent(
 ) -> None:
     """No ``dead_judge`` finding ⇒ no loud dead-judge warning."""
     calls: list[tuple[Any, ...]] = []
-    health = _FakeLoopHealth(
+    health = _report(
+        HealthFinding(code="no_expectations", severity="info", summary="all good"),
         healthy=True,
-        findings=(_FakeFinding(severity="INFO", message="all good", code="no_expectations"),),
     )
     with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
         _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
@@ -333,12 +299,10 @@ def test_evolve_once_critical_persisted_in_report(
 ) -> None:
     """The persisted round report records the critical finding."""
     calls: list[tuple[Any, ...]] = []
-    health = _FakeLoopHealth(
+    health = _report(
+        HealthFinding(code="degenerate_scoring", severity="critical", summary="degenerate scoring"),
+        HealthFinding(code="stalled_loop", severity="warning", summary="pass-rate plateau"),
         healthy=False,
-        findings=(
-            _FakeFinding(severity="CRITICAL", message="degenerate scoring"),
-            _FakeFinding(severity="WARNING", message="pass-rate plateau"),
-        ),
     )
     workspace, epoch_id, _ = _run_one_round(monkeypatch, tmp_path, health=health, calls=calls)
 
@@ -348,13 +312,22 @@ def test_evolve_once_critical_persisted_in_report(
     assert body["healthy"] is False
     assert len(body["findings"]) == 2
     severities = {f["severity"] for f in body["findings"]}
-    assert severities == {"CRITICAL", "WARNING"}
+    assert severities == {"critical", "warning"}
 
 
-def test_evolve_once_runs_without_health_sibling(
+def test_a_detector_that_raises_costs_the_report_not_the_round(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """With no zicato.health sibling the round still completes, no report."""
+    """A detector raising mid-assessment leaves the round's verdict standing.
+
+    Loop health is observability, and observability must never decide a
+    tournament: the round is assessed only after its duels have settled, so
+    a detector that raises costs the round its health report and nothing
+    else. The round still promotes, and the outcome carries the degraded
+    (empty, non-critical) health summary rather than an exception.
+    """
+    import zicato.health.diagnostics as diagnostics
+
     workspace, epoch_id = bootstrap_workspace(tmp_path)
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
@@ -363,22 +336,17 @@ def test_evolve_once_runs_without_health_sibling(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    monkeypatch.delitem(sys.modules, "zicato.health", raising=False)
-    monkeypatch.delitem(sys.modules, "zicato.health.diagnostics", raising=False)
+    def _raises(*_args: Any, **_kwargs: Any) -> list[HealthFinding]:
+        raise RuntimeError("detector failed mid-assessment")
 
-    real_import = __import__
-
-    def _blocking_import(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name.startswith("zicato.health"):
-            raise ImportError(f"no module named {name!r} (simulated)")
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr("builtins.__import__", _blocking_import)
+    # The first detector `assess_loop_health` runs: every finding the
+    # assessment would have collected is lost with it.
+    monkeypatch.setattr(diagnostics, "detect_degenerate_scoring", _raises)
 
     outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "promoted"
-    # No assessment ran → no summary, not critical, no report file.
+    # No assessment completed → no summary, not critical, no report file.
     assert outcome.health_summary == ""
     assert outcome.health_critical is False
     assert not (workspace / "epochs" / epoch_id / "health").exists()
@@ -460,11 +428,13 @@ def test_evolve_n_rounds_stops_on_consecutive_critical_health(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
     )
     calls: list[tuple[Any, ...]] = []
-    _install_fake_health(
+    _pin_health_assessment(
         monkeypatch,
-        health=_FakeLoopHealth(
+        health=_report(
+            HealthFinding(
+                code="degenerate_scoring", severity="critical", summary="degenerate scoring"
+            ),
             healthy=False,
-            findings=(_FakeFinding(severity="CRITICAL", message="degenerate scoring"),),
         ),
         calls=calls,
     )
@@ -500,11 +470,13 @@ def test_evolve_n_rounds_opt_out_of_health_stop(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
     )
     calls: list[tuple[Any, ...]] = []
-    _install_fake_health(
+    _pin_health_assessment(
         monkeypatch,
-        health=_FakeLoopHealth(
+        health=_report(
+            HealthFinding(
+                code="degenerate_scoring", severity="critical", summary="degenerate scoring"
+            ),
             healthy=False,
-            findings=(_FakeFinding(severity="CRITICAL", message="degenerate scoring"),),
         ),
         calls=calls,
     )
