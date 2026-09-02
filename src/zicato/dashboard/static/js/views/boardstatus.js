@@ -27,7 +27,7 @@
 
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty, truncate, hovercardBody, stat, chip, moreMark, ENTRY_KIND_LABEL } from '../ui.js';
+import { section, empty, truncate, hovercardBody, stat, chip, moreMark, fmtPercent, ENTRY_KIND_LABEL } from '../ui.js';
 import { attachHovercard } from '../hovercard.js';
 
 // The doc the popovers point at for "what does this mean" detail.
@@ -239,7 +239,7 @@ function splitPanel(split, meta, opts) {
     split.total === 0 ? [] : [
       stat(String(split.trainCount), 'train'),
       stat(String(split.holdoutCount), 'holdout'),
-      stat(`${(frac * 100).toFixed(0)}%`, 'held out'),
+      stat(fmtPercent(frac), 'held out'),
     ]);
   const facts = factChips(split, meta);
   if (facts.length) head.appendChild(el('div', { class: 'dn-bs-chips' }, facts));

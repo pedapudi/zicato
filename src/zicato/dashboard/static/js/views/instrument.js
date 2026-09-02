@@ -39,11 +39,10 @@
 
 import { el } from '../core/dom.js';
 import * as D from '../data.js';
-import { section, empty, chip, dataTable, renderView, stat, isNum, fmt, fidelityLabel } from '../ui.js';
+import { section, empty, chip, dataTable, renderView, stat, isNum, fmt, fmtPercent, fidelityLabel } from '../ui.js';
 
 // ---- small local coercions (display-only) ---------------------------
 function num(v, d) { return isNum(v) ? fmt(v, isNum(d) ? d : 3) : '—'; }
-function pct(v) { return isNum(v) ? Math.round(v * 100) + '%' : '—'; }
 function yn(v) { return v === true ? 'yes' : v === false ? 'no' : '—'; }
 
 // A proposer-scorecard rate, rendered so the two honesty rules survive the
@@ -54,7 +53,7 @@ function rateCell(r) {
   if (!r) return '—';
   const n = isNum(r.n) ? r.n : 0;
   if (!isNum(r.value)) return n ? `— (0/${n})` : '— (n=0)';
-  return `${Math.round(r.value * 100)}%${r.provisional ? '?' : ''} (${r.k}/${n})`;
+  return `${fmtPercent(r.value)}${r.provisional ? '?' : ''} (${r.k}/${n})`;
 }
 // The digest key for a rate — the same three server numbers, no derivation.
 function rateKey(r) {
@@ -261,7 +260,7 @@ function buildLanding(d, ctx) {
         { text: r.mode || '—' },
         { text: yn(r.executed) },
         { text: isNum(r.n_findings) ? String(r.n_findings) : '—', class: 'dn-num' },
-        { text: isNum(r.decision_flip_p) ? pct(r.decision_flip_p) : 'n/a', class: 'dn-num' },
+        { text: isNum(r.decision_flip_p) ? fmtPercent(r.decision_flip_p) : 'n/a', class: 'dn-num' },
       ],
     })),
   });
@@ -430,7 +429,7 @@ function reliabilityRows(rel, s) {
   rows.push(['noise floor max|Δ|', num(s.noise_floor_max_abs_delta, 4)]);
   const flip = rel.decision_flip || null;
   if (isNum(s.decision_flip_p)) {
-    rows.push(['decision-flip P', pct(s.decision_flip_p), s.decision_flip_p > 0 ? 'warn' : 'good']);
+    rows.push(['decision-flip P', fmtPercent(s.decision_flip_p), s.decision_flip_p > 0 ? 'warn' : 'good']);
   } else {
     // null p_flip — surface the honest reason (never a fabricated 0.0).
     rows.push(['decision-flip P', 'n/a — insufficient replication', 'faint']);

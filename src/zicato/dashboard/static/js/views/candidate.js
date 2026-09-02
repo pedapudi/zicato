@@ -2650,7 +2650,7 @@ export function buildPredictionScorecard(scorecard) {
   // tone is direction-earned, no new hue.
   const headTone = frac == null ? 'dn-flat' : (frac >= 0.5 ? 'dn-good' : 'dn-bad');
   const headValue = (hits != null && total != null)
-    ? hits + '/' + total + (frac != null ? ' · ' + Math.round(frac * 100) + '%' : '')
+    ? hits + '/' + total + (frac != null ? ' · ' + svg.fmtPercent(frac) : '')
     : '—';
   card.appendChild(el('div', { class: 'dn-predcard-head' }, [
     el('div', { class: 'dn-stat' }, [

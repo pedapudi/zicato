@@ -134,11 +134,15 @@ test('renderEvalHealth: noisiest empty-states with the calibration reason when u
   assert(t.includes('no dead channels detected'), 'dead panel empty-states honestly');
 });
 
-test('renderEvalHealth: runtime cost renders the mean wall-clock', () => {
+test('renderEvalHealth: runtime cost renders the mean wall-clock in the console duration register', () => {
   const node = eh.renderEvalHealth(eh.evalHealthModel(H_FULL), {});
   const t = textOf(node);
   assert(t.includes('Runtime cost'), 'has the runtime subhead');
-  assert(t.includes('41.2 s'), 'formats 41200 ms as 41.2 s');
+  // This panel spells a duration the way every other panel does: `fmtDurationMs`,
+  // which writes no space before the unit and carries the ladder up to minutes
+  // and hours. It used to print `41.2 s` from a formatter of its own.
+  assert(t.includes('41.2s'), 'formats 41200 ms as 41.2s');
+  assertEqual(ui.fmtDurationMs(41200), '41.2s', 'the panel prints what the canonical formatter returns');
 });
 
 test('renderEvalHealth: the lifecycle panel shows budget spent + a refresh recommendation', () => {

@@ -9,13 +9,16 @@
 import { el, clearChildren } from './core/dom.js';
 import { attachHovercard } from './hovercard.js';
 import { href } from './router.js';
-import { isNum, fmt, fmtSigned } from './svg.js';
+import { isNum, fmt, fmtSigned, fmtPercent } from './svg.js';
 import * as D from './data.js';
 
-// svg.js owns the canonical numeric formatters (isNum/fmt/fmtSigned). ui.js
-// re-exports them so a view can pull "one formatter home" from ui.js without a
-// second svg.js import; the definitions live in svg.js and never fork.
-export { isNum, fmt, fmtSigned };
+// svg.js owns the canonical numeric formatters (isNum/fmt/fmtSigned/fmtPercent).
+// ui.js re-exports them so a view can pull "one formatter home" from ui.js
+// without a second svg.js import; the definitions live in svg.js and never
+// fork. `fmtPercent` sits there rather than beside `fmtDurationMs` below because
+// the figures format rates too, and svg.js cannot import ui.js — ui.js reads
+// from it.
+export { isNum, fmt, fmtSigned, fmtPercent };
 
 // ---- continuous per-entry score + precision/recall (#18) -------------
 //
@@ -1061,7 +1064,7 @@ export function promotionRateLabel(traj) {
   if (!traj || typeof traj !== 'object') return null;
   if (!isNum(traj.promotion_rate) || !(traj.challenger_count > 0)) return null;
   return (traj.promoted_count || 0) + '/' + traj.challenger_count
-    + ' · ' + Math.round(traj.promotion_rate * 100) + '%';
+    + ' · ' + fmtPercent(traj.promotion_rate);
 }
 export function costPerPromotionLabel(cost) {
   const v = cost && typeof cost === 'object' ? cost.cost_per_promotion_ms : null;

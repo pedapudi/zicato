@@ -19,7 +19,7 @@ import { state } from '../core/state.js';
 import { livenessFor } from '../livestatus.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, densityTokens, prText, metricsDigest, scoreFmt, pill, dataTable, deltaCell, ENTRY_KIND_LABEL } from '../ui.js';
+import { gatedSwap, section, empty, stat, densityTokens, prText, metricsDigest, scoreFmt, pill, dataTable, deltaCell, fmtDurationMs, ENTRY_KIND_LABEL } from '../ui.js';
 import { splitFrame, captureScroll, restoreScroll } from '../compare.js';
 import * as facets from '../facets.js';
 import { buildTurnNode, dedupConsecutiveTurns, reconcileTurns } from '../turns.js';
@@ -1039,12 +1039,6 @@ function trajectoryFigure(dossier) {
   return card;
 }
 
-// A human ms label — seconds over 1s, else raw ms.
-function msLabel(ms) {
-  if (!svg.isNum(ms)) return '—';
-  return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : Math.round(ms) + 'ms';
-}
-
 // The INSTRUMENT stats row — is this eval a good measurement channel? Flip rate
 // (with the unmeasured degrade), discrimination, runtime aggregates, replicate
 // total, cached share, and the slice/holdout membership — all in the dn-stat
@@ -1062,11 +1056,11 @@ function instrumentStats(dossier) {
   return el('div', { class: 'dn-panel dn-row' }, [
     stat(flipVal, flipKey),
     stat(svg.isNum(ins.discrimination) ? svg.fmt(ins.discrimination, 2) : '—', discKey),
-    stat(msLabel(ins.runtime_ms_mean), 'runtime mean'),
-    stat(msLabel(ins.runtime_ms_p50), 'runtime p50'),
-    stat(msLabel(ins.runtime_ms_max), 'runtime max'),
+    stat(fmtDurationMs(ins.runtime_ms_mean), 'runtime mean'),
+    stat(fmtDurationMs(ins.runtime_ms_p50), 'runtime p50'),
+    stat(fmtDurationMs(ins.runtime_ms_max), 'runtime max'),
     stat(String(ins.replicate_total || 0), 'replicates'),
-    stat(svg.isNum(ins.cached_share) ? Math.round(ins.cached_share * 100) + '%' : '—', 'cached share'),
+    stat(svg.fmtPercent(ins.cached_share), 'cached share'),
     stat(slice, slice === 'holdout' ? 'slice · holdout' : 'slice'),
   ]);
 }

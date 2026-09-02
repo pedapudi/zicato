@@ -124,6 +124,13 @@ export function fmtSigned(v, digits) {
   const d = digits == null ? 3 : digits;
   return (v > 0 ? '+' : '') + v.toFixed(d);
 }
+// A fraction as a whole-percent label — the one rendering of a rate the console
+// has. A value that is not a number takes the shared null glyph: a rate nobody
+// measured must never reach the screen as 0%.
+export function fmtPercent(v) {
+  if (!isNum(v)) return '—';
+  return Math.round(v * 100) + '%';
+}
 
 export function title(text) {
   const t = svgEl('title', null);
@@ -1487,7 +1494,7 @@ export function survivalFunnel(opts) {
       const partial = lane && isNum(lane.partialDelta) ? lane.partialDelta : null;
       const delta = (rg.rung.deltas && isNum(rg.rung.deltas[id])) ? rg.rung.deltas[id] : partial;
       const tip = `${id} · ${rg.rung.label || 'rung ' + rg.j}`
-        + (isNum(rg.rung.board_fraction) ? ` · ${(rg.rung.board_fraction * 100).toFixed(0)}% board` : '')
+        + (isNum(rg.rung.board_fraction) ? ` · ${fmtPercent(rg.rung.board_fraction)} board` : '')
         + (projected && isNum(lane.projected_scalar) ? ` · projected scalar ~${fmt(lane.projected_scalar, 2)} (boards still streaming)` : '')
         + (delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : '')
         + (lane ? ` · ${laneProgressText(lane)}` : '')
@@ -4482,7 +4489,7 @@ export function calibrationTrend(opts) {
     const r = (pts.length === 1 || i === lastScoredI) ? 2.6 : 2.0;
     const node = hov(svgEl('circle', { cx, cy: y(f), r, class: cls,
       style: onGen ? 'cursor:pointer;' : null }),
-      `${p.generation_id} · ${Math.round(f * 100)}% of ${p.total_claims} claim${p.total_claims === 1 ? '' : 's'} landed · ${p.decision || '—'}`);
+      `${p.generation_id} · ${fmtPercent(f)} of ${p.total_claims} claim${p.total_claims === 1 ? '' : 's'} landed · ${p.decision || '—'}`);
     if (onGen) node.addEventListener('click', () => onGen(String(p.generation_id)));
     svg.appendChild(node);
   });
@@ -4500,7 +4507,7 @@ export function calibrationTrend(opts) {
       x: rightish ? lx - 5 : lx + 5, y: ly - 5, class: 'dn-caltrend-latest',
       'text-anchor': rightish ? 'end' : 'start',
     });
-    lbl.textContent = Math.round(latestFraction * 100) + '%';
+    lbl.textContent = fmtPercent(latestFraction);
     svg.appendChild(lbl);
   }
   if (isNum(o.n_scored)) {

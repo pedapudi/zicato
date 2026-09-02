@@ -28,7 +28,7 @@
 
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty, stat, dataTable, truncate, gatedSwap } from '../ui.js';
+import { section, empty, stat, dataTable, truncate, gatedSwap, fmtPercent, fmtDurationMs } from '../ui.js';
 
 // ---- model ----------------------------------------------------------
 //
@@ -161,12 +161,6 @@ export function evalHealthDigest(model) {
 // finding is recommend-only; `opts.onEntry` / `opts.reflectHref` /
 // `opts.builderHref` wire the (optional) pointers.
 
-function fmtPct(v) { return svg.isNum(v) ? `${(v * 100).toFixed(0)}%` : '—'; }
-function fmtMs(v) {
-  if (!svg.isNum(v)) return '—';
-  return v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Math.round(v)} ms`;
-}
-
 // A small recommend-only pointer — an <a> when a href is supplied, else quiet
 // text (never a dead link). Keeps the panel merge-safe with the parent router.
 function pointer(text, href) {
@@ -220,7 +214,7 @@ function mdeStrip(mde) {
   wrap.appendChild(strip);
   // The formula line, faint + mono — §4.3's "state the formula + n" rule.
   wrap.appendChild(el('div', { class: 'dn-eh-mono dn-faint dn-eh-formula',
-    text: `${mde.formula}  ·  df=${mde.df}, power ${fmtPct(mde.power)}` }));
+    text: `${mde.formula}  ·  df=${mde.df}, power ${fmtPercent(mde.power)}` }));
   return wrap;
 }
 
@@ -239,7 +233,7 @@ function noisiestPanel(rows, mde, opts) {
       class: r.flipRate > 0 ? 'dn-eh-noisy' : null,
       cells: [
         { el: entryCell(r.entryId, r.slice, opts.onEntry) },
-        { class: 'dn-num', text: fmtPct(r.flipRate) },
+        { class: 'dn-num', text: fmtPercent(r.flipRate) },
         { el: sliceTag(r.slice) },
       ],
     })),
@@ -291,7 +285,7 @@ function runtimePanel(rows, opts) {
     rows: rows.map((r) => ({
       cells: [
         { el: entryCell(r.entryId, r.slice, opts.onEntry) },
-        { class: 'dn-num', text: fmtMs(r.runtimeMsMean) },
+        { class: 'dn-num', text: fmtDurationMs(r.runtimeMsMean) },
         { class: 'dn-num', text: String(r.replicateTotal) },
         { el: sliceTag(r.slice) },
       ],

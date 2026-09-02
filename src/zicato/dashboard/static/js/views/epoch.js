@@ -796,8 +796,8 @@ export function buildCalibrationMini(calib, opts) {
   }));
   const tsign = svg.isNum(calib.trend_sign) ? calib.trend_sign : 0;
   const trendWord = tsign > 0 ? 'improving' : tsign < 0 ? 'regressing' : 'flat / too few';
-  const rm = svg.isNum(calib.rolling_mean) ? Math.round(calib.rolling_mean * 100) + '%' : '—';
-  const lf = svg.isNum(calib.latest_fraction) ? Math.round(calib.latest_fraction * 100) + '%' : '—';
+  const rm = svg.fmtPercent(calib.rolling_mean);
+  const lf = svg.fmtPercent(calib.latest_fraction);
   card.appendChild(figCaption([
     'diagnostic — does not affect the gate · calibration ' + trendWord,
     'epoch mean ' + rm + ' of claims landed · latest ' + lf + ' · higher = better-calibrated',
