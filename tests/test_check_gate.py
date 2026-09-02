@@ -774,7 +774,7 @@ def test_a_retired_proposer_configuration_is_refused_by_the_gate(tmp_path: Path)
     root = _workspace(
         tmp_path / ".zicato",
         config={
-            "runtime": {"pi_bin": "/opt/pi/bin/pi"},
+            "runtime": {"pi_bin": "/opt/removed-runtime/bin/agent"},
             "adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT},
         },
         trees={"harness": _MUTABLE.format(point_id="p")},

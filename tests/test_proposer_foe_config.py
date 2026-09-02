@@ -102,7 +102,7 @@ def test_a_model_block_with_no_provider_is_refused() -> None:
 @pytest.mark.parametrize("key", ["pi_bin", "pi_integration_dir"])
 def test_a_retired_runtime_key_is_refused_by_name(key: str) -> None:
     workspace = _config()
-    workspace["runtime"] = {key: "/opt/pi/bin/pi"}
+    workspace["runtime"] = {key: "/opt/removed-runtime/bin/agent"}
     with pytest.raises(ProposerConfigError) as raised:
         load_foe_proposer_config(workspace)
     assert key in str(raised.value)
