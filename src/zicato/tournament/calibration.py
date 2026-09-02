@@ -392,14 +392,146 @@ def margin_below_floor(promote_margin: float, floor: dict[str, Any] | None) -> b
     malformed ⇒ ``False``, no floor to compare against). ``True`` when the
     margin is strictly below ``max_abs_delta`` — a duel decided by the margin
     alone cannot then distinguish a real improvement from an A/A re-roll.
+
+    The predicate half of :func:`assess_margin_against_floor_record`, which it
+    delegates to, so a caller that only needs the yes/no answer and one that
+    needs the whole assessment can never disagree about whether the condition
+    holds.
     """
-    if not isinstance(floor, dict):
-        return False
+    return assess_margin_against_floor_record(promote_margin, floor) is not None
+
+
+@dataclass(frozen=True, slots=True)
+class MarginNoiseAssessment:
+    """One margin-versus-floor verdict, shared by every surface that reports it.
+
+    The round-0 evolve log line, the ``margin_below_noise_floor`` health
+    finding, and both board-reflection paths ask the same questions of the same
+    two floor statistics: does the margin sit inside the noise, what should it
+    be raised to, which statistic backs that value, and would acting on it
+    actually raise the gate. The answers are computed here and rendered there.
+    :func:`assess_margin_against_floor` and its persisted-record sibling are the
+    only constructors; both return ``None`` when the margin clears the floor and
+    there is nothing to report.
+
+    Fields
+    ------
+    promote_margin:
+        The contract margin that was assessed.
+    max_abs_delta:
+        The floor's RANGE statistic — the comparison that decided the margin
+        sits inside the noise (see :func:`margin_below_floor`).
+    delta_std:
+        The floor's draw-count-stable dispersion, or ``None`` when the record
+        carries none.
+    recommended_margin:
+        :func:`recommended_promote_margin` over whichever dispersion the floor
+        supplied — the value a margin should be lifted to. ``0.0`` when the
+        floor carries no usable dispersion at all.
+    used_delta_std:
+        Whether :attr:`recommended_margin` scaled :attr:`delta_std` (the
+        sound case) rather than falling back to the range.
+    """
+
+    promote_margin: float
+    max_abs_delta: float
+    delta_std: float | None
+    recommended_margin: float
+    used_delta_std: bool
+
+    @property
+    def floor_is_measured(self) -> bool:
+        """Whether the floor is POSITIVE — a measurement rather than its absence.
+
+        A zero floor makes the recommendation a useless ``0.0``, and a margin
+        below it is an absent measurement rather than evidence of promoting on
+        noise. Surfaces that speak only about real measurements gate on this.
+        """
+        return self.max_abs_delta > 0.0
+
+    @property
+    def rounded_recommended_margin(self) -> float:
+        """:attr:`recommended_margin` rounded to six decimal places.
+
+        A recommendation is a starting point an operator tunes, so the tail
+        digits of an unrounded float claim precision the measurement does not
+        have. This is the value an appliable payload carries.
+        """
+        return round(self.recommended_margin, 6)
+
+    @property
+    def recommendation_raises_margin(self) -> bool:
+        """Whether acting on :attr:`rounded_recommended_margin` LIFTS the gate.
+
+        The two floor statistics can disagree, and only in one direction: the
+        range grows with the calibration draw count K while the dispersion does
+        not, so a well-measured floor can put ``max_abs_delta`` above
+        ``MARGIN_NOISE_MULTIPLE × delta_std``. The margin then sits below the
+        range — the assessment fires — while already clearing the dispersion
+        the gate actually thresholds. A surface that ships an appliable payload
+        must check this first: the op it would otherwise emit LOWERS
+        ``promote_margin`` under a headline about promoting on noise.
+        """
+        return self.rounded_recommended_margin > self.promote_margin
+
+
+def assess_margin_against_floor(
+    *,
+    promote_margin: float | None,
+    max_abs_delta: float | None,
+    delta_std: float | None = None,
+) -> MarginNoiseAssessment | None:
+    """Assess ``promote_margin`` against a floor given as loose statistics. Pure.
+
+    Returns ``None`` — nothing to report — when either the margin or the range
+    is absent, or when the margin clears the range. Otherwise returns the
+    :class:`MarginNoiseAssessment` every reporting surface renders.
+
+    :func:`assess_margin_against_floor_record` is the entry point for a
+    persisted :meth:`NoiseFloor.to_json` dict; this one serves callers that
+    already hold the two statistics separately.
+    """
+    if promote_margin is None or max_abs_delta is None:
+        return None
+    margin = float(promote_margin)
+    max_abs = float(max_abs_delta)
+    if margin >= max_abs:
+        return None
+    std = None if delta_std is None else float(delta_std)
+    return MarginNoiseAssessment(
+        promote_margin=margin,
+        max_abs_delta=max_abs,
+        delta_std=std,
+        recommended_margin=recommended_promote_margin(delta_std=std, max_abs_delta=max_abs),
+        used_delta_std=std is not None and std > 0.0,
+    )
+
+
+def assess_margin_against_floor_record(
+    promote_margin: float | None, floor: dict[str, Any] | None
+) -> MarginNoiseAssessment | None:
+    """:func:`assess_margin_against_floor` from a persisted floor record.
+
+    Tolerant: ``None`` / malformed / a margin that clears the floor all yield
+    ``None``. A record with no readable ``max_abs_delta`` reads as a range of
+    ``0.0``, which no valid (non-negative) margin sits below.
+    """
+    if promote_margin is None or not isinstance(floor, dict):
+        return None
     try:
         max_abs = float(floor.get("max_abs_delta", 0.0))
     except (TypeError, ValueError):
-        return False
-    return promote_margin < max_abs
+        return None
+
+    def _delta_std() -> float | None:
+        try:
+            return float(floor["delta_std"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    return assess_margin_against_floor(
+        promote_margin=promote_margin, max_abs_delta=max_abs, delta_std=_delta_std()
+    )
 
 
 __all__ = [
@@ -408,7 +540,10 @@ __all__ = [
     "CALIBRATION_REPLICATE_BASE",
     "DEFAULT_CALIBRATION_RUNS",
     "MARGIN_NOISE_MULTIPLE",
+    "MarginNoiseAssessment",
     "NoiseFloor",
+    "assess_margin_against_floor",
+    "assess_margin_against_floor_record",
     "delta_spread",
     "margin_below_floor",
     "measure_noise_floor",

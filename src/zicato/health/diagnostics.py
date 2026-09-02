@@ -959,15 +959,24 @@ def detect_margin_below_noise_floor(
 
     Silent when no floor was ever measured (``noise_floor is None``), when
     the floor record is malformed, or when the margin clears the floor.
-    """
-    if promote_margin is None:
-        return []
-    from zicato.tournament.calibration import margin_below_floor  # noqa: PLC0415
 
-    if not margin_below_floor(promote_margin, noise_floor):
+    This is the one conversion of the calibration domain's
+    :class:`~zicato.tournament.calibration.MarginNoiseAssessment` into a
+    :class:`HealthFinding`. The assessment itself, including whether the
+    condition holds at all, is computed in that domain, so this finding, the
+    round-0 evolve log line, and both board-reflection surfaces report the same
+    numbers. Grading the finding by ``evidence_gate_on`` is health's own policy
+    and stays here.
+    """
+    from zicato.tournament.calibration import (  # noqa: PLC0415
+        assess_margin_against_floor_record,
+    )
+
+    assessment = assess_margin_against_floor_record(promote_margin, noise_floor)
+    if assessment is None:
         return []
-    assert isinstance(noise_floor, dict)  # narrowed by margin_below_floor
-    max_abs = float(noise_floor.get("max_abs_delta", 0.0))
+    assert isinstance(noise_floor, dict)  # narrowed by the assessment firing
+    max_abs = assessment.max_abs_delta
     severity = "info" if evidence_gate_on else "warning"
     gate_note = (
         "the evidence gate is ON, so the defer→replicate loop still holds "
@@ -980,10 +989,12 @@ def detect_margin_below_noise_floor(
             code="margin_below_noise_floor",
             severity=severity,
             summary=(
-                f"promote_margin {promote_margin:.6g} is below the measured A/A "
+                f"promote_margin {assessment.promote_margin:.6g} is below the measured A/A "
                 f"noise floor {max_abs:.6g}; {gate_note}"
             ),
             detail={
+                # The caller's value verbatim, so the record round-trips what
+                # the contract holds rather than the assessment's coercion.
                 "promote_margin": promote_margin,
                 "noise_floor_max_abs_delta": max_abs,
                 "noise_floor_runs": noise_floor.get("runs"),

@@ -11,9 +11,10 @@ is emitted that the builder would reject (BOARD-REFLECTION.md verdict 6).
 
 Concrete emitters
 -----------------
-* **Margin below the noise floor** → ``set_gate {promote_margin: 2.5 ×
-  floor_max_abs_delta}`` — promoting on noise; lift the margin clear of the
-  floor.
+* **Margin below the noise floor** → ``set_gate`` lifting ``promote_margin`` to
+  the value :func:`zicato.tournament.calibration.assess_margin_against_floor`
+  recommends — promoting on noise; lift the margin clear of the floor. The
+  emitter renders that assessment rather than deriving its own.
 * **Redundant judge** (``redundant_with`` at corr ≈ 1) → ``set_weights
   {per_judge_weights: {judge: 0.0}}`` — the judge carries no independent
   signal; zero its weight. (``remove_judge`` is reserved for pure-cost
@@ -46,10 +47,6 @@ from zicato.reflection.scorecards import JudgeScorecard
 #: Down-weight a false-fire-heavy judge is nudged toward (a starting point the
 #: operator tunes rather than a fitted value).
 FP_DOWNWEIGHT: float = 0.5
-
-#: Multiplier applied to the noise floor to recommend a promote margin clear of
-#: it (BOARD-REFLECTION.md §"margin from noise floor": 2–3× the noise SD).
-MARGIN_FLOOR_MULTIPLE: float = 2.5
 
 # Severity vocabulary + rank (higher = worse; ranking is descending).
 SEVERITY_CRITICAL: str = "critical"
@@ -216,52 +213,42 @@ def derive_findings(
     Every ``proposed_op`` is validated against the real op signature before the
     finding is constructed, so a payload that would not apply never ships.
     """
+    from zicato.tournament.calibration import (  # noqa: PLC0415
+        MARGIN_NOISE_MULTIPLE,
+        assess_margin_against_floor,
+    )
+
     findings: list[Finding] = []
 
     # --- calibration: promote margin below the noise floor -----------------
+    margin_noise = assess_margin_against_floor(
+        promote_margin=promote_margin,
+        max_abs_delta=noise_floor_max_abs_delta,
+        delta_std=noise_floor_delta_std,
+    )
     # Only when the floor is POSITIVE: a zero (or unmeasured-as-0) floor makes
     # the 2.5x recommendation a useless 0.0, and "margin below a zero floor" is
     # not evidence of promoting on noise — it is an absent measurement.
-    if (
-        promote_margin is not None
-        and noise_floor_max_abs_delta is not None
-        and noise_floor_max_abs_delta > 0
-        and promote_margin < noise_floor_max_abs_delta
-    ):
-        from zicato.tournament.calibration import recommended_promote_margin  # noqa: PLC0415
-
-        used_delta_std = noise_floor_delta_std is not None and noise_floor_delta_std > 0
-        recommended = round(
-            recommended_promote_margin(
-                delta_std=noise_floor_delta_std,
-                max_abs_delta=noise_floor_max_abs_delta,
-                multiple=MARGIN_FLOOR_MULTIPLE,
-            ),
-            6,
-        )
+    if margin_noise is not None and margin_noise.floor_is_measured:
+        used_delta_std = margin_noise.used_delta_std
+        recommended = margin_noise.rounded_recommended_margin
         stat_desc = (
             f"delta_std={noise_floor_delta_std} (draw-count-stable)"
             if used_delta_std
             else f"max_abs_delta={noise_floor_max_abs_delta} (range — no delta_std on this record)"
         )
-        # The two statistics can DISAGREE, and only in one direction: the range
-        # grows with the calibration draw count K while ``delta_std`` does not,
-        # so for a well-calibrated floor (K ≳ 12 draws) ``max_abs_delta`` can
-        # exceed 2.5 × delta_std. The margin then sits below the range — firing
-        # this finding — while already clearing 2.5 sigma of the dispersion the
-        # gate actually thresholds. Emitting the delta_std recommendation
-        # verbatim there would ship a CRITICAL, one-command-appliable
+        # When the floor's two statistics disagree (see
+        # ``MarginNoiseAssessment.recommendation_raises_margin``), emitting the
+        # recommendation verbatim would ship a CRITICAL, one-command-appliable
         # ``set_gate`` that LOWERS promote_margin under a headline promising to
         # raise it. Report the disagreement instead and propose nothing: the
-        # range fired, the stable statistic does not corroborate it, and the
         # answer is a re-measurement rather than a weaker gate.
-        raises_margin = recommended > promote_margin
-        if raises_margin:
+        if margin_noise.recommendation_raises_margin:
             detail = (
                 f"promote_margin={promote_margin} is below the measured noise floor "
                 f"max_abs_delta={noise_floor_max_abs_delta} — the gate is promoting on "
                 f"measurement noise. Recommend lifting it to {recommended} "
-                f"({MARGIN_FLOOR_MULTIPLE}× {stat_desc})."
+                f"({MARGIN_NOISE_MULTIPLE}× {stat_desc})."
             )
             recommendation = f"raise promote_margin to {recommended}"
             proposed_op: dict[str, Any] | None = validate_proposed_op(
@@ -270,7 +257,7 @@ def derive_findings(
         else:
             detail = (
                 f"promote_margin={promote_margin} is below the measured noise floor "
-                f"max_abs_delta={noise_floor_max_abs_delta}, but {MARGIN_FLOOR_MULTIPLE}× "
+                f"max_abs_delta={noise_floor_max_abs_delta}, but {MARGIN_NOISE_MULTIPLE}× "
                 f"{stat_desc} is only {recommended} — at or below the current margin. The "
                 "range statistic grows with the calibration draw count while the dispersion "
                 "the gate actually thresholds does not (issue #112), so the two disagree and "
@@ -418,7 +405,6 @@ def derive_findings(
 
 __all__ = [
     "FP_DOWNWEIGHT",
-    "MARGIN_FLOOR_MULTIPLE",
     "SEVERITY_CRITICAL",
     "SEVERITY_INFO",
     "SEVERITY_WARNING",

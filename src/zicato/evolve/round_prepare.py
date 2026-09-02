@@ -460,6 +460,11 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
     holds promotions to CI separation, so the margin being inside the noise is
     an informational note rather than a decision hazard. Never hard-refuses.
 
+    The assessment itself — whether the margin is inside the noise, and what
+    to recommend instead — belongs to
+    :func:`zicato.tournament.calibration.assess_margin_against_floor_record`;
+    this function only renders it as a log line.
+
     Best-effort like the rest of the health path: the :mod:`zicato.health`
     sibling lands in parallel and may be absent, so a missing
     ``zicato.health.inputs`` is silently inert rather than aborting the run.
@@ -471,28 +476,20 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
         return
     from zicato.tournament.calibration import (  # noqa: PLC0415
         MARGIN_NOISE_MULTIPLE,
-        margin_below_floor,
-        recommended_promote_margin_from_floor,
+        assess_margin_against_floor_record,
     )
 
     floor, margin, gate_on = epoch_noise_floor_inputs(workspace_root, epoch_id)
-    if margin is None or not margin_below_floor(margin, floor):
+    assessment = assess_margin_against_floor_record(margin, floor)
+    if assessment is None:
         return
-    assert isinstance(floor, dict)  # narrowed by margin_below_floor
-    max_abs = float(floor.get("max_abs_delta", 0.0))
-    # Recommend from the draw-count-STABLE dispersion, never from the range
-    # (issue #112): ``max_abs_delta`` grows with K on an unchanged board, so
-    # "set the margin above the measured floor" drifts upward as calibration
-    # improves — and a campaign followed it straight past the achievable
-    # signal, making every duel a rejection by arithmetic.
-    recommended = recommended_promote_margin_from_floor(floor) or max_abs
     if gate_on:
         log.info(
             "promote_margin %.6g is below the measured A/A noise floor %.6g "
             "for epoch %s; the evidence gate is ON, so promotions still "
             "replicate to CI separation",
-            margin,
-            max_abs,
+            assessment.promote_margin,
+            assessment.max_abs_delta,
             epoch_id,
         )
         return
@@ -509,10 +506,10 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
         '"promote_confidence_replicates" budget (the scaffolded contracts '
         "use 32) — so promotions must replicate to CI separation. (Floor "
         "measured by `zicato board audit`; this run continues unchanged.)",
-        margin,
-        max_abs,
+        assessment.promote_margin,
+        assessment.max_abs_delta,
         epoch_id,
-        recommended,
+        assessment.recommended_margin,
         MARGIN_NOISE_MULTIPLE,
     )
 

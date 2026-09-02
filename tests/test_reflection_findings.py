@@ -16,13 +16,9 @@ from zicato.builder import operations as ops
 from zicato.builder.draft import TournamentDraft
 from zicato.reflection.adjudicator import VERDICT_FN, VERDICT_FP, JudgeAdjudication
 from zicato.reflection.corpus import FIDELITY_VERBATIM
-from zicato.reflection.findings import (
-    MARGIN_FLOOR_MULTIPLE,
-    Finding,
-    derive_findings,
-    validate_proposed_op,
-)
+from zicato.reflection.findings import Finding, derive_findings, validate_proposed_op
 from zicato.reflection.scorecards import JudgeScorecard
+from zicato.tournament.calibration import MARGIN_NOISE_MULTIPLE
 
 
 def _card(
@@ -132,7 +128,7 @@ def test_margin_finding_emits_set_gate_when_below_floor() -> None:
     assert len(margin) == 1
     assert margin[0].proposed_op == {
         "op": "set_gate",
-        "args": {"promote_margin": round(MARGIN_FLOOR_MULTIPLE * 0.10, 6)},
+        "args": {"promote_margin": round(MARGIN_NOISE_MULTIPLE * 0.10, 6)},
     }
     assert margin[0].severity == "critical"
 
@@ -162,7 +158,7 @@ def test_margin_finding_recommendation_scales_delta_std_when_present() -> None:
     assert len(margin) == 1
     assert margin[0].proposed_op == {
         "op": "set_gate",
-        "args": {"promote_margin": round(MARGIN_FLOOR_MULTIPLE * 0.03, 6)},
+        "args": {"promote_margin": round(MARGIN_NOISE_MULTIPLE * 0.03, 6)},
     }
     assert "delta_std=0.03" in margin[0].detail
     assert "draw-count-stable" in margin[0].detail
@@ -212,7 +208,7 @@ def test_margin_finding_falls_back_to_range_when_delta_std_absent() -> None:
     assert len(margin) == 1
     assert margin[0].proposed_op == {
         "op": "set_gate",
-        "args": {"promote_margin": round(MARGIN_FLOOR_MULTIPLE * 0.10, 6)},
+        "args": {"promote_margin": round(MARGIN_NOISE_MULTIPLE * 0.10, 6)},
     }
     assert "max_abs_delta=0.1" in margin[0].detail
     assert "range" in margin[0].detail

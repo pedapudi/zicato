@@ -716,6 +716,20 @@ alone") and downgrades to **info** when the gate is on (the defer→replicate
 loop still holds promotions to separation of the rating CIs). It never hard-refuses a run —
 calibration is recommend-only, like every board-reflection surface.
 
+Four surfaces report that condition: the round-0 evolve log line
+(`evolve/round_prepare.py::_warn_margin_below_noise_floor`), that health
+finding, the board-reflection finding (`reflection/findings.py`), and the
+`promotion_hygiene` practice check (`reflection/practices.py`). None of them
+does the arithmetic. `assess_margin_against_floor` in `tournament/calibration.py`
+returns one `MarginNoiseAssessment` carrying the comparison, the recommended
+margin, which floor statistic backed it, and whether acting on it would raise
+the gate; `assess_margin_against_floor_record` is the tolerant entry point for
+a persisted floor record, and `margin_below_floor` is its predicate half.
+Health converts that assessment into a finding — grading it by the evidence
+gate is health's own policy — and the other three render it. Reflection keeps
+one thing of its own: the `set_gate` payload built from the recommendation.
+`tests/test_noise_floor_one_owner.py` pins the correspondence.
+
 > ✅ ALWAYS treat `NoiseFloor.to_json()` as a tolerant read on the consumer
 > side: `margin_below_floor` returns `False` for `None`/malformed input by
 > contract. A dashboard or health reader that raises on a missing floor breaks

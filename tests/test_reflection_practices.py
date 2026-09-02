@@ -25,6 +25,7 @@ from zicato.core.types import BoardEntry
 from zicato.reflection import practices as P
 from zicato.reflection.corpus import ObservationRun
 from zicato.reflection.findings import validate_proposed_op
+from zicato.tournament.calibration import MARGIN_NOISE_MULTIPLE
 
 # ---------------------------------------------------------------------------
 # builders
@@ -512,7 +513,7 @@ def test_promotion_hygiene_range_fallback_always_raises_the_margin() -> None:
     )
     assert c.verdict == P.VERDICT_UNSOUND
     assert c.proposed_op is not None
-    assert c.proposed_op["args"]["promote_margin"] == pytest.approx(P.MARGIN_FLOOR_MULTIPLE * 0.10)
+    assert c.proposed_op["args"]["promote_margin"] == pytest.approx(MARGIN_NOISE_MULTIPLE * 0.10)
 
 
 def test_promotion_with_evidence_gate_is_sound() -> None:
