@@ -16,7 +16,6 @@ avoiding an import cycle at module load.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import replace
 from pathlib import Path
@@ -432,11 +431,53 @@ def _overlay_projected_standings(
     return out
 
 
-def _persist_field_tournament(
+def _open_field_tournament(
     workspace_root: Path,
     *,
     field_tournament_id: str,
     first_challenger_id: str,
+    epoch_id: str,
+    structure: str,
+    structure_params: dict[str, Any],
+    competitors: list[dict[str, Any]],
+    field_status: list[dict[str, Any]],
+) -> None:
+    """Best-effort: publish a field record in ``in_progress`` state.
+
+    The replayable settlement commit owns the only transition to ``settled``.
+    This writer exposes the competitors and proposal status while execution is
+    active. A two-competitor gauntlet needs no separate field record.
+    """
+    record = _field_tournament_record(
+        field_tournament_id=field_tournament_id,
+        epoch_id=epoch_id,
+        structure=structure,
+        structure_params=structure_params,
+        competitors=competitors,
+        rounds=[],
+        standings=[],
+        field_status=field_status,
+        decision=None,
+        state="in_progress",
+    )
+    if record is None:
+        return
+    try:
+        _write_field_tournament_record(
+            workspace_root,
+            epoch_id=epoch_id,
+            first_challenger_id=first_challenger_id,
+            record=record,
+        )
+    except Exception as exc:  # noqa: BLE001 — durable snapshot is best-effort here
+        log.debug("field-tournament snapshot skipped: %s", exc)
+        return
+    _ingest_field_tournament_record(workspace_root, record)
+
+
+def _field_tournament_record(
+    *,
+    field_tournament_id: str,
     epoch_id: str,
     structure: str,
     structure_params: dict[str, Any],
@@ -448,34 +489,14 @@ def _persist_field_tournament(
     state: str = "settled",
     override_status: dict[str, dict[str, Any]] | None = None,
     promoted_generation_ids: list[str] | None = None,
-) -> None:
-    """Best-effort: durably persist a FIELD-level structure record.
+) -> dict[str, Any] | None:
+    """Build one field-tournament snapshot without writing it.
 
-    Writes the round's field record — round pairings, Copeland
-    standings, competitors, proposing field-status, the crowning verdict —
-    to its durable ``tournaments/field-*.json`` snapshot AND dual-writes it
-    into the analytical index as ONE field-level ``tournaments`` row. The
-    snapshot is the canonical source (so ``zicato repair index`` re-derives the
-    row); the dual-write puts the swiss / elim ladder in the index.
-
-    ``state`` carries the explicit ``in_progress`` → ``settled`` lifecycle
-    (issue #16): the orchestrator OPENS the envelope at round start
-    (``state="in_progress"``, ``decision=None``, empty rounds/standings —
-    just the competitor field + proposing status so the round is visible to
-    every queryable store mid-flight) and FINALISES it at settle
-    (``state="settled"`` with the resolved bracket + crowning verdict). The
-    record is keyed on the field-level ``tournament_id`` so the settle write
-    upserts the same row the open write created — idempotent, crash-safe,
-    and safe to re-open on resume (the in_progress record is simply
-    overwritten by the next open or the settle).
-
-    A no-op for a degenerate two-competitor (gauntlet) field — the
-    per-challenger row already covers it. Never raises: a durable-state
-    write failure must not abort the round.
+    A two-competitor gauntlet has a canonical duel record already, so it
+    does not create a separate field snapshot.
     """
     if len(competitors) < 3:
-        return
-    from zicato.evolve.ingest import _index_db_path  # noqa: PLC0415
+        return None
     from zicato.evolve.lifecycle_services import _now_iso  # noqa: PLC0415
 
     crowning_delta: float | None = None
@@ -519,16 +540,33 @@ def _persist_field_tournament(
         record["promoted_generation_ids"] = list(promoted_generation_ids)
     if override_status:
         record["override_status"] = {gid: dict(prov) for gid, prov in override_status.items()}
-    try:
-        from zicato.core.workspace import field_tournament_path  # noqa: PLC0415
+    return record
 
-        path = field_tournament_path(workspace_root, epoch_id, first_challenger_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(record, indent=2), encoding="utf-8")
-    except Exception as exc:  # noqa: BLE001 — durable snapshot is best-effort
-        log.debug("field-tournament snapshot skipped: %s", exc)
-        return
+
+def _write_field_tournament_record(
+    workspace_root: Path,
+    *,
+    epoch_id: str,
+    first_challenger_id: str,
+    record: dict[str, Any],
+) -> None:
+    """Atomically replace one canonical field-tournament snapshot."""
+    from zicato.core.workspace import field_tournament_path  # noqa: PLC0415
+    from zicato.storage import atomic_write_json  # noqa: PLC0415
+
+    atomic_write_json(
+        field_tournament_path(workspace_root, epoch_id, first_challenger_id),
+        record,
+    )
+
+
+def _ingest_field_tournament_record(
+    workspace_root: Path,
+    record: dict[str, Any],
+) -> None:
+    """Best-effort refresh of one derived field-tournament index row."""
     try:
+        from zicato.evolve.ingest import _index_db_path  # noqa: PLC0415
         from zicato.index.ingest import ingest_field_tournament  # noqa: PLC0415
 
         ingest_field_tournament(workspace_root, _index_db_path(workspace_root), record)

@@ -438,12 +438,6 @@ async def _propose_and_apply_challenger(
     # ``_propose_child`` already stamped the EVOLVE round onto the
     # experiment (round_index is the authoritative birth round the
     # dashboard's round-grouping reads — issue #16).
-    # Persist the proposer-side experiment.json (outcome still None) and
-    # fold it into the live index, exactly as the gauntlet path does for
-    # its single challenger before the tournament finishes.
-    write_experiment(workspace_root, epoch_id, next_id, experiment)
-    _ingest_experiment_into_index(workspace_root, epoch_id, next_id)
-
     child_gen = Generation(
         id=next_id,
         epoch_id=epoch_id,
@@ -452,23 +446,14 @@ async def _propose_and_apply_challenger(
         created_at=_now_iso(),
         round_index=round_index,
     )
-    # Append the challenger to lineage.json AT CREATION with its birth
-    # round_index, rather than waiting for round settle. Every queryable
-    # store (lineage.json, the index, CLI status, external tooling) must
-    # reflect the in-flight round continuously rather than only the last
-    # settled one (issue #16). The settle-time append_to_lineage upserts the same node
-    # to its final promoted/rejected state; append_to_lineage is an
-    # idempotent update-in-place that preserves round_index, so the
-    # creation-time write and the settle-time write compose cleanly.
-    #
-    # The creation-time write is PENDING (promoted=null) rather than a dead
-    # branch (promoted=False). The challenger has applied a snapshot but has not
-    # been crowned or cut — it is still racing. ``promoted=False`` reads as
-    # REJECTED, so a False default would render an in-flight racer as a dead
-    # branch on /api/lineage while it is mid-tournament. Pending → null →
-    # the dashboard maps it to "racing"; the settle-time append flips it to
-    # the resolved bool.
+    # Lineage is the creation commit marker. Write the pending node before
+    # experiment.json so recovery can identify every applied field sibling
+    # without inferring membership from directory order. A crash before this
+    # marker leaves source-only residue outside lineage-based recovery; a crash
+    # after it can discard the complete field.
     append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id, pending=True)
+    write_experiment(workspace_root, epoch_id, next_id, experiment)
+    _ingest_experiment_into_index(workspace_root, epoch_id, next_id)
     applied_status = {
         "generation_id": next_id,
         "status": "applied",
@@ -533,8 +518,6 @@ def _mint_placebo_challenger(
         generation_id=next_id,
         patches=experiment.patches,
     )
-    write_experiment(workspace_root, epoch_id, next_id, experiment)
-    _ingest_experiment_into_index(workspace_root, epoch_id, next_id)
     child_gen = Generation(
         id=next_id,
         epoch_id=epoch_id,
@@ -544,6 +527,8 @@ def _mint_placebo_challenger(
         round_index=round_index,
     )
     append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id, pending=True)
+    write_experiment(workspace_root, epoch_id, next_id, experiment)
+    _ingest_experiment_into_index(workspace_root, epoch_id, next_id)
     return _AppliedChallenger(
         generation_id=next_id,
         snapshot_root=child_snapshot,

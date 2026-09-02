@@ -147,7 +147,10 @@ class HealthFinding:
         ``"dead_judge"``, ``"placebo_promoted"``, ``"infra_outage"``,
         ``"round_token_clipped"``, ``"tree_never_imported"``,
         ``"attributable_entry_regression"``,
-        ``"on_promote_hook_failed"``.
+        ``"on_promote_hook_failed"``,
+        ``"on_promote_hook_delivery_unknown"``, or
+        ``"settlement_index_repair_required"``, or
+        ``"settlement_receipt_corrupt"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -164,6 +167,15 @@ class HealthFinding:
     severity: str
     summary: str
     detail: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class SettlementReceiptAttention:
+    """Retained settlement conditions that require operator attention."""
+
+    unknown_hook_deliveries: tuple[dict[str, Any], ...] = ()
+    index_repairs: tuple[dict[str, Any], ...] = ()
+    corruptions: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1704,6 +1716,79 @@ def detect_on_promote_hook_failed(
     ]
 
 
+def detect_settlement_receipt_attention(
+    attention: SettlementReceiptAttention | None,
+) -> list[HealthFinding]:
+    """Translate retained settlement problems into health findings."""
+    if attention is None:
+        return []
+    findings: list[HealthFinding] = []
+    for delivery in attention.unknown_hook_deliveries:
+        adapter_name = str(delivery.get("adapter_name", ""))
+        generation_id = str(delivery.get("generation_id", ""))
+        findings.append(
+            HealthFinding(
+                code="on_promote_hook_delivery_unknown",
+                severity="warning",
+                summary=(
+                    f"adapter {adapter_name!r} may not reflect promoted generation "
+                    f"{generation_id}: the prior process stopped before hook delivery "
+                    "could be confirmed"
+                ),
+                detail={
+                    "adapter": adapter_name,
+                    "generation_id": generation_id,
+                    "round_index": delivery.get("round_index"),
+                    "settlement_id": str(delivery.get("settlement_id", "")),
+                    "recommendation": (
+                        "inspect the adapter's external state and reconcile it manually; "
+                        "zicato preserves at-most-once delivery by never retrying an "
+                        "unknown hook call"
+                    ),
+                },
+            )
+        )
+    findings.extend(
+        HealthFinding(
+            code="settlement_index_repair_required",
+            severity="warning",
+            summary=(
+                f"round {repair.get('round_index')} settled, but its analytical "
+                "index projection failed"
+            ),
+            detail={
+                "round_index": repair.get("round_index"),
+                "settlement_id": str(repair.get("settlement_id", "")),
+                "exception_type": str(repair.get("error_type", "")),
+                "recommendation": (
+                    "run `zicato repair index`; a successful full rebuild validates "
+                    "and acknowledges the retained settlement receipt"
+                ),
+            },
+        )
+        for repair in attention.index_repairs
+    )
+    findings.extend(
+        HealthFinding(
+            code="settlement_receipt_corrupt",
+            severity="warning",
+            summary="A retained field-settlement receipt is unreadable or invalid",
+            detail={
+                "epoch_id": str(corruption.get("epoch_id", "")),
+                "storage_key": str(corruption.get("storage_key", "")),
+                "exception_type": str(corruption.get("exception_type", "")),
+                "message": str(corruption.get("message", "")),
+                "recommendation": (
+                    "inspect the retained receipt before running another settlement; "
+                    "zicato cannot safely infer its commit state"
+                ),
+            },
+        )
+        for corruption in attention.corruptions
+    )
+    return findings
+
+
 def assess_loop_health(
     losses_by_generation: dict[str, list[LossProfile]],
     experiments: list[Any],
@@ -1719,6 +1804,7 @@ def assess_loop_health(
     token_clip: tuple[int, int] | None = None,
     tree_import_gaps: dict[str, tuple[str, ...]] | None = None,
     on_promote_failure: tuple[str, str, str] | None = None,
+    settlement_receipt_attention: SettlementReceiptAttention | None = None,
     preflight_gate: str = PREFLIGHT_GATE_DEFAULT,
     attributable_regressions: dict[str, dict[str, Any]] | None = None,
 ) -> LoopHealth:
@@ -1811,6 +1897,9 @@ def assess_loop_health(
         fired an ``on_promote`` that raised or timed out (see
         :func:`detect_on_promote_hook_failed`). ``None`` (the default,
         and every round with no hook) is silent.
+    settlement_receipt_attention:
+        Unknown promotion-hook delivery, required index repair, and receipt
+        corruption found in the epoch's retained settlement receipts.
 
     Returns
     -------
@@ -1846,6 +1935,7 @@ def assess_loop_health(
     findings.extend(detect_tree_never_imported(tree_import_gaps))
     findings.extend(detect_attributable_entry_regression(attributable_regressions))
     findings.extend(detect_on_promote_hook_failed(on_promote_failure))
+    findings.extend(detect_settlement_receipt_attention(settlement_receipt_attention))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -1865,6 +1955,7 @@ __all__ = [
     "GENERALIZATION_GAP_CRIT",
     "HealthFinding",
     "LoopHealth",
+    "SettlementReceiptAttention",
     "assess_loop_health",
     "detect_attributable_entry_regression",
     "detect_degenerate_scoring",
@@ -1877,6 +1968,7 @@ __all__ = [
     "detect_infra_outage",
     "detect_noisy_judge",
     "detect_on_promote_hook_failed",
+    "detect_settlement_receipt_attention",
     "detect_placebo_promoted",
     "detect_preflight_verdict",
     "detect_refresh_cadence",

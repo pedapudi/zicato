@@ -216,7 +216,7 @@ stay identical; internals move behind them.
 - `evolve/loop.py` — `evolve_n_rounds` + the 3 circuit breakers as a small
   `StopPolicy` set. `evolve/epoching.py` — contract-hash auto-epoching.
 - `evolve/dashboard_projection.py` — the ~550 lines of `_publish_*`/`_serialise_*`
-  /`_overlay_*`/`_persist_field_tournament` (`:2311-2864`); pure presentation that
+  /`_overlay_*`/`_open_field_tournament` (`:2311-2864`); pure presentation that
   does not belong in the loop driver.
 - `evolve/lifecycle_services.py` — harmonograf launch + env-restore + meta-loop
   emitter. Move path math to `workspace/WorkspaceLayout` (Phase 1c).

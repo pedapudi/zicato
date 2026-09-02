@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 457,351 | +48,690 |
-| Production | 197,702 | 200,545 | +2,843 |
-| Production logic | 110,276 | 111,043 | +767 |
+| Total | 408,661 | 460,805 | +52,144 |
+| Production | 197,702 | 202,307 | +4,605 |
+| Production logic | 110,276 | 112,659 | +2,383 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -218,3 +218,6 @@ dropped rows named.
 | Durable Ladder query reservations (total) | 456,324 | +1,027 | 457,351 | Issue #380: the tournament runner evaluates the training slice before it schedules holdout work, and a strict epoch-local store atomically charges each permitted holdout query first. Reservation identities, persisted pre-charge budgets, fail-closed locking, strict decoding, and single-use settlement prevent crashes, reuse, or foreign tokens from restoring capacity or publishing uncharged evidence. Most of the increase is adversarial coverage of initialization, write failure, interruption, concurrency, process isolation, exhaustion, release visibility, evidence-pair consistency, and the corresponding deterministic parity evidence. |
 | Durable Ladder query reservations (production) | 200,255 | +290 | 200,545 | Issue #380: production code gains the strict reservation store, train-first scheduling, and explicit audit fields. The pure Ladder decision rule remains separate from filesystem state, keeps the stored confirmation paired with its actual best scalar, and the runner starts no holdout work after a train rejection, exhausted budget, failed debit, or unsupported cross-process lock. |
 | Durable Ladder query reservations (production logic) | 110,738 | +305 | 111,043 | Issue #380: executable growth is the atomic state protocol, identity and corruption checks, process serialization, evidence-pair consistency, and the scheduling boundary that makes the debit durable before evidence access. Replaced docstrings and comments make the executable-line delta slightly larger than the total production-line delta. |
+| Replayable field settlement and lineage-authoritative index (total) | 457,351 | +3,454 | 460,805 | Issues #379 and #54: a retained receipt makes every resolved tournament recoverable across outcome, lineage, champion-marker, journal, bracket, promotion-hook, and grouped index-projection boundaries. The increase includes crash injection at every write, receipt-tampering refusals, directory and Git source cleanup, contract-roll recovery, health and dashboard visibility, index reconstruction, and documentation. |
+| Replayable field settlement and lineage-authoritative index (production) | 200,545 | +1,762 | 202,307 | Issues #379 and #54: production gains one field-specific receipt protocol, atomic lineage resolution and discard, source cleanup through `GenerationStore`, a grouped derived-index transaction, and operator-visible repair states. Settlement remains field-specific rather than introducing a generic transaction layer; lineage is the sole authority for parentage and promotion in the index. |
+| Replayable field settlement and lineage-authoritative index (production logic) | 111,043 | +1,616 | 112,659 | Issues #379 and #54: executable growth is strict receipt validation, ordered idempotent replay, at-most-once promotion-hook delivery, conservative receiptless-field cleanup, verification of Git ref and worktree pruning, and atomic index projection. The receipt deliberately carries one independent primary-champion checksum because multi-promotion outcomes do not identify the single champion-marker target. |

@@ -1,8 +1,8 @@
 """Persist terminal generation outcomes and run the shared round epilogue.
 
-The module owns the write funnel for settled outcomes
-(:func:`_finalize_generation`), the end-of-round health, analysis, and report
-tail (:func:`_round_epilogue`), the validation-rejection tail
+The module owns the write funnel for terminal outcomes that never enter a
+tournament (:func:`_finalize_generation`), the end-of-round health, analysis,
+and report tail (:func:`_round_epilogue`), the validation-rejection tail
 (:func:`_persist_rejected_round`), and synthetic reject and skip outcomes.
 
 Helpers that preserve public monkeypatch seams resolve their orchestration
@@ -51,28 +51,29 @@ def _finalize_generation(
     advance_current_generation: bool = False,
     journal: bool = True,
 ) -> Experiment:
-    """Persist one generation's terminal outcome through every store.
+    """Persist a terminal outcome that has no tournament settlement intent.
 
-    The ONE write pipeline every round tail flows through:
+    Validation and proposal failures use this direct write path. A resolved
+    tournament uses ``evolve.settlement_recovery`` so a crash can replay its
+    multi-record commit from durable intent.
+
+    This helper writes:
 
     1. ``update_experiment_outcome`` — the :class:`OutcomeRecord` lands on
        ``experiment.json`` (the canonical record; a field present on the
        record cannot be dropped by one tail's hand-rolled copy);
     2. live SQLite index dual-write (best-effort, never aborts the round);
     3. optional lineage upsert (``lineage_generation`` — ``None`` for a
-       validation-rejected round that never entered lineage, and for the
-       multi-challenger loop which defers lineage until after its crowning
-       invariant checks). The settle-time facts ride along: the outcome's
-       own ``rejection_reason`` and the duel's two scalars
+       validation-rejected round that never entered lineage). The settle-time
+       facts ride along: the outcome's own ``rejection_reason`` and the duel's
+       two scalars
        (``lineage_parent_scalar`` / ``lineage_child_scalar``, ``None``
        when the caller has no measurement in scope) land on the lineage
        node so the DAG says WHY without a per-generation join against
        ``experiment.json`` (issue #124);
     4. optional champion-marker advance (``advance_current_generation`` —
-       the gauntlet's on-promotion step, sequenced between lineage and
-       journal in that order);
-    5. optional journal append (``journal=False`` lets the multi-challenger
-       path keep its all-outcomes-then-all-journals order).
+       sequenced between lineage and journal in that order);
+    5. optional journal append.
 
     Returns the finalised :class:`Experiment` for the caller to journal /
     summarise.

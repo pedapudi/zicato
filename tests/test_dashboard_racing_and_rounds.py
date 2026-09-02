@@ -716,7 +716,7 @@ def test_field_round_with_no_crowning_row_reports_an_unknown_eval_mode(
 ) -> None:
     """A round that has not been evaluated says so, rather than claiming a re-run.
 
-    ``_persist_field_tournament`` dual-writes the field row at OPEN — before any
+    ``_open_field_tournament`` dual-writes the field row at OPEN — before any
     per-challenger crowning row for that round exists — so mid-round the reader
     can resolve WHO defends (the role tag) while nothing yet says HOW it was
     evaluated. That is genuinely unknown, and the round timeline already spells

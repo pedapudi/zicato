@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -115,6 +116,70 @@ def test_generation_lineage_is_the_commit_dag(seeded_store: GitGenerationStore) 
     v0 = _git(store.repo_path, "rev-parse", "epoch/e1/v0").strip()
     v1_parent = _git(store.repo_path, "rev-parse", "epoch/e1/v1^").strip()
     assert v1_parent == v0
+
+
+def test_prune_rewinds_selected_branch_head_and_is_idempotent(
+    seeded_store: GitGenerationStore,
+) -> None:
+    """Deleting a suffix leaves the epoch branch at its retained ancestor."""
+    store = seeded_store
+    store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""one"""')])
+    store.derive_generation("e1", "v1", "v2", [_patch("p2", '"""two"""')])
+    retained = _git(store.repo_path, "rev-parse", "epoch/e1/v0").strip()
+
+    store.prune_generations("e1", ("v1", "v2"), dry_run=False)
+
+    assert _git(store.repo_path, "rev-parse", "epoch/e1").strip() == retained
+    assert store.has_generation("e1", "v1") is False
+    assert store.has_generation("e1", "v2") is False
+    store.prune_generations("e1", ("v1", "v2"), dry_run=False)
+
+
+def test_prune_removes_a_crash_registered_ephemeral_worktree(
+    seeded_store: GitGenerationStore,
+) -> None:
+    """A process stop during checkout cannot retain discarded generation source."""
+    store = seeded_store
+    store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""one"""')])
+    parent = Path(tempfile.mkdtemp(prefix="ztw-snap-crashed-"))
+    checkout = parent / "v1"
+    _git(
+        store.repo_path,
+        "worktree",
+        "add",
+        "--detach",
+        "--force",
+        str(checkout),
+        "epoch/e1/v1",
+    )
+
+    store.prune_generations("e1", ("v1",), dry_run=False)
+
+    assert not parent.exists()
+    assert "epoch/e1/v1" not in _git(store.repo_path, "tag", "--list").splitlines()
+
+
+def test_prune_succeeds_when_optional_git_gc_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    seeded_store: GitGenerationStore,
+) -> None:
+    """Object maintenance cannot undo a completed source cleanup."""
+    store = seeded_store
+    store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""one"""')])
+    run_git = store._git
+
+    def fail_gc(*args: str, **kwargs: object) -> str:
+        if args == ("gc", "--auto"):
+            from zicato.epoch.git_genstore import GitCommandError
+
+            raise GitCommandError(args, 1, "injected gc failure")
+        return run_git(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_git", fail_gc)
+
+    store.prune_generations("e1", ("v1",), dry_run=False)
+
+    assert store.has_generation("e1", "v1") is False
 
 
 # ---------------------------------------------------------------------------

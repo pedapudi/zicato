@@ -25,9 +25,9 @@ from typing import TYPE_CHECKING, Any
 from zicato.evolve.dashboard_projection import (
     _clear_active_tournament,
     _field_entries,
+    _open_field_tournament,
     _overlay_projected_live_progress,
     _overlay_projected_standings,
-    _persist_field_tournament,
     _publish_active_tournament,
     _serialise_rounds,
     _serialise_standings,
@@ -388,7 +388,7 @@ def _open_tournament_envelopes(field_round: FieldRound, candidates: CandidateFie
         on_error=lambda exc: log.debug("progress-log field tournament-start skipped: %s", exc),
     ):
         progress_log.append_progress(field_round.workspace_root, progress_log.TOURNAMENT_START)
-    _persist_field_tournament(
+    _open_field_tournament(
         field_round.workspace_root,
         field_tournament_id=f"{field_round.epoch_id}:field:{candidates.first_challenger_id}",
         first_challenger_id=candidates.first_challenger_id,
@@ -396,11 +396,7 @@ def _open_tournament_envelopes(field_round: FieldRound, candidates: CandidateFie
         structure=field_round.tournament_spec.structure,
         structure_params=dict(field_round.tournament_spec.params),
         competitors=candidates.competitors,
-        rounds=[],
-        standings=[],
         field_status=candidates.field_status or [],
-        decision=None,
-        state="in_progress",
     )
 
 

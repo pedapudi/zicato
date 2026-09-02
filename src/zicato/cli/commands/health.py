@@ -36,6 +36,7 @@ from zicato.health.diagnostics import LoopHealth, assess_loop_health
 from zicato.health.inputs import (
     epoch_noise_floor_inputs,
     epoch_preflight_record,
+    epoch_settlement_receipt_attention,
     epoch_tree_import_gaps,
     workspace_preflight_gate,
 )
@@ -254,6 +255,7 @@ def health_cmd(workspace: str, epoch: str | None) -> None:
     noise_floor, promote_margin, evidence_gate_on = epoch_noise_floor_inputs(
         workspace_dir, epoch_id
     )
+    receipt_attention = epoch_settlement_receipt_attention(workspace_dir, epoch_id)
     report = assess_loop_health(
         losses_by_generation=losses_by_generation,
         experiments=experiments,
@@ -267,6 +269,7 @@ def health_cmd(workspace: str, epoch: str | None) -> None:
         preflight=epoch_preflight_record(workspace_dir, epoch_id),
         preflight_gate=workspace_preflight_gate(workspace_dir),
         tree_import_gaps=epoch_tree_import_gaps(workspace_dir, epoch_id) or None,
+        settlement_receipt_attention=receipt_attention,
     )
 
     click.echo(render_report(report))

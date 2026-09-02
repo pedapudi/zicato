@@ -6,11 +6,10 @@ against the same hermetic stubs ``tests/test_orchestrator.py`` uses
 conservative resume protocol's two load-bearing properties:
 
 * **A tournament interrupted with completed board units resumes WITHOUT
-  re-running them.** We let one round complete (so every board unit has
-  a ``loss.json`` on disk), strip the outcome to simulate a mid-flight
-  kill, instrument ``_run_single`` to count agent runs, then re-enter the
-  loop. The completed units are cache HITs — ``_run_single`` is never
-  called for them — and lineage / journal are not corrupted.
+  re-running them.** We stop one round immediately before its settlement
+  receipt is written, instrument ``_run_single`` to count agent runs, then
+  re-enter the loop. The completed units are cache HITs — ``_run_single`` is
+  never called for them — and lineage / journal are not corrupted.
 
 * **A clean workspace (nothing to resume) is byte-identical to today** —
   the resume hook returns the no-op plan and a fresh round runs exactly
@@ -87,28 +86,6 @@ def _run_single_counter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     return counts
 
 
-def _strip_outcome(workspace: Path, epoch_id: str, generation_id: str) -> None:
-    """Simulate a mid-tournament kill: drop the committed outcome block.
-
-    Leaves ``experiment.json`` + ``patches/`` + ``snapshot/`` + the
-    per-entry ``loss.json`` files exactly as a completed-but-not-journaled
-    run would — but with ``outcome=None``, the marker the resume protocol
-    keys on. Also removes the lineage / journal entries the finished round
-    wrote, so the workspace looks genuinely interrupted (the resume must
-    not double-append them).
-    """
-    exp = workspace / "epochs" / epoch_id / "generations" / generation_id / "experiment.json"
-    body = json.loads(exp.read_text())
-    body["outcome"] = None
-    exp.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n")
-    # A genuine mid-tournament kill never advanced the promoted head — the
-    # current_generation marker only moves on a completed promotion. Reset
-    # it to the parent so the resumed round derives v1 from v0, not v1.
-    marker = workspace / "epochs" / epoch_id / "current_generation"
-    if marker.exists():
-        marker.write_text("v0")
-
-
 def test_resume_reuses_completed_units_without_rerun(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -122,16 +99,26 @@ def test_resume_reuses_completed_units_without_rerun(
     )
     _wire_real_loss_cache(monkeypatch)
 
-    # --- Round 1: run a full round so v0 + v1 board units land loss.json. ---
-    first = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
-    assert first.proposed_generation_id == "v1"
+    # Stop after the completed board units land but before settlement records
+    # its receipt. This is a reachable interruption state: the experiment and
+    # loss cache exist, while outcome, lineage verdict, and champion marker do
+    # not yet claim the round committed.
+    import zicato.evolve.settlement as settlement_module
+
+    real_commit = settlement_module.commit_field_settlement
+
+    def _stop_before_receipt(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("injected crash before settlement receipt")
+
+    monkeypatch.setattr(settlement_module, "commit_field_settlement", _stop_before_receipt)
+    with pytest.raises(RuntimeError, match="injected crash before settlement receipt"):
+        run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    monkeypatch.setattr(settlement_module, "commit_field_settlement", real_commit)
+
     gens = workspace / "epochs" / epoch_id / "generations"
     v1_dir = gens / "v1"
     assert (v1_dir / "runs" / "entry_a" / "loss.json").is_file()
     assert (gens / "v0" / "runs" / "entry_a" / "loss.json").is_file()
-
-    # --- Simulate a mid-tournament kill: strip v1's outcome. ---
-    _strip_outcome(workspace, epoch_id, "v1")
 
     # An aux responder that RAISES if the proposer is ever consulted —
     # resume must reuse the persisted experiment, never re-propose.

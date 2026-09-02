@@ -391,6 +391,133 @@ def test_evolve_auto_creates_then_rolls_on_rubric_edit(
     assert second["v0_parent"] == epoch_after_first
 
 
+def test_pending_settlement_finishes_before_contract_drift_rolls_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Auto-roll seeds from the recovered champion, not the pre-crash head."""
+    from zicato.epoch.journal import read_experiment
+    from zicato.evolve import settlement as settlement_module
+    from zicato.evolve.settlement_recovery import (
+        commit_field_settlement,
+        field_settlement_intent_path,
+    )
+    from zicato.orchestrator import evolve_n_rounds
+
+    workspace, rubric = _bootstrap_registered(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 5.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    real_commit = settlement_module.commit_field_settlement
+
+    def stop_after_receipt(root: Path, intent: dict[str, Any]) -> None:
+        def stop(boundary: str) -> None:
+            if boundary == "receipt_persisted":
+                raise RuntimeError(boundary)
+
+        commit_field_settlement(root, intent, crash_checkpoint=stop)
+
+    monkeypatch.setattr(settlement_module, "commit_field_settlement", stop_after_receipt)
+    with pytest.raises(RuntimeError, match="receipt_persisted"):
+        asyncio.run(
+            evolve_n_rounds(
+                rounds=1,
+                workspace_root=workspace,
+                epoch_id=None,
+                harness_call_llm=harness_call_llm,
+                auxiliary_call_llm=_make_aux(),
+            )
+        )
+    crashed_epoch = current_epoch_id(workspace)
+    assert crashed_epoch is not None
+    assert read_experiment(workspace, crashed_epoch, "v1").outcome is None
+
+    rubric.write_text("# Rubric\n- Be careful.\n- Cite sources.\n")
+    monkeypatch.setattr(settlement_module, "commit_field_settlement", real_commit)
+    asyncio.run(
+        evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=None,
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=_make_aux(),
+        )
+    )
+
+    rolled_epoch = current_epoch_id(workspace)
+    assert rolled_epoch is not None and rolled_epoch != crashed_epoch
+    receipt = json.loads(
+        field_settlement_intent_path(workspace, crashed_epoch, 0).read_text(encoding="utf-8")
+    )
+    assert receipt["state"] == "committed"
+    assert read_experiment(workspace, crashed_epoch, "v1").outcome is not None
+    assert (workspace / "epochs" / crashed_epoch / "current_generation").read_text().strip() == "v1"
+    lineage = json.loads((workspace / "lineage.json").read_text(encoding="utf-8"))
+    rolled = next(row for row in lineage["epochs"] if row["id"] == rolled_epoch)
+    assert rolled["v0_parent"] == crashed_epoch
+
+
+def test_contract_drift_discards_unsettled_candidate_before_closing_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A cached candidate cannot cross the evaluation-contract boundary."""
+    from zicato.evolve import settlement as settlement_module
+    from zicato.orchestrator import evolve_n_rounds
+
+    workspace, rubric = _bootstrap_registered(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 5.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    real_commit = settlement_module.commit_field_settlement
+    monkeypatch.setattr(
+        settlement_module,
+        "commit_field_settlement",
+        lambda _root, _intent: (_ for _ in ()).throw(RuntimeError("before receipt")),
+    )
+    with pytest.raises(RuntimeError, match="before receipt"):
+        asyncio.run(
+            evolve_n_rounds(
+                rounds=1,
+                workspace_root=workspace,
+                epoch_id=None,
+                harness_call_llm=harness_call_llm,
+                auxiliary_call_llm=_make_aux(),
+            )
+        )
+    crashed_epoch = current_epoch_id(workspace)
+    assert crashed_epoch is not None
+
+    rubric.write_text("# Rubric\n- Be careful.\n- Cite sources.\n")
+    monkeypatch.setattr(settlement_module, "commit_field_settlement", real_commit)
+    asyncio.run(
+        evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=None,
+            harness_call_llm=harness_call_llm,
+            auxiliary_call_llm=_make_aux(),
+        )
+    )
+
+    rolled_epoch = current_epoch_id(workspace)
+    assert rolled_epoch is not None and rolled_epoch != crashed_epoch
+    assert not (workspace / "epochs" / crashed_epoch / "generations" / "v1").exists()
+    lineage = json.loads((workspace / "lineage.json").read_text(encoding="utf-8"))
+    crashed = next(row for row in lineage["epochs"] if row["id"] == crashed_epoch)
+    assert all(row["id"] != "v1" for row in crashed["generations"])
+    rolled = next(row for row in lineage["epochs"] if row["id"] == rolled_epoch)
+    assert rolled["v0_parent"] == crashed_epoch
+
+
 def test_evolve_no_auto_epoch_errors_on_drift(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

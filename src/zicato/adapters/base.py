@@ -218,9 +218,8 @@ class HarnessAdapter(Protocol):
     ) -> None:
         """OPTIONAL: fold a just-promoted generation into out-of-tree state.
 
-        Called exactly once per settled promotion, immediately after the
-        champion marker advances to ``generation_id`` — the first moment
-        the promotion is durable. An adapter whose evolved state lives
+        Called at most once per settled promotion, after canonical settlement
+        advances the champion marker to ``generation_id``. An adapter whose evolved state lives
         only in the mutable tree needs nothing here; this exists for a
         target whose real state lives somewhere the tree cannot reach (a
         database row, a served artifact, a remote config) and which
@@ -252,12 +251,15 @@ class HarnessAdapter(Protocol):
         :data:`~zicato.evolve.promote_hook.ON_PROMOTE_TIMEOUT_SECONDS`
         — never un-promotes the generation and never fails the round:
         the champion marker has already advanced and the outcome is
-        already durable. The failure is logged at ``ERROR`` and raised
-        as an ``on_promote_hook_failed`` WARNING in the round's
-        loop-health report, and reconciling the external side effect is
-        then the operator's job. Implementations that need a promotion
-        to be all-or-nothing must make their own side effect idempotent
-        and reconcile from ``lineage.json``.
+        already durable. The field-settlement receipt records
+        ``delivery_unknown`` before the call and resolves it to
+        ``succeeded`` or ``failed`` afterward. Recovery never retries an
+        unknown delivery. A failure is logged at ``ERROR`` and raised as an
+        ``on_promote_hook_failed`` WARNING in the round's loop-health report;
+        reconciling the external side effect is then the operator's job.
+        Implementations that need a promotion to be all-or-nothing must make
+        their own side effect idempotent and reconcile from the receipt and
+        ``lineage.json``.
 
         Optionality
         -----------

@@ -158,6 +158,9 @@ def index_preflight(workspace_root: Path) -> str:
     action attached, so it is logged at WARNING and named. The run still
     continues — a stale index is a degraded read, never a reason to stop.
     """
+    from zicato.evolve.settlement_recovery import (  # noqa: PLC0415
+        acknowledge_repaired_settlement_indexes,
+    )
     from zicato.index.ingest import ensure_index, heal_index  # noqa: PLC0415
     from zicato.index.schema import IndexSchemaNewerError  # noqa: PLC0415
 
@@ -174,6 +177,7 @@ def index_preflight(workspace_root: Path) -> str:
         return "index: SKIPPED — index.db was written by a newer zicato"
     built = actions[0] if actions else "present"
     if built.startswith("built:"):
+        acknowledge_repaired_settlement_indexes(workspace_root)
         return f"index: built fresh ({built.split(':', 1)[1]})"
     healed = heal_index(workspace_root)
     if healed:

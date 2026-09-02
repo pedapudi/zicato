@@ -918,7 +918,8 @@ pipeline only.
 | Seam | Owns | RoundLog duty |
 |---|---|---|
 | `_propose_child` | builds the single `ProposerContext` both pipelines share; calls `proposer_agent.propose`; stamps `round_index` | emits `proposal_attempted`, `experiment_minted`, `patches_applied` (via `round_emitter`) |
-| `_finalize_generation` | the ONE write pipeline every round tail flows through (outcome + index dual-write + lineage + journal) | emits NOTHING itself — the caller emits `decision_recorded` / `round_closed` |
+| field-settlement receipt replay | the recoverable write pipeline for resolved tournaments (outcomes + lineage + champion marker + journals + bracket + one reported derived-index refresh) | emits nothing; the caller emits `decision_recorded` / `round_closed` |
+| `_finalize_generation` | the direct outcome pipeline for terminal paths that never enter a tournament | emits nothing; the caller emits `decision_recorded` / `round_closed` |
 | `_round_epilogue` | the shared end-of-round tail (health assessment + decision analyzer + report regen) | no direct emission |
 | `_mint_challenger_field` | PURE — the field-diversity accept/soft-reject decision (`_FieldMintDecision`) | none (I/O-free) |
 | `_apply_field_overrides` | PURE — re-resolves field crowning under operator overrides | none (provenance goes to the field record) |
@@ -926,7 +927,8 @@ pipeline only.
 **Steps.**
 
 1. **Find the seam that owns your concern** from the table above. A new propose
-   input goes on `_propose_child`; a new write-tail step goes in
+   input goes on `_propose_child`; a recoverable tournament write goes in
+   field-settlement receipt replay; a pre-tournament terminal write goes in
    `_finalize_generation`; a new end-of-round side effect goes in
    `_round_epilogue`; a change to field accept/reject goes in the PURE
    `_mint_challenger_field`; an override rule goes in the PURE
@@ -1187,7 +1189,7 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
 | Heartbeat | `.zicato/runtime/heartbeat.json` | the live PHASE (`proposing` / `screening:r{n}` / `tournament:…` / `holdout` / `gate`) |
 | Active runs | `.zicato/runtime/active_runs/{run_id}.json` | in-flight runs; one present-but-unsettled = a worker that never returned |
 | Worker args | a temp file (`python -m zicato._tournament_worker <args-file>`) | the worker spec + `config_pins` (ephemeral — cleaned in a `finally`) |
-| Journal + lineage | `epochs/{epoch}/journal…`, `lineage.json` | only OUTCOMED generations (the outcome-before-journal-and-lineage rule — `07-runtime-and-durability.md`, invariant `D8`) |
+| Journal + lineage | `epochs/{epoch}/journal…`, `lineage.json` | the journal contains only resolved experiments; lineage also contains applied, unresolved generations as `promoted=null` nodes (invariant `D8`) |
 | Health report | `epochs/{epoch}/health/round_{N}.json` | the per-round `LoopHealth` findings |
 
 **Steps.**
@@ -1219,11 +1221,14 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
    and the `config_pins` (10-builder-cli-library.md §10.10). It is a TEMP file cleaned up in a `finally`, so
    capture it during a hang (or from a crash that skipped cleanup) — it records
    what the worker was told to run.
-6. **Cross-check the journal + lineage.** `journal` and `lineage.json` record only
-   OUTCOMED generations (the outcome-before-journal-and-lineage rule —
-   07-runtime-and-durability.md, invariant `D8`). A generation in the round log
-   but absent from lineage was never given an outcome: on resume it is discarded
-   safely, and in a debugging session it is the unfinished generation.
+6. **Cross-check the journal + lineage.** The journal records only resolved
+   experiments. `lineage.json` additionally records applied, unresolved
+   challengers with `promoted=null` (07-runtime-and-durability.md, invariant
+   `D8`). A pending lineage node with no settlement receipt belongs to an
+   interrupted tournament; resume either continues the supported
+   single-challenger case or discards the whole unrecorded field. Source that
+   exists without a lineage node is outside this inference boundary and is
+   reported for repair rather than attached to a round by position.
 
 **Traps.**
 

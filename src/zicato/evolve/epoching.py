@@ -102,6 +102,7 @@ async def ensure_epoch_for_contract(
     auto_epoch: bool,
     aux_call_llm: CallLLM,
     epoch_name: str | None = None,
+    before_contract_roll: Callable[[str], None] | None = None,
 ) -> str:
     """Resolve the epoch ``evolve`` should run against, auto-rolling on drift.
 
@@ -197,12 +198,15 @@ async def ensure_epoch_for_contract(
             "epoch automatically.)"
         )
 
-    # Auto-roll: close the drifted epoch, open a fresh one carrying the
+    # Auto-roll: reconcile any contract-bound in-flight work before closing
+    # the drifted epoch, then open a fresh epoch carrying the
     # new contract, baselined from the closed epoch's promoted head.
     # close_epoch_async is awaited (we are already inside an event loop;
     # the sync close_epoch would nest asyncio.run and raise).
     from zicato.epoch.lifecycle import close_epoch_async  # noqa: PLC0415
 
+    if before_contract_roll is not None:
+        before_contract_roll(cur)
     await close_epoch_async(workspace_root, cur, aux_call_llm=aux_call_llm)
 
     # Mid-run the publication is refreshed deterministically each round (no

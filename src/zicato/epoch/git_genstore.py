@@ -964,35 +964,126 @@ class GitGenerationStore:
         *,
         dry_run: bool,
     ) -> int:
-        """Delete selected generation tags and worktrees while preserving records."""
+        """Delete selected generation refs and every recognized checkout.
+
+        The generation tag is the existence marker, so it is deleted last.
+        Until then this method can identify each selected commit, remove its
+        reusable checkout and any crash-registered ephemeral checkout, and
+        rewind an epoch branch whose head is one of the discarded commits.
+        Any unrecognized registered worktree at a selected commit aborts the
+        prune instead of leaving source state behind an absent tag.
+        """
         selected = [
             (
+                generation_id,
                 self._generation_tag(epoch_id, generation_id),
                 self.snapshot_path(epoch_id, generation_id),
             )
             for generation_id in generation_ids
         ]
-        reclaimed = sum(source_tree_bytes(worktree) for _, worktree in selected)
+        reclaimed = sum(source_tree_bytes(worktree) for _, _, worktree in selected)
         if dry_run:
             return reclaimed
+        if not (self._repo / ".git").exists():
+            return reclaimed
         with _worktree_admin_lock(self._repo):
-            for tag, worktree in selected:
-                if worktree.is_dir():
-                    shutil.rmtree(worktree, ignore_errors=True)
-                try:
-                    self._git("tag", "-d", tag)
-                except GitCommandError as exc:
-                    log.warning("generation source prune: tag delete failed for %s: %s", tag, exc)
-            try:
-                self._git("worktree", "prune")
-            except GitCommandError as exc:
-                log.warning("generation source prune: worktree prune failed: %s", exc)
+            selected_commits: dict[str, str] = {}
+            for generation_id, tag, _worktree in selected:
+                ref = f"refs/tags/{tag}"
+                if not self._git_ok("rev-parse", "--verify", "--quiet", ref):
+                    continue
+                selected_commits[generation_id] = self._git(
+                    "rev-parse", f"{ref}^{{commit}}"
+                ).strip()
+            commits = set(selected_commits.values())
+
+            branch = self._epoch_branch(epoch_id)
+            branch_ref = f"refs/heads/{branch}"
+            if commits and self._git_ok("rev-parse", "--verify", "--quiet", branch_ref):
+                branch_head = self._git("rev-parse", branch_ref).strip()
+                if branch_head in commits:
+                    ancestor = branch_head
+                    while ancestor in commits:
+                        ancestor = self._git("rev-parse", f"{ancestor}^").strip()
+                    current_branch = ""
+                    try:
+                        current_branch = self._git("symbolic-ref", "--short", "HEAD").strip()
+                    except GitCommandError:
+                        pass
+                    if current_branch == branch:
+                        self._git("reset", "--hard", ancestor)
+                    else:
+                        self._git("update-ref", branch_ref, ancestor, branch_head)
+
+            registered = self._registered_worktrees()
+            canonical_paths = {worktree.resolve() for _, _, worktree in selected}
+            for worktree_path, head in registered:
+                if head not in commits:
+                    continue
+                resolved = worktree_path.resolve()
+                if resolved == self._repo.resolve():
+                    raise RuntimeError(
+                        "generation prune left the private repository at a discarded commit"
+                    )
+                if resolved not in canonical_paths and not self._is_ephemeral_worktree(resolved):
+                    raise RuntimeError(
+                        "generation prune found an unrecognized worktree at a "
+                        f"discarded commit: {worktree_path}"
+                    )
+                self._git("worktree", "remove", "--force", str(worktree_path))
+                if self._is_ephemeral_worktree(resolved) and resolved.parent.exists():
+                    shutil.rmtree(resolved.parent)
+
+            for _generation_id, _tag, worktree in selected:
+                if worktree.exists():
+                    shutil.rmtree(worktree)
+                if worktree.exists():
+                    raise OSError(f"generation source worktree still exists: {worktree}")
+
+            self._git("worktree", "prune")
+            remaining = [
+                str(path) for path, head in self._registered_worktrees() if head in commits
+            ]
+            if remaining:
+                raise RuntimeError(
+                    "generation prune left worktrees at discarded commits: " + ", ".join(remaining)
+                )
+
+            for _generation_id, tag, _worktree in selected:
+                self._git("update-ref", "-d", f"refs/tags/{tag}")
+            for generation_id, _tag, _worktree in selected:
+                if self.has_generation(epoch_id, generation_id):
+                    raise RuntimeError(
+                        f"generation prune could not delete {epoch_id}/{generation_id}"
+                    )
         if selected:
             try:
                 self._git("gc", "--auto")
             except GitCommandError as exc:
-                log.warning("generation source prune: git gc failed: %s", exc)
+                log.debug("generation-store maintenance skipped after prune: %s", exc)
         return reclaimed
+
+    def _registered_worktrees(self) -> tuple[tuple[Path, str], ...]:
+        """Return registered worktree paths and commit hashes."""
+        records: list[tuple[Path, str]] = []
+        path: Path | None = None
+        head = ""
+        for line in [*self._git("worktree", "list", "--porcelain").splitlines(), ""]:
+            if line.startswith("worktree "):
+                path = Path(line.removeprefix("worktree "))
+            elif line.startswith("HEAD "):
+                head = line.removeprefix("HEAD ")
+            elif not line and path is not None:
+                records.append((path, head))
+                path = None
+                head = ""
+        return tuple(records)
+
+    @staticmethod
+    def _is_ephemeral_worktree(path: Path) -> bool:
+        """Return whether ``path`` is a recognized per-run temporary checkout."""
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        return path.parent.name.startswith(EPHEMERAL_SNAPSHOT_PREFIX) and temp_root in path.parents
 
 
 def _artifact_ignore(src: str, names: list[str]) -> set[str]:

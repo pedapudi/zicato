@@ -332,7 +332,7 @@ def build_drift_movements(paths: WorkspacePaths, generation_id: str) -> dict[str
 
 
 def build_health_report(paths: WorkspacePaths) -> dict[str, Any]:
-    """``GET /api/health-report`` — the latest loop-health report."""
+    """``GET /api/health-report`` — saved diagnostics plus receipt status."""
     epoch_id = read_current_epoch(paths)
     healthy_empty: dict[str, Any] = {
         "epoch_id": epoch_id,
@@ -343,10 +343,10 @@ def build_health_report(paths: WorkspacePaths) -> dict[str, Any]:
         return healthy_empty
     latest = _latest_round_report(paths.epoch_health_dir(epoch_id))
     if latest is None:
-        return healthy_empty
+        return _overlay_settlement_health(paths, healthy_empty, epoch_id)
     value = _read_json_value(latest)
     if not isinstance(value, dict):
-        return healthy_empty
+        return _overlay_settlement_health(paths, healthy_empty, epoch_id)
     report: dict[str, Any] = {
         "epoch_id": value.get("epoch_id") if isinstance(value.get("epoch_id"), str) else epoch_id,
         "findings": value.get("findings") if isinstance(value.get("findings"), list) else [],
@@ -355,6 +355,50 @@ def build_health_report(paths: WorkspacePaths) -> dict[str, Any]:
     checked_at = value.get("checked_at")
     if isinstance(checked_at, str):
         report["checked_at"] = checked_at
+    return _overlay_settlement_health(paths, report, epoch_id)
+
+
+def _overlay_settlement_health(
+    paths: WorkspacePaths,
+    report: dict[str, Any],
+    epoch_id: str,
+) -> dict[str, Any]:
+    """Replace saved receipt-derived findings with a fresh receipt scan."""
+    from zicato.health.diagnostics import detect_settlement_receipt_attention  # noqa: PLC0415
+    from zicato.health.inputs import (  # noqa: PLC0415
+        epoch_settlement_receipt_attention,
+    )
+
+    receipt_codes = {
+        "on_promote_hook_delivery_unknown",
+        "settlement_index_repair_required",
+        "settlement_receipt_corrupt",
+    }
+    original_findings = report.get("findings", [])
+    saved = [
+        finding
+        for finding in original_findings
+        if isinstance(finding, dict) and finding.get("code") not in receipt_codes
+    ]
+    attention = epoch_settlement_receipt_attention(paths.root, epoch_id)
+    fresh = detect_settlement_receipt_attention(attention)
+    saved.extend(
+        {
+            "code": finding.code,
+            "severity": finding.severity,
+            "summary": finding.summary,
+            "detail": finding.detail,
+        }
+        for finding in fresh
+    )
+    report["findings"] = saved
+    saved_receipt_was_removed = len(original_findings) != len(saved) - len(fresh)
+    if saved_receipt_was_removed:
+        report["healthy"] = not any(
+            finding.get("severity") in {"warning", "critical"} for finding in saved
+        )
+    elif any(finding.severity in {"warning", "critical"} for finding in fresh):
+        report["healthy"] = False
     return report
 
 

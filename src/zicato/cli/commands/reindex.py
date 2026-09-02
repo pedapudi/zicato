@@ -37,6 +37,7 @@ from pathlib import Path
 
 import click
 
+from zicato.evolve.settlement_recovery import acknowledge_repaired_settlement_indexes
 from zicato.index.ingest import (
     backfill_generations,
     backfill_tournament_fk,
@@ -72,6 +73,7 @@ def reindex_cmd(workspace: str) -> None:
     """
     ws = Path(workspace).resolve()
     db_path = rebuild_index(ws)
+    acknowledge_repaired_settlement_indexes(ws)
     counts = index_counts(db_path)
     click.echo(f"Rebuilt index at {db_path}.")
     click.echo(

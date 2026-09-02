@@ -1518,8 +1518,8 @@ def facet_scores_for_generation(
     the ``overall`` row, which is the same aggregate over every entry.
 
     THE TRAIN SLICE rather than the whole board. The number the gate compares and
-    the number ``gen_score.json`` caches are BOTH the train-slice aggregate
-    (:func:`zicato.tournament.governance._train_aggs`), because the holdout
+    the number ``gen_score.json`` caches are BOTH the aggregate over the train
+    ids returned by :func:`zicato.board.split.split_board`, because the holdout
     is confirm-only and default-on: a board of six or more entries hands
     ~30% of itself to the holdout with no tag in sight. Aggregating the
     whole board here would put a second, larger "candidate scalar" on the

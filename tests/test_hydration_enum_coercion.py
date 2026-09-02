@@ -33,11 +33,17 @@ from zicato.core.types import (
     DriftMovementActual,
     Experiment,
     HypothesisSpec,
+    MetricMovementActual,
     OutcomeRecord,
 )
 from zicato.core.workspace import experiment_json_path
 from zicato.epoch.analysis import _hydrate_experiment, _hydrate_outcome
-from zicato.epoch.journal import _outcome_from_dict, read_experiment, write_experiment
+from zicato.epoch.journal import (
+    _outcome_from_dict,
+    outcome_from_dict,
+    read_experiment,
+    write_experiment,
+)
 from zicato.telemetry.reducer import (
     _profile_to_dict,
     loss_profile_from_dict,
@@ -69,6 +75,14 @@ def _record(decision: TournamentDecision = TournamentDecision.PROMOTED) -> Outco
         scalar_score_delta=-0.20,
         tournament_decision=decision,
         rejection_reason="",
+        metric_movements=(
+            MetricMovementActual(
+                metric_name="rubric:clarity",
+                from_value=0.4,
+                to_value=0.7,
+                hypothesis_match=True,
+            ),
+        ),
     )
 
 
@@ -298,11 +312,13 @@ def test_an_operator_override_round_records_the_enum_not_the_wire_token(
     from tests.test_pareto_frontier import _drive_round
 
     recorded: list[OutcomeRecord] = []
-    real_finalize_generation = settlement._finalize_generation
+    real_commit_field_settlement = settlement.commit_field_settlement
 
-    def _spy_finalize_generation(*args: Any, **kwargs: Any) -> Experiment:
-        recorded.append(kwargs["outcome"])
-        return real_finalize_generation(*args, **kwargs)
+    def _spy_commit_field_settlement(workspace_root: Path, intent: dict[str, Any]) -> None:
+        recorded.extend(
+            outcome_from_dict(candidate["outcome"]) for candidate in intent["candidates"]
+        )
+        real_commit_field_settlement(workspace_root, intent)
 
     def _force_promote(
         workspace_root: Path, generation_ids: list[str]
@@ -317,7 +333,7 @@ def test_an_operator_override_round_records_the_enum_not_the_wire_token(
             )
         }
 
-    monkeypatch.setattr(settlement, "_finalize_generation", _spy_finalize_generation)
+    monkeypatch.setattr(settlement, "commit_field_settlement", _spy_commit_field_settlement)
     monkeypatch.setattr(gate, "claim_field_gate_overrides", _force_promote)
 
     _workspace, _epoch_id, outcome = _drive_round(

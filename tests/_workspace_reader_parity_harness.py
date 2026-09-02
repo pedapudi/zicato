@@ -534,7 +534,15 @@ def _experiment(epoch_id: str, generation_id: str) -> dict[str, Any]:
                 "note": "",
             }
         ],
-        "metric_movements": [{"name": "cost:tokens_spent", "before": 500, "after": 480}],
+        "metric_movements": [
+            {
+                "metric_name": "cost:tokens_spent",
+                "from_value": 500,
+                "to_value": 480,
+                "hypothesis_match": True,
+                "note": "",
+            }
+        ],
         "generalization_gap": {"train_delta": -0.02, "holdout_delta": 0.01},
     }
     return record

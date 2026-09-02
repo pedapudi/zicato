@@ -20,6 +20,7 @@ from zicato.epoch.lineage import append_to_lineage
 from zicato.index.ingest import (
     backfill_generations,
     ingest_experiment,
+    ingest_field_settlement,
     ingest_run,
     rebuild_index,
 )
@@ -432,6 +433,98 @@ def test_ingest_run_skips_run_without_loss_json(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_ingest_field_settlement_rolls_back_every_candidate_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A failure after one candidate cannot expose a partial field refresh."""
+    import sqlite3
+
+    import zicato.index.ingest as ingest_module
+
+    ws, eid = _build_workspace(tmp_path)
+    db = rebuild_index(ws)
+    v2 = Generation(
+        id="v2",
+        epoch_id=eid,
+        parent_id="v0",
+        snapshot_root=Path("/tmp/v2"),
+        created_at="2026-09-01T00:00:00Z",
+        promoted=False,
+        round_index=1,
+    )
+    append_to_lineage(ws, eid, v2, "v0")
+    write_experiment(
+        ws,
+        eid,
+        "v2",
+        make_experiment(
+            epoch_id=eid,
+            generation_id="v2",
+            parent_generation_id="v0",
+            outcome=make_outcome_record(tournament_decision="rejected"),
+        ),
+    )
+
+    original = ingest_module._ingest_experiment_into
+    calls = 0
+
+    def fail_second(*args: Any, **kwargs: Any) -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected grouped projection failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ingest_module, "_ingest_experiment_into", fail_second)
+    with pytest.raises(OSError, match="grouped projection failure"):
+        ingest_field_settlement(ws, db, eid, ("v1", "v2"), None)
+
+    with sqlite3.connect(db) as connection:
+        indexed_v2 = connection.execute(
+            "SELECT COUNT(*) FROM experiments WHERE epoch_id = ? AND generation_id = 'v2'",
+            (eid,),
+        ).fetchone()[0]
+        lineage_v2 = connection.execute(
+            "SELECT COUNT(*) FROM generations WHERE epoch_id = ? AND generation_id = 'v2'",
+            (eid,),
+        ).fetchone()[0]
+    assert indexed_v2 == 0
+    assert lineage_v2 == 0
+
+
+def test_ingest_field_settlement_projects_every_candidate_in_one_call(tmp_path: Path) -> None:
+    """The grouped writer refreshes all lineage and outcome rows."""
+    ws, eid = _build_workspace(tmp_path)
+    v2 = Generation(
+        id="v2",
+        epoch_id=eid,
+        parent_id="v0",
+        snapshot_root=Path("/tmp/v2"),
+        created_at="2026-09-01T00:00:00Z",
+        promoted=False,
+        round_index=1,
+    )
+    append_to_lineage(ws, eid, v2, "v0")
+    write_experiment(
+        ws,
+        eid,
+        "v2",
+        make_experiment(
+            epoch_id=eid,
+            generation_id="v2",
+            parent_generation_id="v0",
+            outcome=make_outcome_record(tournament_decision="rejected"),
+        ),
+    )
+
+    ingest_field_settlement(ws, None, eid, ("v1", "v2"), None)
+
+    by_id = {row["generation_id"]: row for row in experiments_for_epoch(ws / "index.db", eid)}
+    assert by_id["v1"]["tournament_decision"] == "promoted"
+    assert by_id["v2"]["tournament_decision"] == "rejected"
+
+
 def test_ingest_experiment_upserts_one_experiment(tmp_path: Path) -> None:
     ws, eid = _build_workspace(tmp_path)
     ingest_experiment(ws, None, eid, "v1")
@@ -521,7 +614,7 @@ def test_incremental_ingest_matches_full_rebuild(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# generations table — parent + promoted flags from the experiment
+# generations table — parent and promotion state from lineage
 # ---------------------------------------------------------------------------
 
 
@@ -531,14 +624,11 @@ def _row_dict(row: Any) -> dict[str, Any]:
 
 
 def _build_chain_workspace(tmp_path: Path) -> tuple[Path, str]:
-    """Build a workspace mirroring the t6 chain: v0 seed, v1 promoted, v2 rejected, v3 promoted.
+    """Build a chain with a seed and promoted, rejected, and promoted children.
 
-    The lineage row for v0 is the only one seeded ahead of the
-    per-generation ingests — v1/v2/v3 land via ``ingest_experiment``
-    BEFORE ``append_to_lineage`` runs (the live orchestrator ordering
-    that originally produced the broken rows). This exercises the
-    fixed dual-write path: the experiment is the authoritative source
-    of the generation's parent + promoted flag.
+    Each challenger experiment is ingested before lineage resolves and again
+    afterward. The first pass creates a thin generation row; the second pass
+    refreshes topology from canonical lineage, matching settlement recovery.
     """
     ws = tmp_path / ".zicato"
     board = tmp_path / "board.jsonl"
@@ -568,8 +658,7 @@ def _build_chain_workspace(tmp_path: Path) -> tuple[Path, str]:
     append_to_lineage(ws, eid, g0, None)
     ingest_experiment(ws, None, eid, "v0")
 
-    # v1 — promoted challenger of v0. Write the experiment FIRST,
-    # ingest it, THEN append to lineage — mirrors orchestrator order.
+    # v1 — promoted challenger of v0.
     exp_v1 = make_experiment(
         epoch_id=eid,
         generation_id="v1",
@@ -589,6 +678,7 @@ def _build_chain_workspace(tmp_path: Path) -> tuple[Path, str]:
         promoted=True,
     )
     append_to_lineage(ws, eid, g1, "v0")
+    ingest_experiment(ws, None, eid, "v1")
 
     # v2 — rejected challenger of v1.
     exp_v2 = make_experiment(
@@ -614,6 +704,7 @@ def _build_chain_workspace(tmp_path: Path) -> tuple[Path, str]:
         promoted=False,
     )
     append_to_lineage(ws, eid, g2, "v1")
+    ingest_experiment(ws, None, eid, "v2")
 
     # v3 — promoted challenger of v1 (the surviving champion).
     exp_v3 = make_experiment(
@@ -635,21 +726,15 @@ def _build_chain_workspace(tmp_path: Path) -> tuple[Path, str]:
         promoted=True,
     )
     append_to_lineage(ws, eid, g3, "v1")
+    ingest_experiment(ws, None, eid, "v3")
 
     return ws, eid
 
 
-def test_ingest_experiment_writes_parent_and_promoted_from_experiment(
+def test_ingest_after_settlement_projects_parent_and_promotion_from_lineage(
     tmp_path: Path,
 ) -> None:
-    """The live dual-write must carry parent + promoted, even when lineage is stale.
-
-    Reproduces the t6 ordering: ``experiment.json`` is written and
-    ingested BEFORE ``append_to_lineage`` runs, so the lineage-only
-    read at dual-write time misses the row. The experiment itself is
-    authoritative for the generation's parent + verdict, so the index
-    must use it.
-    """
+    """A post-lineage refresh projects the complete canonical chain."""
     ws, eid = _build_chain_workspace(tmp_path)
     rows = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(ws / "index.db", eid)}
 
@@ -671,15 +756,7 @@ def test_ingest_experiment_writes_parent_and_promoted_from_experiment(
 
 
 def test_ingest_experiment_generation_row_is_idempotent(tmp_path: Path) -> None:
-    """Re-running ingest_experiment must not flip the parent / promoted flag.
-
-    The chain builder mirrors the orchestrator's order (ingest fires
-    before lineage is appended), so the first ingest writes empty
-    ``created_at`` values; a re-ingest after lineage has caught up
-    fills them in. Compare only the two columns the experiment owns
-    authoritatively — the parent + the verdict — which are exactly
-    what was broken on t6.
-    """
+    """Re-ingesting an experiment preserves lineage-owned topology."""
     ws, eid = _build_chain_workspace(tmp_path)
 
     def _critical_cols() -> dict[str, tuple[Any, int]]:
@@ -702,7 +779,7 @@ def test_ingest_experiment_generation_row_is_idempotent(tmp_path: Path) -> None:
 def test_ingest_experiment_unresolved_outcome_leaves_promoted_unset(
     tmp_path: Path,
 ) -> None:
-    """A proposer-side experiment (outcome=None) writes promoted=0 and parent set."""
+    """An experiment cannot invent topology before lineage records it."""
     ws = tmp_path / ".zicato"
     board = tmp_path / "board.jsonl"
     board.write_text(
@@ -725,8 +802,164 @@ def test_ingest_experiment_unresolved_outcome_leaves_promoted_unset(
     ingest_experiment(ws, None, eid, "v1")
 
     rows = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(ws / "index.db", eid)}
+    assert rows["v1"]["parent_generation_id"] is None
+    assert rows["v1"]["promoted"] is None
+
+    pending = Generation(
+        id="v1",
+        epoch_id=eid,
+        parent_id="v0",
+        snapshot_root=Path("/tmp/snap/v1"),
+        created_at="2026-05-20T00:01:00Z",
+    )
+    append_to_lineage(ws, eid, pending, "v0", pending=True)
+    ingest_experiment(ws, None, eid, "v1")
+    rows = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(ws / "index.db", eid)}
     assert rows["v1"]["parent_generation_id"] == "v0"
-    assert rows["v1"]["promoted"] == 0
+    assert rows["v1"]["promoted"] is None
+
+
+def test_experiment_outcome_cannot_override_lineage_topology(tmp_path: Path) -> None:
+    """Conflicting experiment detail leaves parentage and promotion unchanged."""
+    ws = tmp_path / ".zicato"
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    rubric = tmp_path / "rubric.md"
+    rubric.write_text("# r\n", encoding="utf-8")
+    cfg = new_epoch(ws, "lineage-authority", board, rubric, ScoringWeights())
+    eid = cfg.id
+    seed_promoted_lineage(ws, eid)
+    ingest_experiment(ws, None, eid, "v0")
+
+    experiment = make_experiment(
+        epoch_id=eid,
+        generation_id="v1",
+        parent_generation_id="experiment-parent",
+        outcome=make_outcome_record(tournament_decision="promoted"),
+    )
+    write_experiment(ws, eid, "v1", experiment)
+    append_to_lineage(
+        ws,
+        eid,
+        Generation(
+            id="v1",
+            epoch_id=eid,
+            parent_id="v0",
+            snapshot_root=Path("/tmp/snap/v1"),
+            created_at="2026-05-20T00:01:00Z",
+            promoted=False,
+        ),
+        "v0",
+    )
+    ingest_experiment(ws, None, eid, "v1")
+
+    live = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(ws / "index.db", eid)}
+    assert live["v1"]["parent_generation_id"] == "v0"
+    assert live["v1"]["promoted"] == 0
+
+    import sqlite3
+
+    with sqlite3.connect(ws / "index.db") as connection:
+        connection.execute(
+            "UPDATE generations SET parent_generation_id = ?, promoted = 1 "
+            "WHERE epoch_id = ? AND generation_id = 'v1'",
+            ("experiment-parent", eid),
+        )
+    assert backfill_generations(ws)["updated"] == 1
+    repaired = {
+        r["generation_id"]: _row_dict(r) for r in generations_for_epoch(ws / "index.db", eid)
+    }
+    assert repaired["v1"]["parent_generation_id"] == "v0"
+    assert repaired["v1"]["promoted"] == 0
+
+    rebuilt_db = rebuild_index(ws, tmp_path / "rebuilt.db")
+    rebuilt = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(rebuilt_db, eid)}
+    assert rebuilt["v1"]["parent_generation_id"] == "v0"
+    assert rebuilt["v1"]["promoted"] == 0
+
+
+@pytest.mark.parametrize(
+    ("outcome_fields", "lineage_promoted"),
+    (
+        pytest.param({"tournament_decision": "promoted"}, True, id="promoted"),
+        pytest.param({"tournament_decision": "rejected"}, False, id="rejected"),
+        pytest.param({"tournament_decision": "deferred"}, False, id="deferred"),
+        pytest.param(
+            {
+                "tournament_decision": "promoted",
+                "operator_override": True,
+                "operator_override_reason": "operator confirmed promotion",
+            },
+            True,
+            id="operator-overridden",
+        ),
+    ),
+)
+def test_live_settlement_projection_matches_clean_rebuild(
+    tmp_path: Path,
+    outcome_fields: dict[str, Any],
+    lineage_promoted: bool,
+) -> None:
+    """Live settlement ingestion and a clean rebuild produce equal records."""
+    ws = tmp_path / ".zicato"
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    rubric = tmp_path / "rubric.md"
+    rubric.write_text("# r\n", encoding="utf-8")
+    cfg = new_epoch(ws, "projection-parity", board, rubric, ScoringWeights())
+    eid = cfg.id
+    seed_promoted_lineage(ws, eid)
+    ingest_experiment(ws, None, eid, "v0")
+
+    outcome = make_outcome_record(**outcome_fields)
+    experiment = make_experiment(
+        epoch_id=eid,
+        generation_id="v1",
+        parent_generation_id="v0",
+        outcome=outcome,
+    )
+    write_experiment(ws, eid, "v1", experiment)
+    ingest_experiment(ws, None, eid, "v1")
+    append_to_lineage(
+        ws,
+        eid,
+        Generation(
+            id="v1",
+            epoch_id=eid,
+            parent_id="v0",
+            snapshot_root=Path("/tmp/snap/v1"),
+            created_at="2026-05-20T00:01:00Z",
+            promoted=lineage_promoted,
+        ),
+        "v0",
+        rejection_reason=outcome.rejection_reason,
+    )
+    ingest_experiment(ws, None, eid, "v1")
+
+    rebuilt_db = rebuild_index(ws, tmp_path / "rebuilt.db")
+
+    def semantic_rows(db_path: Path) -> dict[str, list[dict[str, Any]]]:
+        generations = []
+        for row in generations_for_epoch(db_path, eid):
+            generation = _row_dict(row)
+            # Elo is maintained by a separate ratings fold. A clean rebuild
+            # runs that fold; experiment ingestion deliberately does not.
+            for field in ("elo", "elo_se", "elo_games"):
+                generation.pop(field)
+            generations.append(generation)
+        return {
+            "generations": generations,
+            "experiments": [_row_dict(row) for row in experiments_for_epoch(db_path, eid)],
+            "tournaments": [_row_dict(row) for row in tournaments_for_epoch(db_path, eid)],
+        }
+
+    assert semantic_rows(ws / "index.db") == semantic_rows(rebuilt_db)
 
 
 # ---------------------------------------------------------------------------
@@ -735,7 +968,7 @@ def test_ingest_experiment_unresolved_outcome_leaves_promoted_unset(
 
 
 def _corrupt_generations_table(db_path: Path) -> None:
-    """Mimic the t6 symptom: parent NULL on every row, promoted=0 except v0."""
+    """Remove all parent links and all non-seed promotion states."""
     import sqlite3 as _sqlite3
 
     conn = _sqlite3.connect(str(db_path))
@@ -753,14 +986,13 @@ def test_backfill_repairs_broken_generations_table(tmp_path: Path) -> None:
     """Build the chain, corrupt the index rows, then run the backfill.
 
     The disk files (lineage.json + per-generation experiment.json) are
-    left correct; only the SQLite rows are mangled to match the t6
-    symptom. After ``backfill_generations`` the rows should agree with
-    disk.
+    left correct; only the SQLite rows are corrupted. After
+    ``backfill_generations`` the rows should agree with disk.
     """
     ws, eid = _build_chain_workspace(tmp_path)
     db = ws / "index.db"
     _corrupt_generations_table(db)
-    # Sanity-check the corruption matched the t6 symptom.
+    # Sanity-check that the corruption removed the projected topology.
     corrupted = {r["generation_id"]: _row_dict(r) for r in generations_for_epoch(db, eid)}
     assert corrupted["v0"]["promoted"] == 1
     assert corrupted["v1"]["promoted"] == 0
@@ -808,7 +1040,7 @@ def test_backfill_handles_missing_db(tmp_path: Path) -> None:
     assert result == {"updated": 0, "scanned": 0}
 
 
-def test_backfill_recovers_champion_lineage_for_t6_chain(tmp_path: Path) -> None:
+def test_backfill_recovers_champion_lineage(tmp_path: Path) -> None:
     """The dashboard's champion-lineage walker recovers v0 -> v1 -> v3 after backfill.
 
     Uses the canonical :func:`_champion_lineage` from the dashboard so
@@ -829,7 +1061,7 @@ def test_backfill_recovers_champion_lineage_for_t6_chain(tmp_path: Path) -> None
         rows = generations_for_epoch(db, eid)
         return _champion_lineage([_row_dict(r) for r in rows])
 
-    # Before the backfill the spine collapses (the symptom on t6).
+    # Before the backfill the corrupted projection collapses the spine.
     assert _spine() == ["v0"]
     backfill_generations(ws)
     # After the backfill the full champion chain is recoverable.
