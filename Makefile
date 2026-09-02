@@ -1,6 +1,6 @@
 ROOT := $(shell pwd)
 
-.PHONY: help install install-hooks test test-fast test-affected node-test lint import-lint format typecheck check clean supervisor supervisor-test supervisor-check install-supervisor
+.PHONY: help install install-hooks test test-fast test-affected node-test lint import-lint format typecheck parity check clean supervisor supervisor-test supervisor-check install-supervisor
 
 # Path to the dashboard JS behaviour suite (run standalone under node).
 JS_TEST_DIR := $(ROOT)/src/zicato/dashboard/static/test
@@ -17,8 +17,10 @@ help:
 	@echo "  import-lint        Run the import-linter library/driver contracts"
 	@echo "  format             Run ruff format"
 	@echo "  typecheck          Run mypy over src/zicato/"
-	@echo "  check              Run lint + typecheck + test + node-test"
-	@echo "                     (independent gates: run 'make -j4 check' to parallelize)"
+	@echo "  parity             Run the parity oracle's golden gates"
+	@echo "                     (skips PYTEST + MYPY, which 'make check' runs itself)"
+	@echo "  check              Run lint + import-lint + typecheck + test + node-test"
+	@echo "                     (independent gates: run 'make -j5 check' to parallelize)"
 	@echo "  clean              Remove build, cache, and generated artifacts"
 	@echo "  supervisor         Build the Rust zicato-supervisor binary (release)"
 	@echo "  supervisor-test    Run the supervisor's cargo tests"
@@ -77,6 +79,17 @@ format:
 
 typecheck:
 	@cd $(ROOT) && uv run mypy src/zicato/
+
+# The behavior-preserving refactor oracle (docs/dev-guide/11-testing.md §11.7).
+# PYTEST and MYPY are skipped because `make check` runs both as gates of their
+# own, and running them twice doubles the slowest part of the oracle for no
+# extra signal; what is left is the golden set — the contract hash, the CLI
+# help text, the index dump and the eight mock-evolve lanes. Pass
+# `PARITY_ARGS=` for the full thirteen-gate run, or any other `--only` /
+# `--skip` selection.
+PARITY_ARGS ?= --skip PYTEST,MYPY
+parity:
+	@cd $(ROOT) && bash tools/parity.sh $(PARITY_ARGS)
 
 # The five gates are independent (no shared state, distinct caches), so
 # they parallelize cleanly: `make -j5 check` runs them concurrently and

@@ -1035,7 +1035,10 @@ index dump), the eight mock-evolve lanes of §11.7.5, and the mypy error
 count. The sections below take them in that order, one kind at a time.
 
 Usage: `bash tools/parity.sh` runs every gate; `--only GATE` / `--skip GATE`
-scope it; `--update` re-captures every golden. Exit code is 0 only if every
+scope it; `--update` re-captures every golden. `make parity` is the same
+script with `--skip PYTEST,MYPY`, because `make check` already runs the suite
+and mypy as gates of its own; `make parity PARITY_ARGS=` restores the full
+thirteen. Exit code is 0 only if every
 selected gate passed. Both scoping flags repeat (`--only A --only B`) and
 also take a comma list (`--only A,B`). A gate name that matches nothing is
 silent: the run prints an empty verdict and exits 0, so check the verdict
