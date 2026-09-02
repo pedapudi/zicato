@@ -212,6 +212,19 @@ def read_episode_log(log_dir: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
+def offered_tools(log_dir: Path) -> list[str]:
+    """The tool names the model was actually shown, in the order given.
+
+    Read off the episode's own ``request/header``, which is what the
+    runtime told the model it could call — the running set, rather than
+    the set zicato believes it configured.
+    """
+    for event in read_episode_log(log_dir):
+        if event["type"] == "request/header":
+            return [str(tool["name"]) for tool in event["data"]["tools"]]
+    raise AssertionError(f"no request/header in the episode log under {log_dir}")
+
+
 def request_texts(log_dir: Path) -> str:
     """Every byte the model was shown, as one string.
 
@@ -232,6 +245,7 @@ __all__ = [
     "error_turn",
     "fake_foe_binary",
     "foe_environment",
+    "offered_tools",
     "read_episode_log",
     "request_texts",
     "return_turn",

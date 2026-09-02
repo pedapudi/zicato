@@ -23,6 +23,7 @@ from tests._foe_support import (
     call_turn,
     error_turn,
     fake_foe_binary,
+    offered_tools,
     request_texts,
     return_turn,
     scripted_transport,
@@ -34,6 +35,7 @@ from zicato.proposer import foe_agent
 from zicato.proposer.agent import ProposerContext
 from zicato.proposer.external import external_proposer_config
 from zicato.proposer.foe_agent import FoeProposerAgent
+from zicato.proposer.foe_request import SANCTIONED_TOOLS
 from zicato.proposer.foe_scratch import SCRATCH_PREFIX
 from zicato.proposer.proposer import ProposerBlocked, ProposerError, ProposerExhausted
 from zicato.runtime.state import list_active_runs
@@ -273,6 +275,27 @@ def test_an_episode_outliving_its_budget_is_ended_and_reported_exhausted(
     assert list_active_runs(workspace.root) == []
     with pytest.raises(ProcessLookupError):
         os.kill(pids[0], 0)
+
+
+def test_the_running_tool_list_is_exactly_the_sanctioned_set(tmp_path: Path) -> None:
+    """What the episode may do is what the contract says, asserted by name.
+
+    Read off the episode's own request header — the list the runtime told
+    the model about — so widening the surface cannot pass by widening only
+    the constant. ``return`` is the runtime's own synthesis of the
+    completion rule and belongs to no tool the contract lists.
+    """
+    workspace = Workspace(
+        tmp_path,
+        [
+            call_turn(_edit(_EDITED_FILE)),
+            return_turn(_HYPOTHESIS),
+        ],
+    )
+    asyncio.run(workspace.agent().propose(workspace.context()))
+
+    offered = offered_tools(workspace.episode_log())
+    assert offered == [*SANCTIONED_TOOLS, "return"]
 
 
 def test_the_request_the_model_sees_carries_no_holdout_entry(tmp_path: Path) -> None:
