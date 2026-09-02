@@ -14,6 +14,8 @@ process of its own and reads no credential.
 from __future__ import annotations
 
 import json
+import os
+import re
 from pathlib import Path
 
 import foe
@@ -106,15 +108,29 @@ def test_selecting_another_model_leaves_the_hash_alone(tmp_path: Path) -> None:
     assert other["contract_fingerprint"] == base["contract_fingerprint"]
 
 
+#: What a credential-carrying environment variable is called, whatever
+#: names it. Anything whose name says key, token, secret or credential is
+#: deleted before the identity is computed.
+_CREDENTIAL_SHAPED = re.compile(r"(API_KEY|_TOKEN|_SECRET|CREDENTIAL)", re.IGNORECASE)
+
+
 def test_the_identity_is_computed_with_no_credential_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Asserted by running with nowhere for a credential to be found."""
+    """Asserted by running with nowhere for a credential to be found.
+
+    The credential search is emptied from both directions: the config
+    home points at an empty directory, and every environment variable
+    whose NAME is credential-shaped is deleted. Matching on shape rather
+    than on a list of names is what makes the claim total — a list can
+    forget a provider, and naming providers is not this repository's
+    business.
+    """
     empty_home = tmp_path / "no-home"
     empty_home.mkdir()
     monkeypatch.setenv("HOME", str(empty_home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(empty_home / ".config"))
-    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"):
+    for key in [k for k in os.environ if _CREDENTIAL_SHAPED.search(k)]:
         monkeypatch.delenv(key, raising=False)
     assert str(_identity(tmp_path, _workspace(tmp_path))["contract_fingerprint"]).startswith(
         "sha256:"

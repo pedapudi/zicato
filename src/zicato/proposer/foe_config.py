@@ -28,10 +28,10 @@ and its skills, which the contract already hashes, assembled by
 :mod:`zicato.proposer.foe_request`.
 
 Validation is strict and names the removal. A workspace still carrying
-the configuration of a retired proposer — the pi integration's binary, an
-ADK or native proposer class, a ``proposers/<name>/agent.py`` module — is
-refused with the key, what replaced it, and where to read about the
-change, rather than silently falling back. What the seam still accepts is
+the configuration of a retired proposer — the coding-agent integration's
+binary, an ADK or native proposer class, a ``proposers/<name>/agent.py``
+module — is refused with the key, what replaced it, and where to read
+about the change, rather than silently falling back. What the seam still accepts is
 an operator's own ``ExternalProposerAgent`` class, which is a different
 thing from a removed built-in and is named in ``docs/design/PROPOSER.md``
 with the trust boundary it runs under.
@@ -282,7 +282,7 @@ def load_foe_proposer_config(
 def refuse_removed_proposer_configuration(workspace_config: Mapping[str, Any]) -> None:
     """Refuse a workspace still configured for a retired proposer runtime.
 
-    The pi, ADK, and native proposer implementations were removed with
+    The coding-agent, ADK and native proposer implementations were removed with
     Foe's adoption. A workspace carrying their configuration would
     otherwise run Foe while its file still described something else, so
     each retired key is refused by name with what replaced it. An operator
