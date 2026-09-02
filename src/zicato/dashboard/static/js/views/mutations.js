@@ -26,8 +26,9 @@
 // note is rendered VERBATIM, never re-worded here: the server knows WHY the
 // tree is missing (pruned vs unreachable) and this view does not.
 
-import { el, svgEl } from '../core/dom.js';
+import { el } from '../core/dom.js';
 import * as D from '../data.js';
+import * as M from '../matrix.js';
 import * as svg from '../svg.js';
 import { section, empty, stat, renderView } from '../ui.js';
 
@@ -133,12 +134,12 @@ export async function render(host, ctx, params) {
 }
 
 function matrixTable(sites, gens, patchedBySite, pinned, pinnedGen, ctx, epochId) {
-  const table = el('table', { class: 'dn-mtx' });
+  const table = M.matrixTable();
   const thead = el('thead');
   const hr = el('tr');
-  hr.appendChild(el('th', { class: 'dn-mtx-corner', text: 'site (file:line · role)' }));
-  for (const g of gens) hr.appendChild(el('th', { class: 'dn-mtx-gen' }, [
-    el('a', { class: 'dn-mtx-genlink', href: ctx.href('candidate', { epochId, gen: g }), text: g }),
+  hr.appendChild(M.matrixCorner('site (file:line · role)'));
+  for (const g of gens) hr.appendChild(M.matrixColumnHeader(null, [
+    M.matrixColumnLabel(g, { href: ctx.href('candidate', { epochId, gen: g }) }),
   ]));
   thead.appendChild(hr);
   table.appendChild(thead);
@@ -150,10 +151,10 @@ function matrixTable(sites, gens, patchedBySite, pinned, pinnedGen, ctx, epochId
     // the SITE row is "pinned" (all-gens view) only when the row itself is the
     // selection — i.e. a mutId with NO cell-level gen.
     const sitePinned = isPinned && !pinnedGen;
-    const tr = el('tr', { class: 'dn-mtx-row' + (isPinned ? ' dn-mtx-pinned' : '') });
+    const tr = M.matrixRow({ extra: isPinned ? 'dn-mtx-pinned' : null });
     // The ROW LABEL is the "all mutations for this site" affordance: it links to
     // the bare mutId (no gen) → every generation that patched the site, stacked.
-    tr.appendChild(el('th', { class: 'dn-mtx-site', scope: 'row' }, [
+    tr.appendChild(M.matrixRowHeader(null, [
       el('a', {
         class: 'dn-mtx-sitelink' + (sitePinned ? ' dn-mtx-sitelink-on' : ''),
         href: ctx.href('mutations', { epochId, mutId: s.mutation_id }),
@@ -169,19 +170,18 @@ function matrixTable(sites, gens, patchedBySite, pinned, pinnedGen, ctx, epochId
       // a CELL is the "this one generation" affordance: it links to mutId+gen →
       // ONLY that single challenger's side-by-side diff for the site.
       const cellPinned = isPinned && String(pinnedGen) === String(g);
-      const td = el('td', { class: 'dn-mtx-cell' + (on ? ' dn-mtx-on' : '') + (cellPinned ? ' dn-mtx-cell-pinned' : ''),
-        'data-gen': g, 'data-site': s.mutation_id });
+      const td = M.matrixCell(on, {
+        extra: cellPinned ? 'dn-mtx-cell-pinned' : null,
+        attrs: { 'data-gen': g, 'data-site': s.mutation_id },
+      });
       if (on) {
-        const dot = svgEl('svg', { class: 'dn-mtx-mark', width: 16, height: 16, viewBox: '0 0 16 16', role: 'img' }, [
-          svgEl('rect', { x: 3, y: 3, width: 10, height: 10, rx: 2, class: 'dn-mtx-square' }),
-        ]);
         td.appendChild(el('a', {
           class: 'dn-mtx-celllink', href: ctx.href('mutations', { epochId, mutId: s.mutation_id, gen: g }),
           title: `${g}’s patch at ${s.mutation_id} (this one generation’s diff)`,
           'aria-current': cellPinned ? 'true' : null,
-        }, [dot]));
+        }, [M.matrixMark()]));
       } else {
-        td.appendChild(el('span', { class: 'dn-mtx-blank', 'aria-hidden': 'true', text: '·' }));
+        td.appendChild(M.matrixBlank());
       }
       tr.appendChild(td);
     }
@@ -191,7 +191,7 @@ function matrixTable(sites, gens, patchedBySite, pinned, pinnedGen, ctx, epochId
   const wrap = el('div');
   // the matrix can be very wide (many generations) — give the TABLE its
   // own contained horizontal scroll so it never forces the panel to overflow.
-  wrap.appendChild(el('div', { class: 'dn-table-scroll' }, [table]));
+  wrap.appendChild(M.matrixScroll(table));
   wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:10px 0 0;', text: 'row = mutation site · column = generation · ▪ = patched here · click a ▪ CELL → that ONE generation’s diff · click the SITE label → ALL generations that patched it' }));
   return wrap;
 }

@@ -26,6 +26,7 @@ static/
     shell.js            — chrome, sidebar-to-detail host, page-scale pill
     ui.js               — gatedSwap, pills, tables, themes, typefaces
     svg.js, dag.js      — the figure builders
+    matrix.js           — the dn-mtx table-grid primitives
     data.js             — the per-epoch read accessors
     views/              — one module per detail pane
   test/                 — JS/DOM test harness

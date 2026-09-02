@@ -5,6 +5,7 @@
 
 import { svgEl, el } from './core/dom.js';
 import { attachHovercard } from './hovercard.js';
+import * as M from './matrix.js';
 
 export const NS = 'http://www.w3.org/2000/svg';
 
@@ -122,6 +123,13 @@ export function fmtSigned(v, digits) {
   if (!isNum(v)) return '—';
   const d = digits == null ? 3 : digits;
   return (v > 0 ? '+' : '') + v.toFixed(d);
+}
+// A fraction as a whole-percent label — the one rendering of a rate the console
+// has. A value that is not a number takes the shared null glyph: a rate nobody
+// measured must never reach the screen as 0%.
+export function fmtPercent(v) {
+  if (!isNum(v)) return '—';
+  return Math.round(v * 100) + '%';
 }
 
 export function title(text) {
@@ -1486,7 +1494,7 @@ export function survivalFunnel(opts) {
       const partial = lane && isNum(lane.partialDelta) ? lane.partialDelta : null;
       const delta = (rg.rung.deltas && isNum(rg.rung.deltas[id])) ? rg.rung.deltas[id] : partial;
       const tip = `${id} · ${rg.rung.label || 'rung ' + rg.j}`
-        + (isNum(rg.rung.board_fraction) ? ` · ${(rg.rung.board_fraction * 100).toFixed(0)}% board` : '')
+        + (isNum(rg.rung.board_fraction) ? ` · ${fmtPercent(rg.rung.board_fraction)} board` : '')
         + (projected && isNum(lane.projected_scalar) ? ` · projected scalar ~${fmt(lane.projected_scalar, 2)} (boards still streaming)` : '')
         + (delta != null ? ` · Δ ${fmtSigned(delta, 2)} vs champion` : '')
         + (lane ? ` · ${laneProgressText(lane)}` : '')
@@ -3577,42 +3585,31 @@ export function diversityMatrix(opts) {
   const isPaired = (g) => pair.includes(g);
   const onCompetitor = typeof o.onCompetitor === 'function' ? o.onCompetitor : null;
 
-  const table = el('table', { class: 'dn-mtx dn-divmtx' });
+  const table = M.matrixTable('dn-divmtx');
   const hr = el('tr');
-  hr.appendChild(el('th', { class: 'dn-mtx-corner', text: 'site · challenger →' }));
+  hr.appendChild(M.matrixCorner('site · challenger →'));
   for (const g of gens) {
-    const cell = el('th', { class: 'dn-mtx-gen' + (isPaired(g) ? ' dn-divmtx-paired' : '') }, [
-      onCompetitor
-        ? clickable(el('span', { class: 'dn-mtx-genlink', text: shortLabel(g, 14) }), () => onCompetitor(g))
-        : el('span', { class: 'dn-mtx-genlink', text: shortLabel(g, 14) }),
-    ]);
-    hr.appendChild(cell);
+    const label = M.matrixColumnLabel(shortLabel(g, 14));
+    hr.appendChild(M.matrixColumnHeader({ extra: isPaired(g) ? 'dn-divmtx-paired' : null },
+      [onCompetitor ? clickable(label, () => onCompetitor(g)) : label]));
   }
   table.appendChild(el('thead', null, [hr]));
   const tbody = el('tbody');
   for (const s of sites) {
-    const tr = el('tr', { class: 'dn-mtx-row' });
-    tr.appendChild(el('th', { class: 'dn-mtx-site', scope: 'row' }, [
-      el('span', { class: 'dn-mtx-file', text: s }),
-    ]));
+    const tr = M.matrixRow();
+    tr.appendChild(M.matrixRowHeader(null, [el('span', { class: 'dn-mtx-file', text: s })]));
     for (const g of gens) {
       const on = touched.get(g).has(s);
-      const td = el('td', { class: 'dn-mtx-cell' + (on ? ' dn-mtx-on' : '') + (isPaired(g) ? ' dn-divmtx-paired' : ''),
-        'data-gen': g, 'data-site': s });
-      if (on) {
-        td.appendChild(svgEl('svg', { class: 'dn-mtx-mark', width: 16, height: 16, viewBox: '0 0 16 16', role: 'img' }, [
-          svgEl('rect', { x: 3, y: 3, width: 10, height: 10, rx: 2, class: 'dn-mtx-square' }),
-        ]));
-      } else {
-        td.appendChild(el('span', { class: 'dn-mtx-blank', 'aria-hidden': 'true', text: '·' }));
-      }
-      tr.appendChild(td);
+      tr.appendChild(M.matrixCell(on, {
+        extra: isPaired(g) ? 'dn-divmtx-paired' : null,
+        attrs: { 'data-gen': g, 'data-site': s },
+      }, [on ? M.matrixMark() : M.matrixBlank()]));
     }
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
   return el('div', { class: 'dn-divmtx-wrap' }, [
-    el('div', { class: 'dn-table-scroll' }, [table]),
+    M.matrixScroll(table),
     el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
       text: 'column = challenger · row = mutation site · ▪ = touched here · coinciding columns are the same idea (the overlap the ribbon scores)' }),
   ]);
@@ -4492,7 +4489,7 @@ export function calibrationTrend(opts) {
     const r = (pts.length === 1 || i === lastScoredI) ? 2.6 : 2.0;
     const node = hov(svgEl('circle', { cx, cy: y(f), r, class: cls,
       style: onGen ? 'cursor:pointer;' : null }),
-      `${p.generation_id} · ${Math.round(f * 100)}% of ${p.total_claims} claim${p.total_claims === 1 ? '' : 's'} landed · ${p.decision || '—'}`);
+      `${p.generation_id} · ${fmtPercent(f)} of ${p.total_claims} claim${p.total_claims === 1 ? '' : 's'} landed · ${p.decision || '—'}`);
     if (onGen) node.addEventListener('click', () => onGen(String(p.generation_id)));
     svg.appendChild(node);
   });
@@ -4510,7 +4507,7 @@ export function calibrationTrend(opts) {
       x: rightish ? lx - 5 : lx + 5, y: ly - 5, class: 'dn-caltrend-latest',
       'text-anchor': rightish ? 'end' : 'start',
     });
-    lbl.textContent = Math.round(latestFraction * 100) + '%';
+    lbl.textContent = fmtPercent(latestFraction);
     svg.appendChild(lbl);
   }
   if (isNum(o.n_scored)) {

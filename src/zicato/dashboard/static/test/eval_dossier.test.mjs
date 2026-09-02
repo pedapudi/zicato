@@ -180,6 +180,13 @@ test('instrument stats: the measured channel shows flip rate, discrimination, ru
   assertEqual(byKeyIncludes('discrimination').value, svg.fmt(0.75, 2), 'discrimination reads 0.75');
   assert(byKeyIncludes('discrimination').key.includes('4 pairs'), 'discrimination names its matchup-pair count');
   assertEqual(byKeyIncludes('runtime mean').value, '41.2s', 'runtime mean is human-formatted seconds');
+  // The three runtime stats read the console's canonical duration formatter, so
+  // an entry whose runs take minutes reads minutes. A local formatter here used
+  // to stop at seconds and print a four-minute mean as `250.0s`.
+  const slow = renderSections({ ...DOSSIER_FULL,
+    instrument: { ...DOSSIER_FULL.instrument, runtime_ms_mean: 250000 } });
+  assertEqual(statPairs(slow).find((p) => p.key.includes('runtime mean')).value, '4.2m',
+    'a runtime mean past ninety seconds reads in minutes');
   assertEqual(byKeyIncludes('replicates').value, '12', 'the replicate total reads through');
   assertEqual(byKeyIncludes('cached share').value, '8%', 'the cached share reads a percentage');
   assert(pairs.some((p) => p.key.includes('holdout') && p.value === 'holdout'), 'the holdout slice membership shows');
