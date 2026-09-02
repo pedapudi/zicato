@@ -19,13 +19,13 @@ from pathlib import Path
 
 import pytest
 
+from tests._proposal_evidence import render_proposal_evidence
 from zicato.board.split import HOLDOUT_TAG, split_board
 from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile, ScoringWeights
 from zicato.core.types import OverfittingConfig
 from zicato.core.workspace import loss_profile_path
 from zicato.evolve.decision_support import _load_parent_losses, _render_loss_summary
 from zicato.patterns import ALL_DETECTORS, DetectorInput, detect_patterns
-from zicato.proposer.prompts import render_user_prompt
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 
 _EPOCH = "e0"
@@ -87,7 +87,7 @@ def _assemble_prompt(tmp_path: Path, board: list[BoardEntry], weights: ScoringWe
     )
     patterns = detect_patterns(detector_input, detectors=ALL_DETECTORS)
     loss_summary = _render_loss_summary(losses)
-    return render_user_prompt(
+    return render_proposal_evidence(
         current_loss_summary=loss_summary,
         patterns=patterns,
         mutations=(),

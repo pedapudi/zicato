@@ -9,8 +9,9 @@ omission, and the section's placement in ``render_user_prompt`` (after
 
 from __future__ import annotations
 
+from tests._proposal_evidence import render_proposal_evidence
 from zicato.core.types import PriorExperiment
-from zicato.proposer.prompts import render_prior_experiments_block, render_user_prompt
+from zicato.proposer.prompts import render_prior_experiments_block
 from zicato.testing.fixtures import make_mutation_point, make_pattern
 
 
@@ -156,7 +157,7 @@ def test_prediction_band_is_always_coarsened_even_unrestricted() -> None:
 
 
 def test_section_omitted_when_prior_empty() -> None:
-    prompt = render_user_prompt(
+    prompt = render_proposal_evidence(
         current_loss_summary="loss=2.3",
         patterns=[make_pattern()],
         mutations=[make_mutation_point()],
@@ -166,7 +167,7 @@ def test_section_omitted_when_prior_empty() -> None:
 
 
 def test_section_lands_between_insights_and_loss_summary() -> None:
-    prompt = render_user_prompt(
+    prompt = render_proposal_evidence(
         current_loss_summary="loss=2.3",
         patterns=[make_pattern()],
         mutations=[make_mutation_point()],

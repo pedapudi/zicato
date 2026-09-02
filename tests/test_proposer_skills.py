@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from zicato.core.types import ProposerSpec
 from zicato.proposer.skills import (
     load_proposer_skills,
@@ -62,7 +64,6 @@ def test_resolve_none_is_builtin_default() -> None:
     assert spec.agent_id == "builtin:default"
     assert spec.tools == ()
     assert spec.skills == ()
-    assert spec.agent_source_sha256 is None
 
 
 def test_resolve_dir_sets_agent_id_and_skills(tmp_path: Path) -> None:
@@ -73,16 +74,26 @@ def test_resolve_dir_sets_agent_id_and_skills(tmp_path: Path) -> None:
     assert spec.agent_id == "dir:p1"
     assert spec.tools == ()
     assert [s.name for s in spec.skills] == ["tighten"]
-    assert spec.agent_source_sha256 is None
 
 
-def test_resolve_dir_hashes_agent_py(tmp_path: Path) -> None:
+def test_a_proposer_dir_carrying_an_agent_module_is_refused(tmp_path: Path) -> None:
+    """A directory that still ships ``agent.py`` describes a removed runtime.
+
+    Resolving it is fine — the skills are still the epoch's, and the
+    contract still hashes — but building an agent from it refuses by
+    name, so the operator is told to delete the module rather than
+    discovering at the first propose that it never ran.
+    """
+    from zicato.proposer.agent import build_proposer_agent
+    from zicato.proposer.foe_config import ProposerConfigError
+
     proposer = tmp_path / "proposers" / "p1"
     (proposer / "skills").mkdir(parents=True)
     (proposer / "agent.py").write_text("def build():\n    return 1\n")
     spec = resolve_proposer_spec(proposer)
-    assert spec.agent_source_sha256 is not None
-    assert len(spec.agent_source_sha256) == 64
+
+    with pytest.raises(ProposerConfigError, match="custom proposer agent modules were removed"):
+        build_proposer_agent(spec, proposer_path=proposer)
 
 
 def test_normalize_skill_body_strips_whitespace_noise() -> None:

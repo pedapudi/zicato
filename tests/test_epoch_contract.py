@@ -1133,22 +1133,6 @@ def test_proposer_renaming_a_skill_changes_hash(tmp_path: Path) -> None:
     assert h1 != h2
 
 
-def test_proposer_agent_source_edit_changes_hash(tmp_path: Path) -> None:
-    """Editing the custom ``agent.py`` rolls the hash via its source sha."""
-    from dataclasses import replace
-
-    base = _write_contract(tmp_path)
-    proposer = _make_proposer(
-        tmp_path, skills={"a.md": _SKILL_A}, agent="def build():\n    return 1\n"
-    )
-    with_proposer = replace(base, proposer_path=proposer)
-    h1 = compute_contract_hash(with_proposer)
-
-    (proposer / "agent.py").write_text("def build():\n    return 2\n")
-    h2 = compute_contract_hash(with_proposer)
-    assert h1 != h2
-
-
 def test_proposer_whitespace_only_skill_edit_is_stable(tmp_path: Path) -> None:
     """Whitespace / line-ending-only skill edits do not roll the hash."""
     from dataclasses import replace

@@ -346,7 +346,6 @@ def test_ceiling_rejects_oversized_challenger_diff_e2e(
         install_telemetry_stubs,
         make_aux_responder,
         run_evolve_once,
-        valid_proposer_response,
     )
 
     workspace, epoch_id = bootstrap_workspace(tmp_path)
@@ -358,7 +357,7 @@ def test_ceiling_rejects_oversized_challenger_diff_e2e(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason.startswith("diff_complexity_ceiling:")
@@ -378,7 +377,6 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
         install_telemetry_stubs,
         make_aux_responder,
         run_evolve_once,
-        valid_proposer_response,
     )
 
     workspace, epoch_id = bootstrap_workspace(tmp_path)
@@ -390,7 +388,7 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     assert outcome.tournament_decision == "promoted"
 
 

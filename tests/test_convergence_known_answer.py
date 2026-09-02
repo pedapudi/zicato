@@ -13,9 +13,10 @@ The target is ``examples/zicato_examples/target_0_convergence``:
 * ``agent/policy.py`` seeds three defect tokens; each remaining token
   emits one ``drift_detected`` frame (severity ``info`` → ``+1.0`` drift
   loss per run) and each KNOWN token fails exactly one board predicate.
-* The scripted proposer (``mocks.aux_llm``) runs a three-round gauntlet
-  script: remove a token (→ promote), ADD a token (→ reject, the
-  negative control), remove another token (→ promote to the floor).
+* The proposal episodes write a scripted policy per candidate
+  (``mocks.GAUNTLET_POLICIES``) over a three-round script: remove a token
+  (→ promote), ADD a token (→ reject, the negative control), remove
+  another token (→ promote to the floor).
 
 The exact floor, from the shipped scoring formulas
 (``zicato.scoring.builtins``) with the example contract
@@ -41,6 +42,7 @@ import pytest
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
+from tests._foe_support import stand_in_proposer_block
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 
@@ -92,7 +94,9 @@ EXPECTED_V1 = _expected_scalar(tokens=2, passes=3)  # 2.4
 EXPECTED_V2 = _expected_scalar(tokens=3, passes=2)  # 3.6 (negative control)
 
 
-def _bootstrap_workspace(tmp_path: Path, scoring_path: Path) -> tuple[Path, str]:
+def _bootstrap_workspace(
+    tmp_path: Path, scoring_path: Path, *, policies: dict[str, dict[str, str]]
+) -> tuple[Path, str]:
     """Create a workspace + one epoch; leave v0 to the production seeder.
 
     Unlike the orchestrator tests' hand-built directory layout, this
@@ -108,6 +112,7 @@ def _bootstrap_workspace(tmp_path: Path, scoring_path: Path) -> tuple[Path, str]
         json.dumps(
             {
                 "instance_id": "default",
+                "proposer": stand_in_proposer_block(tmp_path / "foe", contents=policies),
                 "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
@@ -143,8 +148,9 @@ def _bootstrap_workspace(tmp_path: Path, scoring_path: Path) -> tuple[Path, str]
 
 def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
     """Three real rounds: promoted, rejected, promoted — to the exact floor."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path, SCORING_PATH)
-    t0_mocks.reset()
+    workspace, epoch_id = _bootstrap_workspace(
+        tmp_path, SCORING_PATH, policies=t0_mocks.GAUNTLET_POLICIES
+    )
 
     from zicato.evolve.loop import evolve_n_rounds
 
@@ -340,8 +346,9 @@ def test_racing_field_best_arm_survives_to_floor(tmp_path: Path) -> None:
     the scripted field's best-known arm (v2 — only ``verbose-prose``
     left) survives every rung, clears the champion gate, and is promoted
     at the exact known floor."""
-    workspace, epoch_id = _bootstrap_workspace(tmp_path, RACING_SCORING_PATH)
-    t0_mocks.reset()
+    workspace, epoch_id = _bootstrap_workspace(
+        tmp_path, RACING_SCORING_PATH, policies=t0_mocks.RACING_POLICIES
+    )
 
     from zicato.evolve.loop import evolve_n_rounds
 
@@ -351,7 +358,7 @@ def test_racing_field_best_arm_survives_to_floor(tmp_path: Path) -> None:
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=t0_mocks.harness_llm,
-            auxiliary_call_llm=t0_mocks.racing_aux_llm,
+            auxiliary_call_llm=t0_mocks.aux_llm,
             auto_epoch=False,
         )
     )

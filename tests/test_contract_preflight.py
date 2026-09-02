@@ -23,6 +23,7 @@ from pathlib import Path
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
+from tests._foe_support import stand_in_proposer_block
 from zicato.epoch.lifecycle import _scoring_from_dict, load_epoch, new_epoch
 from zicato.epoch.preflight import (
     PREFLIGHT_REPLICATE_BASE,
@@ -295,6 +296,7 @@ def _bootstrap(
         json.dumps(
             {
                 "instance_id": "default",
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "created_at": "2026-07-01T00:00:00Z",
                 "generation_source_backend": "git",
                 "adapter": adapter_block or DETERMINISTIC_ADAPTER,
@@ -770,7 +772,6 @@ def test_epoch_open_hook_persists_verdict(tmp_path: Path) -> None:
     from zicato.evolve.loop import evolve_n_rounds
 
     workspace, epoch_id = _bootstrap(tmp_path, extra_config={"contract_preflight": 3})
-    t0_mocks.reset()
     asyncio.run(
         evolve_n_rounds(
             rounds=1,

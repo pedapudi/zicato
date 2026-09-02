@@ -31,7 +31,6 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
-    valid_proposer_response,
 )
 from zicato.runtime.control import (
     CMD_PAUSE_EPOCH,
@@ -354,7 +353,7 @@ def test_reject_override_flips_a_would_promote_round(
     # Operator queues a reject for the generation this round will mint (v1).
     write_command(workspace, ControlCommand(name=CMD_REJECT_PREFIX, arg="v1"))
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     # The gate would have promoted (child scalar < parent), but the override
     # rejected it.
     assert outcome.tournament_decision == "rejected"
@@ -392,7 +391,7 @@ def test_promote_override_flips_a_would_reject_round(
     )
     write_command(workspace, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v1"))
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     # The gate would have rejected (child regressed), but the override promoted.
     assert outcome.tournament_decision == "promoted"
     # The current_generation marker WAS bumped to v1.
@@ -424,7 +423,7 @@ def test_override_for_other_generation_does_not_fire(
     # Override targets v7 — not the v1 this round mints.
     write_command(workspace, ControlCommand(name=CMD_REJECT_PREFIX, arg="v7"))
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     # The gate's own verdict (promote) stands.
     assert outcome.tournament_decision == "promoted"
     body = json.loads(

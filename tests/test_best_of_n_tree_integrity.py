@@ -52,6 +52,7 @@ import pytest
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests import _best_of_n_slate_support as slate_mocks
 from tests._contract_pins import resolved_contract_with_proposer
+from tests._foe_support import stand_in_proposer_block
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
@@ -72,7 +73,11 @@ EXPECTED_TWO_TOKENS = 2.4  # 2 tokens, 3/5 pass
 
 
 def _bootstrap(
-    tmp_path: Path, tournament: dict, *, propose_parallelism: int = 4
+    tmp_path: Path,
+    tournament: dict,
+    *,
+    propose_parallelism: int = 4,
+    policies: dict[str, dict[str, str]],
 ) -> tuple[Path, str]:
     """A target_0 workspace whose contract samples a best-of-3 slate.
 
@@ -80,6 +85,10 @@ def _bootstrap(
     the slate gather runs at the requested width (1 = serial reference; 4 =
     the concurrent gather). It is a RUNTIME knob — never part of the frozen
     contract — so it does not perturb the known-answer scalars.
+
+    ``policies`` is what each slate slot's episode writes, keyed
+    ``<candidate>#<slot>``, so the slate's slots are known answers rather
+    than whatever a proposer happened to invent.
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
@@ -87,6 +96,7 @@ def _bootstrap(
         json.dumps(
             {
                 "instance_id": "default",
+                "proposer": stand_in_proposer_block(tmp_path / "foe", contents=policies),
                 "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
@@ -175,11 +185,16 @@ def _style_rules_line(policy: str) -> str:
 
 
 def _patch_content(workspace: Path, epoch_id: str, generation_id: str) -> str:
+    """The token list the persisted patch sets, read out of its literal.
+
+    A span patch carries the applier's unit — the string-literal source —
+    so the token list is what that literal encloses.
+    """
     from zicato.epoch.journal import read_experiment
 
     experiment = read_experiment(workspace, epoch_id, generation_id)
     assert len(experiment.patches) == 1
-    return str(experiment.patches[0].new_content)
+    return str(experiment.patches[0].new_content).strip().strip("\"'")
 
 
 @pytest.mark.parametrize("propose_parallelism", [1, 4])
@@ -201,8 +216,8 @@ def test_gauntlet_mounts_the_chosen_candidate_tree(
             "params": {"replicates": 1, "promote_confidence_threshold": None},
         },
         propose_parallelism=propose_parallelism,
+        policies=slate_mocks.GAUNTLET_POLICIES,
     )
-    slate_mocks.reset()
 
     from zicato.evolve.loop import evolve_n_rounds
 
@@ -212,7 +227,7 @@ def test_gauntlet_mounts_the_chosen_candidate_tree(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=slate_mocks.harness_llm,
-            auxiliary_call_llm=slate_mocks.gauntlet_slate_aux_llm,
+            auxiliary_call_llm=slate_mocks.slate_aux_llm,
             auto_epoch=False,
         )
     )
@@ -276,8 +291,8 @@ def test_field_mounts_each_chosen_candidate_tree(
             },
         },
         propose_parallelism=propose_parallelism,
+        policies=slate_mocks.FIELD_POLICIES,
     )
-    slate_mocks.reset()
 
     from zicato.evolve.loop import evolve_n_rounds
 
@@ -287,7 +302,7 @@ def test_field_mounts_each_chosen_candidate_tree(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=slate_mocks.harness_llm,
-            auxiliary_call_llm=slate_mocks.field_slate_aux_llm,
+            auxiliary_call_llm=slate_mocks.slate_aux_llm,
             auto_epoch=False,
         )
     )

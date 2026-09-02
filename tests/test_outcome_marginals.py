@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 
+from tests._proposal_evidence import render_proposal_evidence
 from zicato.analyzer.outcome_marginals import (
     OutcomeMarginalSummary,
     aggregate_outcome_marginals,
@@ -32,7 +33,6 @@ from zicato.analyzer.outcome_marginals import (
 from zicato.core.types import DriftCount, ExpectationResult, LossProfile
 from zicato.proposer.prompts import (
     render_failure_mode_profile,
-    render_user_prompt,
 )
 
 # --------------------------------------------------------------------------
@@ -181,8 +181,8 @@ def _render_kwargs(**overrides: object) -> dict[str, object]:
 def test_prompt_byte_identical_when_no_profile() -> None:
     # No failure_profile (default) and an explicit empty string must both
     # reproduce the pre-cap-2 prompt exactly — no section, no extra newline.
-    without = render_user_prompt(**_render_kwargs())  # type: ignore[arg-type]
-    empty = render_user_prompt(**_render_kwargs(failure_profile=""))  # type: ignore[arg-type]
+    without = render_proposal_evidence(**_render_kwargs())  # type: ignore[arg-type]
+    empty = render_proposal_evidence(**_render_kwargs(failure_profile=""))  # type: ignore[arg-type]
     assert without == empty
     assert "Failure-mode profile" not in without
 
@@ -192,8 +192,8 @@ def test_prompt_byte_identical_when_summary_empty() -> None:
     # so the whole pipeline (aggregate -> render -> prompt) is byte-identical
     # to today when there is no outcome data.
     profile = render_failure_mode_profile(aggregate_outcome_marginals([]))
-    with_empty = render_user_prompt(**_render_kwargs(failure_profile=profile))  # type: ignore[arg-type]
-    without = render_user_prompt(**_render_kwargs())  # type: ignore[arg-type]
+    with_empty = render_proposal_evidence(**_render_kwargs(failure_profile=profile))  # type: ignore[arg-type]
+    without = render_proposal_evidence(**_render_kwargs())  # type: ignore[arg-type]
     assert with_empty == without
 
 

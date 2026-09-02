@@ -1,13 +1,12 @@
-"""Tests for the durable capture of every rendered proposer input.
+"""The durable capture of every rendered proposer input.
 
-Covers issue #244: one append-only ``epochs/{epoch_id}/proposer_inputs.jsonl``
-per epoch, written before each proposer LLM call.
+One append-only ``epochs/{epoch_id}/proposer_inputs.jsonl`` per epoch,
+written before each call it describes.
 
-* the captured text is byte-identical to what the callable received;
-* every retry attempt lands its own record, including a round that
-  exhausts its retries;
-* all four call sites capture — the text shim, the default ADK agent, the
-  best-of-N self-critique, and the LLM recombination merge;
+* a proposal episode lands one record carrying the exact instructions and
+  the exact task the episode ran under;
+* the other two call sites capture too — the best-of-N self-critique and
+  the LLM recombination merge — each under its own role;
 * concurrent writers produce one parseable line per call, never a spliced
   record;
 * an unwritable workspace degrades to a no-op rather than an exception.
@@ -23,6 +22,8 @@ from typing import Any
 
 import pytest
 
+from tests._foe_support import stand_in_proposer_block
+from tests._source_tree_builders import mutable_tree
 from zicato.core.types import (
     Experiment,
     HypothesisSpec,
@@ -34,6 +35,8 @@ from zicato.core.types import (
 from zicato.core.workspace import proposer_inputs_path
 from zicato.proposer.agent import ProposerContext
 from zicato.proposer.best_of_n import BestOfNProposerAgent
+from zicato.proposer.external import external_proposer_config
+from zicato.proposer.foe_agent import FoeProposerAgent
 from zicato.proposer.input_capture import (
     ROLE_CRITIQUE,
     ROLE_PROPOSAL,
@@ -41,7 +44,6 @@ from zicato.proposer.input_capture import (
     capture_proposer_input,
     read_proposer_inputs,
 )
-from zicato.proposer.proposer import ProposerError, propose_experiment
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -107,51 +109,66 @@ def _records(workspace_root: Path) -> list[dict[str, Any]]:
     return list(read_proposer_inputs(workspace_root, _EPOCH))
 
 
-async def _propose(workspace_root: Path | None, stub: _StubLLM, **overrides: Any) -> Experiment:
-    kwargs: dict[str, Any] = {
-        "epoch_id": _EPOCH,
-        "parent_generation_id": "v0",
-        "new_generation_id": "v1",
-        "patterns": (),
-        "mutations": _MUTATIONS,
-        "brief_text": "# Proposer brief\n- Be careful.\n",
-        "current_loss_summary": "loss=2.3, pass_rate=0.6",
-        "aux_call_llm": stub,
-        "model": "test-model",
-        "workspace_root": workspace_root,
-    }
-    kwargs.update(overrides)
-    return await propose_experiment(**kwargs)
+# ---------------------------------------------------------------------------
+# The proposal episode — one record per episode, carrying its own context
+# ---------------------------------------------------------------------------
 
 
-# ---------------------------------------------------------------------------
-# The text shim — byte identity, per-attempt records
-# ---------------------------------------------------------------------------
+def _episode_agent(tmp_path: Path) -> tuple[FoeProposerAgent, Path]:
+    """A Foe-backed agent over the stand-in, and the snapshot it edits."""
+    snapshot = tmp_path / "snapshot"
+    mutable_tree(snapshot, instr="Route the message.")
+    config = {"proposer": stand_in_proposer_block(tmp_path / "foe")}
+    binding = external_proposer_config(config, tmp_path)
+    assert binding is not None
+    spec = ProposerSpec(agent_id="external:foe", tools=(), skills=())
+    return FoeProposerAgent(spec=spec, config=binding), snapshot
+
+
+def _episode_ctx(tmp_path: Path, snapshot: Path, **overrides: Any) -> ProposerContext:
+    from zicato.mutation.enumerator import enumerate_mutations
+
+    ctx = ProposerContext(
+        epoch_id=_EPOCH,
+        parent_generation_id="v0",
+        new_generation_id="v1",
+        patterns=(),
+        mutations=tuple(enumerate_mutations([snapshot])),
+        brief_text="# Proposer brief\n- Be careful.\n",
+        current_loss_summary="loss=2.3, pass_rate=0.6",
+        aux_call_llm=_unused_callable,
+        model="test-model",
+        workspace_root=tmp_path,
+        generation_root=snapshot,
+    )
+    return replace(ctx, **overrides)
 
 
 @pytest.mark.asyncio
-async def test_capture_is_byte_identical_to_what_the_callable_received(tmp_path: Path) -> None:
-    stub = _StubLLM([_valid_response()])
-    await _propose(tmp_path, stub)
+async def test_an_episode_captures_the_context_it_ran_under(tmp_path: Path) -> None:
+    agent, snapshot = _episode_agent(tmp_path)
+    await agent.propose(_episode_ctx(tmp_path, snapshot))
 
     records = _records(tmp_path)
     assert len(records) == 1
-    system, user, model = stub.calls[0]
-    assert records[0]["system"] == system
-    assert records[0]["user"] == user
-    assert records[0]["model"] == model
-    assert records[0]["role"] == ROLE_PROPOSAL
-    assert records[0]["epoch_id"] == _EPOCH
-    assert records[0]["parent_generation_id"] == "v0"
-    assert records[0]["new_generation_id"] == "v1"
-    assert records[0]["attempt"] == 0
-    assert records[0]["ts"].endswith("Z")
+    record = records[0]
+    assert record["role"] == ROLE_PROPOSAL
+    assert record["epoch_id"] == _EPOCH
+    assert record["parent_generation_id"] == "v0"
+    assert record["new_generation_id"] == "v1"
+    assert record["ts"].endswith("Z")
+    # The instructions carry the charter and the epoch's brief; the task
+    # carries the round's evidence. Both are what the model was shown.
+    assert "# Proposer brief" in record["system"]
+    assert "Only the declared mutation points may change." in record["system"]
+    assert "loss=2.3" in record["user"]
+    assert "## Mutation points" in record["user"]
 
 
 @pytest.mark.asyncio
 async def test_capture_lands_at_the_canonical_per_epoch_path(tmp_path: Path) -> None:
-    stub = _StubLLM([_valid_response()])
-    await _propose(tmp_path, stub)
+    agent, snapshot = _episode_agent(tmp_path)
+    await agent.propose(_episode_ctx(tmp_path, snapshot))
 
     path = tmp_path / "epochs" / _EPOCH / "proposer_inputs.jsonl"
     assert path == proposer_inputs_path(tmp_path, _EPOCH)
@@ -159,86 +176,16 @@ async def test_capture_lands_at_the_canonical_per_epoch_path(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_an_outer_workspace_root_descends_into_the_inner_tree(tmp_path: Path) -> None:
-    (tmp_path / ".zicato" / "epochs").mkdir(parents=True)
-    stub = _StubLLM([_valid_response()])
-    await _propose(tmp_path, stub)
-
-    assert (tmp_path / ".zicato" / "epochs" / _EPOCH / "proposer_inputs.jsonl").exists()
-    assert not (tmp_path / "epochs").exists()
-
-
-@pytest.mark.asyncio
-async def test_every_retry_attempt_lands_its_own_record(tmp_path: Path) -> None:
-    stub = _StubLLM(["not json at all", _valid_response()])
-    await _propose(tmp_path, stub)
+async def test_each_slate_slot_lands_its_own_record(tmp_path: Path) -> None:
+    """A slate's slots are separate episodes, so each records its own."""
+    agent, snapshot = _episode_agent(tmp_path)
+    for slot in (0, 1):
+        await agent.propose(_episode_ctx(tmp_path, snapshot, slot_index=slot))
 
     records = _records(tmp_path)
-    assert [r["attempt"] for r in records] == [0, 1]
-    # The repair turn is what distinguishes the second prompt: it echoes the
-    # prior raw output back, so the two user texts are NOT the same string.
+    assert [r["slot"] for r in records] == [0, 1]
+    # The slot is named in the task, so the two are not the same string.
     assert records[0]["user"] != records[1]["user"]
-    assert [r["user"] for r in records] == [c[1] for c in stub.calls]
-
-
-@pytest.mark.asyncio
-async def test_a_round_that_exhausts_its_retries_still_leaves_every_prompt(
-    tmp_path: Path,
-) -> None:
-    stub = _StubLLM(["nope"] * 3)
-    with pytest.raises(ProposerError):
-        await _propose(tmp_path, stub, max_retries=2)
-
-    records = _records(tmp_path)
-    assert [r["attempt"] for r in records] == [0, 1, 2]
-    assert [r["user"] for r in records] == [c[1] for c in stub.calls]
-
-
-@pytest.mark.asyncio
-async def test_no_workspace_root_captures_nothing(tmp_path: Path) -> None:
-    stub = _StubLLM([_valid_response()])
-    await _propose(None, stub)
-    assert list(tmp_path.iterdir()) == []
-
-
-# ---------------------------------------------------------------------------
-# The default ADK path
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_the_adk_agent_captures_its_task_text(tmp_path: Path) -> None:
-    pytest.importorskip("google.adk")
-    from google.adk.agents import LlmAgent
-
-    from zicato.proposer.adk_agent import ADKProposerAgent
-    from zicato.testing.adk_fake import TextTurn, make_fake_adk_model
-
-    model = make_fake_adk_model([TextTurn(text=_valid_response())], model="proposer-model")
-    agent = LlmAgent(name="capturing_proposer", model=model, instruction="emit JSON", tools=[])
-    ctx = ProposerContext(
-        epoch_id=_EPOCH,
-        parent_generation_id="v0",
-        new_generation_id="v1",
-        patterns=(),
-        mutations=_MUTATIONS,
-        brief_text="# Proposer brief\n",
-        current_loss_summary="loss=2.3",
-        aux_call_llm=_unused_callable,
-        model="aux-model",
-        workspace_root=tmp_path,
-        generation_root=tmp_path / "snapshot",
-    )
-    await ADKProposerAgent(spec=ProposerSpec.default(), agent=agent).propose(ctx)
-
-    records = _records(tmp_path)
-    assert len(records) == 1
-    assert records[0]["role"] == ROLE_PROPOSAL
-    assert records[0]["attempt"] == 0
-    # The agent owns its static instruction, so only the task text is ours.
-    assert records[0]["system"] == ""
-    assert "# Proposer brief" in records[0]["user"]
-    assert "loss=2.3" in records[0]["user"]
 
 
 async def _unused_callable(*_a: Any, **_k: Any) -> str:  # pragma: no cover - never invoked

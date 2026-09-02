@@ -24,17 +24,19 @@ the ``drift:`` channel and ``pass_weight`` both at ``1.0``, 5-entry board):
     fix B ("omit-summary",              1 tok, 4/5) = 1.2   — Δ 1.2 < 1.5 REJECT
     the LLM merge ("" , 0 tok, 5/5)                 = 0.0   — Δ 2.4 > 1.5 PROMOTE
 
-Module-level callables, like :mod:`.mocks_recombine` (LOAD-BEARING: the
-tournament runner serialises each role callable as a re-importable dotted
-path for the subprocess worker). The proposer script serves single fixes in
-call order; the MERGE call is recognised by its distinctive user-prompt marker
-(the merge prompt's opening sentence) and returns the true union WITHOUT
-consuming the sample script — but it DOES advance the total call counter, since
-the merge call substitutes the slot's own sample call (the ``n``-call cost
-story the OC pins).
+The single fixes are scripted per slate slot (:data:`SLATE_POLICIES`) and
+written by the proposal episodes themselves. The MERGE is the one
+proposal that is still a single auxiliary call — it composes two patch
+sets that already exist rather than investigating a tree — and
+:func:`aux_llm` recognises it by the merge prompt's opening sentence and
+answers with the true union. The merge SUBSTITUTES the last slot's own
+episode, so a merging round runs ``n - 1`` episodes plus one merge call:
+the ``n``-call cost story the OC pins.
 
-Everything is byte-deterministic for the same call sequence. The mocks never
-reference any specific model vendor; ``model`` is ignored.
+``aux_llm`` is module-level, which is LOAD-BEARING: the tournament runner
+serialises each role callable as a re-importable dotted path for the
+subprocess worker. Everything is byte-deterministic; the mocks never
+reference any specific model vendor and ``model`` is ignored.
 """
 
 from __future__ import annotations
@@ -81,23 +83,24 @@ def _single_patch_experiment(core_idea: str, why: str, new_content: str, rationa
     )
 
 
-#: Fix A — removes ``omit-summary`` (leaves ``skip-citations``). Touches
-#: ``style_rules``.
-_FIX_A = _single_patch_experiment(
-    core_idea="Drop the omit-summary rule so every note ends with a SUMMARY line.",
-    why="The summary predicate fails every run and the token costs one drift frame.",
-    new_content="skip-citations",
-    rationale="Removing omit-summary restores the SUMMARY line.",
-)
+#: The two overlapping single fixes, as the policy each slate slot writes.
+#: Both touch the SAME mutation point, which is what makes the mechanical
+#: selector — whose predicate is disjointness — decline the pair.
+#:
+#: Under ``best_of_n=2`` (critique off) both of round 1's slots write fix
+#: A (removing ``omit-summary``) and both of round 2's write fix B
+#: (removing ``skip-citations``). Each single fix is a Δ 1.2 improvement,
+#: strictly under the 1.5 margin, so each of those rounds REJECTS; round
+#: 3's last slot is where the merge lands.
+SLATE_POLICIES: dict[str, dict[str, str]] = {
+    "v1#0": {"style_rules": "skip-citations"},
+    "v1#1": {"style_rules": "skip-citations"},
+    "v2#0": {"style_rules": "omit-summary"},
+    "v2#1": {"style_rules": "omit-summary"},
+    "v3#0": {"style_rules": "skip-citations"},
+    "v3#1": {"style_rules": "skip-citations"},
+}
 
-#: Fix B — removes ``skip-citations`` (leaves ``omit-summary``). Touches the
-#: SAME ``style_rules`` point (OVERLAP with fix A).
-_FIX_B = _single_patch_experiment(
-    core_idea="Drop the skip-citations rule so every claim carries a source tag.",
-    why="The citation predicate fails every run and the token costs one drift frame.",
-    new_content="omit-summary",
-    rationale="Removing skip-citations restores the [source: ...] tag.",
-)
 
 #: The TRUE union the LLM merge composes: a SINGLE edit on ``style_rules`` that
 #: removes BOTH defect tokens — exactly what a last-wins concatenation of the
@@ -112,44 +115,32 @@ _MERGE_UNION = _single_patch_experiment(
     rationale="Removing both omit-summary and skip-citations restores every feature.",
 )
 
-#: The call-ordered sample script (indexing is over SAMPLE calls only). Index 4
-#: onward wraps to FIX_A (benign schema-valid repeats).
-_SCRIPT: tuple[str, ...] = (_FIX_A, _FIX_A, _FIX_B, _FIX_B, _FIX_A)
-
-_STATE: dict[str, int] = {"calls": 0, "samples": 0}
+_STATE: dict[str, int] = {"merges": 0}
 
 
-def reset() -> None:
-    """Rewind the proposer script and the call counters."""
-    _STATE["calls"] = 0
-    _STATE["samples"] = 0
+def merge_calls() -> int:
+    """How many LLM merge calls this interpreter has answered so far.
 
+    The merge is the one proposal this fixture still makes as a single
+    auxiliary call — it composes two patch sets that already exist rather
+    than investigating a tree — so it is the one counted here. Proposal
+    EPISODES are counted from the workspace's own durable record.
 
-def proposer_calls() -> int:
-    """How many PROPOSER calls the script has served — the cost counter.
-
-    Counts BOTH ordinary sample calls AND the LLM merge call (the merge
-    substitutes the slot's own sample call, so it costs one proposer call —
-    exactly the ``n``-call cost story the OC pins). Non-proposer auxiliary
-    sites are dispatched before the counter.
+    The count is cumulative for the process, which is what a module-level
+    callable can be: the tournament runner reimports this module in each
+    worker, so there is no per-run state to key it on. A caller reads it
+    either side of the run it is measuring.
     """
-    return _STATE["calls"]
+    return _STATE["merges"]
 
 
 async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
-    """The scripted single-marker proposer plus the LLM merge, plus other sites."""
+    """The LLM merge, plus every other auxiliary call site."""
     del model
-    canned = _dispatch(system, "")
-    if canned is not None:
-        return canned
-    _STATE["calls"] += 1
     if MERGE_MARKER in user:
-        # The LLM merge call — recognised by the merge prompt's marker; returns
-        # the true union without consuming the sample script.
+        _STATE["merges"] += 1
         return _MERGE_UNION
-    idx = _STATE["samples"] % len(_SCRIPT)
-    _STATE["samples"] += 1
-    return _SCRIPT[idx]
+    return _dispatch(system)
 
 
-__all__ = ["MERGE_MARKER", "aux_llm", "proposer_calls", "reset"]
+__all__ = ["MERGE_MARKER", "SLATE_POLICIES", "aux_llm", "merge_calls"]

@@ -24,6 +24,7 @@ import re
 from dataclasses import fields
 from pathlib import Path
 
+from tests._proposal_evidence import render_proposal_evidence
 from zicato.core.types import MutationPoint
 from zicato.proposer.genealogy import (
     _CORE_IDEA_MAX,
@@ -32,7 +33,7 @@ from zicato.proposer.genealogy import (
     GenealogyRecord,
     sample_genealogy,
 )
-from zicato.proposer.prompts import render_genealogy_block, render_user_prompt
+from zicato.proposer.prompts import render_genealogy_block
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -354,8 +355,10 @@ def _mutation() -> MutationPoint:
 
 def test_genealogy_default_is_byte_identical() -> None:
     """A ``genealogy = ()`` round renders the exact prompt of before the surface."""
-    baseline = render_user_prompt(current_loss_summary="loss", patterns=[], mutations=[_mutation()])
-    with_default = render_user_prompt(
+    baseline = render_proposal_evidence(
+        current_loss_summary="loss", patterns=[], mutations=[_mutation()]
+    )
+    with_default = render_proposal_evidence(
         current_loss_summary="loss", patterns=[], mutations=[_mutation()], genealogy=()
     )
     assert with_default == baseline
@@ -376,7 +379,7 @@ def test_genealogy_section_renders_when_present() -> None:
     # champion_id="v2": the walk anchors on the promoted spine head (v2), and
     # r1 is reign-scoped to it (parent == champion).
     items = sample_genealogy(records, {}, 4, champion_id="v2")
-    rendered = render_user_prompt(
+    rendered = render_proposal_evidence(
         current_loss_summary="loss",
         patterns=[],
         mutations=[_mutation()],
@@ -405,7 +408,7 @@ def test_genealogy_lands_above_experiment_memory() -> None:
         ),
     )
     items = sample_genealogy([_record("v2", decision="promoted", round_index=2)], {}, 2)
-    rendered = render_user_prompt(
+    rendered = render_proposal_evidence(
         current_loss_summary="loss",
         patterns=[],
         mutations=[_mutation()],

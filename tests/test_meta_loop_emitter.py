@@ -401,57 +401,55 @@ async def test_meta_loop_jsonl_sink_persists_events(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_propose_experiment_emits_proposer_envelopes(
-    tmp_path: Path,
-) -> None:
-    """End-to-end: passing an emitter to ``propose_experiment`` records events.
+async def test_a_proposal_episode_emits_proposer_envelopes(tmp_path: Path) -> None:
+    """End-to-end: an episode given an emitter records the pair.
 
-    The proposer is given a degenerate ``aux_call_llm`` that returns a
-    valid-shape JSON experiment; we only assert that the emit pair lands
-    on the sink — not that the parse succeeds (which is covered by
-    other tests). The post-parse validation hook is None and patches
-    target the only mutation in the manifest.
+    One episode is one call from this side — the turns inside it are the
+    runtime's own transcript — so the pair brackets the episode rather
+    than a model request, and the completed envelope carries how the
+    episode ended.
     """
-    from zicato.core.types import MutationPoint
-    from zicato.proposer.proposer import ProposerError, propose_experiment
+    from tests._foe_support import stand_in_proposer_block
+    from tests._source_tree_builders import mutable_tree
+    from zicato.core.types import ProposerSpec
+    from zicato.mutation.enumerator import enumerate_mutations
+    from zicato.proposer.agent import ProposerContext
+    from zicato.proposer.external import external_proposer_config
+    from zicato.proposer.foe_agent import FoeProposerAgent
 
     sink = _CapturingSink()
     emitter = MetaLoopEmitter(run_id="run-int", session_id="sess-int", sinks=[sink])
 
-    async def _aux_call(system: str, user: str, model: str) -> str:
-        # Intentionally invalid -> parse error -> retries -> ProposerError.
-        # We only need ONE LLM call to land the started/completed pair;
-        # the parse failure path still emits both envelopes per attempt.
-        return "not json"
-
-    mp = MutationPoint(
-        id="m1",
-        kind="span",
-        file=Path("/src/foo.py"),
-        source_root=Path("/src"),
-        line_start=1,
-        line_end=3,
-        content="x",
-        content_hash="abc",
+    snapshot = tmp_path / "snapshot"
+    mutable_tree(snapshot, instr="Route the message.")
+    binding = external_proposer_config(
+        {"proposer": stand_in_proposer_block(tmp_path / "foe")}, tmp_path
+    )
+    assert binding is not None
+    agent = FoeProposerAgent(
+        spec=ProposerSpec(agent_id="external:foe", tools=(), skills=()), config=binding
     )
 
-    with pytest.raises(ProposerError):
-        await propose_experiment(
+    async def _unused(system: str, user: str, model: str) -> str:  # pragma: no cover
+        raise AssertionError("an episode never calls the auxiliary text shim")
+
+    await agent.propose(
+        ProposerContext(
             epoch_id="ep",
             parent_generation_id="v0",
             new_generation_id="v1",
-            patterns=[],
-            mutations=[mp],
+            patterns=(),
+            mutations=tuple(enumerate_mutations([snapshot])),
             brief_text="",
             current_loss_summary="",
-            aux_call_llm=_aux_call,
+            aux_call_llm=_unused,
             model="aux-model",
-            max_retries=0,  # one attempt total
-            forbidden_ids=(),
+            workspace_root=tmp_path,
+            generation_root=snapshot,
             meta_loop_emitter=emitter,
         )
+    )
 
-    # One attempt -> one started + one completed envelope.
     assert len(sink.events) == 2
     kinds = [_event_kind(e) for e in sink.events]
     assert "proposer_call_started" in kinds

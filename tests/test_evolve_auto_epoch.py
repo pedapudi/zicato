@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import harness_call_llm
 from tests._stub_adapter import make_stub_adapter
 from zicato.core.types import (
@@ -129,6 +130,7 @@ def _bootstrap_registered(tmp_path: Path) -> tuple[Path, Path]:
         json.dumps(
             {
                 "instance_id": "test",
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "adapter": {
                     "kind": "import",
                     "factory": "tests._stub_adapter:make_stub_adapter",
@@ -364,7 +366,7 @@ def test_evolve_auto_creates_then_rolls_on_rubric_edit(
     # epoch's v0 must carry that promoted content forward.
     agent_files = list(new_v0_snapshot.rglob("agent.py"))
     assert agent_files, "expected agent.py in the seeded v0 snapshot"
-    assert '"world"' in agent_files[0].read_text()
+    assert "hello [v1]" in agent_files[0].read_text()
 
     # Cross-epoch lineage edge recorded.
     lineage = json.loads((workspace / "lineage.json").read_text())

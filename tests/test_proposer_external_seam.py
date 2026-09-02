@@ -40,12 +40,12 @@ from zicato.proposer.external import (
 )
 from zicato.proposer.skills import resolve_proposer_spec
 
-#: The canonical form of the built-in default proposer, spelled out. This
-#: literal is the guard: any change to `_canon_proposer`'s shape that
-#: reaches an unconfigured workspace moves every epoch in every workspace.
-BUILTIN_CANON = (
-    '{"agent_id": "builtin:default", "agent_source_sha256": null, "skills": [], "tools": []}'
-)
+#: The canonical form a workspace that declares no proposal runtime
+#: hashes to, spelled out. This literal is the guard: any change to
+#: `_canon_proposer`'s shape that reaches such a workspace moves every
+#: epoch in every workspace, including the ones that can still hash their
+#: contract on a machine with no Foe binary.
+BUILTIN_CANON = '{"agent_id": "builtin:default", "skills": [], "tools": []}'
 
 _DOTTED = "tests.test_proposer_external_seam:StubExternalAgent"
 
@@ -175,7 +175,8 @@ def test_skills_survive_alongside_an_external_agent(tmp_path: Path) -> None:
 # -- contract folding --------------------------------------------------------
 
 
-def test_unconfigured_canonical_form_is_unchanged() -> None:
+def test_a_workspace_declaring_no_runtime_canonicalizes_without_one() -> None:
+    """It hashes, and it hashes without asking any binary anything."""
     assert _canon_proposer(None) == BUILTIN_CANON
     assert json.loads(_canon_proposer(None)) == json.loads(BUILTIN_CANON)
 

@@ -12,10 +12,10 @@ from typing import Any
 
 import pytest
 
+from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     harness_call_llm,
     make_aux_responder,
-    valid_proposer_response,
 )
 from zicato.core.types import (
     BoardEntry,
@@ -38,6 +38,7 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
         json.dumps(
             {
                 "instance_id": "test",
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "created_at": "2026-05-14T00:00:00Z",
                 # Hand-built directory-backend snapshot layout below; pin the
                 # directory backend so the git default does not look for git
@@ -204,7 +205,7 @@ def test_evolve_n_rounds_writes_heartbeat_and_releases_lock(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
+            auxiliary_call_llm=make_aux_responder([]),
             instance_id="hb-test",
         )
     )
@@ -251,7 +252,7 @@ def test_evolve_n_rounds_advances_progress_seq_and_marks_terminal(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
+            auxiliary_call_llm=make_aux_responder([]),
             instance_id="seq-test",
         )
     )
@@ -283,7 +284,7 @@ def test_evolve_n_rounds_advances_progress_seq_and_marks_terminal(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
+            auxiliary_call_llm=make_aux_responder([]),
             instance_id="seq-test",
         )
     )
@@ -316,6 +317,7 @@ def test_evolve_n_rounds_refuses_when_workspace_locked(
         {
             "pid": os.getppid(),
             "instance_id": "other",
+            "proposer": stand_in_proposer_block(tmp_path / "foe"),
             "acquired_at": "2026-05-14T00:00:00Z",
             "workspace_root": str(workspace),
         },
@@ -330,7 +332,7 @@ def test_evolve_n_rounds_refuses_when_workspace_locked(
                 workspace_root=workspace,
                 epoch_id=epoch_id,
                 harness_call_llm=harness_call_llm,
-                auxiliary_call_llm=make_aux_responder([valid_proposer_response()]),
+                auxiliary_call_llm=make_aux_responder([]),
                 instance_id="hb-test",
             )
         )

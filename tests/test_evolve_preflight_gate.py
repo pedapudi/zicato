@@ -32,7 +32,6 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
-    valid_proposer_response,
 )
 from zicato.epoch.preflight import PreflightReport
 from zicato.tournament.calibration import NoiseFloor
@@ -137,7 +136,7 @@ def _prepare(
 
 
 def _run_once(monkeypatch: pytest.MonkeyPatch, workspace: Path, epoch_id: str) -> Any:
-    return run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
+    return run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +189,7 @@ def test_refuse_mode_stops_evolve_n_rounds_before_spending_rounds(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([valid_proposer_response()] * 3),
+            auxiliary_call_llm=make_aux_responder([]),
             stop_reason_out=stop_reason,
         )
     )

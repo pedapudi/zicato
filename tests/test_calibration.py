@@ -20,6 +20,7 @@ import re
 from dataclasses import fields
 from pathlib import Path
 
+from tests._proposal_evidence import render_proposal_evidence
 from zicato.core.types import MutationPoint
 from zicato.proposer.calibration import (
     _CORE_IDEA_MAX,
@@ -31,7 +32,6 @@ from zicato.proposer.calibration import (
 from zicato.proposer.genealogy import GenealogyRecord
 from zicato.proposer.prompts import (
     render_calibration_block,
-    render_user_prompt,
 )
 
 # ---------------------------------------------------------------------------
@@ -258,8 +258,10 @@ def test_calibration_none_renders_empty_block() -> None:
 
 def test_calibration_default_is_byte_identical() -> None:
     """A ``calibration = None`` round renders the exact prompt of before."""
-    baseline = render_user_prompt(current_loss_summary="loss", patterns=[], mutations=[_mutation()])
-    with_default = render_user_prompt(
+    baseline = render_proposal_evidence(
+        current_loss_summary="loss", patterns=[], mutations=[_mutation()]
+    )
+    with_default = render_proposal_evidence(
         current_loss_summary="loss", patterns=[], mutations=[_mutation()], calibration=None
     )
     assert with_default == baseline
@@ -274,7 +276,7 @@ def test_calibration_section_renders_when_present() -> None:
         ],
         5,
     )
-    prompt = render_user_prompt(
+    prompt = render_proposal_evidence(
         current_loss_summary="loss", patterns=[], mutations=[_mutation()], calibration=summary
     )
     assert "## Prediction calibration" in prompt
@@ -319,7 +321,7 @@ def test_calibration_lands_below_genealogy_above_experiment_memory() -> None:
             same_contract=True,
         ),
     )
-    prompt = render_user_prompt(
+    prompt = render_proposal_evidence(
         current_loss_summary="loss",
         patterns=[],
         mutations=[_mutation()],

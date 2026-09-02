@@ -38,6 +38,7 @@ from pathlib import Path
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
+from tests._foe_support import stand_in_proposer_block
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato_examples.target_0_convergence import mocks_recombine_merge as merge_mocks
 
@@ -116,6 +117,9 @@ def _bootstrap_workspace(tmp_path: Path, *, merge_mode: str | None) -> tuple[Pat
         json.dumps(
             {
                 "instance_id": "default",
+                "proposer": stand_in_proposer_block(
+                    tmp_path / "foe", contents=merge_mocks.SLATE_POLICIES
+                ),
                 "created_at": "2026-07-01T00:00:00Z",
                 "generation_source_backend": "directory",
                 "adapter": ADAPTER_BLOCK,
@@ -159,10 +163,22 @@ def _run_rounds(workspace: Path, epoch_id: str, rounds: int, *, aux) -> list:
     )
 
 
+def _proposal_episodes(workspace: Path, epoch_id: str) -> int:
+    """How many proposal episodes this epoch ran, off its durable record.
+
+    Filtered to the proposal role: the critique and merge calls land in
+    the same capture under their own roles, and are not episodes.
+    """
+    from zicato.proposer.input_capture import ROLE_PROPOSAL, read_proposer_inputs
+
+    records = read_proposer_inputs(workspace, epoch_id)
+    return sum(1 for r in records if r.get("role") == ROLE_PROPOSAL)
+
+
 def test_llm_merge_promotes_over_overlapping_pair(tmp_path: Path) -> None:
     """The 3-round known-answer: reject, reject, LLM merge → PROMOTED."""
     workspace, epoch_id = _bootstrap_workspace(tmp_path, merge_mode="llm")
-    merge_mocks.reset()
+    merges_before = merge_mocks.merge_calls()
     outcomes = _run_rounds(workspace, epoch_id, 3, aux=merge_mocks.aux_llm)
 
     # --- (a) The decision sequence: two sub-margin rejects, one promote.
@@ -207,9 +223,11 @@ def test_llm_merge_promotes_over_overlapping_pair(tmp_path: Path) -> None:
     assert [s.recombined for s in sampled] == [False, True]
 
     # --- (e) The COST story: an "llm" recombining round spends exactly
-    # BEST_OF_N calls (the merge SUBSTITUTES the last slot's sample call), so
-    # three rounds spend 3 * BEST_OF_N — a recombine-off round's cost.
-    assert merge_mocks.proposer_calls() == 3 * BEST_OF_N
+    # BEST_OF_N proposals — the merge SUBSTITUTES the last slot's episode,
+    # so round 3 ran BEST_OF_N - 1 episodes and made one merge call, and
+    # three rounds together cost what three recombine-off rounds cost.
+    assert _proposal_episodes(workspace, epoch_id) == 3 * BEST_OF_N - 1
+    assert merge_mocks.merge_calls() - merges_before == 1
 
     marker = workspace / "epochs" / epoch_id / "current_generation"
     assert marker.read_text().strip() == "v3"
@@ -225,7 +243,7 @@ def test_mechanical_mode_mints_nothing_on_overlapping_pair(tmp_path: Path) -> No
     nothing else — is what promotes in the sibling test.
     """
     workspace, epoch_id = _bootstrap_workspace(tmp_path, merge_mode="mechanical")
-    merge_mocks.reset()
+    merges_before = merge_mocks.merge_calls()
     outcomes = _run_rounds(workspace, epoch_id, 3, aux=merge_mocks.aux_llm)
 
     assert [o.tournament_decision for o in outcomes] == ["rejected", "rejected", "rejected"]
@@ -240,8 +258,9 @@ def test_mechanical_mode_mints_nothing_on_overlapping_pair(tmp_path: Path) -> No
         assert record.proposal.recombined_sampled == 0, round_index
     for gid in ("v1", "v2", "v3"):
         assert read_experiment(workspace, epoch_id, gid).recombined_from == ()
-    # No merge call was ever issued (no pair) — every round spent the full slate.
-    assert merge_mocks.proposer_calls() == 3 * BEST_OF_N
+    # No merge call was ever issued (no pair) — every round ran the full slate.
+    assert _proposal_episodes(workspace, epoch_id) == 3 * BEST_OF_N
+    assert merge_mocks.merge_calls() == merges_before
 
 
 def test_llm_merge_garbage_response_degrades_to_fresh_sample(tmp_path: Path) -> None:
@@ -253,7 +272,6 @@ def test_llm_merge_garbage_response_degrades_to_fresh_sample(tmp_path: Path) -> 
     champion stays v0 (both fallback samples are sub-margin single fixes).
     """
     workspace, epoch_id = _bootstrap_workspace(tmp_path, merge_mode="llm")
-    merge_mocks.reset()
     outcomes = _run_rounds(workspace, epoch_id, 3, aux=_garbage_merge_aux)
 
     assert [o.tournament_decision for o in outcomes] == ["rejected", "rejected", "rejected"]
@@ -270,7 +288,7 @@ def test_llm_merge_garbage_response_degrades_to_fresh_sample(tmp_path: Path) -> 
 
 
 async def _garbage_merge_aux(system: str, user: str, model: str, **kwargs) -> str:
-    """Serve the sample script normally but return GARBAGE on the merge call."""
+    """Answer every auxiliary site normally but GARBAGE on the merge call."""
     if merge_mocks.MERGE_MARKER in user:
         return "this is not a JSON object at all — {oops"
     return await merge_mocks.aux_llm(system, user, model, **kwargs)

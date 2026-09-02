@@ -1,190 +1,112 @@
-"""Tests for the :class:`ProposerAgent` abstraction (Phase 2a core).
+"""What :func:`build_proposer_agent` resolves, and what it refuses.
 
-Covers the build-time selection + the skill-composed engine:
-
-* :class:`DefaultProposerAgent` (the skill-composed single-shot engine)
-  runs and returns a valid :class:`Experiment`.
-* a spec carrying skills causes the skill body to land in the system
-  prompt actually sent to the auxiliary callable.
-* :func:`build_proposer_agent` returns the tool-using
-  :class:`~zicato.proposer.adk_agent.ADKProposerAgent` for the BUILTIN
-  DEFAULT (no proposer dir configured), the skill-composed
-  :class:`DefaultProposerAgent` for a skills-only ``dir:*`` spec (the
-  EXPLICIT opt-in), and raises ``ValueError`` when a custom ``agent.py`` is
-  present but no ``proposer_path`` was supplied.
+The builder is the one place a resolved
+:class:`~zicato.core.types.ProposerSpec` becomes something callable, and
+there is one supported answer: the Foe-backed agent, reached because the
+workspace declared a ``proposer`` block. These pin that answer, the
+operator's own class as the one other thing the seam accepts, and the two
+refusals that stand between them and a silent default — a workspace that
+declared no proposal runtime at all, and a proposer directory still
+carrying an executable agent module.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from zicato.core.types import Experiment, MutationPoint, Pattern, ProposerSkill, ProposerSpec
-from zicato.proposer.adk_agent import ADKProposerAgent
-from zicato.proposer.agent import (
-    DefaultProposerAgent,
-    ProposerContext,
-    build_proposer_agent,
-)
-from zicato.testing.mock_llm import CannedCallLLM, RecordingCallLLM
+from tests._foe_support import stand_in_proposer_block
+from zicato.core.types import Experiment, ProposerSkill, ProposerSpec
+from zicato.proposer.agent import ProposerContext, build_proposer_agent
+from zicato.proposer.external import external_proposer_config, resolve_external_spec
+from zicato.proposer.foe_agent import FoeProposerAgent
+from zicato.proposer.foe_config import ProposerConfigError
 
 
-def _mp(mid: str) -> MutationPoint:
-    return MutationPoint(
-        id=mid,
-        kind="span",
-        file=Path(f"/src/{mid}.py"),
-        source_root=Path("/src"),
-        line_start=1,
-        line_end=3,
-        content="content",
-        content_hash="abc",
-        metadata={},
-    )
+class OperatorAgent:
+    """An operator's own implementation of the retained protocol."""
+
+    external_id = "operator"
+
+    def __init__(self, *, spec: ProposerSpec, config: Any) -> None:
+        self.spec = spec
+        self.config = config
+
+    @classmethod
+    def contract_identity(cls, config: Any) -> dict[str, Any]:
+        del config
+        return {"kind": "operator", "tools": ["edit"]}
+
+    async def propose(self, ctx: ProposerContext) -> Experiment:  # pragma: no cover
+        raise AssertionError("this stand-in is resolved, never run")
 
 
-_MUTATIONS = (_mp("router__sp"),)
+_OPERATOR_PATH = "tests.test_proposer_agent:OperatorAgent"
 
 
-def _pattern() -> Pattern:
-    return Pattern(
-        id="pat1",
-        kind="drift_kind_frequency",
-        summary="off_topic dominates",
-        detail={"top_kind": "off_topic"},
-        affected_mutation_ids=("router__sp",),
-        severity="warning",
-    )
+def _workspace_config(tmp_path: Path, **runtime: str) -> dict[str, Any]:
+    config: dict[str, Any] = {"proposer": stand_in_proposer_block(tmp_path / "foe")}
+    if runtime:
+        config["runtime"] = dict(runtime)
+    return config
 
 
-def _valid_response() -> str:
-    return json.dumps(
-        {
-            "hypothesis": {
-                "core_idea": "tighten router preamble",
-                "modulating": ["router__sp"],
-                "why": "off_topic dominates",
-                "expected_drift_movements": [
-                    {"kind": "off_topic", "direction": "decrease", "magnitude": "medium"}
-                ],
-                "expected_pass_rate_delta": "+0.05",
-            },
-            "patches": [
-                {
-                    "mutation_id": "router__sp",
-                    "op": "replace",
-                    "new_content": "new router prompt",
-                    "rationale": "tighter wording",
-                }
-            ],
-        }
-    )
+def _resolve(tmp_path: Path, **runtime: str) -> Any:
+    """Resolve a workspace the way a round does: one reading, one binding."""
+    binding = external_proposer_config(_workspace_config(tmp_path, **runtime), tmp_path)
+    assert binding is not None
+    return build_proposer_agent(resolve_external_spec(binding), external_config=binding)
 
 
-def _context(aux: object) -> ProposerContext:
-    return ProposerContext(
-        epoch_id="e1",
-        parent_generation_id="v0",
-        new_generation_id="v1",
-        patterns=(_pattern(),),
-        mutations=_MUTATIONS,
-        brief_text="# Proposer brief\n- Be careful.\n",
-        current_loss_summary="loss=2.3, pass_rate=0.6",
-        aux_call_llm=aux,  # type: ignore[arg-type]
-        model="test-model",
-    )
+def test_a_declared_proposer_block_resolves_the_foe_agent(tmp_path: Path) -> None:
+    agent = _resolve(tmp_path)
+    assert isinstance(agent, FoeProposerAgent)
+    assert agent.spec.agent_id == "external:foe"
 
 
-@pytest.mark.asyncio
-async def test_default_agent_returns_valid_experiment() -> None:
-    agent = DefaultProposerAgent(ProposerSpec.default())
-    exp = await agent.propose(_context(CannedCallLLM([_valid_response()])))
-    assert isinstance(exp, Experiment)
-    assert [p.mutation_id for p in exp.patches] == ["router__sp"]
+def test_an_operator_class_wins_over_the_default(tmp_path: Path) -> None:
+    """The seam accepts an explicit class of the operator's own."""
+    agent = _resolve(tmp_path, proposer_agent=_OPERATOR_PATH)
+    assert isinstance(agent, OperatorAgent)
+    assert agent.spec.agent_id == "external:operator"
+    assert agent.spec.external_path == _OPERATOR_PATH
 
 
-@pytest.mark.asyncio
-async def test_skills_reach_the_system_prompt_sent_to_aux() -> None:
-    skill = ProposerSkill(
-        name="diversify",
-        description="avoid re-proposing rejected directions",
-        body="When a direction was rejected, change the lever, not the wording.",
-    )
-    spec = ProposerSpec(
-        agent_id="dir:demo",
-        tools=(),
-        skills=(skill,),
-        agent_source_sha256=None,
-    )
-    recorder = RecordingCallLLM(CannedCallLLM([_valid_response()]))
-    agent = DefaultProposerAgent(spec)
-
-    await agent.propose(_context(recorder))
-
-    assert len(recorder.calls) == 1
-    system_prompt = recorder.calls[0]["system"]
-    assert skill.body in system_prompt
-    assert skill.name in system_prompt
-    assert "Proposer skills (composable guidance modules" in system_prompt
+def test_the_spec_carries_the_proposer_dir_s_skills(tmp_path: Path) -> None:
+    """A dir's skills steer the agent whatever implements the protocol."""
+    binding = external_proposer_config(_workspace_config(tmp_path), tmp_path)
+    assert binding is not None
+    skill = ProposerSkill(name="diversify", description="change the lever", body="body")
+    spec = resolve_external_spec(binding, skills=(skill,))
+    assert spec.skills == (skill,)
 
 
-@pytest.mark.asyncio
-async def test_revise_feedback_threads_into_the_engine_prompt() -> None:
-    """The context's revise channel seeds the FIRST engine attempt's repair
-    section (the best-of-N screen-informed revise path)."""
-    from dataclasses import replace
-
-    recorder = RecordingCallLLM(CannedCallLLM([_valid_response()]))
-    agent = DefaultProposerAgent(ProposerSpec.default())
-    ctx = replace(_context(recorder), revise_feedback="screen vetoed the whole slate")
-
-    await agent.propose(ctx)
-
-    assert len(recorder.calls) == 1
-    user_prompt = recorder.calls[0]["user"]
-    assert "Previous attempt was rejected" in user_prompt
-    assert "screen vetoed the whole slate" in user_prompt
-
-
-def test_build_agent_for_builtin_default_is_adk_tool_agent() -> None:
-    # The DEFAULT proposer (no proposer dir configured) is the tool-using
-    # ADK agent in builtin_default mode — NOT the skill-composed single-shot
-    # engine. It builds its LlmAgent lazily from ctx.model at propose time.
-    agent = build_proposer_agent(ProposerSpec.default())
-    assert isinstance(agent, ADKProposerAgent)
-    assert agent.builtin_default is True
-    assert agent.proposer_path is None
-    assert agent.agent is None  # built lazily on first propose
-    assert agent.spec == ProposerSpec.default()
-
-
-def test_build_agent_for_skills_only_dir_stays_skill_composed() -> None:
-    # A configured proposer dir with skills but no agent.py is the EXPLICIT
-    # opt-in into the skill-composed single-shot engine — it is NOT the
-    # tool-using default.
-    spec = ProposerSpec(
-        agent_id="dir:demo",
-        tools=(),
-        skills=(ProposerSkill(name="s", description="", body="b"),),
-        agent_source_sha256=None,
-    )
-    agent = build_proposer_agent(spec)
-    assert isinstance(agent, DefaultProposerAgent)
-    assert agent.spec is spec
-
-
-def test_build_agent_with_custom_agent_source_requires_proposer_path() -> None:
-    # Phase 2b: a custom-agent spec selects the ADK (Design A) path, which
-    # needs the proposer dir to load proposers/<name>/agent.py from. Without
-    # a proposer_path the builder raises ValueError rather than silently
-    # falling back to the default agent.
-    spec = ProposerSpec(
-        agent_id="dir:demo",
-        tools=(),
-        skills=(),
-        agent_source_sha256="deadbeef",
-    )
-    with pytest.raises(ValueError, match="no proposer_path"):
+def test_a_workspace_that_declared_no_runtime_is_refused() -> None:
+    """No block, no bound class: the builder names the block to write."""
+    spec = ProposerSpec.default()
+    with pytest.raises(ValueError, match="names no proposal runtime"):
         build_proposer_agent(spec)
+
+
+def test_a_named_agent_without_its_configuration_is_refused() -> None:
+    spec = ProposerSpec(agent_id="external:foe", tools=(), skills=(), external_path=_OPERATOR_PATH)
+    with pytest.raises(ValueError, match="no external_config"):
+        build_proposer_agent(spec)
+
+
+def test_a_proposer_dir_carrying_an_agent_module_is_refused(tmp_path: Path) -> None:
+    """A removed runtime's configuration is named rather than ignored."""
+    proposer_dir = tmp_path / "proposers" / "demo"
+    proposer_dir.mkdir(parents=True)
+    (proposer_dir / "agent.py").write_text("agent = object()\n", encoding="utf-8")
+    binding = external_proposer_config(_workspace_config(tmp_path), tmp_path)
+    assert binding is not None
+
+    with pytest.raises(ProposerConfigError, match="custom proposer agent modules were removed"):
+        build_proposer_agent(
+            resolve_external_spec(binding),
+            proposer_path=proposer_dir,
+            external_config=binding,
+        )

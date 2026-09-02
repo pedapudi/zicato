@@ -41,6 +41,7 @@ from typing import Any
 import pytest
 
 # Reuse the fully-mocked harness from the gauntlet orchestrator tests.
+from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     harness_call_llm,
     install_stub_adapter_factory,
@@ -129,6 +130,7 @@ def _bootstrap_single_elim_workspace(tmp_path: Path, *, field_size: int) -> tupl
         json.dumps(
             {
                 "instance_id": "test",
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "created_at": "2026-06-06T00:00:00Z",
                 # Hand-built directory-backend snapshot layout below; pin the
                 # directory backend so the git default does not look for git

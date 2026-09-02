@@ -34,6 +34,7 @@ from pathlib import Path
 import pytest
 
 from tests._contract_pins import pin_deterministic
+from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     install_stub_adapter_factory,
     make_aux_responder,
@@ -42,43 +43,6 @@ from tests._orchestrator_harness import (
 from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile
 from zicato.core.types import OverfittingConfig, ScoringWeights, TournamentStructure
 from zicato.epoch.lifecycle import new_epoch
-
-
-def _distinct_field_responses(n: int) -> list[str]:
-    """``n`` distinct schema-valid proposer responses for an ``n``-wide field.
-
-    Each carries a unique ``core_idea`` (and replacement word) so the
-    field-diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3) keeps
-    every challenger — a genuinely diverse field of ``n`` distinct
-    experiments, which is what these holdout structure tests intend. Two
-    byte-identical proposals would, correctly, collapse to one.
-    """
-    return [
-        json.dumps(
-            {
-                "hypothesis": {
-                    "core_idea": f"swap the greeting string (variant {i})",
-                    "modulating": ["greeting"],
-                    "why": "exercising the multi-challenger holdout path",
-                    "expected_drift_movements": [
-                        {"kind": "off_topic", "direction": "decrease", "magnitude": "small"}
-                    ],
-                    "expected_pass_rate_delta": "+0.0 to +0.1",
-                    "risks": "harmless",
-                },
-                "patches": [
-                    {
-                        "mutation_id": "greeting",
-                        "op": "replace",
-                        "new_content": f'"word{i}"',
-                        "rationale": "different greeting word",
-                    }
-                ],
-            }
-        )
-        for i in range(n)
-    ]
-
 
 # Structures under test + their minimal params (small fields keep the bracket
 # shallow so the synthetic field resolves in one pass).
@@ -221,6 +185,7 @@ def _bootstrap(
         json.dumps(
             {
                 "instance_id": "test",
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "created_at": "2026-06-04T00:00:00Z",
                 # Hand-built directory-backend snapshot layout below; pin the
                 # directory backend so the git default does not look for git
@@ -337,7 +302,7 @@ def test_holdout_confirms_a_true_win_and_persists_records(
         pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "promoted", structure
     crowned = outcome.proposed_generation_id
@@ -389,7 +354,7 @@ def test_holdout_regression_flips_a_bracket_leaders_win_to_reject(
 
     from zicato.evolve.generation_phase import current_generation
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "rejected", structure
     assert "holdout_not_confirmed" in outcome.rejection_reason
@@ -431,7 +396,7 @@ def test_per_epoch_ladder_budget_is_shared_and_decremented(
 
     from zicato.core.workspace import ladder_state_path
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
+    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     state_path = ladder_state_path(workspace, epoch_id)
     assert state_path.exists(), "the crowning confirmation must persist the shared ladder state"
@@ -476,7 +441,7 @@ def test_empty_holdout_degrades_to_whole_board(
 
     from zicato.core.workspace import ladder_state_path
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "promoted", structure
     crowned = outcome.proposed_generation_id
@@ -517,7 +482,7 @@ def test_settled_promotion_agrees_with_champion_and_lineage(
 
     from zicato.evolve.generation_phase import current_generation
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "promoted", structure
     crowned = outcome.proposed_generation_id
@@ -559,7 +524,7 @@ def test_holdout_flip_persists_a_rejected_bracket_not_a_phantom_promotion(
 
     from zicato.evolve.generation_phase import current_generation
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     assert outcome.tournament_decision == "rejected", structure
     # Champion stands.
@@ -602,4 +567,4 @@ def test_crowning_invariant_raises_when_champion_pointer_cannot_advance(
     )
 
     with pytest.raises(RuntimeError, match="crowning invariant violated"):
-        run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
+        run_evolve_once(workspace, epoch_id, make_aux_responder([]))

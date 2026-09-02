@@ -38,6 +38,7 @@ from typing import Any
 import pytest
 
 from tests._contract_pins import deterministic_weights
+from tests._foe_support import stand_in_proposer_block
 from zicato.core.types import (
     BoardEntry,
     DriftCount,
@@ -67,11 +68,19 @@ def make_aux_responder(responses: list[str]) -> Any:
     return _aux
 
 
-def bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
+def bootstrap_workspace(tmp_path: Path, **proposer: Any) -> tuple[Path, str]:
     """Create a workspace + one epoch + a v0 baseline snapshot.
 
-    The snapshot contains a single Python file with one zicato:mutable
-    marker so the enumerator + applier paths exercise the real code.
+    The snapshot contains one Python file with a mutable span and a
+    mutable code region, so the enumerator, the projection and the applier
+    all exercise the real code.
+
+    The workspace declares the stand-in proposal runtime
+    (:func:`tests._foe_support.stand_in_proposer_block`): a round cannot
+    open without one, and these suites want a real episode per candidate
+    rather than a substitute for the propose step. Keyword arguments are
+    that helper's, so a test whose subject is a misbehaving proposer
+    (``break_first``, ``idea``) steers it from here.
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
@@ -89,6 +98,7 @@ def bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
                     "kind": "import",
                     "factory": "tests._stub_adapter:make_stub_adapter",
                 },
+                "proposer": stand_in_proposer_block(tmp_path / "foe", **proposer),
             }
         )
     )
@@ -342,36 +352,6 @@ def install_telemetry_stubs(
         )
 
     monkeypatch.setattr(_runner_mod, "_run_single", _fake_run_single)
-
-
-def valid_proposer_response() -> str:
-    """A schema-valid response targeting the stub snapshot's marker."""
-    return json.dumps(
-        {
-            "hypothesis": {
-                "core_idea": "swap the greeting string",
-                "modulating": ["greeting"],
-                "why": "Baseline drift baseline run, exercising the orchestrator.",
-                "expected_drift_movements": [
-                    {
-                        "kind": "off_topic",
-                        "direction": "decrease",
-                        "magnitude": "small",
-                    }
-                ],
-                "expected_pass_rate_delta": "+0.0 to +0.1",
-                "risks": "harmless",
-            },
-            "patches": [
-                {
-                    "mutation_id": "greeting",
-                    "op": "replace",
-                    "new_content": '"world"',
-                    "rationale": "different greeting word",
-                }
-            ],
-        }
-    )
 
 
 def run_evolve_once(

@@ -57,47 +57,6 @@ async def _hung_aux(system: str, user: str, model: str) -> str:
     return ""
 
 
-def test_proposer_timeout_raises_proposer_error() -> None:
-    """A hung aux LLM exhausts retries with ``auxiliary LLM call timed out`` errors."""
-    _pin_aux_timeout(0.05)
-
-    from zicato.core.types import MutationPoint
-    from zicato.proposer.proposer import ProposerError, propose_experiment
-
-    mut = MutationPoint(
-        id="m1",
-        kind="span",
-        file=Path("/tmp/agent.py"),
-        source_root=Path("/tmp"),
-        line_start=1,
-        line_end=1,
-        content="GREETING = 'hi'",
-        content_hash="0" * 64,
-    )
-
-    with pytest.raises(ProposerError) as exc_info:
-        asyncio.run(
-            propose_experiment(
-                epoch_id="e",
-                parent_generation_id="v0",
-                new_generation_id="v1",
-                patterns=(),
-                mutations=(mut,),
-                brief_text="# proposer brief",
-                current_loss_summary="",
-                aux_call_llm=_hung_aux,
-                max_retries=0,
-            )
-        )
-
-    assert any("timed out" in m for m in exc_info.value.attempts)
-
-
-# ---------------------------------------------------------------------------
-# Rubric (board matcher — the LLM-as-judge OUTCOME matcher)
-# ---------------------------------------------------------------------------
-
-
 def test_rubric_timeout_returns_rubric_timeout_detail() -> None:
     """A hung rubric aux returns ``passed=False`` with detail ``rubric_judge_timeout``."""
     _pin_aux_timeout(0.05)

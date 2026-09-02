@@ -17,6 +17,7 @@ from pathlib import Path
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
+from tests._foe_support import stand_in_proposer_block
 from zicato.epoch.lifecycle import _scoring_from_dict, load_epoch, new_epoch
 from zicato.health.diagnostics import detect_margin_below_noise_floor
 from zicato.tournament.calibration import (
@@ -107,6 +108,7 @@ def _bootstrap(tmp_path: Path, extra_config: dict | None = None) -> tuple[Path, 
         json.dumps(
             {
                 "instance_id": "default",
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
@@ -133,7 +135,6 @@ def _bootstrap(tmp_path: Path, extra_config: dict | None = None) -> tuple[Path, 
 def _run_rounds(workspace: Path, epoch_id: str, rounds: int = 1) -> list:
     from zicato.evolve.loop import evolve_n_rounds
 
-    t0_mocks.reset()
     return asyncio.run(
         evolve_n_rounds(
             rounds=rounds,

@@ -36,7 +36,6 @@ from tests._orchestrator_harness import (
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
-    valid_proposer_response,
 )
 from zicato.core import DriftCount, ExpectationResult, LossProfile, MetricCount, ScoringWeights
 from zicato.epoch.pareto import (
@@ -427,7 +426,6 @@ def test_a_FIELD_round_that_crowns_the_placebo_leaves_the_record_untouched(
     """
     from tests.test_orchestrator_multi_challenger import (
         _bootstrap_swiss_workspace,
-        _distinct_field_responses,
     )
     from zicato.core.scoring_config import OverfittingConfig
     from zicato.evolve.placebo import PLACEBO_HYPOTHESIS_MARKER
@@ -485,7 +483,7 @@ def test_a_FIELD_round_that_crowns_the_placebo_leaves_the_record_untouched(
         tokens_by_gen={"v0": 1000, "v1": 1000, "v2": 1000, "v3": 1100},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(6)))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
     # The round really did crown the placebo — otherwise this pins nothing.
     assert outcome.tournament_decision == "promoted"
@@ -1154,9 +1152,7 @@ def _drive_round(
     )
     _install_costed_run_single(monkeypatch, drift_by_gen=drift_by_gen, tokens_by_gen=tokens_by_gen)
 
-    outcome = run_evolve_once(
-        workspace, epoch_id, make_aux_responder([valid_proposer_response() for _ in range(6)])
-    )
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     return workspace, epoch_id, outcome
 
 
@@ -1252,7 +1248,7 @@ def test_a_promotion_retires_a_newly_dominated_member_end_to_end(
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([valid_proposer_response() for _ in range(20)]),
+            auxiliary_call_llm=make_aux_responder([]),
             max_consecutive_rejections=3,
         )
     )
@@ -1375,7 +1371,6 @@ def _drive_swiss_round(
     """One real 2-challenger Swiss round on the multi-challenger settle seam."""
     from tests.test_orchestrator_multi_challenger import (
         _bootstrap_swiss_workspace,
-        _distinct_field_responses,
     )
 
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
@@ -1387,7 +1382,7 @@ def _drive_swiss_round(
     )
     _install_costed_run_single(monkeypatch, drift_by_gen=drift_by_gen, tokens_by_gen=tokens_by_gen)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder(_distinct_field_responses(2)))
+    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
     return workspace, epoch_id, outcome
 
 

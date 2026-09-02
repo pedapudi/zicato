@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import stat
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -114,6 +114,87 @@ def scripted_transport(
     return _executable(directory / f"{name}-transport", body)
 
 
+def stand_in_transport(directory: Path, *, name: str = "stand-in") -> Path:
+    """Write the mechanical proposer transport (:mod:`tests._foe_stand_in_proposer`).
+
+    Unlike :func:`scripted_transport` this one carries no script: it reads
+    the working copy the task names and proposes against whatever it
+    finds, so a workspace can declare it once and every round of every
+    epoch gets a well-formed candidate.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    body = (
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        f"sys.path.insert(0, {str(_HERE.parent)!r})\n"
+        "from tests._foe_stand_in_proposer import main\n"
+        "sys.exit(main())\n"
+    )
+    return _executable(directory / f"{name}-transport", body)
+
+
+def stand_in_proposer_block(
+    directory: Path,
+    *,
+    model_calls: int = 6,
+    idea: str = "",
+    break_first: int = 0,
+    refuse: str = "",
+    predict: str = "",
+    hypotheses: Mapping[str, Mapping[str, str]] | None = None,
+    contents: Mapping[str, Mapping[str, str]] | None = None,
+) -> dict[str, Any]:
+    """The ``proposer`` block a loop-suite workspace declares.
+
+    Every fixture workspace that runs a round needs one, because a
+    workspace that declares no proposal runtime cannot open a round. The
+    block written here names the stand-in binary and the mechanical
+    transport above, both placed under ``directory``, so the workspace
+    proposes for real — one episode per candidate, over the host protocol
+    — without a credential, a network, or a model.
+
+    ``directory`` must outlive the workspace: the absolute paths written
+    here are read back by the tournament workers, which are separate
+    interpreters and see nothing this process patched in memory.
+
+    ``idea`` fixes the core idea every candidate states, which is how a
+    test makes a field's siblings duplicate each other on purpose;
+    ``break_first`` is how many opening turns write an edit the verifier
+    must reject, which is how a test drives the repair loop and, when it
+    exceeds the retry budget, the block that ends an unsatisfiable
+    episode, and ``refuse`` is a blocked code the episode reports instead
+    of proposing at all. ``predict`` names the metric every hypothesis
+    claims will
+    move, which is how a test drives a hypothesis the round's validator
+    refuses. ``hypotheses`` maps a candidate id to either of those two
+    keys, for a field that wants them to differ by candidate rather than
+    across the board. ``contents`` maps a candidate id to the literal
+    bodies that
+    candidate writes — ``{"v1": {"style_rules": "verbose-prose"}}`` —
+    which is how a known-answer harness scripts the exact tree each
+    candidate produces. All of them ride the model options, because that
+    is the one part of the block Foe forwards to the transport.
+    """
+    options = {"exec": str(stand_in_transport(directory))}
+    if idea:
+        options["idea"] = idea
+    if break_first:
+        options["break_first"] = str(break_first)
+    if refuse:
+        options["refuse"] = refuse
+    if predict:
+        options["predict"] = predict
+    if hypotheses:
+        options["hypotheses"] = json.dumps({k: dict(v) for k, v in hypotheses.items()})
+    if contents:
+        options["contents"] = json.dumps({k: dict(v) for k, v in contents.items()})
+    return {
+        "binary": str(fake_foe_binary(directory)),
+        "budget": {"model_calls": model_calls, "seconds": 300},
+        "model": {"provider": "exec", "model": "stand-in", "options": options},
+    }
+
+
 def foe_environment(directory: Path) -> dict[str, str]:
     """A credential directory for a stand-in run, as a mapping to merge.
 
@@ -155,5 +236,7 @@ __all__ = [
     "request_texts",
     "return_turn",
     "scripted_transport",
+    "stand_in_proposer_block",
+    "stand_in_transport",
     "text_turn",
 ]
