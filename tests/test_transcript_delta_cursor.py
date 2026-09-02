@@ -17,7 +17,7 @@ The properties under test are the ones the follow pane depends on:
   ``multi_turn_emulated`` entry) still advances the cursor monotonically,
   which is precisely why the cursor counts parsed events rather than
   goldfive ``sequence`` numbers;
-* the same-shaped degrades (absent run, no reconstructor, bad id).
+* the same-shaped degrades (absent run, failed reconstruction, bad id).
 """
 
 from __future__ import annotations
@@ -26,11 +26,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from zicato.dashboard.transcript import reconstruct_transcript
+import pytest
+
 from zicato.query import (
     FIDELITY_EVENTS,
     build_run_transcript_delta,
     empty_run_transcript_delta,
+    transcript_view,
 )
 from zicato.query.paths import WorkspacePaths
 
@@ -83,7 +85,6 @@ def _delta(root: Path, after: int | None = None, **kw: Any) -> dict[str, Any]:
         GEN,
         ENTRY,
         after=after,
-        reconstruct=reconstruct_transcript,
         **kw,
     )
 
@@ -365,13 +366,19 @@ def test_absent_run_degrades_to_the_not_found_shape(tmp_path: Path) -> None:
     assert "error" not in out  # genuine absence carries no error
 
 
-def test_missing_reconstructor_degrades_with_an_error(tmp_path: Path) -> None:
+def test_failed_reconstruction_degrades_with_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _opening(_events_path(tmp_path))
 
-    out = build_run_transcript_delta(WorkspacePaths(tmp_path), EPOCH, GEN, ENTRY, reconstruct=None)
+    def boom(events_path: Path, *, partial_ok: bool = False) -> None:
+        raise RuntimeError("torn read")
+
+    monkeypatch.setattr(transcript_view, "reconstruct_transcript", boom)
+    out = _delta(tmp_path)
 
     assert out["found"] is False
-    assert out["error"] == "transcript reconstruction unavailable"
+    assert out["error"] == "transcript failed: torn read"
 
 
 def test_every_degrade_shares_the_full_key_set(tmp_path: Path) -> None:

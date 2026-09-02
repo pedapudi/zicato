@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 462,856 | +54,195 |
-| Production | 197,702 | 202,799 | +5,097 |
-| Production logic | 110,276 | 113,261 | +2,985 |
+| Total | 408,661 | 462,795 | +54,134 |
+| Production | 197,702 | 202,741 | +5,039 |
+| Production logic | 110,276 | 113,220 | +2,944 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -224,3 +224,6 @@ dropped rows named.
 | Optional contract-bound Goldfive integration (total) | 460,805 | +2,057 | 462,862 | Issue #386: Goldfive owns and validates its runtime configuration document, while Zicato activates the integration only for adapters that declare it. Evaluator, adapter, and integration identities prevent cached measurements from crossing implementation changes. Regression coverage exercises generic adapters, the public judge-only path, frozen-contract validation, malformed configuration, process transport, Builder and API surfaces, environment-backed credentials, explicit epoch selection, and pre-spend checks. |
 | Optional contract-bound Goldfive integration (production) | 202,307 | +492 | 202,799 | Issue #386: the lazy integration bridge, capability-gated worker projection, generic adapter identity, frozen-contract verification, explicit runtime settings, dependency validation, and Builder surface replace Zicato's private Goldfive schema and ADK judge-only implementation. Adapters that do not declare Goldfive carry no Goldfive configuration or import requirement. Tournament commands validate and load the selected frozen epoch before constructing a runtime, and absolute worker-permit paths preserve the configured host-wide ceiling across working directories. |
 | Optional contract-bound Goldfive integration (production logic) | 112,659 | +602 | 113,261 | Issue #386: executable growth covers capability and dependency checks, credential-name transport, upstream runtime projection, full adapter identity, verifiable implementation revisions, frozen-contract comparison, selected-epoch tournament loading, and measured worker-preparation failures. Deleting the private configuration parser and judge-only path offsets part of that growth. |
+| Transcript reconstruction owned by the query layer (total) | 462,862 | -67 | 462,795 | Issue #402: the reconstructor moves into the query package, and the injection seam that carried it across the layer boundary — the callable parameter on both conversation readers, the guarded import and availability flag in the endpoints, the two unavailable responses, and their tests — is deleted. |
+| Transcript reconstruction owned by the query layer (production) | 202,799 | -58 | 202,741 | Issue #402: production loses the guarded import, the availability flag, the two unavailable-response branches, the two reader degrade branches, and the four parameter threadings; the moved module carries the same lines at its new path. |
+| Transcript reconstruction owned by the query layer (production logic) | 113,261 | -41 | 113,220 | Issue #402: the executable reduction is the deleted try/except import block, the availability branches in the endpoints, and the `reconstruct is None` degrades in both readers. |

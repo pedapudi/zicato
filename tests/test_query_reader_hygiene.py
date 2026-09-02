@@ -32,12 +32,13 @@ from zicato.query import (
     build_per_judge_trend,
     build_run_transcript,
     build_run_transcript_delta,
-    empty_run_transcript,
+    conversations_view,
     read_epoch_journal,
     read_epoch_journal_md,
     read_run_result,
     resolve_conversation,
     resolve_run_id_for_entry,
+    transcript_view,
 )
 from zicato.query._sqlite import _IndexAbsent, open_index_ro, open_index_ro_or_none
 
@@ -68,11 +69,17 @@ class _FakeTranscript:
         return dict(self._payload)
 
 
-def _fake_reconstruct(payload: dict):
+def _install_reconstruct(monkeypatch: pytest.MonkeyPatch, fn: object) -> None:
+    """Rebind the reconstructor both transcript readers call."""
+    monkeypatch.setattr(transcript_view, "reconstruct_transcript", fn)
+    monkeypatch.setattr(conversations_view, "reconstruct_transcript", fn)
+
+
+def _install_fake_reconstruct(monkeypatch: pytest.MonkeyPatch, payload: dict) -> None:
     def reconstruct(events_path: Path, *, partial_ok: bool = False) -> _FakeTranscript:
         return _FakeTranscript(payload)
 
-    return reconstruct
+    _install_reconstruct(monkeypatch, reconstruct)
 
 
 # ---------------------------------------------------------------------------
@@ -310,33 +317,29 @@ def test_resolve_conversation_finds_the_entry_events(tmp_path: Path) -> None:
     assert got == events
 
 
-def test_build_run_transcript_unavailable_without_reconstructor(tmp_path: Path) -> None:
+def test_build_run_transcript_absent_run_is_honest_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     paths = WorkspacePaths(_base_workspace(tmp_path))
-    out = build_run_transcript(paths, EPOCH, GEN, ENTRY, reconstruct=None)
-    assert out == empty_run_transcript(
-        EPOCH, GEN, ENTRY, error="transcript reconstruction unavailable"
-    )
-
-
-def test_build_run_transcript_absent_run_is_honest_empty(tmp_path: Path) -> None:
-    paths = WorkspacePaths(_base_workspace(tmp_path))
-    out = build_run_transcript(paths, EPOCH, GEN, ENTRY, reconstruct=_fake_reconstruct({}))
+    _install_fake_reconstruct(monkeypatch, {})
+    out = build_run_transcript(paths, EPOCH, GEN, ENTRY)
     assert out["turns"] == []
     assert out["event_count"] == 0
     assert out["complete"] is False
     assert "error" not in out  # genuine absence carries NO error key
 
 
-def test_build_run_transcript_stamps_coordinates(tmp_path: Path) -> None:
+def test_build_run_transcript_stamps_coordinates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ws = _base_workspace(tmp_path)
     events = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY / "events.jsonl"
     events.parent.mkdir(parents=True)
     events.write_text('{"runId": "r1"}\n', encoding="utf-8")
     _write_json(events.parent / "artifacts.json", {"files": [{"path": "report.html", "size": 42}]})
     payload = {"run_id": "", "turns": [{"role": "user"}], "annotations": [], "event_count": 1}
-    out = build_run_transcript(
-        WorkspacePaths(ws), EPOCH, GEN, ENTRY, reconstruct=_fake_reconstruct(payload)
-    )
+    _install_fake_reconstruct(monkeypatch, payload)
+    out = build_run_transcript(WorkspacePaths(ws), EPOCH, GEN, ENTRY)
     # The documented stamping step: coordinates + fallback run_id.
     assert out["epoch_id"] == EPOCH
     assert out["generation_id"] == GEN
@@ -351,7 +354,9 @@ def test_build_run_transcript_stamps_coordinates(tmp_path: Path) -> None:
     )
 
 
-def test_full_and_delta_transcripts_select_exact_replicate(tmp_path: Path) -> None:
+def test_full_and_delta_transcripts_select_exact_replicate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Both transcript readers must resolve the requested sibling, never r0."""
     ws = _base_workspace(tmp_path)
     run_dir = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY
@@ -374,23 +379,10 @@ def test_full_and_delta_transcripts_select_exact_replicate(tmp_path: Path) -> No
             }
         )
 
+    _install_reconstruct(monkeypatch, reconstruct)
     runtime_run_id = run_id_for_unit(GEN, ENTRY, 1)
-    full = build_run_transcript(
-        WorkspacePaths(ws),
-        EPOCH,
-        GEN,
-        ENTRY,
-        run_id=runtime_run_id,
-        reconstruct=reconstruct,
-    )
-    delta = build_run_transcript_delta(
-        WorkspacePaths(ws),
-        EPOCH,
-        GEN,
-        ENTRY,
-        run_id=runtime_run_id,
-        reconstruct=reconstruct,
-    )
+    full = build_run_transcript(WorkspacePaths(ws), EPOCH, GEN, ENTRY, run_id=runtime_run_id)
+    delta = build_run_transcript_delta(WorkspacePaths(ws), EPOCH, GEN, ENTRY, run_id=runtime_run_id)
 
     assert seen == [replicate_events, replicate_events]
     assert full["run_id"] == "goldfive-r1"
@@ -398,7 +390,9 @@ def test_full_and_delta_transcripts_select_exact_replicate(tmp_path: Path) -> No
     assert delta["events_path"] == str(replicate_events)
 
 
-def test_build_run_transcript_failure_degrades_same_shape(tmp_path: Path) -> None:
+def test_build_run_transcript_failure_degrades_same_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ws = _base_workspace(tmp_path)
     events = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY / "events.jsonl"
     events.parent.mkdir(parents=True)
@@ -407,17 +401,17 @@ def test_build_run_transcript_failure_degrades_same_shape(tmp_path: Path) -> Non
     def boom(events_path: Path, *, partial_ok: bool = False) -> None:
         raise RuntimeError("torn read")
 
-    out = build_run_transcript(WorkspacePaths(ws), EPOCH, GEN, ENTRY, reconstruct=boom)
+    _install_reconstruct(monkeypatch, boom)
+    out = build_run_transcript(WorkspacePaths(ws), EPOCH, GEN, ENTRY)
     assert out["error"] == "transcript failed: torn read"
     assert out["turns"] == []
     assert out["run_id"] == ENTRY
 
 
 # ---------------------------------------------------------------------------
-# transcript_view — the PARTIAL (in-flight) reconstruction path, wired through
-# the REAL reconstructor (exactly as the /api/run/.../transcript endpoint injects
-# it). Pins: a growing events.jsonl surfaces more turns across reads; a torn
-# tail is tolerated; a settled run's served body matches a direct
+# transcript_view — the PARTIAL (in-flight) reconstruction path, through the
+# REAL reconstructor. Pins: a growing events.jsonl surfaces more turns across
+# reads; a torn tail is tolerated; a settled run's served body matches a direct
 # reconstruction (partial_ok does not perturb a completed run).
 # ---------------------------------------------------------------------------
 
@@ -457,8 +451,6 @@ def _agent_turn(agent: str, text: str, seq: int) -> list[str]:
 
 
 def test_build_run_transcript_partial_grows_across_reads(tmp_path: Path) -> None:
-    from zicato.dashboard.transcript import reconstruct_transcript
-
     ws = _base_workspace(tmp_path)
     paths = WorkspacePaths(ws)
     events = _live_events_path(ws)
@@ -470,7 +462,7 @@ def test_build_run_transcript_partial_grows_across_reads(tmp_path: Path) -> None
     ]
     events.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    first = build_run_transcript(paths, EPOCH, GEN, ENTRY, reconstruct=reconstruct_transcript)
+    first = build_run_transcript(paths, EPOCH, GEN, ENTRY)
     assert first["complete"] is False  # partial: no terminal event seen
     n_first = len(first["turns"])
     assert n_first >= 2  # goal turn + the alpha turn
@@ -479,7 +471,7 @@ def test_build_run_transcript_partial_grows_across_reads(tmp_path: Path) -> None
     with events.open("a", encoding="utf-8") as fh:
         fh.write("\n".join(_agent_turn("beta", "second thought", 3)) + "\n")
 
-    second = build_run_transcript(paths, EPOCH, GEN, ENTRY, reconstruct=reconstruct_transcript)
+    second = build_run_transcript(paths, EPOCH, GEN, ENTRY)
     assert second["complete"] is False
     assert len(second["turns"]) > n_first  # the partial transcript grew across reads
     assert second["epoch_id"] == EPOCH
@@ -488,8 +480,6 @@ def test_build_run_transcript_partial_grows_across_reads(tmp_path: Path) -> None
 
 
 def test_build_run_transcript_partial_tolerates_torn_tail_line(tmp_path: Path) -> None:
-    from zicato.dashboard.transcript import reconstruct_transcript
-
     ws = _base_workspace(tmp_path)
     paths = WorkspacePaths(ws)
     events = _live_events_path(ws)
@@ -505,14 +495,14 @@ def test_build_run_transcript_partial_tolerates_torn_tail_line(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    out = build_run_transcript(paths, EPOCH, GEN, ENTRY, reconstruct=reconstruct_transcript)
+    out = build_run_transcript(paths, EPOCH, GEN, ENTRY)
     assert "error" not in out  # tolerated — not the failure-degrade shape
     assert len(out["turns"]) >= 2  # the intact turns before the torn tail
     assert out["complete"] is False  # a torn tail is never a clean completion
 
 
 def test_build_run_transcript_settled_run_matches_direct_reconstruct(tmp_path: Path) -> None:
-    from zicato.dashboard.transcript import reconstruct_transcript
+    from zicato.query.transcript_reconstruction import reconstruct_transcript
 
     ws = _base_workspace(tmp_path)
     paths = WorkspacePaths(ws)
@@ -525,7 +515,7 @@ def test_build_run_transcript_settled_run_matches_direct_reconstruct(tmp_path: P
     ]
     events.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    out = build_run_transcript(paths, EPOCH, GEN, ENTRY, reconstruct=reconstruct_transcript)
+    out = build_run_transcript(paths, EPOCH, GEN, ENTRY)
     assert out["complete"] is True  # a terminal event → settled
 
     # The served body is byte-identical to a direct reconstruction — the endpoint
@@ -548,7 +538,9 @@ def test_matchup_conversations_degrade_without_tournament(tmp_path: Path) -> Non
     assert build_matchup_conversations(paths, ENTRY) == {"champion": None, "challenger": None}
 
 
-def test_matchup_conversations_shape_both_sides(tmp_path: Path) -> None:
+def test_matchup_conversations_shape_both_sides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ws = _base_workspace(tmp_path)
     _write_json(
         ws / "runtime" / "active_tournament.json",
@@ -567,9 +559,8 @@ def test_matchup_conversations_shape_both_sides(tmp_path: Path) -> None:
         run_dir.mkdir(parents=True)
         (run_dir / "events.jsonl").write_text('{"runId": "r"}\n', encoding="utf-8")
         _write_json(run_dir / "loss.json", {"drift_loss": 0.1, "pass_fail": True})
-    out = build_matchup_conversations(
-        WorkspacePaths(ws), ENTRY, reconstruct=_fake_reconstruct({"turns": []})
-    )
+    _install_fake_reconstruct(monkeypatch, {"turns": []})
+    out = build_matchup_conversations(WorkspacePaths(ws), ENTRY)
     for side, gen in (("champion", "v0"), ("challenger", GEN)):
         record = out[side]
         assert record is not None
@@ -579,8 +570,10 @@ def test_matchup_conversations_shape_both_sides(tmp_path: Path) -> None:
         assert record["result"]["pass_fail"] is True
 
 
-def test_matchup_conversations_no_reconstructor_still_serves_results(tmp_path: Path) -> None:
-    """DQ3: an absent reconstructor degrades transcripts, not the payload."""
+def test_matchup_conversations_failed_reconstruction_still_serves_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DQ3: a failed reconstruction degrades that transcript, not the payload."""
     ws = _base_workspace(tmp_path)
     _write_json(
         ws / "runtime" / "active_tournament.json",
@@ -594,6 +587,11 @@ def test_matchup_conversations_no_reconstructor_still_serves_results(tmp_path: P
     run_dir = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY
     run_dir.mkdir(parents=True)
     (run_dir / "events.jsonl").write_text('{"runId": "r"}\n', encoding="utf-8")
+
+    def boom(events_path: Path, *, partial_ok: bool = False) -> None:
+        raise RuntimeError("torn read")
+
+    _install_reconstruct(monkeypatch, boom)
     out = build_matchup_conversations(WorkspacePaths(ws), ENTRY)
-    assert out["challenger"]["transcript"] is None
+    assert out["challenger"]["transcript"] == {"error": "transcript failed: torn read"}
     assert out["challenger"]["generation_id"] == GEN

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from zicato.dashboard.transcript import (
+from zicato.query.transcript_reconstruction import (
     Annotation,
     Transcript,
     Turn,

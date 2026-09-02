@@ -1,12 +1,10 @@
 """The champion and challenger conversations for one board entry.
 
 This module owns the join that pairs the two sides of a matchup and
-reconstructs both transcripts, so the dashboard endpoint renders what it is
-handed. The transcript reconstructor lives in ``zicato.dashboard.transcript``
-and the query layer must stay dashboard-free (the import-linter contract), so
-:func:`build_matchup_conversations` takes it as an INJECTED callable. Passing
-``None`` degrades each side to a record without a transcript; no reader here
-raises.
+reconstructs both transcripts
+(:func:`zicato.query.transcript_reconstruction.reconstruct_transcript`), so the
+dashboard endpoint renders what it is handed. A side whose reconstruction
+fails carries the failure in place of its transcript; no reader here raises.
 """
 
 from __future__ import annotations
@@ -16,11 +14,10 @@ from typing import Any
 from zicato.query.events_index import find_generation_run, read_run_result
 from zicato.query.paths import WorkspacePaths
 from zicato.query.runtime_view import read_active_tournament_dict
+from zicato.query.transcript_reconstruction import reconstruct_transcript
 
 
-def build_matchup_conversations(
-    paths: WorkspacePaths, entry_id: str, *, reconstruct: Any = None
-) -> dict[str, Any]:
+def build_matchup_conversations(paths: WorkspacePaths, entry_id: str) -> dict[str, Any]:
     """Locate and reconstruct the champion + challenger conversations.
 
     For a board entry, the active tournament names a champion-side
@@ -87,12 +84,11 @@ def build_matchup_conversations(
                 "result": None,
             }
         run_id, events_path = located
-        transcript: Any = None
-        if reconstruct is not None:
-            try:
-                transcript = reconstruct(events_path, partial_ok=True).to_dict()
-            except Exception as exc:  # noqa: BLE001 — best-effort, never raises
-                transcript = {"error": f"transcript failed: {exc}"}
+        transcript: Any
+        try:
+            transcript = reconstruct_transcript(events_path, partial_ok=True).to_dict()
+        except Exception as exc:  # noqa: BLE001 — best-effort, never raises
+            transcript = {"error": f"transcript failed: {exc}"}
         # Surface a small projection of the sibling ``loss.json`` so the
         # frontend can render an honest "timed out" panel for a run that
         # produced no transcript turns. Without this the dashboard's

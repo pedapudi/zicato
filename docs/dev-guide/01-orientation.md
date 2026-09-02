@@ -836,7 +836,9 @@ read back by the next round's proposer), the epoch analysis report
 (`analysis.md`/`analysis.html`), outcome marginals, and the
 process-exemplar extractor.
 
-**`query/`** — the read-only workspace query layer, one module per view.
+**`query/`** — the read-only workspace query layer: one module per view,
+plus the events → `Transcript` reconstruction
+(`transcript_reconstruction.py`) the conversation views read through.
 Library code: it must never import `zicato.dashboard` (a dedicated
 import-linter contract pins that rule). Every function is best-effort
 over possibly-torn files.
@@ -897,7 +899,7 @@ regenerate it from `--help` on CLI changes. May import the dashboard
 `allow_indirect_imports = true` on that contract).
 
 **`dashboard/`** — the Starlette server, endpoints, SSE broker
-(`sse.py` — coalesced `state_change` frames), transcript reconstructor,
+(`sse.py` — coalesced `state_change` frames),
 and the static JS bundle (`static/js/…`) with its Node behaviour suite
 (`static/test/`, run by `make node-test`). Must never import the CLI.
 Render discipline follows digest-gated rendering (§4).

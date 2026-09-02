@@ -42,9 +42,9 @@ import json
 
 # The adjudicator protocol markers + JSON verdict shape, inlined so these test
 # doubles carry NO import edge into :mod:`zicato.reflection` (which reaches
-# :mod:`zicato.dashboard.transcript` for the preview-fidelity fallback — a
-# forbidden edge for anything the library import-linter contract covers, and
-# ``zicato.testing`` is covered). They mirror the constants of the same names in
+# :mod:`zicato.builder` to apply its findings — a forbidden edge for anything
+# the library import-linter contract covers, and ``zicato.testing`` is
+# covered). They mirror the constants of the same names in
 # :mod:`zicato.reflection.adjudicator`; a consistency test in
 # ``tests/test_reflection_adjudicator.py`` pins them equal so neither can drift.
 OBSERVED_FIRED = "fired"

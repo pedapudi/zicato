@@ -60,16 +60,16 @@ server + the JS). Nothing in the library knows the driver exists.
 | `src/zicato/query/loop_view.py` | `build_optimization_trajectory` (the uncertainty-honest verdict), `build_tournament_cost`, `build_round_pipeline` + `PIPELINE_STEPS` (the server-owned stepper projection) | 435 lines |
 | `src/zicato/query/racing_view.py` | `build_racing_field` — the racing ladder joined server-side out of the per-challenger records | 301 lines |
 | `src/zicato/query/rounds_view.py` | `build_round_timeline` — the round spine and loss-floor waterfall joined server-side across four endpoints' worth of records | 329 lines |
-| `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record), `entry_candidate_matrix` (reflection-independent, off the index loss tables) — the Instrument-lens feed (BOARD-REFLECTION.md R4). Index-first, file-fallback; stays dashboard-free by reading `result.json` / `judge_io` for the x-ray rather than the events-preview reconstructor | ~430 lines |
+| `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record), `entry_candidate_matrix` (reflection-independent, off the index loss tables) — the Instrument-lens feed (BOARD-REFLECTION.md R4). Index-first, file-fallback; the x-ray reads `result.json` / `judge_io` rather than re-running the adjudicator's events-preview reconstruction | ~430 lines |
 | `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_environment`'s epoch slice, `_current_champion` (reigning spine end), `build_workspace_view`, `compute_board_split` | 35 KB |
 | `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view`, `build_drift_movements` | 56 KB |
 | `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_detail`, `build_matchup_grid` | 51 KB |
 | `src/zicato/query/{judge,hypothesis,lineage,events_index,run_log}_view.py` | per-judge matrices, hypothesis/calibration accuracy, lineage feed, `/api/environment` coalescer + meta-loop ledger, the run-log tail. `judge_view.build_per_entry_for_generation` serves the dossier; its `facet_scores` block comes from `eval_view.facet_scores_for_generation` | — |
+| `src/zicato/query/transcript_reconstruction.py` | `reconstruct_transcript` — one goldfive `events.jsonl` → an ordered `Transcript` | 31 KB |
 | `src/zicato/query/board_scan.py` | `iter_board_rows` + the `board_entry_id` / `board_entry_tags` guards — the tolerant raw `board.jsonl` walk shared by the judge-name union and the facet-tag read. Per-ROW degrade: `load_board` VALIDATES, so one stale entry would blank a whole read model | ~75 lines |
 | `src/zicato/dashboard/server.py` | `create_app` (routes + `read_only`), `run` (port walk + harmonograf), static serving with ETag revalidation | 575 lines |
 | `src/zicato/dashboard/endpoints.py` | `make_endpoints` (the per-surface factories), `_is_safe_id` / `_is_safe_tournament_id`, the control POST handlers | 62 KB |
 | `src/zicato/dashboard/sse.py` | `ChangeBroker` (coalescing file watcher), `sse_event_stream`, `_classify`, `_progress_signal` | 398 lines |
-| `src/zicato/dashboard/transcript.py` | `reconstruct_transcript` — one goldfive `events.jsonl` → an ordered `Transcript` | 31 KB |
 | `src/zicato/dashboard/static_assets.py` | `resolve_static_dir` — the bundle-resolution seam | 50 lines |
 | `src/zicato/dashboard/static/js/core/` | `sse.js` (the seq gate), `api.js` (`postControl`), `state.js` (`noteProgress`, `AppState`), `dom.js`, `bus.js` | — |
 | `src/zicato/dashboard/static/js/` | `router.js`, `shell.js` (dispatch + chrome + loop controls), `live.js` (the live engine + `pipelineStepper`), `livestatus.js` (the four run-states), `data.js` (null-degrading accessors), `svg.js` (the figure grammar), `ui.js` (`gatedSwap`) | — |
@@ -721,8 +721,8 @@ def to_snake(name: str) -> str:
 > key is normalized on the Python side, the Rust supervisor's run-log tailer
 > keys on a different vocabulary and the two dashboards show different event
 > kinds for the same file. Change both, or neither. The transcript
-> reconstructor (`dashboard/transcript.py`) reuses this exact helper for the
-> same reason — one normalization, three consumers.
+> reconstructor (`query/transcript_reconstruction.py`) reuses this exact helper
+> for the same reason — one normalization, three consumers.
 
 ### 9.3.5 The read-only index open
 
@@ -2207,7 +2207,7 @@ per-section endpoints and does not poll on a tight timer:
 
 ### 9.14.1 Transcript reconstruction
 
-`dashboard/transcript.py::reconstruct_transcript` turns one goldfive
+`query/transcript_reconstruction.py::reconstruct_transcript` turns one goldfive
 `events.jsonl` into an ordered `Transcript` (turns + margin annotations). It
 is pure (the only I/O is the file the caller hands in) and tolerant — a
 malformed/truncated line is skipped, a missing file yields an empty
@@ -2215,9 +2215,10 @@ transcript, mirroring the reducer's plain-JSON fallback and the supervisor's
 run-log tailer that parse the same growing file. It handles both goldfive
 envelope shapes (camelCase persistence-sink keys and the reducer's
 normalized `{kind, payload, ...}`), reusing `to_snake` (§9.3.4) for key
-normalization so the transcript speaks the one stable vocabulary. The
-endpoints import it behind a guarded `try/except` so the whole server still
-starts if it is unavailable in a stripped install.
+normalization so the transcript speaks the one stable vocabulary. It is
+library code: the two query readers that serve the conversation surfaces
+(`transcript_view`, `conversations_view`) import it directly, as does the
+run_id endpoint.
 
 The transcript reader also owns the conversation execution outline. Turns carry
 `activity_ids`; the top-level `execution` object carries the referenced nodes,

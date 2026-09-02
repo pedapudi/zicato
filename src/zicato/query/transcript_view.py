@@ -1,19 +1,13 @@
 """The run-transcript payload, assembled in the query layer.
 
 The run-level conversation surfaces read their payloads from here rather
-than assembling them in the dashboard endpoints. Two seams matter:
-
-* The query layer must stay dashboard-free (the import-linter contract),
-  but the transcript reconstructor lives in ``zicato.dashboard.transcript``
-  — so :func:`build_run_transcript` takes it as an INJECTED callable
-  (``reconstruct``). A ``None`` reconstructor degrades to the honest
-  "transcript reconstruction unavailable" shape rather than importing
-  across the boundary.
-* The reader STAMPS the resolved coordinates onto the reconstructed
-  payload (``epoch_id`` / ``generation_id`` / ``entry_id`` and a
-  fallback ``run_id``) — a documented reader step, so the frontend can
-  label the transcript column without a second lookup, and each field keeps
-  one server-owned spelling on the wire.
+than assembling them in the dashboard endpoints. The reader resolves the
+events file (:mod:`zicato.query.events_index`), reconstructs it
+(:func:`zicato.query.transcript_reconstruction.reconstruct_transcript`) and
+STAMPS the resolved coordinates onto the reconstructed payload (``epoch_id``
+/ ``generation_id`` / ``entry_id`` and a fallback ``run_id``) — a documented
+reader step, so the frontend can label the transcript column without a
+second lookup, and each field keeps one server-owned spelling on the wire.
 
 Every function degrades to the same-shaped empty payload and never raises.
 """
@@ -31,6 +25,7 @@ from zicato.query.events_index import (
 )
 from zicato.query.paths import WorkspacePaths
 from zicato.query.run_log import clamp_run_log_limit
+from zicato.query.transcript_reconstruction import reconstruct_transcript
 
 #: The follow pane renders an events reconstruction rather than verbatim capture.
 FIDELITY_EVENTS = "events"
@@ -131,16 +126,8 @@ def build_run_transcript(
     *,
     run_id: str | None = None,
     match_id: str | None = None,
-    reconstruct: Any = None,
 ) -> dict[str, Any]:
     """Build one coordinate-stamped transcript with a same-shaped degrade."""
-    if reconstruct is None:
-        return empty_run_transcript(
-            epoch_id,
-            generation_id,
-            entry_id,
-            error="transcript reconstruction unavailable",
-        )
     events_path = resolve_transcript_events(
         paths,
         epoch_id,
@@ -156,7 +143,7 @@ def build_run_transcript(
         return empty_run_transcript(epoch_id, generation_id, entry_id, run_id=run_id)
     resolved_run_id = run_id or entry_id
     try:
-        payload: dict[str, Any] = reconstruct(events_path, partial_ok=True).to_dict()
+        payload: dict[str, Any] = reconstruct_transcript(events_path, partial_ok=True).to_dict()
     except Exception as exc:  # noqa: BLE001 — best-effort, never raises
         return empty_run_transcript(
             epoch_id,
@@ -229,16 +216,8 @@ def build_run_transcript_delta(
     limit: int | None = None,
     run_id: str | None = None,
     match_id: str | None = None,
-    reconstruct: Any = None,
 ) -> dict[str, Any]:
     """Return the bounded transcript changes at or beyond a parsed-event cursor."""
-    if reconstruct is None:
-        return empty_run_transcript_delta(
-            epoch_id,
-            generation_id,
-            entry_id,
-            error="transcript reconstruction unavailable",
-        )
     events_path = resolve_transcript_events(
         paths,
         epoch_id,
@@ -251,7 +230,7 @@ def build_run_transcript_delta(
         return empty_run_transcript_delta(epoch_id, generation_id, entry_id, run_id=run_id)
     resolved_run_id = run_id or entry_id
     try:
-        full: dict[str, Any] = reconstruct(events_path, partial_ok=True).to_dict()
+        full: dict[str, Any] = reconstruct_transcript(events_path, partial_ok=True).to_dict()
     except Exception as exc:  # noqa: BLE001 — best-effort, never raises
         return empty_run_transcript_delta(
             epoch_id,
