@@ -6,10 +6,17 @@ which agent or tool was active while reading a champion and challenger side by
 side. The layout stays decision-oriented: the conversation is the spine, and
 execution expands locally beneath it.
 
-The outline is a compact reconstruction from the run's canonical
-`events.jsonl`. Harmonograf holds the full temporal trace for one run. It
-provides timing, lifelines, and the complete event stream when the operator
-needs more detail than the comparison pane can carry.
+The outline is a compact reconstruction from the record a run left behind.
+Harmonograf holds the full temporal trace for one run. It provides timing,
+lifelines, and the complete event stream when the operator needs more detail
+than the comparison pane can carry.
+
+Two formats carry such a record, and `reconstruct_transcript` selects a reader
+from the file's first line. A system under test writes a Goldfive/ADK
+`events.jsonl`, whose conversation is inferred from surrounding observability
+events. A proposal episode writes a Foe `episode.jsonl`, which opens with
+`episode/start` at `seq` 0 and states the conversation outright. Both readers
+produce the same transcript shape, so one renderer serves both.
 
 ## Server-owned structure
 
@@ -50,9 +57,38 @@ The transcript's overall `fidelity` values have these meanings:
 
 | Value | Meaning |
 |---|---|
-| `exact` | Every displayed edge comes from explicit invocation identifiers. |
+| `exact` | Every displayed edge comes from an identifier the record states. |
 | `partial` | The outline includes parentless turn-scoped tools or unresolved agent records. |
 | `unavailable` | The run contains no supported execution records. |
+
+## Reading a proposal episode
+
+An episode log always reconstructs at `fidelity: "exact"`. Every tool call
+carries exactly one result matched by `call_id`, and every request records the
+message list it sent, so the guarantee is a property of the format rather than
+a judgement about one file.
+
+`query/foe_episode.py` states the derived-message rule the log format
+specifies, and the transcript follows it. A request contributes the user turn
+built from the inbox items it consumed. A response contributes an agent turn
+carrying its text and calls. Each result lands on the turn that issued the call
+it answers. A summarization exchange and a composing tool's inner dispatches
+reach no model, so they contribute no turn.
+
+The episode is the root node. A model-issued call hangs off it with the
+identity `tool:<episode-id>:<call-id>`, an inner dispatch hangs off the call
+that composed it, and every edge is one the log states.
+
+A log seeded from another episode carries the copied prefix before its
+`seed/end` event. Those turns are attributed to the episode they were copied
+from and form their own run group, and the boundary becomes a margin
+annotation of kind `seed` naming the source and the `seq` the copy stopped at.
+
+A proposal transcript is served from an episode log and from no other source.
+`resolve_conversation` reads the board entry as the coordinate that
+distinguishes a generation's two kinds of conversation: with an entry it
+resolves that entry's board run, and without one it resolves the generation's
+proposal episode or answers nothing.
 
 Nodes that have no conversation-turn anchor appear under **Run activity**.
 This keeps an in-flight invocation visible before it produces a message.
@@ -79,7 +115,7 @@ positions for execution nodes.
 
 ## Supported and deferred data
 
-The shipped reader reconstructs explicit agent invocation trees and
+The ADK reader reconstructs explicit agent invocation trees and
 turn-scoped delegation observations. The generic renderer also understands
 tool and artifact node kinds so richer adapters can use the same visual
 contract when their canonical events provide stable identifiers.
@@ -96,7 +132,13 @@ activity records. The reader does not create retry edges from repeated names.
 ## Verification
 
 Python tests cover explicit parents, missing parents, cycles, turn-scoped tool
-observations, and stable serialization. Browser tests cover nested rendering,
+observations, and stable serialization. For the episode reader they cover
+which reader answers for a given file, a multi-tool episode at exact fidelity,
+a seeded prefix, and an inner dispatch nested under its composing call. They
+also check the derived-message rule against the list each request recorded, in
+three fixtures shared with Foe. The ADK reader's payload for three streams is
+compared field for field with what it produced before the episode reader
+existed. Browser tests cover nested rendering,
 absence fallback, node-local live updates, cycles, unattached running roots,
 and unresolved records.
 

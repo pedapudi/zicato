@@ -1,0 +1,11 @@
+{"runId": "adk-turn-b", "sequence": 1, "emittedAt": "2026-01-05T13:00:00Z", "runStarted": {"goalSummary": "Answer the follow-up question."}}
+{"run_id": "adk-turn-a", "sequence": 1, "emitted_at": {"seconds": 1767618000, "nanos": 0}, "kind": "run_started", "payload": {"goal_summary": "Answer the first question."}}
+{"run_id": "adk-turn-a", "sequence": 2, "emitted_at": {"seconds": 1767618001, "nanos": 500000000}, "kind": "drift_detected", "payload": {"kind": "DRIFT_KIND_SCOPE_CREEP", "severity": "DRIFT_SEVERITY_LOW", "detail": "started summarising an unrelated thread"}}
+{"run_id": "adk-turn-a", "sequence": 3, "emitted_at": {"seconds": 1767618002, "nanos": 0}, "kind": "steering_decision_made", "payload": {"detector_name": "scope_guard", "outcome": "nudge", "reason": "return to the asked question"}}
+{"run_id": "adk-turn-a", "sequence": 4, "emitted_at": {"seconds": 1767618003, "nanos": 0}, "kind": "judgement_emitted", "payload": {"judge_name": "answer_quality", "verdict_kind": "pass", "detail": "the answer cites the source"}}
+{"run_id": "adk-turn-a", "sequence": 5, "emitted_at": {"seconds": 1767618004, "nanos": 0}, "kind": "plan_revised", "payload": {"revision_index": 2, "reason": "the second question needs its own step", "plan": {"tasks": [{"id": "p1", "title": "Answer one"}, {"id": "p2", "title": "Answer two"}]}}}
+{"run_id": "adk-turn-a", "sequence": 6, "emitted_at": {"seconds": 1767618005, "nanos": 0}, "kind": "task_completed", "payload": {"summary": "The first question is answered."}}
+{"run_id": "adk-turn-a", "sequence": 7, "emitted_at": {"seconds": 1767618006, "nanos": 0}, "kind": "conversation_ended", "payload": {"outcome_summary": "First turn closed."}}
+{"runId": "adk-turn-b", "sequence": 2, "emittedAt": "2026-01-05T13:00:01Z", "goldfiveLlmCallStart": {"inputPreview": "The follow-up asks for the same figure by quarter."}}
+{"runId": "adk-turn-b", "sequence": 3, "emittedAt": "2026-01-05T13:00:02Z", "taskCompleted": {"summary": "Quarterly breakdown supplied."}}
+{"runId": "adk-turn-b", "sequence": 4, "emittedAt": "2026-01-05T13:00:03Z", "runCompleted": {"outcomeSum

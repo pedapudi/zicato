@@ -1,19 +1,42 @@
-"""Pure, tolerant conversation reconstruction from an ``events.jsonl`` file.
+"""Pure, tolerant conversation reconstruction from one run's event file.
 
-Both wire shapes of an event are accepted, and the payload case, its field
-names and the emission timestamp all come from
-:mod:`zicato.telemetry.event_log` — so a turn is built from the same reading
-of a line that every other consumer of the file gets. Malformed lines are
-skipped so growing runs remain readable.
+Two source formats reach this module, and :func:`reconstruct_transcript`
+tells them apart by the first line of the file.
+
+A **Goldfive/ADK ``events.jsonl``** is what a system under test emits. Both
+wire shapes of such an event are accepted. The payload case, its field names
+and the emission timestamp all come from :mod:`zicato.telemetry.event_log`, so
+a turn is built from the same reading of a line that every other consumer of
+the file gets. The conversation is inferred from surrounding observability
+events, and its execution fidelity is whatever those events state.
+
+A **Foe ``episode.jsonl``** is what a proposal episode writes, and it is the
+only source a proposer transcript is served from. :mod:`zicato.query.foe_episode`
+reads it and states the derived-message rule that turns its events into the
+message list each request carried. Every tool call in such a log has exactly
+one result matched by ``call_id``, and every request records the messages it
+sent, so a Foe log always reconstructs at ``fidelity: exact``. The guarantee is
+a property of the format rather than a judgement about one file.
+
+Malformed lines are skipped in both formats so growing runs remain readable.
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from zicato.query.foe_episode import (
+    EpisodeEvent,
+    EpisodeLog,
+    inner_call_ids,
+    is_episode_log,
+    message_from,
+    read_episode_log,
+)
 from zicato.telemetry.event_log import EventRecord, read_event_log
 
 __all__ = ["Annotation", "Transcript", "Turn", "reconstruct_transcript"]
@@ -428,6 +451,282 @@ def _conversation_event(
 
 def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Transcript:
     """Reconstruct an ordered conversation transcript from ``events_path``.
+
+    The file's own first line selects the reader. A Foe ``episode.jsonl``
+    opens with ``episode/start`` at ``seq`` 0 and is reconstructed by
+    :func:`_reconstruct_episode`; anything else is read as a Goldfive/ADK
+    event stream by :func:`_reconstruct_event_stream`. The two produce the
+    same :class:`Transcript` shape, so every caller and every rendering
+    surface handles a proposal episode and a system-under-test run alike.
+
+    A missing file yields an empty :class:`Transcript` from the ADK path
+    (never raises), which is the same-shaped answer both readers degrade to.
+    ``partial_ok`` reaches only the ADK path: an episode already reports
+    ``complete`` false for a torn final line whatever the caller asks for.
+    """
+    path = Path(events_path)
+    if is_episode_log(path):
+        return _reconstruct_episode(read_episode_log(path))
+    return _reconstruct_event_stream(path, partial_ok=partial_ok)
+
+
+def _episode_agent(start: EpisodeEvent | None) -> str | None:
+    """The contract name the episode ran under, which names its speaker."""
+    if start is None:
+        return None
+    contract = start.data.get("contract")
+    name = contract.get("name") if isinstance(contract, dict) else None
+    return name if isinstance(name, str) and name else None
+
+
+def _episode_ts(event: EpisodeEvent) -> str | None:
+    """One event's ``time`` as RFC-3339 in UTC, the spelling every turn uses."""
+    if event.time is None:
+        return None
+    try:
+        moment = _dt.datetime.fromtimestamp(event.time / 1000, _dt.UTC)
+    except (OSError, OverflowError, ValueError):
+        return None
+    return moment.isoformat().replace("+00:00", "Z")
+
+
+def _outcome_text(outcome: Any) -> str:
+    """One line stating how the episode ended, from its ``episode/end``."""
+    if not isinstance(outcome, dict):
+        return ""
+    kind = str(outcome.get("kind") or "")
+    for key in ("message", "error", "code", "limit"):
+        detail = outcome.get(key)
+        if isinstance(detail, str) and detail:
+            return f"{kind}: {detail}" if kind else detail
+    value = outcome.get("value")
+    if isinstance(value, str) and value:
+        return f"{kind}: {value}" if kind else value
+    return kind
+
+
+def _outcome_status(outcome: Any) -> str:
+    """An episode outcome as a node status: only ``completed`` completes."""
+    kind = outcome.get("kind") if isinstance(outcome, dict) else None
+    return "completed" if kind == "completed" else "failed"
+
+
+def _episode_topology(events: tuple[EpisodeEvent, ...], episode_id: str) -> dict[str, Any]:
+    """The episode's activity tree, every edge stated by an event.
+
+    The episode itself is the root; a model-issued tool call hangs off it,
+    and an inner dispatch off the call that composed it (``outer_call_id``).
+    Nothing here infers a parent, and every obligation a Foe log opens is
+    closed in the same log, so every node is ``exact`` and nothing is
+    unresolved.
+    """
+    nodes: dict[str, dict[str, Any]] = {}
+    end = next((event for event in events if event.type == "episode/end"), None)
+    start = next((event for event in events if event.type == "episode/start"), None)
+    nodes[episode_id] = {
+        "node_id": episode_id,
+        "kind": "agent",
+        "parent_id": None,
+        "name": _episode_agent(start),
+        "status": "running" if end is None else _outcome_status(end.data.get("outcome")),
+        "start_source_index": 0,
+        "summary": _clip(_outcome_text(end.data.get("outcome")) if end else "", 512),
+        "fidelity": "exact",
+    }
+    for source_index, event in enumerate(events):
+        data = event.data
+        if event.type in ("assistant/message", "tool/inner-call"):
+            calls = data.get("tool_calls") if event.type == "assistant/message" else [data]
+            parent = (
+                episode_id
+                if event.type == "assistant/message"
+                else _tool_node_id(episode_id, str(data.get("outer_call_id") or ""))
+            )
+            for call in calls if isinstance(calls, list) else []:
+                if not isinstance(call, dict):
+                    continue
+                call_id = str(call.get("id") or call.get("call_id") or "")
+                if not call_id:
+                    continue
+                nodes[_tool_node_id(episode_id, call_id)] = {
+                    "node_id": _tool_node_id(episode_id, call_id),
+                    "kind": "tool",
+                    "parent_id": parent,
+                    "name": str(call.get("name") or "tool"),
+                    "status": "running",
+                    "start_source_index": source_index,
+                    "summary": "",
+                    "fidelity": "exact",
+                }
+        elif event.type == "tool/result":
+            node = nodes.get(_tool_node_id(episode_id, str(data.get("call_id") or "")))
+            if node is not None:
+                node["status"] = "failed" if data.get("is_error") is True else "completed"
+                node["summary"] = _clip(str(data.get("subject") or ""), 512)
+
+    execution = {
+        "fidelity": "unavailable",
+        "nodes": list(nodes.values()),
+        "root_ids": [],
+        "unresolved_ids": [],
+    }
+    _finalize_execution(execution)
+    return execution
+
+
+def _tool_node_id(episode_id: str, call_id: str) -> str:
+    return f"tool:{episode_id}:{call_id}"
+
+
+def _seed_summary(origin: Any, source_id: str) -> str:
+    """What the copied prefix above this boundary was copied from.
+
+    ``fork_origin`` names the source episode and the ``seq`` in that source
+    log the copy stopped at. A log seeded by a writer that recorded no origin
+    still gets the boundary; it just cannot say where the prefix came from.
+    """
+    source = source_id or "another episode"
+    at = origin.get("seq") if isinstance(origin, dict) else None
+    where = f" up to its seq {at}" if isinstance(at, int) and not isinstance(at, bool) else ""
+    return f"end of the prefix copied from {source}{where}; the episode's own events follow"
+
+
+def _reconstruct_episode(log: EpisodeLog) -> Transcript:
+    """Project one Foe episode log onto the shared :class:`Transcript` shape.
+
+    Turns follow the derived-message rule
+    (:func:`zicato.query.foe_episode.message_from`). A request contributes the
+    user turn built from the inbox items it consumed. An assistant response
+    contributes an agent turn carrying its text and its tool calls. Each tool
+    result lands on the turn that issued the call it answers, and the episode
+    outcome closes the transcript as a system turn.
+
+    A log seeded from another episode — a fork or a replay — carries the
+    copied prefix before its ``seed/end`` event. Those turns are attributed to
+    the episode they were copied from, in their own run group, and the
+    boundary itself becomes a margin annotation naming the source and the
+    ``seq`` the copy stopped at. What follows is the live episode's own work.
+
+    Every node is ``exact``: the format gives each tool call exactly one
+    ``call_id``-matched result and makes each request record the messages it
+    sent, so nothing here is inferred and nothing is left unresolved.
+    """
+    events = log.events
+    start = next((event for event in events if event.type == "episode/start"), None)
+    episode_id = str(start.data.get("id") or "") if start is not None else ""
+    agent = _episode_agent(start)
+    # The copied prefix, if any, is everything below the seed boundary.
+    seed_seq = next((e.seq for e in events if e.type == "seed/end"), None)
+    origin = start.data.get("fork_origin") if start is not None else None
+    source_id = str(origin.get("episode_id") or "") if isinstance(origin, dict) else ""
+
+    transcript = Transcript(run_id=episode_id or None, event_count=len(events))
+    transcript.execution = _episode_topology(events, episode_id or "episode")
+
+    inbox: dict[int, EpisodeEvent] = {}
+    inner = inner_call_ids(events)
+    issuers: dict[str, Turn] = {}
+    last_seq: int | None = None
+
+    for source_index, event in enumerate(events):
+        if event.type == "inbox/item":
+            inbox[event.seq] = event
+        seeded = seed_seq is not None and event.seq < seed_seq
+        message = message_from(event, inbox, inner)
+        if message is None:
+            if event.type == "seed/end":
+                transcript.annotations.append(
+                    Annotation(
+                        kind="seed",
+                        ts=_episode_ts(event),
+                        summary=_seed_summary(origin, source_id),
+                        anchor_seq=last_seq,
+                        detail={"event_kind": event.type, "fork_origin": origin},
+                        source_index=source_index,
+                    )
+                )
+            continue
+
+        if message["role"] == "tool":
+            # A result whose call opened in this log lands on the turn that
+            # issued it; the runtime's own settlement results name no call,
+            # so they land on the turn they follow.
+            target = issuers.get(str(message["call_id"])) or (
+                transcript.turns[-1] if transcript.turns else None
+            )
+            if target is not None:
+                target.tool_results.append(
+                    {
+                        "call_id": message["call_id"],
+                        "name": message["name"],
+                        "result": _clip(str(message["rendered"])),
+                        "is_error": message["is_error"],
+                    }
+                )
+                target.source_index = max(target.source_index, source_index)
+            continue
+
+        turn = Turn(
+            seq=event.seq,
+            ts=_episode_ts(event),
+            agent=agent if message["role"] == "assistant" else None,
+            role="agent" if message["role"] == "assistant" else "user",
+            kind=event.type,
+            run_id=(source_id or None) if seeded else (episode_id or None),
+            run_index=1 if seeded else 2 if seed_seq is not None else 1,
+            source_index=source_index,
+        )
+        if message["role"] == "user":
+            turn.text = _clip(_content_text(message["content"]))
+        else:
+            turn.text = _clip(str(message["text"]))
+            for call in message["tool_calls"]:
+                call_id = str(call.get("id") or "")
+                turn.tool_calls.append(
+                    {
+                        "id": call_id,
+                        "name": str(call.get("name") or "tool"),
+                        "args": call.get("args"),
+                    }
+                )
+                turn.activity_ids.append(_tool_node_id(episode_id or "episode", call_id))
+                if call_id:
+                    issuers[call_id] = turn
+        transcript.turns.append(turn)
+        last_seq = event.seq
+
+    end = next((event for event in events if event.type == "episode/end"), None)
+    if end is not None:
+        transcript.turns.append(
+            Turn(
+                seq=end.seq,
+                ts=_episode_ts(end),
+                role="system",
+                kind=end.type,
+                text=_clip(_outcome_text(end.data.get("outcome"))),
+                run_id=episode_id or None,
+                run_index=2 if seed_seq is not None else 1,
+                source_index=len(events) - 1,
+            )
+        )
+
+    transcript.turns = [t for t in transcript.turns if t.text or t.tool_calls or t.tool_results]
+    transcript.complete = end is not None and log.last_line_ok
+    return transcript
+
+
+def _content_text(blocks: Any) -> str:
+    """The text of one message's content blocks, blank-line separated."""
+    parts: list[str] = []
+    for block in blocks if isinstance(blocks, list) else []:
+        text = block.get("text") if isinstance(block, dict) else None
+        if isinstance(text, str) and text:
+            parts.append(text)
+    return "\n\n".join(parts)
+
+
+def _reconstruct_event_stream(events_path: Path, *, partial_ok: bool = True) -> Transcript:
+    """Reconstruct an ordered conversation transcript from an ADK event stream.
 
     ``events_path`` is a goldfive ``JSONLPersistenceSink`` file (one
     ``goldfive.v1.Event`` per line). The result groups raw events into

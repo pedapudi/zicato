@@ -19,6 +19,7 @@ from zicato.query.epoch_view import (
     _read_epoch_brief,
     _tournament_block_from_scoring,
 )
+from zicato.query.foe_episode import is_episode_log
 from zicato.query.gate_view import _mean_drift_loss_per_generation
 from zicato.query.paths import (
     WorkspacePaths,
@@ -431,6 +432,61 @@ def resolve_transcript_events(
     if own.exists():
         return own
     return None
+
+
+def find_proposal_episode_log(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str, *, slot_index: int | None = None
+) -> Path | None:
+    """Locate the Foe ``episode.jsonl`` that proposed one generation.
+
+    A round writes one episode directory per candidate under the epoch's
+    ``episodes/``, named for the generation it proposes and, in a best-of-N
+    slate, for the slot as well. ``slot_index`` names one slate slot; without
+    it the whole-generation directory is preferred and the lowest-numbered
+    slot answers for a slate, so a caller that knows only the generation
+    still reaches an episode.
+
+    A generation id is unique workspace-wide, so an ``epoch_id`` that does not
+    hold the generation falls back to the epoch that does. The returned path
+    is always a Foe episode log: a file that is not one
+    (:func:`zicato.query.foe_episode.is_episode_log`) is refused rather than
+    served, because a proposer transcript reconstructed from any other format
+    would claim a fidelity the format does not give.
+    """
+    layout = layout_of(paths)
+    epoch_ids = [epoch_id] if epoch_id else []
+    epoch_ids += [epoch.id for epoch in iter_epochs(layout) if epoch.id != epoch_id]
+    for candidate_epoch in epoch_ids:
+        directories: list[Path] = []
+        if slot_index is None:
+            directories.append(layout.proposal_episode_dir(candidate_epoch, generation_id))
+            directories += _slate_episode_dirs(layout.episodes_dir(candidate_epoch), generation_id)
+        else:
+            directories.append(
+                layout.proposal_episode_dir(candidate_epoch, generation_id, slot_index)
+            )
+        for directory in directories:
+            log = directory / "episode.jsonl"
+            if log.exists() and is_episode_log(log):
+                return log
+    return None
+
+
+def _slate_episode_dirs(episodes: Path, generation_id: str) -> list[Path]:
+    """One slate's episode directories, in slot order.
+
+    A generation id is ``v`` followed by a round number
+    (:func:`zicato.workspace.epochs.next_generation_id`), so a trailing
+    ``-<digits>`` on a directory name is the slate slot and nothing else.
+    """
+    if not episodes.is_dir():
+        return []
+    slots: list[tuple[int, Path]] = []
+    for child in episodes.iterdir():
+        prefix, separator, slot = child.name.rpartition("-")
+        if separator and prefix == generation_id and slot.isdigit():
+            slots.append((int(slot), child))
+    return [directory for _slot, directory in sorted(slots)]
 
 
 def find_generation_run(

@@ -163,6 +163,27 @@ class WorkspaceLayout:
         """One epoch's ``generations/`` directory."""
         return self.epoch_dir(epoch_id) / "generations"
 
+    def episodes_dir(self, epoch_id: str) -> Path:
+        """One epoch's proposal-episode subtree (``episodes/``).
+
+        One self-contained Foe episode directory per proposal, holding the
+        ``episode.jsonl`` that is the whole record of what the proposer did.
+        """
+        return self.epoch_dir(epoch_id) / "episodes"
+
+    def proposal_episode_dir(
+        self, epoch_id: str, generation_id: str, slot_index: int | None = None
+    ) -> Path:
+        """Where one candidate's proposal episode writes its log.
+
+        A round proposing one candidate per generation names the directory
+        after the generation it is proposing. A best-of-N slate runs several
+        episodes toward the same generation id, so each carries the slate slot
+        it belongs to.
+        """
+        slot = "" if slot_index is None else f"-{slot_index}"
+        return self.episodes_dir(epoch_id) / f"{generation_id}{slot}"
+
     def rounds_dir(self, epoch_id: str) -> Path:
         """One epoch's ``rounds/`` directory (one sub-dir per evolve round).
 

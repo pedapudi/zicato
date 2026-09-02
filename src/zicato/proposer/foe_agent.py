@@ -577,8 +577,7 @@ def _episode_log_dir(workspace_root: Path, ctx: ProposerContext) -> Path:
     from zicato.workspace import WorkspaceLayout  # noqa: PLC0415 - avoids an import cycle
 
     layout = WorkspaceLayout.from_root(workspace_root)
-    slot = "" if ctx.slot_index is None else f"-{ctx.slot_index}"
-    return layout.epoch_dir(ctx.epoch_id) / "episodes" / f"{ctx.new_generation_id}{slot}"
+    return layout.proposal_episode_dir(ctx.epoch_id, ctx.new_generation_id, ctx.slot_index)
 
 
 def _register_active_run(

@@ -1135,16 +1135,22 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         # kept failing on reused / index-only run_ids. We fall back to the
         # opaque run_id lookup only when the triple is absent or resolves to
         # nothing (a pure-run_id caller with no coordinates).
+        #
+        # ``?gen=`` WITHOUT ``?entry=`` asks for that generation's proposal
+        # episode rather than one of its board runs; ``?slot=`` names a
+        # best-of-N slate slot. The reader decides which record answers.
         gen = request.query_params.get("gen")
         entry = request.query_params.get("entry")
         epoch_q = request.query_params.get("epoch")
-        triple_ok = bool(gen and entry and _is_safe_id(gen) and _is_safe_id(entry))
+        gen_ok = bool(gen and _is_safe_id(gen))
+        entry_ok = bool(entry and _is_safe_id(entry))
         events_path = query.resolve_conversation(
             paths,
             run_id,
-            gen=gen if triple_ok else None,
-            entry=entry if triple_ok else None,
+            gen=gen if gen_ok else None,
+            entry=entry if (gen_ok and entry_ok) else None,
             epoch=epoch_q if (epoch_q and _is_safe_id(epoch_q)) else "",
+            slot=_int_query(request, "slot"),
         )
         if events_path is None:
             return JSONResponse({"error": f"no events for run {run_id}"}, status_code=404)

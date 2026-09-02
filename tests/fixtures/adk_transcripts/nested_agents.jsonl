@@ -1,0 +1,11 @@
+{"runId": "adk-nested", "sequence": 1, "emittedAt": "2026-01-05T10:00:00Z", "runStarted": {"goalSummary": "Draft the launch deck and check the numbers."}}
+{"runId": "adk-nested", "sequence": 2, "emittedAt": "2026-01-05T10:00:01Z", "goalDerived": {"goals": [{"id": "g1", "summary": "Draft the deck"}, {"id": "g2", "summary": "Check the numbers"}]}}
+{"runId": "adk-nested", "sequence": 3, "emittedAt": "2026-01-05T10:00:02Z", "agentInvocationStarted": {"invocationId": "inv-root", "agentName": "coordinator", "parentInvocationId": ""}}
+{"runId": "adk-nested", "sequence": 4, "emittedAt": "2026-01-05T10:00:03Z", "agentInvocationStarted": {"invocationId": "inv-writer", "agentName": "writer", "parentInvocationId": "inv-root"}}
+{"runId": "adk-nested", "sequence": 5, "emittedAt": "2026-01-05T10:00:04Z", "delegationObserved": {"invocationId": "inv-root", "fromAgent": "coordinator", "toAgent": "writer", "taskId": "t1", "toolArgsJson": "{\"outline\": \"three slides\"}"}}
+{"runId": "adk-nested", "sequence": 6, "emittedAt": "2026-01-05T10:00:05Z", "goldfiveLlmCallStart": {"inputPreview": "The deck needs a title slide first."}}
+{"runId": "adk-nested", "sequence": 7, "emittedAt": "2026-01-05T10:00:06Z", "goldfiveLlmCallEnd": {"decisionSummary": "Write the title slide, then the numbers slide."}}
+{"runId": "adk-nested", "sequence": 8, "emittedAt": "2026-01-05T10:00:07Z", "agentInvocationCompleted": {"invocationId": "inv-writer", "agentName": "writer", "taskId": "t1", "summary": "Three slides drafted."}}
+{"runId": "adk-nested", "sequence": 9, "emittedAt": "2026-01-05T10:00:08Z", "taskCompleted": {"summary": "Deck drafted and numbers checked."}}
+{"runId": "adk-nested", "sequence": 10, "emittedAt": "2026-01-05T10:00:09Z", "agentInvocationCompleted": {"invocationId": "inv-root", "agentName": "coordinator", "summary": "Both goals met."}}
+{"runId": "adk-nested", "sequence": 11, "emittedAt": "2026-01-05T10:00:10Z", "runCompleted": {"outcomeSummary": "Completed with both goals met."}}
