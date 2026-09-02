@@ -30,6 +30,7 @@ import contextlib
 import json
 import logging
 import os
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -76,6 +77,14 @@ log = logging.getLogger("zicato.proposer.foe")
 #: waiting on it. Foe closes its own obligations on cancel, so this bounds
 #: the pathological case rather than the ordinary one.
 _CANCEL_GRACE_S = 30.0
+
+#: Fingerprints already read from a binary in this process, keyed by the
+#: contract document and the binary that answered for it. ``foe plan``
+#: reads a document and reports a hash of it; asking the same binary about
+#: the same document twice in one process cannot return a second answer, and
+#: the contract hash is recomputed at every preflight, so the memo is the
+#: difference between one subprocess per epoch and one per round.
+_FINGERPRINTS: dict[tuple[str, str, int, int], str] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,7 +227,7 @@ class FoeProposerAgent:
         )
         contract = identity_contract(foe_config, tools.as_sequence())
         try:
-            fingerprint = contract.fingerprint(foe_config.binary)
+            fingerprint = _fingerprint(contract, foe_config.binary)
         except foe.BinaryError as exc:
             raise ProposerConfigError(
                 f"proposer.binary: {foe_config.binary} could not report the "
@@ -259,6 +268,7 @@ class FoeProposerAgent:
                 write_root=scratch_root,
                 verify_retries=ctx.max_retries,
             )
+            _capture_request(ctx, config, request, workspace_root)
             outcome = await self._run_episode(ctx, config, request, workspace_root)
             experiment = self._experiment_from(ctx, outcome, scratch_root, generation_root)
 
@@ -291,12 +301,16 @@ class FoeProposerAgent:
 
         run_id = f"propose:{ctx.epoch_id}:{ctx.new_generation_id}"
         _register_active_run(workspace_root, run_id, handle, config, ctx, log_dir)
+        invocation = await _episode_started(ctx, config)
+        started_at = time.monotonic()
         try:
             deadline = config.budget.seconds
-            if deadline is None:
-                return await handle.wait()
             try:
-                return await asyncio.wait_for(handle.wait(), timeout=deadline)
+                outcome = (
+                    await handle.wait()
+                    if deadline is None
+                    else await asyncio.wait_for(handle.wait(), timeout=deadline)
+                )
             except TimeoutError:
                 # The budget Foe was given is the same one; reaching here
                 # means the process did not honor it, so the host that
@@ -310,9 +324,12 @@ class FoeProposerAgent:
                 )
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(handle.cancel(), timeout=_CANCEL_GRACE_S)
+                await _episode_completed(ctx, invocation, started_at, "timeout")
                 raise ProposerExhausted(
                     "seconds", f"the episode outlived its {deadline}s budget"
                 ) from None
+            await _episode_completed(ctx, invocation, started_at, _outcome_label(outcome))
+            return outcome
         finally:
             _remove_active_run(workspace_root, run_id)
 
@@ -407,6 +424,109 @@ class FoeProposerAgent:
 # ---------------------------------------------------------------------------
 
 
+def _capture_request(
+    ctx: ProposerContext,
+    config: FoeProposerConfig,
+    request: Any,
+    workspace_root: Path,
+) -> None:
+    """Record what this episode was given, before it is given it.
+
+    The same durable capture every proposer call has written: the exact
+    instructions and the exact task, filed under the epoch so an operator
+    can read what the proposer saw without parsing an episode log. An
+    episode is one call from this side — the turns inside it are Foe's
+    transcript — so there is one record per episode rather than one per
+    attempt.
+    """
+    from zicato.proposer.input_capture import ROLE_PROPOSAL, capture_proposer_input  # noqa: PLC0415
+
+    document = request.document()
+    sections = document.get("instructions") or {}
+    capture_proposer_input(
+        workspace_root=workspace_root,
+        epoch_id=ctx.epoch_id,
+        role=ROLE_PROPOSAL,
+        system="\n\n".join(sections[key] for key in sorted(sections)),
+        user=request.task,
+        model=config.model.model,
+        parent_generation_id=ctx.parent_generation_id,
+        new_generation_id=ctx.new_generation_id,
+        slot=ctx.slot_index,
+    )
+
+
+def _outcome_label(outcome: foe.Outcome) -> str:
+    """How an episode ended, in the meta-loop's outcome vocabulary."""
+    match outcome:
+        case foe.Completed():
+            return "completed"
+        case foe.Blocked(code, _):
+            return f"blocked:{code}"
+        case foe.Exhausted(limit):
+            return f"exhausted:{limit}"
+        case _:
+            return "error:Failed"
+
+
+async def _episode_started(ctx: ProposerContext, config: FoeProposerConfig) -> str | None:
+    """Open the meta-loop bookend for one episode. Best-effort."""
+    if ctx.meta_loop_emitter is None:
+        return None
+    try:
+        return await ctx.meta_loop_emitter.proposer_started(
+            model=config.model.model,
+            epoch_id=ctx.epoch_id,
+            parent_generation_id=ctx.parent_generation_id,
+            new_generation_id=ctx.new_generation_id,
+        )
+    except Exception:  # noqa: BLE001 - additive telemetry only
+        return None
+
+
+async def _episode_completed(
+    ctx: ProposerContext, invocation_id: str | None, started_at: float, outcome: str
+) -> None:
+    """Close the meta-loop bookend an episode opened. Best-effort."""
+    if ctx.meta_loop_emitter is None or invocation_id is None:
+        return
+    try:
+        await ctx.meta_loop_emitter.proposer_completed(
+            invocation_id=invocation_id,
+            latency_s=time.monotonic() - started_at,
+            response_chars=0,
+            outcome=outcome,
+        )
+    except Exception:  # noqa: BLE001 - additive telemetry only
+        pass
+
+
+def _fingerprint(contract: foe.ExecutionContract, binary: Path) -> str:
+    """``foe plan``'s hash of one contract, read at most once per binary.
+
+    Keyed by the binary's identity on disk as well as its path, so a build
+    replaced under the same name during a long-lived process is asked
+    again rather than answered from the build it replaced.
+    """
+    try:
+        stat = binary.stat()
+        key = (
+            json.dumps(contract.to_dict(""), sort_keys=True),
+            str(binary),
+            stat.st_size,
+            stat.st_mtime_ns,
+        )
+    except OSError:
+        # An unreadable binary is the BinaryError path; let the call raise
+        # it rather than reporting a memo key as the failure.
+        return contract.fingerprint(binary)
+    cached = _FINGERPRINTS.get(key)
+    if cached is None:
+        cached = contract.fingerprint(binary)
+        _FINGERPRINTS[key] = cached
+    return cached
+
+
 def resolve_foe_config(config: ExternalProposerConfig) -> FoeProposerConfig:
     """The workspace's ``proposer`` block, off the resolved binding."""
     return load_foe_proposer_config(config.workspace_config, config.workspace_root)
@@ -434,6 +554,9 @@ def evidence_from_context(ctx: ProposerContext) -> ProposalEvidence:
         revise_feedback=ctx.revise_feedback,
         restrict_visibility=ctx.restrict_visibility,
         mutation_track_records=ctx.mutation_track_records,
+        candidate_id=ctx.new_generation_id,
+        parent_id=ctx.parent_generation_id,
+        slot_index=ctx.slot_index,
     )
 
 

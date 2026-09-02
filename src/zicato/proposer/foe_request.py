@@ -42,6 +42,7 @@ from zicato.proposer.prompts import (
     render_mutation_block,
     render_pattern_block,
     render_prior_experiments_block,
+    render_skills_block,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only imports
@@ -109,6 +110,13 @@ def _movement_schema(name_key: str) -> dict[str, Any]:
 #: hypothesis. The patches are read back from the working copy, so the
 #: model never restates an edit it has already made and the two can never
 #: disagree. The schema is in the subset ``foe/docs/config.md`` implements.
+#:
+#: The ``anyOf`` states the rule
+#: :func:`~zicato.proposer.structured.parse_experiment_json` enforces: a
+#: hypothesis predicts at least one movement, of either kind. It is
+#: written here as well as there because the runtime checks the returned
+#: value at the boundary, and a hypothesis the runtime accepts and zicato
+#: then rejects costs the whole episode rather than one turn.
 HYPOTHESIS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -125,6 +133,16 @@ HYPOTHESIS_SCHEMA: dict[str, Any] = {
             "items": _movement_schema("metric_name"),
         },
     },
+    "anyOf": [
+        {
+            "required": ["expected_drift_movements"],
+            "properties": {"expected_drift_movements": {"minItems": 1}},
+        },
+        {
+            "required": ["expected_metric_movements"],
+            "properties": {"expected_metric_movements": {"minItems": 1}},
+        },
+    ],
 }
 
 #: The instructions every proposal episode runs under, before the epoch's
@@ -142,11 +160,11 @@ CHARTER_SECTIONS: Mapping[str, str] = {
     ),
     "20-working-copy": (
         "You are given a disposable writable copy of the current generation's "
-        "source tree, and read access to the generation itself. Change files "
-        "in the copy with the edit tool. The generation is not writable and an "
-        "attempt to write it is refused. The copy is discarded when the "
-        "episode ends; what survives is the patch set your changes are read "
-        "back as."
+        "source tree, and read access to the generation itself. Both trees are "
+        "named at the top of the task. Change files in the copy with the edit "
+        "tool. The generation is not writable and an attempt to write it is "
+        "refused. The copy is discarded when the episode ends; what survives "
+        "is the patch set your changes are read back as."
     ),
     "30-mutation-points": (
         "Only the declared mutation points may change. The task lists every "
@@ -219,6 +237,19 @@ class ProposalEvidence:
     revise_feedback: str = ""
     restrict_visibility: bool = False
     mutation_track_records: Mapping[str, MutationTrackRecord] | None = None
+    #: Which candidate this episode is producing, and the generation it
+    #: descends from. Lineage coordinates, not board data: they name the
+    #: episode in the round log and in its own transcript, and they are
+    #: what distinguishes one challenger's episode from its siblings' when
+    #: a field proposes several against the same evidence.
+    candidate_id: str = ""
+    parent_id: str = ""
+    #: Which slot of a best-of-N slate this episode is filling, when it is
+    #: filling one. The slate's slots share a candidate and are told apart
+    #: only by their edit-class hint, so the slot is named for the same
+    #: reason the hint is given: the slate is worth running only if its
+    #: episodes explore different edits.
+    slot_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,26 +272,60 @@ def instruction_sections(brief_text: str, skills: Sequence[ProposerSkill]) -> di
 
     The brief and the skills are the operator's steering for this epoch
     and are already folded into the contract hash by the contract
-    canonicalizer; they are here because the model must read them.
+    canonicalizer; they are here because the model must read them. The
+    section keys order them: the brief is ``70-brief`` and the skills
+    ``80-skills``, so the operator's goal is read before the procedures
+    for reaching it.
     """
     sections = dict(CHARTER_SECTIONS)
     sections[BRIEF_SECTION] = (
         "Proposer brief for this epoch, written by the operator:\n\n"
         f"{brief_text.strip() or '(no brief)'}"
     )
-    if skills:
-        bodies = "\n\n".join(f"### {skill.name}\n{skill.body.strip()}" for skill in skills)
-        sections[SKILLS_SECTION] = f"Operating procedures for this epoch:\n\n{bodies}"
+    rendered_skills = render_skills_block(skills)
+    if rendered_skills:
+        sections[SKILLS_SECTION] = f"Operating procedures for this epoch:\n\n{rendered_skills}"
     return sections
 
 
-def render_task(evidence: ProposalEvidence) -> str:
-    """This round's evidence, as the one text the episode is given.
+def render_episode_block(evidence: ProposalEvidence, *, read_root: Path, write_root: Path) -> str:
+    """Where this episode works, and which candidate it is producing.
 
-    The order is the reading order: what to fix first, then what is
-    already known, then what may be changed. Every block is omitted when
-    it is empty, so a workspace that opts into none of the optional
-    channels gets a task made of the three that are always present.
+    The charter tells the episode it holds a writable copy of the parent
+    snapshot; this names both trees, because a grant the model cannot
+    address is a grant it cannot use. The candidate and parent generation
+    ids are here for the same reason the episode's log is filed under
+    them: they say which point of the lineage this episode is extending,
+    which is what tells one challenger's episode from its siblings' when a
+    field proposes several against the same evidence.
+
+    Nothing here is fingerprinted — the task never is — so naming a
+    per-round path cannot move the proposer's contract identity.
+    """
+    lines = [
+        f"Read-only parent snapshot: {read_root}",
+        f"Your writable working copy: {write_root}",
+    ]
+    if evidence.candidate_id:
+        slot = "" if evidence.slot_index is None else f" (slate slot {evidence.slot_index})"
+        descends = f" from {evidence.parent_id}" if evidence.parent_id else ""
+        lines.append(f"You are producing candidate {evidence.candidate_id}{slot}{descends}.")
+    return "\n".join(lines)
+
+
+def render_evidence(evidence: ProposalEvidence) -> str:
+    """This round's evidence, in the order it is meant to be read.
+
+    What to fix first, then what is already known, then what may be
+    changed. Every block is omitted when it is empty, so a workspace that
+    opts into none of the optional channels gets the three that are
+    always present.
+
+    Rendered here rather than inside :func:`render_task` because the
+    proposal episode is not its only reader: the best-of-N critic ranks
+    candidates against the same evidence, under the same restricted
+    visibility, and that invariant holds by construction only while one
+    function renders it.
     """
     blocks: list[str] = []
     if evidence.revise_feedback.strip():
@@ -325,8 +390,23 @@ def render_task(evidence: ProposalEvidence) -> str:
         "## Mutation points (only these may change)\n"
         + render_mutation_block(evidence.mutations, track_records=evidence.mutation_track_records)
     )
-    blocks.append("Change the working copy now, verify it, and return your hypothesis.")
     return "\n\n".join(blocks)
+
+
+def render_task(evidence: ProposalEvidence, *, read_root: Path, write_root: Path) -> str:
+    """The one text a proposal episode is given: where it works, and why.
+
+    The episode block comes first because it names the trees every later
+    instruction refers to, and the closing line is the ask.
+    """
+    return "\n\n".join(
+        [
+            "## This episode\n"
+            + render_episode_block(evidence, read_root=read_root, write_root=write_root),
+            render_evidence(evidence),
+            "Change the working copy now, verify it, and return your hypothesis.",
+        ]
+    )
 
 
 def build_contract(
@@ -391,7 +471,9 @@ def build_request(
         verify_retries=verify_retries,
     )
     return FoeProposalRequest(
-        contract=contract, task=render_task(evidence), host_tools=tuple(host_tools)
+        contract=contract,
+        task=render_task(evidence, read_root=read_root, write_root=write_root),
+        host_tools=tuple(host_tools),
     )
 
 
@@ -436,5 +518,7 @@ __all__ = [
     "build_request",
     "identity_contract",
     "instruction_sections",
+    "render_episode_block",
+    "render_evidence",
     "render_task",
 ]
