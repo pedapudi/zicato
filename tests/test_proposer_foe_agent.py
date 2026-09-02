@@ -90,9 +90,7 @@ class Workspace:
         binding = external_proposer_config(self.config, self.root)
         assert binding is not None
         return FoeProposerAgent(
-            spec=ProposerSpec(
-                agent_id="external:foe", tools=(), skills=(), agent_source_sha256=None
-            ),
+            spec=ProposerSpec(agent_id="external:foe", tools=(), skills=()),
             config=binding,
         )
 
@@ -142,7 +140,9 @@ def test_a_completed_episode_becomes_an_experiment_over_its_own_edits(tmp_path: 
 
     assert experiment.hypothesis.core_idea == _HYPOTHESIS["core_idea"]
     assert [p.mutation_id for p in experiment.patches] == ["instr"]
-    assert experiment.patches[0].new_content == 'INSTR = """Answer with the agent name."""\n'
+    # The patch carries the applier's unit for a Python span — the literal
+    # alone — so applying it back onto the snapshot reproduces the edit.
+    assert experiment.patches[0].new_content == '"""Answer with the agent name."""'
     assert experiment.generation_id == "v1"
     assert experiment.parent_generation_id == "v0"
 

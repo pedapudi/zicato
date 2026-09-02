@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from zicato.core.types import MutationPoint
+from zicato.mutation.applier import apply_patches, replacement_source
 from zicato.mutation.enumerator import enumerate_mutations
 from zicato.proposer.foe_scratch import (
     SCRATCH_PREFIX,
@@ -87,17 +88,25 @@ def test_an_edit_inside_one_point_becomes_that_point_s_patch(tmp_path: Path) -> 
         patches = _project(snapshot, scratch)
     assert [p.mutation_id for p in patches] == ["router__prompt"]
     assert patches[0].op == "replace"
-    assert patches[0].new_content == 'PROMPT = """Answer with the agent name."""\n'
+    # The applier's unit for a Python span is the literal, not the
+    # statement around it, so that is what the patch carries.
+    assert patches[0].new_content == '"""Answer with the agent name."""'
 
 
-def test_the_patch_content_is_what_the_enumerator_reads_off_the_copy(tmp_path: Path) -> None:
-    """The one authority on a point's value is the enumerator, not the diff."""
+def test_the_patch_content_is_read_off_the_copy_not_off_the_diff(tmp_path: Path) -> None:
+    """The authority on a point's new value is the copy, not the hunk.
+
+    The copy is re-enumerated and each touched point is converted into
+    the unit the applier consumes, so the patch says what the point now
+    IS rather than which lines happened to change.
+    """
     snapshot = _snapshot(tmp_path)
     with scratch_working_copy(snapshot) as scratch:
         _write(scratch, _SOURCE.replace("Route the message.", "Say less."))
         patches = _project(snapshot, scratch)
-        edited = {p.id: p.content for p in enumerate_mutations([scratch])}
-    assert patches[0].new_content == edited["router__prompt"]
+        edited = {p.id: p for p in enumerate_mutations([scratch])}
+        expected = replacement_source(edited["router__prompt"])
+    assert patches[0].new_content == expected
 
 
 def test_edits_in_two_points_become_two_patches(tmp_path: Path) -> None:
@@ -109,10 +118,7 @@ def test_edits_in_two_points_become_two_patches(tmp_path: Path) -> None:
         )
         patches = _project(snapshot, scratch)
     assert [p.mutation_id for p in patches] == ["router__prompt", "router__style"]
-    assert {p.new_content for p in patches} == {
-        'PROMPT = """Say less."""\n',
-        'STYLE = """blunt"""\n',
-    }
+    assert {p.new_content for p in patches} == {'"""Say less."""', '"""blunt"""'}
 
 
 def test_several_edits_inside_one_point_are_one_patch(tmp_path: Path) -> None:
@@ -130,7 +136,7 @@ def test_several_edits_inside_one_point_are_one_patch(tmp_path: Path) -> None:
             changed_ranges(snapshot, scratch), enumerate_mutations([snapshot]), scratch
         )
     assert len(patches) == 1
-    assert patches[0].new_content == 'BODY = """A\nb\nC"""\n'
+    assert patches[0].new_content == '"""A\nb\nC"""'
 
 
 def test_a_change_outside_every_point_names_its_path_and_line_range(tmp_path: Path) -> None:
@@ -181,15 +187,20 @@ def test_an_untouched_copy_produces_no_patches(tmp_path: Path) -> None:
 
 
 def test_a_patch_set_survives_apply_diff_and_projection(tmp_path: Path) -> None:
-    """The round trip a proposal makes: edit, read the tree back, compare."""
+    """The round trip a proposal makes, closed by applying what it produced.
+
+    A projection that agrees with the enumerator but not with the applier
+    would pass every case above and still corrupt the child snapshot, so
+    the assertion here is the one that matters: applying the projected
+    patch set to the snapshot reproduces the tree the episode edited,
+    byte for byte.
+    """
     snapshot = _snapshot(tmp_path)
+    edited = _SOURCE.replace("Route the message.", "Say less.").replace("terse", "blunt")
     with scratch_working_copy(snapshot) as scratch:
-        _write(
-            scratch,
-            _SOURCE.replace("Route the message.", "Say less.").replace("terse", "blunt"),
-        )
+        _write(scratch, edited)
         patches = _project(snapshot, scratch)
-    assert {p.mutation_id: p.new_content for p in patches} == {
-        "router__prompt": 'PROMPT = """Say less."""\n',
-        "router__style": 'STYLE = """blunt"""\n',
-    }
+
+    child = tmp_path / "child"
+    apply_patches(snapshot, patches, child)
+    assert (child / "agent" / "prompts.py").read_text(encoding="utf-8") == edited

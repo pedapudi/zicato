@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from zicato.core.types import MutationPoint, Patch
+from zicato.mutation.applier import replacement_source
 from zicato.mutation.enumerator import enumerate_mutations
 
 #: Prefix of the proposer's working copies. Distinct from every other
@@ -129,6 +130,11 @@ def project_onto_mutation_points(
     it broke; so does an edit that made a declared point stop resolving,
     because a marker the copy no longer carries is a change outside every
     point that a line range cannot see.
+
+    What a patch carries is the applier's unit rather than the
+    enumerator's — :func:`~zicato.mutation.applier.replacement_source`
+    converts between them — so applying the projected set to the snapshot
+    reproduces the copy.
     """
     by_file: dict[Path, list[MutationPoint]] = {}
     for point in points:
@@ -163,7 +169,7 @@ def project_onto_mutation_points(
             id=uuid.uuid4().hex,
             mutation_id=mutation_id,
             op="replace",
-            new_content=edited[mutation_id].content,
+            new_content=replacement_source(edited[mutation_id]),
             new_numeric=None,
             new_enum=None,
             rationale="Read back from the proposer's working copy.",
