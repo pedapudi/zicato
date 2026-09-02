@@ -26,17 +26,83 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from zicato.health.diagnostics import SettlementReceiptAttention
 from zicato.workspace import WorkspaceLayout, generation_ids
 
 log = logging.getLogger("zicato.health.inputs")
 
 __all__ = [
+    "SettlementReceiptAttention",
     "epoch_noise_floor_inputs",
     "epoch_preflight_record",
+    "epoch_settlement_receipt_attention",
     "epoch_tree_import_gaps",
     "str_tuple",
     "workspace_preflight_gate",
 ]
+
+
+def epoch_settlement_receipt_attention(
+    workspace_root: Path,
+    epoch_id: str,
+) -> SettlementReceiptAttention:
+    """Scan retained settlement receipts once for all health conditions."""
+    from zicato.evolve.settlement_recovery import scan_field_settlement_receipts  # noqa: PLC0415
+
+    try:
+        receipts, corruptions = scan_field_settlement_receipts(workspace_root, epoch_id)
+    except Exception as exc:  # noqa: BLE001 — corruption is itself a health input
+        log.debug("settlement receipts unreadable for %s: %s", epoch_id, exc)
+        return SettlementReceiptAttention(
+            corruptions=(
+                {
+                    "epoch_id": epoch_id,
+                    "exception_type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
+        )
+
+    deliveries: list[dict[str, Any]] = []
+    repairs: list[dict[str, Any]] = []
+    for raw in receipts:
+        if raw.get("state") != "committed":
+            continue
+        hook = raw.get("promotion_hook")
+        if isinstance(hook, dict) and hook.get("state") == "delivery_unknown":
+            field_record = raw.get("field_tournament_record")
+            generation_id = (
+                str(field_record.get("promoted_generation_id", ""))
+                if isinstance(field_record, dict)
+                else next(
+                    (
+                        str(candidate.get("generation_id", ""))
+                        for candidate in raw.get("candidates", [])
+                        if isinstance(candidate, dict)
+                        and isinstance(candidate.get("outcome"), dict)
+                        and candidate["outcome"].get("tournament_decision") == "promoted"
+                    ),
+                    "",
+                )
+            )
+            deliveries.append(
+                {
+                    "settlement_id": str(raw.get("settlement_id", "")),
+                    "round_index": raw.get("round_index"),
+                    "generation_id": generation_id,
+                    "adapter_name": str(hook.get("adapter_name", "")),
+                }
+            )
+        projection = raw.get("index_projection")
+        if isinstance(projection, dict) and projection.get("state") == "repair_required":
+            repairs.append(
+                {
+                    "settlement_id": str(raw.get("settlement_id", "")),
+                    "round_index": raw.get("round_index"),
+                    "error_type": str(projection.get("error_type", "")),
+                }
+            )
+    return SettlementReceiptAttention(tuple(deliveries), tuple(repairs), corruptions)
 
 
 def str_tuple(raw: Any) -> tuple[str, ...]:

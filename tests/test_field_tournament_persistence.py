@@ -6,7 +6,7 @@ field-status — which the per-challenger ``experiment.json`` audit cannot
 reconstruct on its own. These tests pin the persistence path end to end:
 
 * the orchestrator's settled-structure serialisers + the durable snapshot
-  writer (:func:`zicato.evolve.dashboard_projection._persist_field_tournament`),
+  open writer (:func:`zicato.evolve.dashboard_projection._open_field_tournament`),
 * the index ingest of that record
   (:func:`zicato.index.ingest.ingest_field_tournament` +
   ``rebuild_index`` from the snapshot file),
@@ -28,7 +28,7 @@ from pathlib import Path
 from zicato.core.types import TournamentStructure
 from zicato.core.workspace import field_tournament_path
 from zicato.evolve.dashboard_projection import (
-    _persist_field_tournament,
+    _open_field_tournament,
     _serialise_rounds,
     _serialise_standings,
 )
@@ -233,16 +233,16 @@ def test_gauntlet_field_writes_no_field_row(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _persist_field_tournament — durable snapshot + dual-write + reindex
+# _open_field_tournament — in-progress snapshot + dual-write
 # ---------------------------------------------------------------------------
 
 
-def test_persist_writes_durable_snapshot_and_dual_writes(tmp_path: Path) -> None:
+def test_open_writes_in_progress_snapshot_and_dual_writes(tmp_path: Path) -> None:
     ws = tmp_path / ".zicato"
     ws.mkdir(parents=True)
-    strategy, decision, competitors = _settle_swiss()
+    _strategy, _decision, competitors = _settle_swiss()
 
-    _persist_field_tournament(
+    _open_field_tournament(
         ws,
         field_tournament_id="e1:field:v1",
         first_challenger_id="v1",
@@ -250,25 +250,23 @@ def test_persist_writes_durable_snapshot_and_dual_writes(tmp_path: Path) -> None
         structure="swiss",
         structure_params={"field_size": 4},
         competitors=competitors,
-        rounds=_serialise_rounds(strategy.rounds()),
-        standings=_serialise_standings(decision.standings),
         field_status=[{"generation_id": "v1", "status": "applied", "reason": "", "seed": 2}],
-        decision=decision,
     )
 
-    # The durable snapshot exists and holds the settled structure.
+    # The durable snapshot exists and describes work in progress.
     snap = field_tournament_path(ws, "e1", "v1")
     assert snap.exists()
     import json
 
     blob = json.loads(snap.read_text())
-    assert blob["standings"]
-    assert blob["rounds"]
+    assert blob["state"] == "in_progress"
+    assert blob["standings"] == []
+    assert blob["rounds"] == []
 
     # The dual-write put the field row in the index immediately.
     row = _read_tournament_row(ws / "index.db", "e1:field:v1")
     assert row is not None
-    assert json.loads(row["standings_json"])
+    assert json.loads(row["standings_json"]) == []
 
 
 def test_rebuild_index_rederives_field_row_from_snapshot(tmp_path: Path) -> None:

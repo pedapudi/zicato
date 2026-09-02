@@ -25,8 +25,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from zicato.core.types import (
     Experiment,
+    Generation,
     HypothesisSpec,
     LossProfile,
     Patch,
@@ -107,6 +110,32 @@ def _write_experiment(workspace: Path, generation_id: str, *, with_outcome: bool
     )
 
 
+def _write_pending_lineage(
+    workspace: Path,
+    generation_id: str,
+    *,
+    parent_id: str = "v0",
+    round_index: int = 0,
+) -> None:
+    from zicato.epoch.lineage import append_to_lineage
+
+    append_to_lineage(
+        workspace,
+        EPOCH,
+        Generation(
+            id=generation_id,
+            epoch_id=EPOCH,
+            parent_id=parent_id,
+            snapshot_root=_gen_dir(workspace, generation_id) / "snapshot",
+            created_at="2026-06-09T00:00:00Z",
+            promoted=False,
+            round_index=round_index,
+        ),
+        parent_id,
+        pending=True,
+    )
+
+
 def _write_snapshot(workspace: Path, generation_id: str) -> None:
     snap = _gen_dir(workspace, generation_id) / "snapshot"
     snap.mkdir(parents=True, exist_ok=True)
@@ -136,7 +165,30 @@ def _write_loss(workspace: Path, generation_id: str, entry_id: str) -> None:
 
 def _seed_v0(workspace: Path) -> None:
     """Create a v0 baseline so the latest-generation logic has a floor."""
+    _configure_directory_store(workspace)
     _write_snapshot(workspace, "v0")
+
+
+def _configure_directory_store(workspace: Path) -> None:
+    (workspace / "config.json").write_text(
+        json.dumps({"generation_source_backend": "directory"}),
+        encoding="utf-8",
+    )
+
+
+def _seed_git_store(workspace: Path, source: Path) -> None:
+    """Create tagged v0/v1 source commits for a Git-backed resume test."""
+    from zicato.epoch.git_genstore import GitGenerationStore
+
+    (workspace / "config.json").write_text(
+        json.dumps({"generation_source_backend": "git"}),
+        encoding="utf-8",
+    )
+    source.mkdir()
+    (source / "agent.py").write_text('GREETING = "hi"\n', encoding="utf-8")
+    store = GitGenerationStore(workspace)
+    store.seed_generation(EPOCH, "v0", (source,))
+    store.derive_generation(EPOCH, "v0", "v1", ())
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +214,7 @@ def test_no_generations_at_all_is_noop(tmp_path: Path) -> None:
     """An epoch with no generations directory at all → clean."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
+    _configure_directory_store(workspace)
 
     plan = prepare_resume(workspace, EPOCH)
 
@@ -197,6 +250,7 @@ def test_interrupted_tournament_with_loss_resumes_in_place(tmp_path: Path) -> No
     _write_experiment(workspace, "v1", with_outcome=False)
     _write_snapshot(workspace, "v1")
     _write_loss(workspace, "v1", "entry_a")  # one completed board unit
+    _write_pending_lineage(workspace, "v1")
 
     plan = prepare_resume(workspace, EPOCH)
 
@@ -211,6 +265,77 @@ def test_interrupted_tournament_with_loss_resumes_in_place(tmp_path: Path) -> No
     # cache HIT on resume.
     assert plan.discarded_generation_id is None
     assert (_gen_dir(workspace, "v1") / "runs" / "entry_a" / "loss.json").is_file()
+
+
+def test_git_backed_interrupted_tournament_resumes_in_place(tmp_path: Path) -> None:
+    """Git source existence is recognized without a snapshot directory."""
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    _seed_git_store(workspace, tmp_path / "source")
+    _write_experiment(workspace, "v1", with_outcome=False)
+    _write_loss(workspace, "v1", "entry_a")
+    _write_pending_lineage(workspace, "v1")
+
+    plan = prepare_resume(workspace, EPOCH)
+
+    assert plan.classification == "resume_tournament"
+    assert plan.resume_generation_id == "v1"
+
+
+def test_cached_tournament_with_empty_parent_is_discarded(tmp_path: Path) -> None:
+    """A cache cannot resume when its experiment does not identify a parent."""
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    _seed_v0(workspace)
+    _write_experiment(workspace, "v1")
+    experiment_path = _gen_dir(workspace, "v1") / "experiment.json"
+    raw = json.loads(experiment_path.read_text(encoding="utf-8"))
+    raw["parent_generation_id"] = ""
+    experiment_path.write_text(json.dumps(raw), encoding="utf-8")
+    _write_snapshot(workspace, "v1")
+    _write_loss(workspace, "v1", "entry_a")
+    _write_pending_lineage(workspace, "v1")
+
+    plan = prepare_resume(workspace, EPOCH)
+
+    assert plan.classification == "discard_garbled"
+    assert not _gen_dir(workspace, "v1").exists()
+
+
+def test_cached_tournament_with_mismatched_lineage_parent_is_discarded(tmp_path: Path) -> None:
+    """A cache cannot resume under a parent different from pending lineage."""
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    _seed_v0(workspace)
+    _write_experiment(workspace, "v1")
+    _write_snapshot(workspace, "v1")
+    _write_loss(workspace, "v1", "entry_a")
+    _write_pending_lineage(workspace, "v1", parent_id="v9")
+
+    plan = prepare_resume(workspace, EPOCH)
+
+    assert plan.classification == "discard_garbled"
+    assert not _gen_dir(workspace, "v1").exists()
+
+
+def test_git_backed_no_progress_discard_prunes_source_and_round_log(tmp_path: Path) -> None:
+    """A Git challenger with no completed unit is removed as one retryable round."""
+    from zicato.epoch.git_genstore import GitGenerationStore
+    from zicato.epoch.round_log import RoundLog, RoundOpened
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    _seed_git_store(workspace, tmp_path / "source")
+    _write_experiment(workspace, "v1", with_outcome=False)
+    RoundLog(workspace, EPOCH, 0).append(RoundOpened(contract_hash="hash"))
+
+    plan = prepare_resume(workspace, EPOCH)
+
+    assert plan.classification == "discard_no_progress"
+    assert GitGenerationStore(workspace).has_generation(EPOCH, "v1") is False
+    assert not (workspace / "epochs" / EPOCH / "rounds" / "0").exists()
+    envelope = RoundLog(workspace, EPOCH, 0).append(RoundOpened(contract_hash="hash"))
+    assert envelope.seq == 1
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +359,50 @@ def test_applied_but_no_units_ran_discards(tmp_path: Path) -> None:
     assert not plan.resumes_in_place
     # The interrupted directory is gone so _next_generation_id re-picks v1.
     assert not _gen_dir(workspace, "v1").exists()
+
+
+def test_single_discard_retries_when_process_stops_before_lineage_commit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Pending lineage remains a retry marker after source and record removal."""
+    import zicato.runtime.resume as resume_module
+    from zicato.epoch.lineage import append_to_lineage, load_lineage
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    _seed_v0(workspace)
+    _write_experiment(workspace, "v1", with_outcome=False)
+    _write_snapshot(workspace, "v1")
+    append_to_lineage(
+        workspace,
+        EPOCH,
+        Generation(
+            id="v1",
+            epoch_id=EPOCH,
+            parent_id="v0",
+            snapshot_root=_gen_dir(workspace, "v1") / "snapshot",
+            created_at="2026-06-09T00:00:00Z",
+            promoted=False,
+            round_index=0,
+        ),
+        "v0",
+        pending=True,
+    )
+
+    def stop(boundary: str) -> None:
+        if boundary == "canonical_records_removed":
+            raise RuntimeError(boundary)
+
+    monkeypatch.setattr(resume_module, "_field_cleanup_checkpoint", stop)
+    with pytest.raises(RuntimeError, match="canonical_records_removed"):
+        prepare_resume(workspace, EPOCH)
+
+    monkeypatch.setattr(resume_module, "_field_cleanup_checkpoint", lambda _boundary: None)
+    plan = prepare_resume(workspace, EPOCH)
+    assert plan.classification == "discard_unrecorded_field"
+    epoch = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == EPOCH)
+    assert {row["id"] for row in epoch["generations"]}.isdisjoint({"v1"})
 
 
 def test_proposed_but_not_applied_discards(tmp_path: Path) -> None:

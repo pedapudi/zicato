@@ -44,6 +44,7 @@ from zicato.core.types import (
     Experiment,
     HypothesisSpec,
     MatchOutcome,
+    MetricMovementActual,
     OutcomeRecord,
     Patch,
     TournamentDecision,
@@ -198,6 +199,42 @@ def append_journal_entry(workspace_root: Path, epoch_id: str, experiment: Experi
         backend.write_text(key, section)
 
 
+def append_journal_entry_once(
+    workspace_root: Path,
+    epoch_id: str,
+    experiment: Experiment,
+    *,
+    settlement_identity: str,
+) -> None:
+    """Append a settled experiment once under a stable settlement identity.
+
+    Field settlement can replay after any interrupted write. The journal
+    section therefore carries a machine-readable HTML comment whose identity
+    comes from the durable settlement intent and candidate generation. The
+    marker and section land in one atomic journal replacement, so a replay
+    either finds the complete entry or appends it once.
+    """
+    if not settlement_identity or any(c in settlement_identity for c in ('"', "\n", "\r")):
+        raise ValueError("settlement_identity must be non-empty and contain no quotes or newlines")
+    edir = epoch_dir(workspace_root, epoch_id)
+    if not edir.exists():
+        raise FileNotFoundError(
+            f"epoch directory {edir} does not exist; create it with new_epoch first"
+        )
+    backend = backend_for(workspace_root)
+    key = journal_key(epoch_id)
+    marker = f'<!-- zicato:field-settlement identity="{settlement_identity}" -->'
+    existing = backend.read_text(key) or ""
+    if marker in existing:
+        return
+    section = marker + "\n" + _render_section(experiment)
+    if existing:
+        if not existing.endswith("\n"):
+            existing += "\n"
+        section = existing + section
+    backend.write_text(key, section)
+
+
 def read_journal(workspace_root: Path, epoch_id: str) -> str:
     """Return the epoch's full journal text, or an empty string if missing."""
     return backend_for(workspace_root).read_text(journal_key(epoch_id)) or ""
@@ -317,6 +354,16 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         )
         for m in d.get("drift_movements", [])
     )
+    metric_movements = tuple(
+        MetricMovementActual(
+            metric_name=str(m["metric_name"]),
+            from_value=float(m["from_value"]),
+            to_value=float(m["to_value"]),
+            hypothesis_match=bool(m["hypothesis_match"]),
+            note=str(m.get("note", "")),
+        )
+        for m in d.get("metric_movements", [])
+    )
     # Generalised tournament-structure fields (additive; every default
     # reproduces the gauntlet reading so a journal written before the
     # feature deserializes unchanged).
@@ -339,6 +386,7 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         scalar_score_delta=float(d.get("scalar_score_delta", 0.0)),
         tournament_decision=_as_decision(d.get("tournament_decision", "rejected")),
         rejection_reason=str(d.get("rejection_reason", "")),
+        metric_movements=metric_movements,
         structure=str(d.get("structure", "gauntlet")),
         final_rank=int(raw_rank) if raw_rank is not None else None,
         eliminated_in_round=int(raw_elim) if raw_elim is not None else None,
@@ -363,6 +411,14 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         # fit never cleared the credibility floor) and on older journals.
         evidence=d.get("evidence"),
     )
+
+
+def outcome_from_dict(d: dict[str, Any]) -> OutcomeRecord:
+    """Hydrate the complete persisted outcome payload used by recovery."""
+    outcome = _outcome_from_dict(d)
+    if outcome is None:  # pragma: no cover - the public contract excludes None
+        raise ValueError("outcome payload must be a JSON object")
+    return outcome
 
 
 def write_seed_experiment(
@@ -643,6 +699,8 @@ def read_generation_patches(
 
 __all__ = [
     "append_journal_entry",
+    "append_journal_entry_once",
+    "outcome_from_dict",
     "read_journal",
     "write_experiment",
     "write_seed_experiment",

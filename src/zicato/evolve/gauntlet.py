@@ -319,7 +319,18 @@ async def evolve_once(
     # manual ``zicato baseline`` invocation, but materialising it on
     # demand here keeps the CLI surface narrow.
     _ensure_baseline_snapshot(workspace_root, resolved_epoch_id, workspace_config)
-    parent_id = generation_phase.current_generation(workspace_root, resolved_epoch_id)
+    # An interrupted challenger is already the newest generation record. When
+    # no champion marker exists, ``current_generation`` therefore falls back
+    # to that challenger even though it has not settled. Its persisted
+    # experiment is the authority on the parent the resumed tournament must
+    # compare against.
+    if resume_plan is not None and resume_plan.resumes_in_place:
+        resume_experiment = resume_plan.resume_experiment
+        if resume_experiment is None or not resume_experiment.parent_generation_id:
+            raise RuntimeError("resume plan lacks its validated parent generation")
+        parent_id = resume_experiment.parent_generation_id
+    else:
+        parent_id = generation_phase.current_generation(workspace_root, resolved_epoch_id)
     parent_gen = Generation(
         id=parent_id,
         epoch_id=resolved_epoch_id,

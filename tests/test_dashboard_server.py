@@ -2115,7 +2115,7 @@ def test_per_entry_facet_overall_is_the_gates_own_number(tmp_path: Path) -> None
     """``overall`` IS the candidate's headline scalar, holdout excluded.
 
     The number the gate compares — and the one ``gen_score.json`` caches —
-    is the TRAIN-slice aggregate (``governance._train_aggs``). The holdout
+    is the aggregate over the train ids returned by ``split_board``. The holdout
     is default-on and needs no tag: a board of six or more entries hands
     ~30% of itself over by hash alone. Aggregating the whole board would put
     a second, larger "candidate scalar" on the same screen as the gate's,

@@ -22,13 +22,13 @@
 > | ID | Name | Invariant |
 > |----|------|-----------|
 > | D1 | files canonical, index derived | Files are canonical; the SQLite index is a derived, lag-only projection. Nothing may exist only in the index. |
-> | D2 | index writes are best-effort | Every dual-write into the index is best-effort: any failure is logged at `debug` and swallowed; a round/run is never failed by an index write. |
+> | D2 | index writes cannot invalidate canonical work | The SQLite index is derived. Ordinary dual-writes are best-effort. Field settlement reports its grouped refresh as `succeeded` or `repair_required` on the retained receipt; either result leaves the canonical decision intact. |
 > | D3 | mutable records are written atomically | Every mutable JSON record write goes through the atomic-write helpers (`tmp` → `fsync` → `os.replace` → parent-dir `fsync`). Nobody bypasses them. |
 > | D4 | torn-tail tolerance is for append-only logs only | Torn-tail tolerance exists ONLY for append-only JSONL logs. An unparseable *interior* line raises; a mutable JSON record is never partially readable. |
 > | D5 | a generation derivation is transactional | A generation store's unit of work is transactional: a child tree appears in full or not at all (`derive_generation` is all-or-nothing). |
 > | D6 | ephemeral checkouts live in one known shape | Every per-run ephemeral checkout lives under a `ztw-snap-*` mkdtemp parent in the OS temp dir — the exact shape the supervisor's crash-reaper is allowed to delete. |
 > | D7 | garbage collection prunes trees, never records | GC prunes source TREES only, never records; promoted / in-flight / lineage-unknown generations and the seed `v0` are never pruned. |
-> | D8 | journal and lineage only after the outcome | A generation is journaled and appended to `lineage.json` only AFTER its outcome is decided. An un-outcomed generation has no lineage/journal entry, so discarding it on resume cannot corrupt either. |
+> | D8 | pending lineage precedes settlement | An applied challenger enters `lineage.json` with `promoted=null` before evaluation. Settlement resolves that node and appends the journal section. Conservative discard removes the pending node together with the generation directory. |
 > | D9 | process identity is pid plus start time | Process identity is `(pid, start_time)`, never a bare pid. Lock stealing and worker signalling both require the identity check. |
 > | D10 | one writer per event log | Exactly one process appends to a given event log (single-writer `seq`); consumed control commands are claimed exactly once and always archived, never silently deleted. |
 > | D11 | round-log emission is best-effort | RoundLog emission is best-effort: an emission failure must never fail a round. The canonical stores stay authoritative. |
@@ -220,7 +220,9 @@ deciding *where a new datum belongs* and *what happens to it in a crash*.
 | Store | Location (under `.zicato/` unless noted) | Canonical or derived | Writer | Readers | Crash semantics |
 |---|---|---|---|---|---|
 | Generation source trees | git backend (default): commits in `repo/`, tags `epoch/{epoch}/{gen}`, materialised worktrees in `repo-worktrees/`; directory backend: `epochs/{e}/generations/{g}/snapshot/` | Canonical | Orchestrator via `GenerationStore` (`seed_generation` / `derive_generation`) | Workers (via `checkout_ephemeral`), dashboard file browser, diff-containment scans | Transactional: child appears in full or not at all (D5). A half-derived attempt is cleared on retry; resume discards an un-outcomed generation it cannot vouch for. |
-| Lineage / experiments / journal | `lineage.json`, `epochs/{e}/generations/{g}/experiment.json` + `patches/*.json`, `epochs/{e}/journal.md`, per-epoch `config.json` / `scoring.json` / `board.jsonl` / `brief.md`, cached `gen_score.json` | Canonical (the typed evolutionary record) | Orchestrator only, via `zicato.epoch.journal` / `lineage` / `lifecycle` routed through `StorageBackend` | Everything: resume, index ingest, dashboard, analyzer, GC's safety floor | Atomic per record (D3). `lineage.json` / journal are appended only post-outcome (D8), so an interrupted round leaves them untouched. |
+| Lineage / experiments / journal | `lineage.json`, `epochs/{e}/generations/{g}/experiment.json` + `patches/*.json`, `epochs/{e}/journal.md`, per-epoch `config.json` / `scoring.json` / `board.jsonl` / `brief.md`, cached `gen_score.json` | Canonical (the typed evolutionary record) | Orchestrator only, via `zicato.epoch.journal` / `lineage` / `lifecycle` routed through `StorageBackend` | Everything: resume, index ingest, dashboard, analyzer, GC's safety floor | Atomic per record (D3). Applied challengers are visible as pending lineage nodes (`promoted=null`); settlement resolves them, while conservative discard removes unresolved nodes with their generation directories (D8). |
+| Field settlement receipt | `epochs/{e}/rounds/{n}/field_settlement.json` | Canonical recovery and audit record | Field-settlement tail | `prepare_resume`, operators | Written atomically before the first outcome update and retained in full after `state` becomes `committed`. Replay is idempotent across outcomes, lineage, the champion marker, journals, bracket publication, and one grouped derived-index refresh. The receipt reports index repair requirements and post-promotion hook delivery. |
+| Ladder query budget | `epochs/{e}/ladder_state.json` plus `ladder_state.initialized.json` | Canonical statistical state | Tournament governor | Tournament runner and holdout evidence records | Each pending reservation stores an epoch-state-bound identity and its pre-charge budget. The reservation is atomically persisted before holdout work starts and consumed once during settlement. A foreign workspace is rejected before its state is opened. An established state that is missing, malformed, unwritable, or unlocked fails closed; a crash may waste a reservation but cannot restore it. |
 | Per-run records | `epochs/{e}/generations/{g}/runs/{entry}/loss.json` | Canonical — and the board-unit cache: keyed `(generation, entry, replicate)` | The run's worker subprocess | Tournament runner (cache hits), reducer, index ingest, resume (`_has_any_loss`) | Atomic write; a completed unit survives any crash and is a permanent cache HIT for resume. |
 | Telemetry | `epochs/.../runs/{entry}/events.jsonl` (one per BOARD UNIT — replicate `r>0` is the sibling `events.r{r}.jsonl`) | Canonical event capture (goldfive's format) | goldfive `JSONLPersistenceSink` inside the worker | Reducer (once), dashboard log panel, harmonograf — all through `telemetry/event_log.py`, the one reader (TELEMETRY-DIALECTS.md §1) | Append-only; a torn tail costs its own line and is reported as such (D4). |
 | Runtime state | `runtime/heartbeat.json`, `runtime/lock.json`, `runtime/active_runs/*.json`, `runtime/active_tournament.events.jsonl`, `runtime/progress.events.jsonl`, `runtime/dashboard.json`, `runtime/inconclusive/*.json` | Canonical but EPHEMERAL — describes the live process rather than history | Orchestrator + each run's worker (own file each) | Rust supervisor, dashboard, `prepare_resume` (which deletes it) | Discarded wholesale on restart by `clear_runtime_state`; the supervisor treats absence as "never booted". |
@@ -995,14 +997,42 @@ snapshot they ran against — which is exactly why resume-in-place reuses the
 proposer is non-deterministic; a fresh proposal would silently pair stale
 cached losses with a different snapshot).
 
-### 7.8.2 The two phases and the classification table
+### 7.8.2 Settlement recovery and tournament classification
 
-Phase 1 — `clear_runtime_state`: delete `heartbeat.json`, the
+**Runtime cleanup.** `clear_runtime_state` deletes `heartbeat.json`, the
 active-tournament event log AND its snapshot file, and every
 `active_runs/*.json`. The workspace lock is not touched (acquisition already
 stole any stale one). Best-effort; an unlink race never aborts startup.
 
-Phase 2 — classify the highest un-outcomed `vN`:
+**Settlement recovery.** Startup validates every `field_settlement.json`
+against its containing epoch and round before it reads the record's state. A
+pending receipt contains each candidate's resolved outcome and the complete
+settled bracket. Candidate experiments establish the common parent; outcomes
+establish lineage resolutions; and the bracket establishes the primary
+champion, structure, decision, and reason. The receipt also stores the primary
+promoted generation as an independent checksum because a multi-promotion
+settlement has several promoted outcomes but exactly one champion-marker
+target. Recovery performs no matchup or gate evaluation. It retains the full
+receipt after changing its state to
+`committed`, including the grouped index-refresh result and post-promotion
+hook-delivery state.
+
+If a field process dies before the receipt write, startup identifies the field
+from the frozen selection strategy and pending lineage nodes grouped by parent
+and birth round. Candidate creation writes pending lineage before
+`experiment.json`, so the grouping survives an interrupted experiment write.
+This also covers a wide field in which only one candidate applied. Cleanup
+first removes
+`index.db` and its SQLite sidecars, then removes every pending candidate's
+source through the configured `GenerationStore`, its generation record, the
+`in_progress` bracket, and the complete round namespace. The final canonical
+write removes all pending lineage nodes atomically. Startup can retry any
+interrupted prefix because pending lineage remains until every other canonical
+record is gone. The derived index is rebuilt afterward or by the next evolve
+preflight.
+
+**Tournament classification.** Startup classifies the highest un-outcomed
+`vN`:
 
 ```python
     ===============================================  ====================
@@ -1027,6 +1057,7 @@ The `ResumePlan.classification` tokens, exhaustively:
 | `discard_no_progress` | applied but zero completed units | discard (byte-identical to starting the tournament from scratch, and keeps the loop free of a zero-cache special case) |
 | `discard_garbled` | `experiment.json` exists but is unreadable / inconsistent | discard, re-propose |
 | `discard_partial_proposal` | no `experiment.json` at all | discard, re-propose |
+| `discard_unrecorded_field` | a configured wide field has pending entrants but no settlement receipt, including a field where other proposal slots failed | discard the pending entrants, their source and records, the `in_progress` bracket, the complete round namespace, and derived index rows; retain independently resolved soft rejections |
 
 Note carefully what is NOT in this table: `deferred_infra` is not a resume
 classification. It is a *round decision* (§7.12) that leaves the experiment
@@ -1036,33 +1067,33 @@ cleanly.
 
 ### 7.8.3 The invariant that makes discard safe
 
-The journal-and-lineage-only-after-the-outcome rule (D8), in the module's own
-words:
+Candidate creation and settlement own different lineage transitions. The
+module states the distinction directly:
 
 ```python
 Lineage / journal safety
 ------------------------
-A generation is appended to ``lineage.json`` and journaled only at the
-very end of one evolve round, *after* its outcome is decided. An
-un-outcomed generation therefore has NO lineage or journal entry, so
-both discarding it and resuming it leave those append-only records
-untouched. This is what makes the protocol corruption-free by
-construction.
+An applied generation enters ``lineage.json`` immediately with
+``promoted=null``. Settlement later resolves that same node to ``true`` or
+``false`` and appends its journal section. Discarding an interrupted
+single-challenger generation therefore removes its pending lineage node as
+well as its directory. If a multi-challenger field reached a decision, its
+durable settlement receipt resolves every sibling together; without a
+receipt, recovery discards every pending sibling in the field.
 ```
 — `src/zicato/runtime/resume.py` (module docstring)
 
-> ⛔ NEVER write a lineage or journal entry for a generation before its
-> outcome is decided — not "provisionally", not "for the dashboard". The
-> moment an un-outcomed generation has an append-only record,
-> `_discard_generation` stops being safe and the whole resume protocol inherits a corruption mode.
-> If you need pre-outcome visibility, use the runtime tree (§7.6) — it is
-> deleted on resume by design.
+> ⛔ NEVER encode an unresolved challenger as `promoted=false`. Candidate
+> creation writes `promoted=null`; only settlement may resolve the boolean.
+> Every discard path must remove source through the configured
+> `GenerationStore`, remove the generation and round records, and commit the
+> pending-lineage removal last. A multi-challenger discard is a field-wide
+> operation, never a latest-generation heuristic.
 
-Scope note: this first cut covers the **gauntlet** path. A multi-challenger
-field (swiss / elim / racing) under interruption is treated conservatively —
-in-flight challengers are discarded and the round re-runs. If you extend
-in-place resume through the non-gauntlet structures, the classification table
-and journal-only-after-the-outcome (D8) are the contract you must preserve.
+Tournament execution resumes in place only for one challenger with cached
+board units. Settlement recovery applies to every structure because the
+decision is already complete and recorded. In both paths, experiment outcomes
+precede settled lineage and journal entries.
 
 ---
 

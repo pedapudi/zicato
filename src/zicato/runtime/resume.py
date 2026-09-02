@@ -7,11 +7,9 @@ generations, the journal, ``experiment.json``, and any per-board
 ``runtime/`` state (heartbeat, active runs, active tournament) does
 not; it is rebuilt from scratch on restart.
 
-This module reads the durable resume *markers* (RUNTIME.md §4.2,
-ROBUSTNESS.md §2.6) and decides, for the most recent **un-outcomed**
-generation, whether the prior ``evolve`` can safely pick up where it
-left off or whether the partial work must be discarded and re-run from
-the last clean checkpoint.
+This module first completes every durable field-settlement receipt. It then
+decides whether the most recent un-outcomed generation can resume in place or
+must be discarded.
 
 The single design rule is **conservatism** (RUNTIME.md §4.2): *when it
 cannot tell exactly what state things are in, it discards the partial
@@ -37,28 +35,27 @@ resume-in-place reuses the **persisted** ``experiment.json`` + patches
 rather than re-proposing (the proposer is non-deterministic — a fresh
 proposal would yield a different snapshot, and the old ``loss.json``
 would then be stale-but-cached: silent corruption). Whenever the
-persisted experiment is absent, unreadable, already outcomed, or its
+persisted experiment is absent, unreadable, or its
 snapshot cannot be reconciled with the patches, this module DISCARDS
 the generation directory so the next round re-proposes cleanly into a
 fresh ``vN`` — never reusing a unit cache it cannot vouch for.
 
 Lineage / journal safety
 ------------------------
-A generation is appended to ``lineage.json`` and journaled only at the
-very end of one evolve round, *after* its outcome is decided. An
-un-outcomed generation therefore has NO lineage or journal entry, so
-both discarding it and resuming it leave those append-only records
-untouched. This is what makes the protocol corruption-free by
-construction.
+An applied generation enters ``lineage.json`` immediately with
+``promoted=null``. Settlement later resolves that same node to ``true`` or
+``false`` and appends its journal section. Discarding an interrupted
+single-challenger generation therefore removes its pending lineage node as
+well as its directory. If a multi-challenger field reached a decision, its
+durable settlement receipt resolves every sibling together; without a
+receipt, recovery discards every pending sibling in the field.
 
 Scope
 -----
-This first cut covers the **gauntlet** path (one champion, one
-challenger, one full-board duel — the default and back-compat anchor).
-A multi-challenger field (swiss / elim / racing) under interruption is
-treated conservatively: its in-flight challengers are discarded and the
-round re-runs from scratch. Extending in-place resume through the
-non-gauntlet structures is a follow-up.
+Tournament execution resumes in place only for one challenger with a readable
+experiment and completed board units. Settlement recovery covers every
+tournament structure because its persisted receipt contains the final decision
+and requires no new evaluation.
 """
 
 from __future__ import annotations
@@ -84,6 +81,7 @@ from zicato.workspace import (
 
 if TYPE_CHECKING:
     from zicato.core.types import Experiment
+    from zicato.epoch.genstore import GenerationStore
 
 log = logging.getLogger("zicato.runtime.resume")
 
@@ -96,9 +94,8 @@ class ResumePlan:
     ------
     resume_generation_id:
         When non-``None``, the orchestrator should resume this
-        generation *in place* — reuse its persisted ``experiment.json``
-        + patches (do NOT re-propose), re-derive its snapshot from those
-        patches (idempotent), and run the tournament, which cache-HITs
+        generation *in place* — reuse its persisted ``experiment.json`` and
+        patches, and run the tournament, which cache-HITs
         every board unit that already has a ``loss.json``. ``None`` means
         there is nothing to resume in place: either the workspace was
         clean, or the partial work was discarded and the next round runs
@@ -115,8 +112,8 @@ class ResumePlan:
         A short symbolic label for what the protocol found, for logging
         and tests. One of ``"clean"``, ``"resume_tournament"``,
         ``"discard_partial_proposal"``, ``"discard_unapplied"``,
-        ``"discard_no_progress"``, ``"discard_complete_unreadable"``, or
-        ``"discard_garbled"``.
+        ``"discard_no_progress"``, ``"discard_garbled"``, or
+        ``"discard_unrecorded_field"``.
     """
 
     resume_generation_id: str | None = None
@@ -186,18 +183,253 @@ def clear_runtime_state(workspace_root: Path) -> None:
                 log.debug("resume: could not remove active run %s: %s", child, exc)
 
 
-def _discard_generation(workspace_root: Path, epoch_id: str, generation_id: str) -> None:
-    """Delete one interrupted generation's directory, all-or-nothing.
+def discard_interrupted_generation(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    *,
+    store: GenerationStore | None = None,
+    round_index: int | None = None,
+) -> None:
+    """Delete one interrupted generation and its pending lineage node.
 
-    The directory holds nothing append-only — a generation is journaled
-    and added to ``lineage.json`` only once its outcome is decided, which
-    by definition has not happened for an un-outcomed generation. So
-    removing it cannot corrupt the journal or the lineage; it only frees
-    the ``vN`` id for a clean re-propose by the next round.
+    Candidate creation records ``promoted=null`` before experiment.json. The
+    pending node supplies the birth round when the experiment is unreadable.
     """
-    gen_dir = _generations_root(workspace_root, epoch_id) / generation_id
-    if gen_dir.is_dir():
-        shutil.rmtree(gen_dir, ignore_errors=True)
+    matches = [
+        (recorded_round, generation_ids)
+        for (recorded_round, _parent_id), generation_ids in _pending_lineage_groups(
+            workspace_root, epoch_id
+        ).items()
+        if generation_id in generation_ids
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(f"lineage contains duplicate generation id {generation_id!r}")
+    if matches:
+        recorded_round, siblings = matches[0]
+        if len(siblings) != 1:
+            raise RuntimeError("single-generation cleanup received an unresolved field")
+        if round_index is not None and round_index != recorded_round:
+            raise RuntimeError(f"generation {generation_id!r} has conflicting round coordinates")
+        round_index = recorded_round
+    if store is None:
+        from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
+
+        store = default_generation_store(workspace_root)
+    _discard_candidates(
+        workspace_root,
+        epoch_id,
+        ((round_index, (generation_id,)),),
+        {generation_id} if matches else set(),
+        store,
+    )
+
+
+def _prune_generation_records(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_ids_to_remove: tuple[str, ...],
+    store: GenerationStore,
+) -> None:
+    """Remove source and record directories, then verify both are absent."""
+    store.prune_generations(epoch_id, generation_ids_to_remove, dry_run=False)
+    for generation_id in generation_ids_to_remove:
+        if (
+            store.has_generation(epoch_id, generation_id)
+            or store.snapshot_path(epoch_id, generation_id).exists()
+        ):
+            raise RuntimeError(f"generation source cleanup failed for {epoch_id}/{generation_id}")
+        generation_dir = _generations_root(workspace_root, epoch_id) / generation_id
+        if generation_dir.exists():
+            shutil.rmtree(generation_dir)
+        if generation_dir.exists():
+            raise RuntimeError(f"generation record cleanup failed for {epoch_id}/{generation_id}")
+
+
+def _pending_lineage_groups(
+    workspace_root: Path,
+    epoch_id: str,
+) -> dict[tuple[int, str], tuple[str, ...]]:
+    """Return unresolved generations grouped by their immutable field coordinates."""
+    from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
+
+    lineage = load_lineage(workspace_root)
+    epoch = next(
+        (
+            row
+            for row in lineage.get("epochs", [])
+            if isinstance(row, dict) and row.get("id") == epoch_id
+        ),
+        None,
+    )
+    if epoch is None:
+        return {}
+    groups: dict[tuple[int, str], list[str]] = {}
+    promoted_groups: set[tuple[int, str]] = set()
+    seen: set[str] = set()
+    for row in epoch.get("generations", []):
+        if not isinstance(row, dict):
+            continue
+        generation_id = row.get("id")
+        if not isinstance(generation_id, str) or not generation_id or generation_id in seen:
+            raise RuntimeError("lineage contains an invalid or duplicate generation id")
+        seen.add(generation_id)
+        promoted = row.get("promoted")
+        if promoted is not None and not isinstance(promoted, bool):
+            raise RuntimeError(
+                f"lineage generation {generation_id!r} has invalid promoted state {promoted!r}"
+            )
+        if promoted is False:
+            continue
+        round_index = row.get("round_index")
+        parent_id = row.get("parent_id")
+        if (
+            not isinstance(round_index, int)
+            or isinstance(round_index, bool)
+            or round_index < 0
+            or not isinstance(parent_id, str)
+            or not parent_id
+        ):
+            if promoted is None:
+                raise RuntimeError("pending lineage contains an invalid field identity")
+            continue
+        key = (round_index, parent_id)
+        if promoted is True:
+            promoted_groups.add(key)
+        else:
+            groups.setdefault(key, []).append(generation_id)
+    if promoted_groups & groups.keys():
+        raise RuntimeError("unrecorded field has both promoted and pending generations")
+    return {
+        key: tuple(
+            sorted(
+                generation_ids,
+                key=lambda value: (
+                    generation_round_number(value)
+                    if generation_round_number(value) is not None
+                    else 2**31 - 1,
+                    value,
+                ),
+            )
+        )
+        for key, generation_ids in groups.items()
+    }
+
+
+def _unrecorded_fields_without_receipts(
+    workspace_root: Path,
+    epoch_id: str,
+    store: GenerationStore,
+) -> tuple[tuple[int, tuple[str, ...]], ...]:
+    """Find pending entrants whose field has no settlement receipt."""
+    from zicato.epoch._storage import backend_for  # noqa: PLC0415
+    from zicato.evolve.settlement_recovery import (  # noqa: PLC0415
+        field_settlement_intent_key,
+    )
+
+    backend = backend_for(workspace_root)
+    field_size = _configured_field_size(workspace_root, epoch_id)
+    fields: list[tuple[int, tuple[str, ...]]] = []
+    for (round_index, _parent_id), pending in _pending_lineage_groups(
+        workspace_root, epoch_id
+    ).items():
+        cleanup_started = any(
+            not store.has_generation(epoch_id, generation_id)
+            or not (_generations_root(workspace_root, epoch_id) / generation_id).exists()
+            for generation_id in pending
+        )
+        if field_size <= 1 and len(pending) == 1 and not cleanup_started:
+            continue
+        if backend.read_json(field_settlement_intent_key(epoch_id, round_index)) is not None:
+            continue
+        fields.append((round_index, pending))
+    return tuple(sorted(fields))
+
+
+def _configured_field_size(workspace_root: Path, epoch_id: str) -> int:
+    """Return the frozen tournament's requested challenger count."""
+    from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
+    from zicato.selection.registry import make_strategy  # noqa: PLC0415
+
+    try:
+        spec = load_epoch(workspace_root, epoch_id).scoring.tournament_structure
+    except FileNotFoundError:
+        return 1
+    return make_strategy(spec).field_size()
+
+
+def _field_cleanup_checkpoint(_boundary: str) -> None:
+    """Test seam for crashes between field-cleanup durability boundaries."""
+
+
+def _discard_unrecorded_fields(
+    workspace_root: Path,
+    epoch_id: str,
+    store: GenerationStore,
+) -> tuple[str, ...]:
+    """Discard every sibling of a field that died before receipt persistence."""
+    fields = _unrecorded_fields_without_receipts(workspace_root, epoch_id, store)
+    if not fields:
+        return ()
+
+    discarded = tuple(generation_id for _, ids in fields for generation_id in ids)
+    _discard_candidates(
+        workspace_root,
+        epoch_id,
+        fields,
+        set(discarded),
+        store,
+    )
+    log.warning(
+        "resume: discarded an unresolved field with no settlement receipt: %s",
+        ", ".join(discarded),
+    )
+    return discarded
+
+
+def _discard_candidates(
+    workspace_root: Path,
+    epoch_id: str,
+    fields: tuple[tuple[int | None, tuple[str, ...]], ...],
+    lineaged_ids: set[str],
+    store: GenerationStore,
+) -> None:
+    """Remove unresolved candidate fields with lineage as the commit marker."""
+    from zicato.core.workspace import field_tournament_path  # noqa: PLC0415
+    from zicato.epoch.lineage import discard_pending_generations  # noqa: PLC0415
+
+    _invalidate_index_before_field_discard(workspace_root)
+    _field_cleanup_checkpoint("index_invalidated")
+    rounds_root = WorkspaceLayout.from_root(workspace_root).rounds_dir(epoch_id)
+    for round_index, generation_ids_in_round in fields:
+        _prune_generation_records(workspace_root, epoch_id, generation_ids_in_round, store)
+        if round_index is not None:
+            field_tournament_path(workspace_root, epoch_id, generation_ids_in_round[0]).unlink(
+                missing_ok=True
+            )
+            round_dir = rounds_root / str(round_index)
+            if round_dir.exists():
+                shutil.rmtree(round_dir)
+            if round_dir.exists():
+                raise RuntimeError(
+                    f"round record cleanup failed for {epoch_id}/round {round_index}"
+                )
+    _field_cleanup_checkpoint("canonical_records_removed")
+    removed = discard_pending_generations(workspace_root, epoch_id, lineaged_ids)
+    if set(removed) != lineaged_ids:
+        raise RuntimeError("candidate cleanup could not remove every pending lineage node")
+    _field_cleanup_checkpoint("lineage_committed")
+
+
+def _invalidate_index_before_field_discard(workspace_root: Path) -> None:
+    """Remove every SQLite file before canonical cleanup can make it stale."""
+    index_path = workspace_root / "index.db"
+    paths = [index_path.with_name(index_path.name + suffix) for suffix in ("", "-wal", "-shm")]
+    for path in paths:
+        path.unlink(missing_ok=True)
+    remaining = [str(path) for path in paths if path.exists()]
+    if remaining:
+        raise RuntimeError("could not invalidate derived index: " + ", ".join(remaining))
 
 
 def _has_any_loss(workspace_root: Path, epoch_id: str, generation_id: str) -> bool:
@@ -216,44 +448,32 @@ def _has_any_loss(workspace_root: Path, epoch_id: str, generation_id: str) -> bo
 
 
 def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
-    """Reconcile an interrupted workspace into a resumable / clean state.
+    """Recover receipts, discard ambiguous fields, and classify one restart.
 
-    Called once at ``evolve`` start, after the workspace lock is held and
-    before the round loop. Two phases:
-
-    1. **Clear stale runtime state.** The live ``runtime/`` files of a
-       dead evolve are removed (:func:`clear_runtime_state`); the unit
-       cache under ``epochs/`` is the only thing the resume relies on.
-
-    2. **Classify the latest generation.** If the highest ``vN`` has a
-       committed ``outcome`` (or there is no generation at all, or the
-       seed ``v0``), the workspace is clean and the next round runs
-       byte-identically to the default path. Otherwise ``vN`` is an interrupted
-       generation and the conservative inference table (RUNTIME.md §4.2)
-       decides resume-in-place vs discard-and-rerun.
-
-    The inference, conservatively (discard on ANY ambiguity):
-
-    ===============================================  ====================
-    On-disk state of the un-outcomed latest gen      Action
-    ===============================================  ====================
-    experiment readable + snapshot/ + >=1 loss.json  resume in place
-    experiment readable + snapshot/ + 0 loss.json    discard (re-run)
-    experiment readable + no snapshot/               discard (re-run)
-    experiment present but unreadable / outcome set  discard (garbled)
-    no experiment.json                               discard (partial)
-    ===============================================  ====================
-
-    Only the first row resumes in place — the one case where the persisted
-    patches are known-good and the on-disk ``loss.json`` units are a sound
-    cache HIT. Every other row discards the directory so the next round
-    re-proposes a fresh ``vN``.
-
-    Returns a :class:`ResumePlan`. A clean workspace yields the default
-    (no resume, nothing discarded) so behavior is byte-identical to a
-    cold start.
+    Settlement receipts complete before generation inspection. Pending
+    siblings without a receipt are discarded together. A remaining single
+    challenger resumes only when its experiment, pending lineage coordinates,
+    source snapshot, and at least one cached loss all agree; every ambiguous
+    state is discarded so the round can be proposed again.
     """
+    # A field settlement has a complete, replayable receipt before its first
+    # outcome write. Finish those commits before classifying generations: an
+    # experiment whose outcome already landed can still have pending lineage,
+    # journal, champion-marker, or bracket writes.
+    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
+    from zicato.evolve.settlement_recovery import (  # noqa: PLC0415
+        recover_field_settlements,
+    )
+
+    store = default_generation_store(workspace_root)
+    recover_field_settlements(workspace_root, epoch_id)
+    discarded_field = _discard_unrecorded_fields(workspace_root, epoch_id, store)
     clear_runtime_state(workspace_root)
+    if discarded_field:
+        return ResumePlan(
+            discarded_generation_id=discarded_field[0],
+            classification="discard_unrecorded_field",
+        )
 
     latest = _latest_generation_id(workspace_root, epoch_id)
     if latest is None or latest == "v0":
@@ -288,7 +508,7 @@ def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
             latest,
             exc,
         )
-        _discard_generation(workspace_root, epoch_id, latest)
+        discard_interrupted_generation(workspace_root, epoch_id, latest, store=store)
         return ResumePlan(discarded_generation_id=latest, classification=cls)
 
     if experiment.outcome is not None:
@@ -301,7 +521,7 @@ def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
 
     # The experiment is readable and un-outcomed: an interrupted round.
     # Decide resume-in-place vs discard from the snapshot + loss markers.
-    snapshot_present = (_generations_root(workspace_root, epoch_id) / latest / "snapshot").is_dir()
+    snapshot_present = store.has_generation(epoch_id, latest)
     if not snapshot_present:
         # Proposed-but-not-applied (or applier crashed mid-derive). No
         # snapshot means no board unit can have run; discard and re-run
@@ -312,7 +532,13 @@ def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
             "discarding and re-running the round fresh",
             latest,
         )
-        _discard_generation(workspace_root, epoch_id, latest)
+        discard_interrupted_generation(
+            workspace_root,
+            epoch_id,
+            latest,
+            store=store,
+            round_index=experiment.round_index,
+        )
         return ResumePlan(discarded_generation_id=latest, classification="discard_unapplied")
 
     if not _has_any_loss(workspace_root, epoch_id, latest):
@@ -326,8 +552,23 @@ def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
             "discarding and re-running the round fresh",
             latest,
         )
-        _discard_generation(workspace_root, epoch_id, latest)
+        discard_interrupted_generation(
+            workspace_root,
+            epoch_id,
+            latest,
+            store=store,
+            round_index=experiment.round_index,
+        )
         return ResumePlan(discarded_generation_id=latest, classification="discard_no_progress")
+
+    if not _matches_single_pending_lineage(workspace_root, epoch_id, latest, experiment):
+        log.warning(
+            "resume: generation %s has cached board units but its experiment does not "
+            "match one pending lineage node; discarding the unverifiable cache",
+            latest,
+        )
+        discard_interrupted_generation(workspace_root, epoch_id, latest, store=store)
+        return ResumePlan(discarded_generation_id=latest, classification="discard_garbled")
 
     # The single safe-and-free resume case: a readable, un-outcomed
     # experiment whose snapshot is applied and that has at least one
@@ -347,6 +588,31 @@ def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
     )
 
 
+def _matches_single_pending_lineage(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    experiment: Experiment,
+) -> bool:
+    """Whether a cached experiment names its one exact in-flight lineage row."""
+    parent_id = experiment.parent_generation_id
+    round_index = experiment.round_index
+    if (
+        experiment.epoch_id != epoch_id
+        or experiment.generation_id != generation_id
+        or not isinstance(parent_id, str)
+        or not parent_id
+        or not isinstance(round_index, int)
+        or isinstance(round_index, bool)
+        or round_index < 0
+    ):
+        return False
+
+    return _pending_lineage_groups(workspace_root, epoch_id).get((round_index, parent_id)) == (
+        generation_id,
+    )
+
+
 def _experiment_file_present(workspace_root: Path, epoch_id: str, generation_id: str) -> bool:
     """True iff ``experiment.json`` exists (even if unreadable).
 
@@ -362,5 +628,6 @@ def _experiment_file_present(workspace_root: Path, epoch_id: str, generation_id:
 __all__ = [
     "ResumePlan",
     "clear_runtime_state",
+    "discard_interrupted_generation",
     "prepare_resume",
 ]

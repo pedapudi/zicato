@@ -24,27 +24,22 @@ which owns the champion-marker advance under
   through it would give a persistence module a dependency on the
   inner-harness Protocol purely to carry it one frame deeper.
 
-The orchestrator already holds the adapter at both promote sites, and at
-both of them the marker advance is the immediately preceding statement.
-So the hook fires from the orchestrator, one statement after the
-promotion becomes durable, through :func:`fire_on_promote`.
+The settlement caller already holds the adapter and invokes
+:func:`fire_on_promote` after the complete canonical settlement commits.
 
-Exactly-once
+At-most-once
 ------------
-Both call sites fire on the transition — the branch that advances
-``current_generation`` — not on observing a promoted state, so a
-promotion produces one call per settled round. A crash-restart
-cannot double-fire either: :func:`zicato.runtime.resume.prepare_resume`
-classifies a generation whose ``experiment.json`` carries a committed
-outcome as ``"clean"`` and resumes nothing, and a promoted generation
-always has one (the outcome write precedes the marker advance inside the
-same funnel). Only an *un-outcomed* generation is ever re-entered, and an
-un-outcomed generation has not promoted.
-
-The converse — a crash in the window between the marker advance and the
-hook — loses the call rather than repeating it. That is the deliberate
-direction: the hook is best-effort and its failure mode is already
-"reconcile the external side effect by hand".
+The settlement caller fires for the transition that advances
+``current_generation``. A promotion therefore produces one call per settled
+round. Field settlement may replay outcomes, lineage, the champion
+marker, journals, and the bracket from its persisted receipt. The receipt
+records ``delivery_unknown`` immediately before the external call and records
+``succeeded`` or ``failed`` after the await returns. Recovery never retries an
+unknown delivery, so a restart cannot repeat a hook whose completion is
+ambiguous. Startup converts a retained ``pending`` delivery to
+``delivery_unknown`` because it cannot prove whether the prior process reached
+the call. The loop-health report tells the operator to reconcile that external
+state manually.
 """
 
 from __future__ import annotations
@@ -86,7 +81,7 @@ async def fire_on_promote(
 ) -> OnPromoteFailure | None:
     """Fire ``adapter.on_promote`` for a just-crowned generation.
 
-    Call immediately after the champion marker advances to
+    Call after the canonical settlement advances the champion marker to
     ``generation_id``. An adapter that declares no hook (every adapter
     predating issue #125) is a no-op — the member is optional, so this
     resolves it off the instance rather than assuming it exists.

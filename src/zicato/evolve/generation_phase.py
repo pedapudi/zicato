@@ -124,9 +124,11 @@ def safe_parent(workspace_root: Path, epoch_id: str | None) -> str:
 
 
 def set_current_generation(workspace_root: Path, epoch_id: str, generation_id: str) -> None:
+    """Atomically replace the epoch's promoted-generation marker."""
+    from zicato.storage import atomic_write_text  # noqa: PLC0415
+
     marker = current_marker(workspace_root, epoch_id)
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(f"{generation_id}\n", encoding="utf-8")
+    atomic_write_text(marker, f"{generation_id}\n")
 
 
 def snapshot_root(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:

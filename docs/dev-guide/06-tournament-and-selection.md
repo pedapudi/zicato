@@ -81,7 +81,8 @@ owns it, and the selection layer only *reads* its verdict.
 | `src/zicato/evolve/field_candidates.py` | `assemble_candidate_field`, `CandidateField`, the proposing publish, the empty-field settlement, the placebo slot | 383 lines |
 | `src/zicato/evolve/field_execution.py` | `execute_field_tournament`, `run_field_matchup`, `request_field`, `publish_live_structure`, `record_inconclusive_duel`, `FieldExecution` | 556 lines |
 | `src/zicato/evolve/gate.py` | `resolve_field_verdict`, `_confirm_crowning_on_holdout`, `_apply_field_overrides`, `_integrity_block_reason`, `_resolve_round_champion_mode` | 549 lines |
-| `src/zicato/evolve/settlement.py` | `settle_field_round` and its four private steps, `RoundSettlement`, `ordered_promotions` | 671 lines |
+| `src/zicato/evolve/settlement.py` | `settle_field_round` and its four private steps, `RoundSettlement`, `ordered_promotions` | 719 lines |
+| `src/zicato/evolve/settlement_recovery.py` | the retained field-settlement receipt, validation, ordered idempotent replay, index status, hook-delivery status, startup recovery | 874 lines |
 | `src/zicato/evolve/propose_apply.py` | `_mint_placebo_challenger`, `_maybe_run_placebo_arm_gauntlet`, `_propose_and_apply_challenger` | 775 lines |
 
 Two facts about the file layout matter before you edit anything:
@@ -136,9 +137,9 @@ evolve_once (orchestrator.py)
       ├─ resolve_field_verdict (evolve/gate.py)   # gate → FieldVerdict
       │    └─ confirm_crowning_holdout → integrity blocks → operator overrides
       └─ settle_field_round (evolve/settlement.py)  # decide → EvolveRoundOutcome
-           ├─ _record_field_tournament   # frontier row, envelope, durable record
            ├─ _build_field_settlement    # one OutcomeRecord per challenger
-           ├─ _commit_field_settlement   # outcomes, lineage, marker, journal
+           ├─ _commit_field_settlement   # receipt, canonical replay, hook
+           ├─ _publish_field_observations  # frontier row and live envelope
            └─ _close_field_round         # epilogue, round close, summary
                 └─ (opt) _maybe_run_placebo_arm_gauntlet  # never advances champion
 ```
@@ -1427,10 +1428,11 @@ evolve_once
       optional confirm_crowning_holdout
       integrity checks and operator overrides
     settle_field_round
-      _record_field_tournament: frontier row, live envelope, durable record
       _build_field_settlement → RoundSettlement(...)
       _commit_field_settlement
-        persist outcome → invariant → lineage → champion marker → journal
+        receipt → outcomes → lineage → champion marker → journal
+        → settled bracket → grouped derived-index refresh → committed receipt
+      _publish_field_observations: frontier row and live envelope
       _close_field_round
         optional placebo duel; never advances champion
         epilogue, round close, and the round summary

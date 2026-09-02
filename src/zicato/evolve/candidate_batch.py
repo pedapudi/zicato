@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from zicato.core.types import Generation, OutcomeRecord, PriorExperiment, TournamentDecision
@@ -55,35 +55,42 @@ class CandidateBatch:
 
 def _persist_soft_reject(
     prepared: PreparedRound,
-    generation_id: str,
+    challenger: _AppliedChallenger,
     reason: str,
     detail: str = "",
 ) -> None:
-    """Settle a diversity rejection on its already-persisted experiment."""
+    """Settle a diversity rejection in outcome, lineage, and index."""
 
-    from zicato.epoch import update_experiment_outcome  # noqa: PLC0415
+    from zicato.epoch import append_to_lineage, update_experiment_outcome  # noqa: PLC0415
 
+    generation_id = challenger.generation_id
     full_reason = f"{reason}: {detail}" if detail else reason
-    with best_effort(f"persist soft-reject outcome for {generation_id}"):
-        update_experiment_outcome(
-            prepared.workspace_root,
-            prepared.epoch_id,
-            generation_id,
-            OutcomeRecord(
-                ran_at=_now_iso(),
-                drift_movements=(),
-                pass_rate_delta=0.0,
-                drift_loss_delta=0.0,
-                scalar_score_delta=0.0,
-                tournament_decision=TournamentDecision.REJECTED,
-                rejection_reason=full_reason,
-            ),
-        )
-        _ingest_experiment_into_index(
-            prepared.workspace_root,
-            prepared.epoch_id,
-            generation_id,
-        )
+    update_experiment_outcome(
+        prepared.workspace_root,
+        prepared.epoch_id,
+        generation_id,
+        OutcomeRecord(
+            ran_at=_now_iso(),
+            drift_movements=(),
+            pass_rate_delta=0.0,
+            drift_loss_delta=0.0,
+            scalar_score_delta=0.0,
+            tournament_decision=TournamentDecision.REJECTED,
+            rejection_reason=full_reason,
+        ),
+    )
+    append_to_lineage(
+        prepared.workspace_root,
+        prepared.epoch_id,
+        replace(challenger.generation, promoted=False),
+        parent_id=prepared.parent_generation.id,
+        rejection_reason=full_reason,
+    )
+    _ingest_experiment_into_index(
+        prepared.workspace_root,
+        prepared.epoch_id,
+        generation_id,
+    )
 
 
 async def produce_candidate_batch(
@@ -231,7 +238,7 @@ async def produce_candidate_batch(
             _emit_status(status)
             _persist_soft_reject(
                 prepared,
-                next_id,
+                challenger,
                 "field_diversity_duplicate",
                 "duplicates an in-flight sibling (same mutation ids + core idea)",
             )
@@ -264,7 +271,7 @@ async def produce_candidate_batch(
             _emit_status(status)
             _persist_soft_reject(
                 prepared,
-                next_id,
+                challenger,
                 "field_diversity_overlap",
                 f"overlap {mint.overlap:.3f} with sibling {peer_id or '(accepted)'} "
                 f"exceeds diversity_tolerance {diversity_tolerance:.3f}",

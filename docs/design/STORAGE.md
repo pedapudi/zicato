@@ -176,10 +176,40 @@ go through the same `.tmp`, `fsync`, and rename discipline the runtime
 layer uses, so a crash mid-write cannot leave any of them truncated.
 The on-disk layout is byte-identical to a direct write.
 
-The per-patch write order matters: patch files first and
-`experiment.json` last, so a crash between the two phases leaves
-harmless orphan patch files rather than a dangling `patch_ids`
-reference.
+Candidate creation first records the applied generation as a pending lineage
+node (`promoted=null`), then writes the patch records, and writes
+`experiment.json` last. The pending lineage node is the cleanup commit marker:
+a crash before it leaves source-only residue that the current lineage-based
+recovery cannot identify, while a crash after it gives resume enough
+coordinates to discard the complete candidate field. Writing patch records
+before `experiment.json` prevents a dangling `patch_ids` reference.
+
+A resolved field round spans several atomic records. Before updating the first
+experiment outcome, zicato writes
+`epochs/{epoch}/rounds/{round}/field_settlement.json`. The pending receipt
+contains the final candidate outcomes and the complete settled bracket. Replay
+derives lineage facts from the candidate experiments and outcomes; it derives
+structure, decision, and reason from the bracket. The receipt separately stores
+the primary promoted generation and requires exact agreement with the bracket,
+because several candidates may have promoted outcomes while exactly one may
+advance the champion marker.
+Startup can replay the fixed commit order without running a matchup or gate
+again. Replay writes outcomes, settled lineage, the champion marker, journal
+entries, and the canonical bracket before refreshing the derived index as one
+reported operation. Journal sections carry a stable settlement identity, so
+replay does not duplicate them. Completion changes the same full record to
+`state="committed"`; zicato retains it instead of replacing it with a
+tombstone or deleting it.
+
+The retained receipt reports the derived-index result as `succeeded`,
+`repair_required`, or `repaired`. A failed grouped projection leaves every
+canonical record committed and instructs a full `zicato repair index`; a
+successful rebuild changes `repair_required` to `repaired` while preserving
+the original exception type. The receipt reports the post-promotion hook as
+`not_applicable`, `pending`, `succeeded`, `failed`, or `delivery_unknown`.
+The live caller writes `delivery_unknown` before invoking an external hook.
+Recovery never retries an unknown delivery, which preserves the hook's
+at-most-once contract.
 
 ### 5.2 `GenerationStore` protocol; both backends behind it
 

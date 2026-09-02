@@ -4,12 +4,9 @@ A target whose evolved state lives outside the mutable tree needs to be
 told when a generation became champion. These tests cover the four
 properties that makes it a contract rather than a callback:
 
-* **it fires on both promote seams** — the gauntlet's
-  ``_finalize_generation(advance_current_generation=True)`` tail and the
-  multi-challenger inline champion-marker advance;
-* **it fires exactly once per settled promotion**, and never for a
-  rejected round — including across a crash-resume, which re-enters an
-  interrupted round but never an outcomed one;
+* **every tournament structure uses the shared promotion seam**;
+* **it fires at most once per settled promotion**, and never for a
+  rejected round; canonical settlement replay does not repeat the side effect;
 * **it is best-effort**: a hook that raises or hangs leaves the
   promotion standing and the round intact;
 * **a failure is observable** — an ERROR log plus an
@@ -45,6 +42,7 @@ from tests.test_orchestrator_multi_challenger import (
     _distinct_field_responses,
 )
 from zicato.evolve.promote_hook import ON_PROMOTE_TIMEOUT_SECONDS, fire_on_promote
+from zicato.evolve.settlement_recovery import field_settlement_intent_path
 from zicato.health.diagnostics import assess_loop_health, detect_on_promote_hook_failed
 
 # ---------------------------------------------------------------------------
@@ -121,6 +119,13 @@ def _health_report(workspace: Path, epoch_id: str, round_n: int) -> dict[str, An
 
 def _findings(report: dict[str, Any], code: str) -> list[dict[str, Any]]:
     return [f for f in report.get("findings", []) if f.get("code") == code]
+
+
+def _settlement_receipt(workspace: Path, epoch_id: str) -> dict[str, Any]:
+    """Read the first round's retained field-settlement receipt."""
+    return json.loads(
+        field_settlement_intent_path(workspace, epoch_id, 0).read_text(encoding="utf-8")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +313,7 @@ def test_the_finding_makes_the_loop_unhealthy() -> None:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: the two promote seams
+# End-to-end: each tournament shape uses the shared promotion seam
 # ---------------------------------------------------------------------------
 
 
@@ -359,16 +364,16 @@ def test_a_rejected_round_never_fires_the_hook(
 
     assert outcome.tournament_decision == "rejected"
     assert calls == []
+    assert _settlement_receipt(workspace, epoch_id)["promotion_hook"]["state"] == "not_applicable"
 
 
 def test_multi_challenger_crowning_fires_the_hook_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The multi-challenger inline marker advance notifies the adapter too.
+    """A multi-challenger settlement notifies the adapter too.
 
-    The second promote seam: a settled field crowns ONE primary head, and
-    that is the single generation the hook is fired for — not every
-    challenger the round applied.
+    A settled field crowns one primary head. That head is the only generation
+    passed to the hook, even if the round applied several challengers.
     """
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
     calls = _install_hooked_adapter_factory(monkeypatch)
@@ -388,6 +393,12 @@ def test_multi_challenger_crowning_fires_the_hook_once(
     assert context["parent_generation_id"] == "v0"
     marker = workspace / "epochs" / epoch_id / "current_generation"
     assert marker.read_text().strip() == crowned
+    hook_delivery = _settlement_receipt(workspace, epoch_id)["promotion_hook"]
+    assert hook_delivery == {
+        "state": "succeeded",
+        "adapter_name": "hooked-stub",
+        "failure_type": "",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +449,12 @@ def test_a_failing_hook_leaves_the_promotion_standing(
     assert finding["detail"]["generation_id"] == "v1"
     assert finding["detail"]["exception_type"] == "ConnectionError"
     assert report["healthy"] is False
+    hook_delivery = _settlement_receipt(workspace, epoch_id)["promotion_hook"]
+    assert hook_delivery == {
+        "state": "failed",
+        "adapter_name": "hooked-stub",
+        "failure_type": "ConnectionError",
+    }
 
 
 def test_a_successful_hook_raises_no_finding(
@@ -455,10 +472,11 @@ def test_a_successful_hook_raises_no_finding(
     run_evolve_once(workspace, epoch_id, make_aux_responder([valid_proposer_response()]))
 
     assert _findings(_health_report(workspace, epoch_id, 1), "on_promote_hook_failed") == []
+    assert _settlement_receipt(workspace, epoch_id)["promotion_hook"]["state"] == "succeeded"
 
 
 # ---------------------------------------------------------------------------
-# Exactly-once across a crash-resume
+# At-most-once across a crash-resume
 # ---------------------------------------------------------------------------
 
 
@@ -467,14 +485,9 @@ def test_resume_never_re_fires_a_settled_promotion(
 ) -> None:
     """A promoted generation is not re-notified when the loop restarts.
 
-    The hook fires on the champion-marker TRANSITION, so it cannot repeat
-    for a promotion that already settled. The resume protocol is what
-    makes that hold across a crash:
-    :func:`zicato.runtime.resume.prepare_resume` only ever re-enters an
-    **un-outcomed** generation, and a promoted one always carries a
-    committed outcome (the outcome write precedes the marker advance in
-    the same funnel). So the restarted loop moves past v1 rather than
-    replaying its tail.
+    Settlement recovery does not replay adapter side effects. A restart can
+    therefore complete canonical records without repeating a hook that already
+    ran, and the next round moves past v1.
     """
     workspace, epoch_id = bootstrap_workspace(tmp_path)
     calls = _install_hooked_adapter_factory(monkeypatch)

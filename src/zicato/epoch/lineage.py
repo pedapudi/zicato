@@ -311,6 +311,167 @@ def append_to_lineage(
     _save_raw(workspace_root, raw)
 
 
+def discard_pending_generations(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_ids: set[str],
+) -> tuple[str, ...]:
+    """Remove unresolved lineage nodes during conservative crash cleanup.
+
+    Candidate creation records an applied challenger with ``promoted=null``.
+    If a multi-challenger process dies before it persists a settlement
+    receipt, recovery has no trustworthy tournament decision to replay and
+    must discard the whole field. This mutator removes only the named pending
+    nodes in one atomic lineage rewrite. A named resolved node is a conflict,
+    not cleanup material, so validation completes before anything is removed.
+    """
+    if not generation_ids:
+        return ()
+    raw = _load_raw(workspace_root)
+    entry = _find_epoch(raw, epoch_id)
+    if entry is None:
+        return ()
+    generations, existing = _indexed_generation_rows(entry, epoch_id)
+    resolved = sorted(
+        generation_id
+        for generation_id in generation_ids
+        if generation_id in existing and existing[generation_id].get("promoted") is not None
+    )
+    if resolved:
+        raise RuntimeError(
+            "refusing to discard resolved lineage generations: " + ", ".join(resolved)
+        )
+    removed = tuple(
+        row["id"]
+        for row in generations
+        if isinstance(row, dict) and row.get("id") in generation_ids
+    )
+    if not removed:
+        return ()
+    entry["generations"] = [
+        generation
+        for generation in generations
+        if not isinstance(generation, dict) or generation.get("id") not in generation_ids
+    ]
+    _save_raw(workspace_root, raw)
+    return removed
+
+
+def resolve_pending_generations(
+    workspace_root: Path,
+    epoch_id: str,
+    resolutions: dict[str, dict[str, Any]],
+) -> None:
+    """Resolve one settlement's lineage nodes in one atomic rewrite.
+
+    Each resolution supplies the already-validated ``parent_id``,
+    ``created_at``, ``round_index``, verdict, reason, and optional scalars.
+    Coordinates must match the pending nodes exactly and are never rewritten.
+    An exact resolved node is accepted for idempotent crash replay.
+    """
+    raw, by_id = _validated_resolution_rows(
+        workspace_root, epoch_id, resolutions, require_resolved=False
+    )
+
+    for generation_id, resolution in resolutions.items():
+        row = by_id[generation_id]
+        promoted = resolution["promoted"]
+        parent_scalar = resolution["parent_scalar"]
+        child_scalar = resolution["child_scalar"]
+        row["promoted"] = promoted
+        row["rejection_reason"] = resolution["rejection_reason"] if promoted is False else ""
+        row["parent_scalar"] = parent_scalar
+        row["child_scalar"] = child_scalar
+        row["delta_scalar"] = (
+            child_scalar - parent_scalar
+            if child_scalar is not None and parent_scalar is not None
+            else None
+        )
+    _save_raw(workspace_root, raw)
+
+
+def validate_generation_resolutions(
+    workspace_root: Path,
+    epoch_id: str,
+    resolutions: dict[str, dict[str, Any]],
+    *,
+    require_resolved: bool,
+) -> None:
+    """Validate settlement facts against lineage without changing the DAG."""
+    _validated_resolution_rows(
+        workspace_root, epoch_id, resolutions, require_resolved=require_resolved
+    )
+
+
+def _validated_resolution_rows(
+    workspace_root: Path,
+    epoch_id: str,
+    resolutions: dict[str, dict[str, Any]],
+    *,
+    require_resolved: bool,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    if not resolutions:
+        raise ValueError("lineage resolution requires at least one generation")
+    raw = _load_raw(workspace_root)
+    entry = _find_epoch(raw, epoch_id)
+    if entry is None:
+        raise RuntimeError(f"lineage does not contain exactly one epoch {epoch_id!r}")
+    _rows, by_id = _indexed_generation_rows(entry, epoch_id)
+
+    for generation_id, resolution in resolutions.items():
+        current = by_id.get(generation_id)
+        if current is None:
+            raise RuntimeError(f"lineage lacks settlement generation {generation_id!r}")
+        for key in ("parent_id", "created_at", "round_index"):
+            if current.get(key) != resolution[key]:
+                raise RuntimeError(f"lineage generation {generation_id!r} conflicts on {key}")
+        promoted = current.get("promoted")
+        if promoted is not None and not isinstance(promoted, bool):
+            raise RuntimeError(f"lineage generation {generation_id!r} has an invalid verdict")
+        if promoted is not None and promoted is not resolution["promoted"]:
+            raise RuntimeError(f"lineage generation {generation_id!r} has a different verdict")
+        if promoted is not None:
+            parent_scalar = resolution["parent_scalar"]
+            child_scalar = resolution["child_scalar"]
+            expected = {
+                "rejection_reason": resolution["rejection_reason"] if promoted is False else "",
+                "parent_scalar": parent_scalar,
+                "child_scalar": child_scalar,
+                "delta_scalar": (
+                    child_scalar - parent_scalar
+                    if child_scalar is not None and parent_scalar is not None
+                    else None
+                ),
+            }
+            if any(current.get(key) != value for key, value in expected.items()):
+                raise RuntimeError(
+                    f"lineage generation {generation_id!r} has different settlement facts"
+                )
+        if require_resolved and promoted is None:
+            raise RuntimeError(f"lineage generation {generation_id!r} lacks its settlement verdict")
+    return raw, by_id
+
+
+def _indexed_generation_rows(
+    entry: dict[str, Any], epoch_id: str
+) -> tuple[list[Any], dict[str, dict[str, Any]]]:
+    """Validate and index one epoch's generation rows."""
+    generations = entry.get("generations")
+    if not isinstance(generations, list):
+        raise RuntimeError(f"epoch {epoch_id!r} has malformed generation lineage")
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in generations:
+        if not isinstance(row, dict):
+            continue
+        generation_id = row.get("id")
+        if not isinstance(generation_id, str) or not generation_id:
+            raise RuntimeError(f"epoch {epoch_id!r} contains an invalid generation id")
+        if generation_id in by_id:
+            raise RuntimeError(f"epoch {epoch_id!r} contains duplicate generation ids")
+        by_id[generation_id] = row
+    return generations, by_id
+
+
 # ---------------------------------------------------------------------------
 # Read-side
 # ---------------------------------------------------------------------------
@@ -363,6 +524,9 @@ __all__ = [
     "register_epoch",
     "mark_closed",
     "append_to_lineage",
+    "discard_pending_generations",
+    "resolve_pending_generations",
+    "validate_generation_resolutions",
     "load_lineage",
     "render_lineage_summary",
 ]

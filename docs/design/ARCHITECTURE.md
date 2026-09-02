@@ -385,23 +385,20 @@ served artifact, a cache, a remote config — has no such closure. Without
 the hook, such a target has to poll `lineage.json` from outside the loop
 and reconcile the promoted head itself.
 
-**When it fires.** Exactly once per settled promotion, immediately after
-the champion marker advances — the first moment the promotion is
-durable. Both promote seams fire it through the one helper
-(`zicato.evolve.promote_hook.fire_on_promote`): the gauntlet's
-`_finalize_generation(advance_current_generation=True)` tail and the
-multi-challenger inline crowning. A rejected round never fires it. Under
-a multi-challenger structure with an operator multi-promote it fires for
-the PRIMARY head only — the generation `current_generation` advanced
-to — not for every generation lineage marks `promoted`.
+**When it fires.** At most once per settled promotion, after the canonical
+settlement completes. The shared settlement path calls
+`zicato.evolve.promote_hook.fire_on_promote`; a rejected round never calls it.
+Under a multi-challenger structure with an operator multi-promote, the hook
+receives only the primary head: the generation named by `current_generation`,
+rather than every generation that lineage marks `promoted`.
 
-It fires on the *transition*, never on observing promoted state, so it
-cannot repeat: a crash-restart re-enters only an **un-outcomed**
-generation (`prepare_resume`, RUNTIME.md §4.2) and a promoted generation
-always carries a committed outcome. The converse window — a crash
-between the marker advance and the hook — loses the call rather than
-repeating it, which is the chosen direction given the failure
-semantics below.
+The retained field-settlement receipt tracks hook delivery. A round with no
+promotion or no callable hook records `not_applicable`; a callable hook starts
+as `pending`. Immediately before the external call, zicato records
+`delivery_unknown`, then resolves it to `succeeded` or `failed` only after the
+awaited call returns. Settlement recovery never retries `delivery_unknown`, so
+the hook remains best-effort and at-most-once rather than claiming guaranteed
+delivery.
 
 **Failure semantics: best-effort.** A hook that raises, or that exceeds
 `ON_PROMOTE_TIMEOUT_SECONDS` (120s), NEVER un-promotes the generation

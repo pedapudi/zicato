@@ -607,6 +607,7 @@ def _assess_and_persist_loop_health(
         from zicato.health.inputs import (  # noqa: PLC0415
             epoch_noise_floor_inputs,
             epoch_preflight_record,
+            epoch_settlement_receipt_attention,
             epoch_tree_import_gaps,
             workspace_preflight_gate,
         )
@@ -633,6 +634,8 @@ def _assess_and_persist_loop_health(
         tree_import_gaps = epoch_tree_import_gaps(workspace_root, epoch_id)
         if tree_import_gaps:
             extra_kwargs["tree_import_gaps"] = tree_import_gaps
+        receipt_attention = epoch_settlement_receipt_attention(workspace_root, epoch_id)
+        extra_kwargs["settlement_receipt_attention"] = receipt_attention
         health = assess_loop_health(
             losses_by_generation,
             experiments,

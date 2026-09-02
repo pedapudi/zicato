@@ -33,7 +33,11 @@ from zicato.epoch.preflight import PreflightRefusedError
 from zicato.logging_stream import install_log_stream, set_log_context
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.lock import acquire_workspace_lock, release_workspace_lock
-from zicato.runtime.resume import ResumePlan, prepare_resume
+from zicato.runtime.resume import (
+    ResumePlan,
+    discard_interrupted_generation,
+    prepare_resume,
+)
 from zicato.util import best_effort
 
 if TYPE_CHECKING:
@@ -535,15 +539,6 @@ async def evolve_n_rounds(
         live_contract=epoch_id is None,
     )
 
-    # Contract-hash auto-epoching — resolve the epoch ONCE up front.
-    # An explicit --epoch wins and skips auto-rolling entirely.
-    if epoch_id is None:
-        epoch_id = await ensure_epoch_for_contract(
-            workspace_root,
-            auto_epoch=auto_epoch,
-            aux_call_llm=auxiliary_call_llm,
-            epoch_name=epoch_name,
-        )
     if max_consecutive_rejections <= 0:
         # 0 / negative effectively disables early-stop — protect against
         # nonsense values by treating them as "never stop early".
@@ -589,20 +584,58 @@ async def evolve_n_rounds(
     # orchestrators from corrupting the same workspace; the beater writes
     # ``heartbeat.json`` so the supervisor binary can detect a wedge.
     lock = acquire_workspace_lock(workspace_root, instance_id)
-    # Analytical-index preflight (ANALYTICAL-INDEX.md §5.3): build an absent
-    # or wrong-schema index, then re-project only the epochs whose cursors
-    # disagree with the workspace. Placed HERE, inside the lock, rather than
-    # beside the other preflights above: §5.3's concurrency rule is that a
-    # build or heal runs only under the workspace-lock discipline, and the
-    # preflights above run before the lock is held. The proposer's experiment
-    # memory and mutation track record read this index later in the same
-    # invocation, so a stale one silently thins them. Best-effort — the index
-    # is derived, so a preflight failure must never abort a run.
-    with best_effort(
-        "index self-heal preflight",
-        on_error=lambda exc: log.debug("index self-heal preflight skipped: %s", exc),
-    ):
-        log.info("%s", index_preflight(workspace_root))
+    _prepared_plan = ResumePlan()
+    try:
+        # Reconcile the open epoch under the workspace lock before contract
+        # drift can close it or choose its promoted head as a new baseline.
+        # A complete receipt is replayed; a receiptless field is discarded;
+        # and a resumable single challenger is retained unless a contract roll
+        # makes its cached evaluation incomparable with the new contract.
+        if epoch_id is None:
+            from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
+
+            current_epoch = current_epoch_id(workspace_root)
+            if current_epoch is not None:
+                _prepared_plan = prepare_resume(workspace_root, current_epoch)
+
+            def discard_resume_before_roll(rolling_epoch: str) -> None:
+                nonlocal _prepared_plan
+                if not _prepared_plan.resumes_in_place:
+                    return
+                generation_id = _prepared_plan.resume_generation_id
+                experiment = _prepared_plan.resume_experiment
+                assert generation_id is not None and experiment is not None
+                discard_interrupted_generation(
+                    workspace_root,
+                    rolling_epoch,
+                    generation_id,
+                    round_index=experiment.round_index,
+                )
+                _prepared_plan = ResumePlan(
+                    discarded_generation_id=generation_id,
+                    classification="discard_unrecorded_field",
+                )
+
+            epoch_id = await ensure_epoch_for_contract(
+                workspace_root,
+                auto_epoch=auto_epoch,
+                aux_call_llm=auxiliary_call_llm,
+                epoch_name=epoch_name,
+                before_contract_roll=discard_resume_before_roll,
+            )
+            set_log_context(epoch_id=epoch_id)
+            if epoch_id != current_epoch:
+                _prepared_plan = prepare_resume(workspace_root, epoch_id)
+        else:
+            _prepared_plan = prepare_resume(workspace_root, epoch_id)
+    except BaseException:
+        release_workspace_lock(lock)
+        with best_effort(
+            "operator-log stream close after epoch resolution failure",
+            on_error=lambda exc: log.debug("operator-log stream close raised: %s", exc),
+        ):
+            log_stream.close()
+        raise
     # Conservative crash-resume reconciliation (RUNTIME.md §4, ROBUSTNESS.md
     # §2.6) — runs ONCE, right after the lock is held and before any new
     # work. It clears the stale runtime/ state of a prior dead evolve and,
@@ -613,10 +646,20 @@ async def evolve_n_rounds(
     # round re-runs fresh. A clean workspace yields the default no-op plan,
     # so a cold start resumes nothing. The plan is consumed by
     # the FIRST round only; later rounds pass ``None``.
-    _prepared_plan = prepare_resume(workspace_root, epoch_id or "")
     resume_plan: ResumePlan | None = (
         None if _prepared_plan.classification == "clean" else _prepared_plan
     )
+    # Rebuild or heal the derived index only after recovery has finished all
+    # canonical writes and discarded any receiptless field. Cleanup can safely
+    # invalidate a stale index without owning a second rebuild path; this one
+    # preflight reconstructs the final canonical state under the workspace
+    # lock before proposer memory reads it. Failure remains non-fatal because
+    # the filesystem is authoritative.
+    with best_effort(
+        "index self-heal preflight",
+        on_error=lambda exc: log.debug("index self-heal preflight skipped: %s", exc),
+    ):
+        log.info("%s", index_preflight(workspace_root))
     # The orchestrator progress event log is the TRUE
     # liveness signal (its monotonic ``seq`` advances only on a genuine
     # transition, never on the heartbeat timer). Clear any prior invocation's

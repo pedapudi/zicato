@@ -1,16 +1,14 @@
-"""Settle one field round: record it, commit it, and close it.
+"""Commit one field round, publish its views, and close it.
 
 The round pipeline's decide phase. :func:`settle_field_round` is the whole
 of it, in four steps that always run in this order and nowhere else:
 
-* :func:`_record_field_tournament` writes the resolved structure — the
-  Pareto frontier row, the live envelope, and the durable
-  field-tournament record;
 * :func:`_build_field_settlement` turns the crowning into one terminal
   :class:`OutcomeRecord` per applied challenger;
-* :func:`_commit_field_settlement` makes those outcomes durable, then
-  advances lineage, the champion pointer, and the journal under the
-  invariants that keep the bracket and the champion in agreement;
+* :func:`_commit_field_settlement` records the complete receipt, then commits
+  outcomes, lineage, the champion pointer, journals, and the settled bracket;
+* :func:`_publish_field_observations` publishes the Pareto observation and live
+  dashboard envelope after the canonical commit;
 * :func:`_close_field_round` runs the round epilogue and returns the
   round's summary.
 
@@ -26,19 +24,17 @@ champion pointer contradicts.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Any, Literal
+from uuid import uuid4
 
 from zicato.core.types import (
-    Experiment,
-    Generation,
     MatchOutcome,
     OutcomeRecord,
     TournamentDecision,
 )
-from zicato.evolve import generation_phase
 from zicato.evolve.dashboard_projection import (
-    _persist_field_tournament,
+    _field_tournament_record,
     _serialise_rounds,
     _serialise_standings,
     _settle_active_tournament,
@@ -53,12 +49,17 @@ from zicato.evolve.gate import FieldVerdict, _first_aggregate_for
 from zicato.evolve.generation_phase import FieldRound
 from zicato.evolve.lifecycle_services import _beat, _now_iso
 from zicato.evolve.pareto import record_round_frontier
-from zicato.evolve.persist import _finalize_generation, _round_epilogue
+from zicato.evolve.persist import _round_epilogue
 from zicato.evolve.placebo import is_placebo_experiment
 from zicato.evolve.promote_hook import fire_on_promote
 from zicato.evolve.propose_apply import _maybe_run_placebo_arm_gauntlet
 from zicato.evolve.round_api import EvolveRoundOutcome
 from zicato.evolve.round_reporting import _promoted_entry_regressions
+from zicato.evolve.settlement_recovery import (
+    SETTLEMENT_INTENT_FORMAT_VERSION,
+    commit_field_settlement,
+    record_promotion_hook_delivery,
+)
 from zicato.selection.strategy import SelectionDecision
 from zicato.util import best_effort
 from zicato.workspace import generation_round_number
@@ -103,13 +104,13 @@ def ordered_promotions(primary: str | None, promoted: set[str]) -> tuple[str, ..
     return (primary, *sorted(promoted - {primary}))
 
 
-def _record_field_tournament(
+def _publish_field_observations(
     field_round: FieldRound,
     candidates: CandidateField,
     execution: FieldExecution,
     verdict: FieldVerdict,
 ) -> None:
-    """Record the resolved structure to every store that serves it.
+    """Publish observational views after canonical settlement completes.
 
     The Pareto frontier row (docs/design/PARETO-FRONTIER.md) names the
     round's champion — the crowned generation when the field crowned one,
@@ -118,17 +119,10 @@ def _record_field_tournament(
     no-op re-emission of the champion must never land on the record.
     Record-only: it never fails a round.
 
-    The live envelope is then settled with the resolved rounds and standings
-    so the dashboard sees the final topology; the completed envelope remains
-    available until the next round starts.  That envelope is EPHEMERAL,
-    overwritten by the next round and cleared on a crash, so a completed
-    Swiss or elimination epoch would render blank from the index alone.  The
-    durable field record carries the same shape, keyed on the round's first
-    applied challenger, and FINALISES the ``in_progress`` record opened
-    before resolution (issue #16) — the same tournament id, so this is an
-    idempotent upsert to ``settled``.  Both carry the holdout-resolved
-    decision, so the dashboard never shows a crown that contradicts the
-    champion pointer (issue #20).
+    The live envelope is settled with the resolved rounds and standings so
+    the dashboard sees the final topology until the next round starts. The
+    durable field record has already landed through the replayable settlement
+    commit before this function runs.
     """
 
     record_round_frontier(
@@ -155,26 +149,6 @@ def _record_field_tournament(
         round_index=field_round.round_index,
         total_rounds=field_round.total_rounds,
         field_status=candidates.field_status,
-    )
-    _persist_field_tournament(
-        field_round.workspace_root,
-        field_tournament_id=f"{field_round.epoch_id}:field:{candidates.first_challenger_id}",
-        first_challenger_id=candidates.first_challenger_id,
-        epoch_id=field_round.epoch_id,
-        structure=field_round.tournament_spec.structure,
-        structure_params=dict(field_round.tournament_spec.params),
-        competitors=candidates.competitors,
-        rounds=_serialise_rounds(field_round.strategy.rounds()),
-        standings=_serialise_standings(verdict.effective_decision.standings),
-        field_status=candidates.field_status or [],
-        decision=verdict.effective_decision,
-        state="settled",
-        # Operator override readback (additive — omitted when no override
-        # fired, so a gate-decided field round's record carries no such key).
-        override_status=verdict.override_provenance or None,
-        promoted_generation_ids=(
-            sorted(verdict.promoted_ids) if len(verdict.promoted_ids) > 1 else None
-        ),
     )
 
 
@@ -371,6 +345,13 @@ def _assert_crowning_agrees(settlement: RoundSettlement, candidates: CandidateFi
             f"({settlement.primary_promoted_generation_id!r}); refusing to persist a "
             "bracket the champion pointer / lineage contradict"
         )
+    decision_primary = settlement.decision.promoted_generation_id or None
+    if decision_primary != settlement.primary_promoted_generation_id:
+        raise RuntimeError(
+            "crowning invariant violated: settled bracket names primary champion "
+            f"{decision_primary!r}, but settlement would advance "
+            f"{settlement.primary_promoted_generation_id!r}"
+        )
     if (
         settlement.primary_promoted_generation_id is not None
         and settlement.primary_promoted_generation_id not in candidates.by_id
@@ -387,17 +368,16 @@ async def _commit_field_settlement(
     field_round: FieldRound,
     candidates: CandidateField,
     execution: FieldExecution,
+    verdict: FieldVerdict,
     settlement: RoundSettlement,
 ) -> tuple[str, str, str] | None:
-    """Make the round durable, and return any post-promotion hook failure.
+    """Commit the replayable settlement and run the promotion hook.
 
-    Outcomes and their index projections become durable before lineage or
-    the champion marker changes, so an invariant failure can never leave a
-    promoted lineage node pointing at an unsettled outcome.  Lineage then
-    puts every PROMOTED generation on the spine and records every other
-    challenger as a dead branch (a rejected child of the champion).  An
-    operator multi-promote marks each advanced candidate promoted while
-    ``current_generation`` still advances only to the primary head.
+    The complete decision lands in a settlement receipt before any outcome
+    write. The recovery module applies outcomes, lineage, the champion marker,
+    journals, the settled bracket, and one reported derived-index refresh in
+    that order. Every canonical write is idempotent, so startup can repeat the
+    commit without evaluating the tournament again.
 
     The post-promotion adapter hook (issue #125) fires once, after the
     champion marker advances, for the PRIMARY head only: an operator
@@ -406,95 +386,150 @@ async def _commit_field_settlement(
     the adapter's out-of-tree state has to track.
     """
 
-    from zicato.epoch import append_journal_entry, append_to_lineage  # noqa: PLC0415
-
-    decision = execution.decision
-    finalised_by_id: dict[str, Experiment] = {}
-    for candidate in settlement.candidates:
-        gid = candidate.challenger.generation_id
-        finalised_by_id[gid] = _finalize_generation(
-            workspace_root=field_round.workspace_root,
-            epoch_id=field_round.epoch_id,
-            generation_id=gid,
-            outcome=candidate.outcome,
-            journal=False,
-        )
-
     _assert_crowning_agrees(settlement, candidates)
-
-    champion_agg = _first_aggregate_for(field_round.parent_id, decision)
-    for candidate in settlement.candidates:
-        challenger = candidate.challenger
-        gid = challenger.generation_id
-        gen_record = Generation(
-            id=gid,
-            epoch_id=field_round.epoch_id,
-            parent_id=field_round.parent_id,
-            snapshot_root=challenger.snapshot_root,
-            created_at=challenger.generation.created_at,
-            promoted=gid in settlement.promoted_generation_ids,
-            round_index=challenger.generation.round_index,
-        )
-        # The settle-time facts, per challenger (issue #124): the reason
-        # this one was cut — already computed above, including the
-        # holdout-demotion and operator-override phrasings, and read back
-        # off the outcome so the DAG and experiment.json cannot disagree —
-        # and its own standings scalar against the champion's. ``None``
-        # rather than 0.0 when a challenger has no aggregate: a zero scalar
-        # is a legal measurement.
-        settled = finalised_by_id.get(gid)
-        gen_agg = _first_aggregate_for(gid, decision)
-        append_to_lineage(
-            field_round.workspace_root,
-            field_round.epoch_id,
-            gen_record,
-            parent_id=field_round.parent_id,
-            rejection_reason=(
-                settled.outcome.rejection_reason
-                if settled is not None and settled.outcome is not None
-                else ""
-            ),
-            parent_scalar=float(champion_agg["scalar"]) if champion_agg else None,
-            child_scalar=float(gen_agg["scalar"]) if gen_agg else None,
-        )
+    receipt = _field_settlement_receipt(
+        field_round,
+        candidates,
+        execution,
+        verdict,
+        settlement,
+    )
+    commit_field_settlement(field_round.workspace_root, receipt)
 
     on_promote_failure: tuple[str, str, str] | None = None
-    if settlement.primary_promoted_generation_id is not None:
-        generation_phase.set_current_generation(
-            field_round.workspace_root,
-            field_round.epoch_id,
-            settlement.primary_promoted_generation_id,
+    promoted_id = settlement.primary_promoted_generation_id
+    if promoted_id is not None:
+        settlement_id = str(receipt["settlement_id"])
+        hook = getattr(field_round.adapter, "on_promote", None)
+        adapter_name = str(
+            getattr(field_round.adapter, "name", None) or type(field_round.adapter).__name__
         )
-        # The marker MUST now name the crowned generation — a write that did
-        # not stick (e.g. a read-only workspace) would leave a settled
-        # ``promoted`` bracket whose champion never advanced. Re-read and
-        # raise rather than diverge silently (issue #20).
-        crowned_head = generation_phase.current_generation(
-            field_round.workspace_root, field_round.epoch_id
-        )
-        if crowned_head != settlement.primary_promoted_generation_id:
-            raise RuntimeError(
-                "crowning invariant violated: bracket promoted "
-                f"{settlement.primary_promoted_generation_id!r} but current_generation resolves to "
-                f"{crowned_head!r} after the crowning write; the champion "
-                "pointer did not advance to the promoted generation"
+        if hook is not None and callable(hook):
+            try:
+                record_promotion_hook_delivery(
+                    field_round.workspace_root,
+                    epoch_id=field_round.epoch_id,
+                    round_index=field_round.round_index,
+                    settlement_id=settlement_id,
+                    state="delivery_unknown",
+                    adapter_name=adapter_name,
+                )
+            except Exception as exc:  # noqa: BLE001 — canonical settlement is complete
+                log.error(
+                    "on_promote hook skipped for %s/%s because its delivery state "
+                    "could not be persisted",
+                    field_round.epoch_id,
+                    promoted_id,
+                    exc_info=exc,
+                )
+                return (adapter_name, promoted_id, type(exc).__name__)
+            on_promote_failure = await fire_on_promote(
+                field_round.adapter,
+                workspace_root=field_round.workspace_root,
+                epoch_id=field_round.epoch_id,
+                generation_id=promoted_id,
+                parent_generation_id=field_round.parent_id,
+                snapshot_root=candidates.by_id[promoted_id].snapshot_root,
             )
-        on_promote_failure = await fire_on_promote(
-            field_round.adapter,
-            workspace_root=field_round.workspace_root,
-            epoch_id=field_round.epoch_id,
-            generation_id=settlement.primary_promoted_generation_id,
-            parent_generation_id=field_round.parent_id,
-            snapshot_root=candidates.by_id[settlement.primary_promoted_generation_id].snapshot_root,
+            delivery_state: Literal["failed", "succeeded"] = (
+                "failed" if on_promote_failure is not None else "succeeded"
+            )
+            failure_type = on_promote_failure[2] if on_promote_failure is not None else ""
+            try:
+                record_promotion_hook_delivery(
+                    field_round.workspace_root,
+                    epoch_id=field_round.epoch_id,
+                    round_index=field_round.round_index,
+                    settlement_id=settlement_id,
+                    state=delivery_state,
+                    adapter_name=adapter_name,
+                    failure_type=failure_type,
+                )
+            except Exception as exc:  # noqa: BLE001 — unknown is the safe final state
+                log.error(
+                    "on_promote hook delivery result for %s/%s could not be persisted; "
+                    "the receipt remains delivery_unknown and recovery will not retry it",
+                    field_round.epoch_id,
+                    promoted_id,
+                    exc_info=exc,
+                )
+                if on_promote_failure is None:
+                    on_promote_failure = (adapter_name, promoted_id, type(exc).__name__)
+
+    return on_promote_failure
+
+
+def _field_settlement_receipt(
+    field_round: FieldRound,
+    candidates: CandidateField,
+    execution: FieldExecution,
+    verdict: FieldVerdict,
+    settlement: RoundSettlement,
+) -> dict[str, Any]:
+    """Serialize every fact needed to validate, replay, and audit settlement."""
+    champion_agg = _first_aggregate_for(field_round.parent_id, execution.decision)
+    candidate_records: list[dict[str, Any]] = []
+    for candidate in settlement.candidates:
+        challenger = candidate.challenger
+        generation_id = challenger.generation_id
+        aggregate = _first_aggregate_for(generation_id, execution.decision)
+        candidate_records.append(
+            {
+                "experiment_id": challenger.experiment.id,
+                "generation_id": generation_id,
+                "created_at": challenger.generation.created_at,
+                "parent_scalar": (
+                    float(champion_agg["scalar"]) if champion_agg is not None else None
+                ),
+                "child_scalar": float(aggregate["scalar"]) if aggregate is not None else None,
+                "outcome": asdict(candidate.outcome),
+            }
         )
 
-    for candidate in settlement.candidates:
-        append_journal_entry(
-            field_round.workspace_root,
-            field_round.epoch_id,
-            finalised_by_id[candidate.challenger.generation_id],
-        )
-    return on_promote_failure
+    field_record = _field_tournament_record(
+        field_tournament_id=f"{field_round.epoch_id}:field:{candidates.first_challenger_id}",
+        epoch_id=field_round.epoch_id,
+        structure=field_round.tournament_spec.structure,
+        structure_params=dict(field_round.tournament_spec.params),
+        competitors=candidates.competitors,
+        rounds=_serialise_rounds(field_round.strategy.rounds()),
+        standings=_serialise_standings(settlement.decision.standings),
+        field_status=candidates.field_status or [],
+        decision=settlement.decision,
+        state="settled",
+        override_status=verdict.override_provenance or None,
+        promoted_generation_ids=(
+            sorted(verdict.promoted_ids) if len(settlement.promoted_generation_ids) > 1 else None
+        ),
+    )
+    # The nonce prevents proposer-authored journal prose from forging the
+    # replay marker. Persisting it in the intent makes it stable across replay.
+    settlement_id = uuid4().hex
+    hook = getattr(field_round.adapter, "on_promote", None)
+    hook_adapter_name = str(
+        getattr(field_round.adapter, "name", None) or type(field_round.adapter).__name__
+    )
+    hook_is_applicable = (
+        settlement.primary_promoted_generation_id is not None
+        and hook is not None
+        and callable(hook)
+    )
+    return {
+        "format_version": SETTLEMENT_INTENT_FORMAT_VERSION,
+        "state": "pending",
+        "settlement_id": settlement_id,
+        "epoch_id": field_round.epoch_id,
+        "round_index": field_round.round_index,
+        "primary_promoted_generation_id": settlement.primary_promoted_generation_id,
+        "candidates": candidate_records,
+        "field_tournament_record": field_record,
+        "index_projection": {"state": "pending", "error_type": ""},
+        "promotion_hook": {
+            "state": "pending" if hook_is_applicable else "not_applicable",
+            "adapter_name": hook_adapter_name if hook_is_applicable else "",
+            "failure_type": "",
+        },
+    }
 
 
 def _round_summary(
@@ -652,17 +687,17 @@ async def settle_field_round(
     execution: FieldExecution,
     verdict: FieldVerdict,
 ) -> EvolveRoundOutcome:
-    """Record, commit, and close the round the crowning verdict resolved.
+    """Commit, publish, and close the round the crowning verdict resolved.
 
     The round's terminal phase and the last thing that runs: it returns the
     summary the evolve loop reads.
     """
 
-    _record_field_tournament(field_round, candidates, execution, verdict)
     settlement = _build_field_settlement(field_round, candidates, execution, verdict)
     on_promote_failure = await _commit_field_settlement(
-        field_round, candidates, execution, settlement
+        field_round, candidates, execution, verdict, settlement
     )
+    _publish_field_observations(field_round, candidates, execution, verdict)
     return await _close_field_round(
         field_round, candidates, execution, verdict, settlement, on_promote_failure
     )

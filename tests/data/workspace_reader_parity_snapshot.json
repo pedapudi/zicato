@@ -595,9 +595,11 @@
         "is_baseline": false,
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "modulating": [
@@ -893,9 +895,11 @@
         "is_baseline": false,
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "modulating": [
@@ -968,9 +972,11 @@
         "is_baseline": false,
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "modulating": [
@@ -1043,9 +1049,11 @@
         "is_baseline": false,
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "modulating": [
@@ -1118,9 +1126,11 @@
         "is_baseline": false,
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "modulating": [
@@ -1193,9 +1203,11 @@
         "is_baseline": false,
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "modulating": [
@@ -1268,9 +1280,11 @@
         "is_baseline": false,
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "modulating": [
@@ -1343,9 +1357,11 @@
         "is_baseline": false,
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "modulating": [
@@ -1418,9 +1434,11 @@
         "is_baseline": false,
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "modulating": [
@@ -1493,9 +1511,11 @@
         "is_baseline": false,
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "modulating": [
@@ -1568,9 +1588,11 @@
         "is_baseline": false,
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "modulating": [
@@ -2229,9 +2251,11 @@
         },
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "pass_rate_delta": 0.01,
@@ -2302,9 +2326,11 @@
         },
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "pass_rate_delta": 0.01,
@@ -2366,9 +2392,11 @@
         },
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "pass_rate_delta": 0.02,
@@ -2430,9 +2458,11 @@
         },
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "pass_rate_delta": 0.03,
@@ -2494,9 +2524,11 @@
         },
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "pass_rate_delta": 0.04,
@@ -2558,9 +2590,11 @@
         },
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "pass_rate_delta": 0.05,
@@ -2622,9 +2656,11 @@
         },
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "pass_rate_delta": 0.06,
@@ -2686,9 +2722,11 @@
         },
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "pass_rate_delta": 0.07,
@@ -2750,9 +2788,11 @@
         },
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "pass_rate_delta": 0.08,
@@ -2814,9 +2854,11 @@
         },
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "pass_rate_delta": 0.09,
@@ -2878,9 +2920,11 @@
         },
         "metric_movements": [
           {
-            "after": 480,
-            "before": 500,
-            "name": "cost:tokens_spent"
+            "from_value": 500,
+            "hypothesis_match": true,
+            "metric_name": "cost:tokens_spent",
+            "note": "",
+            "to_value": 480
           }
         ],
         "pass_rate_delta": 0.1,
@@ -5457,7 +5501,7 @@
       "hypothesis_core_idea": "Rewrite the planner instruction block for round 1.",
       "hypothesis_json": "{\"core_idea\": \"Rewrite the planner instruction block for round 1.\", \"expected_drift_movements\": [{\"direction\": \"down\", \"kind\": \"plan_thrash\", \"magnitude\": \"moderate\"}], \"expected_metric_movements\": [{\"direction\": \"down\", \"magnitude\": \"small\", \"metric_name\": \"cost:tokens_spent\"}], \"expected_pass_rate_delta\": \"+0.05\", \"modulating\": [\"prompt.planner\"], \"risks\": \"A shorter instruction may drop the citation requirement.\", \"why\": \"Plan thrash dominates the drift profile.\"}",
       "hypothesis_why": "Plan thrash dominates the drift profile.",
-      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.02, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.01, \"ran_at\": \"2026-01-02T06:00:00Z\", \"rejection_reason\": \"\", \"scalar_score_delta\": -0.02, \"structure\": \"gauntlet\", \"tournament_decision\": \"promoted\", \"train_loss\": null}",
+      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.02, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [{\"from_value\": 500.0, \"hypothesis_match\": true, \"metric_name\": \"cost:tokens_spent\", \"note\": \"\", \"to_value\": 480.0}], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.01, \"ran_at\": \"2026-01-02T06:00:00Z\", \"rejection_reason\": \"\", \"scalar_score_delta\": -0.02, \"structure\": \"gauntlet\", \"tournament_decision\": \"promoted\", \"train_loss\": null}",
       "pass_rate_delta": 0.01,
       "rejection_reason": "",
       "scalar_score_delta": -0.02,
@@ -5485,7 +5529,7 @@
       "hypothesis_core_idea": "Rewrite the planner instruction block for round 1.",
       "hypothesis_json": "{\"core_idea\": \"Rewrite the planner instruction block for round 1.\", \"expected_drift_movements\": [{\"direction\": \"down\", \"kind\": \"plan_thrash\", \"magnitude\": \"moderate\"}], \"expected_metric_movements\": [{\"direction\": \"down\", \"magnitude\": \"small\", \"metric_name\": \"cost:tokens_spent\"}], \"expected_pass_rate_delta\": \"+0.05\", \"modulating\": [\"prompt.planner\"], \"risks\": \"A shorter instruction may drop the citation requirement.\", \"why\": \"Plan thrash dominates the drift profile.\"}",
       "hypothesis_why": "Plan thrash dominates the drift profile.",
-      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.02, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.01, \"ran_at\": \"2026-01-02T06:00:00Z\", \"rejection_reason\": \"\", \"scalar_score_delta\": -0.02, \"structure\": \"gauntlet\", \"tournament_decision\": \"promoted\", \"train_loss\": null}",
+      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.02, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [{\"from_value\": 500.0, \"hypothesis_match\": true, \"metric_name\": \"cost:tokens_spent\", \"note\": \"\", \"to_value\": 480.0}], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.01, \"ran_at\": \"2026-01-02T06:00:00Z\", \"rejection_reason\": \"\", \"scalar_score_delta\": -0.02, \"structure\": \"gauntlet\", \"tournament_decision\": \"promoted\", \"train_loss\": null}",
       "pass_rate_delta": 0.01,
       "rejection_reason": "",
       "scalar_score_delta": -0.02,
@@ -5498,7 +5542,7 @@
       "hypothesis_core_idea": "Rewrite the planner instruction block for round 10.",
       "hypothesis_json": "{\"core_idea\": \"Rewrite the planner instruction block for round 10.\", \"expected_drift_movements\": [{\"direction\": \"down\", \"kind\": \"plan_thrash\", \"magnitude\": \"moderate\"}], \"expected_metric_movements\": [{\"direction\": \"down\", \"magnitude\": \"small\", \"metric_name\": \"cost:tokens_spent\"}], \"expected_pass_rate_delta\": \"+0.05\", \"modulating\": [\"prompt.planner\"], \"risks\": \"A shorter instruction may drop the citation requirement.\", \"why\": \"Plan thrash dominates the drift profile.\"}",
       "hypothesis_why": "Plan thrash dominates the drift profile.",
-      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.2, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.1, \"ran_at\": \"2026-01-11T06:00:00Z\", \"rejection_reason\": \"\", \"scalar_score_delta\": -0.02, \"structure\": \"gauntlet\", \"tournament_decision\": \"promoted\", \"train_loss\": null}",
+      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.2, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [{\"from_value\": 500.0, \"hypothesis_match\": true, \"metric_name\": \"cost:tokens_spent\", \"note\": \"\", \"to_value\": 480.0}], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.1, \"ran_at\": \"2026-01-11T06:00:00Z\", \"rejection_reason\": \"\", \"scalar_score_delta\": -0.02, \"structure\": \"gauntlet\", \"tournament_decision\": \"promoted\", \"train_loss\": null}",
       "pass_rate_delta": 0.1,
       "rejection_reason": "",
       "scalar_score_delta": -0.02,
@@ -5511,7 +5555,7 @@
       "hypothesis_core_idea": "Rewrite the planner instruction block for round 2.",
       "hypothesis_json": "{\"core_idea\": \"Rewrite the planner instruction block for round 2.\", \"expected_drift_movements\": [{\"direction\": \"down\", \"kind\": \"plan_thrash\", \"magnitude\": \"moderate\"}], \"expected_metric_movements\": [{\"direction\": \"down\", \"magnitude\": \"small\", \"metric_name\": \"cost:tokens_spent\"}], \"expected_pass_rate_delta\": \"+0.05\", \"modulating\": [\"prompt.planner\"], \"risks\": \"A shorter instruction may drop the citation requirement.\", \"why\": \"Plan thrash dominates the drift profile.\"}",
       "hypothesis_why": "Plan thrash dominates the drift profile.",
-      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.04, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.02, \"ran_at\": \"2026-01-03T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"rejected\", \"train_loss\": null}",
+      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.04, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [{\"from_value\": 500.0, \"hypothesis_match\": true, \"metric_name\": \"cost:tokens_spent\", \"note\": \"\", \"to_value\": 480.0}], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.02, \"ran_at\": \"2026-01-03T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"rejected\", \"train_loss\": null}",
       "pass_rate_delta": 0.02,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
@@ -5524,7 +5568,7 @@
       "hypothesis_core_idea": "Rewrite the planner instruction block for round 3.",
       "hypothesis_json": "{\"core_idea\": \"Rewrite the planner instruction block for round 3.\", \"expected_drift_movements\": [{\"direction\": \"down\", \"kind\": \"plan_thrash\", \"magnitude\": \"moderate\"}], \"expected_metric_movements\": [{\"direction\": \"down\", \"magnitude\": \"small\", \"metric_name\": \"cost:tokens_spent\"}], \"expected_pass_rate_delta\": \"+0.05\", \"modulating\": [\"prompt.planner\"], \"risks\": \"A shorter instruction may drop the citation requirement.\", \"why\": \"Plan thrash dominates the drift profile.\"}",
       "hypothesis_why": "Plan thrash dominates the drift profile.",
-      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.06, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.03, \"ran_at\": \"2026-01-04T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"rejected\", \"train_loss\": null}",
+      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.06, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [{\"from_value\": 500.0, \"hypothesis_match\": true, \"metric_name\": \"cost:tokens_spent\", \"note\": \"\", \"to_value\": 480.0}], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.03, \"ran_at\": \"2026-01-04T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"rejected\", \"train_loss\": null}",
       "pass_rate_delta": 0.03,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
@@ -5537,7 +5581,7 @@
       "hypothesis_core_idea": "Rewrite the planner instruction block for round 4.",
       "hypothesis_json": "{\"core_idea\": \"Rewrite the planner instruction block for round 4.\", \"expected_drift_movements\": [{\"direction\": \"down\", \"kind\": \"plan_thrash\", \"magnitude\": \"moderate\"}], \"expected_metric_movements\": [{\"direction\": \"down\", \"magnitude\": \"small\", \"metric_name\": \"cost:tokens_spent\"}], \"expected_pass_rate_delta\": \"+0.05\", \"modulating\": [\"prompt.planner\"], \"risks\": \"A shorter instruction may drop the citation requirement.\", \"why\": \"Plan thrash dominates the drift profile.\"}",
       "hypothesis_why": "Plan thrash dominates the drift profile.",
-      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.08, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.04, \"ran_at\": \"2026-01-05T06:00:00Z\", \"rejection_reason\": \"\", \"scalar_score_delta\": -0.02, \"structure\": \"gauntlet\", \"tournament_decision\": \"promoted\", \"train_loss\": null}",
+      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.08, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [{\"from_value\": 500.0, \"hypothesis_match\": true, \"metric_name\": \"cost:tokens_spent\", \"note\": \"\", \"to_value\": 480.0}], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.04, \"ran_at\": \"2026-01-05T06:00:00Z\", \"rejection_reason\": \"\", \"scalar_score_delta\": -0.02, \"structure\": \"gauntlet\", \"tournament_decision\": \"promoted\", \"train_loss\": null}",
       "pass_rate_delta": 0.04,
       "rejection_reason": "",
       "scalar_score_delta": -0.02,
@@ -5550,7 +5594,7 @@
       "hypothesis_core_idea": "Rewrite the planner instruction block for round 5.",
       "hypothesis_json": "{\"core_idea\": \"Rewrite the planner instruction block for round 5.\", \"expected_drift_movements\": [{\"direction\": \"down\", \"kind\": \"plan_thrash\", \"magnitude\": \"moderate\"}], \"expected_metric_movements\": [{\"direction\": \"down\", \"magnitude\": \"small\", \"metric_name\": \"cost:tokens_spent\"}], \"expected_pass_rate_delta\": \"+0.05\", \"modulating\": [\"prompt.planner\"], \"risks\": \"A shorter instruction may drop the citation requirement.\", \"why\": \"Plan thrash dominates the drift profile.\"}",
       "hypothesis_why": "Plan thrash dominates the drift profile.",
-      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.1, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.05, \"ran_at\": \"2026-01-06T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"rejected\", \"train_loss\": null}",
+      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.1, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [{\"from_value\": 500.0, \"hypothesis_match\": true, \"metric_name\": \"cost:tokens_spent\", \"note\": \"\", \"to_value\": 480.0}], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.05, \"ran_at\": \"2026-01-06T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"rejected\", \"train_loss\": null}",
       "pass_rate_delta": 0.05,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
@@ -5563,7 +5607,7 @@
       "hypothesis_core_idea": "Rewrite the planner instruction block for round 6.",
       "hypothesis_json": "{\"core_idea\": \"Rewrite the planner instruction block for round 6.\", \"expected_drift_movements\": [{\"direction\": \"down\", \"kind\": \"plan_thrash\", \"magnitude\": \"moderate\"}], \"expected_metric_movements\": [{\"direction\": \"down\", \"magnitude\": \"small\", \"metric_name\": \"cost:tokens_spent\"}], \"expected_pass_rate_delta\": \"+0.05\", \"modulating\": [\"prompt.planner\"], \"risks\": \"A shorter instruction may drop the citation requirement.\", \"why\": \"Plan thrash dominates the drift profile.\"}",
       "hypothesis_why": "Plan thrash dominates the drift profile.",
-      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.12, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.06, \"ran_at\": \"2026-01-07T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"deferred\", \"train_loss\": null}",
+      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.12, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [{\"from_value\": 500.0, \"hypothesis_match\": true, \"metric_name\": \"cost:tokens_spent\", \"note\": \"\", \"to_value\": 480.0}], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.06, \"ran_at\": \"2026-01-07T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"deferred\", \"train_loss\": null}",
       "pass_rate_delta": 0.06,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
@@ -5576,7 +5620,7 @@
       "hypothesis_core_idea": "Rewrite the planner instruction block for round 7.",
       "hypothesis_json": "{\"core_idea\": \"Rewrite the planner instruction block for round 7.\", \"expected_drift_movements\": [{\"direction\": \"down\", \"kind\": \"plan_thrash\", \"magnitude\": \"moderate\"}], \"expected_metric_movements\": [{\"direction\": \"down\", \"magnitude\": \"small\", \"metric_name\": \"cost:tokens_spent\"}], \"expected_pass_rate_delta\": \"+0.05\", \"modulating\": [\"prompt.planner\"], \"risks\": \"A shorter instruction may drop the citation requirement.\", \"why\": \"Plan thrash dominates the drift profile.\"}",
       "hypothesis_why": "Plan thrash dominates the drift profile.",
-      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.14, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.07, \"ran_at\": \"2026-01-08T06:00:00Z\", \"rejection_reason\": \"\", \"scalar_score_delta\": -0.02, \"structure\": \"gauntlet\", \"tournament_decision\": \"promoted\", \"train_loss\": null}",
+      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.14, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [{\"from_value\": 500.0, \"hypothesis_match\": true, \"metric_name\": \"cost:tokens_spent\", \"note\": \"\", \"to_value\": 480.0}], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.07, \"ran_at\": \"2026-01-08T06:00:00Z\", \"rejection_reason\": \"\", \"scalar_score_delta\": -0.02, \"structure\": \"gauntlet\", \"tournament_decision\": \"promoted\", \"train_loss\": null}",
       "pass_rate_delta": 0.07,
       "rejection_reason": "",
       "scalar_score_delta": -0.02,
@@ -5589,7 +5633,7 @@
       "hypothesis_core_idea": "Rewrite the planner instruction block for round 8.",
       "hypothesis_json": "{\"core_idea\": \"Rewrite the planner instruction block for round 8.\", \"expected_drift_movements\": [{\"direction\": \"down\", \"kind\": \"plan_thrash\", \"magnitude\": \"moderate\"}], \"expected_metric_movements\": [{\"direction\": \"down\", \"magnitude\": \"small\", \"metric_name\": \"cost:tokens_spent\"}], \"expected_pass_rate_delta\": \"+0.05\", \"modulating\": [\"prompt.planner\"], \"risks\": \"A shorter instruction may drop the citation requirement.\", \"why\": \"Plan thrash dominates the drift profile.\"}",
       "hypothesis_why": "Plan thrash dominates the drift profile.",
-      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.16, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.08, \"ran_at\": \"2026-01-09T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"rejected\", \"train_loss\": null}",
+      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.16, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [{\"from_value\": 500.0, \"hypothesis_match\": true, \"metric_name\": \"cost:tokens_spent\", \"note\": \"\", \"to_value\": 480.0}], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.08, \"ran_at\": \"2026-01-09T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"rejected\", \"train_loss\": null}",
       "pass_rate_delta": 0.08,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
@@ -5602,7 +5646,7 @@
       "hypothesis_core_idea": "Rewrite the planner instruction block for round 9.",
       "hypothesis_json": "{\"core_idea\": \"Rewrite the planner instruction block for round 9.\", \"expected_drift_movements\": [{\"direction\": \"down\", \"kind\": \"plan_thrash\", \"magnitude\": \"moderate\"}], \"expected_metric_movements\": [{\"direction\": \"down\", \"magnitude\": \"small\", \"metric_name\": \"cost:tokens_spent\"}], \"expected_pass_rate_delta\": \"+0.05\", \"modulating\": [\"prompt.planner\"], \"risks\": \"A shorter instruction may drop the citation requirement.\", \"why\": \"Plan thrash dominates the drift profile.\"}",
       "hypothesis_why": "Plan thrash dominates the drift profile.",
-      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.18, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.09, \"ran_at\": \"2026-01-10T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"rejected\", \"train_loss\": null}",
+      "outcome_json": "{\"champion_eval_mode\": \"full\", \"drift_loss_delta\": -0.18, \"drift_movements\": [{\"from_rate\": 3.0, \"hypothesis_match\": true, \"kind\": \"plan_thrash\", \"note\": \"\", \"to_rate\": 2.0}], \"eliminated_in_round\": null, \"evidence\": null, \"final_rank\": null, \"generalization_gap\": null, \"holdout\": null, \"holdout_loss\": null, \"match_record\": [], \"metric_movements\": [{\"from_value\": 500.0, \"hypothesis_match\": true, \"metric_name\": \"cost:tokens_spent\", \"note\": \"\", \"to_value\": 480.0}], \"operator_override\": false, \"operator_override_reason\": \"\", \"pass_rate_delta\": 0.09, \"ran_at\": \"2026-01-10T06:00:00Z\", \"rejection_reason\": \"below promote margin\", \"scalar_score_delta\": 0.005, \"structure\": \"gauntlet\", \"tournament_decision\": \"rejected\", \"train_loss\": null}",
       "pass_rate_delta": 0.09,
       "rejection_reason": "below promote margin",
       "scalar_score_delta": 0.005,
@@ -7427,39 +7471,6 @@
       "subject": "t1",
       "suggestion_hint": "regression_entry",
       "summary": "entry 't1' failed its expectation on 2 run(s) across 2 candidate(s)"
-    },
-    {
-      "coverage_key": 10,
-      "episode_id": "episode-4",
-      "episode_type": "unresolved_claim",
-      "evidence": {
-        "metric": "cost:tokens_spent",
-        "predictions": 10
-      },
-      "provenance": {
-        "miner_version": "eval-synth/1",
-        "source_episodes": [],
-        "source_lineage_ids": [
-          "v1",
-          "v2",
-          "v3",
-          "v4",
-          "v5",
-          "v6",
-          "v7",
-          "v8",
-          "v9",
-          "v10"
-        ],
-        "source_refs": [
-          "cost:tokens_spent"
-        ]
-      },
-      "recency_key": 10,
-      "severity_rank": 3,
-      "subject": "cost:tokens_spent",
-      "suggestion_hint": "coverage_entry",
-      "summary": "proposer predicted movement on 'cost:tokens_spent' across 10 hypothesis(es) but nothing on the board measures it"
     }
   ],
   "zicato.reflection.noise_floor_summary": {
@@ -8705,9 +8716,11 @@
       },
       "metric_movements": [
         {
-          "after": 480,
-          "before": 500,
-          "name": "cost:tokens_spent"
+          "from_value": 500,
+          "hypothesis_match": true,
+          "metric_name": "cost:tokens_spent",
+          "note": "",
+          "to_value": 480
         }
       ],
       "pass_rate_delta": 0.1,
@@ -8769,9 +8782,11 @@
       },
       "metric_movements": [
         {
-          "after": 480,
-          "before": 500,
-          "name": "cost:tokens_spent"
+          "from_value": 500,
+          "hypothesis_match": true,
+          "metric_name": "cost:tokens_spent",
+          "note": "",
+          "to_value": 480
         }
       ],
       "pass_rate_delta": 0.02,
@@ -8846,9 +8861,11 @@
           },
           "metric_movements": [
             {
-              "after": 480,
-              "before": 500,
-              "name": "cost:tokens_spent"
+              "from_value": 500,
+              "hypothesis_match": true,
+              "metric_name": "cost:tokens_spent",
+              "note": "",
+              "to_value": 480
             }
           ],
           "pass_rate_delta": 0.01,
@@ -8925,9 +8942,11 @@
           },
           "metric_movements": [
             {
-              "after": 480,
-              "before": 500,
-              "name": "cost:tokens_spent"
+              "from_value": 500,
+              "hypothesis_match": true,
+              "metric_name": "cost:tokens_spent",
+              "note": "",
+              "to_value": 480
             }
           ],
           "pass_rate_delta": 0.01,
@@ -8992,9 +9011,11 @@
           },
           "metric_movements": [
             {
-              "after": 480,
-              "before": 500,
-              "name": "cost:tokens_spent"
+              "from_value": 500,
+              "hypothesis_match": true,
+              "metric_name": "cost:tokens_spent",
+              "note": "",
+              "to_value": 480
             }
           ],
           "pass_rate_delta": 0.02,
@@ -9059,9 +9080,11 @@
           },
           "metric_movements": [
             {
-              "after": 480,
-              "before": 500,
-              "name": "cost:tokens_spent"
+              "from_value": 500,
+              "hypothesis_match": true,
+              "metric_name": "cost:tokens_spent",
+              "note": "",
+              "to_value": 480
             }
           ],
           "pass_rate_delta": 0.03,
@@ -9126,9 +9149,11 @@
           },
           "metric_movements": [
             {
-              "after": 480,
-              "before": 500,
-              "name": "cost:tokens_spent"
+              "from_value": 500,
+              "hypothesis_match": true,
+              "metric_name": "cost:tokens_spent",
+              "note": "",
+              "to_value": 480
             }
           ],
           "pass_rate_delta": 0.04,
@@ -9193,9 +9218,11 @@
           },
           "metric_movements": [
             {
-              "after": 480,
-              "before": 500,
-              "name": "cost:tokens_spent"
+              "from_value": 500,
+              "hypothesis_match": true,
+              "metric_name": "cost:tokens_spent",
+              "note": "",
+              "to_value": 480
             }
           ],
           "pass_rate_delta": 0.05,
@@ -9260,9 +9287,11 @@
           },
           "metric_movements": [
             {
-              "after": 480,
-              "before": 500,
-              "name": "cost:tokens_spent"
+              "from_value": 500,
+              "hypothesis_match": true,
+              "metric_name": "cost:tokens_spent",
+              "note": "",
+              "to_value": 480
             }
           ],
           "pass_rate_delta": 0.06,
@@ -9327,9 +9356,11 @@
           },
           "metric_movements": [
             {
-              "after": 480,
-              "before": 500,
-              "name": "cost:tokens_spent"
+              "from_value": 500,
+              "hypothesis_match": true,
+              "metric_name": "cost:tokens_spent",
+              "note": "",
+              "to_value": 480
             }
           ],
           "pass_rate_delta": 0.07,
@@ -9394,9 +9425,11 @@
           },
           "metric_movements": [
             {
-              "after": 480,
-              "before": 500,
-              "name": "cost:tokens_spent"
+              "from_value": 500,
+              "hypothesis_match": true,
+              "metric_name": "cost:tokens_spent",
+              "note": "",
+              "to_value": 480
             }
           ],
           "pass_rate_delta": 0.08,
@@ -9461,9 +9494,11 @@
           },
           "metric_movements": [
             {
-              "after": 480,
-              "before": 500,
-              "name": "cost:tokens_spent"
+              "from_value": 500,
+              "hypothesis_match": true,
+              "metric_name": "cost:tokens_spent",
+              "note": "",
+              "to_value": 480
             }
           ],
           "pass_rate_delta": 0.09,
@@ -9528,9 +9563,11 @@
           },
           "metric_movements": [
             {
-              "after": 480,
-              "before": 500,
-              "name": "cost:tokens_spent"
+              "from_value": 500,
+              "hypothesis_match": true,
+              "metric_name": "cost:tokens_spent",
+              "note": "",
+              "to_value": 480
             }
           ],
           "pass_rate_delta": 0.1,
