@@ -62,7 +62,7 @@ from zicato.epoch.genstore import GenerationStore, default_generation_store
 from zicato.epoch.journal import read_generation_patches
 from zicato.query import WorkspacePaths
 from zicato.query.paths import list_epoch_ids
-from zicato.storage import default_backend
+from zicato.storage import workspace_backend
 from zicato.workspace import generation_round_number, natural_key
 
 #: Files larger than this are not inlined into the content response —
@@ -189,7 +189,7 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
     would be a fabricated retention fact.
     """
     store, store_error = _resolve_store(paths)
-    records = default_backend(paths.root)
+    records = workspace_backend(paths.root, start=True)
     epochs: list[dict[str, Any]] = []
     # Epoch enumeration + ordering routes through the single authority
     # (timestamp-first), the same one every other epoch-list response uses.
@@ -342,7 +342,8 @@ def build_generation_patches(
     records are read through ``StorageBackend``.
     """
     try:
-        record = read_generation_patches(default_backend(paths.root), epoch_id, generation_id)
+        backend = workspace_backend(paths.root, start=True)
+        record = read_generation_patches(backend, epoch_id, generation_id)
     except (FileNotFoundError, OSError, ValueError) as exc:
         return {
             "epoch_id": epoch_id,

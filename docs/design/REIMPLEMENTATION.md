@@ -979,10 +979,11 @@ index/ (projection)   telemetry/ (reducer)   analyzer/   dashboard/readers/
 
 - **One `StorageBackend` ABC** (`storage/backend.py`) + `FileStorageBackend` +
   `InMemoryStorageBackend` (unchanged interface; already clean and conformance-
-  tested). **One `backend_for(workspace_root)`** (delete the duplicate in
-  `epoch/_storage.py` and `runtime/_storage.py`).
+  tested). **One `workspace_backend(workspace_root, *, start)`** — done: the
+  duplicate `backend_for` in `epoch/_storage.py` and `runtime/_storage.py` is
+  deleted and `storage/factory.py` holds the sole construction path.
 - **Per-domain key helpers stay** but become thin key-namespace modules
-  (`storage/keys/runtime.py`, `storage/keys/epoch.py`) over the one `backend_for`.
+  (`storage/keys/runtime.py`, `storage/keys/epoch.py`) over the one constructor.
 - **Delete `runtime/_atomic.py`** (pure back-compat shim); its one external caller
   (`dashboard/state_reader.py`) moves to `workspace/readers`.
 - **One atomic primitive** (`storage/atomic.py`, fsync + tmp + replace). Delete

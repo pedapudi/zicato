@@ -2429,19 +2429,17 @@ def repair_epoch_goals(
         independent; an epoch can need a config patch but not an
         index refresh (and vice versa).
     """
-    from zicato.epoch._storage import (  # noqa: PLC0415
-        backend_for,
-        epoch_config_key,
-    )
+    from zicato.epoch._storage import epoch_config_key  # noqa: PLC0415
     from zicato.epoch.lifecycle import (  # noqa: PLC0415
         _write_config,
         list_epochs,
     )
+    from zicato.storage import workspace_backend  # noqa: PLC0415
 
     scanned = 0
     config_patched = 0
     index_updated = 0
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
 
     # 1. Walk every epoch on disk and patch its config.json.
     for cfg in list_epochs(workspace_root):

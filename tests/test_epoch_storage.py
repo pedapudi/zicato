@@ -30,7 +30,7 @@ from zicato.core.workspace import (
     scoring_path,
 )
 from zicato.epoch import _storage
-from zicato.storage import FileStorageBackend
+from zicato.storage import workspace_backend
 
 # ---------------------------------------------------------------------------
 # key computation — keys must mirror the workspace path layout
@@ -64,12 +64,6 @@ def test_patch_key_sits_under_the_patches_prefix(tmp_path: Path) -> None:
     assert pkey.endswith(f"generations/{gen}/patches/{pid}.json")
 
 
-def test_backend_for_returns_a_file_backend_rooted_at_workspace(tmp_path: Path) -> None:
-    backend = _storage.backend_for(tmp_path)
-    assert isinstance(backend, FileStorageBackend)
-    assert backend.root == tmp_path
-
-
 # ---------------------------------------------------------------------------
 # atomicity — the concrete win of routing epoch/ through the seam
 # ---------------------------------------------------------------------------
@@ -77,7 +71,7 @@ def test_backend_for_returns_a_file_backend_rooted_at_workspace(tmp_path: Path) 
 
 def test_records_written_through_the_seam_leave_no_tmp_artefact(tmp_path: Path) -> None:
     """An atomic write leaves the final file and no .tmp sibling."""
-    backend = _storage.backend_for(tmp_path)
+    backend = workspace_backend(tmp_path, start=False)
     backend.write_json(_storage.experiment_key("e1", "v1"), {"id": "exp1"})
 
     gen_dir = tmp_path / "epochs" / "e1" / "generations" / "v1"
@@ -87,7 +81,7 @@ def test_records_written_through_the_seam_leave_no_tmp_artefact(tmp_path: Path) 
 
 
 def test_seam_write_is_a_full_replacement(tmp_path: Path) -> None:
-    backend = _storage.backend_for(tmp_path)
+    backend = workspace_backend(tmp_path, start=False)
     key = _storage.lineage_key()
     backend.write_json(key, {"epochs": [{"id": "old"}]})
     backend.write_json(key, {"epochs": [{"id": "new"}]})

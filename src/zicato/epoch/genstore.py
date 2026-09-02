@@ -1023,7 +1023,7 @@ def default_generation_store(workspace_root: Path) -> GenerationStore:
       directory-snapshot backend, always available as the no-git fallback.
 
     This function is the single seam where that choice is made — the
-    generation-store mirror of :func:`zicato.storage.factory.default_backend`.
+    generation-store mirror of :func:`zicato.storage.workspace_backend`.
 
     The configured backend is never inferred, but it is checked against the
     source data on disk: a knob that contradicts the disk raises here rather

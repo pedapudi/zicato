@@ -38,16 +38,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from zicato.runtime._storage import (
-    backend_for,
-    control_command_key,
-    control_log_prefix,
-)
+from zicato.runtime._storage import control_command_key, control_log_prefix
 from zicato.runtime.paths import (
     control_dir,
     control_log_dir,
     ensure_runtime_dirs,
 )
+from zicato.storage import workspace_backend
 from zicato.util.iso_time import now_iso as _utc_now_iso
 
 # ---------------------------------------------------------------------------
@@ -226,7 +223,7 @@ def write_command(workspace_root: Path, cmd: ControlCommand) -> Path:
     subdirectory — and callers want the concrete path back.
     """
     ensure_runtime_dirs(workspace_root)
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     cdir = control_dir(workspace_root)
 
     if cmd.name == CMD_RUBRIC_REPLACEMENT:
@@ -300,7 +297,8 @@ def consume_command(
         "reason": reason,
         "original_file_path": str(cmd.file_path),
     }
-    backend_for(workspace_root).write_json(f"{control_log_prefix()}/{log_name}", record)
+    backend = workspace_backend(workspace_root, start=False)
+    backend.write_json(f"{control_log_prefix()}/{log_name}", record)
     # Delete the source AFTER the log is durable.
     if cmd.file_path != Path() and cmd.file_path.exists():
         try:

@@ -1,25 +1,25 @@
 """Bridge between the ``runtime/`` domain and the storage seam.
 
 The ``runtime/`` modules reach persistence through :class:`StorageBackend`
-rather than for the atomic-file helpers (:mod:`zicato.storage`) and
-:class:`pathlib.Path` math directly. This module is the thin adapter that
+rather than reaching for the atomic-file helpers (:mod:`zicato.storage`)
+and :class:`pathlib.Path` math directly. This module is the thin adapter that
 makes that routing ergonomic without putting a backend in any public
 ``runtime/`` signature.
 
-Two responsibilities:
+What it owns is key computation. ``runtime/`` state lives under the
+``runtime/`` namespace of the workspace. The ``*_key`` helpers turn a
+workspace coordinate into the logical storage key — the exact mirror of
+the path helpers in :mod:`zicato.runtime.paths`, but yielding a backend
+*key* (a ``/``-relative string) rather than an absolute :class:`Path`.
 
-* **Backend selection.** :func:`backend_for` constructs the canonical file
-  backend for a workspace root. It is the single seam where ``runtime/``
-  decides which backend it uses; swapping it (or honouring a config knob)
-  is a change in exactly this one function.
-* **Key computation.** ``runtime/`` state lives under the ``runtime/``
-  namespace of the workspace. The ``*_key`` helpers turn a workspace
-  coordinate into the logical storage key — the exact mirror of the path
-  helpers in :mod:`zicato.runtime.paths`, but yielding a backend *key*
-  (a ``/``-relative string) rather than an absolute :class:`Path`.
+The backend comes from :func:`zicato.storage.workspace_backend`, the one
+construction path in the tree, and ``runtime/`` asks it for an unstarted
+one: ``runtime/`` writers already call
+:func:`zicato.runtime.paths.ensure_runtime_dirs`, which creates the
+directory tree, and readers tolerate a missing root.
 
 Public ``runtime/`` functions keep their ``workspace_root: Path`` first
-argument; internally they call :func:`backend_for` and one of the key
+argument; internally they construct a backend and pass it one of the key
 helpers. A caller cannot tell the implementation now flows through a
 backend — the on-disk layout, the atomic-write discipline, and every
 function signature are unchanged.
@@ -27,30 +27,9 @@ function signature are unchanged.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from zicato.storage import FileStorageBackend, StorageBackend
-
 #: The logical namespace every ``runtime/`` record sits under, mirroring
 #: :func:`zicato.runtime.paths.runtime_dir`.
 RUNTIME_NS = "runtime"
-
-
-def backend_for(workspace_root: Path) -> StorageBackend:
-    """Return the canonical storage backend for a workspace.
-
-    ``runtime/`` records are the live-state surface the orchestrator
-    writes and the supervisor + dashboard read; files are their canonical
-    store (one keyed record per file means a misbehaving run's blast
-    radius is one file). This returns a :class:`FileStorageBackend` rooted
-    at the workspace.
-
-    The backend is intentionally *not* started here: ``runtime/`` writers
-    already call :func:`zicato.runtime.paths.ensure_runtime_dirs` (which
-    creates the directory tree), and readers tolerate a missing root. A
-    cheap unstarted backend keeps read-only callers side-effect-free.
-    """
-    return FileStorageBackend(workspace_root)
 
 
 # --- key helpers (mirror zicato.runtime.paths, but yield storage keys) -----
@@ -148,7 +127,6 @@ def kill_request_key(run_id: str) -> str:
 
 __all__ = [
     "RUNTIME_NS",
-    "backend_for",
     "heartbeat_key",
     "lock_key",
     "active_tournament_key",

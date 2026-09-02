@@ -39,7 +39,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from zicato.storage import FileStorageBackend
+from zicato.storage import workspace_backend
 from zicato.workspace.epochs import _read_json_value, natural_key
 from zicato.workspace.layout import WorkspaceLayout
 
@@ -54,7 +54,7 @@ def _namespace_names(layout: WorkspaceLayout, *parts: str) -> list[str]:
     and yields the empty list rather than escaping the workspace.
     """
     try:
-        keys = FileStorageBackend(layout.root).list_namespaces("/".join(parts))
+        keys = workspace_backend(layout.root, start=False).list_namespaces("/".join(parts))
     except ValueError:
         return []
     return [key.rsplit("/", 1)[-1] for key in keys]

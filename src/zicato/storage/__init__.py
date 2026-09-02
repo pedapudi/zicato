@@ -17,8 +17,9 @@ Public surface
 * :class:`StorageBackend` — the abstract interface every backend implements.
 * :class:`FileStorageBackend` — the canonical, default file backend.
 * :class:`InMemoryStorageBackend` — an in-process backend for tests.
-* :func:`make_storage_backend` — name → backend factory.
-* :func:`default_backend` — a started file backend for a workspace root.
+* :func:`workspace_backend` — the one construction path: the file backend for
+  a workspace root, started or unstarted as the call site asks.
+* :func:`make_storage_backend` — name → backend, for tests and future backends.
 * :func:`atomic_claim` / :func:`atomic_write_json` / :func:`atomic_write_text`
   / :func:`read_json`
   — the atomic file primitives every writer/reader in the tree shares
@@ -40,8 +41,8 @@ from zicato.storage._atomic import (
 from zicato.storage.base import StorageBackend
 from zicato.storage.factory import (
     DEFAULT_BACKEND,
-    default_backend,
     make_storage_backend,
+    workspace_backend,
 )
 from zicato.storage.files import FileStorageBackend
 from zicato.storage.memory import InMemoryStorageBackend
@@ -51,7 +52,7 @@ __all__ = [
     "FileStorageBackend",
     "InMemoryStorageBackend",
     "make_storage_backend",
-    "default_backend",
+    "workspace_backend",
     "DEFAULT_BACKEND",
     "atomic_claim",
     "atomic_write_json",

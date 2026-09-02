@@ -1013,11 +1013,12 @@ def test_the_dashboard_startup_never_heals(tmp_path: Path) -> None:
 
 def test_a_stale_lock_does_not_block_the_dashboard_build(tmp_path: Path) -> None:
     from zicato.dashboard.server import _ensure_index_at_startup, _resolve_workspace
-    from zicato.runtime._storage import backend_for, lock_key
+    from zicato.runtime._storage import lock_key
+    from zicato.storage import workspace_backend
 
     ws = _make_workspace(tmp_path)
     (ws / "runtime").mkdir(parents=True, exist_ok=True)
-    backend_for(ws).write_json(
+    workspace_backend(ws, start=False).write_json(
         lock_key(),
         {
             "pid": 999_999,

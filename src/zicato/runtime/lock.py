@@ -29,8 +29,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from zicato.runtime._storage import backend_for, lock_key
+from zicato.runtime._storage import lock_key
 from zicato.runtime.paths import ensure_runtime_dirs
+from zicato.storage import workspace_backend
 from zicato.util.iso_time import now_iso as _utc_now_iso
 
 
@@ -246,7 +247,7 @@ def read_workspace_lock(workspace_root: Path) -> WorkspaceLock | None:
     dashboard's index build defers on exactly this signal (see
     ``docs/design/ANALYTICAL-INDEX.md`` §5.3).
     """
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     try:
         existing = backend.read_json(lock_key())
     except OSError:
@@ -291,7 +292,7 @@ def acquire_workspace_lock(
         it to ``False`` to require manual cleanup of stale locks.
     """
     ensure_runtime_dirs(workspace_root)
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     my_pid = os.getpid()
 
     existing = backend.read_json(lock_key())
@@ -344,7 +345,7 @@ def release_workspace_lock(lock: WorkspaceLock) -> None:
 
     Idempotent.
     """
-    backend = backend_for(lock.workspace_root)
+    backend = workspace_backend(lock.workspace_root, start=False)
     existing = backend.read_json(lock_key())
     if existing is None:
         return

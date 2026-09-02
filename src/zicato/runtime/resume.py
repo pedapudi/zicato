@@ -322,12 +322,12 @@ def _unrecorded_fields_without_receipts(
     store: GenerationStore,
 ) -> tuple[tuple[int, tuple[str, ...]], ...]:
     """Find pending entrants whose field has no settlement receipt."""
-    from zicato.epoch._storage import backend_for  # noqa: PLC0415
     from zicato.evolve.settlement_recovery import (  # noqa: PLC0415
         field_settlement_intent_key,
     )
+    from zicato.storage import workspace_backend  # noqa: PLC0415
 
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     field_size = _configured_field_size(workspace_root, epoch_id)
     fields: list[tuple[int, tuple[str, ...]]] = []
     for (round_index, _parent_id), pending in _pending_lineage_groups(

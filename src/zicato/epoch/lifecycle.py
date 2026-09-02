@@ -52,13 +52,13 @@ from zicato.core.workspace import (
 )
 from zicato.epoch._storage import (
     RECORD_FORMAT_VERSION,
-    backend_for,
     check_record_format,
     current_epoch_key,
     epoch_config_key,
     scoring_key,
 )
 from zicato.proposer.staging import drain_staged_recommendations
+from zicato.storage import workspace_backend
 from zicato.workspace import WorkspaceLayout, list_epoch_ids
 
 if TYPE_CHECKING:
@@ -261,7 +261,8 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
 
 def _write_config(workspace_root: Path, cfg: EpochConfig) -> None:
     """Atomically write one epoch's ``config.json`` through the storage seam."""
-    backend_for(workspace_root).write_json(epoch_config_key(cfg.id), _config_to_dict(cfg))
+    backend = workspace_backend(workspace_root, start=False)
+    backend.write_json(epoch_config_key(cfg.id), _config_to_dict(cfg))
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +276,7 @@ def current_epoch_id(workspace_root: Path) -> str | None:
     Returns ``None`` when there is no marker (fresh workspace, or the
     marker was removed by hand). Returns the stripped contents otherwise.
     """
-    text = backend_for(workspace_root).read_text(current_epoch_key())
+    text = workspace_backend(workspace_root, start=False).read_text(current_epoch_key())
     if text is None:
         return None
     return text.strip() or None
@@ -290,7 +291,7 @@ def switch_epoch(workspace_root: Path, epoch_id: str) -> None:
     """
     if not epoch_dir(workspace_root, epoch_id).exists():
         raise FileNotFoundError(f"epoch {epoch_id!r} does not exist under {workspace_root}")
-    backend_for(workspace_root).write_text(current_epoch_key(), epoch_id + "\n")
+    workspace_backend(workspace_root, start=False).write_text(current_epoch_key(), epoch_id + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +301,7 @@ def switch_epoch(workspace_root: Path, epoch_id: str) -> None:
 
 def load_epoch(workspace_root: Path, epoch_id: str) -> EpochConfig:
     """Read one epoch's ``config.json`` back into an :class:`EpochConfig`."""
-    raw = backend_for(workspace_root).read_json(epoch_config_key(epoch_id))
+    raw = workspace_backend(workspace_root, start=False).read_json(epoch_config_key(epoch_id))
     if raw is None:
         raise FileNotFoundError(f"epoch {epoch_id!r} has no config.json under {workspace_root}")
     # Record-format guard: absent ⇒ version 1, so an epoch written before the
@@ -327,7 +328,7 @@ def list_epochs(workspace_root: Path) -> list[EpochConfig]:
     skip-the-in-progress-write behavior.
     """
     layout = WorkspaceLayout.from_root(workspace_root)
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     out: list[EpochConfig] = []
     for epoch_id in list_epoch_ids(layout):
         try:
@@ -534,7 +535,8 @@ def new_epoch(
     # 4. Scoring weights — serialized from the in-memory ScoringWeights,
     # written atomically through the storage seam.
     target_scoring = scoring_path(workspace_root, epoch_id)
-    backend_for(workspace_root).write_json(scoring_key(epoch_id), scoring_to_dict(weights))
+    backend = workspace_backend(workspace_root, start=False)
+    backend.write_json(scoring_key(epoch_id), scoring_to_dict(weights))
 
     # 5. Contract hash over the frozen board/brief/scoring plus every
     # registered component the caller carried in. Computed from the

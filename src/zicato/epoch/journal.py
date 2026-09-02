@@ -52,13 +52,12 @@ from zicato.core.types import (
 from zicato.core.workspace import epoch_dir
 from zicato.epoch._storage import (
     RECORD_FORMAT_VERSION,
-    backend_for,
     check_record_format,
     experiment_key,
     journal_key,
     patch_key,
 )
-from zicato.storage import StorageBackend
+from zicato.storage import StorageBackend, workspace_backend
 from zicato.workspace import generation_round_number
 
 
@@ -185,7 +184,7 @@ def append_journal_entry(workspace_root: Path, epoch_id: str, experiment: Experi
         raise FileNotFoundError(
             f"epoch directory {edir} does not exist; create it with new_epoch first"
         )
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     key = journal_key(epoch_id)
     section = _render_section(experiment)
     existing = backend.read_text(key)
@@ -219,7 +218,7 @@ def append_journal_entry_once(
         raise FileNotFoundError(
             f"epoch directory {edir} does not exist; create it with new_epoch first"
         )
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     key = journal_key(epoch_id)
     marker = f'<!-- zicato:field-settlement identity="{settlement_identity}" -->'
     existing = backend.read_text(key) or ""
@@ -235,7 +234,7 @@ def append_journal_entry_once(
 
 def read_journal(workspace_root: Path, epoch_id: str) -> str:
     """Return the epoch's full journal text, or an empty string if missing."""
-    return backend_for(workspace_root).read_text(journal_key(epoch_id)) or ""
+    return workspace_backend(workspace_root, start=False).read_text(journal_key(epoch_id)) or ""
 
 
 def _coerce_paths(obj: Any) -> Any:
@@ -454,7 +453,7 @@ def write_seed_experiment(
     timestamp (e.g. the workspace ``create_at``, or the epoch's
     ``created_at``) pass it through verbatim.
     """
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
     key = experiment_key(epoch_id, generation_id)
     if backend.read_text(key) is not None:
         return False
@@ -507,7 +506,7 @@ def write_experiment(
     construction — only the on-disk shape is split. Round-tripping
     through :func:`read_experiment` reconstitutes the same tuple.
     """
-    backend = backend_for(workspace_root)
+    backend = workspace_backend(workspace_root, start=False)
 
     patch_ids: list[str] = []
     for patch in experiment.patches:
@@ -601,7 +600,8 @@ def read_experiment(
     of which on-disk form produced it. New writes always use the
     per-patch layout.
     """
-    return read_experiment_from_backend(backend_for(workspace_root), epoch_id, generation_id)
+    backend = workspace_backend(workspace_root, start=False)
+    return read_experiment_from_backend(backend, epoch_id, generation_id)
 
 
 def read_experiment_from_backend(

@@ -47,9 +47,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from zicato.runtime._storage import backend_for, progress_log_key
+from zicato.runtime._storage import progress_log_key
 from zicato.runtime.channel import Event, EventLog
 from zicato.runtime.paths import ensure_runtime_dirs
+from zicato.storage import workspace_backend
 
 # ---------------------------------------------------------------------------
 # Transition vocabulary — the single producer + every reader agree on these.
@@ -101,7 +102,7 @@ def is_terminal(event_type: str) -> bool:
 
 def _log(workspace_root: Path) -> EventLog:
     """Bind the orchestrator progress :class:`EventLog` for a workspace."""
-    return EventLog(backend_for(workspace_root), progress_log_key())
+    return EventLog(workspace_backend(workspace_root, start=False), progress_log_key())
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +157,7 @@ def clear_log(workspace_root: Path) -> None:
     new invocation's ``seq`` starts from ``1`` rather than inheriting a
     prior run's tail — a stale ``seq`` must never read as live progress.
     """
-    backend_for(workspace_root).delete(progress_log_key())
+    workspace_backend(workspace_root, start=False).delete(progress_log_key())
 
 
 __all__ = [

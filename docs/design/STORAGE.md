@@ -162,11 +162,12 @@ available when Git is unwanted.
 `zicato.epoch.journal`, `zicato.epoch.lineage`, and the config writes in
 `zicato.epoch.lifecycle` route every record read and write through
 `StorageBackend`, via a `zicato.epoch._storage` adapter that mirrors
-`zicato.runtime._storage`:
-
-- one `backend_for(workspace_root)` seam,
-- `*_key` helpers turning an `(epoch, generation, …)` coordinate into a
-  logical storage key.
+`zicato.runtime._storage`. Each adapter owns `*_key` helpers turning a
+coordinate — an `(epoch, generation, …)` triple for `epoch/`, a workspace
+for `runtime/` — into a logical storage key. The backend those keys are
+passed to comes from `zicato.storage.workspace_backend`, the tree's one
+construction path. Both adapters' callers ask it for an unstarted
+backend, so reading a workspace creates nothing on disk.
 
 Every public `epoch/` function takes `workspace_root: Path` as its
 first argument, so the routing is invisible to callers. What the

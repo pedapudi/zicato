@@ -24,6 +24,7 @@ from zicato.storage import (
     InMemoryStorageBackend,
     StorageBackend,
     make_storage_backend,
+    workspace_backend,
 )
 
 # --- backend registry ------------------------------------------------------
@@ -313,3 +314,31 @@ def test_make_storage_backend_rejects_unknown_kind():
 def test_make_storage_backend_files_requires_root():
     with pytest.raises(ValueError, match="requires a root"):
         make_storage_backend("files")
+
+
+# === the one workspace construction path ===================================
+#
+# Every domain gets its backend from workspace_backend, and the lifecycle
+# it asks for decides whether construction touches the filesystem. The two
+# tests below pin the side effect on each side of that choice, because the
+# epoch/, runtime/ and workspace/ readers depend on the unstarted side
+# leaving an absent workspace absent.
+
+
+def test_workspace_backend_unstarted_creates_nothing(tmp_path: Path):
+    root = tmp_path / "ws"
+    backend = workspace_backend(root, start=False)
+    assert isinstance(backend, FileStorageBackend)
+    assert backend.root == root
+    assert not root.exists()
+    # A read of an absent workspace stays side-effect-free too.
+    assert backend.read_json("runtime/heartbeat.json") is None
+    assert not root.exists()
+
+
+def test_workspace_backend_started_creates_the_root(tmp_path: Path):
+    root = tmp_path / "ws"
+    backend = workspace_backend(root, start=True)
+    assert isinstance(backend, FileStorageBackend)
+    assert backend.root == root
+    assert root.is_dir()
