@@ -27,6 +27,14 @@ enumerations feed (:func:`read_epoch_config`, :func:`read_board`,
 :func:`read_gen_score_history` / :func:`read_events_history`), so the leaf
 filename joins stop being re-implemented at dozens of call sites.
 
+Above the raw reads sit the quantities that combine several records or decode
+one record's nested structure (:mod:`zicato.workspace.aggregates`): a
+generation's per-judge loss totals, an epoch's validated board entries, the
+cumulative scalar along a lineage, and the folded round records. Each has one
+definition, shared by the analysis report and by the query readers that open
+the same files. The query readers that answer from ``index.db`` compute their
+own quantities over that derived store and are not part of this layer.
+
 Design constraints:
 
 * Every read is **best-effort**: a missing / unreadable / malformed file
@@ -43,6 +51,17 @@ Design constraints:
 
 from __future__ import annotations
 
+from zicato.workspace.aggregates import (
+    BoardRead,
+    JudgeLossRow,
+    ScalarStep,
+    cumulative_scalars,
+    judge_loss_rows,
+    per_judge_loss_totals,
+    read_board_entries,
+    read_round_log,
+    read_round_records,
+)
 from zicato.workspace.epochs import (
     Epoch,
     epoch_created_at,
@@ -69,8 +88,12 @@ from zicato.workspace.reads import (
 )
 
 __all__ = [
+    "BoardRead",
     "Epoch",
+    "JudgeLossRow",
+    "ScalarStep",
     "WorkspaceLayout",
+    "cumulative_scalars",
     "epoch_created_at",
     "epoch_sort_key",
     "events_replicate_index",
@@ -78,10 +101,13 @@ __all__ = [
     "generation_round_number",
     "is_events_file",
     "iter_epochs",
+    "judge_loss_rows",
     "list_epoch_ids",
     "natural_key",
     "next_generation_id",
+    "per_judge_loss_totals",
     "read_board",
+    "read_board_entries",
     "read_epoch_config",
     "read_events_history",
     "read_experiment",
@@ -89,6 +115,8 @@ __all__ = [
     "read_gen_score",
     "read_gen_score_history",
     "read_loss",
+    "read_round_log",
+    "read_round_records",
     "round_indices",
     "run_entry_ids",
 ]

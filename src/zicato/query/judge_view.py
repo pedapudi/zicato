@@ -57,6 +57,7 @@ from zicato.query.tournament_view import (
     _tournament_id_for,
     build_bracket,
 )
+from zicato.workspace import judge_loss_rows
 from zicato.workspace.config_io import read_workspace_config
 
 #: "This reader's rows carry no run count at all", a different answer from a
@@ -572,18 +573,21 @@ def build_per_judge_for_entry(
     )
     if not isinstance(loss, dict):
         return {"run_id": resolved_run_id, "judges": []}
-    raw_judges = loss.get("per_judge_loss")
-    if not isinstance(raw_judges, list):
+    if not isinstance(loss.get("per_judge_loss"), list):
         return build_per_judge_for_run(paths, resolved_run_id)
+    # The rows come off the loss profile through the shared canonical decoder,
+    # which the analysis report's per-judge totals read through as well, so one
+    # rule says what a profile's per-judge attribution holds. The unattributed
+    # bucket (the empty judge name) is dropped here: this table names judges.
     judges = [
         _judge_row(
-            str(row.get("judge_name", "")),
-            weighted_loss=row.get("weighted_loss"),
-            raw_loss=row.get("raw_loss"),
-            weight=row.get("weight"),
+            row.judge_name,
+            weighted_loss=row.weighted_loss,
+            raw_loss=row.raw_loss,
+            weight=row.weight,
         )
-        for row in raw_judges
-        if isinstance(row, dict) and row.get("judge_name")
+        for row in judge_loss_rows(loss)
+        if row.judge_name
     ]
     return {"run_id": resolved_run_id, "judges": judges}
 

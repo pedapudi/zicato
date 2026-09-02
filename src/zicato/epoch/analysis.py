@@ -52,7 +52,7 @@ from zicato.core.workspace import (
     journal_path,
 )
 from zicato.epoch.lineage import load_lineage
-from zicato.workspace import WorkspaceLayout, generation_ids
+from zicato.workspace import ScalarStep, WorkspaceLayout, cumulative_scalars, generation_ids
 
 # A goldfive-compatible auxiliary call_llm.
 _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
@@ -297,20 +297,34 @@ def _scalar_trajectory(
     Generations without an outcome inherit the parent's scalar (or the
     baseline if the parent is unknown). The returned mapping keys on
     generation id.
+
+    The cumulation itself is the shared canonical one
+    (:func:`zicato.workspace.cumulative_scalars`); this function supplies the
+    typed lineage's answers to which generation seeds the lineage and what
+    delta each one recorded.
     """
-    scores: dict[str, float] = {}
     exp_idx = _exp_by_child(experiments)
-    for g in generations:
-        if g.parent_id is None:
-            scores[g.id] = baseline
-            continue
-        parent_score = scores.get(g.parent_id, baseline)
-        exp = exp_idx.get(g.id)
-        if exp is not None and exp.outcome is not None:
-            scores[g.id] = parent_score + exp.outcome.scalar_score_delta
-        else:
-            scores[g.id] = parent_score
-    return scores
+
+    def _delta(gen: Generation) -> float:
+        exp = exp_idx.get(gen.id)
+        if exp is None or exp.outcome is None:
+            return 0.0
+        return exp.outcome.scalar_score_delta
+
+    return dict(
+        cumulative_scalars(
+            (
+                ScalarStep(
+                    generation_id=g.id,
+                    parent_generation_id=g.parent_id or "",
+                    is_baseline=g.parent_id is None,
+                    scalar_score_delta=_delta(g),
+                )
+                for g in generations
+            ),
+            baseline=baseline,
+        )
+    )
 
 
 def render_mermaid_lineage(
