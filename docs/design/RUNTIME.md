@@ -355,7 +355,7 @@ contention, because each worker is the sole writer of its own file.
 > moves a consumed file into `control_log/`. The orchestrator calls it:
 > `src/zicato/runtime/control_consumer.py` is invoked between rounds
 > from `src/zicato/evolve/loop.py`, and at the head of a round for
-> `skip_round` from `src/zicato/evolve/gauntlet.py`.
+> `skip_round` from `src/zicato/evolve/round_entry.py`.
 
 The orchestrator reads `control/` at **safe points only** —
 between board entries, between rounds, between epoch lifecycle stages —

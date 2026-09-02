@@ -25,7 +25,7 @@ The executable round is divided by behavior:
 
 | Owner | Responsibility |
 |---|---|
-| `zicato.evolve.gauntlet` | single-challenger round strategy |
+| `zicato.evolve.round_entry` | round entry point: prepares the round, then runs it as a single-challenger duel or hands it to the field |
 | `zicato.evolve.field` | multi-challenger field strategy |
 | `zicato.evolve.decision_support` | shared decision inputs and outcome shaping |
 | `zicato.evolve.round_prepare` | calibration, preflight, and health assessment |
@@ -33,9 +33,9 @@ The executable round is divided by behavior:
 | `zicato.evolve.round_reporting` | round log, health inputs, and report regeneration |
 | `zicato.evolve.persist` | outcome, lineage, marker, and journal ordering |
 
-The gauntlet dispatches to the field strategy only after the resolved selection
-strategy requests a field wider than one. The field module never imports the
-gauntlet module, so the two structures cannot accidentally share mutable
+`round_entry` dispatches to the field strategy only after the resolved
+selection strategy requests a field wider than one. The field module never
+imports `round_entry`, so the two structures cannot accidentally share mutable
 strategy state. Shared behavior is imported from a narrow owner instead of
 copied between the strategies.
 

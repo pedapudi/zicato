@@ -499,7 +499,7 @@ def test_pause_blocks_then_resumes_between_rounds(
         calls.append(round_index)
         return _mock_outcome(round_index)
 
-    monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
+    monkeypatch.setattr("zicato.evolve.round_entry.evolve_once", _mock_evolve_once)
     monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
     # Pause is active before the loop starts.
@@ -558,7 +558,7 @@ def test_rubric_replacement_rolls_the_epoch(
         seen_epochs.append(epoch_id)
         return _mock_outcome(round_index)
 
-    monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
+    monkeypatch.setattr("zicato.evolve.round_entry.evolve_once", _mock_evolve_once)
     monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
     # Queue the rubric replacement BEFORE the loop starts so it fires at the

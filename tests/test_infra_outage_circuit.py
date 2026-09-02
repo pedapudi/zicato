@@ -303,8 +303,8 @@ def _promoted_outcome(round_idx: int) -> EvolveRoundOutcome:
 def test_loop_backs_off_exponentially_and_reconciles(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import zicato.evolve.gauntlet as gauntlet
     import zicato.evolve.loop as loop_mod
+    import zicato.evolve.round_entry as round_entry
     import zicato.orchestrator as orch
 
     workspace, epoch_id = bootstrap_workspace(tmp_path)
@@ -324,7 +324,7 @@ def test_loop_backs_off_exponentially_and_reconciles(
             return _deferred_outcome(round_index)
         return _promoted_outcome(round_index)
 
-    monkeypatch.setattr(gauntlet, "evolve_once", _mock_evolve_once)
+    monkeypatch.setattr(round_entry, "evolve_once", _mock_evolve_once)
     monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
     sleeps: list[float] = []

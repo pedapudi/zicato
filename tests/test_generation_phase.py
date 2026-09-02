@@ -75,7 +75,7 @@ def test_round_pipeline_structure_stays_bounded() -> None:
     ):
         assert len((src / "evolve" / name).read_text().splitlines()) < 1_000
 
-    entries = {"gauntlet.py": "evolve_once", "field.py": "evolve_field_round"}
+    entries = {"round_entry.py": "evolve_once", "field.py": "evolve_field_round"}
     for name, expected in entries.items():
         tree = ast.parse((src / "evolve" / name).read_text())
         public_async = [

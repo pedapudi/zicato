@@ -1,6 +1,6 @@
 """The N-round evolve loop split out of :mod:`zicato.orchestrator`.
 
-:func:`evolve_n_rounds` calls :func:`zicato.evolve.gauntlet.evolve_once` up to
+:func:`evolve_n_rounds` calls :func:`zicato.evolve.round_entry.evolve_once` up to
 ``rounds`` times, with the four loop circuit-breakers modelled as a small
 :class:`StopPolicy` set:
 
@@ -499,7 +499,6 @@ async def evolve_n_rounds(
     from zicato import workspace_loader  # noqa: PLC0415
     from zicato.evolve.dashboard_projection import _mark_run_terminal  # noqa: PLC0415
     from zicato.evolve.epoching import ensure_epoch_for_contract  # noqa: PLC0415
-    from zicato.evolve.gauntlet import evolve_once  # noqa: PLC0415
     from zicato.evolve.ingest import index_preflight  # noqa: PLC0415
     from zicato.evolve.lifecycle_services import (  # noqa: PLC0415
         _build_meta_loop_emitter_safe,
@@ -507,6 +506,7 @@ async def evolve_n_rounds(
         _resolve_or_launch_harmonograf,
     )
     from zicato.evolve.round_api import DEFERRED_INFRA_DECISION  # noqa: PLC0415
+    from zicato.evolve.round_entry import evolve_once  # noqa: PLC0415
     from zicato.runtime.control_consumer import (  # noqa: PLC0415
         block_while_paused,
         claim_rubric_replacement,

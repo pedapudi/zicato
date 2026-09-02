@@ -1040,7 +1040,7 @@ The runtime layer ships in stages (see [ROBUSTNESS.md](ROBUSTNESS.md)
   stream, and both sides of the control endpoints. The orchestrator
   consumes `control/` commands at safe points
   (`zicato.runtime.control_consumer`, called from `evolve/loop.py`,
-  `epoching.py`, `field.py`, `gauntlet.py` and `gate.py`) and archives
+  `epoching.py`, `field.py`, `round_entry.py` and `gate.py`) and archives
   each consumed command into `control_log/`;
 * the conservative crash-resume protocol
   (`zicato.runtime.resume.prepare_resume`, called from `evolve/loop.py`),
