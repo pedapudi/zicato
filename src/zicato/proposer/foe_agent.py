@@ -325,10 +325,12 @@ class FoeProposerAgent:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(handle.cancel(), timeout=_CANCEL_GRACE_S)
                 await _episode_completed(ctx, invocation, started_at, "timeout")
+                await _export_settled_episode(config, log_dir)
                 raise ProposerExhausted(
                     "seconds", f"the episode outlived its {deadline}s budget"
                 ) from None
             await _episode_completed(ctx, invocation, started_at, _outcome_label(outcome))
+            await _export_settled_episode(config, log_dir)
             return outcome
         finally:
             _remove_active_run(workspace_root, run_id)
@@ -622,6 +624,28 @@ def _register_active_run(
                 pgid=pgid,
             ),
         )
+
+
+async def _export_settled_episode(config: FoeProposerConfig, log_dir: Path) -> None:
+    """Render the settled episode to Foe's static page, beside its log.
+
+    A cancelled episode gets one too: Foe closes its own obligations on
+    cancel, so the log is readable, and an episode that ran out of time is
+    the one an operator most wants to read at Foe's depth.
+
+    Best effort by contract, like every other observability write on this
+    path. :mod:`zicato.proposer.episode_export` already answers every way
+    the render can fail with no page; this guard covers anything it did
+    not anticipate, so no round is lost to a page nobody has opened yet.
+    """
+    from zicato.proposer.episode_export import write_episode_export  # noqa: PLC0415
+    from zicato.util import best_effort  # noqa: PLC0415
+
+    with best_effort(
+        "proposal-episode static export",
+        on_error=lambda exc: log.debug("proposal-episode static export skipped: %s", exc),
+    ):
+        await write_episode_export(config.binary, log_dir)
 
 
 def _remove_active_run(workspace_root: Path, run_id: str) -> None:

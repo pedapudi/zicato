@@ -1028,6 +1028,56 @@ def _make_epoch_document_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     }
 
 
+def _make_proposal_episode_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
+    """Foe's static page for one proposal episode: whether there is one, and it."""
+
+    async def api_proposal_episode_export(request: Request) -> Response:
+        """Whether one candidate has Foe's static episode page, and how to get it.
+
+        The proposer panel reads this before it renders: an available page
+        becomes a link to ``episode-export.html`` below, and an absent one
+        becomes the caption naming the episode log and the command that
+        renders it by hand.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
+            return JSONResponse({"error": "invalid coordinates"}, status_code=400)
+        return JSONResponse(
+            query.build_proposal_episode_export(
+                paths, epoch_id, generation_id, slot=_int_query(request, "slot")
+            )
+        )
+
+    async def api_proposal_episode_export_html(request: Request) -> Response:
+        """Serve Foe's static page for one proposal episode.
+
+        The page is a file the round wrote inside that episode's own
+        directory, resolved from the ``(epoch, generation, slot)``
+        coordinates like every other route rather than from a path the
+        caller supplies, so no request can name a file of its own. Returns
+        404 when the candidate has no page, which is the state the panel
+        already knows about and captions.
+        """
+        from starlette.responses import HTMLResponse
+
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
+            return PlainTextResponse("invalid coordinates", status_code=400)
+        html = query.read_proposal_episode_export(
+            paths, epoch_id, generation_id, slot=_int_query(request, "slot")
+        )
+        if html is None:
+            return PlainTextResponse(f"no episode export for {generation_id}", status_code=404)
+        return HTMLResponse(html)
+
+    return {
+        "api_proposal_episode_export": api_proposal_episode_export,
+        "api_proposal_episode_export_html": api_proposal_episode_export_html,
+    }
+
+
 def _make_files_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     """File-tree / mutation-site browser surface."""
 
@@ -1451,6 +1501,7 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
     handlers.update(_make_read_endpoints(paths))
     handlers.update(_make_state_endpoints(paths, read_only=read_only, started=started))
     handlers.update(_make_epoch_document_endpoints(paths))
+    handlers.update(_make_proposal_episode_endpoints(paths))
     handlers.update(_make_files_endpoints(paths))
     handlers.update(_make_conversation_endpoints(paths))
     handlers.update(_make_control_endpoints(paths, read_only=read_only))

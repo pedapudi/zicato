@@ -9,6 +9,12 @@ STAMPS the resolved coordinates onto the reconstructed payload (``epoch_id``
 reader step, so the frontend can label the transcript column without a
 second lookup, and each field keeps one server-owned spelling on the wire.
 
+The module also answers for the other reading of a proposal episode: Foe's
+own static page, rendered beside the episode's log when the episode settles.
+:func:`build_proposal_episode_export` says whether a candidate has one and,
+when it does not, what to run to get it; :func:`read_proposal_episode_export`
+returns the page itself.
+
 Every function degrades to the same-shaped empty payload and never raises.
 """
 
@@ -101,6 +107,96 @@ def resolve_conversation(
     if events_path is None:
         events_path = find_run_events_path(paths, run_id)
     return events_path
+
+
+def _configured_foe_binary(paths: WorkspacePaths) -> str:
+    """The binary a workspace runs its episodes with, for the by-hand command.
+
+    The dashboard prints the command an operator runs when a candidate has
+    no page, and that command must name the same build the episode ran.
+    A workspace whose ``proposer`` block cannot be read falls back to the
+    bare program name, which is what a Foe installation puts on the path.
+    """
+    from zicato.proposer.foe_config import (  # noqa: PLC0415 - a driver-side read
+        load_foe_proposer_config,
+    )
+    from zicato.workspace.config_io import read_workspace_config  # noqa: PLC0415
+
+    try:
+        config = load_foe_proposer_config(read_workspace_config(paths.root).raw, paths.root)
+    except Exception:  # noqa: BLE001 - a reader on the dashboard path never raises
+        return "foe"
+    return str(config.binary)
+
+
+def build_proposal_episode_export(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    *,
+    slot: int | None = None,
+) -> dict[str, Any]:
+    """What the proposer panel needs to link, or to explain, Foe's static page.
+
+    Foe renders a finished episode to one self-contained HTML page, written
+    beside the episode's log when the episode settles
+    (:mod:`zicato.proposer.episode_export`). ``export_available`` says
+    whether this candidate has one. When it does not, ``episode_log`` and
+    ``command`` are what the panel shows instead: the log on disk, and the
+    invocation that renders it by hand.
+
+    A candidate with no proposal episode at all — a seed, or a workspace
+    whose configured binary is still the scaffold placeholder — resolves no
+    log, and both fields are empty. Never raises.
+    """
+    log_path = find_proposal_episode_log(paths, epoch_id, generation_id, slot_index=slot)
+    payload: dict[str, Any] = {
+        "epoch_id": epoch_id,
+        "generation_id": generation_id,
+        "slot": slot,
+        "episode_log": "",
+        "export_available": False,
+        "command": "",
+    }
+    if log_path is None:
+        return payload
+    from zicato.proposer.episode_export import (  # noqa: PLC0415 - one spelling of both
+        EXPORT_FILENAME,
+        export_command,
+    )
+
+    payload["episode_log"] = str(log_path)
+    payload["command"] = " ".join(export_command(_configured_foe_binary(paths), log_path.parent))
+    try:
+        payload["export_available"] = (log_path.parent / EXPORT_FILENAME).is_file()
+    except OSError:
+        payload["export_available"] = False
+    return payload
+
+
+def read_proposal_episode_export(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    *,
+    slot: int | None = None,
+) -> str | None:
+    """Foe's static page for one proposal episode, or ``None`` when absent.
+
+    Resolves the episode the same way the transcript does, so the page and
+    the native reading of one candidate always come from one episode. The
+    page is read whole because it is self-contained: one HTML document with
+    its script, its styles and its fonts inlined.
+    """
+    log_path = find_proposal_episode_log(paths, epoch_id, generation_id, slot_index=slot)
+    if log_path is None:
+        return None
+    from zicato.proposer.episode_export import EXPORT_FILENAME  # noqa: PLC0415
+
+    try:
+        return (log_path.parent / EXPORT_FILENAME).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def empty_run_transcript(

@@ -112,6 +112,23 @@ class DetailPayload(ObjectPayload, total=False):
     annotations: list[dict[str, Any]]
 
 
+class ProposalEpisodeExportPayload(ObjectPayload, total=False):
+    """Whether one candidate has Foe's static episode page, and how to get it.
+
+    ``export_available`` is what the proposer panel branches on. The other
+    two fields are what it shows when there is no page: ``episode_log`` is
+    the log on disk, and ``command`` renders it by hand with the same
+    binary the episode ran. Both are empty for a candidate with no proposal
+    episode at all. ``slot`` names one best-of-N slate slot, and is null
+    when the caller named the generation alone.
+    """
+
+    slot: int | None
+    episode_log: str
+    export_available: bool
+    command: str
+
+
 # Every JSON GET has one declared boundary contract. Routes that share an
 # envelope share one type, so each wire spelling is declared here once rather
 # than in a per-route wrapper.
@@ -191,6 +208,9 @@ ENDPOINT_PAYLOADS.update(
             "/api/tournaments/{generation_id}",
         )
     }
+)
+ENDPOINT_PAYLOADS["/api/generation/{epoch_id}/{generation_id}/episode-export"] = (
+    ProposalEpisodeExportPayload
 )
 ENDPOINT_PAYLOADS["/api/epoch/{epoch_id}/execution-plan"] = ExecutionPlanPayload
 ENDPOINT_PAYLOADS["/api/live/execution-plan"] = LiveExecutionPlanPayload

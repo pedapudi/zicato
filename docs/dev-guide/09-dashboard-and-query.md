@@ -2231,6 +2231,25 @@ generation named without a board entry as a request for its proposal episode,
 which `events_index.find_proposal_episode_log` resolves under the epoch's
 `episodes/`.
 
+One proposal episode has a second reading, which Foe owns. Foe renders a
+finished episode log to one self-contained HTML page — every tool call in both
+its rendered and its canonical form, the budget the episode consumed, sandbox
+status, and the causality figure — and
+`proposer/episode_export.py::write_episode_export` runs the workspace's own
+`proposer.binary` as `foe view <the episode's directory>` when the episode
+settles, writing the page as `episode.html` beside the log. The render is best
+effort and bounded: a binary that cannot be run, a non-zero exit, empty output,
+a timeout, or an unwritable directory each leave the log alone and the round
+unaffected. Two routes carry it to the dossier. The first,
+`/api/generation/{epoch}/{gen}/episode-export`, answers
+`transcript_view.build_proposal_episode_export` — whether the candidate has a
+page and, when it does not, the log's path and the command that renders one.
+The second, `/api/generation/{epoch}/{gen}/episode-export.html`, serves the
+page itself, resolved from the same coordinates rather than from any path a
+caller supplies. The candidate view's proposal header links the first answer or
+captions the second, so an operator reaches Foe's depth from the summary zicato
+reads out of the same episode.
+
 The transcript reader also owns the conversation execution outline. Turns carry
 `activity_ids`; the top-level `execution` object carries the referenced nodes,
 explicit roots, unresolved identifiers, and a fidelity value. Agent edges come

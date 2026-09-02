@@ -731,6 +731,27 @@ holding the pipe is the first to notice a missed deadline; it cancels the
 episode, which lets Foe close its own obligations so the log stays
 readable, and reports the round as exhausted on `seconds`.
 
+### What a settled episode leaves behind
+
+Two files, in the episode's own directory under the epoch's `episodes/`.
+The first is `episode.jsonl`, Foe's append-only log, which is the whole
+record of what the proposer did and the source the dashboard reconstructs
+a proposal transcript from. The second is `episode.html`, Foe's own
+rendering of that log: one self-contained page carrying every tool call in
+both its rendered and its canonical form, the budget the episode consumed,
+sandbox status, and the causality figure. The round produces it by running
+the workspace's configured binary as `foe view <the episode's directory>`
+once the episode settles, cancelled episodes included, and writing what
+that command prints. There is no server, no port and no token: the page is
+a file, and the dashboard's proposal header links it by path.
+
+Rendering it is best effort and bounded. A binary that cannot be run, a
+non-zero exit, empty output, a render that outlives its bound, and a
+directory that cannot be written each leave the log alone and the round
+unaffected; the dashboard then names the log and the command instead of
+linking a page. A workspace whose binary is still the scaffold placeholder
+runs no episode at all, so it has neither file.
+
 ### The other door — an operator's own class
 
 `runtime.proposer_agent` still binds a class the operator supplies, and
