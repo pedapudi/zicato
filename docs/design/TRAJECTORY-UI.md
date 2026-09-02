@@ -239,10 +239,10 @@ then a tree walk for a plan-less mint dir), reads the persisted imported
 traces (`trace_import.read_imported_traces`), and reads the persisted
 suggestions (`suggestions.read_suggestions`).
 
-**Dashboard-free by construction (the import contract, load-bearing).** The
-query layer must not reach the dashboard driver, and `reflection.mining`
-transitively imports `dashboard.transcript` (via the adjudicator). So the
-readers do **not** re-run the miner. They derive the **episode overlays from the
+**No engine behind a read (load-bearing).** `reflection.mining` is the
+pipeline's engine and itself reads back through the query layer
+(`query.reflection_view` among others), so the readers do **not** re-run the
+miner. They derive the **episode overlays from the
 persisted suggestions** — each bootstrap suggestion's provenance already carries
 `source_episodes` (the episode ids), `source_refs = [source_file, signal_kind]`,
 and the `foreign_source` block (TRAJECTORY-BOOTSTRAP.md §5.3), so the trace →

@@ -18,9 +18,9 @@ import pytest
 from zicato.analyzer.aggregator import aggregate_decision_events
 from zicato.analyzer.process_exemplars import _load_events
 from zicato.core import DIALECT_ADK_EVENTS, DIALECT_GOLDFIVE, BoardEntry
-from zicato.dashboard.transcript import reconstruct_transcript
 from zicato.proposer.redacted_query import _read_events
 from zicato.query.run_log import _tail_events
+from zicato.query.transcript_reconstruction import reconstruct_transcript
 from zicato.reflection.trace_import import sniff_dialect
 from zicato.telemetry.dialects import reduce_adk_events
 from zicato.telemetry.event_log import read_event_log

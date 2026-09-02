@@ -12,8 +12,6 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
-import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -2827,7 +2825,7 @@ async def test_sse_coalesces_burst_into_one_state_change(workspace: Path) -> Non
 
 
 def _install_stub_transcript(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Install a minimal ``zicato.dashboard.transcript`` stub.
+    """Rebind the transcript reconstructor to a minimal stub.
 
     The stub matches the documented contract:
     ``reconstruct_transcript(events_path, *, partial_ok=True) ->
@@ -2852,16 +2850,13 @@ def _install_stub_transcript(monkeypatch: pytest.MonkeyPatch) -> None:
     def reconstruct_transcript(events_path, *, partial_ok=True):  # noqa: ANN001
         return _Transcript(events_path)
 
-    module = types.ModuleType("zicato.dashboard.transcript")
-    module.reconstruct_transcript = reconstruct_transcript
-    module.Transcript = _Transcript
-    monkeypatch.setitem(sys.modules, "zicato.dashboard.transcript", module)
-
-    # Rebind the guarded import inside the endpoints module.
+    # Rebind the name in every module that calls it: the run_id endpoint
+    # calls it directly, the two readers own their own binding.
     import zicato.dashboard.endpoints as ep
+    from zicato.query import conversations_view, transcript_view
 
-    monkeypatch.setattr(ep, "reconstruct_transcript", reconstruct_transcript)
-    monkeypatch.setattr(ep, "_HAVE_TRANSCRIPT", True)
+    for module in (ep, transcript_view, conversations_view):
+        monkeypatch.setattr(module, "reconstruct_transcript", reconstruct_transcript)
 
 
 def test_conversation_endpoint(
@@ -3292,15 +3287,16 @@ def test_matchup_conversations_carries_loss_json_result_block(
     assert body["champion"]["result"] is None
 
 
-def test_conversation_unavailable_without_transcript_module(
+def test_conversation_endpoint_serves_the_real_reconstruction(
     client: TestClient,
 ) -> None:
-    # The default `client` fixture has no transcript stub installed; if
-    # the real module is not importable the endpoint reports 503, and if
-    # it is importable it returns transcript-shaped JSON. Either way the
-    # server stays up and the route exists.
+    # No stub installed: the route runs the real reconstructor over the
+    # fixture's events file and answers with the transcript shape.
     r = client.get("/api/conversation/waffles_single")
-    assert r.status_code in (200, 503)
+    assert r.status_code == 200
+    body = r.json()
+    for key in ("turns", "annotations", "run_id", "event_count", "complete"):
+        assert key in body
 
 
 # ---------------------------------------------------------------------------

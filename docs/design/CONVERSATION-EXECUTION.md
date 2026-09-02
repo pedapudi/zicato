@@ -13,7 +13,7 @@ needs more detail than the comparison pane can carry.
 
 ## Server-owned structure
 
-`dashboard/transcript.py` reconstructs two related structures:
+`query/transcript_reconstruction.py` reconstructs two related structures:
 
 - each conversation turn carries `activity_ids`, the execution nodes displayed
   beneath that turn;

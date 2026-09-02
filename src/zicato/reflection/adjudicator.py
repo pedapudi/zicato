@@ -18,7 +18,7 @@ at the highest fidelity the capture ladder retained:
 * ``result`` — the full user-facing transcript from ``result.json`` when no
   judge-I/O sidecar exists.
 * ``preview`` — the truncated ``events.jsonl`` reconstruction
-  (:func:`zicato.dashboard.transcript.reconstruct_transcript`) as the last
+  (:func:`zicato.query.transcript_reconstruction.reconstruct_transcript`) as the last
   resort for a run that captured neither sidecar. It can rank suspects but
   never ground a verdict, and the tier rides through onto every finding so a
   preview adjudication never masquerades as a verbatim one.
@@ -278,7 +278,7 @@ def _preview_context(events_path: Path | None) -> tuple[Any, str] | None:
     """Build a ``preview`` context from the events reconstruction, or ``None``."""
     if events_path is None or not events_path.exists():
         return None
-    from zicato.dashboard.transcript import reconstruct_transcript  # noqa: PLC0415
+    from zicato.query.transcript_reconstruction import reconstruct_transcript  # noqa: PLC0415
 
     transcript = reconstruct_transcript(events_path)
     turns = [t.text for t in transcript.turns if getattr(t, "text", "")]

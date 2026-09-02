@@ -223,7 +223,7 @@ select = [
 "zicato.analyzer.process_exemplars._to_snake".msg = "deleted: use zicato.telemetry.event_log.to_snake"
 "zicato.proposer.redacted_query._to_snake".msg = "deleted: use zicato.telemetry.event_log.to_snake"
 "zicato.telemetry.reducer._camel_to_snake".msg = "deleted: use zicato.telemetry.event_log.to_snake"
-"zicato.dashboard.transcript._snake_deep".msg = "deleted: use zicato.telemetry.event_log.snake_deep"
+"zicato.query.transcript_reconstruction._snake_deep".msg = "deleted: use zicato.telemetry.event_log.snake_deep"
 "zicato.adapters.adk._entry_judge_only".msg = "promoted: use zicato.adapters.entry_judge_only"
 "zicato.adapters.adk._entry_disable_drift".msg = "promoted: use zicato.adapters.entry_disable_drift"
 "zicato.orchestrator._epoch_preflight_record".msg = "moved: use zicato.health.inputs.epoch_preflight_record"
@@ -286,10 +286,6 @@ module = [
     "zicato.index.*",
     "zicato.health",
     "zicato.health.*",
-    # The dashboard transcript reconstructor is imported best-effort
-    # behind a guarded try/except; its module may carry no py.typed
-    # marker, so references are treated as untyped rather than erroring.
-    "zicato.dashboard.transcript",
 ]
 ignore_missing_imports = true
 

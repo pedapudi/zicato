@@ -12,15 +12,15 @@ The index is a projection; **a reflection is readable with no index at all** —
 each reader falls back to the canonical files when the index row is absent
 (the filesystem is canonical and the index is derived; ``AGENTS.md``). This
 module must stay **dashboard-free**
-(the ``zicato.query`` import contract) and so it imports only the
-dashboard-free reflection submodules (:mod:`~zicato.reflection.plan`,
+(the ``zicato.query`` import contract), and it keeps no engine behind a read:
+it imports only the pure reflection submodules (:mod:`~zicato.reflection.plan`,
 :mod:`~zicato.reflection.corpus`, :mod:`~zicato.reflection.analysis`) plus the
 canonical file layout — never :mod:`zicato.reflection.adjudicator` /
-``scorecards`` / ``findings`` (which reach the builder / the events preview
-reconstructor), and never :mod:`zicato.dashboard`. The transcript x-ray
-therefore reconstructs from ``result.json`` (preferred) then the verbatim
-``judge_io`` window; the events-preview tier — the only source needing the
-dashboard reconstructor — is honestly reported as unavailable here.
+``scorecards`` (which run the meta-judge) or ``findings`` (which reaches the
+builder), and never :mod:`zicato.dashboard`. The transcript x-ray therefore
+reconstructs from ``result.json`` (preferred) then the verbatim ``judge_io``
+window; the events-preview tier belongs to the adjudicator and is never re-run
+behind a read, so it is honestly reported as unavailable.
 
 Readers
 -------
@@ -450,9 +450,9 @@ def build_adjudication_xray(
     """The transcript x-ray for one adjudicated decision — the centrepiece.
 
     Assembles the conversation the judge graded (``result.json`` preferred, the
-    verbatim ``judge_io`` window as the fallback — the events-preview tier needs
-    the dashboard reconstructor and so is reported ``unavailable`` here to keep
-    the query layer dashboard-free), the judge's ORIGINAL verdict from the
+    verbatim ``judge_io`` window as the fallback — the events-preview tier is
+    the adjudicator's own fallback, never re-run behind a read, and so is
+    reported ``unavailable`` here), the judge's ORIGINAL verdict from the
     corpus, and the independent meta-judge's adjudication record. An unknown
     reflection / decision degrades to a same-shape empty payload.
     """

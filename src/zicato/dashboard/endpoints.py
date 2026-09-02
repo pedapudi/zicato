@@ -21,9 +21,7 @@ protocol the orchestrator consumes) and return ``403`` when the server
 was created with ``read_only=True``.
 
 The conversation endpoints reconstruct goldfive event streams into
-transcripts via :mod:`zicato.dashboard.transcript`; its import is
-guarded so the server still starts (and every other endpoint still
-works) when that module is not present.
+transcripts via :mod:`zicato.query.transcript_reconstruction`.
 """
 
 from __future__ import annotations
@@ -43,21 +41,7 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from zicato import query
 from zicato.query import WorkspacePaths
-
-# Guard the transcript-reconstructor import so the whole server still
-# runs (and its tests still pass) even if that module is unavailable.
-_HAVE_TRANSCRIPT = False
-reconstruct_transcript: Any = None
-try:  # pragma: no cover - import availability varies across worktrees
-    from zicato.dashboard.transcript import (
-        reconstruct_transcript as _reconstruct_transcript,
-    )
-
-    reconstruct_transcript = _reconstruct_transcript
-    _HAVE_TRANSCRIPT = True
-except Exception:  # pragma: no cover
-    pass
-
+from zicato.query.transcript_reconstruction import reconstruct_transcript
 
 # ---------------------------------------------------------------------------
 # Coordinate guards
@@ -1142,11 +1126,6 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         run_id = request.path_params["run_id"]
         if not _is_safe_id(run_id):
             return JSONResponse({"error": "invalid run_id"}, status_code=400)
-        if not _HAVE_TRANSCRIPT:
-            return JSONResponse(
-                {"error": "transcript reconstruction unavailable"},
-                status_code=503,
-            )
         # Back-compat run_id route, but gen×entry-FIRST when the coordinates
         # are known. The deterministic triple is the primary key: when the
         # caller supplies ``?gen=&entry=`` (and optionally ``?epoch=``), we
@@ -1182,15 +1161,7 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         entry_id = request.path_params["entry_id"]
         if not _is_safe_id(entry_id):
             return JSONResponse({"error": "invalid entry_id"}, status_code=400)
-        if not _HAVE_TRANSCRIPT:
-            return JSONResponse(
-                {"error": "transcript reconstruction unavailable"},
-                status_code=503,
-            )
-        result = query.build_matchup_conversations(
-            paths, entry_id, reconstruct=reconstruct_transcript
-        )
-        return JSONResponse(result)
+        return JSONResponse(query.build_matchup_conversations(paths, entry_id))
 
     async def api_run_transcript(request: Request) -> Response:
         """Reconstruct the transcript for one ``(epoch, gen, entry)`` run.
@@ -1227,7 +1198,6 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 entry_id,
                 run_id=run_q,
                 match_id=match_q,
-                reconstruct=reconstruct_transcript if _HAVE_TRANSCRIPT else None,
             )
         )
 
@@ -1268,7 +1238,6 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
                 limit=_int_query(request, "limit"),
                 run_id=run_q,
                 match_id=match_q,
-                reconstruct=reconstruct_transcript if _HAVE_TRANSCRIPT else None,
             )
         )
 

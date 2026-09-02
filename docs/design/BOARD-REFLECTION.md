@@ -419,8 +419,8 @@ cannot supply it:
   reads it back and unlinks it in its cleanup `finally`
   (`tournament/runner.py`). Nothing about that path retains the user-facing
   conversation the judges graded.
-- **`events.jsonl` carries previews only.** The dashboard's transcript
-  reconstruction (`dashboard/transcript.py`) reads the `input_preview`,
+- **`events.jsonl` carries previews only.** The transcript reconstruction
+  (`query/transcript_reconstruction.py`) reads the `input_preview`,
   `output_preview`, and `summary` fields, which are truncated summaries rather
   than verbatim text. The same limit applies to a judge's decision: it reaches
   `events.jsonl` as a `JudgementEmitted` event with a one-line `detail`, which
@@ -701,8 +701,8 @@ surfaces.
 
 **What the engine reuses:**
 - `tournament/runner.py` and `_tournament_worker.py` execute the board.
-- `dashboard/transcript.py`, `RunResult`, `events.jsonl`, and `emulator/audit.py`
-  spans supply the observations.
+- `query/transcript_reconstruction.py`, `RunResult`, `events.jsonl`, and
+  `emulator/audit.py` spans supply the observations.
 - `judge_runtime/` and the two-callable anti-collusion guard adjudicate
   independently.
 - `synthetic/` supplies optional adversarial and clean entries as *additional*

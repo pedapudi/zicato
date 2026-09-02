@@ -20,17 +20,17 @@ unknown / cold reflection, an unknown trace / suggestion, or a malformed record
 degrades to a SAME-SHAPE payload (``found: False`` / empties, never a raise,
 never a fabricated number).
 
-**Dashboard-free by construction (the import contract).** ``zicato.query`` may
-not reach the dashboard driver, and ``reflection.mining`` transitively imports
-``dashboard.transcript`` (via the adjudicator). So the readers do NOT re-run the
-miner; they derive the episode overlays from the **persisted suggestions**
-(``reflection.suggestions`` — dashboard-free) whose provenance already carries
-``source_episodes`` (the episode ids), ``source_refs = [source_file,
-signal_kind]``, and the ``foreign_source`` block (TRAJECTORY-BOOTSTRAP.md §5.3).
-The trace figure itself (lane / signals / budget) reads the reduced
+**No engine behind a read.** ``reflection.mining`` is the pipeline's engine and
+itself reads back through this layer (``query.reflection_view`` among others),
+so the readers do NOT re-run the miner; they derive the episode overlays from
+the **persisted suggestions** (``reflection.suggestions``) whose provenance
+already carries ``source_episodes`` (the episode ids), ``source_refs =
+[source_file, signal_kind]``, and the ``foreign_source`` block
+(TRAJECTORY-BOOTSTRAP.md §5.3). The trace figure itself (lane / signals /
+budget) reads the reduced
 :class:`~zicato.telemetry.dialects.DialectSignals` off the persisted
-``ImportedTrace`` (``reflection.trace_import`` — dashboard-free). This reads the
-REAL pipeline output, adds no engine coupling, and keeps the query layer clean.
+``ImportedTrace`` (``reflection.trace_import``). This reads the REAL pipeline
+output and adds no engine coupling.
 
 The strip-model computation (:func:`build_strip_model`) and its pure helpers
 (:func:`lane_marks`, :func:`budget_fill`, :func:`signal_ticks`) do NO I/O and

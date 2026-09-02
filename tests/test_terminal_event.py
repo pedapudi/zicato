@@ -251,7 +251,7 @@ def test_worker_emits_run_aborted_when_cooperative_budget_cancels_mid_emit(
     )
 
     # The downstream reconstructor must now flip ``complete=True``.
-    from zicato.dashboard.transcript import reconstruct_transcript
+    from zicato.query.transcript_reconstruction import reconstruct_transcript
 
     transcript = reconstruct_transcript(events_path, partial_ok=True)
     assert transcript.complete is True, (

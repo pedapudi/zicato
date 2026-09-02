@@ -9,10 +9,9 @@ SIGKILLs the whole worker subprocess (the parent / supervisor escalation).
 
 Without a terminal frame on disk, downstream readers cannot tell a
 "truly mid-flight" run from a "wall-clock killed and torn down" run.
-The dashboard's transcript reconstruction in particular gates
-``complete`` on a member of
-:data:`zicato.dashboard.transcript._TERMINAL_KINDS` being present — see
-the file header for the exact downstream consequence.
+The transcript reconstruction in particular gates ``complete`` on a member
+of :data:`zicato.query.transcript_reconstruction._TERMINAL_KINDS` being
+present — see the file header for the exact downstream consequence.
 
 This module provides two co-operating pieces:
 
@@ -150,7 +149,7 @@ def _proto_run_aborted_line(run_id: str, sequence: int, reason: str) -> str:
 
     Falls back to a dict-shape envelope if the goldfive proto stubs are
     not importable (a no-goldfive test environment). Both shapes are
-    accepted by the dashboard's transcript reconstructor — the proto
+    accepted by the transcript reconstructor — the proto
     path is preferred because every other line in the file is proto-
     canonical and a stable byte shape matters for snapshot tests.
     """
@@ -210,8 +209,8 @@ def ensure_run_aborted_event(
 
     if not run_id:
         # We saw events on disk but none carried a run_id. Synthesise
-        # an empty run_id — the dashboard's reconstructor handles a
-        # blank run_id gracefully and `complete: True` still flips.
+        # an empty run_id — the reconstructor handles a blank run_id
+        # gracefully and `complete: True` still flips.
         run_id = ""
 
     line = _proto_run_aborted_line(run_id=run_id, sequence=int(sequence), reason=reason)
