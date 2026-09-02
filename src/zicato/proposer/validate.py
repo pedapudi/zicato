@@ -458,8 +458,7 @@ def _pre_image_problems(
                 f"drafted against has content_hash "
                 f"{drafted.content_hash[:16]}… but the parent snapshot now "
                 f"holds {live.content_hash[:16]}…. The point was rewritten "
-                f"under you; re-read it (list_mutation_points / "
-                f"read_mutable_file) and re-draft before patching it"
+                "under you; re-read the file and re-draft before patching it"
             )
     return problems
 

@@ -180,10 +180,10 @@ def test_append_journal_entry_keeps_the_whole_why(
 
     This used to assert ``"Second sentence" not in text`` — it pinned the
     write-time truncation as intended behaviour. It is not: ``journal.md``
-    is append-only and is the proposer's only channel to its own prior
-    reasoning, so a sentence dropped here is lost permanently. The budget
-    now lives on the readers (``proposer.tools._JOURNAL_LIMIT_CHARS`` and
-    the two analysis paths), where it is recoverable.
+    is append-only and is the durable narrative of what each round tried,
+    so a sentence dropped here is lost permanently. The budget
+    now lives on the readers (the two analysis paths), where it is
+    recoverable.
     """
     ws, eid = epoch_root
     exp = _experiment(

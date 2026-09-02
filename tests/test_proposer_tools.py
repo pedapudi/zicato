@@ -1,36 +1,23 @@
-"""Tests for the read-only proposer tool registry (``zicato.proposer.tools``).
+"""Tests for the proposer's snapshot reads (``zicato.proposer.tools``).
 
-Each tool is exercised against a fixture generation-root snapshot plus a
-mutation manifest whose ``source_root`` basenames re-base onto that
-snapshot. The tests assert the returned content, that the read / grep
-tools refuse path traversal and never write, that every tool raises
-cleanly with no bound context, and that the bind context-manager sets AND
-resets the module-level context var.
+``mutation_usage`` is the host tool an episode is served; ``grep_mutable``
+is the sandboxed search it is built from. Both are exercised against a
+fixture generation-root snapshot plus a mutation manifest: the returned
+content, that the search stays inside the snapshot and never writes, that
+each raises cleanly with no bound context, and that the bind
+context-manager sets AND resets the module-level context var.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from zicato.proposer import tool_context
 from zicato.proposer import tools as proposer_tools
-from zicato.proposer.tools import (
-    DEFAULT_PROPOSER_TOOLS,
-    ProposerToolContext,
-    bind_proposer_tool_context,
-    grep_mutable,
-    list_mutation_points,
-    mutation_track_record,
-    mutation_usage,
-    read_insights,
-    read_journal,
-    read_mutable_file,
-    read_parent_diff,
-    validate_patches,
-)
+from zicato.proposer.tool_context import ProposerToolContext, bind_proposer_tool_context
+from zicato.proposer.tools import grep_mutable, mutation_usage
 from zicato.testing import make_mutation_point
 
 
@@ -41,9 +28,6 @@ def _build_snapshot(tmp_path: Path) -> tuple[Path, tuple]:
 
         {tmp}/snapshot/harness/prompts.py
         {tmp}/snapshot/harness/router.py
-
-    The manifest's ``source_root`` basename is ``harness``, so
-    ``ProposerToolContext.mutable_roots`` resolves ``{snapshot}/harness``.
     """
     snapshot = tmp_path / "snapshot"
     harness = snapshot / "harness"
@@ -74,132 +58,16 @@ def _make_ctx(tmp_path: Path) -> ProposerToolContext:
     )
 
 
-def test_list_mutation_points_renders_manifest(tmp_path: Path) -> None:
-    ctx = _make_ctx(tmp_path)
-    with bind_proposer_tool_context(ctx):
-        payload = json.loads(list_mutation_points())
-    entries = payload["mutation_points"]
-    assert len(entries) == 1
-    entry = entries[0]
-    assert entry["id"] == "harness__system_prompt"
-    assert entry["content"] == "You are a helpful assistant."
-    # File is rendered relative to the snapshot root when possible.
-    assert entry["file"] == "harness/prompts.py"
-
-
-def test_read_mutable_file_returns_content(tmp_path: Path) -> None:
-    ctx = _make_ctx(tmp_path)
-    with bind_proposer_tool_context(ctx):
-        text = read_mutable_file("prompts.py")
-    assert "You are a helpful assistant." in text
-
-
-def _build_declared_subtree_snapshot(tmp_path: Path) -> tuple[Path, tuple]:
-    """A generation snapshot whose adapter declares a NARROWER mutable subtree.
-
-    Layout — the mutable tree lives under ``agent/`` inside the snapshot,
-    exactly as a real generation snapshot copies a registered ``agent`` tree
-    under its basename::
-
-        {tmp}/generations/v1/snapshot/agent/prompts.py   <- mutable, declared
-        {tmp}/generations/v1/snapshot/runner.py          <- NOT mutable, consumes it
-
-    The manifest's ``source_root`` is the DECLARED mutable subtree
-    (``{snapshot}/agent``) — what an adapter with a ``mutable_subpaths``
-    declaration enumerates from. This is the case the issue #20 regression
-    bit: the old derivation admitted ONLY that narrow subtree as a readable
-    root, while :func:`list_mutation_points` advertises the file
-    snapshot-relative (``agent/prompts.py``), so the advertised path no longer
-    resolved. The mismatch is unconditional (independent of round); the
-    ``agent`` basename is just this layout's folder name, not a special case.
-
-    ``runner.py`` sits INSIDE the snapshot but OUTSIDE the declared subtree:
-    the non-mutable consumer whose reachability is the reason the snapshot
-    root is a readable root at all. It is what distinguishes "walk the
-    outermost roots" from "walk the declared subtrees" — both visit each file
-    once, only the former still lets the proposer see who reads the value it
-    is about to rewrite.
-    """
-    snapshot = tmp_path / "generations" / "v1" / "snapshot"
-    agent = snapshot / "agent"
-    agent.mkdir(parents=True)
-    (agent / "prompts.py").write_text(
-        "SYSTEM_PROMPT = 'You are a helpful assistant.'\n", encoding="utf-8"
-    )
-    (snapshot / "runner.py").write_text(
-        "from agent.prompts import SYSTEM_PROMPT\n", encoding="utf-8"
-    )
-    mp = make_mutation_point(
-        id="agent__system_prompt",
-        file=agent / "prompts.py",
-        # The adapter declared ``agent`` as the mutable subtree, so the
-        # enumerated point's source_root IS that subtree under the snapshot.
-        source_root=agent,
-        content="You are a helpful assistant.",
-    )
-    return snapshot, (mp,)
-
-
-def test_mutable_roots_admits_both_snapshot_and_subtree_relative_paths(tmp_path: Path) -> None:
-    """A generation with a DECLARED mutable subtree keeps the snapshot root in
-    its mutable surface, so the snapshot-relative path the manifest advertises
-    (``agent/prompts.py``) resolves — alongside the bare subtree-relative
-    ``prompts.py`` — regardless of which form the proposer issues
-    (issue #20, acceptance #2)."""
-    snapshot, mutations = _build_declared_subtree_snapshot(tmp_path)
-    ctx = ProposerToolContext(
-        workspace_root=tmp_path / "ws",
-        generation_root=snapshot,
-        epoch_id="ep-001",
-        mutations=mutations,
-    )
-    roots = ctx.mutable_roots()
-    # The snapshot root itself is in the surface (so a snapshot-relative path
-    # resolves) AND the declared subtree (so a subtree-relative path resolves).
-    assert snapshot.resolve() in roots
-    assert (snapshot / "agent").resolve() in roots
-    with bind_proposer_tool_context(ctx):
-        # The exact call shape the default proposer issues — relative to the
-        # snapshot root, i.e. carrying the ``agent/`` subtree prefix.
-        text = read_mutable_file("agent/prompts.py")
-        assert "You are a helpful assistant." in text
-        # The subtree-relative form still resolves too.
-        assert "You are a helpful assistant." in read_mutable_file("prompts.py")
-
-
-def test_read_mutable_file_rejects_traversal(tmp_path: Path) -> None:
-    # Plant a secret OUTSIDE the mutable subtree the proposer may read.
-    secret = tmp_path / "snapshot" / "secret.txt"
-    ctx = _make_ctx(tmp_path)
-    secret.write_text("TOP SECRET", encoding="utf-8")
-    with bind_proposer_tool_context(ctx):
-        with pytest.raises(ValueError, match="does not resolve to a file"):
-            read_mutable_file("../secret.txt")
-
-
-def test_read_mutable_file_rejects_absolute(tmp_path: Path) -> None:
-    ctx = _make_ctx(tmp_path)
-    with bind_proposer_tool_context(ctx):
-        with pytest.raises(ValueError, match="must be relative"):
-            read_mutable_file("/etc/passwd")
-
-
-def test_read_mutable_file_never_writes(tmp_path: Path) -> None:
-    ctx = _make_ctx(tmp_path)
-    target = tmp_path / "snapshot" / "harness" / "prompts.py"
-    before = target.read_bytes()
-    mtime_before = target.stat().st_mtime_ns
-    with bind_proposer_tool_context(ctx):
-        read_mutable_file("prompts.py")
-    assert target.read_bytes() == before
-    assert target.stat().st_mtime_ns == mtime_before
+# ---------------------------------------------------------------------------
+# grep_mutable
+# ---------------------------------------------------------------------------
 
 
 def test_grep_mutable_finds_matches(tmp_path: Path) -> None:
     ctx = _make_ctx(tmp_path)
     with bind_proposer_tool_context(ctx):
         out = grep_mutable(r"TODO")
-    assert "router.py:" in out
+    assert "harness/router.py:" in out
     assert "TODO tighten" in out
 
 
@@ -219,110 +87,164 @@ def test_grep_mutable_invalid_regex_raises(tmp_path: Path) -> None:
 
 def test_grep_mutable_never_writes(tmp_path: Path) -> None:
     ctx = _make_ctx(tmp_path)
-    harness = tmp_path / "snapshot" / "harness"
-    snapshot_before = {p: p.read_bytes() for p in harness.rglob("*") if p.is_file()}
+    snapshot = tmp_path / "snapshot"
+    before = {p: p.read_bytes() for p in snapshot.rglob("*") if p.is_file()}
     with bind_proposer_tool_context(ctx):
         grep_mutable(r".")
-    for path, data in snapshot_before.items():
+    for path, data in before.items():
         assert path.read_bytes() == data
 
 
-def test_grep_mutable_visits_each_file_once_under_a_declared_subtree(
+def test_grep_mutable_annotates_its_match_cap(tmp_path: Path) -> None:
+    """Past the cap the result says so, rather than reading as complete."""
+    ctx = _make_ctx(tmp_path)
+    harness = tmp_path / "snapshot" / "harness"
+    (harness / "prompts.py").write_text("HIT = 1\nHIT = 2\nHIT = 3\nHIT = 4\n", encoding="utf-8")
+    with bind_proposer_tool_context(ctx):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(proposer_tools, "_GREP_MATCH_LIMIT", 2)
+            out = grep_mutable(r"HIT")
+
+    lines = [line for line in out.splitlines() if line.strip()]
+    assert len(lines) == 3  # two matches plus the truncation note
+    assert lines[-1].startswith("[... truncated:")
+
+
+def test_grep_mutable_reads_the_whole_snapshot_not_only_the_mutable_subtree(
     tmp_path: Path,
 ) -> None:
-    """A declared mutable subtree must not be walked twice.
+    """The searchable surface is the generation root, subtrees included.
 
-    ``mutable_roots`` returns the snapshot root AND each declared subtree so
-    both path shapes RESOLVE, but the subtree is a descendant of the snapshot
-    root: walking the list directly visited every file inside it once per
-    containing root, emitting the same line under two different relative
-    paths (``agent/prompts.py:1:`` and ``prompts.py:1:``) and burning the
-    match budget on duplicates. Each match must appear exactly once, under
-    the snapshot-relative path ``list_mutation_points`` advertises.
-
-    Deduping must keep the OUTERMOST root, not the innermost: the exact
-    result pins ``runner.py`` — inside the snapshot, outside the declared
-    subtree — so a "walk only the declared subtrees" dedupe, which also
-    visits each file once, still fails here for losing the non-mutable
-    consumer the proposer needs in order to ground a rewrite.
+    Where an adapter declares a narrower mutable subtree, the non-mutable
+    code that CONSUMES a mutable value still falls inside the searched tree.
+    Here ``runner.py`` sits in the snapshot but outside the declared
+    ``agent`` subtree, and it is the reference that tells the proposer who
+    reads the value it is about to rewrite. Every match appears once, under
+    its snapshot-relative path.
     """
-    snapshot, mutations = _build_declared_subtree_snapshot(tmp_path)
+    snapshot = tmp_path / "generations" / "v1" / "snapshot"
+    agent = snapshot / "agent"
+    agent.mkdir(parents=True)
+    (agent / "prompts.py").write_text(
+        "SYSTEM_PROMPT = 'You are a helpful assistant.'\n", encoding="utf-8"
+    )
+    (snapshot / "runner.py").write_text(
+        "from agent.prompts import SYSTEM_PROMPT\n", encoding="utf-8"
+    )
+    point = make_mutation_point(
+        id="agent__system_prompt",
+        file=agent / "prompts.py",
+        source_root=agent,
+        content="You are a helpful assistant.",
+    )
     ctx = ProposerToolContext(
         workspace_root=tmp_path / "ws",
         generation_root=snapshot,
         epoch_id="ep-001",
-        mutations=mutations,
+        mutations=(point,),
     )
-    # Precondition: this layout really does surface both roots.
-    assert snapshot.resolve() in ctx.mutable_roots()
-    assert (snapshot / "agent").resolve() in ctx.mutable_roots()
 
     with bind_proposer_tool_context(ctx):
         out = grep_mutable(r"SYSTEM_PROMPT")
 
-    lines = [line for line in out.splitlines() if line.strip()]
-    assert lines == [
+    assert [line for line in out.splitlines() if line.strip()] == [
         "agent/prompts.py:1: SYSTEM_PROMPT = 'You are a helpful assistant.'",
         "runner.py:1: from agent.prompts import SYSTEM_PROMPT",
     ]
 
 
-def test_grep_mutable_budget_is_not_spent_on_duplicates(tmp_path: Path) -> None:
-    """The match cap counts distinct lines, not per-root revisits.
+# ---------------------------------------------------------------------------
+# mutation_usage
+# ---------------------------------------------------------------------------
 
-    With the snapshot root and the declared subtree both walked, a file with
-    N matching lines produced 2N entries and truncated at half the real
-    reach. Under a cap above the file's true match count but below the
-    duplicated count, the result must now be complete and unannotated.
-    """
-    snapshot, mutations = _build_declared_subtree_snapshot(tmp_path)
-    agent = snapshot / "agent"
-    (agent / "prompts.py").write_text("HIT = 1\nHIT = 2\nHIT = 3\nHIT = 4\n", encoding="utf-8")
-    ctx = ProposerToolContext(
+
+def _usage_snapshot(tmp_path: Path) -> tuple[Path, tuple]:
+    """A snapshot where the point's symbol + value are referenced twice."""
+    snapshot = tmp_path / "snapshot"
+    harness = snapshot / "harness"
+    harness.mkdir(parents=True)
+    (harness / "prompts.py").write_text(
+        "MAX_STEPS = 7\nSYSTEM_PROMPT = 'Be terse.'\n", encoding="utf-8"
+    )
+    (harness / "loop.py").write_text(
+        "from prompts import MAX_STEPS\n\nfor _ in range(MAX_STEPS):\n    pass\n",
+        encoding="utf-8",
+    )
+    point = make_mutation_point(
+        id="harness__MAX_STEPS",
+        kind="span",
+        file=harness / "prompts.py",
+        source_root=Path("/orig/harness"),
+        content="7",
+        metadata={"min": "1", "max": "20"},
+    )
+    return snapshot, (point,)
+
+
+def _usage_ctx(tmp_path: Path, snapshot: Path, mutations: tuple) -> ProposerToolContext:
+    return ProposerToolContext(
         workspace_root=tmp_path / "ws",
         generation_root=snapshot,
-        epoch_id="ep-001",
+        epoch_id="e1",
         mutations=mutations,
+        generation_id="v1",
     )
-    with bind_proposer_tool_context(ctx):
-        with pytest.MonkeyPatch.context() as mp:
-            # 4 real matches, 8 with the duplicate walk: a cap of 5 is
-            # comfortably above the truth and below the duplicated count.
-            mp.setattr(proposer_tools, "_GREP_MATCH_LIMIT", 5)
-            out = grep_mutable(r"HIT")
-
-    assert "truncated" not in out
-    assert len([line for line in out.splitlines() if line.strip()]) == 4
 
 
-def test_read_journal_and_insights_empty_when_absent(tmp_path: Path) -> None:
-    ctx = _make_ctx(tmp_path)
-    with bind_proposer_tool_context(ctx):
-        assert read_journal() == ""
-        assert read_insights() == ""
+def test_mutation_usage_finds_symbol_and_value_references(tmp_path: Path) -> None:
+    snapshot, mutations = _usage_snapshot(tmp_path)
+    with bind_proposer_tool_context(_usage_ctx(tmp_path, snapshot, mutations)):
+        out = mutation_usage("harness__MAX_STEPS")
+    assert out.startswith("# usage of mutation point harness__MAX_STEPS")
+    # Symbol references across BOTH files, via the sandboxed grep.
+    assert "### references to 'MAX_STEPS'" in out
+    assert "loop.py" in out and "prompts.py" in out
+    # The short single-line value is searched too.
+    assert "### references to '7'" in out
 
 
-def test_read_journal_reads_existing(tmp_path: Path) -> None:
-    from zicato.core.workspace import journal_path
+def test_mutation_usage_skips_long_multiline_content(tmp_path: Path) -> None:
+    snapshot, _ = _usage_snapshot(tmp_path)
+    long_point = make_mutation_point(
+        id="harness__SYSTEM_PROMPT",
+        file=snapshot / "harness" / "prompts.py",
+        source_root=Path("/orig/harness"),
+        content="line one\nline two — far too long to be a greppable literal",
+    )
+    with bind_proposer_tool_context(_usage_ctx(tmp_path, snapshot, (long_point,))):
+        out = mutation_usage("harness__SYSTEM_PROMPT")
+    # Only the symbol section renders — multi-line content is not grepped.
+    assert "### references to 'SYSTEM_PROMPT'" in out
+    assert out.count("### references to") == 1
 
-    ctx = _make_ctx(tmp_path)
-    jp = journal_path(ctx.workspace_root, ctx.epoch_id)
-    jp.parent.mkdir(parents=True, exist_ok=True)
-    jp.write_text("## round 1\nwe tried tightening the prompt.\n", encoding="utf-8")
-    with bind_proposer_tool_context(ctx):
-        out = read_journal()
-    assert "tightening the prompt" in out
+
+def test_mutation_usage_stays_inside_the_sandbox(tmp_path: Path) -> None:
+    """The search never leaves the snapshot: a match planted OUTSIDE it is
+    invisible."""
+    snapshot, mutations = _usage_snapshot(tmp_path)
+    (tmp_path / "outside.py").write_text("MAX_STEPS = 999\n", encoding="utf-8")
+    with bind_proposer_tool_context(_usage_ctx(tmp_path, snapshot, mutations)):
+        out = mutation_usage("harness__MAX_STEPS")
+    assert "outside.py" not in out
+
+
+def test_mutation_usage_rejects_unknown_ids(tmp_path: Path) -> None:
+    snapshot, mutations = _usage_snapshot(tmp_path)
+    with bind_proposer_tool_context(_usage_ctx(tmp_path, snapshot, mutations)):
+        with pytest.raises(ValueError, match="unknown mutation id"):
+            mutation_usage("not_in_manifest")
+
+
+# ---------------------------------------------------------------------------
+# the bound context
+# ---------------------------------------------------------------------------
 
 
 def test_tools_raise_with_no_bound_context() -> None:
-    # Each tool resolves the context var and must raise cleanly when unbound.
-    for tool in (list_mutation_points, read_journal, read_insights):
-        with pytest.raises(RuntimeError, match="no bound ProposerToolContext"):
-            tool()
-    with pytest.raises(RuntimeError, match="no bound ProposerToolContext"):
-        read_mutable_file("prompts.py")
     with pytest.raises(RuntimeError, match="no bound ProposerToolContext"):
         grep_mutable(r".")
+    with pytest.raises(RuntimeError, match="no bound ProposerToolContext"):
+        mutation_usage("harness__MAX_STEPS")
 
 
 def test_bind_context_sets_and_resets(tmp_path: Path) -> None:
@@ -341,29 +263,3 @@ def test_bind_context_resets_on_exception(tmp_path: Path) -> None:
         with bind_proposer_tool_context(ctx):
             raise RuntimeError("boom")
     assert tool_context._TOOL_CONTEXT.get() is None
-
-
-def test_default_proposer_tools_are_the_sanctioned_set() -> None:
-    """The registry is the whole sanctioned surface, in order.
-
-    Every entry but the last is read-only over the parent snapshot.
-    ``validate_patches`` is the one tool that writes, and only into a
-    disposable scratch copy in the OS temp root — never the snapshot the
-    round is about to patch (``zicato.proposer.validate``). Adding a tool
-    here widens what the proposer can do, so the list is pinned rather than
-    counted.
-    """
-    from zicato.proposer.redacted_query import REDACTED_QUERY_TOOLS
-
-    assert DEFAULT_PROPOSER_TOOLS == (
-        list_mutation_points,
-        read_mutable_file,
-        grep_mutable,
-        read_journal,
-        read_insights,
-        mutation_track_record,
-        read_parent_diff,
-        mutation_usage,
-        validate_patches,
-        *REDACTED_QUERY_TOOLS,
-    )

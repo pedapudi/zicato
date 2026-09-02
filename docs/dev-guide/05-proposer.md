@@ -52,7 +52,8 @@
 | `src/zicato/proposer/structured.py` | `EXPERIMENT_JSON_SCHEMA`, `parse_experiment_json` (two-pass validation), `extract_json_object` (5-stage salvage), `ExperimentParseError`, `PostApplyValidationError` | 880 lines |
 | `src/zicato/proposer/best_of_n.py` | `BestOfNProposerAgent` (slate sampling, screen, revise, critique, heuristic, `_mount_chosen`), `CandidateScreenResult`, `ScreenRunner`, `wrap_with_proposer_quality` | 1743 lines |
 | `src/zicato/proposer/hints.py` | `EDIT_CLASS_HINTS`, `FAILURE_MODE_HINTS`, `hint_for_slot`, `dominant_failure_mode` — the per-slot slate diversifier | 256 lines |
-| `src/zicato/proposer/tools.py` | The read-only tool implementations, `ProposerToolContext`, `bind_proposer_tool_context` (the contextvar seam) | — |
+| `src/zicato/proposer/tools.py` | `mutation_usage` (a host tool) and `grep_mutable`, the sandboxed search behind it | — |
+| `src/zicato/proposer/tool_context.py` | `ProposerToolContext`, `bind_proposer_tool_context` — the contextvar seam both host tools read | — |
 | `src/zicato/proposer/brief.py` | `ProposerBrief` / `load_brief` / `enforce_forbidden` — the operator's `brief.md` parser | 217 lines |
 | `src/zicato/proposer/skills.py` | `resolve_proposer_spec`, `load_proposer_skills`, `normalize_skill_body`, `parse_frontmatter` | 169 lines |
 | `src/zicato/core/proposer.py` | `ProposerSpec` / `ProposerSkill` — the hash-ready proposer identity types | — |
@@ -254,7 +255,7 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `parent_generation_id` | `str` | orchestrator (current champion) | `Experiment.parent_generation_id`; `_resolve_generation_root` for the tools; meta-loop events | MACHINERY |
 | `new_generation_id` | `str` | orchestrator (`_next_generation_id`, or the resume plan's reused id) | `Experiment.generation_id`; `Experiment.id = f"exp_{epoch}_{gen}"` | MACHINERY |
 | `patterns` | `tuple[Pattern, ...]` | orchestrator: `detect_patterns` over the **TRAIN slice only** | `render_pattern_block` (prompt), `_targets_observed_failure` (best-of-N heuristic), exemplar anchors | SANITIZED under `restrict_visibility` (identity keys stripped → `entries_affected=N`); **train-only** |
-| `mutations` | `tuple[MutationPoint, ...]` | orchestrator: `enumerate_mutations` over the adapter's mutable trees | `render_mutation_block` (prompt), `parse_experiment_json` cross-checks, tools context (`list_mutation_points`, escape-guard roots) | IDENTITY-FREE (code spans, unrelated to the board split) |
+| `mutations` | `tuple[MutationPoint, ...]` | orchestrator: `enumerate_mutations` over the adapter's mutable trees | `render_mutation_block` (prompt), `parse_experiment_json` cross-checks, the tool context (`mutation_usage`'s id check, `validate_patches`' pre-image guard) | IDENTITY-FREE (code spans, unrelated to the board split) |
 | `brief_text` | `str` | orchestrator: `load_brief(brief.md).text` | `instruction_sections` → the episode's `70-brief` section (spliced verbatim) | IDENTITY-FREE (operator-authored) |
 | `current_loss_summary` | `str` | orchestrator: `_render_loss_summary(TRAIN losses)` — one line: `drift_loss_mean=… over N runs, pass_rate=…` | user prompt `## Current loss summary` | AGGREGATED (board-wide means only; train-only) |
 | `aux_call_llm` | `(system, user, model) -> Awaitable[str]` | orchestrator from `RuntimeConfig` | the best-of-N **critic** and the LLM recombination merge. NEVER the proposal episode | MACHINERY |
@@ -1845,9 +1846,10 @@ What an episode may do is a closed list, asserted by name
 host tools `mutation_usage` and `validate_patches` are answered by zicato
 over the host protocol.
 
-`src/zicato/proposer/tools.py` ships the read-only implementations behind
-`mutation_usage`, plus the tool bodies the validator and the CLI reuse.
-They are plain module-level functions reading a bound per-round context.
+`src/zicato/proposer/tools.py` ships `mutation_usage` and `grep_mutable`,
+the sandboxed search it is built from; `src/zicato/proposer/validate.py`
+ships `validate_patches`. All three are plain module-level functions reading
+a bound per-round context.
 
 ### 5.9.1 The contextvar binding
 
@@ -1855,11 +1857,9 @@ A tool function cannot carry per-round context as a bound argument: the
 implementations are module-level and reused across every challenger. The
 tools therefore read a module-level
 `contextvars.ContextVar[ProposerToolContext | None]`. That plumbing lives in
-`zicato/proposer/tool_context.py` and is re-exported from
-`zicato/proposer/tools.py`, so `from zicato.proposer.tools import
-ProposerToolContext, bind_proposer_tool_context` stays the import site; the
-split exists so `validate.py` can reach the context without
-importing the tool bodies (see the callout at the end of §5.9.2). The
+`zicato/proposer/tool_context.py`, which is the import site: the split exists
+so `validate.py` can reach the context without importing a sibling's whole
+closure (see the callout at the end of §5.9.2). The
 contextvar is what the episode's host tools set around each call via
 `bind_proposer_tool_context(tool_ctx)` — set on entry, **reset to the prior
 value on exit even on exception**. A `ContextVar` rather than a plain global
@@ -1869,65 +1869,49 @@ raises a clear `RuntimeError` ("proposer tools may only be called from within
 a bound proposer tool context") rather than returning a misleading empty
 result.
 
-`ProposerToolContext` fields: `workspace_root` (journal/insights/index
-lookups), `generation_root` (the PARENT snapshot the read/grep tools resolve
-under — resolved via the generation store's pure path math in
-`_resolve_generation_root`), `epoch_id`, `mutations` (the round's manifest
-tuple), `generation_id` (lets `read_parent_diff` resolve store coordinates;
-empty degrades that tool to an explicit "coordinates unavailable" answer).
+`ProposerToolContext` carries four things:
+
+- `workspace_root` — where `validate_patches` resolves the declared static
+  checks and the load probe.
+- `generation_root` — the PARENT snapshot `grep_mutable` walks and
+  `validate_patches` re-enumerates a draft against. It is resolved via the
+  generation store's pure path math in `_resolve_generation_root`.
+- `mutations` — the round's manifest tuple.
+- `epoch_id` and `generation_id` — the round's coordinates. No tool resolves
+  anything from either one.
 
 ### 5.9.2 The tools
 
 | Tool | Reads | Sandbox / caps | Failure behaviour |
 |---|---|---|---|
-| `list_mutation_points()` | the bound manifest, rendered as JSON (id, kind, file rel-to-snapshot, lines, content, metadata) | n/a — only ids listed here are valid patch targets | — |
-| `read_mutable_file(relative_path)` | one file under the mutable roots | `_resolve_under_mutable_roots`: absolute paths rejected; `..` traversal rejected per-root (`is_relative_to` after `resolve()`); content capped at 200 000 chars with a truncation note | `ValueError` on escape / not-a-file |
-| `grep_mutable(pattern)` | regex over every file under the mutable surface, `path:line: text` — walks `_walk_roots` (the OUTERMOST mutable roots), not `mutable_roots()` directly | match cap `_GREP_MATCH_LIMIT = 200` (annotated); unreadable/binary files skipped; `"(no matches)"` explicit empty signal | `ValueError` on an invalid regex |
-| `read_journal()` | the epoch's narrative journal | — | `""` when absent |
-| `read_insights()` | `load_latest_insights` — the SAME helper the text shim embeds, so both paths see identical content | — | `""` when absent |
-| `mutation_track_record(mutation_id)` | the fertility map for ONE manifest point, as JSON (counts, promoted, `recent` flag, the banded summary line) | AGGREGATES ONLY — same banding as the manifest annotation; the honesty `basis` field is mandatory | `ValueError` on an id not in the current manifest ("actionable retry signal"); a zeroed record — not an error — for an untouched point |
-| `read_parent_diff()` | what the LAST promotion changed: `git diff` between the parent generation's tag and ITS parent's under the git backend (tree objects only — nothing checked out); the journal's patch records under the directory backend | output cap 20 000 chars; per-patch value cap 2 000 chars on the fallback | explicit notices for: no coordinates, a seed generation, a byte-identical promotion |
-| `mutation_usage(mutation_id)` | where the point's symbol (the trailing `__`-segment of its id) and short single-line literal value are referenced across the snapshot | delegates to `grep_mutable` with `re.escape`, so the escape guard + match cap apply unchanged | `ValueError` on an unknown id |
-| `validate_patches(patches_json)` | nothing — it WRITES a draft patch set into a throwaway `ztw-pvalidate-*` scratch copy of the parent snapshot and reports what broke, as `{"ok", "errors", "tiers"}` | three tiers, stopping at the first failure: structure (incl. the `content_hash` pre-image guard) + apply + A1–A4; the contract-declared static-check delta; the sandboxed `adapter.load` probe. Per-check timeouts (120s / 60s), output capped at 4 000 chars, scratch tree removed in a `finally` | `ValueError` on an argument that is not a usable patch array; a check that could not run is a NOTE (never `ok: false`) |
-| `train_slice_drift_profile()` | banded per-entry incidence of each drift kind (and its severity mix) across the champion's TRAIN slice | slice re-derived, never passed in; two independent slice gates; default-deny read allowlist admitting NO free-text field; rates banded; label count capped at 40 | fails closed to `status: "train slice unavailable"` with no data — never the whole board |
-| `train_slice_agent_profile()` | per agent role: banded incidence of invocation, of attributed drift, and of being steered | as above; agent names are open-vocabulary, so each passes through `scrub_identity` then `truncate_free_text` | as above |
-| `train_slice_process_profile()` | banded incidence of the process-failure payload cases (`task_failed` / `task_blocked` / `task_cancelled` / `plan_revised`) | as above; case names are goldfive's closed payload-oneof vocabulary and carry no content of their own | as above |
+| `mutation_usage(mutation_id)` | where the point's symbol (the trailing `__`-segment of its id) and short single-line literal value are referenced across the snapshot | delegates to `grep_mutable` with `re.escape`, so the containment guard + match cap apply unchanged | `ValueError` on an id outside the round's manifest |
+| `validate_patches(patches_json)` | nothing — it WRITES the working copy's projected patch set into a throwaway `ztw-pvalidate-*` scratch copy of the parent snapshot and reports what broke, as `{"ok", "errors", "tiers"}` | three tiers, stopping at the first failure: structure (incl. the `content_hash` pre-image guard) + apply + A1–A4; the contract-declared static-check delta; the sandboxed `adapter.load` probe. Per-check timeouts (120s / 60s), output capped at 4 000 chars, scratch tree removed in a `finally` | `ValueError` on an argument that is not a usable patch array; a check that could not run is a NOTE (never `ok: false`) |
 
-The registry is the in-process surface, reached by a proposer running in
-zicato's own interpreter. It is not what a Foe episode calls: an episode's
-tool list is declared in its execution contract and its two host tools are
-built per episode (`zicato/proposer/foe_agent.py`), which is what lets the
-same functions serve a sandboxed subprocess. Both routes dispatch inside the
-same `bind_proposer_tool_context` block, so the escape guard has one
-implementation and the sanctioned-surface question is decided in `tools.py`
-and nowhere else. One binding per challenger: the context var is
-process-wide, so a shared binding would cross-bind concurrent rounds.
+`grep_mutable(pattern)` is not itself served to an episode — Foe's own `grep`
+is. It is the search `mutation_usage` is built from: a regex over every file
+under the generation root, returning each hit as `path:line: text`. It skips
+unreadable and binary files, caps the result at `_GREP_MATCH_LIMIT = 200`
+matches and annotates the text when that cap is reached, and answers a
+pattern that matches nowhere with the explicit `"(no matches)"` rather than a
+blank string. An invalid regex raises `ValueError`.
 
-**The `mutable_roots` path-shape lesson** (read this before touching path
-resolution): `list_mutation_points` advertises files **relative to the whole
-snapshot** (`agent/prompts.py`). A root derivation that admitted only the
-narrower declared subtree (`<snapshot>/agent`) when an adapter declares one
-would resolve that manifest-advertised path to
-`<snapshot>/agent/agent/prompts.py` and raise, leaving only the bare
-`prompts.py` working — an unconditional mismatch, hit whenever the model uses
-the manifest's own path form. `ProposerToolContext.mutable_roots()` therefore
-ALWAYS anchors the snapshot root FIRST, then each `source_root`-basename
-subtree: both path shapes resolve, and the escape guard still rejects any `..`
-out of whichever root matched, so widening the accepted roots never widens the
-readable surface beyond the snapshot.
+Both host tools are built per episode in `zicato/proposer/foe_agent.py`
+(`build_episode_tools`), which binds them to that round's context and answers
+the episode's calls over the host protocol. So the containment guard has one
+implementation, and the tool list is the only place the sanctioned surface is
+decided. One binding per challenger: the context var is process-wide, so a
+shared binding would cross-bind concurrent rounds.
 
-**Its corollary — never *walk* `mutable_roots()`.** That list is built for
-path *resolution*, and it overlaps by design: the declared subtrees are
-descendants of the snapshot root. A recursive walk that iterates it directly
-visits every file inside a declared subtree once per containing root, emitting
-the same line under a different relative path each time and spending the match
-budget several times over on revisits. `grep_mutable` therefore walks
-`_walk_roots(ctx)` — the roots not contained in another root, resolved first so
-the containment test is over real paths. Keep the filter on the OUTERMOST
-roots rather than the innermost: both dedupe, but only the outermost keeps the whole
-snapshot readable, and reaching the non-mutable code that *consumes* a mutable
-value is the entire reason the snapshot root is a readable root. Any new
-recursive tool goes through `_walk_roots` too.
+**The searchable surface is the WHOLE snapshot** (read this before narrowing
+it). `grep_mutable` walks `ctx.generation_root` rather than the declared
+mutable subtrees inside it, so a mutable value's non-mutable CONSUMERS are
+found too. Consider `runner.py` importing `agent/prompts.py`'s
+`SYSTEM_PROMPT`: that line is what tells the proposer who reads the value it
+is about to rewrite, and it sits outside the declared `agent` subtree.
+Narrowing the walk to the declared subtrees loses it, and reaching such
+consumers is the whole reason grounding works. What the proposer may CHANGE
+stays narrow independently: patches are addressed by mutation id, and the
+applier writes only what an id covers.
 
 > ⛔ NEVER add a tool that writes to the GENERATION SNAPSHOT. "A proposer tool
 > that mutated the snapshot would corrupt the very tree the round is about to
@@ -1946,7 +1930,7 @@ recursive tool goes through `_walk_roots` too.
 > `zicato/proposer/_load_probe.py` and is reached by SPAWNING a subprocess (so
 > the adapters stay on the forbidden list), and the contextvar plumbing lives
 > in `zicato/proposer/tool_context.py` (so reaching `_active_context` does not
-> drag the analyzer, and through it the board loader, into the closure).
+> pull a sibling module's whole closure into the property being proved).
 
 **The pre-image guard is the only reader of `MutationPoint.content_hash`.**
 The enumerator writes the field, the CLI and the dashboard render it, and the
@@ -2067,8 +2051,8 @@ banding).
 
 ### 5.11.1 Recipe: add a proposer tool
 
-Goal: give tool-using proposers (built-in default + custom agents) a new
-read-only grounding capability.
+Goal: give a proposal episode a new read-only grounding capability, served
+as a host tool.
 
 1. **Write the tool as a plain module-level function** in
    `src/zicato/proposer/tools.py`. Signature: JSON-friendly positional args,
@@ -2077,26 +2061,26 @@ read-only grounding capability.
    docstring is model-facing (the tool's description is built from it, and
    Foe HASHES that description): state what it returns, what raises, and the
    caps — and know that rewording it rolls the epoch.
-2. **Sandbox every read.** Anything that touches the snapshot goes through
-   `_resolve_under_mutable_roots` or delegates to `grep_mutable` (the
-   `mutation_usage` precedent — `re.escape` + the existing escape guard and
-   match cap for free). Anything that touches the workspace uses the
-   canonical path helpers (`zicato.core.workspace`), never string-joined
-   paths.
+2. **Sandbox every read.** Anything that touches the snapshot delegates to
+   `grep_mutable` (the `mutation_usage` precedent — `re.escape` plus the
+   existing containment guard and match cap for free) or resolves under
+   `ctx.generation_root` and rejects anything that lands outside it.
+   Anything that touches the workspace uses the canonical path helpers
+   (`zicato.core.workspace`), never string-joined paths.
 3. **Cap the output.** Add a module constant (`_<NAME>_LIMIT_CHARS`) and
-   annotate truncation in the returned text (the `_truncate_note` pattern) —
-   a runaway tool floods the agent's context window.
+   annotate truncation in the returned text (`grep_mutable`'s match cap is
+   the pattern) — a runaway tool floods the agent's context window.
 4. **Respect the envelope for the OUTPUT.** If the tool reads anything
    board-adjacent, its output must be banded/aggregated/identity-free
-   (§5.8.7; `mutation_track_record` is the worked precedent — it reuses
-   `render_mutation_track_annotation` so tool and prompt speak one shape and
-   carries the "not causal" honesty label). A tool must never expose holdout
-   material, per-entry outcomes, or task text.
+   (§5.8.7): band it through the vocabulary the prompt renderers already use
+   so tool and evidence speak one shape, and label an aggregate that is not
+   causal as not causal. A tool must never expose holdout material, per-entry
+   outcomes, or task text.
 5. **Make bad input an actionable error.** Unknown ids raise `ValueError`
-   naming the discovery tool (`"only ids in the current manifest (see
-   list_mutation_points) are valid"`) — the agent retries with a corrected
-   call. Missing-but-legitimate state returns an explicit sentinel string
-   (`""`, `"(no matches)"`, a zeroed record), never an exception.
+   saying what a valid one would be (`"only ids in the round's manifest are
+   valid"`) — the agent retries with a corrected call. Missing-but-legitimate
+   state returns an explicit sentinel string (`""`, `"(no matches)"`), never
+   an exception.
 6. **Register it**: add the name to `SANCTIONED_TOOLS` and, for a host tool,
    build it in `build_episode_tools` with its description in a module-level
    constant beside `MUTATION_USAGE_DESCRIPTION`. Both are model-visible and
@@ -2106,25 +2090,24 @@ read-only grounding capability.
 7. **Lazy-import anything heavy** inside the function body (`# noqa: PLC0415`
    — the module must stay importable without optional extras; every existing
    tool models this).
-8. **Tests** in `tests/test_proposer_tools.py` (or
-   `tests/test_proposer_grounding_tools.py` for read-the-world tools):
-   out-of-context `RuntimeError`; the happy path under
-   `bind_proposer_tool_context`; the sandbox (absolute path + `..` traversal
-   rejected); the cap (annotated truncation); the unknown-id error text; and
-   — if board-adjacent — an adversarial identity fixture (§5.8.7 item 7).
+8. **Tests** in `tests/test_proposer_tools.py`: out-of-context
+   `RuntimeError`; the happy path under `bind_proposer_tool_context`; the
+   sandbox (a match planted outside the snapshot stays invisible); the cap
+   (annotated truncation); the unknown-id error text; and — if
+   board-adjacent — an adversarial identity fixture (§5.8.7 item 7).
 9. **Verify**:
    ```bash
    uv sync --all-extras
-   uv run pytest tests/test_proposer_tools.py tests/test_proposer_grounding_tools.py \
+   uv run pytest tests/test_proposer_tools.py \
        tests/test_proposer_foe_agent.py tests/test_proposer_contract_identity.py -x -q
    uv run ruff check src/zicato/proposer/tools.py && uv run mypy src/zicato/proposer/tools.py
    # prove the contract hash did NOT move for an unchanged workspace:
    uv run pytest tests/test_epoch_contract.py -q
    ```
    If you skipped step 5's `ValueError` wording, the agent gets a generic
-   tool-error and burns retries guessing; if you skipped step 7, `import
-   zicato.proposer.agent` starts requiring `google-adk` everywhere and the
-   text-shim path breaks in minimal environments.
+   tool-error and burns retries guessing; if you skipped step 7, importing
+   the tool module starts requiring an optional extra everywhere it is
+   imported, and minimal environments break at import time.
 
 ### 5.11.2 Recipe: add a prompt-context channel WITHOUT violating the envelope
 
@@ -2244,7 +2227,7 @@ touches. (Full definitions: `src/zicato/core/patterns.py`,
 | `file`, `line_start`, `line_end` | location in the snapshot |
 | `content` | the CURRENT full span/file content — rendered in full (§5.5) |
 | `metadata` | constraint map: `min`/`max` (numeric range), `enum` (comma-separated domain), placeholders |
-| `source_root` | the registered mutable tree the point came from; its basename re-bases into the snapshot (the `mutable_roots` lesson, §5.9.2) |
+| `source_root` | the registered mutable tree the point came from; its basename re-bases into the snapshot |
 
 **`Experiment`** — the proposer's output (also the journal's record):
 `id` (`exp_{epoch}_{gen}`), `epoch_id`, `generation_id`,
@@ -2327,7 +2310,7 @@ Where to add (and what will catch) a regression, by concern:
 | skills / frontmatter / spec resolution | `tests/test_proposer_skills.py` |
 | what the builder resolves, and what it refuses | `tests/test_proposer_agent.py` |
 | the standalone propose command, and what it must not touch | `tests/test_cli_propose.py` |
-| tools: sandbox, caps, contextvar, error texts | `tests/test_proposer_tools.py`, `tests/test_proposer_grounding_tools.py` |
+| tools: sandbox, caps, contextvar, error texts | `tests/test_proposer_tools.py` |
 | best-of-N: slate, critique, heuristic, screen wiring, revise | `tests/test_proposer_best_of_n.py` |
 | the tree/record agreement invariant, end to end with subprocess workers | `tests/test_best_of_n_tree_integrity.py` (+ the scripted slates in `tests/_best_of_n_slate_support.py`) |
 | slot hints + dominant-mode parsing | `tests/test_proposer_hints.py` |

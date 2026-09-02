@@ -40,11 +40,11 @@ The invariants, mirroring :mod:`zicato.analyzer.outcome_marginals`:
   token is scrubbed out of every KEPT free-text value — a drift detail
   that quotes the task prompt loses the quote mechanically).
 
-R3 and R4 are pure string transforms with a SECOND consumer (the
-proposer's redacted query surface, :mod:`zicato.proposer.redacted_query`),
-so they live in :mod:`zicato.analyzer.redaction` — one implementation, one
-set of constants, byte-identical redaction on both paths. This module
-keeps R1 and R2, which are bound to the exemplar window's own structure.
+R3 and R4 are pure string transforms, so they live in
+:mod:`zicato.analyzer.redaction` rather than here — one implementation and
+one set of constants, so a second consumer redacts byte-identically instead
+of approximately. This module keeps R1 and R2, which are bound to the
+exemplar window's own structure.
 
 Like the decision-telemetry aggregator, this module is JSONL-only and
 proto-stub-free: it reads the files goldfive's persistence sink wrote

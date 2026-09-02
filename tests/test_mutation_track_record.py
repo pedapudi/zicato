@@ -1,6 +1,6 @@
 """Tests for the mutation-point fertility map (track record) surfaces.
 
-Three layers, matching how the feature ships:
+Two layers, matching how the feature ships:
 
 * the index query (:func:`zicato.index.query.mutation_point_track_record`)
   against a hand-seeded SQLite index — per-point touch/promotion counts,
@@ -10,15 +10,11 @@ Three layers, matching how the feature ships:
   (:func:`zicato.proposer.prompts.render_mutation_track_annotation` +
   ``render_mutation_block(track_records=...)``) — banding (bucketed deltas,
   no raw floats), the honest "experiments touching this point / credit
-  confounded" attribution labels, and byte-identity when no records exist;
-* the read-only proposer tool (``mutation_track_record``) — registration in
-  ``DEFAULT_PROPOSER_TOOLS``, output shape, manifest-scoped id validation,
-  and the zeroed no-history answer.
+  confounded" attribution labels, and byte-identity when no records exist.
 """
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
 
@@ -30,12 +26,6 @@ from zicato.index.schema import apply_schema
 from zicato.proposer.prompts import (
     render_mutation_block,
     render_mutation_track_annotation,
-)
-from zicato.proposer.tools import (
-    DEFAULT_PROPOSER_TOOLS,
-    ProposerToolContext,
-    bind_proposer_tool_context,
-    mutation_track_record,
 )
 from zicato.testing import make_mutation_point
 
@@ -240,65 +230,3 @@ def test_user_prompt_threads_track_records_and_stays_byte_identical_without() ->
     assert render_proposal_evidence(**kwargs, mutation_track_records={}) == plain
     annotated = render_proposal_evidence(**kwargs, mutation_track_records={"router__sp": _record()})
     assert "track record: touched:3" in annotated
-
-
-# ---------------------------------------------------------------------------
-# The read-only proposer tool
-# ---------------------------------------------------------------------------
-
-
-def _tool_ctx(tmp_path: Path) -> ProposerToolContext:
-    workspace = tmp_path / "ws"
-    workspace.mkdir(exist_ok=True)
-    _seed_index(workspace / "index.db")
-    snapshot = tmp_path / "snapshot"
-    snapshot.mkdir(exist_ok=True)
-    return ProposerToolContext(
-        workspace_root=workspace,
-        generation_root=snapshot,
-        epoch_id=_EPOCH,
-        mutations=(
-            make_mutation_point(id="router__sp"),
-            make_mutation_point(id="style__untouched"),
-        ),
-    )
-
-
-def test_tool_is_registered() -> None:
-    assert mutation_track_record in DEFAULT_PROPOSER_TOOLS
-
-
-def test_tool_output_shape_is_banded_aggregates(tmp_path: Path) -> None:
-    with bind_proposer_tool_context(_tool_ctx(tmp_path)):
-        payload = json.loads(mutation_track_record("router__sp"))
-    assert payload["mutation_id"] == "router__sp"
-    assert payload["experiments_touching"] == 3
-    assert payload["promoted"] == 2
-    assert payload["confounded_experiments"] == 1
-    assert payload["recent"] is True
-    assert "experiments touching this point" in payload["basis"]
-    assert "not causal" in payload["basis"]
-    # The summary is the SAME banded annotation the manifest carries — no
-    # raw experiment-level delta leaks through the tool either.
-    assert "Δscalar[best:improved median:improved worst:regressed]" in payload["summary"]
-    assert "-0.5" not in payload["summary"]
-
-
-def test_tool_zeroed_record_for_untouched_point(tmp_path: Path) -> None:
-    with bind_proposer_tool_context(_tool_ctx(tmp_path)):
-        payload = json.loads(mutation_track_record("style__untouched"))
-    assert payload["experiments_touching"] == 0
-    assert payload["promoted"] == 0
-    assert payload["recent"] is False
-    assert "no settled experiment" in payload["summary"]
-
-
-def test_tool_rejects_ids_outside_the_manifest(tmp_path: Path) -> None:
-    with bind_proposer_tool_context(_tool_ctx(tmp_path)):
-        with pytest.raises(ValueError, match="unknown mutation id"):
-            mutation_track_record("not_in_manifest")
-
-
-def test_tool_requires_bound_context() -> None:
-    with pytest.raises(RuntimeError, match="no bound ProposerToolContext"):
-        mutation_track_record("router__sp")

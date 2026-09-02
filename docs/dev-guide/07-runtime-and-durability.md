@@ -648,11 +648,10 @@ directory backend by walking the snapshot — and both render through
 not shell out to `git diff` for this: git's output carries blob hashes, file
 modes, and rename detection no other backend can reproduce.
 
-That matters because the text reaches the proposer's prompt through
-`read_parent_diff` (`src/zicato/proposer/tools.py`), and the epoch contract
-hash does not fold the source backend. A backend-dependent rendering would
-make the proposer's input, and so its behaviour, depend on how the workspace
-happens to store its source.
+That matters because a backend-dependent rendering would make a reader's
+answer depend on how the workspace happens to store its source, and the epoch
+contract hash does not fold the source backend — so the difference would
+never show up as a rolled epoch.
 
 The format: files in path order, each opened by `diff --git a/<path> b/<path>`,
 then a unified diff with three lines of context. An added file reads from
