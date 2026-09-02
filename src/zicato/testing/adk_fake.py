@@ -3,7 +3,7 @@
 :class:`FakeADKModel` is a :class:`~google.adk.models.BaseLlm` that yields
 canned :class:`~google.adk.models.LlmResponse`s from a pre-loaded script —
 no network, no real model. It exists to drive
-:class:`~zicato.proposer.adk_agent.ADKProposerAgent` (and any other
+an ADK-backed system under test (and any other
 ADK-agent test) through a deterministic conversation: a tool-call turn
 followed by a final JSON turn, multiple tool turns, or a single final
 turn, exactly as the test scripts it.

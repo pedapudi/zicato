@@ -286,7 +286,7 @@ async def _propose_and_apply_challenger(
     caller uses to re-publish the live envelope as each slot resolves.
 
     ``prior_experiments`` is the caller-assembled experiment-memory digest
-    threaded into the inner :func:`propose_experiment` call — the settled
+    threaded into the proposal episode's evidence — the settled
     cross-round history plus this round's already-minted in-flight
     siblings — so each challenger diversifies away from both known
     failures and its just-proposed cohort. Empty by default.

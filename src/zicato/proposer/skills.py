@@ -26,7 +26,6 @@ cosmetic whitespace edits do not roll the epoch.
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -124,17 +123,17 @@ def resolve_proposer_spec(
 
     * skills come from ``<proposer_path>/skills/*.md``;
     * ``agent_id`` is ``"dir:<proposer_path.name>"``;
-    * ``agent_source_sha256`` is the SHA-256 of ``<proposer_path>/agent.py``
-      when that file exists, else ``None``;
     * ``tools`` is empty — tool declaration is a later phase.
 
-    ``external`` (a resolved ``runtime.proposer_agent``, absent for every
-    workspace that configures none) takes precedence over both: the spec
-    becomes the ``external:<label>`` identity from
+    ``external`` — the workspace's resolved proposer binding — takes
+    precedence: the spec becomes the ``external:<label>`` identity from
     :func:`zicato.proposer.external.resolve_external_spec`, still carrying
-    the proposer dir's skills when one is also configured — the external
-    agent is steered by the *hashed* skills, never by its own runtime's
-    parallel skill system.
+    the proposer dir's skills when one is also configured. The agent is
+    steered by the *hashed* skills, never by its own runtime's parallel
+    skill system. ``None`` says the workspace declared no proposal
+    runtime; the spec still canonicalizes, so the epoch hashes, but
+    :func:`~zicato.proposer.agent.build_proposer_agent` refuses to build
+    an agent from it.
     """
     skills = load_proposer_skills(proposer_path / "skills") if proposer_path is not None else ()
 
@@ -146,19 +145,7 @@ def resolve_proposer_spec(
     if proposer_path is None:
         return ProposerSpec.default()
 
-    agent_py = proposer_path / "agent.py"
-    agent_source_sha256: str | None
-    if agent_py.is_file():
-        agent_source_sha256 = hashlib.sha256(agent_py.read_bytes()).hexdigest()
-    else:
-        agent_source_sha256 = None
-
-    return ProposerSpec(
-        agent_id=f"dir:{proposer_path.name}",
-        tools=(),
-        skills=skills,
-        agent_source_sha256=agent_source_sha256,
-    )
+    return ProposerSpec(agent_id=f"dir:{proposer_path.name}", tools=(), skills=skills)
 
 
 __all__ = [

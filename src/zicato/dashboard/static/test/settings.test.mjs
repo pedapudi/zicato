@@ -40,7 +40,7 @@ const EPOCH = {
   // /api/epoch computes the train/holdout split SERVER-SIDE; the contract
   // preview reads its counts (so it never re-derives the sha256 hash split).
   board_split: { configured: true, enabled: true, holdout_fraction: 0.25, train_count: 2, holdout_count: 0, total: 2 },
-  proposer: { has_custom_agent: false },
+  proposer: { },
 };
 
 // the models section reads /settings/models — the secret-safe per-role view:

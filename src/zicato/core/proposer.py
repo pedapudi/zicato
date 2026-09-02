@@ -199,29 +199,24 @@ class ProposerSpec:
         hashed.
     skills:
         The loaded :class:`ProposerSkill` modules, sorted by name.
-    agent_source_sha256:
-        Hex SHA-256 of the proposer dir's ``agent.py`` when present, else
-        ``None``. Folded into the contract hash so editing the custom
-        agent's source rolls the epoch.
     external_path:
-        The ``runtime.proposer_agent`` dotted path when an external agent
-        backs the proposer, else ``None``. This is the field
-        :func:`~zicato.proposer.agent.build_proposer_agent` resolves on
-        first, ahead of both ADK tiers.
+        The dotted path of the class implementing the proposer — the
+        Foe-backed agent for every workspace that declares a ``proposer``
+        block, or an operator's own class when one is bound through
+        ``runtime.proposer_agent``. ``None`` says the workspace declared
+        no proposal runtime, and a round refuses to open on it.
     external_identity_sha256:
-        Hex SHA-256 of that agent's canonicalized causal surface — its
-        runtime version, the bytes of the files we author for it, its
-        tool set, its launch envelope (see
-        :func:`zicato.proposer.external.identity_sha256`). Folded into the
-        contract hash so upgrading the external runtime, or editing what
-        we hand it, rolls the epoch. ``None`` for every non-external
-        proposer, which is what keeps their canonical form unchanged.
+        Hex SHA-256 of that agent's canonicalized causal surface. For the
+        Foe agent that surface is the runtime's own contract fingerprint
+        — the instructions, every tool's name, description and schema, the
+        grant shape, the budget, the completion rule, and the build that
+        answered — so rewording a tool description inside the runtime
+        rolls the epoch. Folded into the contract hash for that reason.
     """
 
     agent_id: str
     tools: tuple[str, ...]
     skills: tuple[ProposerSkill, ...]
-    agent_source_sha256: str | None
     external_path: str | None = None
     external_identity_sha256: str | None = None
 
@@ -233,9 +228,4 @@ class ProposerSpec:
         is configured. It canonicalizes to a stable form so a workspace
         that never configures a proposer keeps a stable contract hash.
         """
-        return cls(
-            agent_id="builtin:default",
-            tools=(),
-            skills=(),
-            agent_source_sha256=None,
-        )
+        return cls(agent_id="builtin:default", tools=(), skills=())

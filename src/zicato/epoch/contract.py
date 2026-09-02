@@ -652,8 +652,6 @@ def _canon_proposer(
       body>}]``, sorted by name. Skill bodies are normalized exactly like
       the proposer brief, so a whitespace-only skill edit does not move the
       hash; a semantic edit (or adding / removing / renaming a skill) does;
-    * ``agent_source_sha256`` — SHA-256 of a custom ``agent.py`` (or
-      ``null``), so editing the custom agent rolls the epoch;
     * ``validate_static_checks`` — the sorted tier-2 static-check names
       from ``static_checks``, present ONLY when non-empty. Declaring or
       changing the set the proposer must satisfy before it will emit a
@@ -688,7 +686,6 @@ def _canon_proposer(
         "agent_id": spec.agent_id,
         "tools": sorted(spec.tools),
         "skills": skills,
-        "agent_source_sha256": spec.agent_source_sha256,
     }
     if spec.external_path is not None:
         canon["external"] = {

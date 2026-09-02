@@ -42,7 +42,7 @@ function freshDraft() {
     board_meta: { disable_drift: [], judge_only: false },
     brief: 'be crisper',
     proposer_path: null,
-    proposer: { agent_id: 'default', tools: [], skills: [], has_custom_agent: false },
+    proposer: { agent_id: 'default', tools: [], skills: [] },
     holdout: { train_ids: ['waffles'], holdout_ids: ['picky'] },
   };
 }

@@ -152,7 +152,7 @@ async function renderContract() {
     hBudget: scoring.holdout_entry_regression_budget || 0,
     mono: !!scoring.pass_rate_monotonicity,
     holdFrac: overfitting.holdout_fraction, ofEnabled: overfitting.enabled,
-    proposer: proposer ? (proposer.has_custom_agent ? 'agent' : 'skills') : null,
+    proposer: proposer ? (proposer.agent_id || '') : null,
     // the server envelope folds in so an unavailable→available transition (or a
     // moved cost) repaints; null cost ⇒ the honest "unavailable" line.
     cost: cost ? [cost.board_runs_per_round, (cost.breakdown || []).length] : null,
@@ -184,8 +184,7 @@ async function renderContract() {
       contractRow('Overfitting guard',
         overfitting.enabled === false ? 'disabled'
           : (holdFrac != null ? `holdout ${holdFrac}` : 'on'), 'builder'),
-      contractRow('Proposer',
-        proposer ? (proposer.has_custom_agent ? 'custom ADK agent' : 'skill-composed default') : '—', 'builder'),
+      contractRow('Proposer', (proposer && proposer.agent_id) || '—', 'builder'),
     ];
     // The read-only preview model: the SAME shape the builder's preview reads,
     // but with no diff (nothing to apply) and the cost / warnings taken from the

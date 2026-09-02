@@ -111,7 +111,7 @@ The self-critique pass sees ONLY the SAME restricted prompt context the
 proposer itself sees — the train-slice patterns (aggregated when
 ``restrict_visibility``), the banded experiment memory, the bucketed
 failure-mode profile — assembled by the same
-:func:`~zicato.proposer.prompts.render_user_prompt` renderer under the same
+:func:`~zicato.proposer.foe_request.render_evidence` renderer under the same
 ``restrict_visibility`` flag. It NEVER sees the holdout and never sees a
 per-entry identity the proposer is not already allowed to see. The critic is
 inside the same overfitting-visibility envelope as the proposer
@@ -127,10 +127,10 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, cast
+from typing import Any
 
 from zicato.core.types import CallLLM, Experiment, ProposerQualityConfig
-from zicato.proposer.agent import NativeSlateProposer, ProposerAgent, ProposerContext
+from zicato.proposer.agent import ProposerAgent, ProposerContext
 
 # EDIT_CLASS_HINTS moved to :mod:`zicato.proposer.hints` (its canonical home,
 # alongside the failure-mode-conditioned FAILURE_MODE_HINTS and the pure
@@ -141,22 +141,10 @@ from zicato.proposer.input_capture import (
     ROLE_RECOMBINE_MERGE,
     capture_proposer_input,
 )
-from zicato.proposer.prompts import render_user_prompt
 from zicato.proposer.proposer import ProposerError
 from zicato.scoring.diff_complexity import diff_char_size as _diff_size
 
 log = logging.getLogger("zicato.proposer.best_of_n")
-
-
-@dataclass(frozen=True)
-class NativeSlateAdapter:
-    """Route best-of-N through a proposer's session-aware capability."""
-
-    inner: NativeSlateProposer
-    config: ProposerQualityConfig
-
-    async def propose(self, ctx: ProposerContext) -> Experiment:
-        return await self.inner.propose_slate(ctx, self.config)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1576,10 +1564,10 @@ class BestOfNProposerAgent:
         """One cheap self-critique LLM call; returns ``(index, rationale)``.
 
         Builds the critic's user prompt from the SAME restricted context the
-        proposer saw — rendered through :func:`render_user_prompt` under the
-        same ``restrict_visibility`` flag, so the patterns are aggregated and
-        the experiment memory banded exactly as for the proposer — plus the
-        compact candidate slate. The critic NEVER receives the holdout or any
+        proposer saw — the same evidence, rendered by the same function
+        under the same ``restrict_visibility`` flag, so the patterns are
+        aggregated and the experiment memory banded exactly as for the
+        proposer — plus the compact candidate slate. The critic NEVER receives the holdout or any
         identity the proposer did not already see. Best-effort: a raising /
         timing-out / unparseable critic returns ``(None, "")`` and the caller
         falls back to the heuristic.
@@ -1590,26 +1578,15 @@ class BestOfNProposerAgent:
         entry identity can reach it. It is the ``pi`` transport's
         ``select_candidate`` rationale by another route.
         """
-        restricted_context = render_user_prompt(
-            current_loss_summary=ctx.current_loss_summary,
-            patterns=ctx.patterns,
-            mutations=ctx.mutations,
-            prior_experiments=ctx.prior_experiments,
-            restrict_visibility=ctx.restrict_visibility,
-            custom_judge_names=ctx.custom_judge_names or frozenset(),
-            metric_priorities=ctx.metric_priorities,
-            failure_profile=ctx.failure_profile,
-            # The critic stays inside the SAME visibility envelope as the
-            # proposer: the redacted exemplar block (when the contract opted
-            # in) is part of that envelope — never anything beyond it.
-            process_exemplars=ctx.process_exemplars,
-            # Likewise the genealogy block (opt-in): banded + capped candidate
-            # lineage, part of the same restricted envelope.
-            genealogy=ctx.genealogy,
-            # Likewise the calibration block (opt-in): the proposer's OWN
-            # banded prediction track record, part of the same envelope.
-            calibration=ctx.calibration,
-        )
+        # The critic stays inside the SAME visibility envelope as the
+        # proposer, and does so by construction: this is the very evidence
+        # the proposal episode was given, projected off the same context
+        # and rendered by the same function. Nothing can be added here
+        # that the proposer had not already seen.
+        from zicato.proposer.foe_agent import evidence_from_context  # noqa: PLC0415
+        from zicato.proposer.foe_request import render_evidence  # noqa: PLC0415
+
+        restricted_context = render_evidence(evidence_from_context(ctx))
         slate = _render_candidate_slate(candidates)
         # Calibration-aware advisory note (never a gate): when the lineage's
         # recent hypothesis predictions have mostly borne out, tell the
@@ -1705,19 +1682,6 @@ def wrap_with_proposer_quality(
     """
     if config.best_of_n <= 1:
         return inner
-    native = getattr(inner, "propose_slate", None)
-    if callable(native):
-        overrides = {
-            "proposer_generate": breadth_call_llm or breadth_model,
-            "proposer_review": depth_call_llm or depth_model,
-        }
-        configured = ", ".join(name for name, value in overrides.items() if value is not None)
-        if configured:
-            raise ValueError(
-                f"{type(inner).__name__} owns its best-of-N session; "
-                f"remove unsupported role override(s): {configured}"
-            )
-        return NativeSlateAdapter(cast(NativeSlateProposer, inner), config)
     return BestOfNProposerAgent(
         inner=inner,
         config=config,
@@ -1734,7 +1698,6 @@ __all__ = [
     "EDIT_CLASS_HINTS",
     "RATIONALE_CAP",
     "BestOfNProposerAgent",
-    "NativeSlateAdapter",
     "CandidateScreenResult",
     "ScreenRunner",
     "normalize_selection_rationale",

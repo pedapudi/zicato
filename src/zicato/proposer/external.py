@@ -231,7 +231,6 @@ def resolve_external_spec(
         agent_id=external_agent_id(cls, config),
         tools=tuple(str(t) for t in identity.get("tools") or ()),
         skills=skills,
-        agent_source_sha256=None,
         external_path=config.dotted_path,
         external_identity_sha256=identity_sha256(identity),
     )
