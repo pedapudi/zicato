@@ -31,7 +31,13 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from zicato.query._sqlite import _IndexAbsent, _query, _rget, open_index_ro
+from zicato.query._sqlite import (
+    _IndexAbsent,
+    _query,
+    _rget,
+    open_index_ro,
+    with_index_not_built_note,
+)
 from zicato.query.decisions import canonical_decision, promoted_tristate
 from zicato.query.paths import WorkspacePaths, _resolve_epoch_id
 
@@ -101,7 +107,7 @@ def build_experiments_ledger(paths: WorkspacePaths, epoch_id: str | None = None)
                 "experiments": _ledger_rows(conn, epoch_id),
             }
     except (_IndexAbsent, sqlite3.Error):
-        return {**_empty_ledger(epoch_id), "note": "index not built; run zicato repair index"}
+        return with_index_not_built_note(_empty_ledger(epoch_id))
 
 
 def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]]:

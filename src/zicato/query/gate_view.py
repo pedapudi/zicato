@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from zicato.query._sqlite import (
+    INDEX_NOT_BUILT_NOTE,
     _IndexAbsent,
     _query,
     open_index_ro,
+    with_index_not_built_note,
 )
 from zicato.query.judge_view import build_per_judge_comparison
 from zicato.query.lineage_view import build_lineage_view
@@ -179,7 +181,7 @@ def build_score_trajectory(
                 }
                 for g in ordered
             ],
-            "note": "index not built; run zicato repair index",
+            "note": INDEX_NOT_BUILT_NOTE,
         }
     except sqlite3.Error:
         return {"epoch_id": epoch_id, "points": []}
@@ -326,7 +328,7 @@ def build_drift_movements(paths: WorkspacePaths, generation_id: str) -> dict[str
                 "movements": movements,
             }
     except _IndexAbsent:
-        return {**empty, "note": "index not built; run zicato repair index"}
+        return with_index_not_built_note(empty)
     except sqlite3.Error:
         return empty
 

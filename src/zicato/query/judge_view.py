@@ -17,6 +17,7 @@ from zicato.query._sqlite import (
     _row_keys,
     open_index_ro,
     open_index_ro_or_none,
+    with_index_not_built_note,
 )
 from zicato.query.board_scan import iter_board_rows
 from zicato.query.epoch_view import (
@@ -57,6 +58,46 @@ from zicato.query.tournament_view import (
     build_bracket,
 )
 from zicato.workspace.config_io import read_workspace_config
+
+#: "This reader's rows carry no run count at all", a different answer from a
+#: run count the source held but could not read as an integer (that is ``None``).
+_NO_RUN_COUNT: Any = object()
+
+
+def _judge_row(
+    judge_name: Any,
+    *,
+    weighted_loss: Any,
+    raw_loss: Any,
+    weight: Any,
+    run_count: Any = _NO_RUN_COUNT,
+) -> dict[str, Any]:
+    """THE one per-judge row shape the readers in this module serve.
+
+    Three sources carry the same four fields under different names: the
+    per-generation index query sums its losses into ``total_weighted_loss``
+    and ``total_raw_loss``, the per-run query drops the ``total_`` prefix,
+    and a run's ``loss.json`` carries a mapping the reducer wrote. Each
+    caller reads its own source and passes the values here, so the field
+    names, their order, and the float coercion have one definition.
+
+    ``judge_name`` passes through as its source spelled it: an index column
+    and a JSON value can hold different things, so normalising here would
+    change what a reader answers.
+
+    ``run_count`` appears only when a caller passes one — the per-generation
+    reader is the only source that aggregates across runs — and its field
+    sits between ``raw_loss`` and ``weight``.
+    """
+    row: dict[str, Any] = {
+        "judge_name": judge_name,
+        "weighted_loss": coerce_float(weighted_loss),
+        "raw_loss": coerce_float(raw_loss),
+    }
+    if run_count is not _NO_RUN_COUNT:
+        row["run_count"] = int(run_count) if isinstance(run_count, int) else None
+    row["weight"] = coerce_float(weight)
+    return row
 
 
 def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
@@ -147,7 +188,7 @@ def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
         # carries the actionable degrade note. The generations spine still
         # renders (field-by-field degrade) — a built-but-empty index gets no
         # note, only an un-built one.
-        out["note"] = "index not built; run zicato repair index"
+        return with_index_not_built_note(out)
     return out
 
 
@@ -163,30 +204,22 @@ def build_per_judge_for_generation(
     """
     from zicato.index.query import judge_losses_for_generation  # noqa: PLC0415
 
+    header = {"epoch_id": epoch_id, "generation_id": generation_id}
     try:
         rows = judge_losses_for_generation(paths.index_db, epoch_id, generation_id)
     except Exception:  # noqa: BLE001
-        return {
-            "epoch_id": epoch_id,
-            "generation_id": generation_id,
-            "judges": [],
-            "note": "index not built; run zicato repair index",
-        }
+        return with_index_not_built_note({**header, "judges": []})
     judges = [
-        {
-            "judge_name": r["judge_name"],
-            "weighted_loss": (coerce_float(r["total_weighted_loss"])),
-            "raw_loss": (coerce_float(r["total_raw_loss"])),
-            "run_count": int(r["run_count"]) if isinstance(r["run_count"], int) else None,
-            "weight": coerce_float(r["weight"]),
-        }
+        _judge_row(
+            r["judge_name"],
+            weighted_loss=r["total_weighted_loss"],
+            raw_loss=r["total_raw_loss"],
+            weight=r["weight"],
+            run_count=r["run_count"],
+        )
         for r in rows
     ]
-    return {
-        "epoch_id": epoch_id,
-        "generation_id": generation_id,
-        "judges": judges,
-    }
+    return {**header, "judges": judges}
 
 
 def build_per_entry_for_generation(
@@ -397,39 +430,30 @@ def build_per_judge_comparison(
     largest absolute delta; ``None`` when no judge fired on either side.
 
     A never-indexed workspace yields empty ``judges`` with a ``note``.
-    """
-    from zicato.index.query import judge_losses_for_generation  # noqa: PLC0415
 
-    try:
-        champ_rows = judge_losses_for_generation(paths.index_db, epoch_id, champion_id)
-        chal_rows = judge_losses_for_generation(paths.index_db, epoch_id, challenger_id)
-    except Exception:  # noqa: BLE001
-        return {
-            "epoch_id": epoch_id,
-            "champion": champion_id,
-            "challenger": challenger_id,
-            "judges": [],
-            "primary_driver": None,
-            "note": "index not built; run zicato repair index",
-        }
+    Both sides are read through :func:`build_per_judge_for_generation`, so a
+    judge's weighted loss here is the number that reader serves for the same
+    generation.
+    """
+    header = {"epoch_id": epoch_id, "champion": champion_id, "challenger": challenger_id}
 
     by_judge: dict[str, dict[str, float | None]] = {}
-    for r in champ_rows:
-        name = r["judge_name"]
-        if not isinstance(name, str):
-            continue
-        v = r["total_weighted_loss"]
-        by_judge.setdefault(name, {"champion": None, "challenger": None})["champion"] = (
-            coerce_float(v)
-        )
-    for r in chal_rows:
-        name = r["judge_name"]
-        if not isinstance(name, str):
-            continue
-        v = r["total_weighted_loss"]
-        by_judge.setdefault(name, {"champion": None, "challenger": None})["challenger"] = (
-            coerce_float(v)
-        )
+    for side, generation_id in (("champion", champion_id), ("challenger", challenger_id)):
+        per_judge = build_per_judge_for_generation(paths, epoch_id, generation_id)
+        if "note" in per_judge:
+            # A side the index could not answer for reaches here as the same
+            # empty row list as a side where no judge fired, and the delta
+            # arithmetic below signs an absent side as the other side's whole
+            # loss. So the payload degrades whole rather than publishing one
+            # generation's losses as deltas against a side never read.
+            return with_index_not_built_note({**header, "judges": [], "primary_driver": None})
+        for row in per_judge["judges"]:
+            name = row["judge_name"]
+            if not isinstance(name, str):
+                continue
+            by_judge.setdefault(name, {"champion": None, "challenger": None})[side] = row[
+                "weighted_loss"
+            ]
 
     judges: list[dict[str, Any]] = []
     primary_driver: str | None = None
@@ -457,13 +481,7 @@ def build_per_judge_comparison(
             primary_abs = abs(delta)
             primary_driver = name
 
-    return {
-        "epoch_id": epoch_id,
-        "champion": champion_id,
-        "challenger": challenger_id,
-        "judges": judges,
-        "primary_driver": primary_driver,
-    }
+    return {**header, "judges": judges, "primary_driver": primary_driver}
 
 
 def _entry_loss_path(
@@ -558,12 +576,12 @@ def build_per_judge_for_entry(
     if not isinstance(raw_judges, list):
         return build_per_judge_for_run(paths, resolved_run_id)
     judges = [
-        {
-            "judge_name": str(row.get("judge_name", "")),
-            "weighted_loss": coerce_float(row.get("weighted_loss")),
-            "raw_loss": coerce_float(row.get("raw_loss")),
-            "weight": coerce_float(row.get("weight")),
-        }
+        _judge_row(
+            str(row.get("judge_name", "")),
+            weighted_loss=row.get("weighted_loss"),
+            raw_loss=row.get("raw_loss"),
+            weight=row.get("weight"),
+        )
         for row in raw_judges
         if isinstance(row, dict) and row.get("judge_name")
     ]
@@ -581,14 +599,14 @@ def build_per_judge_for_run(paths: WorkspacePaths, run_id: str) -> dict[str, Any
     try:
         rows = judge_losses_for_run(paths.index_db, run_id)
     except Exception:  # noqa: BLE001
-        return {"run_id": run_id, "judges": [], "note": "index not built; run zicato repair index"}
+        return with_index_not_built_note({"run_id": run_id, "judges": []})
     judges = [
-        {
-            "judge_name": r["judge_name"],
-            "weighted_loss": (coerce_float(r["weighted_loss"])),
-            "raw_loss": (coerce_float(r["raw_loss"])),
-            "weight": coerce_float(r["weight"]),
-        }
+        _judge_row(
+            r["judge_name"],
+            weighted_loss=r["weighted_loss"],
+            raw_loss=r["raw_loss"],
+            weight=r["weight"],
+        )
         for r in rows
     ]
     return {"run_id": run_id, "judges": judges}
