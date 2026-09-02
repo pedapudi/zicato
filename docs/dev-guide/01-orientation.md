@@ -102,7 +102,7 @@ driving one stage in isolation; `zicato --help` is the authority on the
 current set. `evolve` orchestrates the whole
 loop: it is a thin CLI shell over `evolve_n_rounds`
 (`src/zicato/evolve/loop.py`) which calls `evolve_once`
-(`src/zicato/evolve/gauntlet.py`, re-exported as
+(`src/zicato/evolve/round_entry.py`, re-exported as
 `zicato.orchestrator.evolve_once`) up to N times. Chapter 02 walks one round
 end to end.
 
@@ -721,7 +721,7 @@ walkthrough.
 **`evolve/`** — the evolve-loop internals, one module per phase:
 `loop.py` (`evolve_n_rounds` plus the loop's stop policies — consecutive
 rejection, degenerate loop health, wall-clock budget),
-`gauntlet.py` (`evolve_once`, one round), `epoching.py` (contract-hash
+`round_entry.py` (`evolve_once`, one round), `epoching.py` (contract-hash
 auto-epoching), `round.py` (the shared propose-time seams
 `build_post_apply_validator` / `check_patch_manifest_and_forbidden`),
 `lifecycle_services.py` (heartbeat/harmonograf/meta-loop plumbing),
@@ -1471,7 +1471,7 @@ bisect before writing code.
 
 Read, in order:
 
-1. `src/zicato/evolve/gauntlet.py` — `evolve_once`'s docstring and its
+1. `src/zicato/evolve/round_entry.py` — `evolve_once`'s docstring and its
    eight numbered steps.
 2. `src/zicato/epoch/contract.py` — the module docstring (the contract
    components and the canonicalization promise).
@@ -1538,7 +1538,7 @@ the code that exists because the mistake happened.
 > module therefore takes effect at call time. `zicato.orchestrator` is an
 > import surface for callers rather than a seam registry, so a
 > `monkeypatch.setattr` aimed at it does not intercept the loop's calls.
-> Patch `zicato.evolve.gauntlet.evolve_once` and its siblings instead.
+> Patch `zicato.evolve.round_entry.evolve_once` and its siblings instead.
 
 > ⚠️ **TRAP — champion cache semantics differ by mode.** The champion is
 > immutable within an epoch, so its per-board units are cache-read by

@@ -5,13 +5,14 @@
 > behind each finding. For the system as it stands, read the design documents
 > it cites and the development guide under `docs/dev-guide/`.
 >
-> Two of its recommendations have since been adopted, so the sections that
-> call them unbuilt are stale: sampling diversity within a best-of-N slate
-> ships as the per-slot edit-class hint
-> (`EDIT_CLASS_HINTS` in `src/zicato/proposer/hints.py`, applied in
+> Several of its recommendations have since been adopted, and the passages
+> that made them record the outcome in place. Sampling diversity within a
+> best-of-N slate ships as the per-slot edit-class hint (`EDIT_CLASS_HINTS`
+> in `src/zicato/proposer/hints.py`, applied in
 > `src/zicato/proposer/best_of_n.py`), and the noise-aware defaults raised
 > `replicates` to 2 for every structure except racing
-> (`src/zicato/selection/strategies/`).
+> (`src/zicato/selection/strategies/`). For the proposer as it stands, read
+> `docs/design/PROPOSER.md`.
 
 _Analysis date: 2026-07-01. Every code snippet below is copied verbatim from
 the file named in its caption._
@@ -20,7 +21,7 @@ the file named in its caption._
 
 zicato is a self-improving **meta-harness** for any system whose behaviour can be measured; multi-agent systems are its founding and primary use case rather than a limit on what it accepts. It wraps a system you already built, runs it against a frozen board of tasks, reduces each run's structured runtime telemetry (a `goldfive.v1.Event` stream) into a typed per-run loss profile, aggregates those into recurring failure **patterns**, asks an LLM **proposer** to emit typed **patches** against an annotated mutation surface, and then runs a **tournament** that promotes the candidate generation only when it wins by a configured margin without regressing. The architecture is a Python orchestration loop (`src/zicato/`, ~85k LOC across 235 files) whose safety is enforced out-of-band by an independent Rust supervisor (`crates/supervisor/`, ~14.5k LOC) that never shares memory with the loop and only reads atomic state files. The codebase is large less because it does many things than because it is written to be *legible and self-auditing*: an AST/token census puts only ~47% of `src/zicato/` lines at executable code, with ~40% docstrings and comments (31% + 9%) carrying the design rationale inline, and nearly every capability ships as a byte-identical-by-default opt-in wrapped in defense-in-depth checks. That prose is mostly merited, and the [code-quality audit](#code-quality-how-much-of-the-verbosity-is-load-bearing) found the *reducible* debt to be structural rather than textual: three god-functions (~3,000 lines between them), duplicated evolve/dashboard logic, and a handful of dead symbols.
 
-The deterministic guarantees are concentrated in the supervisor and the Python single-writer state contract: warn-only heartbeats (the watchdog can never kill the orchestrator), pid-reuse-proof signalling, an untrusted-and-clamped run deadline, a tamper-evident hash-chained audit ledger, diff-containment re-hashing of every child snapshot, an independent re-derivation of the promotion gate, atomic tmp→fsync→rename writes, a pid-start-time-checked workspace lock, and a conservative crash-resume protocol that discards on any ambiguity. The single highest-leverage improvement is to the proposer: its per-slot generation step is still one i.i.d. sample. A [branch audit](#branch-audit-main-is-the-union-of-the-merged-feature-work) found that **all three of the `FUNCTIONALITY-RECOMMENDATIONS.md §4` proposer levers are already implemented and merged into `main`** (from `feat/proposer-quality`): best-of-N + self-critique, hypothesis prediction-accuracy grading, and the field-diversity constraint. The genuine headline recommendations are therefore narrower than "build them": (a) **enable** the shipped but default-off best-of-N and self-critique wrapper, which sits at `best_of_n = 1` and whose flip is a scoring-contract change that rolls the epoch, and (b) make the already-computed hypothesis prediction-accuracy signal **actionable**: it is graded after the tournament and shown to the proposer as an advisory low, medium or high band, and is never used to bias best-of-N selection or any gate. Both stay inside the existing overfitting-restricted context channels.
+The deterministic guarantees are concentrated in the supervisor and the Python single-writer state contract: warn-only heartbeats (the watchdog can never kill the orchestrator), pid-reuse-proof signalling, an untrusted-and-clamped run deadline, a tamper-evident hash-chained audit ledger, diff-containment re-hashing of every child snapshot, an independent re-derivation of the promotion gate, atomic tmp→fsync→rename writes, a pid-start-time-checked workspace lock, and a conservative crash-resume protocol that discards on any ambiguity. The single highest-leverage improvement is to the proposer. A [branch audit](#branch-audit-main-is-the-union-of-the-merged-feature-work) found that **all three of the `FUNCTIONALITY-RECOMMENDATIONS.md §4` proposer levers are already implemented and merged into `main`** (from `feat/proposer-quality`): best-of-N + self-critique, hypothesis prediction-accuracy grading, and the field-diversity constraint. The headline recommendation this analysis drew from that — turn the shipped best-of-N and self-critique wrapper on — has since been taken: `best_of_n` defaults to 3 with self-critique enabled, so a slate and a critique pass are what a default contract runs. What remains is to make the already-computed hypothesis prediction-accuracy signal **actionable**: it is graded after the tournament and shown to the proposer as an advisory low, medium or high band, and is never used to bias best-of-N selection or any gate. That stays inside the existing overfitting-restricted context channels.
 
 ## Table of contents
 
@@ -903,55 +904,34 @@ SANCTIONED_TOOLS: tuple[str, ...] = (
 
 `read` and `grep` reach the *parent* snapshot; `edit` reaches the disposable copy and nothing else, because Foe compiles the two grants into a kernel ruleset every process of the episode inherits. A writing tool over the snapshot would corrupt the tree the round is about to patch and break the applier's content-hash guard, so no tool has one. The two host tools are answered by zicato: `mutation_usage` delegates to the read-only registry (so the containment guard and the match cap apply unchanged), and `validate_patches` projects the copy and lints it. The per-round context both host tools answer about is bound through a `contextvars.ContextVar` around each call, so concurrent challengers never leak context into one another. The episode runs on its *own* model; because it is not the auxiliary callable, the hard `is`-identity collusion guard does not apply, so a soft warning is logged when the two model strings trivially match.
 
-### The one structural weakness: single-sample generation
+### Generation: a best-of-N slate with a self-critique pass
 
-The proposer's biggest untapped quality reservoir is that each generation slot is still **one i.i.d. sample** — the retry loop only fires on *invalid* output, so a valid-but-mediocre proposal is never reconsidered. A best-of-N + self-critique wrapper *exists and is merged* but is default-off (`ProposerQualityConfig.best_of_n: int = 1`, `critique_enabled: bool = True` at `src/zicato/core/scoring_config.py:241-242`); at the default it is a transparent pass-through:
+Each generation slot samples a slate rather than a single draw.
+`ProposerQualityConfig` (`src/zicato/core/scoring_config.py`) defaults
+`best_of_n` to 3 with `critique_enabled` true, so a default contract proposes
+N candidates per slot and critiques them against a quality bar: is the edit
+grounded in a tool call, does it target a real failure mode, is the diff
+minimal. A contract that pins `best_of_n: 1` gets the historical
+single-sample proposer, whose retry loop fires only on *invalid* output so
+that a valid-but-mediocre proposal is never reconsidered; at that pinned
+value `maybe_wrap` returns the inner proposer unwrapped, so opting out costs
+not even a wrapper object in the call path.
 
-src/zicato/proposer/best_of_n.py:188-217
-```python
-    async def propose(self, ctx: ProposerContext) -> Experiment:
-        n = self.config.best_of_n
-        if n <= 1:
-            # Byte-identical to today: one inner sample, no critique.
-            return await self.inner.propose(ctx)
-
-        candidates: list[Experiment] = []
-        last_error: ProposerError | None = None
-        for _sample in range(n):
-            try:
-                candidates.append(await self.inner.propose(ctx))
-            except ProposerError as exc:
-                # A candidate the inner proposer could not produce simply
-                # narrows the slate; remember the error so an all-failed
-                # slate can re-raise the real failure.
-                last_error = exc
-
-        if not candidates:
-            # The whole slate failed — surface the inner failure exactly as a
-            # single propose would (the caller's rejected-outcome path handles
-            # it). ``last_error`` is set because n >= 2 means the loop ran.
-            if last_error is not None:
-                raise last_error
-            raise ProposerError(["best-of-N produced no candidates"])  # pragma: no cover
-
-        if len(candidates) == 1:
-            return candidates[0]
-
-        chosen = await self._select_best(candidates, ctx)
-        return candidates[chosen]
-```
-
-When enabled, the self-critique pass sees **only** the same restricted, overfitting-safe context the proposer saw (aggregated train-slice patterns, banded experiment memory, bucketed failure profile — never the holdout); a flaky critic falls back to a deterministic heuristic (grounded-in-an-observed-failure-mode first, then minimal diff, then stable order — `best_of_n.py:65-96`).
+The critique pass sees **only** the same restricted, overfitting-safe context
+the proposer saw (aggregated train-slice patterns, banded experiment memory,
+bucketed failure profile — never the holdout), and a flaky critic falls back
+to a deterministic heuristic: grounded-in-an-observed-failure-mode first,
+then minimal diff, then stable order (`src/zicato/proposer/best_of_n.py`).
 
 ### How to improve it (ranked)
 
-Grounded in `docs/design/FUNCTIONALITY-RECOMMENDATIONS.md §4`, and reconciled against `main` (the three §4 levers all landed via `feat/proposer-quality` — see the [branch audit](#branch-audit-main-is-the-union-of-the-merged-feature-work)), the ranked levers — all of which stay inside the existing overfitting-restricted context channels — are:
+Grounded in `docs/design/FUNCTIONALITY-RECOMMENDATIONS.md §4`, and reconciled against `main` (the three §4 levers all landed via `feat/proposer-quality` — see the [branch audit](#branch-audit-main-is-the-union-of-the-merged-feature-work)), the levers this analysis ranked — all of which stay inside the existing overfitting-restricted context channels — and what became of each are:
 
-1. **Enable best-of-N + self-critique (top lever — built, default-off).** The wrapper is merged but defaults to a single sample (`best_of_n = 1`). Sampling N and critiquing against the quality bar (grounded in a tool call? targets a real failure mode? minimal diff?) is the biggest generation-quality win and needs no new code — only a non-default `best_of_n` in the scoring contract (which correctly rolls the epoch, since a self-critiquing proposer proposes *differently*).
+1. **Enable best-of-N + self-critique — done.** The recommendation was to flip the merged wrapper on in the scoring contract. `ProposerQualityConfig` now defaults `best_of_n` to 3 with self-critique enabled, so a slate and a critique pass are what a default contract runs; a contract that wants the old single sample pins `best_of_n: 1`.
 2. **Make hypothesis prediction-accuracy actionable (built, but advisory-only).** The grading already exists — `grade_hypothesis_predictions` scores each settled hypothesis against actuals and folds a banded `prediction_accuracy` into experiment memory, shown to the proposer as a `prediction:low|medium|high` annotation. The remaining work is to *use* the signal: e.g. bias best-of-N selection toward candidates whose hypothesis shape has historically been well-calibrated, or down-weight experiment-memory entries from chronically over-confident lineages. Keep it out of the promotion gate (diagnostic discipline), but let it shape *generation*.
-3. **Add sampling diversity within a best-of-N slate (unbuilt).** The field-diversity constraint that already exists (`_duplicates_inflight_sibling`, `orchestrator.py`) only de-duplicates *across* in-flight multi-challenger siblings by `(modulating set, core_idea)`; the N samples *inside* one best-of-N slot are still independent identically-distributed draws from the same prompt. Varying them — distinct temperatures, distinct edit-class hints, or a "propose a structurally different fix" instruction per sample — would let the critique pass choose among different strategies rather than among N paraphrases.
-4. **Targeted failure-mode → edit-class prompting.** The failure profile already classifies modes (over-retrieves / misses / empty / looping); inject a mode-specific instruction instead of leaving the proposer to infer the remedy.
-5. **Richer mutation tooling.** The default registry is read-only and lean (`list_mutation_points, read_mutable_file, grep_mutable, read_journal, read_insights`); add a `read_parent_diff` (what the last promotion changed) and a `mutation_usage` (where an id's value is referenced) tool, plus a soft "ground before proposing" nudge.
+3. **Add sampling diversity within a best-of-N slate — the prompt half is done.** The field-diversity constraint (`_duplicates_inflight_sibling`, `src/zicato/evolve/propose_apply.py`) de-duplicates only *across* in-flight multi-challenger siblings by `(modulating set, core_idea)`, which left the N samples inside one slot as identically-distributed draws from one prompt. They are no longer: `src/zicato/proposer/hints.py` gives each slot a distinct edit-class hint and rotates a strategy hint per `(slot, round)`, so the slate is drawn from N distinct prompts and the critique pass chooses among strategies rather than among paraphrases. Decoding diversity — a per-slot temperature or top-p — remains unbuilt, because the `CallLLM` seam is `(system, user, model) -> str` and carries no sampling parameters.
+4. **Targeted failure-mode → edit-class prompting — done.** `hint_for_slot` (`src/zicato/proposer/hints.py`) conditions slots `0..N-2` on the failure profile's dominant mode (over-retrieves / misses / empty / looping) and keeps the last slot exploratory, so the mode-specific instruction is injected rather than left for the proposer to infer.
+5. **Richer mutation tooling — partly done, and the registry it named is gone.** The read-only registry this recommendation would have extended (`list_mutation_points`, `read_mutable_file`, `read_journal`, `read_insights`) was retired along with the proposal runtime that called it. What an episode is served now is a closed six-tool list — `read`, `grep`, `edit`, `block`, `mutation_usage`, `validate_patches` — which already includes `mutation_usage`, reporting where a mutation point's value is referenced. `read_parent_diff` was never built, and the "ground before proposing" instruction belongs in the proposer's skill body, which steers procedure without widening the sanctioned list.
 
 ---
 
@@ -1169,9 +1149,9 @@ Still unproven (endpoint-gated backlog): behavior with a *real* proposer/judges 
 
 **Proposer (highest leverage — this is where loop quality is won):**
 
-1. **Enable best-of-N + self-critique.** Already implemented (`src/zicato/proposer/best_of_n.py`) and overfitting-safe, but default-off (`best_of_n = 1`). Setting `best_of_n > 1` in the scoring contract is the single biggest, lowest-cost proposal-quality win; the retry loop today only reconsiders *invalid* output, never a valid-but-mediocre one.
+1. **Enable best-of-N + self-critique — since done.** The wrapper (`src/zicato/proposer/best_of_n.py`) was overfitting-safe and merged but default-off at `best_of_n = 1`, so this asked only that the scoring contract set it higher. `best_of_n` now defaults to 3 with self-critique enabled.
 2. **Make hypothesis prediction-accuracy actionable.** The grading exists (`grade_hypothesis_predictions` → banded `PriorExperiment.prediction_accuracy`) but is advisory-only — displayed to the proposer, never used to bias selection. Wire it into best-of-N selection / experiment-memory weighting; keep it out of the promotion gate.
-3. **Add diversity *within* a best-of-N slate** (distinct temperatures or edit-class hints per sample; the existing `_duplicates_inflight_sibling` constraint de-duplicates only *across* multi-challenger siblings and not the independent samples inside one slot) and **inject failure-mode-specific edit-class prompts** from the already-computed failure profile; optionally add `read_parent_diff` / `mutation_usage` grounding tools.
+3. **Add diversity *within* a best-of-N slate — the prompt half since done.** Per-slot edit-class and strategy hints (`src/zicato/proposer/hints.py`) now draw the slate from N distinct prompts and condition it on the failure profile's dominant mode, which the `_duplicates_inflight_sibling` constraint could not do because it de-duplicates only *across* multi-challenger siblings. Per-slot decoding variation (distinct temperatures or top-p) remains unbuilt. Of the two grounding tools this named, `mutation_usage` ships as a host tool and `read_parent_diff` was never built.
 
 **Determinism and safety — observations rather than gaps:**
 

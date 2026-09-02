@@ -6,7 +6,7 @@
 
 This chapter walks one evolve round as the code in this tree runs it. The
 round pipeline is a set of named seams under `src/zicato/evolve/`. Read the
-chapter with `src/zicato/evolve/gauntlet.py`, `src/zicato/evolve/field.py`
+chapter with `src/zicato/evolve/round_entry.py`, `src/zicato/evolve/field.py`
 and the phase modules its facade calls
 (`field_candidates.py`, `field_execution.py`, `gate.py`, `settlement.py`),
 and `src/zicato/evolve/loop.py` open. Every step names the symbol that owns
@@ -333,7 +333,7 @@ Ctrl-C), the `finally` in `evolve_n_rounds` runs, in this order:
 
 ## 3. `evolve_once` — round preparation and dispatch
 
-`evolve_once` (`src/zicato/evolve/gauntlet.py`) prepares one round. It loads
+`evolve_once` (`src/zicato/evolve/round_entry.py`) prepares one round. It loads
 and freezes the evaluation inputs, constructs the configured selection
 strategy, and passes a typed `PreparedRound` to the shared evaluation and
 settlement pipeline in `src/zicato/evolve/field.py`. The gauntlet is the
@@ -416,7 +416,7 @@ frozen contract hash:
 round_log = _RoundLogEmitter(workspace_root, resolved_epoch_id, round_index)
 round_log.emit("round_opened", {"contract_hash": _epoch_cfg.contract_hash or ""})
 ```
-*(src/zicato/evolve/gauntlet.py, `evolve_once` step 0b)*
+*(src/zicato/evolve/round_entry.py, `evolve_once` step 0b)*
 
 The event vocabulary is CLOSED and typed — one frozen dataclass per
 transition, registered in `EVENT_TYPES`
@@ -511,7 +511,7 @@ every downstream proposer input flows through it:
     train_seed = rotation_seed(weights.overfitting, resolved_epoch_id)
     train_ids, _holdout_ids = split_board(board, weights.overfitting, seed=train_seed)
 ```
-*(src/zicato/evolve/gauntlet.py, `evolve_once` step 4 — excerpt)*
+*(src/zicato/evolve/round_entry.py, `evolve_once` step 4 — excerpt)*
 
 Everything the proposer will see is computed from the TRAIN slice only:
 `_load_parent_losses` (the champion's per-entry loss profiles),
@@ -541,7 +541,7 @@ phase, so the stall detector attributes the wall-clock honestly.
     prepared = PreparedRound(..., strategy=strategy)
     return await evolve_field_round(prepared, resume_plan=resume_plan)
 ```
-*(src/zicato/evolve/gauntlet.py, `evolve_once` step 5b — excerpt)*
+*(src/zicato/evolve/round_entry.py, `evolve_once` step 5b — excerpt)*
 
 Board-aware structures (racing) get the train entry ids as default
 `board_ids`; board-agnostic ones ignore them. All field widths use the same
@@ -735,7 +735,7 @@ the in-progress generation), and the duel runs:
             ...
             force_fresh=resumed_experiment is None,
 ```
-*(src/zicato/evolve/gauntlet.py, `evolve_once` step 10 — excerpt)*
+*(src/zicato/evolve/round_entry.py, `evolve_once` step 10 — excerpt)*
 
 `--mode full` re-samples BOTH sides for noise; a resumed round
 cache-reads both sides so the interrupted round's completed units are
@@ -1559,7 +1559,7 @@ The seams, and what each owns:
 |---|---|---|---|
 | `evolve_n_rounds` + stop policies | `evolve/loop.py` | the loop, circuit breakers, budget, backoff, control safe points, progress log lifecycle | (the loop itself) |
 | `ensure_epoch_for_contract`, `_create_epoch_from_contract`, `_promoted_head_snapshot`, component-hash bookkeeping | `evolve/epoching.py` | the roll-at-evolve-time decision (03 covers it) | loop start, rubric replacement |
-| `PreparedRound` construction | `evolve/gauntlet.py`, type in `evolve/generation_phase.py` | frozen inputs shared by every field slot and matchup | every strategy |
+| `PreparedRound` construction | `evolve/round_entry.py`, type in `evolve/generation_phase.py` | frozen inputs shared by every field slot and matchup | every strategy |
 | `produce_candidate_batch` | `evolve/candidate_batch.py` | field width, proposal/apply admission, diversity, rejection, resume provenance | every strategy |
 | `build_post_apply_validator` | `evolve/round.py` | propose-time apply+validate hook (beat → derive all-or-nothing → validate) | every candidate slot |
 | `check_patch_manifest_and_forbidden` | `evolve/round.py` | manifest + forbidden-ids cross-check | every candidate slot |

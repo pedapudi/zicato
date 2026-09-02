@@ -241,22 +241,25 @@ Rust manager directly, since it delivers both wins.
 
 ## 4. Improving the proposals the loop generates
 
-> **Partly since built.** Recommendations 1 and 2 below have shipped, as
-> `src/zicato/proposer/best_of_n.py` and `src/zicato/proposer/calibration.py`.
+> **Partly since built.** Recommendations 1, 2 and 3 below have shipped, as
+> `src/zicato/proposer/best_of_n.py`, `src/zicato/proposer/calibration.py`,
+> and `_duplicates_inflight_sibling` in `src/zicato/evolve/propose_apply.py`.
 > Recommendation 4's prompt-side half shipped and its decoding-parameter half
-> did not, as the recommendation itself records. Recommendations 3, 5, 6, and
-> 7 are unbuilt.
+> did not, as the recommendation itself records. Recommendation 6 was answered
+> in part: `mutation_usage` ships, and `read_parent_diff` was never built.
+> Recommendation 5 is unbuilt. Recommendation 7 advises against a change, and
+> that change was never made.
 
 The default proposer is a tool-using agent with a rich restricted context —
 loss summary, valid targets, patterns, mutation points, prior-experiment
-digest, failure-mode profile, telemetry insights — plus read-only tools
-(`list_mutation_points`, `read_mutable_file`, `grep_mutable`, `read_journal`,
-`read_insights`) and a parse-validate-retry loop. Generation nevertheless
-carries **no critique and no calibration loop**, and only *partial* diversity
-pressure: per-slot edit-class and strategy hints exist, while per-slot decoding
-variation does not (recommendation 4). That is the largest untapped source of
-proposal quality. The levers below are ranked, and all of them stay inside the
-existing overfitting-restricted context channels:
+digest, failure-mode profile, telemetry insights — plus a closed tool list
+(`read`, `grep`, `edit`, `block`, `mutation_usage` and `validate_patches`,
+asserted by name as `SANCTIONED_TOOLS` in
+`src/zicato/proposer/foe_request.py`) and a parse-validate-retry loop.
+Generation nevertheless carries only *partial* diversity pressure: per-slot
+edit-class and strategy hints exist, while per-slot decoding variation does
+not (recommendation 4). The levers below are ranked, and all of them stay
+inside the existing overfitting-restricted context channels:
 
 1. **Best-of-N sampling with a self-critique pass (the top lever).** Sample N
    experiments per propose-step, then run a cheap critique pass that picks or
@@ -299,10 +302,14 @@ existing overfitting-restricted context channels:
 5. **Structured per-epoch reflection on rejection *patterns***, which the
    per-experiment digest does not supply because it surfaces individual
    instances. **M / M.**
-6. **Richer mutation tooling**: a `read_parent_diff` tool reporting what the
-   last promotion changed, a `mutation_usage` tool reporting where an id's
-   value is referenced, and a soft instruction to ground a proposal in the
-   tools before writing it. **M / M.**
+6. **Richer mutation tooling — the usage half shipped.** `mutation_usage`,
+   reporting where a mutation point's value is referenced across the parent
+   snapshot, is one of the two host tools zicato answers for every episode
+   (`src/zicato/proposer/tools.py`). A `read_parent_diff` tool reporting what
+   the last promotion changed was never built. The soft instruction to ground
+   a proposal in the tools before writing it now belongs in the proposer's
+   skill body, which is where operating procedure is steered without widening
+   the sanctioned tool list. **M / M** for what remains.
 7. **Do not add semantic retrieval over the journal.** Epochs are small and the
    relational `prior_experiments_for_epoch` curation is the right abstraction.
    Extend it, as recommendation 5 does, rather than adding an embedding

@@ -743,7 +743,7 @@ Both sides of the control-file protocol ship. The dashboard's POST
 `/api/control/*` endpoints drop files under `control/`, and the
 orchestrator consumes them at safe points — between rounds
 (`src/zicato/evolve/loop.py`) and at the start of a round for
-`skip_round` (`src/zicato/evolve/gauntlet.py`) — through
+`skip_round` (`src/zicato/evolve/round_entry.py`) — through
 `src/zicato/runtime/control_consumer.py`. A consumed command is archived
 under `control_log/` with a JSON sidecar naming the consumer and the
 reason, and a gate override is recorded in the outcome record and the

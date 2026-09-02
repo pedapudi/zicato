@@ -66,7 +66,7 @@
 Orchestrator call topology, per round:
 
 ```
-evolve_once (evolve/gauntlet.py)
+evolve_once (evolve/round_entry.py)
  ├─ enumerate_mutations → split_board(train/holdout) → detect_patterns(TRAIN)
  ├─ _render_loss_summary(TRAIN losses)
  ├─ _render_failure_profile(TRAIN losses, weights)          # banded block or ""
@@ -138,7 +138,7 @@ agent:
 
 > ⚠️ TRAP — the identity that was HASHED and the agent that RUNS must be
 > resolved from one reading of the workspace. `epoch/contract.py` and
-> `evolve/gauntlet.py` both call `external_proposer_config`, and both pass
+> `evolve/round_entry.py` both call `external_proposer_config`, and both pass
 > the result on: the contract hash folds `resolve_external_spec`'s digest,
 > and the round constructs the class from the same binding. Resolving them
 > separately is how a contract comes to describe a proposer that is not the
@@ -1230,7 +1230,7 @@ evolve invocation start (once):
   build_proposer_agent(spec, None, binding) → FoeProposerAgent(spec, config)
   wrap_with_proposer_quality(agent, q)   → BestOfNProposerAgent(inner=…, n=3)
 
-per round (evolve_once, evolve/gauntlet.py):
+per round (evolve_once, evolve/round_entry.py):
   mutations   = enumerate_mutations(adapter mutable trees)
   train split = split_board(board, overfitting, seed=rotation_seed(…, epoch))
   patterns    = detect_patterns(TRAIN losses/entries/events)
@@ -1747,7 +1747,7 @@ the round proceeds untouched (`_render_process_exemplars_block` wraps it in
 
 ### 5.8.4 Train-slice plumbing (where the slice is decided)
 
-One place: `evolve_once` step 4 (`src/zicato/evolve/gauntlet.py`).
+One place: `evolve_once` step 4 (`src/zicato/evolve/round_entry.py`).
 `rotation_seed(weights.overfitting, epoch_id)` + `split_board(board, …)`
 produce `train_ids`; `train_board` filters the board; the champion's
 `losses` are loaded for train entries only. Everything downstream —

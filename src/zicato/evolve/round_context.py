@@ -1,8 +1,6 @@
 """Round-pipeline **round-context** stage — the pre-propose context builders.
 
-Split out of :mod:`zicato.orchestrator` as part of the Finding-2 typed
-round-pipeline decomposition (``docs/design/REIMPLEMENTATION.md``). This is the
-pipeline's pre-propose seam (the plan's "screen" stage): the four builders that
+This is the round pipeline's pre-propose (screen) seam: the four builders that
 assemble the round's proposer-context inputs ONCE per round, beside each other,
 and thread them as plain DATA onto
 :class:`~zicato.proposer.agent.ProposerContext` so the proposer stack stays
@@ -17,16 +15,15 @@ IO-free:
 
 Each builder is OFF by default (a contract opt-in flips it on) and every read
 is best-effort, so an unbuilt index / unreadable record simply yields the OFF
-value and a byte-identical round. Two names are referenced from outside
-:mod:`zicato.orchestrator` (``_build_candidate_screen_runner`` from the
-candidate-screen + decision-procedure tests, ``_recombine_pair_for_slot`` from
-the best-of-N test), so the orchestrator re-imports every name and lists those
-two in ``__all__`` for mypy's no-implicit-reexport; the three purely internal
-builders are re-imported but not listed. Stable collaborators
+value and a byte-identical round. Every consumer imports the name it wants
+from this module directly, with no re-export in between: ``evolve_once`` takes
+all four builders, ``evolve.candidate_batch`` takes the slot rule, and the
+candidate-screen, decision-procedure and best-of-N tests take the two they
+exercise. Stable collaborators
 (``ingest._index_db_path``, ``lifecycle_services._beat``, the heartbeat helper)
 are direct top-level imports; the heavier ``epoch`` / ``proposer`` / ``query`` /
-``index`` siblings stay lazy call-time imports. The module logger keeps the
-``zicato.orchestrator`` name, so a log record names the orchestrator
+``index`` siblings stay lazy call-time imports. The module logger is named
+``zicato.orchestrator``, so a log record names the orchestrator
 wherever the builder lives.
 """
 

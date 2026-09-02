@@ -88,8 +88,8 @@ async def _hang_mid_round(**_kwargs):
     await asyncio.sleep(600)
 
 
-import zicato.evolve.gauntlet as gauntlet
-gauntlet.evolve_once = _hang_mid_round
+import zicato.evolve.round_entry as round_entry
+round_entry.evolve_once = _hang_mid_round
 
 ev.evolve_cmd.main(
     args=[

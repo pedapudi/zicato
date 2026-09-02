@@ -324,8 +324,9 @@ def detect_degenerate_scoring(
     experiments exist, or when any tournament in the window showed a
     real delta.
 
-    ``config`` defaults to the env-sourced
-    :class:`~zicato.config.HealthConfig` via :func:`load_config`.
+    ``config`` defaults to the :class:`~zicato.config.HealthConfig` that
+    :func:`load_config` builds from the dataclass field defaults plus any
+    process-pinned CLI overrides.
     """
     health = _resolve_health_config(config)
     window = health.scoring_window
@@ -490,8 +491,9 @@ def detect_no_expectations(
 
     Silent on an empty board.
 
-    ``config`` defaults to the env-sourced
-    :class:`~zicato.config.HealthConfig` via :func:`load_config`.
+    ``config`` defaults to the :class:`~zicato.config.HealthConfig` that
+    :func:`load_config` builds from the dataclass field defaults plus any
+    process-pinned CLI overrides.
     """
     coverage = measure_expectation_coverage(board_entries, config)
     if not coverage.reportable:
@@ -713,8 +715,9 @@ def detect_stalled_loop(
     one thing. Those demand different responses, and the reasons are
     already on the outcomes the detector walks.
 
-    ``config`` defaults to the env-sourced
-    :class:`~zicato.config.HealthConfig` via :func:`load_config`.
+    ``config`` defaults to the :class:`~zicato.config.HealthConfig` that
+    :func:`load_config` builds from the dataclass field defaults plus any
+    process-pinned CLI overrides.
     """
     threshold = _resolve_health_config(config).stalled_rejects
 
@@ -827,8 +830,9 @@ def detect_generalization_gap(
       ``config.generalization_gap_warn`` it fires ``warning``; below the warn
       bar it clears.
 
-    ``config`` defaults to the env-sourced
-    :class:`~zicato.config.HealthConfig` via :func:`load_config`.
+    ``config`` defaults to the :class:`~zicato.config.HealthConfig` that
+    :func:`load_config` builds from the dataclass field defaults plus any
+    process-pinned CLI overrides.
     """
     health = _resolve_health_config(config)
     warn = health.generalization_gap_warn
