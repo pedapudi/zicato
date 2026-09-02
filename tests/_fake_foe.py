@@ -236,6 +236,10 @@ class Episode:
         header, header_seq = self._write_header()
         done_when = config.get("done_when") or {}
         budget_calls = int(config["budget"]["model_calls"])
+        # `done_when.retries` bounds how many times findings are fed back
+        # before the episode ends blocked, which is what makes an
+        # unsatisfiable verifier a block rather than a spent budget.
+        retries_left = int(done_when.get("retries", 2)) if "verify" in done_when else 0
         calls = 0
         step = 0
         try:
@@ -289,6 +293,16 @@ class Episode:
                     if "verify" in done_when:
                         findings = self._verify(step, str(done_when["verify"]), value)
                         if findings:
+                            if retries_left <= 0:
+                                self.end(
+                                    {
+                                        "kind": "blocked",
+                                        "code": "verification-unsatisfiable",
+                                        "message": "\n".join(findings),
+                                    }
+                                )
+                                return 2
+                            retries_left -= 1
                             self.held.append(
                                 {
                                     "source": "verify",

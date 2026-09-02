@@ -56,6 +56,16 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only imports
 #: The workspace-config key, under ``runtime``, that names the class.
 PROPOSER_AGENT_KEY = "proposer_agent"
 
+#: The class a workspace gets when it declares a ``proposer`` block and
+#: binds no class of its own: the Foe-backed proposer, zicato's only
+#: supported implementation of the protocol below.
+DEFAULT_PROPOSER_AGENT = "zicato.proposer.foe_agent:FoeProposerAgent"
+
+#: The ``config.json`` key whose presence means the workspace declared how
+#: it proposes. Re-stated here rather than imported so this module keeps
+#: no dependency on the Foe configuration it merely detects.
+PROPOSER_BLOCK_KEY = "proposer"
+
 #: Label used in ``import_dotted_path`` errors, so a bad path points the
 #: operator at the field that produced it.
 _IMPORT_LABEL = f"runtime.{PROPOSER_AGENT_KEY}"
@@ -86,6 +96,12 @@ class ExternalProposerConfig:
     dotted_path: str
     workspace_root: Path | None = None
     options: Mapping[str, str] = field(default_factory=dict)
+    #: The workspace's whole ``config.json``, so an implementation can
+    #: read its own declared block. :class:`FoeProposerAgent` reads the
+    #: ``proposer`` block from here; an operator's own class may read
+    #: whatever it declares. Not hashed wholesale, for the reason
+    #: ``options`` is not.
+    workspace_config: Mapping[str, Any] = field(default_factory=dict)
 
 
 class ExternalProposerAgent(Protocol):
@@ -118,23 +134,30 @@ def external_proposer_config(
     workspace_config: Mapping[str, Any],
     workspace_root: Path | None = None,
 ) -> ExternalProposerConfig | None:
-    """Read ``runtime.proposer_agent`` off a workspace config.
+    """Resolve which class implements the proposer for a workspace.
 
-    Returns ``None`` when no external proposer is configured, which is the
-    overwhelmingly common case. The spec, the contract canon, and the agent
-    builder then carry no external-proposer fields at all.
+    ``runtime.proposer_agent`` names an operator's own class when one is
+    bound. Absent it, a workspace that declares a ``proposer`` block gets
+    :data:`DEFAULT_PROPOSER_AGENT`, the Foe-backed proposer, which is
+    zicato's only supported implementation of the protocol.
+
+    A workspace that does neither has not declared how it proposes, and
+    ``None`` says so. Its epoch still hashes — a contract is more than its
+    proposer — but a round refuses to open, naming the block to write.
     """
     runtime = workspace_config.get("runtime")
-    if not isinstance(runtime, Mapping):
-        return None
-    dotted = runtime.get(PROPOSER_AGENT_KEY)
+    runtime = runtime if isinstance(runtime, Mapping) else {}
+    dotted = str(runtime.get(PROPOSER_AGENT_KEY) or "")
     if not dotted:
-        return None
+        if not isinstance(workspace_config.get(PROPOSER_BLOCK_KEY), Mapping):
+            return None
+        dotted = DEFAULT_PROPOSER_AGENT
     options = {str(k): str(v) for k, v in runtime.items() if isinstance(v, str)}
     return ExternalProposerConfig(
-        dotted_path=str(dotted),
+        dotted_path=dotted,
         workspace_root=workspace_root,
         options=options,
+        workspace_config=dict(workspace_config),
     )
 
 
@@ -215,7 +238,9 @@ def resolve_external_spec(
 
 
 __all__ = [
+    "DEFAULT_PROPOSER_AGENT",
     "PROPOSER_AGENT_KEY",
+    "PROPOSER_BLOCK_KEY",
     "ExternalProposerAgent",
     "ExternalProposerConfig",
     "external_agent_id",
