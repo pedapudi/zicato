@@ -307,13 +307,27 @@
       },
       {
         "payload": {
-          "experiment_id": "exp_<DATE>_t1_gauntlet_v1"
+          "code": "",
+          "kind": "completed",
+          "message": ""
         },
         "scope": {
           "generation_id": "v1",
           "step": "propose"
         },
         "seq": 7,
+        "ts": "<TS>",
+        "type": "proposal_episode_settled"
+      },
+      {
+        "payload": {
+          "experiment_id": "exp_<DATE>_t1_gauntlet_v1"
+        },
+        "scope": {
+          "generation_id": "v1",
+          "step": "propose"
+        },
+        "seq": 8,
         "ts": "<TS>",
         "type": "experiment_minted"
       },
@@ -325,7 +339,7 @@
           "generation_id": "v1",
           "step": "apply"
         },
-        "seq": 8,
+        "seq": 9,
         "ts": "<TS>",
         "type": "patches_applied"
       },
@@ -343,7 +357,7 @@
           "generation_id": "v0",
           "step": "run"
         },
-        "seq": 9,
+        "seq": 10,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -361,7 +375,7 @@
           "generation_id": "v1",
           "step": "run"
         },
-        "seq": 10,
+        "seq": 11,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -379,7 +393,7 @@
           "generation_id": "v0",
           "step": "run"
         },
-        "seq": 11,
+        "seq": 12,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -397,7 +411,7 @@
           "generation_id": "v1",
           "step": "run"
         },
-        "seq": 12,
+        "seq": 13,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -418,7 +432,7 @@
           "generation_id": "v1",
           "step": "gate"
         },
-        "seq": 13,
+        "seq": 14,
         "ts": "<TS>",
         "type": "gate_evaluated"
       },
@@ -430,7 +444,7 @@
           "generation_id": "v1",
           "step": "gate"
         },
-        "seq": 14,
+        "seq": 15,
         "ts": "<TS>",
         "type": "holdout_released"
       },
@@ -453,14 +467,14 @@
         "scope": {
           "step": "decide"
         },
-        "seq": 15,
+        "seq": 16,
         "ts": "<TS>",
         "type": "decision_recorded"
       },
       {
         "payload": {},
         "scope": {},
-        "seq": 16,
+        "seq": 17,
         "ts": "<TS>",
         "type": "round_closed"
       }

@@ -929,13 +929,27 @@
       },
       {
         "payload": {
-          "experiment_id": "exp_<DATE>_t1_swiss_v1"
+          "code": "",
+          "kind": "completed",
+          "message": ""
         },
         "scope": {
           "generation_id": "v1",
           "step": "propose"
         },
         "seq": 3,
+        "ts": "<TS>",
+        "type": "proposal_episode_settled"
+      },
+      {
+        "payload": {
+          "experiment_id": "exp_<DATE>_t1_swiss_v1"
+        },
+        "scope": {
+          "generation_id": "v1",
+          "step": "propose"
+        },
+        "seq": 4,
         "ts": "<TS>",
         "type": "experiment_minted"
       },
@@ -947,7 +961,7 @@
           "generation_id": "v1",
           "step": "apply"
         },
-        "seq": 4,
+        "seq": 5,
         "ts": "<TS>",
         "type": "patches_applied"
       },
@@ -960,9 +974,23 @@
           "generation_id": "v2",
           "step": "propose"
         },
-        "seq": 5,
+        "seq": 6,
         "ts": "<TS>",
         "type": "proposal_attempted"
+      },
+      {
+        "payload": {
+          "code": "",
+          "kind": "completed",
+          "message": ""
+        },
+        "scope": {
+          "generation_id": "v2",
+          "step": "propose"
+        },
+        "seq": 7,
+        "ts": "<TS>",
+        "type": "proposal_episode_settled"
       },
       {
         "payload": {
@@ -972,7 +1000,7 @@
           "generation_id": "v2",
           "step": "propose"
         },
-        "seq": 6,
+        "seq": 8,
         "ts": "<TS>",
         "type": "experiment_minted"
       },
@@ -984,7 +1012,7 @@
           "generation_id": "v2",
           "step": "apply"
         },
-        "seq": 7,
+        "seq": 9,
         "ts": "<TS>",
         "type": "patches_applied"
       },
@@ -997,9 +1025,23 @@
           "generation_id": "v3",
           "step": "propose"
         },
-        "seq": 8,
+        "seq": 10,
         "ts": "<TS>",
         "type": "proposal_attempted"
+      },
+      {
+        "payload": {
+          "code": "",
+          "kind": "completed",
+          "message": ""
+        },
+        "scope": {
+          "generation_id": "v3",
+          "step": "propose"
+        },
+        "seq": 11,
+        "ts": "<TS>",
+        "type": "proposal_episode_settled"
       },
       {
         "payload": {
@@ -1009,7 +1051,7 @@
           "generation_id": "v3",
           "step": "propose"
         },
-        "seq": 9,
+        "seq": 12,
         "ts": "<TS>",
         "type": "experiment_minted"
       },
@@ -1021,7 +1063,7 @@
           "generation_id": "v3",
           "step": "apply"
         },
-        "seq": 10,
+        "seq": 13,
         "ts": "<TS>",
         "type": "patches_applied"
       },
@@ -1034,9 +1076,23 @@
           "generation_id": "v4",
           "step": "propose"
         },
-        "seq": 11,
+        "seq": 14,
         "ts": "<TS>",
         "type": "proposal_attempted"
+      },
+      {
+        "payload": {
+          "code": "",
+          "kind": "completed",
+          "message": ""
+        },
+        "scope": {
+          "generation_id": "v4",
+          "step": "propose"
+        },
+        "seq": 15,
+        "ts": "<TS>",
+        "type": "proposal_episode_settled"
       },
       {
         "payload": {
@@ -1046,7 +1102,7 @@
           "generation_id": "v4",
           "step": "propose"
         },
-        "seq": 12,
+        "seq": 16,
         "ts": "<TS>",
         "type": "experiment_minted"
       },
@@ -1058,85 +1114,13 @@
           "generation_id": "v4",
           "step": "apply"
         },
-        "seq": 13,
+        "seq": 17,
         "ts": "<TS>",
         "type": "patches_applied"
       },
       {
         "payload": {
           "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r0_m0",
-            "opponent_generation_id": "v1"
-          },
-          "generation_id": "v0",
-          "step": "run"
-        },
-        "seq": 14,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r0_m0",
-            "opponent_generation_id": "v0"
-          },
-          "generation_id": "v1",
-          "step": "run"
-        },
-        "seq": 15,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r0_m0",
-            "opponent_generation_id": "v1"
-          },
-          "generation_id": "v0",
-          "step": "run"
-        },
-        "seq": 16,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r0_m0",
-            "opponent_generation_id": "v0"
-          },
-          "generation_id": "v1",
-          "step": "run"
-        },
-        "seq": 17,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
           "replicate": 0,
           "side": "parent"
         },
@@ -1154,7 +1138,7 @@
       },
       {
         "payload": {
-          "entry_id": "transformers_progressive_scripted",
+          "entry_id": "every_expectation_kind_demo",
           "replicate": 0,
           "side": "child"
         },
@@ -1172,7 +1156,7 @@
       },
       {
         "payload": {
-          "entry_id": "waffles_single",
+          "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "parent"
         },
@@ -1190,7 +1174,7 @@
       },
       {
         "payload": {
-          "entry_id": "waffles_single",
+          "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "child"
         },
@@ -1203,6 +1187,78 @@
           "step": "run"
         },
         "seq": 21,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r0_m0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v0",
+          "step": "run"
+        },
+        "seq": 22,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r0_m0",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
+        "seq": 23,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r0_m0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v0",
+          "step": "run"
+        },
+        "seq": 24,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r0_m0",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
+        "seq": 25,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -1223,7 +1279,7 @@
           "generation_id": "v1",
           "step": "gate"
         },
-        "seq": 22,
+        "seq": 26,
         "ts": "<TS>",
         "type": "gate_evaluated"
       },
@@ -1241,7 +1297,7 @@
           "generation_id": "v2",
           "step": "run"
         },
-        "seq": 23,
+        "seq": 27,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -1259,85 +1315,13 @@
           "generation_id": "v3",
           "step": "run"
         },
-        "seq": 24,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r0_m1",
-            "opponent_generation_id": "v3"
-          },
-          "generation_id": "v2",
-          "step": "run"
-        },
-        "seq": 25,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r0_m1",
-            "opponent_generation_id": "v2"
-          },
-          "generation_id": "v3",
-          "step": "run"
-        },
-        "seq": 26,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r0_m1",
-            "opponent_generation_id": "v3"
-          },
-          "generation_id": "v2",
-          "step": "run"
-        },
-        "seq": 27,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r0_m1",
-            "opponent_generation_id": "v2"
-          },
-          "generation_id": "v3",
-          "step": "run"
-        },
         "seq": 28,
         "ts": "<TS>",
         "type": "unit_completed"
       },
       {
         "payload": {
-          "entry_id": "waffles_single",
+          "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "parent"
         },
@@ -1355,7 +1339,7 @@
       },
       {
         "payload": {
-          "entry_id": "waffles_single",
+          "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "child"
         },
@@ -1368,6 +1352,78 @@
           "step": "run"
         },
         "seq": 30,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r0_m1",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v2",
+          "step": "run"
+        },
+        "seq": 31,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r0_m1",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v3",
+          "step": "run"
+        },
+        "seq": 32,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r0_m1",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v2",
+          "step": "run"
+        },
+        "seq": 33,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r0_m1",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v3",
+          "step": "run"
+        },
+        "seq": 34,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -1388,7 +1444,7 @@
           "generation_id": "v3",
           "step": "gate"
         },
-        "seq": 31,
+        "seq": 35,
         "ts": "<TS>",
         "type": "gate_evaluated"
       },
@@ -1406,7 +1462,7 @@
           "generation_id": "v4",
           "step": "run"
         },
-        "seq": 32,
+        "seq": 36,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -1424,85 +1480,13 @@
           "generation_id": "v1",
           "step": "run"
         },
-        "seq": 33,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r1_m0",
-            "opponent_generation_id": "v1"
-          },
-          "generation_id": "v4",
-          "step": "run"
-        },
-        "seq": 34,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r1_m0",
-            "opponent_generation_id": "v4"
-          },
-          "generation_id": "v1",
-          "step": "run"
-        },
-        "seq": 35,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r1_m0",
-            "opponent_generation_id": "v1"
-          },
-          "generation_id": "v4",
-          "step": "run"
-        },
-        "seq": 36,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r1_m0",
-            "opponent_generation_id": "v4"
-          },
-          "generation_id": "v1",
-          "step": "run"
-        },
         "seq": 37,
         "ts": "<TS>",
         "type": "unit_completed"
       },
       {
         "payload": {
-          "entry_id": "waffles_single",
+          "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "parent"
         },
@@ -1520,7 +1504,7 @@
       },
       {
         "payload": {
-          "entry_id": "waffles_single",
+          "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "child"
         },
@@ -1533,6 +1517,78 @@
           "step": "run"
         },
         "seq": 39,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r1_m0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v4",
+          "step": "run"
+        },
+        "seq": 40,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r1_m0",
+            "opponent_generation_id": "v4"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
+        "seq": 41,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r1_m0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v4",
+          "step": "run"
+        },
+        "seq": 42,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r1_m0",
+            "opponent_generation_id": "v4"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
+        "seq": 43,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -1553,7 +1609,7 @@
           "generation_id": "v1",
           "step": "gate"
         },
-        "seq": 40,
+        "seq": 44,
         "ts": "<TS>",
         "type": "gate_evaluated"
       },
@@ -1571,7 +1627,7 @@
           "generation_id": "v2",
           "step": "run"
         },
-        "seq": 41,
+        "seq": 45,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -1589,85 +1645,13 @@
           "generation_id": "v3",
           "step": "run"
         },
-        "seq": 42,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r1_m1",
-            "opponent_generation_id": "v3"
-          },
-          "generation_id": "v2",
-          "step": "run"
-        },
-        "seq": 43,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r1_m1",
-            "opponent_generation_id": "v2"
-          },
-          "generation_id": "v3",
-          "step": "run"
-        },
-        "seq": 44,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r1_m1",
-            "opponent_generation_id": "v3"
-          },
-          "generation_id": "v2",
-          "step": "run"
-        },
-        "seq": 45,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "r1_m1",
-            "opponent_generation_id": "v2"
-          },
-          "generation_id": "v3",
-          "step": "run"
-        },
         "seq": 46,
         "ts": "<TS>",
         "type": "unit_completed"
       },
       {
         "payload": {
-          "entry_id": "waffles_single",
+          "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "parent"
         },
@@ -1685,7 +1669,7 @@
       },
       {
         "payload": {
-          "entry_id": "waffles_single",
+          "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "child"
         },
@@ -1698,6 +1682,78 @@
           "step": "run"
         },
         "seq": 48,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r1_m1",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v2",
+          "step": "run"
+        },
+        "seq": 49,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r1_m1",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v3",
+          "step": "run"
+        },
+        "seq": 50,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r1_m1",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v2",
+          "step": "run"
+        },
+        "seq": 51,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "r1_m1",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v3",
+          "step": "run"
+        },
+        "seq": 52,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -1718,7 +1774,7 @@
           "generation_id": "v3",
           "step": "gate"
         },
-        "seq": 49,
+        "seq": 53,
         "ts": "<TS>",
         "type": "gate_evaluated"
       },
@@ -1736,7 +1792,7 @@
           "generation_id": "v0",
           "step": "run"
         },
-        "seq": 50,
+        "seq": 54,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -1754,85 +1810,13 @@
           "generation_id": "v1",
           "step": "run"
         },
-        "seq": 51,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "swiss-final",
-            "opponent_generation_id": "v1"
-          },
-          "generation_id": "v0",
-          "step": "run"
-        },
-        "seq": 52,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "picky_stakeholder_emulated",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "swiss-final",
-            "opponent_generation_id": "v0"
-          },
-          "generation_id": "v1",
-          "step": "run"
-        },
-        "seq": 53,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "swiss-final",
-            "opponent_generation_id": "v1"
-          },
-          "generation_id": "v0",
-          "step": "run"
-        },
-        "seq": 54,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "swiss-final",
-            "opponent_generation_id": "v0"
-          },
-          "generation_id": "v1",
-          "step": "run"
-        },
         "seq": 55,
         "ts": "<TS>",
         "type": "unit_completed"
       },
       {
         "payload": {
-          "entry_id": "waffles_single",
+          "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "parent"
         },
@@ -1850,7 +1834,7 @@
       },
       {
         "payload": {
-          "entry_id": "waffles_single",
+          "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "child"
         },
@@ -1863,6 +1847,78 @@
           "step": "run"
         },
         "seq": 57,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "swiss-final",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v0",
+          "step": "run"
+        },
+        "seq": 58,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "swiss-final",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
+        "seq": 59,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "swiss-final",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v0",
+          "step": "run"
+        },
+        "seq": 60,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "swiss-final",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
+        "seq": 61,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -1883,7 +1939,7 @@
           "generation_id": "v1",
           "step": "gate"
         },
-        "seq": 58,
+        "seq": 62,
         "ts": "<TS>",
         "type": "gate_evaluated"
       },
@@ -1895,7 +1951,7 @@
           "generation_id": "v1",
           "step": "gate"
         },
-        "seq": 59,
+        "seq": 63,
         "ts": "<TS>",
         "type": "holdout_released"
       },
@@ -1918,14 +1974,14 @@
         "scope": {
           "step": "decide"
         },
-        "seq": 60,
+        "seq": 64,
         "ts": "<TS>",
         "type": "decision_recorded"
       },
       {
         "payload": {},
         "scope": {},
-        "seq": 61,
+        "seq": 65,
         "ts": "<TS>",
         "type": "round_closed"
       }
