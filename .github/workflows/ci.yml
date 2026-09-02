@@ -57,10 +57,8 @@ jobs:
         run: make node-test
 
   lint-and-test:
+    name: lint and default-tier tests (Python 3.12)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
@@ -73,8 +71,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      - name: Set up Python 3.12
+        run: uv python install 3.12
 
       - name: Sync dependencies
         # --frozen installs exactly what uv.lock pins (and fails if the
@@ -91,9 +89,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .mypy_cache
-          key: mypy-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          key: mypy-3.12-${{ hashFiles('pyproject.toml', 'uv.lock') }}
           restore-keys: |
-            mypy-${{ matrix.python-version }}-
+            mypy-3.12-
 
       - name: Ruff
         run: uv run ruff check .
@@ -126,31 +124,21 @@ jobs:
           -m "not node and not cascade_oc and not slow"
 
   parity:
-    name: parity gates (${{ matrix.python-version }})
+    name: parity gates (Python 3.12)
     # PYTEST is skipped: lint-and-test's Pytest step already runs the
     # default tier (pyproject testpaths = ["tests"]), and slow-tier.yml
     # runs the other tier as its own check. Every other gate runs.
     #
-    # Every supported interpreter, not one: a golden is a claim that the
-    # bytes are a function of the code and the inputs, and running it on a
-    # single version cannot distinguish that from a function of the
-    # interpreter. CPython 3.12 changed the builtin `sum` over floats to
-    # compensated summation, which moved a served scalar by one ulp and made
-    # a mock-evolve golden green on 3.12 and red on 3.11. The aggregation
-    # seam now uses math.fsum so the values are exact either way
-    # (tests/test_scalar_aggregation_is_exact.py); this matrix is what would
-    # catch the next such difference instead of an operator running the
-    # ladder on the other version.
+    # Pull requests use one Python interpreter so the same deterministic
+    # gates are not paid for twice. Interpreter-independent aggregation is
+    # pinned directly by tests/test_scalar_aggregation_is_exact.py; package
+    # metadata continues to declare the wider supported-Python range.
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
     env:
       # tools/parity.sh shells out to `uv run`; --frozen keeps those from
       # re-resolving the lock mid-gate.
       UV_FROZEN: "1"
-      UV_PYTHON: ${{ matrix.python-version }}
+      UV_PYTHON: "3.12"
     steps:
       - uses: actions/checkout@v4
 
@@ -160,8 +148,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      - name: Set up Python 3.12
+        run: uv python install 3.12
 
       - name: Sync dependencies
         # The gates import the tests/ helpers and the examples package.
@@ -173,9 +161,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .mypy_cache
-          key: mypy-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          key: mypy-3.12-${{ hashFiles('pyproject.toml', 'uv.lock') }}
           restore-keys: |
-            mypy-${{ matrix.python-version }}-
+            mypy-3.12-
 
       - name: Parity gates
         run: bash tools/parity.sh --skip PYTEST
