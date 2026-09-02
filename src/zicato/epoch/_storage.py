@@ -13,13 +13,19 @@ read/write through :class:`~zicato.storage.StorageBackend` instead —
 this module is the thin adapter that makes that routing ergonomic
 without changing any public ``epoch/`` signature.
 
-What it owns is key computation. ``epoch/`` records live under the
-``epochs/`` namespace (per-epoch and per-generation records) or directly
-under the workspace root (``lineage.json``, the ``current_epoch``
-marker). The ``*_key`` helpers turn an ``(epoch, generation, …)``
-coordinate into the logical storage key — the exact mirror of the path
-helpers in :mod:`zicato.core.workspace`, but yielding a backend *key* (a
-``/``-relative string) rather than an absolute :class:`Path`.
+What it owns is naming: the ``*_key`` helpers turn an
+``(epoch, generation, …)`` coordinate into the logical storage key for one
+record. ``epoch/`` records live under the ``epochs/`` namespace (per-epoch
+and per-generation records) or directly under the workspace root
+(``lineage.json``, the ``current_epoch`` marker).
+
+The helpers do not re-spell those joins. Each reads its location off
+:data:`~zicato.workspace.layout.WORKSPACE_RELATIVE_LAYOUT`, the workspace
+layout resolved against an empty root, and
+:func:`~zicato.workspace.layout.storage_key` renders the result as a
+``/``-relative key. :class:`~zicato.workspace.layout.WorkspaceLayout` is
+therefore the only place each record's location is declared, whether a
+caller wants that location as a :class:`Path` or as a backend key.
 
 The backend comes from :func:`zicato.storage.workspace_backend`, the one
 construction path in the tree, and ``epoch/`` asks it for an unstarted
@@ -42,37 +48,33 @@ observable change is that every write is now atomic.
 
 from __future__ import annotations
 
-#: The logical namespace per-epoch records sit under, mirroring
-#: :func:`zicato.core.workspace.epoch_dir`.
-EPOCHS_NS = "epochs"
+from zicato.workspace.layout import WORKSPACE_RELATIVE_LAYOUT as _LAYOUT
+from zicato.workspace.layout import storage_key
 
 
-# --- key helpers (mirror zicato.core.workspace, but yield storage keys) ----
+def epochs_prefix() -> str:
+    """Storage-key prefix every epoch's records sit under."""
+    return storage_key(_LAYOUT.epochs_dir)
 
 
-def _epoch_ns(epoch_id: str) -> str:
+def epoch_prefix(epoch_id: str) -> str:
     """Storage-key prefix for one epoch's records."""
-    return f"{EPOCHS_NS}/{epoch_id}"
-
-
-def _generation_ns(epoch_id: str, generation_id: str) -> str:
-    """Storage-key prefix for one generation's records."""
-    return f"{_epoch_ns(epoch_id)}/generations/{generation_id}"
+    return storage_key(_LAYOUT.epoch_dir(epoch_id))
 
 
 def epoch_config_key(epoch_id: str) -> str:
     """Storage key for one epoch's ``config.json``."""
-    return f"{_epoch_ns(epoch_id)}/config.json"
+    return storage_key(_LAYOUT.epoch_config(epoch_id))
 
 
 def scoring_key(epoch_id: str) -> str:
     """Storage key for one epoch's frozen ``scoring.json``."""
-    return f"{_epoch_ns(epoch_id)}/scoring.json"
+    return storage_key(_LAYOUT.scoring(epoch_id))
 
 
 def journal_key(epoch_id: str) -> str:
     """Storage key for one epoch's running ``journal.md``."""
-    return f"{_epoch_ns(epoch_id)}/journal.md"
+    return storage_key(_LAYOUT.journal(epoch_id))
 
 
 #: Version stamped into the CANONICAL JSON records (``experiment.json``,
@@ -114,39 +116,52 @@ def check_record_format(body: dict[str, object], record_name: str) -> None:
 
 def lineage_key() -> str:
     """Storage key for the workspace-level ``lineage.json``."""
-    return "lineage.json"
+    return storage_key(_LAYOUT.lineage_path)
 
 
 def current_epoch_key() -> str:
     """Storage key for the workspace ``current_epoch`` marker file."""
-    return "current_epoch"
+    return storage_key(_LAYOUT.current_epoch_marker)
+
+
+def rounds_prefix(epoch_id: str) -> str:
+    """Storage-key prefix one epoch's per-round records sit under."""
+    return storage_key(_LAYOUT.rounds_dir(epoch_id))
+
+
+def round_prefix(epoch_id: str, round_index: int) -> str:
+    """Storage-key prefix for one evolve round's records."""
+    return storage_key(_LAYOUT.round_dir(epoch_id, round_index))
 
 
 def experiment_key(epoch_id: str, generation_id: str) -> str:
     """Storage key for a generation's ``experiment.json``."""
-    return f"{_generation_ns(epoch_id, generation_id)}/experiment.json"
+    return storage_key(_LAYOUT.experiment(epoch_id, generation_id))
 
 
 def patches_prefix(epoch_id: str, generation_id: str) -> str:
     """Storage-key prefix the per-patch JSON records sit under."""
-    return f"{_generation_ns(epoch_id, generation_id)}/patches"
+    return storage_key(_LAYOUT.patches_dir(epoch_id, generation_id))
 
 
 def patch_key(epoch_id: str, generation_id: str, patch_id: str) -> str:
     """Storage key for one patch's JSON record."""
-    return f"{patches_prefix(epoch_id, generation_id)}/{patch_id}.json"
+    return storage_key(_LAYOUT.patch_json(epoch_id, generation_id, patch_id))
 
 
 __all__ = [
-    "EPOCHS_NS",
     "RECORD_FORMAT_VERSION",
     "RecordFormatError",
     "check_record_format",
+    "epochs_prefix",
+    "epoch_prefix",
     "epoch_config_key",
     "scoring_key",
     "journal_key",
     "lineage_key",
     "current_epoch_key",
+    "rounds_prefix",
+    "round_prefix",
     "experiment_key",
     "patches_prefix",
     "patch_key",

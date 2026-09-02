@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from zicato.core.types import OutcomeRecord
 from zicato.core.workspace import field_tournament_path
+from zicato.epoch._storage import epoch_prefix, epochs_prefix, round_prefix, rounds_prefix
 from zicato.epoch.journal import (
     append_journal_entry_once,
     outcome_from_dict,
@@ -72,7 +73,7 @@ class _ValidatedSettlement:
 
 def field_settlement_intent_key(epoch_id: str, round_index: int) -> str:
     """Return the canonical storage key for one round's settlement receipt."""
-    return f"epochs/{epoch_id}/rounds/{int(round_index)}/{SETTLEMENT_INTENT_FILENAME}"
+    return f"{round_prefix(epoch_id, round_index)}/{SETTLEMENT_INTENT_FILENAME}"
 
 
 def field_settlement_intent_path(
@@ -82,8 +83,7 @@ def field_settlement_intent_path(
 ) -> Path:
     """Return the filesystem path for one round's settlement receipt."""
     return (
-        WorkspaceLayout.from_root(workspace_root).rounds_dir(epoch_id)
-        / str(int(round_index))
+        WorkspaceLayout.from_root(workspace_root).round_dir(epoch_id, round_index)
         / SETTLEMENT_INTENT_FILENAME
     )
 
@@ -409,16 +409,17 @@ def _stored_receipt_locations(
 ) -> Iterator[tuple[Any, str, str, int]]:
     """Yield each receipt key with the epoch and round encoded by its namespace."""
     backend = workspace_backend(workspace_root, start=False)
+    epochs_key = epochs_prefix()
     epoch_namespaces = (
-        (f"epochs/{epoch_id}",) if epoch_id else tuple(backend.list_namespaces("epochs"))
+        (epoch_prefix(epoch_id),) if epoch_id else tuple(backend.list_namespaces(epochs_key))
     )
     for epoch_namespace in epoch_namespaces:
         parts = epoch_namespace.split("/")
-        if len(parts) != 2 or parts[0] != "epochs" or not parts[1]:
+        if len(parts) != 2 or parts[0] != epochs_key or not parts[1]:
             continue
         stored_epoch = parts[1]
         namespaces = sorted(
-            backend.list_namespaces(f"{epoch_namespace}/rounds"),
+            backend.list_namespaces(rounds_prefix(stored_epoch)),
             key=_round_namespace_order,
         )
         for namespace in namespaces:
@@ -809,7 +810,7 @@ def _project_settlement_index(
 
 def _validate_containing_namespace(namespace: str, epoch_id: str) -> int:
     """Return the round encoded by an exact ``epochs/<epoch>/rounds/<n>`` key."""
-    prefix = f"epochs/{epoch_id}/rounds/"
+    prefix = f"{rounds_prefix(epoch_id)}/"
     if not namespace.startswith(prefix):
         raise RuntimeError(f"field settlement receipt has invalid namespace {namespace!r}")
     tail = namespace.removeprefix(prefix)

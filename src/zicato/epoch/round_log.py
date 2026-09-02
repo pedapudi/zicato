@@ -78,7 +78,7 @@ def round_dir(workspace_root: Path, epoch_id: str, round_index: int) -> Path:
     same axis ``Generation.round_index`` / the health reports'
     ``round_{n}.json`` use — rendered as its plain decimal string.
     """
-    return rounds_dir(workspace_root, epoch_id) / str(int(round_index))
+    return WorkspaceLayout.from_root(workspace_root).round_dir(epoch_id, round_index)
 
 
 def round_log_path(workspace_root: Path, epoch_id: str, round_index: int) -> Path:

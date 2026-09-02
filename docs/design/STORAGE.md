@@ -169,6 +169,21 @@ passed to comes from `zicato.storage.workspace_backend`, the tree's one
 construction path. Both adapters' callers ask it for an unstarted
 backend, so reading a workspace creates nothing on disk.
 
+A key is a persisted address: the file backend resolves `key` as
+`root / key`, so the key for a record and the filesystem path for the same
+record are two readings of one location. Both readings come from one
+declaration. `WorkspaceLayout` (`zicato.workspace.layout`) declares where
+each artifact lives, and the surfaces that need a location resolve through
+it: `zicato.core.workspace` and `zicato.runtime.paths` resolve it against a
+workspace root to get an absolute path, `zicato.query.paths.WorkspacePaths`
+names the subset the dashboard readers open, and the `*_key` helpers resolve
+it against an empty root — `WORKSPACE_RELATIVE_LAYOUT`, rendered by
+`storage_key` — to get the key. Adding an artifact means adding one layout
+method. `tests/test_storage_key_registry.py` holds the correspondence: it
+pins every key against the layout member that owns its location, against the
+absolute path a real backend write lands at, and against the spelling the
+key already has on disk.
+
 Every public `epoch/` function takes `workspace_root: Path` as its
 first argument, so the routing is invisible to callers. What the
 routing buys is uniform atomicity. `experiment.json`, `lineage.json`,
