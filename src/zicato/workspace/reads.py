@@ -27,9 +27,9 @@ directories come back in :func:`~zicato.workspace.epochs.natural_key` order
 round directories come back as ascending integers.
 
 Every reader is **best-effort**: a missing directory, an unreadable one, a
-malformed leaf file, or an id that is not a legal storage key yields the
-empty / ``None`` value rather than an exception. A record whose directory
-exists but whose ``experiment.json`` was never written (an interrupted
+malformed leaf file, or an id that cannot name a single record directory
+yields the empty / ``None`` value rather than an exception. A record whose
+directory exists but whose ``experiment.json`` was never written (an interrupted
 round) is still enumerated — the directory IS the record's existence — and
 simply drops out of the readers that need the file.
 """
@@ -37,26 +37,29 @@ simply drops out of the readers that need the file.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from zicato.storage import workspace_backend
 from zicato.workspace.epochs import _read_json_value, natural_key
-from zicato.workspace.layout import WorkspaceLayout
+from zicato.workspace.layout import WORKSPACE_RELATIVE_LAYOUT, WorkspaceLayout, storage_key
 
 
-def _namespace_names(layout: WorkspaceLayout, *parts: str) -> list[str]:
-    """The names of the record namespaces directly under a workspace key.
+def _namespace_names(layout: WorkspaceLayout, namespace: Path, *ids: str) -> list[str]:
+    """The names of the record namespaces directly under one layout directory.
 
-    ``parts`` are joined into a storage key relative to the workspace root.
-    Returns bare names in the backend's lexical order; each enumeration
-    below imposes the canonical order on top. An id that cannot form a legal
-    key — empty, or carrying a path separator or ``..`` — names no records
-    and yields the empty list rather than escaping the workspace.
+    ``namespace`` is a directory resolved off
+    :data:`~zicato.workspace.layout.WORKSPACE_RELATIVE_LAYOUT`, so it already
+    reads as the storage key to enumerate, and ``ids`` are the ids that were
+    substituted into it. Returns bare names in the backend's lexical order;
+    each enumeration below imposes the canonical order on top. An id that
+    cannot name exactly one directory — empty, or carrying a path separator
+    or ``..`` — names no records and yields the empty list rather than
+    reaching outside the subtree it was meant to address.
     """
-    try:
-        keys = workspace_backend(layout.root, start=False).list_namespaces("/".join(parts))
-    except ValueError:
+    if any(not i or "/" in i or "\\" in i or i in (".", "..") for i in ids):
         return []
+    keys = workspace_backend(layout.root, start=False).list_namespaces(storage_key(namespace))
     return [key.rsplit("/", 1)[-1] for key in keys]
 
 
@@ -73,7 +76,10 @@ def generation_ids(layout: WorkspaceLayout, epoch_id: str) -> list[str]:
 
     Order is numeric-aware, so ``v2`` precedes ``v10``.
     """
-    return sorted(_namespace_names(layout, "epochs", epoch_id, "generations"), key=natural_key)
+    return sorted(
+        _namespace_names(layout, WORKSPACE_RELATIVE_LAYOUT.generations_dir(epoch_id), epoch_id),
+        key=natural_key,
+    )
 
 
 def run_entry_ids(layout: WorkspaceLayout, epoch_id: str, generation_id: str) -> list[str]:
@@ -85,7 +91,12 @@ def run_entry_ids(layout: WorkspaceLayout, epoch_id: str, generation_id: str) ->
     reports which of them left a run on disk.
     """
     return sorted(
-        _namespace_names(layout, "epochs", epoch_id, "generations", generation_id, "runs"),
+        _namespace_names(
+            layout,
+            WORKSPACE_RELATIVE_LAYOUT.runs_dir(epoch_id, generation_id),
+            epoch_id,
+            generation_id,
+        ),
         key=natural_key,
     )
 
@@ -98,7 +109,7 @@ def round_indices(layout: WorkspaceLayout, epoch_id: str) -> list[int]:
     list, which is the honest report that nothing ran rather than an error.
     """
     out: list[int] = []
-    for name in _namespace_names(layout, "epochs", epoch_id, "rounds"):
+    for name in _namespace_names(layout, WORKSPACE_RELATIVE_LAYOUT.rounds_dir(epoch_id), epoch_id):
         try:
             out.append(int(name))
         except ValueError:

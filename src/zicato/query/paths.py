@@ -40,11 +40,15 @@ def _iso(dt: _dt.datetime) -> str:
 
 
 class WorkspacePaths:
-    """The ``.zicato/`` layout the dashboard reads.
+    """The subset of the ``.zicato/`` layout the dashboard readers open.
 
     ``root`` is the ``.zicato`` directory itself, matching the convention
     every other zicato helper uses (``runtime/`` and ``epochs/`` hang
-    directly off it).
+    directly off it). Every path below resolves through
+    :class:`~zicato.workspace.layout.WorkspaceLayout`, which is where each
+    location is declared; this class adds the reader-side name for it and
+    the dashboard's harmonograf URL. :func:`layout_of` hands callers the
+    layout itself when they need a location this subset does not name.
     """
 
     def __init__(self, root: Path, *, harmonograf_url: str = "") -> None:
@@ -59,69 +63,63 @@ class WorkspacePaths:
         self.harmonograf_url = harmonograf_url
 
     @property
+    def _layout(self) -> WorkspaceLayout:
+        return WorkspaceLayout.from_root(self.root)
+
+    @property
     def runtime(self) -> Path:
-        return self.root / "runtime"
+        return self._layout.runtime_dir
 
     @property
     def epochs(self) -> Path:
-        return self.root / "epochs"
+        return self._layout.epochs_dir
 
     @property
     def logs(self) -> Path:
-        # The structured operator-log streams (LOGGING.md): one
-        # ``<utc-stamp>-<pid>.jsonl`` per evolve/reflect invocation.
-        return self.root / "logs"
+        return self._layout.logs_dir
 
     @property
     def heartbeat(self) -> Path:
-        return self.runtime / "heartbeat.json"
+        return self._layout.heartbeat
 
     @property
     def lock(self) -> Path:
-        return self.runtime / "lock.json"
+        return self._layout.lock
 
     @property
     def active_runs_dir(self) -> Path:
-        return self.runtime / "active_runs"
+        return self._layout.active_runs_dir
 
     @property
     def active_tournament(self) -> Path:
-        # The superseded single-file snapshot, still read by the
-        # compatibility reader. Live state comes from the event log below.
-        return self.runtime / "active_tournament.json"
+        return self._layout.active_tournament
 
     @property
     def active_tournament_log(self) -> Path:
-        # The active-tournament EVENT LOG: the single-writer append-only
-        # JSONL the orchestrator/runner publish live state onto, folded by
-        # ``read_active_tournament`` into the structure view.
-        return self.runtime / "active_tournament.events.jsonl"
+        return self._layout.active_tournament_log
 
     @property
     def progress_log(self) -> Path:
-        # The ORCHESTRATOR progress EVENT LOG: the single-writer
-        # append-only JSONL whose monotonic ``seq`` is the true liveness
-        # signal, advancing only on a genuine transition.
-        return self.runtime / "progress.events.jsonl"
+        return self._layout.progress_log
 
     @property
     def control_dir(self) -> Path:
-        return self.runtime / "control"
+        return self._layout.control_dir
 
     @property
     def current_epoch_marker(self) -> Path:
-        return self.root / "current_epoch"
+        return self._layout.current_epoch_marker
 
     @property
     def lineage(self) -> Path:
-        return self.root / "lineage.json"
+        return self._layout.lineage_path
 
     @property
     def index_db(self) -> Path:
-        return self.root / "index.db"
+        return self._layout.index_db_path
 
     def epoch_health_dir(self, epoch_id: str) -> Path:
-        return self.epochs / epoch_id / "health"
+        return self._layout.health_dir(epoch_id)
 
 
 # ---------------------------------------------------------------------------

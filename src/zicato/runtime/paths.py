@@ -1,9 +1,15 @@
-"""Path helpers for the ``.zicato/runtime/`` state-file tree.
+"""Absolute paths into the ``.zicato/runtime/`` state-file tree.
 
 Pure path math — no I/O is performed here other than the explicit
 :func:`ensure_runtime_dirs` helper which creates the directory tree.
 Every other function returns a :class:`Path` and never touches the
 filesystem.
+
+Where each file lives is declared once, on
+:class:`zicato.workspace.layout.WorkspaceLayout`; the functions below
+resolve those declarations against a workspace root, and the ``*_key``
+helpers in :mod:`zicato.runtime._storage` render the same declarations as
+storage keys. Adding a runtime state file means adding one layout method.
 
 The runtime tree is the read/write surface the orchestrator and the
 external supervisor binary share. Layout (``workspace_root`` is the
@@ -31,48 +37,52 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from zicato.workspace.layout import WorkspaceLayout
+
+
+def _layout(workspace_root: Path) -> WorkspaceLayout:
+    """The path declarations for one workspace root.
+
+    ``workspace_root`` is the ``.zicato/`` directory itself; nothing here
+    prepends ``.zicato`` so the caller can name the workspace whatever it
+    likes (the CLI passes ``.zicato`` by default, while tests and embedded
+    usage may pass alternate names).
+    """
+    return WorkspaceLayout.from_root(workspace_root)
+
 
 def runtime_dir(workspace_root: Path) -> Path:
-    """Return ``runtime/`` for a workspace.
-
-    ``workspace_root`` is the ``.zicato/`` directory itself; the helper
-    does NOT prepend ``.zicato`` so the caller can name the workspace
-    whatever it likes (the CLI passes ``.zicato`` by default but tests
-    and embedded usage may pass alternate names).
-    """
-    return workspace_root / "runtime"
+    """Return ``runtime/`` for a workspace."""
+    return _layout(workspace_root).runtime_dir
 
 
 def lock_path(workspace_root: Path) -> Path:
     """Return the path to the workspace lock JSON file."""
-    return runtime_dir(workspace_root) / "lock.json"
+    return _layout(workspace_root).lock
 
 
 def heartbeat_path(workspace_root: Path) -> Path:
     """Return the path to the heartbeat JSON file."""
-    return runtime_dir(workspace_root) / "heartbeat.json"
+    return _layout(workspace_root).heartbeat
 
 
 def dashboard_endpoint_path(workspace_root: Path) -> Path:
     """Return the path to the dashboard's bound-endpoint JSON file.
 
-    The standalone dashboard service walks ``+1`` from its preferred
-    port if that port is taken, so the port it ends up serving on is not
-    knowable up front. The service writes the host/port it actually
-    bound to this file once the listener is up; ``zicato evolve`` reads
-    it back to report the dashboard's real URL instead of guessing.
+    See :attr:`~zicato.workspace.layout.WorkspaceLayout.dashboard_endpoint`
+    for why the bound port is only knowable after the listener is up.
     """
-    return runtime_dir(workspace_root) / "dashboard.json"
+    return _layout(workspace_root).dashboard_endpoint
 
 
 def active_runs_dir(workspace_root: Path) -> Path:
     """Return the directory holding per-run live state JSONs."""
-    return runtime_dir(workspace_root) / "active_runs"
+    return _layout(workspace_root).active_runs_dir
 
 
 def active_run_path(workspace_root: Path, run_id: str) -> Path:
     """Return the path to one run's live-state JSON file."""
-    return active_runs_dir(workspace_root) / f"{run_id}.json"
+    return _layout(workspace_root).active_run(run_id)
 
 
 def active_tournament_path(workspace_root: Path) -> Path:
@@ -82,12 +92,12 @@ def active_tournament_path(workspace_root: Path) -> Path:
     writes the event log (see :func:`active_tournament_log_path`); this
     snapshot is only read when no log exists.
     """
-    return runtime_dir(workspace_root) / "active_tournament.json"
+    return _layout(workspace_root).active_tournament
 
 
 def active_tournament_log_path(workspace_root: Path) -> Path:
     """Return the path to the active-tournament EVENT LOG."""
-    return runtime_dir(workspace_root) / "active_tournament.events.jsonl"
+    return _layout(workspace_root).active_tournament_log
 
 
 def progress_log_path(workspace_root: Path) -> Path:
@@ -97,36 +107,31 @@ def progress_log_path(workspace_root: Path) -> Path:
     true orchestrator-produced liveness signal (advances only on a genuine
     transition, never on the heartbeat timer).
     """
-    return runtime_dir(workspace_root) / "progress.events.jsonl"
+    return _layout(workspace_root).progress_log
 
 
 def inconclusive_dir(workspace_root: Path) -> Path:
     """Return the dead-letter directory for inconclusive crowning duels.
 
-    The Bradley--Terry promotion pre-gate (opt-in) records here any crowning
-    duel whose rating CIs never separated after its replicate budget was spent
-    — a terminal ``"inconclusive"`` verdict. One JSON file per generation
-    (:func:`inconclusive_record_path`) captures the unresolved duel + its final
-    CIs so nothing is silently dropped. The directory is created lazily by the
-    writer; an absent directory simply means no inconclusive duel was ever
-    recorded (the default for every run that did not opt into the pre-gate).
+    See :attr:`~zicato.workspace.layout.WorkspaceLayout.inconclusive_dir`
+    for what lands here and why an absent directory is the norm.
     """
-    return runtime_dir(workspace_root) / "inconclusive"
+    return _layout(workspace_root).inconclusive_dir
 
 
 def inconclusive_record_path(workspace_root: Path, generation_id: str) -> Path:
     """Return the dead-letter path for one inconclusive challenger generation."""
-    return inconclusive_dir(workspace_root) / f"{generation_id}.json"
+    return _layout(workspace_root).inconclusive_record(generation_id)
 
 
 def control_dir(workspace_root: Path) -> Path:
     """Return the directory operator commands are dropped into."""
-    return runtime_dir(workspace_root) / "control"
+    return _layout(workspace_root).control_dir
 
 
 def control_log_dir(workspace_root: Path) -> Path:
     """Return the directory consumed commands are archived in."""
-    return runtime_dir(workspace_root) / "control_log"
+    return _layout(workspace_root).control_log_dir
 
 
 def control_command_path(workspace_root: Path, command: str) -> Path:
@@ -137,27 +142,17 @@ def control_command_path(workspace_root: Path, command: str) -> Path:
     ``"kill_runs/run_abc"``) — the kill/promote/reject commands keep
     one file per target underneath a per-command-kind subdirectory.
     """
-    return control_dir(workspace_root) / command
-
-
-#: Subdirectory of ``control/`` holding parent→supervisor kill-escalation
-#: requests. Distinct from the operator's ``kill_runs/`` channel (which the
-#: orchestrator consumes): a ``kill_requests/{run_id}`` marker is written by
-#: the *Python parent* when a worker overran its budget, asking the *Rust
-#: supervisor* to run the single SIGTERM→grace→SIGKILL escalator on that
-#: worker's pid. Consolidating escalation in the supervisor removes the
-#: parent↔supervisor race over the same worker pid.
-KILL_REQUESTS_DIRNAME = "kill_requests"
+    return _layout(workspace_root).control_command(command)
 
 
 def kill_requests_dir(workspace_root: Path) -> Path:
     """Return the directory holding parent→supervisor kill-escalation requests."""
-    return control_dir(workspace_root) / KILL_REQUESTS_DIRNAME
+    return _layout(workspace_root).kill_requests_dir
 
 
 def kill_request_path(workspace_root: Path, run_id: str) -> Path:
     """Return the path to one run's parent→supervisor kill-request marker."""
-    return kill_requests_dir(workspace_root) / run_id
+    return _layout(workspace_root).kill_request(run_id)
 
 
 def ensure_runtime_dirs(workspace_root: Path) -> None:
@@ -167,10 +162,11 @@ def ensure_runtime_dirs(workspace_root: Path) -> None:
     not error if the tree already exists. Does NOT create any of the
     JSON state files themselves — only the directories that hold them.
     """
-    runtime_dir(workspace_root).mkdir(parents=True, exist_ok=True)
-    active_runs_dir(workspace_root).mkdir(parents=True, exist_ok=True)
-    control_dir(workspace_root).mkdir(parents=True, exist_ok=True)
-    control_log_dir(workspace_root).mkdir(parents=True, exist_ok=True)
+    layout = _layout(workspace_root)
+    layout.runtime_dir.mkdir(parents=True, exist_ok=True)
+    layout.active_runs_dir.mkdir(parents=True, exist_ok=True)
+    layout.control_dir.mkdir(parents=True, exist_ok=True)
+    layout.control_log_dir.mkdir(parents=True, exist_ok=True)
 
 
 __all__ = [
@@ -188,7 +184,6 @@ __all__ = [
     "control_dir",
     "control_log_dir",
     "control_command_path",
-    "KILL_REQUESTS_DIRNAME",
     "kill_requests_dir",
     "kill_request_path",
     "ensure_runtime_dirs",

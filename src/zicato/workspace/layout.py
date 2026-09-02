@@ -1,9 +1,20 @@
-"""WorkspaceLayout — the single source of ``.zicato/`` path math.
+"""WorkspaceLayout — the one declaration of where each ``.zicato/`` artifact lives.
 
-A small, pure (no-I/O) value object that resolves every path the dashboard
-reads off a workspace root. It exists so leaf filename joins
-(``epochs/<id>/generations/<gen>/runs/<entry>/loss.json`` and friends) live
-in ONE place instead of being re-spelled at dozens of dashboard call sites.
+A small, pure (no-I/O) value object that resolves every path a reader or a
+writer needs off a workspace root. Each leaf filename join
+(``epochs/<id>/generations/<gen>/runs/<entry>/loss.json`` and its siblings)
+is declared here once, so a location cannot be spelled two ways.
+
+Every other path surface in the tree resolves through this class rather
+than re-joining the names: :mod:`zicato.core.workspace` (which adds the
+outer→inner descent below), :mod:`zicato.runtime.paths`,
+:class:`zicato.query.paths.WorkspacePaths`, and the record-key helpers in
+:mod:`zicato.epoch._storage` and :mod:`zicato.runtime._storage`.
+
+The key helpers reach a location through :data:`WORKSPACE_RELATIVE_LAYOUT`
+and :func:`storage_key` at the bottom of this module: a storage key is a
+layout path stated relative to the workspace root, so a record's location
+has one declaration whether a caller wants it as a path or as a key.
 
 ``root`` is the inner ``.zicato`` directory itself — the same convention as
 :class:`zicato.query.paths.WorkspacePaths` (``runtime/`` and
@@ -73,6 +84,153 @@ class WorkspaceLayout:
     def current_epoch_marker(self) -> Path:
         """The ``current_epoch`` marker file at the workspace root."""
         return self.root / "current_epoch"
+
+    @property
+    def logs_dir(self) -> Path:
+        """The structured operator-log directory (``logs/``).
+
+        One ``<utc-stamp>-<pid>.jsonl`` stream per ``evolve`` / ``reflect``
+        invocation, as LOGGING.md describes.
+        """
+        return self.root / "logs"
+
+    # -- runtime state -------------------------------------------------------
+    #
+    # The ``runtime/`` subtree is the read/write surface the orchestrator and
+    # the external supervisor binary share. It holds live process state, so
+    # every reader tolerates absence: a workspace with no evolve loop running
+    # has never written most of it. Directory creation is a domain decision
+    # and stays in :func:`zicato.runtime.paths.ensure_runtime_dirs`.
+
+    @property
+    def runtime_dir(self) -> Path:
+        """The ``runtime/`` directory holding live process state."""
+        return self.root / "runtime"
+
+    @property
+    def lock(self) -> Path:
+        """The exclusive workspace lock record (``runtime/lock.json``)."""
+        return self.runtime_dir / "lock.json"
+
+    @property
+    def heartbeat(self) -> Path:
+        """The orchestrator's liveness beat (``runtime/heartbeat.json``)."""
+        return self.runtime_dir / "heartbeat.json"
+
+    @property
+    def dashboard_endpoint(self) -> Path:
+        """The dashboard's actually-bound host and port (``runtime/dashboard.json``).
+
+        The standalone dashboard service walks ``+1`` from its preferred port
+        when that port is taken, so the port it ends up serving on is not
+        knowable up front. The service writes what it bound to once the
+        listener is up, and ``zicato evolve`` reads it back to report the real
+        URL instead of guessing.
+        """
+        return self.runtime_dir / "dashboard.json"
+
+    @property
+    def active_runs_dir(self) -> Path:
+        """The directory holding per-run live state (``runtime/active_runs/``)."""
+        return self.runtime_dir / "active_runs"
+
+    def active_run(self, run_id: str) -> Path:
+        """One in-flight run's live-state record."""
+        return self.active_runs_dir / f"{run_id}.json"
+
+    @property
+    def active_tournament(self) -> Path:
+        """The active tournament's SNAPSHOT record (``runtime/active_tournament.json``).
+
+        Read only as a fallback, by the compatibility reader and by resume
+        cleanup: a snapshot with no event log beside it is still folded into a
+        live view. Nothing writes it — the live producer appends to
+        :meth:`active_tournament_log` instead.
+        """
+        return self.runtime_dir / "active_tournament.json"
+
+    @property
+    def active_tournament_log(self) -> Path:
+        """The active tournament's EVENT LOG (``runtime/active_tournament.events.jsonl``).
+
+        The single-writer, append-only JSONL carrying the in-progress
+        tournament's live state. The runner appends one typed event per state
+        transition and a reader folds the log into the live view, which removes
+        the snapshot's read-modify-write race.
+        """
+        return self.runtime_dir / "active_tournament.events.jsonl"
+
+    @property
+    def progress_log(self) -> Path:
+        """The orchestrator's progress EVENT LOG (``runtime/progress.events.jsonl``).
+
+        A single-writer, append-only JSONL the evolve loop appends one typed
+        event to on each genuine transition (round start, propose, apply,
+        tournament start and settle, gate, promote or reject). Its monotonic
+        ``seq`` is the true liveness signal: it advances only on real progress,
+        never on a timer, so a wedged loop whose heartbeat thread keeps
+        stamping the clock does not read as alive. The tail ``seq`` is stamped
+        into :meth:`heartbeat` and the dashboard's server-sent frames.
+        """
+        return self.runtime_dir / "progress.events.jsonl"
+
+    @property
+    def inconclusive_dir(self) -> Path:
+        """The dead-letter directory for inconclusive crowning duels.
+
+        The opt-in Bradley-Terry promotion pre-gate records here any crowning
+        duel whose rating confidence intervals never separated before its
+        replicate budget was spent. One file per generation
+        (:meth:`inconclusive_record`) captures the unresolved duel and its
+        final intervals, so nothing is dropped silently. An absent directory
+        means no such duel was ever recorded, which is the default for every
+        run that did not opt into the pre-gate.
+        """
+        return self.runtime_dir / "inconclusive"
+
+    def inconclusive_record(self, generation_id: str) -> Path:
+        """One inconclusive challenger generation's dead-letter record."""
+        return self.inconclusive_dir / f"{generation_id}.json"
+
+    @property
+    def control_dir(self) -> Path:
+        """The directory operator commands are dropped into (``runtime/control/``)."""
+        return self.runtime_dir / "control"
+
+    def control_command(self, command: str) -> Path:
+        """One control command's file, under :meth:`control_dir`.
+
+        ``command`` is taken verbatim as a relative path, and may include a
+        subdirectory component: the kill, promote, and reject commands keep one
+        file per target under a per-command-kind subdirectory (for example
+        ``kill_runs/run_abc``).
+        """
+        return self.control_dir / command
+
+    @property
+    def control_log_dir(self) -> Path:
+        """The directory consumed commands are archived in (``runtime/control_log/``)."""
+        return self.runtime_dir / "control_log"
+
+    @property
+    def kill_requests_dir(self) -> Path:
+        """The directory holding parent-to-supervisor kill escalations.
+
+        Distinct from the operator's ``control/kill_runs/`` channel, which the
+        orchestrator consumes. A marker here is written by the Python parent
+        when a worker overran its budget, asking the Rust supervisor to run the
+        single SIGTERM-grace-SIGKILL escalator on that worker's pid.
+        Consolidating escalation in the supervisor removes the race the parent
+        and the supervisor would otherwise have over one worker pid.
+        """
+        return self.control_dir / "kill_requests"
+
+    def kill_request(self, run_id: str) -> Path:
+        """One run's parent-to-supervisor kill-request marker.
+
+        No ``.json`` suffix: the supervisor matches on the bare run id.
+        """
+        return self.kill_requests_dir / run_id
 
     # -- per-epoch -----------------------------------------------------------
 
@@ -206,6 +364,16 @@ class WorkspaceLayout:
         the round subtree has one path definition like every other.
         """
         return self.epoch_dir(epoch_id) / "rounds"
+
+    def round_dir(self, epoch_id: str, round_index: int) -> Path:
+        """One evolve round's directory under :meth:`rounds_dir`.
+
+        ``round_index`` is the epoch-cumulative round number — the same axis
+        :attr:`zicato.core.types.Generation.round_index` and the health
+        reports' ``round_{n}.json`` use — rendered as its plain decimal
+        string.
+        """
+        return self.rounds_dir(epoch_id) / str(int(round_index))
 
     # -- board reflection ----------------------------------------------------
 
@@ -423,3 +591,25 @@ class WorkspaceLayout:
         which joins them with the canonical slot.
         """
         return self.run_dir(epoch_id, generation_id, entry_id) / "loss.archive.jsonl"
+
+
+#: The layout resolved against an empty root, so every path it yields is
+#: already stated relative to the workspace root. Pair it with
+#: :func:`storage_key` to name a record's location as a backend key: the
+#: ``*_key`` helpers in :mod:`zicato.epoch._storage` and
+#: :mod:`zicato.runtime._storage` read their locations off this layout
+#: instead of re-spelling the joins, which is what keeps each location to
+#: one declaration.
+WORKSPACE_RELATIVE_LAYOUT = WorkspaceLayout.from_root(Path())
+
+
+def storage_key(relative_path: Path) -> str:
+    """The backend key naming a path from :data:`WORKSPACE_RELATIVE_LAYOUT`.
+
+    A storage key is a ``/``-separated path relative to the workspace root:
+    :class:`zicato.storage.FileStorageBackend` resolves ``key`` as
+    ``root / key``. So the key for a record is the layout's path for it read
+    off the relative-rooted layout, spelled with forward slashes whatever
+    separator the running platform uses.
+    """
+    return relative_path.as_posix()
