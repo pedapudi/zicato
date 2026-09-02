@@ -20,6 +20,7 @@ from zicato.evolve.lifecycle_services import (
 from zicato.util import best_effort
 
 if TYPE_CHECKING:
+    from zicato.health.diagnostics import HealthFinding, LoopHealth
     from zicato.runtime.heartbeat import HeartbeatBeater
 
 log = logging.getLogger("zicato.orchestrator")
@@ -464,16 +465,8 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
     to recommend instead — belongs to
     :func:`zicato.tournament.calibration.assess_margin_against_floor_record`;
     this function only renders it as a log line.
-
-    Best-effort like the rest of the health path: the :mod:`zicato.health`
-    sibling lands in parallel and may be absent, so a missing
-    ``zicato.health.inputs`` is silently inert rather than aborting the run.
     """
-    try:
-        from zicato.health.inputs import epoch_noise_floor_inputs  # noqa: PLC0415
-    except ImportError:
-        log.debug("zicato.health.inputs unavailable; skipping margin/noise-floor check")
-        return
+    from zicato.health.inputs import epoch_noise_floor_inputs  # noqa: PLC0415
     from zicato.tournament.calibration import (  # noqa: PLC0415
         MARGIN_NOISE_MULTIPLE,
         assess_margin_against_floor_record,
@@ -589,50 +582,30 @@ def _assess_and_persist_loop_health(
       it critical under the default ``"warn"`` gate would stop a run the
       operator asked to let run.
 
-    Best-effort: the :mod:`zicato.health` sibling lands in parallel and
-    may be absent. A missing module, or any failure assessing or writing
-    the report, is logged at ``debug`` level and yields ``("", False)``
-    — the round's outcome is never affected by a health-side error.
+    Best-effort by contract: loop health is observability, and observability
+    must never cost a tournament result. A detector that raises
+    mid-assessment, an unreadable health input, or a failed report write is
+    logged at ``debug`` level and yields ``("", False)``, leaving the round
+    to settle on the verdict its duels produced.
     """
-    try:
-        from zicato.health.diagnostics import assess_loop_health  # noqa: PLC0415
-    except ImportError:
-        log.debug("zicato.health.diagnostics unavailable; skipping loop-health check")
-        return "", False
+    from zicato.health.diagnostics import assess_loop_health  # noqa: PLC0415
+    from zicato.health.inputs import (  # noqa: PLC0415
+        epoch_noise_floor_inputs,
+        epoch_preflight_record,
+        epoch_settlement_receipt_attention,
+        epoch_tree_import_gaps,
+        workspace_preflight_gate,
+    )
 
     try:
-        from zicato.health.inputs import (  # noqa: PLC0415
-            epoch_noise_floor_inputs,
-            epoch_preflight_record,
-            epoch_settlement_receipt_attention,
-            epoch_tree_import_gaps,
-            workspace_preflight_gate,
-        )
-
         losses_by_generation, experiments = _collect_epoch_health_inputs(
             workspace_root, epoch_id, board
         )
         noise_floor, promote_margin, evidence_gate_on = epoch_noise_floor_inputs(
             workspace_root, epoch_id
         )
-        # The runtime-event inputs are passed only when a round actually
-        # carries one, so an older / stubbed ``assess_loop_health``
-        # signature (the sibling-may-lag tolerance this function already
-        # documents) keeps working for every ordinary round.
-        extra_kwargs: dict[str, Any] = {}
-        if infra_outage is not None:
-            extra_kwargs["infra_outage"] = infra_outage
-        if token_clip is not None:
-            extra_kwargs["token_clip"] = token_clip
-        if attributable_regressions:
-            extra_kwargs["attributable_regressions"] = attributable_regressions
-        if on_promote_failure is not None:
-            extra_kwargs["on_promote_failure"] = on_promote_failure
         tree_import_gaps = epoch_tree_import_gaps(workspace_root, epoch_id)
-        if tree_import_gaps:
-            extra_kwargs["tree_import_gaps"] = tree_import_gaps
         receipt_attention = epoch_settlement_receipt_attention(workspace_root, epoch_id)
-        extra_kwargs["settlement_receipt_attention"] = receipt_attention
         health = assess_loop_health(
             losses_by_generation,
             experiments,
@@ -647,7 +620,12 @@ def _assess_and_persist_loop_health(
             evidence_gate_on=evidence_gate_on,
             preflight=epoch_preflight_record(workspace_root, epoch_id),
             preflight_gate=workspace_preflight_gate(workspace_root),
-            **extra_kwargs,
+            infra_outage=infra_outage,
+            token_clip=token_clip,
+            attributable_regressions=attributable_regressions,
+            on_promote_failure=on_promote_failure,
+            tree_import_gaps=tree_import_gaps,
+            settlement_receipt_attention=receipt_attention,
         )
     except Exception as exc:  # noqa: BLE001 — health assessment is best-effort
         log.debug("loop-health assessment skipped for %s round %d: %s", epoch_id, round_n, exc)
@@ -692,49 +670,32 @@ def _assess_and_persist_loop_health(
 _HEALTH_RECOMMENDATION_CLIP = 160
 
 
-def _summarise_loop_health(health: Any) -> tuple[str, bool]:
+def _summarise_loop_health(health: LoopHealth) -> tuple[str, bool]:
     """Derive a one-line summary + critical flag from a ``LoopHealth`` object.
-
-    Tolerant of the sibling's exact :class:`LoopHealth` shape: it is
-    documented to expose ``.findings`` and ``.healthy``, and each finding
-    is expected to carry a ``code``, a ``severity`` (string) and a
-    ``message`` / ``summary`` / ``detail`` text field. Anything missing is
-    filled in defensively so a schema drift in the sibling never raises
-    here.
 
     The line names the finding's stable ``code``, its measured summary, and
     — when the detector wrote one — the ``detail["recommendation"]`` saying
     what to change. The recommendation has to be read out of ``detail``
-    explicitly: the text walker below accepts only *string* attributes, and
-    ``detail`` is a dict, so a walker-only line would carry the remediation
-    that fifteen of the nineteen detectors compose no further than the
-    round's health JSON (issue #129). Still one line — the clip keeps it
-    that way.
+    explicitly, because it is one key of a structured dict rather than a
+    field of the finding: without that read the line would omit the
+    remediation that fifteen of the nineteen detectors compose no further
+    than the round's health JSON (issue #129). Still one line — the clip
+    keeps it that way.
     """
-    findings = list(getattr(health, "findings", ()) or ())
-    healthy = bool(getattr(health, "healthy", not findings))
-
-    def _severity(f: Any) -> str:
-        return str(getattr(f, "severity", "") or "").upper()
-
-    critical = [f for f in findings if _severity(f) == "CRITICAL"]
+    findings = list(health.findings)
+    critical = [f for f in findings if f.severity.upper() == "CRITICAL"]
     has_critical = bool(critical)
 
     if not findings:
-        return ("loop healthy" if healthy else "loop health: no findings"), False
+        return ("loop healthy" if health.healthy else "loop health: no findings"), False
 
-    def _text(f: Any) -> str:
-        for attr in ("message", "summary", "detail", "description"):
-            val = getattr(f, attr, None)
-            if isinstance(val, str) and val.strip():
-                return val.strip()
-        return str(f)
+    def _text(f: HealthFinding) -> str:
+        return f.summary.strip() or str(f)
 
-    def _head(f: Any) -> str:
-        code = str(getattr(f, "code", "") or "").strip()
+    def _head(f: HealthFinding) -> str:
+        code = f.code.strip()
         line = f"[{code}] {_text(f)}" if code else _text(f)
-        detail = getattr(f, "detail", None)
-        rec = detail.get("recommendation") if isinstance(detail, dict) else None
+        rec = f.detail.get("recommendation")
         if isinstance(rec, str) and rec.strip():
             rec = rec.strip()
             if len(rec) > _HEALTH_RECOMMENDATION_CLIP:
@@ -752,32 +713,18 @@ def _summarise_loop_health(health: Any) -> tuple[str, bool]:
     return f"{len(findings)} finding(s): {head}{extra}", False
 
 
-def _loop_health_to_json(health: Any, epoch_id: str, round_n: int) -> str:
-    """Serialize a ``LoopHealth`` object to a pretty-printed JSON string.
+def _loop_health_to_json(health: LoopHealth, epoch_id: str, round_n: int) -> str:
+    """Serialize a ``LoopHealth`` report to a pretty-printed JSON string.
 
-    Uses :func:`dataclasses.asdict` when the sibling's :class:`LoopHealth`
-    is a dataclass; otherwise falls back to reading ``.healthy`` /
-    ``.findings`` and coercing each finding via :func:`dataclasses.asdict`
-    or ``vars()``. ``epoch_id`` / ``round`` / ``assessed_at`` are stamped
-    on so the report is self-describing for the dashboard.
+    :class:`~zicato.health.diagnostics.LoopHealth` is a dataclass of
+    dataclasses, so :func:`dataclasses.asdict` carries the whole report —
+    every finding's ``code`` / ``severity`` / ``summary`` / ``detail``
+    included. ``epoch_id`` / ``round`` / ``assessed_at`` are stamped on so
+    the report is self-describing for the dashboard.
     """
     import dataclasses as _dataclasses  # noqa: PLC0415
 
-    def _coerce(obj: Any) -> Any:
-        if _dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-            return _dataclasses.asdict(obj)
-        if hasattr(obj, "__dict__"):
-            return dict(vars(obj))
-        return obj
-
-    body: dict[str, Any]
-    if _dataclasses.is_dataclass(health) and not isinstance(health, type):
-        body = _dataclasses.asdict(health)
-    else:
-        body = {
-            "healthy": bool(getattr(health, "healthy", False)),
-            "findings": [_coerce(f) for f in getattr(health, "findings", ()) or ()],
-        }
+    body: dict[str, Any] = _dataclasses.asdict(health)
     summary, has_critical = _summarise_loop_health(health)
     body.update(
         {
@@ -813,7 +760,17 @@ def _warn_loop_no_signal(epoch_id: str, round_n: int, summary: str) -> None:
     )
 
 
-def _warn_dead_judges(epoch_id: str, round_n: int, health: Any) -> None:
+def _first_finding(health: LoopHealth, code: str) -> HealthFinding | None:
+    """Return the report's first finding carrying ``code``, or ``None``.
+
+    Shared by the run-level warnings below. Each lifts one finding onto the
+    terminal per round, so where a detector emitted several under the same
+    code the first one stands for all of them.
+    """
+    return next((f for f in health.findings if f.code == code), None)
+
+
+def _warn_dead_judges(epoch_id: str, round_n: int, health: LoopHealth) -> None:
     """Emit a prominent stderr WARNING for any board-declared judge that never fired.
 
     The ``dead_judge`` loop-health finding (a board-declared process judge
@@ -825,36 +782,28 @@ def _warn_dead_judges(epoch_id: str, round_n: int, health: Any) -> None:
     invokes it) or its criterion is unreachable, and an operator cannot
     tell it apart from a judge that ran and passed. Fired every round the
     finding is present (idempotent, best-effort).
-
-    Tolerant of the health sibling's exact shape: it scans ``.findings``
-    for the stable ``code == "dead_judge"`` and reads the finding's
-    ``detail["dead_judges"]`` / ``summary`` defensively, so a schema drift
-    never raises here.
     """
-    for finding in getattr(health, "findings", ()) or ():
-        if str(getattr(finding, "code", "") or "") != "dead_judge":
-            continue
-        detail = getattr(finding, "detail", None)
-        dead = detail.get("dead_judges") if isinstance(detail, dict) else None
-        named = ", ".join(repr(str(n)) for n in dead) if isinstance(dead, list | tuple) else ""
-        summary = str(getattr(finding, "summary", "") or "")
-        log.warning(
-            "DECLARED JUDGE NEVER FIRED — epoch %s round %d: %s%s "
-            "A judge declared on the board produced no metric across the whole "
-            "generation: it is either mis-wired (the events it keys on are never "
-            "emitted, or the harness never invokes it) or its criterion is "
-            "unreachable — an operator cannot tell it apart from a judge that ran "
-            "and passed. Confirm each judge is wired to events that fire and its "
-            "criterion is reachable (see zicato-design-judges).",
-            epoch_id,
-            round_n,
-            summary or "a declared judge never fired",
-            f" (dead: {named})" if named else "",
-        )
+    finding = _first_finding(health, "dead_judge")
+    if finding is None:
         return
+    dead = finding.detail.get("dead_judges")
+    named = ", ".join(repr(str(n)) for n in dead) if isinstance(dead, list | tuple) else ""
+    log.warning(
+        "DECLARED JUDGE NEVER FIRED — epoch %s round %d: %s%s "
+        "A judge declared on the board produced no metric across the whole "
+        "generation: it is either mis-wired (the events it keys on are never "
+        "emitted, or the harness never invokes it) or its criterion is "
+        "unreachable — an operator cannot tell it apart from a judge that ran "
+        "and passed. Confirm each judge is wired to events that fire and its "
+        "criterion is reachable (see zicato-design-judges).",
+        epoch_id,
+        round_n,
+        finding.summary or "a declared judge never fired",
+        f" (dead: {named})" if named else "",
+    )
 
 
-def _warn_erroring_judges(epoch_id: str, round_n: int, health: Any) -> None:
+def _warn_erroring_judges(epoch_id: str, round_n: int, health: LoopHealth) -> None:
     """Emit a prominent stderr WARNING for a board-declared judge that RAISED.
 
     The sibling of :func:`_warn_dead_judges`, for the failure that is easily
@@ -866,33 +815,26 @@ def _warn_erroring_judges(epoch_id: str, round_n: int, health: Any) -> None:
     made the generation look BETTER than the evidence supports. That is a
     result the operator must see on the terminal in the round it happens, not
     in a per-round JSON read afterwards.
-
-    Tolerant of the health sibling's exact shape: it scans ``.findings`` for
-    the stable ``code == "judge_erroring"`` and reads the finding's
-    ``summary`` / ``detail`` defensively, so a schema drift never raises here.
     """
-    for finding in getattr(health, "findings", ()) or ():
-        if str(getattr(finding, "code", "") or "") != "judge_erroring":
-            continue
-        detail = getattr(finding, "detail", None)
-        recommendation = detail.get("recommendation") if isinstance(detail, dict) else None
-        summary = str(getattr(finding, "summary", "") or "")
-        log.warning(
-            "DECLARED JUDGE RAISED — epoch %s round %d: %s %s",
-            epoch_id,
-            round_n,
-            summary or "a declared judge failed on every invocation",
-            str(recommendation)
-            or (
-                "a judge that raised did not decide anything: its silence lowered "
-                "this round's drift loss without evidence. Check the judge / "
-                "auxiliary endpoint and model config."
-            ),
-        )
+    finding = _first_finding(health, "judge_erroring")
+    if finding is None:
         return
+    recommendation = finding.detail.get("recommendation")
+    log.warning(
+        "DECLARED JUDGE RAISED — epoch %s round %d: %s %s",
+        epoch_id,
+        round_n,
+        finding.summary or "a declared judge failed on every invocation",
+        str(recommendation)
+        or (
+            "a judge that raised did not decide anything: its silence lowered "
+            "this round's drift loss without evidence. Check the judge / "
+            "auxiliary endpoint and model config."
+        ),
+    )
 
 
-def _warn_trees_never_imported(epoch_id: str, round_n: int, health: Any) -> None:
+def _warn_trees_never_imported(epoch_id: str, round_n: int, health: LoopHealth) -> None:
     """Emit a prominent stderr WARNING for a tree no unit of a generation imported.
 
     The ``tree_never_imported`` finding says the loop mutated code that was
@@ -902,20 +844,20 @@ def _warn_trees_never_imported(epoch_id: str, round_n: int, health: Any) -> None
     cannot tell "the mutations did not help" from "the mutations were never
     under test" — the same argument that lifted ``dead_judge`` to the terminal
     (:func:`_warn_dead_judges`). Fired every round the finding is present
-    (idempotent, best-effort), and tolerant of the health sibling's exact shape.
+    (idempotent, best-effort).
     """
-    for finding in getattr(health, "findings", ()) or ():
-        if str(getattr(finding, "code", "") or "") != "tree_never_imported":
-            continue
-        log.warning(
-            "MUTATED TREE NEVER IMPORTED — epoch %s round %d: %s. The round's "
-            "verdict compared two IDENTICAL unmutated trees, so it carries no "
-            "optimization signal. Check that the harness entrypoint imports the "
-            "mutable tree rather than an installed copy under another name, and "
-            "that the board exercises the code path the mutations target; the "
-            "per-generation record is generations/<gen>/harness_load.json "
-            "(issue #110).",
-            epoch_id,
-            round_n,
-            str(getattr(finding, "summary", "") or "a mutable tree was never imported"),
-        )
+    finding = _first_finding(health, "tree_never_imported")
+    if finding is None:
+        return
+    log.warning(
+        "MUTATED TREE NEVER IMPORTED — epoch %s round %d: %s. The round's "
+        "verdict compared two IDENTICAL unmutated trees, so it carries no "
+        "optimization signal. Check that the harness entrypoint imports the "
+        "mutable tree rather than an installed copy under another name, and "
+        "that the board exercises the code path the mutations target; the "
+        "per-generation record is generations/<gen>/harness_load.json "
+        "(issue #110).",
+        epoch_id,
+        round_n,
+        finding.summary or "a mutable tree was never imported",
+    )

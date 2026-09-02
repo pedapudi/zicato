@@ -53,8 +53,8 @@ class EvolveRoundOutcome:
     health_summary:
         One-line summary of the round's loop-health assessment (see
         :func:`zicato.health.diagnostics.assess_loop_health`). Empty
-        string when the health sibling is unavailable or the assessment
-        could not be run — the round's outcome is unaffected either way.
+        string when the assessment could not be run — the round's outcome
+        is unaffected either way.
     health_critical:
         ``True`` when the round's loop-health assessment surfaced at
         least one CRITICAL finding (e.g. degenerate scoring producing no
