@@ -100,19 +100,17 @@ markers = [
     "slow: one test measured at 15 s or more (statistical characterizations and end-to-end simulations); deselected ONLY by a bare `pytest` (see tests/conftest.py) — naming a file or a test runs it, `-m slow` runs the tier alone, and `make test` and CI run both tiers",
     "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses); its runtime IS its coverage, so it is never a candidate for stubbing",
     "cascade_oc: the opt-in evaluation-cascade OC measurement suite (CASCADE.md §4); EXCLUDED from the default run via addopts — run with `-m cascade_oc`",
-    "pi: launches the real pi coding agent from integrations/pi (needs `npm ci` + Node >= 22); SKIPS cleanly when it is not installed, so the default run is unaffected — the CI lane selects it with `-m pi`",
 ]
 ```
 — `pyproject.toml`, `[tool.pytest.ini_options]`
 
-The five markers and what they tag:
+The four markers and what they tag:
 
 | Marker | Tags | In the default run? |
 |---|---|---|
 | `node` | the in-pytest shim (`tests/test_dashboard_js.py`) that re-runs the whole standalone Node suite inside pytest | NO — it would duplicate `make node-test` |
 | `slow` | one test measured at 15 s or more ALONE (`-n0`) | NO for a BARE `pytest`; YES the moment anything is named (see below) |
 | `cascade_oc` | the opt-in evaluation-cascade measurement suite | NO — run it with `-m cascade_oc` |
-| `pi` | tests that launch the real pi coding agent | YES, but they SKIP unless `integrations/pi` is installed |
 | `integration` | any test crossing a process or network boundary | YES — most are fast |
 
 `slow` and `integration` answer different questions and must not be

@@ -398,8 +398,7 @@ class EnvVarInfo:
     role:
         Why an environment variable is the RIGHT mechanism here — one of
         ``"harness-contract"``, ``"internal-handoff"``,
-        ``"external-integration"``, ``"secrets-boundary"``, or
-        ``"test-toggle"``. Configuration
+        ``"secrets-boundary"``, or ``"test-toggle"``. Configuration
         knobs are none of these; they live on CLI flags and in workspace
         configuration or contract files.
     description:
@@ -448,38 +447,6 @@ _MERITED_ENV_VARS: tuple[EnvVarInfo, ...] = (
             "the native gRPC host:port the per-run telemetry sinks must "
             "dial (the web URL serves gRPC-Web on a different port). Set "
             "and restored by the same lifecycle."
-        ),
-    ),
-    EnvVarInfo(
-        name="ZICATO_PROPOSER_TOOL_CONTEXT",
-        role="internal-handoff",
-        description=(
-            "Set by the proposer launcher for the isolated MCP tool server: "
-            "names the per-round JSON context file that the child process reads."
-        ),
-    ),
-    EnvVarInfo(
-        name="PI_CODING_AGENT_DIR",
-        role="external-integration",
-        description=(
-            "Read as the operator's Pi credential source, then set for each "
-            "isolated Pi proposer process to name its private agent directory."
-        ),
-    ),
-    EnvVarInfo(
-        name="PI_CODING_AGENT_SESSION_DIR",
-        role="external-integration",
-        description=(
-            "Set for an isolated Pi proposer process to keep its sessions under "
-            "the per-challenger agent directory."
-        ),
-    ),
-    EnvVarInfo(
-        name="PI_OFFLINE",
-        role="external-integration",
-        description=(
-            "Set to 1 for an isolated Pi proposer process so it uses the model "
-            "and credentials Zicato supplied without remote package discovery."
         ),
     ),
     EnvVarInfo(

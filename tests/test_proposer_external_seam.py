@@ -1,9 +1,11 @@
-"""The external-proposer seam: ``runtime.proposer_agent`` (issue #147 phase 1).
+"""The external-proposer seam: an operator's own ``runtime.proposer_agent``.
 
-Covers the three things the seam has to get right:
+The seam is the loop's single proposer boundary. Its default and only
+supported implementation is the Foe-backed proposer; what these cases
+cover is the other door — a class the operator supplies themselves.
 
-* **resolution** — a dotted path becomes an agent, ahead of both ADK
-  tiers, with an error that names the field when it does not;
+* **resolution** — a dotted path becomes an agent, with an error that
+  names the field when it does not;
 * **identity** — the class's causal surface is folded into the proposer
   contract component, so configuring an external proposer (or changing
   what it runs on) rolls the epoch;
@@ -101,14 +103,14 @@ def test_config_is_none_without_the_key() -> None:
 
 def test_config_reads_the_runtime_block() -> None:
     config = external_proposer_config(
-        {"runtime": {"proposer_agent": _DOTTED, "pi_bin": "/opt/pi", "parallelism": 4}},
+        {"runtime": {"proposer_agent": _DOTTED, "instance_id": "ws-1", "parallelism": 4}},
         Path("/ws"),
     )
     assert config is not None
     assert config.dotted_path == _DOTTED
     assert config.workspace_root == Path("/ws")
     # Non-string runtime values are dropped rather than coerced.
-    assert config.options == {"proposer_agent": _DOTTED, "pi_bin": "/opt/pi"}
+    assert config.options == {"proposer_agent": _DOTTED, "instance_id": "ws-1"}
 
 
 def test_build_proposer_agent_resolves_the_external_class_first() -> None:

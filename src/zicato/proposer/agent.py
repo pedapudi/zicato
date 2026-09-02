@@ -346,12 +346,10 @@ async def propose_via_engine(
     :func:`~zicato.proposer.proposer.propose_experiment`'s keyword
     arguments. ``aux_call_llm`` is a parameter rather than being read off
     the context because the transport is the only thing that varies:
-    :class:`DefaultProposerAgent` passes ``ctx.aux_call_llm`` (the text
-    shim), while :class:`~zicato.proposer.pi_agent.PiProposerAgent` passes
-    a live RPC session's ``call``. Everything downstream of that choice —
-    the bounded retry, the repair turns, the forbidden-id enforcement, the
-    post-apply validation hook, the meta-loop bookends — is identical for
-    both by construction rather than by two implementations agreeing.
+    :class:`DefaultProposerAgent` passes ``ctx.aux_call_llm``. Everything
+    downstream of that choice — the bounded retry, the repair turns, the
+    forbidden-id enforcement, the post-apply validation hook, the
+    meta-loop bookends — is decided here rather than by each caller.
     """
     return await propose_experiment(
         epoch_id=ctx.epoch_id,

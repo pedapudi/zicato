@@ -48,7 +48,6 @@ def test_install_profiles_cover_shipped_interfaces() -> None:
     assert names("dashboard") <= names("observability")
     assert names("tui") <= names("observability")
     assert names("observability") <= names("all")
-    assert names("mcp") <= names("all")
     assert {"goldfive", "google-adk"} <= names("all")
 
 

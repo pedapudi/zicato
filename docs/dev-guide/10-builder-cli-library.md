@@ -1294,7 +1294,6 @@ Each entry carries a **boundary-kind role** (NOT a process label):
 |---|---|---|
 | `harness-contract` | set by zicato for the inner harness — part of the run contract | `ZICATO_RUN_SCRATCH_DIR` |
 | `internal-handoff` | set and restored by zicato to hand a value across its own processes | `ZICATO_HARMONOGRAF_URL`, `ZICATO_HARMONOGRAF_GRPC` |
-| `external-integration` | input or child-process control required by an optional external tool | `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `PI_OFFLINE` |
 | `secrets-boundary` | Configuration records a variable name while its credential value remains in the process environment | `<models.<role>.api_key_env>`, Goldfive names returned by `RuntimeConfigDocument.secret_env_names`, and `<runtime.worker_env_passthrough>` when used for credentials |
 | `test-toggle` | CI / test switches; never read on an operator path | `ZICATO_SKIP_HOOK_CHECK`, `ZICATO_PARITY_UPDATE` |
 

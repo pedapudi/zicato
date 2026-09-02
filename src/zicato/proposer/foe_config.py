@@ -44,6 +44,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from zicato.proposer.external import DEFAULT_PROPOSER_AGENT
+
 #: The ``config.json`` key holding everything below.
 PROPOSER_BLOCK_KEY = "proposer"
 
@@ -57,19 +59,16 @@ VIEWER_POLICIES: tuple[str, ...] = ("off", "on-failure", "always")
 #: :func:`refuse_removed_proposer_configuration`, which is the single
 #: place a retired configuration is named.
 REMOVED_RUNTIME_KEYS: Mapping[str, str] = {
-    "pi_bin": "the pi proposer integration was removed",
-    "pi_integration_dir": "the pi proposer integration was removed",
+    "pi_bin": "the coding-agent proposer integration it configured was removed",
+    "pi_integration_dir": "the coding-agent proposer integration it configured was removed",
 }
 
-#: Dotted paths that named a removed built-in proposer class. An operator
-#: may still bind their OWN class through ``runtime.proposer_agent``; what
-#: is refused is a path back into a runtime that no longer exists.
-REMOVED_PROPOSER_CLASSES: tuple[str, ...] = (
-    "zicato.proposer.pi_agent:PiProposerAgent",
-    "zicato.proposer.adk_agent:ADKProposerAgent",
-    "zicato.proposer.agent:DefaultProposerAgent",
-    "zicato.proposer.proposer:DefaultProposerAgent",
-)
+#: The module namespace zicato's own proposer classes live in. A dotted
+#: path into it that is not the Foe agent names a built-in runtime that
+#: was removed, and is refused. An operator's own class lives outside this
+#: namespace and is untouched, which is the whole distinction the retained
+#: seam draws: it accepts an explicit class, never a removed built-in.
+BUILT_IN_PROPOSER_NAMESPACE = "zicato.proposer."
 
 #: Named in every refusal so an operator has one place to read.
 _REPLACEMENT = (
@@ -265,10 +264,11 @@ def refuse_removed_proposer_configuration(workspace_config: Mapping[str, Any]) -
         if runtime.get(key):
             raise ProposerConfigError(f"runtime.{key}: {removal}, and {_REPLACEMENT}")
     dotted = str(runtime.get("proposer_agent") or "")
-    if dotted in REMOVED_PROPOSER_CLASSES:
+    if dotted.startswith(BUILT_IN_PROPOSER_NAMESPACE) and dotted != DEFAULT_PROPOSER_AGENT:
         raise ProposerConfigError(
-            f"runtime.proposer_agent: {dotted} was removed, and {_REPLACEMENT}. "
-            "An operator-supplied class of your own is still accepted here."
+            f"runtime.proposer_agent: {dotted} names a built-in proposer runtime "
+            f"that was removed, and {_REPLACEMENT}. An operator-supplied class of "
+            "your own is still accepted here."
         )
 
 
@@ -292,8 +292,8 @@ def refuse_removed_proposer_directory(proposer_path: Path | None) -> None:
 
 __all__ = [
     "PROPOSER_BLOCK_KEY",
-    "REMOVED_PROPOSER_CLASSES",
     "REMOVED_RUNTIME_KEYS",
+    "BUILT_IN_PROPOSER_NAMESPACE",
     "VIEWER_POLICIES",
     "FoeBudget",
     "FoeModelRole",

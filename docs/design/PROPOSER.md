@@ -573,84 +573,194 @@ reign's durable records with the grader's ledger).
 
 ---
 
-## 2.9 The external resolution — a proposer that is its own process
+## 2.9 The proposer runtime — one Foe episode per candidate
 
-`ProposerAgent` is a one-method protocol, so a proposer that runs outside
-the ADK `Runner` needs no new machinery — only a way to *name* it and a
-way to *hash* it. Both live in `zicato/proposer/external.py`:
+Zicato's proposer is a [Foe](https://github.com/pedapudi/foe) episode.
+Foe is a runtime for autonomous coding agents: nothing is available to an
+episode that its configuration did not grant, the grants compile into
+kernel restrictions that every process of the episode inherits, and the
+log is complete by construction because every exchange with the host
+passes through it. One episode produces one candidate, in its own
+process.
 
-```toml
-[runtime]
-proposer_agent = "zicato.proposer.pi_agent:PiProposerAgent"
+`ProposerAgent` remains a one-method protocol, and
+`zicato/proposer/external.py` remains the loop's single proposer
+boundary: a way to *name* an implementation and a way to *hash* it.
+`FoeProposerAgent` (`zicato/proposer/foe_agent.py`) is that protocol's
+default and only supported implementation.
+
+### The ownership boundary
+
+Zicato owns the authorized proposal context, the holdout redaction, the
+mutation-point rules, the best-of-N policy, screening, recombination,
+experiment validation, tournament execution and promotion statistics. Foe
+owns the bounded agent loop, the model call, the editing tools,
+capability enforcement, the episode budget, cancellation and the
+transcript. Foe *is* the proposer subprocess: no second Python worker
+wraps it, because two lifecycle authorities would make cancellation
+ambiguous.
+
+Two host tools cross the boundary the other way, answered by zicato in
+its own process: `mutation_usage`, so an edit can be grounded in how a
+value is actually consumed, and `validate_patches` (§2.10), which reads
+the working copy back as a patch set and lints it.
+
+### The configuration
+
+A workspace declares its proposer in one block of its `config.json`:
+
+```json
+"proposer": {
+  "binary": "/usr/local/bin/foe",
+  "budget": {"model_calls": 12, "seconds": 900},
+  "model": {"provider": "anthropic", "model": "claude-opus-5",
+            "options": {"api_key_file": "/home/me/.config/foe/key.json"}},
+  "viewer": "off"
+}
 ```
 
-The class answers `contract_identity(config)` with its **causal surface**,
-and that mapping's digest is folded into the `proposer` contract component
-beside `agent_source_sha256` (§4). A workspace that names no external
-proposer omits the key, so its canonical form and contract hash are
-unaffected, which is pinned in `tests/test_proposer_external_seam.py`.
+Four decisions and no fifth. The **binary** is named by absolute path,
+because the episode's grants are absolute and a relative path would mean
+different things to the loop and to a worker. The **budget** bounds the
+episode in Foe's own dimensions. The **model** block is what Foe's
+built-in transport calls; a credential is always a file Foe reads, per
+Foe's `docs/models.md`, and zicato defines no environment variable of its
+own and forwards no credential. The **viewer** decides when a finished
+episode's trajectory is served for an operator to read. The instructions
+are not here: they are the epoch's proposer brief and its skills, which
+the contract already hashes.
 
-Four things belong in that identity: the version of the third-party runtime,
-the bytes of the files zicato owns, the tool set, and the launch envelope. The
-runtime version is recorded coarsely, because a patch release that changes no
-prompt and no tool schema should not roll an epoch, and the standing rule *do
-not upgrade mid-tournament* carries the rest. The files zicato owns are edited
-in place, so they have no version to record and their bytes stand in. What
-does **not** belong: the model. A `models.*` role is
-runtime infrastructure that does not roll an epoch, and the contract hash
-names no model. The collusion hazard an external tier
-introduces — an agent quietly falling back to its own configured default —
-is closed where it happens, at launch: the resolved `ctx.model` is threaded
-into the process and an empty one is a hard failure, asserted in
-`tests/test_proposer_pi_envelope.py`.
+Validation is strict and refuses by name. A workspace still carrying a
+retired proposer runtime's configuration — a binary key for the removed
+coding-agent integration, a `runtime.proposer_agent` pointing back into
+zicato's own proposer namespace at anything but the Foe agent, a
+`proposers/<name>/agent.py` module — is refused with the key, what was
+removed, and this document, rather than silently running something else.
 
-**The first implementation is pi** (`zicato/proposer/pi_agent.py`,
-`integrations/pi/`): one `pi --mode rpc` subprocess per challenger, driven
-through the *same* `propose_experiment` engine the text shim uses. The live
-RPC session is handed to that engine as the `aux_call_llm` callable, so a
-bounded retry becomes a follow-up message on a warm conversation instead
-of a cold restart that re-sends the whole manifest. The tier differs from
-the shim in transport rather than in semantics, which is what makes it an
-honest paired baseline against the shim.
+### The envelope, by construction
 
-When `best_of_n > 1`, pi advertises the optional native-slate capability.
-Zicato still owns the visibility envelope, screening, deterministic fallback,
-and final tree mount, but generation, comparison, and a screen-triggered
-revision all occur as turns in that challenger's one conversation. The review
-turn uses the bounded `select_candidate` tool; an absent or out-of-range index
-degrades to the deterministic selector. The round log
-retains the ordinary `candidate_sampled` events and enriches
-`critique_selected` with candidate summaries and the review rationale, making
-the in-session decision inspectable without board identities. The default aux
-critic records the same two fields by another route — it answers with the
-index and one sentence — so a reader of `round_log.jsonl` learns what was
-chosen and why regardless of which transport ran.
+Section 2.10's governing principle is that a proposer may check its work
+by any means that consumes no board data and produces no scores, and may
+never execute board entries. Under Foe that envelope is reached by
+construction rather than by asserting a list of switches: nothing is
+available that was not granted, and the grants are hashed.
 
-The session boundary is one proposal slate: it is never shared across board
-entries, runs, challengers, or rounds. Pi receives only `ProposerContext`'s
-restricted aggregates and mutation surface—never board entries. This
-capability belongs only to the proposer seam; emulator, judge, adjudicator,
-and target adapters retain their own structured/text execution contracts.
+An episode is granted read on the parent generation's snapshot and write
+on a disposable copy of it, and nothing else. Its tool list is `read`,
+`grep`, `edit`, `block`, `mutation_usage` and `validate_patches` — the
+sanctioned set, named in one place and folded into the identity below, so
+widening it rolls the epoch and is asserted where it is declared. There
+is no discovery of extensions, skills, prompt templates or project-local
+context files, because Foe has no such discovery: a tool the document
+does not list does not exist for that episode. There is no cross-round
+memory, because each episode's log directory is its own.
 
-Stage-specific proposer model overrides are rejected on this path: a
-separate generation or review model would require another process and
-would contradict the native-session contract. They remain supported by the
-generic best-of-N wrapper for proposers without this capability.
+### Identity — ask the runtime
 
-The envelope is the other half, and it is enforced by what the proposer is
-shown. A default coding-agent session has `bash`, `read` and `grep`
-pointed at the working directory; a proposer with those can read the board
-and the holdout slice, and nothing errors and nothing warns. The sanctioned
-launch therefore turns off built-in tools, extension, skill and
-prompt-template discovery, and context files. Project-local files are
-untrusted. The agent gets a fresh isolated directory with credentials copied
-in explicitly, no packages, and no cross-round memory. It writes no session
-file, because cross-round persistence would be an unhashed side channel
-around the overfitting envelope. Its working directory sits outside every
-snapshot: the snapshot is the system under test, and reading it ambiently
-would be both an unhashed contract input and an injection path from the
-thing being rewritten into the thing rewriting it. Continuous integration
-asserts the running agent's active tool list equals the sanctioned set.
+The contract hash must move for everything the model sees and for nothing
+else. Foe computes `fingerprint(contract)` itself: a SHA-256 over the
+instruction sections, every tool's name, description, instruction and
+parameter schema, the permission *shape*, the budget and termination
+condition, and the runtime's own version and build hash. The task, the
+model route and the paths in the resolved permission set are excluded.
+
+Zicato asks the runtime for that value rather than reconstructing it,
+because a reconstruction from outside cannot see the model-visible
+strings the runtime itself contributes. The proposer's contract identity
+is therefore Foe's fingerprint plus the zicato-side inputs — the
+sanctioned tool list — folded into the `proposer` contract component
+(§4). Computing it starts no episode, opens no socket and reads no
+credential: `foe plan` reads the document and the files it names. A
+binary that cannot report it refuses to freeze the epoch rather than
+hashing something else, because an epoch whose proposer identity is
+unknown is not frozen.
+
+What follows from the rule, and is pinned in
+`tests/test_proposer_contract_identity.py`: rewording a tool description
+moves the hash; relocating a grant path does not; raising the episode's
+budget moves it, because a proposer with more model calls investigates
+differently; selecting another model does not, which is the standing rule
+that keeps every `models.*` role out of the contract hash.
+
+### The edit loop
+
+Both earlier proposer tiers emitted a patch set in one answer. A Foe
+episode instead edits: it is given a writable copy of the parent
+snapshot, changes files in it, calls `validate_patches`, fixes what it
+reports, and returns the hypothesis when the checks pass. Zicato derives
+the patch set from the difference between the snapshot and the copy,
+projected onto the enumerated mutation points
+(`zicato/proposer/foe_scratch.py`).
+
+Each changed line range must fall entirely inside one declared mutation
+point. A point that a range touches is replaced as a unit, and its new
+value is read from the copy's *own enumeration* rather than from its
+lines, because the enumerator is the one authority on what a point's
+content is. A change outside every point, or one that leaves a declared
+point unresolvable, is refused with the path and the line range.
+The `Experiment` schema does not change: what leaves the proposer is an
+ordinary patch set over mutation ids.
+
+The copy is a `ztw-pscratch-*` tree in the OS temp root — a prefix
+distinct from the `ztw-pvalidate-*` trees §2.10 writes and the
+`ztw-slate-*` trees a slate uses, so no sweep over one family reaps
+another — and it is removed on every exit path. The standing prohibition
+that no proposer tool writes to the generation snapshot is preserved,
+because the copy is disposable and the snapshot is never mounted
+writable; under Foe the write grant *is* the copy's path, enforced by the
+kernel.
+
+### The four endings
+
+An episode ends completed, blocked, exhausted or failed, and each names a
+different remedy. A block says what the proposer found impossible, which
+is a signal about the mutation surface or the brief; exhaustion says the
+budget ran out with work still in progress; a failure says something is
+defective. `core.types` carries the vocabulary, the closed set of
+zicato blocked codes, and the mapping from every code Foe's log format
+declares. `ProposerBlocked` and `ProposerExhausted` derive from
+`ProposerError`, so every round that already degrades on that exception
+degrades identically and spends no tournament budget; the round log
+records the ending as `proposal_episode_settled` and the scorecard counts
+each kind, each blocked code and each exhausted limit.
+
+A block whose Foe code is `verification-unsatisfiable` is refined by
+asking the working copy what actually went wrong, because that one code
+covers every way a copy can fail to become a patch set: an edit outside
+the declared surface reports `edit-outside-mutation-point`, and a copy
+the episode never changed reports `no-groundable-mutation-point`.
+
+### The supervisor's reach
+
+An episode records its own process id in `active_runs` before its first
+model request — `handle.pid`, available because `start_config` returns
+only after `episode/start` — so the supervisor watchdog ends a wedged
+proposal by the same escalation it uses for a wedged tournament worker.
+The host also enforces the wall-clock budget itself, because the process
+holding the pipe is the first to notice a missed deadline; it cancels the
+episode, which lets Foe close its own obligations so the log stays
+readable, and reports the round as exhausted on `seconds`.
+
+### The other door — an operator's own class
+
+`runtime.proposer_agent` still binds a class the operator supplies, and
+that path is retained deliberately. The trust boundary is worth stating
+plainly: **an external class runs in-process with zicato's authority.**
+The containment-by-construction guarantees above — kernel-enforced
+grants, a hashed tool surface, a runtime-enforced budget — apply to the
+Foe implementation alone. What applies to every implementation is the
+zicato-side half: the context is redacted and holdout-free before it
+reaches any proposer at all. Foe-specific surfaces degrade explicitly for
+a non-Foe proposer rather than pretending equivalence.
+
+The class answers `contract_identity(config)` with its causal surface,
+whose digest is folded into the `proposer` contract component the same
+way Foe's fingerprint is, so binding one rolls the epoch. What belongs in
+that identity is the version of what the operator did not write, the
+bytes of what they did, the tool set and the launch envelope. What does
+not belong is the model: a `models.*` role is runtime infrastructure, the
+contract hash names no model, and the hazard of an agent quietly falling
+back to its own configured default is closed at launch instead.
 
 ---
 

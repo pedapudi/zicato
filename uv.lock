@@ -7040,7 +7040,6 @@ all = [
     { name = "google-adk", extra = ["extensions"] },
     { name = "harmonograf-client" },
     { name = "harmonograf-server" },
-    { name = "mcp" },
     { name = "starlette" },
     { name = "textual" },
     { name = "uvicorn" },
@@ -7054,7 +7053,6 @@ dashboard = [
 dev = [
     { name = "httpx" },
     { name = "import-linter" },
-    { name = "mcp" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -7077,9 +7075,6 @@ goldfive-local-embedding = [
 ]
 goldfive-remote = [
     { name = "goldfive" },
-]
-mcp = [
-    { name = "mcp" },
 ]
 observability = [
     { name = "harmonograf-client" },
@@ -7111,9 +7106,6 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "jsonschema", specifier = ">=4.20" },
-    { name = "mcp", marker = "extra == 'all'", specifier = ">=1.0" },
-    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
@@ -7140,7 +7132,7 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'observability'", specifier = ">=4.0" },
     { name = "zicato-examples", marker = "extra == 'dev'", editable = "examples" },
 ]
-provides-extras = ["goldfive", "goldfive-remote", "goldfive-local-embedding", "adk", "dashboard", "tui", "observability", "mcp", "all", "dev"]
+provides-extras = ["goldfive", "goldfive-remote", "goldfive-local-embedding", "adk", "dashboard", "tui", "observability", "all", "dev"]
 
 [[package]]
 name = "zicato-examples"

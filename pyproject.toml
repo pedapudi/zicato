@@ -85,14 +85,6 @@ observability = [
     "harmonograf-client",
     "harmonograf-server",
 ]
-# The Model Context Protocol server that exposes the proposer tool
-# registry (zicato.proposer.mcp_server) to a proposer that is NOT an
-# in-process ADK agent — an external agent process, an operator's own
-# client. Optional because every shipped proposer path reaches the same
-# functions in-process; the extra only buys the second door. Every `mcp`
-# import in that module is lazy, so importing it without the extra is
-# safe and only building/serving a server needs the dependency.
-mcp = ["mcp >= 1.0"]
 # Complete runtime profile. Keep this explicit so wheel metadata alone defines
 # the profile and installers need no project-specific composition rules.
 all = [
@@ -104,7 +96,6 @@ all = [
     "textual == 8.2.8",
     "harmonograf-client",
     "harmonograf-server",
-    "mcp >= 1.0",
 ]
 
 dev = [
@@ -144,9 +135,6 @@ dev = [
     "httpx >= 0.27",
     # The terminal console and its Pilot-driven tests.
     "textual == 8.2.8",
-    # The proposer MCP server and its in-memory client/server tests
-    # (tests/test_proposer_mcp_server.py importorskips it).
-    "mcp >= 1.0",
     # The vendored dogfood targets — a separate distribution under
     # examples/, resolved as a uv workspace member (see
     # [tool.uv.sources] below). The test_example_* smoke tests import
@@ -345,7 +333,6 @@ markers = [
     "slow: one test measured at 15 s or more ALONE (`-n0`; statistical characterizations and end-to-end simulations); deselected ONLY by a bare `pytest` (see tests/conftest.py) — naming a file, a test or a `-k` keyword runs it, `-m slow` runs the tier alone, and `make test` and tools/parity.sh run both tiers",
     "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses); its runtime IS its coverage, so it is never a candidate for stubbing",
     "cascade_oc: the opt-in evaluation-cascade OC measurement suite (CASCADE.md §4); EXCLUDED from the default run via addopts — run with `-m cascade_oc`",
-    "pi: launches the real pi coding agent from integrations/pi (needs `npm ci` + Node >= 22); SKIPS cleanly when it is not installed, so the default run is unaffected — the CI lane selects it with `-m pi`",
 ]
 # With the package under src/, an editable install puts `zicato` on
 # sys.path, but a bare `pytest` from a non-installed checkout would

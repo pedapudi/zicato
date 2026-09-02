@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from zicato.proposer.external import DEFAULT_PROPOSER_AGENT
 from zicato.proposer.foe_config import (
     FoeBudget,
     ProposerConfigError,
@@ -112,16 +113,22 @@ def test_a_retired_runtime_key_is_refused_by_name(key: str) -> None:
 @pytest.mark.parametrize(
     "dotted",
     [
-        "zicato.proposer.pi_agent:PiProposerAgent",
-        "zicato.proposer.adk_agent:ADKProposerAgent",
-        "zicato.proposer.agent:DefaultProposerAgent",
+        "zicato.proposer.retired_runtime:RetiredProposerAgent",
+        "zicato.proposer.something:SomethingElse",
     ],
 )
-def test_a_removed_built_in_proposer_class_is_refused(dotted: str) -> None:
+def test_a_built_in_proposer_class_other_than_foe_is_refused(dotted: str) -> None:
+    """Every built-in runtime but Foe was removed, so the namespace is closed."""
     workspace = _config()
     workspace["runtime"] = {"proposer_agent": dotted}
     with pytest.raises(ProposerConfigError, match="was removed"):
         load_foe_proposer_config(workspace)
+
+
+def test_the_foe_agent_is_the_one_class_the_namespace_still_admits() -> None:
+    workspace = _config()
+    workspace["runtime"] = {"proposer_agent": DEFAULT_PROPOSER_AGENT}
+    assert load_foe_proposer_config(workspace).viewer == "off"
 
 
 def test_an_operator_supplied_proposer_class_is_still_accepted() -> None:

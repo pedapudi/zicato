@@ -1873,25 +1873,15 @@ empty degrades that tool to an explicit "coordinates unavailable" answer).
 | `train_slice_agent_profile()` | per agent role: banded incidence of invocation, of attributed drift, and of being steered | as above; agent names are open-vocabulary, so each passes through `scrub_identity` then `truncate_free_text` | as above |
 | `train_slice_process_profile()` | banded incidence of the process-failure payload cases (`task_failed` / `task_blocked` / `task_cancelled` / `plan_revised`) | as above; case names are goldfive's closed payload-oneof vocabulary and carry no content of their own | as above |
 
-The registry is also served over MCP (`zicato/proposer/mcp_server.py`) for a
-proposer that is not an in-process ADK agent. That server **derives its tool
-list by reflecting over `DEFAULT_PROPOSER_TOOLS`** and dispatches into the same
-functions inside the same `bind_proposer_tool_context` block, so it neither
-narrows nor widens the surface and the escape guard gets no second
-implementation. The sanctioned-surface question is therefore decided in
-`tools.py` and nowhere else. One server per challenger process: the context var
-is process-wide, so a shared server would cross-bind concurrent rounds.
-
-**The external proposer is not wired to it.** `SANCTIONED_TOOLS` in
-`zicato/proposer/pi_agent.py` is `("propose_experiment",)` — the
-terminating structured-output tool and nothing else — and the envelope
-assertion in `tests/test_proposer_pi_envelope.py` pins exactly that. Connecting
-the two is a separate step by design, and `pi_agent.py`'s module docstring
-states its shape: override `PiProposerAgent.tool_flags` to return the server's
-launch flags and declare the exposed names in `SANCTIONED_TOOLS`. Both are read
-by the launch *and* by the contract identity, so widening the external
-proposer's tool surface rolls the epoch by construction — which is why the
-wiring must go through those two constants rather than around them.
+The registry is the in-process surface, reached by a proposer running in
+zicato's own interpreter. It is not what a Foe episode calls: an episode's
+tool list is declared in its execution contract and its two host tools are
+built per episode (`zicato/proposer/foe_agent.py`), which is what lets the
+same functions serve a sandboxed subprocess. Both routes dispatch inside the
+same `bind_proposer_tool_context` block, so the escape guard has one
+implementation and the sanctioned-surface question is decided in `tools.py`
+and nowhere else. One binding per challenger: the context var is
+process-wide, so a shared binding would cross-bind concurrent rounds.
 
 **The `mutable_roots` path-shape lesson** (read this before touching path
 resolution): `list_mutation_points` advertises files **relative to the whole
