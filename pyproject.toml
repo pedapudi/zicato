@@ -264,12 +264,9 @@ warn_unused_ignores = true
 # guarded try/except in zicato.telemetry.sink remains, both to keep the
 # module import-safe in degraded installs and to tolerate API drift.)
 #
-# zicato.index / zicato.health are sibling subsystems the orchestrator
-# and tournament runner import lazily and best-effort — a round runs
-# fine without them and every import is wrapped in try/except
-# ImportError. They may not be present in every checkout, so they get
-# the same treatment: references are untyped rather than a hard import
-# error.
+# Only third-party modules belong here. zicato.index and zicato.health
+# ship in this distribution, so mypy resolves and checks them like any
+# other first-party package.
 [[tool.mypy.overrides]]
 module = [
     "goldfive",
@@ -280,10 +277,6 @@ module = [
     "harmonograf_client.*",
     "harmonograf_server",
     "harmonograf_server.*",
-    "zicato.index",
-    "zicato.index.*",
-    "zicato.health",
-    "zicato.health.*",
 ]
 ignore_missing_imports = true
 

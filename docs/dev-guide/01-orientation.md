@@ -832,8 +832,10 @@ canonical itself.
 
 **`health/`** — loop-health diagnostics (`assess_loop_health`,
 `LoopHealth`, the detectors incl. `detect_placebo_promoted` and the
-generalization-gap detector) + the `zicato health` CLI backend. Imported
-lazily and best-effort by the orchestrator.
+generalization-gap detector) + the `zicato health` CLI backend. The
+orchestrator imports it lazily and runs the assessment inside a
+best-effort boundary, so a failure here costs the round its health report
+and never its verdict.
 
 **`analyzer/`** — decision-telemetry insights (`insights/round_{N}.md`
 read back by the next round's proposer), the epoch analysis report
