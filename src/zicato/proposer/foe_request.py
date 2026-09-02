@@ -238,7 +238,7 @@ class ProposalEvidence:
     restrict_visibility: bool = False
     mutation_track_records: Mapping[str, MutationTrackRecord] | None = None
     #: Which candidate this episode is producing, and the generation it
-    #: descends from. Lineage coordinates, not board data: they name the
+    #: descends from. Lineage coordinates rather than board data: they name the
     #: episode in the round log and in its own transcript, and they are
     #: what distinguishes one challenger's episode from its siblings' when
     #: a field proposes several against the same evidence.

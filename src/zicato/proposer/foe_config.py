@@ -276,7 +276,7 @@ def refuse_removed_proposer_directory(proposer_path: Path | None) -> None:
     """Refuse a proposer directory carrying an executable agent module.
 
     A ``proposers/<name>/`` directory is still how an epoch declares the
-    proposer's skills. What it may no longer carry is ``agent.py``: custom
+    proposer's skills. What it may not carry is ``agent.py``: custom
     proposer agents ran on a runtime that was removed, and a directory
     holding one describes a proposer that will not run.
     """

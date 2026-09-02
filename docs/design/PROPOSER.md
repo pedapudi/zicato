@@ -82,7 +82,7 @@ specifies it.
   epoch will be, and guessing one silently would make two epochs
   incomparable without saying so.
 
-A configuration that names a proposer runtime zicato no longer has —
+A configuration that names a removed proposer runtime —
 the coding-agent integration's binary, a dotted path into
 `zicato.proposer` that is not the Foe agent, a `proposers/<name>/agent.py`
 module — is refused by name, with what replaced it, rather than falling
@@ -1188,7 +1188,7 @@ component to the operator.
 
 > **Note.** A workspace that declares no proposal runtime canonicalizes as
 > `agent_id = "builtin:default"` with empty tools and skills. That is a
-> statement about the contract, not a runtime that will be chosen: a round
+> statement about the contract rather than a runtime that will be chosen: a round
 > on such a workspace refuses to open (§2).
 
 This composes with the brief: the **proposer brief** is per-epoch *operator

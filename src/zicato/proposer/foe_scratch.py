@@ -1,6 +1,6 @@
 """The proposer's disposable working copy, and the diff it is read back as.
 
-A proposal is an edit, not a document about an edit. The proposer is
+A proposal is an edit rather than a document about an edit. The proposer is
 granted write on a throwaway copy of the parent generation's snapshot,
 changes files in it with ordinary editing tools, checks its work, and
 answers when the checks pass. Zicato then reads the copy back as a patch
@@ -120,7 +120,7 @@ def project_onto_mutation_points(
     point's new value is read from the working copy's OWN enumeration
     rather than from its lines. The enumerator is the one authority on
     what a point's content is — for a span it is the string literal's
-    body, not the statement around it — so re-reading the copy through it
+    body rather than the statement around it — so re-reading the copy through it
     is what keeps a projected patch from splicing code into a literal.
 
     A point is replaced as a unit, so several edits inside one point are
@@ -128,7 +128,7 @@ def project_onto_mutation_points(
     point raises :class:`EditOutsideMutationPointError` naming every
     offender, so the proposer is told what to undo rather than which rule
     it broke; so does an edit that made a declared point stop resolving,
-    because a marker the copy no longer carries is a change outside every
+    because a marker absent from the copy is a change outside every
     point that a line range cannot see.
 
     What a patch carries is the applier's unit rather than the

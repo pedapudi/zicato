@@ -1558,7 +1558,7 @@ function proposerSection(d) {
   const pq = ((d.scoring || {}).proposer_quality) || {};
   const em = ((d.scoring || {}).experiment_memory) || {};
   return section('Proposer',
-    el('p', { class: 'dn-lede', text: 'How each challenger is proposed: the workspace\\'s declared proposal runtime, steered by this epoch\\'s brief and the skills of its proposer directory — plus the proposer-quality levers (best-of-N slate, self-critique, cross-epoch memory). Changing the proposer directory or any lever is a contract edit — it rolls the epoch.' }),
+    el('p', { class: 'dn-lede', text: 'How each challenger is proposed: the proposal runtime this workspace declares, steered by this epoch\'s brief and the skills of its proposer directory — plus the proposer-quality levers (best-of-N slate, self-critique, cross-epoch memory). Changing the proposer directory or any lever is a contract edit — it rolls the epoch.' }),
     proposerPicker(d),
     briefEditor(d),
     controlRow('Best-of-N slate', {

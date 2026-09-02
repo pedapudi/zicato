@@ -306,7 +306,7 @@ def build_proposer_agent(
 
     ``proposer_path`` is the epoch's proposer directory. It carries the
     skills the spec already hashed and is checked here for the one thing
-    it may no longer hold — an executable ``agent.py``, which ran on a
+    it may not hold — an executable ``agent.py``, which ran on a
     proposer runtime that was removed.
 
     Raises

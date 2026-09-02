@@ -85,7 +85,9 @@ def _bootstrap(tmp_path: Path, replicate_budget: int) -> tuple[Path, str]:
         json.dumps(
             {
                 "instance_id": "default",
-                "proposer": stand_in_proposer_block(tmp_path / "foe"),
+                "proposer": stand_in_proposer_block(
+                    tmp_path / "foe", contents=t0_mocks.GAUNTLET_POLICIES
+                ),
                 "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
