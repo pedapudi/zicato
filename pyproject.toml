@@ -32,6 +32,14 @@ classifiers = [
 dependencies = [
     "click >= 8.1",
     "jsonschema >= 4.20",
+    # The Foe runtime's Python host package: zicato's only proposer runtime.
+    # It builds the execution-contract document, launches the `foe` binary,
+    # and answers the host protocol. Pinned to one commit because Foe
+    # publishes no release yet and its interfaces are unstable; the binary a
+    # workspace configures must be built from the same commit, which
+    # `FoeProposerAgent` asserts through the package's own compatibility
+    # check. Bump the rev here and in [tool.uv.sources] together.
+    "foe @ git+https://github.com/pedapudi/foe.git@63ba2c61486eaa45c935e720b693209db0670ef5#subdirectory=python",
 ]
 
 [project.optional-dependencies]
@@ -529,3 +537,8 @@ harmonograf-client = { git = "https://github.com/pedapudi/harmonograf.git", subd
 # running; setting ``ZICATO_HARMONOGRAF_URL`` / ``integration.harmonograf_url``
 # opts back into an external instance.
 harmonograf-server = { git = "https://github.com/pedapudi/harmonograf.git", subdirectory = "server", rev = "ed3a3401e5853f59dbcc28fa36c8131250341735" }
+# Foe is a monorepo whose Python host package lives under `python/`, so the
+# git source pins a rev AND a subdirectory. The rev matches the direct
+# reference in [project.dependencies]; bump both together, and rebuild the
+# `foe` binary a workspace configures from the same commit.
+foe = { git = "https://github.com/pedapudi/foe.git", subdirectory = "python", rev = "63ba2c61486eaa45c935e720b693209db0670ef5" }
