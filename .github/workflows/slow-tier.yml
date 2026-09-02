@@ -6,8 +6,8 @@ name: statistical and end-to-end oracles
 # the six minutes a full suite takes. This separate workflow keeps their
 # pull-request result visible without delaying the default test job. It also
 # runs nightly against main and on demand from the Actions tab. The stable job
-# names make both supported Python-version results individually visible.
-# Repository policy requires both results before merge.
+# name keeps the Python 3.12 result visible. Repository policy requires this
+# result before merge.
 #
 # The local merge ladder runs the same tests: `make test` and
 # tools/parity.sh's PYTEST gate each run both tiers.
@@ -23,12 +23,8 @@ on:
 
 jobs:
   slow-tier:
-    name: statistical and end-to-end oracles (Python ${{ matrix.python-version }})
+    name: statistical and end-to-end oracles (Python 3.12)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
@@ -38,8 +34,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      - name: Set up Python 3.12
+        run: uv python install 3.12
 
       - name: Sync dependencies
         run: uv sync --all-extras --frozen

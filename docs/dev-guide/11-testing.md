@@ -58,7 +58,7 @@
 | `tools/parity/golden/` | the committed golden baselines |
 | `pyproject.toml` | `[tool.pytest.ini_options]` (markers, `addopts`), `[tool.importlinter]` (the five contracts), `[tool.ruff.lint...banned-api]` (the TID251 bans) |
 | `Makefile` | the targets (`test` = both tiers / `test-fast` = the default tier / `node-test` / `lint` / `import-lint` / `typecheck` / `check`) |
-| `.github/workflows/ci.yml` | the pull-request jobs (Python matrix running the DEFAULT tier, dashboard JavaScript, parity, and the Rust supervisor) |
+| `.github/workflows/ci.yml` | the pull-request jobs (Python 3.12 running the DEFAULT tier, dashboard JavaScript, parity, and the Rust supervisor) |
 | `.github/workflows/slow-tier.yml` | the `slow` tier on pull requests, nightly against main, and on demand |
 | `src/zicato/dashboard/static/test/run-all.mjs` | the Node behaviour-suite runner (exit-code-honest) |
 
@@ -1495,13 +1495,14 @@ invokes it. The whole module skips when `node` is unavailable.
 
 ## 11.10 CI
 
-`.github/workflows/ci.yml` runs one job per gate family. The Python job
-matrixes over 3.11 and 3.12 and runs the gates in order: ruff → import
-contracts → mypy → the DEFAULT test tier. The step names its own marker
-expression rather than leaning on the default, because it names paths — and
-naming anything runs the `slow` tier (§11.1). Dependencies install with
-`--frozen` (exactly what `uv.lock` pins, failing if the lock is stale —
-reproducible CI):
+`.github/workflows/ci.yml` runs one job per gate family. Python 3.12 runs the
+gates in order: ruff → import contracts → mypy → the DEFAULT test tier. The
+step names its own marker expression rather than leaning on the default,
+because it names paths — and naming anything runs the `slow` tier (§11.1).
+Dependencies install with `--frozen` (exactly what `uv.lock` pins, failing if
+the lock is stale — reproducible CI). The project metadata supports Python
+3.11 and later, but pull requests use one interpreter so deterministic and
+statistical suites are not duplicated:
 
 ```yaml
       - name: Sync dependencies
@@ -1547,10 +1548,10 @@ on:
 — `.github/workflows/slow-tier.yml`
 
 `workflow_dispatch` lets collaborators with write access run the tier from the
-Actions tab. Stable job names make the Python 3.11 and 3.12 results individually
-visible. Repository policy requires both results before merge; repository
-settings do not enforce that policy. The scheduled run tests main once a day
-even when no pull request is open.
+Actions tab. Its stable job name keeps the Python 3.12 result visible.
+Repository policy requires that result before merge; repository settings do
+not enforce that policy. The scheduled run tests main once a day even when no
+pull request is open.
 
 The Rust job builds and tests the supervisor: `cargo fmt --check`,
 `cargo clippy --all-targets -- -D warnings`, `cargo test`. A change that

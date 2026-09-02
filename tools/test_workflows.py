@@ -105,10 +105,20 @@ def test_statistical_oracles_are_a_visible_pull_request_lane() -> None:
     assert required_events <= set(events)
 
     job = document["jobs"]["slow-tier"]
-    assert job["name"] == (
-        "statistical and end-to-end oracles (Python ${{ matrix.python-version }})"
+    assert job["name"] == "statistical and end-to-end oracles (Python 3.12)"
+
+
+def test_python_test_jobs_use_one_interpreter() -> None:
+    """Do not duplicate deterministic and statistical suites across Python versions."""
+    jobs = (
+        load_workflow(PULL_REQUEST_CI)["jobs"]["lint-and-test"],
+        load_workflow(PULL_REQUEST_CI)["jobs"]["parity"],
+        load_workflow(STATISTICAL_ORACLES)["jobs"]["slow-tier"],
     )
-    assert job["strategy"]["matrix"]["python-version"] == ["3.11", "3.12"]
+    for job in jobs:
+        assert "strategy" not in job
+        setup = next(step for step in job["steps"] if step.get("name") == "Set up Python 3.12")
+        assert setup["run"] == "uv python install 3.12"
 
 
 def test_dashboard_javascript_is_a_visible_pull_request_lane() -> None:
