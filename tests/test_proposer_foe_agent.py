@@ -277,13 +277,29 @@ def test_an_episode_outliving_its_budget_is_ended_and_reported_exhausted(
         os.kill(pids[0], 0)
 
 
+#: What an episode may do, written out here rather than imported. This
+#: literal is the guard: comparing the running list against the production
+#: constant would pass for any widening of that constant, which is the one
+#: change this test exists to stop. ``return`` is the runtime's own
+#: synthesis of the completion rule and belongs to no tool the contract
+#: lists.
+_EXPECTED_TOOLS = [
+    "read",
+    "grep",
+    "edit",
+    "block",
+    "mutation_usage",
+    "validate_patches",
+    "return",
+]
+
+
 def test_the_running_tool_list_is_exactly_the_sanctioned_set(tmp_path: Path) -> None:
-    """What the episode may do is what the contract says, asserted by name.
+    """What the episode may do is what this test says, name by name.
 
     Read off the episode's own request header — the list the runtime told
-    the model about — so widening the surface cannot pass by widening only
-    the constant. ``return`` is the runtime's own synthesis of the
-    completion rule and belongs to no tool the contract lists.
+    the MODEL about — so a widening has to change this file to land, and a
+    reviewer sees the surface grow in the diff.
     """
     workspace = Workspace(
         tmp_path,
@@ -294,8 +310,10 @@ def test_the_running_tool_list_is_exactly_the_sanctioned_set(tmp_path: Path) -> 
     )
     asyncio.run(workspace.agent().propose(workspace.context()))
 
-    offered = offered_tools(workspace.episode_log())
-    assert offered == [*SANCTIONED_TOOLS, "return"]
+    assert offered_tools(workspace.episode_log()) == _EXPECTED_TOOLS
+    # The production constant and the list above must agree; either alone
+    # would let a widening through, so both are asserted.
+    assert [*SANCTIONED_TOOLS, "return"] == _EXPECTED_TOOLS
 
 
 def test_the_request_the_model_sees_carries_no_holdout_entry(tmp_path: Path) -> None:
