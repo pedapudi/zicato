@@ -38,7 +38,7 @@ from zicato.query.paths import (
     layout_of,
 )
 from zicato.query.replicate_scores import cell_replicate_draws
-from zicato.workspace import read_loss, run_entry_ids
+from zicato.workspace import read_board_entries, read_loss, run_entry_ids
 
 # The live MDE ladder's operating characteristics (EVAL-VIEW.md §4.3, pinned to
 # CAMPAIGN.md §3): the two-sample form at α=.05 / power .80 (with a relaxed α=.10
@@ -347,13 +347,14 @@ def _score_from_loss_json(row: Any) -> float | None:
 
 
 def _load_board_entries(paths: WorkspacePaths, epoch_id: str) -> list[Any]:
-    """Load the epoch's board as ``BoardEntry`` objects (``[]`` on any defect)."""
-    from zicato.board.jsonl import load_board  # noqa: PLC0415
+    """Load the epoch's board as ``BoardEntry`` objects (``[]`` on any defect).
 
-    try:
-        return list(load_board(layout_of(paths).board(epoch_id)))
-    except Exception:  # noqa: BLE001 — best-effort; a missing/bad board degrades
-        return []
+    Reads through the shared canonical board reader
+    (:func:`zicato.workspace.read_board_entries`), which the analysis report
+    reads through as well, so one rule decides what an epoch's board holds.
+    """
+    board = read_board_entries(layout_of(paths), epoch_id)
+    return list(board.entries) if board is not None else []
 
 
 def _holdout_ids(paths: WorkspacePaths, epoch_id: str, board_entries: list[Any]) -> set[str]:

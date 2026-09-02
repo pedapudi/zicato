@@ -45,13 +45,15 @@ from typing import Any
 
 from zicato.core.workspace import _normalise_workspace_root
 from zicato.workspace import (
+    ScalarStep,
     WorkspaceLayout,
+    cumulative_scalars,
+    per_judge_loss_totals,
+    read_board_entries,
     read_epoch_config,
     read_experiments,
     read_gen_score,
-    read_loss,
-    round_indices,
-    run_entry_ids,
+    read_round_records,
 )
 
 # Soft caps so the data view (and therefore the prompt) stays bounded.
@@ -273,37 +275,37 @@ def _load_board(
 ) -> tuple[tuple[BoardEntryView, ...], tuple[str, ...]]:
     """Reduce ``board.jsonl`` to entry views + the disable_drift list.
 
-    Uses the strict board loader when it parses cleanly; on any failure
-    (a board predating the current schema, a malformed line) it falls
-    back to a tolerant JSONL re-read so the report still surfaces the
-    entry ids and kinds. Either path yields the same view shape.
+    Reads through the shared canonical board reader
+    (:func:`zicato.workspace.read_board_entries`), which the query layer's
+    file-reading board paths use as well, so one rule decides what an
+    epoch's board holds. When that reader rejects the board (one predating
+    the current schema, a malformed line) this falls back to a tolerant
+    JSONL re-read so the report still surfaces the entry ids and kinds.
+    Either path yields the same view shape.
     """
     bpath = layout.board(epoch_id)
     if not bpath.exists():
         return (), ()
-    try:
-        from zicato.board.jsonl import load_board_with_meta  # noqa: PLC0415
-
-        entries, disable_drift, _judge_only = load_board_with_meta(bpath)
-        views: list[BoardEntryView] = []
-        for e in entries:
-            exp_kind = e.expectation.kind if e.expectation is not None else ""
-            exp_spec = e.expectation.spec if e.expectation is not None else ""
-            views.append(
-                BoardEntryView(
-                    id=e.id,
-                    kind=str(e.kind),
-                    weight=float(e.weight),
-                    tags=tuple(e.tags),
-                    expectation_kind=str(exp_kind),
-                    expectation_spec=str(exp_spec),
-                    judges=tuple(j.name for j in e.judges),
-                    wall_clock_budget_seconds=int(e.wall_clock_budget_seconds),
-                )
-            )
-        return tuple(views), tuple(str(d) for d in disable_drift)
-    except Exception:  # noqa: BLE001 — fall back to a tolerant re-read
+    board = read_board_entries(layout, epoch_id)
+    if board is None:
         return _load_board_tolerant(bpath), ()
+    views: list[BoardEntryView] = []
+    for e in board.entries:
+        exp_kind = e.expectation.kind if e.expectation is not None else ""
+        exp_spec = e.expectation.spec if e.expectation is not None else ""
+        views.append(
+            BoardEntryView(
+                id=e.id,
+                kind=str(e.kind),
+                weight=float(e.weight),
+                tags=tuple(e.tags),
+                expectation_kind=str(exp_kind),
+                expectation_spec=str(exp_spec),
+                judges=tuple(j.name for j in e.judges),
+                wall_clock_budget_seconds=int(e.wall_clock_budget_seconds),
+            )
+        )
+    return tuple(views), board.disable_drift
 
 
 def _load_board_tolerant(bpath: Path) -> tuple[BoardEntryView, ...]:
@@ -454,36 +456,25 @@ def _load_one_generation(
 def _load_per_judge_totals(
     layout: WorkspaceLayout, epoch_id: str, generation_id: str
 ) -> tuple[tuple[str, float], ...]:
-    """Sum ``per_judge_loss`` across every ``loss.json`` under one generation.
+    """One generation's per-judge weighted-loss totals, labelled for the table.
 
-    Walks ``runs/*/loss.json`` directly and pulls the ``per_judge_loss``
-    array off each profile (the reducer's per-judge weighted-loss
-    attribution). Tolerant of missing / unparseable files — a run with
-    no loss.json contributes nothing. Returns the totals sorted by
-    judge_name so the analyzer's table iteration is deterministic.
+    The summation itself is the shared canonical one
+    (:func:`zicato.workspace.per_judge_loss_totals`), which adds each run's
+    recorded per-judge weighted loss across the generation's runs. This
+    function adds only the report's presentation: the reducer's
+    unattributed bucket, keyed on disk by the empty judge name, is promoted
+    to a readable label, and the rows are re-sorted so the table's iteration
+    order stays deterministic under that label.
 
     Returns the empty tuple when no judge fired (or no runs landed) —
     a no-custom-judge board produces no rows under this section.
     """
-    totals: dict[str, float] = {}
-    for entry_id in run_entry_ids(layout, epoch_id, generation_id):
-        raw = read_loss(layout, epoch_id, generation_id, entry_id)
-        if raw is None:
-            continue
-        per_judge = raw.get("per_judge_loss")
-        if not isinstance(per_judge, list):
-            continue
-        for j in per_judge:
-            if not isinstance(j, dict):
-                continue
-            name = str(j.get("judge_name", "") or "")
-            # Promote the unattributed bucket to a stable display label
-            # so the table's row order stays deterministic and the cell
-            # is recognisable.
-            display = name if name else "(unattributed)"
-            weighted = _as_float(j.get("weighted_loss", 0.0))
-            totals[display] = totals.get(display, 0.0) + weighted
-    return tuple(sorted(totals.items()))
+    return tuple(
+        sorted(
+            (name if name else "(unattributed)", total)
+            for name, total in per_judge_loss_totals(layout, epoch_id, generation_id)
+        )
+    )
 
 
 def _load_patches(
@@ -545,52 +536,33 @@ def _as_float(value: Any) -> float:
 def _cumulate_scalar(generations: list[GenerationView]) -> list[GenerationView]:
     """Return a copy of ``generations`` with ``cumulative_scalar`` filled.
 
-    The baseline seeds at ``0.0``; every subsequent generation adds its
-    ``scalar_score_delta`` to its parent's cumulative scalar. A
-    generation whose parent is unknown inherits ``0.0``. The result is
-    deterministic and matches the trajectory the renderers plot.
+    The cumulation is the shared canonical one
+    (:func:`zicato.workspace.cumulative_scalars`): the baseline seeds at
+    ``0.0``, every subsequent generation adds its ``scalar_score_delta`` to
+    its parent's cumulative scalar, and a generation whose parent is unknown
+    inherits ``0.0``. The result is deterministic and matches the trajectory
+    the renderers plot.
     """
     from dataclasses import replace as _replace  # noqa: PLC0415
 
-    by_id: dict[str, float] = {}
-    out: list[GenerationView] = []
-    for g in generations:
-        if g.is_baseline:
-            score = 0.0
-        else:
-            parent_score = by_id.get(g.parent_generation_id, 0.0)
-            score = parent_score + g.scalar_score_delta
-        by_id[g.generation_id] = score
-        out.append(_replace(g, cumulative_scalar=score))
-    return out
+    scores = cumulative_scalars(
+        ScalarStep(
+            generation_id=g.generation_id,
+            parent_generation_id=g.parent_generation_id,
+            is_baseline=g.is_baseline,
+            scalar_score_delta=g.scalar_score_delta,
+        )
+        for g in generations
+    )
+    return [
+        _replace(g, cumulative_scalar=score)
+        for g, (_id, score) in zip(generations, scores, strict=True)
+    ]
 
 
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
-
-
-def _load_round_records(workspace_root: Path, epoch_id: str) -> tuple[Any, ...]:
-    """Fold every ``rounds/{n}/round_log.jsonl`` into typed round records.
-
-    Best-effort: the orchestrator emits the durable per-round event log as
-    each round settles, so a freshly-opened epoch with no settled round yet
-    has no ``rounds/`` tree and this returns ``()`` — the validity and
-    proposer-analytics sections then degrade to their honest one-liners.
-    As rounds accrue the same reader lights those sections up with no
-    report change. A malformed / interior-corrupt log for one round is
-    skipped rather than failing the whole gather.
-    """
-    from zicato.epoch.round_log import RoundLog, fold_round_record  # noqa: PLC0415
-
-    records: list[Any] = []
-    for idx in round_indices(WorkspaceLayout.from_root(workspace_root), epoch_id):
-        try:
-            events = RoundLog(workspace_root, epoch_id, idx).read()
-            records.append(fold_round_record(events))
-        except Exception:  # noqa: BLE001 — one bad round never sinks the gather
-            continue
-    return tuple(records)
 
 
 def _distill_brief_goal(brief: str) -> str:
@@ -650,7 +622,7 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
     tournament_structure = ts_raw if isinstance(ts_raw, dict) else {}
     pq_raw = scoring.get("proposer_quality")
     proposer_quality = pq_raw if isinstance(pq_raw, dict) else {}
-    round_records = _load_round_records(layout.root, epoch_id)
+    round_records = read_round_records(layout, epoch_id)
 
     return EpochReportData(
         epoch_id=epoch_id,

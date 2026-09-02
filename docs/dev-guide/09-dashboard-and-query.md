@@ -812,6 +812,38 @@ chapter leans on:
 | `build_judge_scorecards` | `/api/reflection/{id}/scorecards` | `{judges:[{judge_name, tp/fp/fn/tn, ambiguous, precision, recall, f1, disagreement_rate, self_consistency_kappa, exercised, redundant_with}]}` | `{judges: []}` |
 | `build_adjudication_xray` | `/api/reflection/{id}/xray/{judge}/{run_ref}` | `{found, transcript:{fidelity, turns[]}, judge_verdict, adjudication}` | `found: false` + `fidelity: unavailable` |
 
+### 9.3.7 The shared canonical aggregations — `zicato.workspace.aggregates`
+
+Some quantities are computed from the canonical files by a reader in this
+chapter AND by the analysis-report gatherer
+(`src/zicato/analyzer/report_data.py`), which walks the same tree to build the
+epoch report. Four such quantities are defined once, in
+`zicato.workspace.aggregates`, and both sides call that definition. Two of the
+four are reached through a pair of functions, one that decodes a record and one
+that aggregates the decoded rows, which is why the table has five:
+
+| Function | Quantity | Consumers |
+|---|---|---|
+| `judge_loss_rows(loss)` | the per-judge attribution rows one run's loss profile records | `build_per_judge_for_entry`, the report's per-judge totals |
+| `per_judge_loss_totals(layout, epoch_id, generation_id)` | those rows' weighted loss, summed across a generation's runs | the report's per-judge totals |
+| `read_board_entries(layout, epoch_id)` | an epoch's board as validated entries plus its `disable_drift` header | `eval_view._load_board_entries`, the report's board section |
+| `cumulative_scalars(steps)` | the cumulative scalar along a lineage, from the per-generation deltas | `epoch/analysis._scalar_trajectory`, the report's trajectory |
+| `read_round_log(root, epoch_id, index)` / `read_round_records(layout, epoch_id)` | one round's events and whether the log read cleanly; every settled round folded into a record | `execution_plan._read_round_events`, the report's round records |
+
+Two aggregations of one measurement can disagree. The per-judge pair did: the
+reducer keys drift it could not pair with a judge under the empty judge name,
+the report totals that bucket under a label of its own, and the per-entry table
+drops it because that table names judges. The rows are decoded once now, and
+each consumer states in place what it does with the bucket.
+
+> ⛔ NEVER give an index-backed reader a filesystem fallback while putting it
+> on one of these. The filesystem is canonical and `index.db` is derived, so
+> the aggregations live on the files — but `build_per_judge_for_generation`
+> and `build_score_trajectory` answer from the index, and a workspace that was
+> never indexed must keep reporting nothing rather than quietly acquiring a
+> second source with different numbers. Adding a fallback is a behaviour
+> change with its own decision, never a side effect of sharing a reader.
+
 ---
 
 ## 9.4 The dashboard server — `server.py`

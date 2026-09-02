@@ -94,7 +94,6 @@ from zicato.epoch.round_log import (
     HoldoutReleased,
     PatchesApplied,
     ProposalAttempted,
-    RoundLog,
     RoundLogEnvelope,
     RoundRecord,
     ValidationFailed,
@@ -125,6 +124,7 @@ from zicato.workspace import (
     generation_ids as recorded_generation_ids,
 )
 from zicato.workspace import (
+    read_round_log,
     round_indices,
     run_entry_ids,
 )
@@ -320,11 +320,13 @@ def _read_round_events(paths: WorkspacePaths, epoch_id: str, index: int) -> _Rou
     folds. Interior corruption raises there (the append-only invariant was
     violated) and lands here as ``(<what nothing>, False)`` — the round
     node then reads ``partial`` instead of pretending the round is empty.
+
+    Reads through the shared canonical round-log reader
+    (:func:`zicato.workspace.read_round_log`), which the analysis report's
+    round records read through as well, so one rule decides what a round log
+    yields and when it counts as read.
     """
-    try:
-        return RoundLog(paths.root, epoch_id, index).read(), True
-    except Exception:  # noqa: BLE001 — best-effort, mirrors the sibling readers
-        return [], False
+    return read_round_log(paths.root, epoch_id, index)
 
 
 def _board_facts(paths: WorkspacePaths, epoch_id: str) -> tuple[str, list[str]]:
