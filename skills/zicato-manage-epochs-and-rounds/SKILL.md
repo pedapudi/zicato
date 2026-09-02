@@ -94,9 +94,9 @@ brief / scoring, run `zicato evolve`, and the right thing happens.
 4. **target-adapter IDENTITY** — the registered entrypoint string + the sorted
    list of mutable-tree paths (NOT the source bytes inside those trees — that
    source is exactly what zicato mutates within the epoch).
-5. **proposer** — the proposing agent's identity, tools, and the skill modules
-   under the configured `proposers/<name>/` dir (or the built-in default
-   proposer when none is registered via `register --proposer-path`). Distinct
+5. **proposer** — the proposing agent's identity (for the Foe runtime, the
+   fingerprint the runtime reports for its own contract), its tools, and the
+   skill modules under the configured `proposers/<name>/` dir. Distinct
    from the *proposer brief* (item 2): the brief is per-epoch steering text;
    the proposer is the agent (plus its skills) that consumes it. See
    `skills/zicato-design-proposer` and
@@ -136,9 +136,11 @@ epoch:
 - retuning a weight, a `per_judge_weight`, or `promote_margin`;
 - a different entrypoint;
 - an added or removed mutable tree;
-- **registering a proposer dir, or semantically editing its `agent.py` or a
-  `skills/*.md` module** — the roll message names the changed component as
-  `proposer`;
+- **naming the workspace's proposal runtime, changing what that runtime
+  hashes (its instructions, a tool's description or schema, the episode
+  budget, the build), registering a proposer dir, or semantically editing
+  one of its `skills/*.md` modules** — the roll message names the changed
+  component as `proposer`;
 - **changing the scoring `tournament` block**, whether that means switching
   `gauntlet → swiss` or bumping a param such as `swiss.rounds`. The tournament structure lives inside `scoring.json` and rides
 the existing scoring canonicalizer, so a structure change rolls the epoch

@@ -24,7 +24,7 @@ it does NOT restate the design knowledge it composes. Defer:
   [`zicato-build-board`](../zicato-build-board/SKILL.md).
 - **The train/holdout split, the Ladder budget, leakage** →
   [OVERFITTING.md](../../docs/design/OVERFITTING.md).
-- **The proposer (skill-composed default vs custom ADK agent)** →
+- **The proposer (the workspace's runtime block, and its skills)** →
   [`zicato-design-proposer`](../zicato-design-proposer/SKILL.md).
 - **The gate (promote_margin, monotonicity) and the scalar** →
   [SCORING.md](../../docs/design/SCORING.md).
@@ -138,16 +138,15 @@ ids). Changing the split rolls the epoch like any board change.
 
 ### 5. The proposer
 
-Defer to [`zicato-design-proposer`](../zicato-design-proposer/SKILL.md). The
-**default** (no proposer dir) is already a **tool-using ADK agent** — it reads
-the world (greps the mutable surface, reads the snapshot/journal) while it
-reasons, so the copilot offers customization only when there is a reason. The
-two opt-ins: a **skill-composed text shim** (drop `skills/*.md`, no code — the
-contract-clean lever for pure *reasoning* changes, but it drops the default's
-tools) versus a **custom ADK agent** (its own `model=` + the read-only tool
-registry — when the operator wants to own the model or curate the tool subset
-while keeping tools). Remind the operator of the Design-A model rule: a custom
-proposer's model must differ from the optional target-side model. Set it with
+Defer to [`zicato-design-proposer`](../zicato-design-proposer/SKILL.md). Every
+candidate is a **Foe episode**, declared in the workspace's own `proposer`
+block: it reads the parent snapshot, edits a disposable copy of it, checks
+its own work, and returns the hypothesis that explains the change. The
+copilot's one proposer lever is therefore the **proposer directory** — drop
+`skills/*.md` to steer how it reasons (grounding rules, house style, a
+checklist) without changing what it may do, which the grants and the tool
+list decide. Remind the operator of the model rule: the episode's model
+should differ from the optional target-side model. Set it with
 `set_proposer`; named engine overrides live under `models.roles.proposer`.
 Editing the proposer or any of its skills rolls the epoch.
 
@@ -270,7 +269,7 @@ Two hard rules for the copilot:
 builder view — the weight mappings (severity / per-kind / per-judge, each posting
 the WHOLE mapping) with add-key rows for new judge/namespace keys, the gate's
 namespace-monotonicity map, the overfitting refresh ceiling, the proposer picker
-(discovered dirs + builtin default + free-text path), and the slot strip's
+(discovered dirs + no-directory + free-text path), and the slot strip's
 reset/undo. GUI coverage is machine-pinned by `tests/test_builder_gui_coverage.py`
 (the one standing exception is `add_judge`, which the board editor covers through
 the whole-entry `edit_board_entry` round-trip). The board is authored through a
