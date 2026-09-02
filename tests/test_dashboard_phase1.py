@@ -13,6 +13,11 @@ phase-0 stubs:
 * ``build_epoch_view`` — now exposes the frozen ``goal`` field.
 * Endpoint routes — each new ``/api/...`` path resolves and returns the
   expected shape against the populated fixture workspace.
+
+The five per-judge readers are held by served-payload pins: each response
+is compared against the exact JSON text an endpoint writes, so a change to
+how a judge row is decoded cannot alter a key name, a key's position, or a
+coerced value without failing here.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from zicato.query import (
     build_epochs_summary,
     build_per_entry_for_generation,
     build_per_judge_comparison,
+    build_per_judge_for_entry,
     build_per_judge_for_generation,
     build_per_judge_for_run,
     build_per_judge_trend,
@@ -434,28 +440,80 @@ def test_build_epoch_view_surfaces_frozen_goal(phase1_workspace: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_per_judge_trend_returns_judge_by_generation(phase1_workspace: Path) -> None:
-    trend = build_per_judge_trend(WorkspacePaths(phase1_workspace), "2026-05-16_e0")
-    assert trend["epoch_id"] == "2026-05-16_e0"
-    # Spine is v0 → v1 → v2 (promoted lineage); v1a is rejected and not
-    # part of the spine.
-    assert trend["generations"] == ["v0", "v1", "v2"]
-    judges = {j["judge_name"]: j for j in trend["judges"]}
-    assert set(judges) == {"critic_A", "critic_B"}
-    assert "v1" in judges["critic_A"]["by_generation"]
+E0 = "2026-05-16_e0"
 
 
-def test_build_per_judge_for_generation_returns_totals(phase1_workspace: Path) -> None:
-    payload = build_per_judge_for_generation(
-        WorkspacePaths(phase1_workspace), "2026-05-16_e0", "v1"
+def _served(payload: dict[str, object]) -> str:
+    """The payload as an endpoint writes it — values and insertion key order."""
+    return json.dumps(payload, separators=(",", ":"))
+
+
+@pytest.fixture
+def unindexed_workspace(tmp_path: Path) -> Path:
+    """A workspace with no ``index.db`` at all."""
+    ws = tmp_path / "unindexed" / ".zicato"
+    ws.mkdir(parents=True)
+    return ws
+
+
+@pytest.fixture
+def workspace_without_judge_losses(tmp_path: Path) -> Path:
+    """A workspace whose ``index.db`` exists but carries no ``judge_losses``.
+
+    The degrade note fires when the index QUERY raises, which a missing
+    table does and a missing file does not — a missing file reads as zero
+    rows. The two degrade to different payloads, so both are pinned.
+    """
+    ws = tmp_path / "no_judge_losses" / ".zicato"
+    ws.mkdir(parents=True)
+    conn = sqlite3.connect(ws / "index.db")
+    conn.execute("CREATE TABLE runs(run_id TEXT)")
+    conn.commit()
+    conn.close()
+    return ws
+
+
+def test_build_per_judge_trend_returns_judge_by_generation(
+    phase1_workspace: Path, unindexed_workspace: Path
+) -> None:
+    # ``generations`` is the promoted spine v0 → v1 → v2, so the rejected
+    # sibling v1a is absent from it — but present in every judge's
+    # by_generation map, which is not spine-restricted.
+    assert _served(build_per_judge_trend(WorkspacePaths(phase1_workspace), E0)) == (
+        '{"epoch_id":"2026-05-16_e0","generations":["v0","v1","v2"],"judges":['
+        '{"judge_name":"critic_A","by_generation":'
+        '{"v0":0.3,"v1":0.18,"v1a":0.42,"v2":0.12}},'
+        '{"judge_name":"critic_B","by_generation":'
+        '{"v0":0.2,"v1":0.12,"v1a":0.27999999999999997,"v2":0.08000000000000002}}]}'
     )
-    assert payload["epoch_id"] == "2026-05-16_e0"
-    assert payload["generation_id"] == "v1"
-    names = {j["judge_name"] for j in payload["judges"]}
-    assert names == {"critic_A", "critic_B"}
-    for j in payload["judges"]:
-        assert j["weighted_loss"] is not None
-        assert j["weight"] is not None
+    # The spine still renders without an index; only the judges drop out.
+    assert _served(build_per_judge_trend(WorkspacePaths(unindexed_workspace), E0)) == (
+        '{"epoch_id":"2026-05-16_e0","generations":[],"judges":[],'
+        '"note":"index not built; run zicato repair index"}'
+    )
+
+
+def test_build_per_judge_for_generation_returns_totals(
+    phase1_workspace: Path, unindexed_workspace: Path, workspace_without_judge_losses: Path
+) -> None:
+    # ``run_count`` sits between raw_loss and weight; this is the only one
+    # of the five readers that carries it.
+    assert _served(build_per_judge_for_generation(WorkspacePaths(phase1_workspace), E0, "v1")) == (
+        '{"epoch_id":"2026-05-16_e0","generation_id":"v1","judges":['
+        '{"judge_name":"critic_A","weighted_loss":0.18,"raw_loss":0.24,'
+        '"run_count":1,"weight":0.75},'
+        '{"judge_name":"critic_B","weighted_loss":0.12,"raw_loss":0.15,'
+        '"run_count":1,"weight":0.25}]}'
+    )
+    assert _served(
+        build_per_judge_for_generation(WorkspacePaths(unindexed_workspace), E0, "v1")
+    ) == ('{"epoch_id":"2026-05-16_e0","generation_id":"v1","judges":[]}')
+    assert _served(
+        build_per_judge_for_generation(WorkspacePaths(workspace_without_judge_losses), E0, "v1")
+    ) == (
+        '{"epoch_id":"2026-05-16_e0","generation_id":"v1","judges":[],'
+        '"note":"index not built; run zicato repair index"}'
+    )
 
 
 def test_build_per_entry_uses_tournament_id_fk(phase1_workspace: Path) -> None:
@@ -481,25 +539,112 @@ def test_build_per_entry_v0_has_no_tournament_id(phase1_workspace: Path) -> None
     assert len(payload["entries"]) == 1
 
 
-def test_build_per_judge_comparison_picks_primary_driver(phase1_workspace: Path) -> None:
-    payload = build_per_judge_comparison(
-        WorkspacePaths(phase1_workspace), "2026-05-16_e0", "v1", "v2"
+def test_build_per_judge_comparison_picks_primary_driver(
+    phase1_workspace: Path, unindexed_workspace: Path, workspace_without_judge_losses: Path
+) -> None:
+    assert _served(
+        build_per_judge_comparison(WorkspacePaths(phase1_workspace), E0, "v1", "v2")
+    ) == (
+        '{"epoch_id":"2026-05-16_e0","champion":"v1","challenger":"v2","judges":['
+        '{"judge_name":"critic_A","champion_weighted_loss":0.18,'
+        '"challenger_weighted_loss":0.12,"delta":-0.06},'
+        '{"judge_name":"critic_B","champion_weighted_loss":0.12,'
+        '"challenger_weighted_loss":0.08000000000000002,"delta":-0.03999999999999998}],'
+        '"primary_driver":"critic_A"}'
     )
-    assert payload["epoch_id"] == "2026-05-16_e0"
-    assert payload["champion"] == "v1"
-    assert payload["challenger"] == "v2"
-    # Both judges fired; the primary driver is one of them.
-    assert payload["primary_driver"] in {"critic_A", "critic_B"}
-    # Each row has a delta.
-    for j in payload["judges"]:
-        assert j["delta"] is not None
+    assert _served(
+        build_per_judge_comparison(WorkspacePaths(unindexed_workspace), E0, "v1", "v2")
+    ) == (
+        '{"epoch_id":"2026-05-16_e0","champion":"v1","challenger":"v2",'
+        '"judges":[],"primary_driver":null}'
+    )
+    assert _served(
+        build_per_judge_comparison(WorkspacePaths(workspace_without_judge_losses), E0, "v1", "v2")
+    ) == (
+        '{"epoch_id":"2026-05-16_e0","champion":"v1","challenger":"v2",'
+        '"judges":[],"primary_driver":null,'
+        '"note":"index not built; run zicato repair index"}'
+    )
 
 
-def test_build_per_judge_for_run_returns_rows(phase1_workspace: Path) -> None:
-    payload = build_per_judge_for_run(WorkspacePaths(phase1_workspace), "run_v1")
-    assert payload["run_id"] == "run_v1"
-    names = {j["judge_name"] for j in payload["judges"]}
-    assert names == {"critic_A", "critic_B"}
+def test_per_judge_comparison_signs_a_one_sided_judge(phase1_workspace: Path) -> None:
+    """A judge that fired on only one side still yields a signed delta.
+
+    A challenger-only judge reads as its own loss and a champion-only judge
+    as the negation of its loss, so a judge that appeared or disappeared
+    between the two generations is scored rather than dropped.
+    """
+    conn = sqlite3.connect(phase1_workspace / "index.db")
+    conn.executemany(
+        "INSERT INTO judge_losses VALUES(?,?,?,?,?)",
+        [("run_v2", "critic_new", 0.5, 0.6, 0.5), ("run_v1", "critic_gone", 0.9, 1.0, 0.5)],
+    )
+    conn.commit()
+    conn.close()
+    payload = build_per_judge_comparison(WorkspacePaths(phase1_workspace), E0, "v1", "v2")
+    rows = {row["judge_name"]: row["delta"] for row in payload["judges"]}
+    assert rows["critic_new"] == 0.5
+    assert rows["critic_gone"] == -0.9
+    # The largest absolute delta names the driver, one-sided rows included.
+    assert payload["primary_driver"] == "critic_gone"
+
+
+def test_build_per_judge_for_run_returns_rows(
+    phase1_workspace: Path, unindexed_workspace: Path, workspace_without_judge_losses: Path
+) -> None:
+    assert _served(build_per_judge_for_run(WorkspacePaths(phase1_workspace), "run_v1")) == (
+        '{"run_id":"run_v1","judges":['
+        '{"judge_name":"critic_A","weighted_loss":0.18,"raw_loss":0.24,"weight":0.75},'
+        '{"judge_name":"critic_B","weighted_loss":0.12,"raw_loss":0.15,"weight":0.25}]}'
+    )
+    assert _served(build_per_judge_for_run(WorkspacePaths(unindexed_workspace), "run_v1")) == (
+        '{"run_id":"run_v1","judges":[]}'
+    )
+    assert _served(
+        build_per_judge_for_run(WorkspacePaths(workspace_without_judge_losses), "run_v1")
+    ) == ('{"run_id":"run_v1","judges":[],"note":"index not built; run zicato repair index"}')
+
+
+def test_build_per_judge_for_entry_decodes_the_loss_file(phase1_workspace: Path) -> None:
+    paths = WorkspacePaths(phase1_workspace)
+    # v1's loss.json carries no per_judge_loss block, so this reader falls
+    # through to the run-keyed reader and answers in its shape.
+    assert _served(build_per_judge_for_entry(paths, E0, "v1", "entry_alpha")) == (
+        '{"run_id":"run_v1","judges":['
+        '{"judge_name":"critic_A","weighted_loss":0.18,"raw_loss":0.24,"weight":0.75},'
+        '{"judge_name":"critic_B","weighted_loss":0.12,"raw_loss":0.15,"weight":0.25}]}'
+    )
+    # No loss.json for that entry at all: the requested id echoes back.
+    assert _served(build_per_judge_for_entry(paths, E0, "v1", "absent_entry")) == (
+        '{"run_id":"absent_entry","judges":[]}'
+    )
+    # With a block present, rows decode from the FILE. The reducer writes
+    # it and the reader does not schema-check it: a missing or non-numeric
+    # field coerces to null, and a nameless or non-mapping row is dropped.
+    _write_json(
+        phase1_workspace
+        / "epochs"
+        / E0
+        / "generations"
+        / "v2"
+        / "runs"
+        / "entry_alpha"
+        / "loss.json",
+        {
+            "run_id": "run_v2",
+            "per_judge_loss": [
+                {"judge_name": "critic_A", "weighted_loss": 0.12, "raw_loss": 0.16, "weight": 0.75},
+                {"judge_name": "critic_B", "weighted_loss": None, "raw_loss": "x", "weight": 0.25},
+                {"judge_name": "", "weighted_loss": 1.0},
+                "not a mapping",
+            ],
+        },
+    )
+    assert _served(build_per_judge_for_entry(paths, E0, "v2", "entry_alpha")) == (
+        '{"run_id":"run_v2","judges":['
+        '{"judge_name":"critic_A","weighted_loss":0.12,"raw_loss":0.16,"weight":0.75},'
+        '{"judge_name":"critic_B","weighted_loss":null,"raw_loss":null,"weight":0.25}]}'
+    )
 
 
 # ---------------------------------------------------------------------------
