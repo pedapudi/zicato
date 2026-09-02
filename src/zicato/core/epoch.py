@@ -6,7 +6,7 @@ Split out of :mod:`zicato.core.types`; re-exported from there and from
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from zicato.core.scoring_config import ScoringWeights
@@ -48,9 +48,9 @@ class EpochConfig:
         ISO-8601 UTC timestamp of closure, or empty string when still
         open.
     contract_hash:
-        ``sha256`` hex digest of the canonicalized evaluation contract
-        (board + rubric + scoring + the registered inner-harness
-        identity) at the time this epoch was created. See
+        ``sha256`` hex digest of the canonicalized evaluation contract:
+        board, proposer brief, scoring, evaluator revision, adapter identity,
+        mutable source paths, and proposer identity. See
         :mod:`zicato.epoch.contract`. The orchestrator recomputes this
         on every ``evolve`` and auto-rolls the epoch when the live
         contract drifts from the stored value.
@@ -60,6 +60,13 @@ class EpochConfig:
         explicit ``is None`` check and NOT ``== ""``: a corrupted or empty
         stored hash must not read as "no hash recorded". An on-disk ``""``
         is normalised to ``None`` on read.
+    implementation_identity:
+        System implementation revisions that contributed behavior to the
+        evaluation contract. Every epoch records the Zicato evaluator revision.
+        A Goldfive-enabled epoch also records the pinned Goldfive version and
+        Zicato integration revision. The same values participate in the
+        contract hash; this field keeps them directly inspectable in the
+        canonical workspace record.
     goal:
         Free-form operator-supplied statement of *why* this epoch
         exists — the intent the operator is testing (e.g. "shift the
@@ -123,6 +130,7 @@ class EpochConfig:
     closed: bool = False
     closed_at: str = ""
     contract_hash: str | None = None
+    implementation_identity: dict[str, str | int] = field(default_factory=dict)
     goal: str = ""
     # Location of the proposer dir frozen for this epoch, or ``None`` for
     # the built-in default proposer. Folded into the contract hash; missing

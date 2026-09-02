@@ -439,6 +439,14 @@ seam that already receives the config (full/fast schedulers, the screen,
 evidence replicate duels) shares one tally with zero signature changes;
 knob off (default 0) binds nothing.
 
+The optional `ScoringWeights.goldfive` object follows a separate path. It is
+frozen contract data rather than a runtime knob. The worker exposes it as
+`RuntimeConfig.goldfive` only when the adapter's worker specification declares
+the `"goldfive"` integration. Zicato preserves the JSON mapping; the lazy
+bridge in `src/zicato/integrations/goldfive.py` delegates its schema, defaults,
+normalization, capability checks, credential resolution, and runtime
+construction to Goldfive's `RuntimeConfigDocument` API.
+
 ### 3.5 Step 2 — baseline and parent
 
 `_ensure_baseline_snapshot` materializes `v0` from the registered mutable
@@ -1253,7 +1261,7 @@ into a child generation. Discard is best-effort
 file — the entry (`_entry_to_dict`, with the board-level
 `disable_drift`/`judge_only` stamped onto entry context by
 `_stamp_disable_drift`/`_stamp_judge_only`), the adapter spec
-(`_adapter_spec` — the same `config.json` block the factory reconstructs
+(`adapter_worker_spec` — the same `config.json` block the factory reconstructs
 from), the LLM roles as dotted paths (`_role_worker_spec` →
 `_callable_dotted_path`, the module-level-callable rule), and the FULL
 scoring weights
@@ -1264,6 +1272,12 @@ the weights must cross complete. A dropped field means the worker scores
 under defaults while the orchestrator believes otherwise (the
 `per_judge_weights` desync class; 03-contract-and-epochs.md
 §"Serializer completeness").
+
+An optional Goldfive object crosses in the same scoring document. Zicato does
+not deserialize it into a parallel tree of Zicato dataclasses. The worker keeps
+the immutable JSON mapping until a Goldfive-consuming adapter invokes the lazy
+integration bridge. A generic adapter and a contract without the object never
+import Goldfive through this path.
 
 **Inside the worker** (`src/zicato/_tournament_worker.py`): rebuild the
 adapter and weights from the spec, attach the per-run goldfive

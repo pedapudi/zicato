@@ -245,6 +245,21 @@ def register_cmd(
     if proposer_path is not None:
         contract_block["proposer_path"] = str(Path(proposer_path).resolve())
     config["contract"] = contract_block
+
+    # The built-in ADK adapter executes through Goldfive. Bind its explicit
+    # defaults when the adapter is selected so a newly initialized workspace
+    # is runnable without making Goldfive part of generic scaffolds.
+    from zicato.storage import atomic_write_json, read_json  # noqa: PLC0415
+
+    scoring_file = Path(contract_block["scoring_path"])
+    scoring = read_json(scoring_file)
+    if scoring is None:
+        scoring = {}
+    if not isinstance(scoring, dict):
+        raise click.UsageError(f"scoring contract at {scoring_file} must be a JSON object")
+    if "goldfive" not in scoring:
+        scoring["goldfive"] = {}
+        atomic_write_json(scoring_file, scoring)
     write_workspace_config(workspace_root, config)
 
     click.echo(

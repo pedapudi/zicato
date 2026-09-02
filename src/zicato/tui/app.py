@@ -354,8 +354,6 @@ def degrade_to_ascii() -> bool:
     must read correctly either way. Colour is always redundant encoding, so
     nothing is lost — only the braille and box glyphs transliterate.
     """
-    if os.environ.get("ZICATO_TUI_ASCII"):
-        return True
     encoding = (os.environ.get("LC_ALL") or os.environ.get("LANG") or "").lower()
     return "utf-8" not in encoding and "utf8" not in encoding
 

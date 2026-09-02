@@ -16,6 +16,7 @@ import math
 from pathlib import Path
 
 import zicato_examples.target_0_convergence as _t0_pkg
+from tests._contract_pins import resolved_contract_with_proposer
 from zicato.epoch.lifecycle import _scoring_from_dict, load_epoch, new_epoch
 from zicato.health.diagnostics import detect_margin_below_noise_floor
 from zicato.tournament.calibration import (
@@ -124,7 +125,7 @@ def _bootstrap(tmp_path: Path, extra_config: dict | None = None) -> tuple[Path, 
         brief_source=brief,
         weights=weights,
         auto_close_previous=False,
-        proposer_path=EXAMPLE_DIR / "proposer",
+        contract=resolved_contract_with_proposer(workspace, EXAMPLE_DIR / "proposer"),
     )
     return workspace, cfg.id
 

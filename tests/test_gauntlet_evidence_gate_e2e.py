@@ -55,6 +55,7 @@ from pathlib import Path
 import pytest
 
 import zicato_examples.target_0_convergence as _t0_pkg
+from tests._contract_pins import resolved_contract_with_proposer
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
 from zicato_examples.target_0_convergence import mocks as t0_mocks
@@ -112,7 +113,7 @@ def _bootstrap(tmp_path: Path, replicate_budget: int) -> tuple[Path, str]:
         brief_source=brief,
         weights=weights,
         auto_close_previous=False,
-        proposer_path=EXAMPLE_DIR / "proposer",
+        contract=resolved_contract_with_proposer(workspace, EXAMPLE_DIR / "proposer"),
     )
     return workspace, cfg.id
 

@@ -166,12 +166,12 @@ entries are likewise replaced, never mutated in place — which is what makes
 
 The draft's `diff_vs_live` and its three canonicalizers (`_board_canon`,
 `_brief_canon`, `_scoring_canon`) **agree with the contract-hash and epoch-roll
-rule** by construction: they reuse `zicato.epoch.contract.round_floats` /
-`scoring_to_canon`, the same normalizers the contract hash uses. That agreement
-is the reason the builder can honestly tell an operator "this edit rolls the
-epoch" before they apply — the diff can never report a change the hash would not
-see, nor hide one it would (see 03-contract-and-epochs.md §3.7 "Computing the
-hash").
+rule** by construction. Scoring uses
+`zicato.epoch.contract.scoring_contract_to_canon`, the same canonicalizer as
+the contract hash. For an enabled Goldfive object, that function delegates
+defaults and normalization to Goldfive's `RuntimeConfigDocument` before
+comparing documents. The builder can therefore report whether an edit rolls
+the epoch without inventing a second Goldfive schema.
 
 > ⚠️ TRAP — the six diff *components* are not all epoch-rollers. `ContractDiff`
 > reports `board` / `brief` / `scoring` / `proposer` / `structure` /
@@ -201,13 +201,13 @@ by the dashboard at `/builder/*`):
 
 | Method + route | Handler | What it does |
 |---|---|---|
-| `GET /builder/config` | `builder_config` | `load_builder_config(root).to_public_dict()` (secret-safe) + the server-derived `vocab` (entry kinds / expectation kinds / reads / judge modes / severities / drift kinds — the GUI never hardcodes an enum) |
+| `GET /builder/config` | `builder_config` | `load_builder_config(root).to_public_dict()` with credential values omitted + the server-derived `vocab` (entry kinds / expectation kinds / reads / judge modes / severities / drift kinds — the GUI never hardcodes an enum) |
 | `GET /builder/draft?session=ID` | `builder_draft` | the draft snapshot + cost/warnings/diff/slots + `proposer_dirs` (discovered `<workspace_parent>/proposers/*` candidates; degrades to `[]`) |
 | `POST /builder/op` | `builder_op` | `{session, op, args}` → dispatch → the shared envelope |
 | `POST /builder/apply` | `builder_apply` | `{session, confirm}` → `ApplyResult.to_dict()` |
 | `POST /builder/chat` | `builder_chat` | `{session, message}` → SSE stream of copilot frames |
 
-`_dispatch_op` handles the 16 write ops; the read/lifecycle ops
+`_dispatch_op` handles the 20 write ops; the read/lifecycle ops
 (`fork`/`switch`/`list_drafts`/`compare`/`revert_to_live`/`undo`/`preflight`)
 are handled inline in the `builder_op` handler because they act on store
 slots / the undo history or run async. `builder_op` also calls
@@ -327,19 +327,30 @@ in every case.
 | `set_holdout` | `scoring.overfitting` + per-entry `holdout` tags + nested `ladder` | `enabled`, `fraction`, `tags`, `min_board_size_for_split`, `rotate_holdout`, `restrict_proposer_visibility`, `random_baseline_every_n`, `max_generations_per_contract` (`0` clears), `ladder` (partial dict) |
 | `set_proposer` | `draft.proposer_path` | `proposer_path: str \| Path \| None` |
 | `set_weights` | the pass term + the within-channel shapes on `scoring` | `pass_weight`, `per_kind_weights`, `per_judge_weights`, `default_judge_weight`, `plan_revision_weight`, `task_failure_weight`, `not_completed_weight`, `severity_weights` |
-| `set_gate` | the promote gate on `scoring` | `promote_margin`, `monotonicity`, `monotonicity_scope`, `namespace_monotonicity`, `block_on_containment_violation`, `block_on_gate_contradiction`, `regression_gate_enabled`, `regression_test_command`, `regression_timeout_s` |
-| `set_namespace_weights` | `scoring.namespace_weights`, `scoring.diff_complexity_weight` | `namespace_weights` (the per-CHANNEL coefficients — sign encodes worse-direction; `"failure:"` must stay > 0), `diff_complexity_weight` (≥0) |
-| `set_proposer_quality` | nested `scoring.proposer_quality` | `best_of_n` (≥1), `critique_enabled`, `process_exemplars` (≥0) |
+| `set_gate` | the promote and holdout gates on `scoring` | `promote_margin`, `holdout_margin`, `holdout_entry_regression_budget`, monotonicity and containment controls, regression-command controls |
+| `set_namespace_weights` | namespace and patch-complexity scoring | `namespace_weights`, `diff_complexity_weight`, `diff_complexity_ceiling` |
+| `set_proposer_quality` | nested `scoring.proposer_quality` | slate size, critique, process exemplars, recombination, genealogy, calibration feedback, and merge mode |
 | `set_experiment_memory` | `scoring.experiment_memory.cross_epoch` | `cross_epoch: bool` |
+| `set_goldfive` | optional `scoring.goldfive` JSON document | `config: {}` enables the complete defaulted document, a partial object edits it, and `null` removes it |
+| `set_telemetry_dialect` | `scoring.telemetry_dialect` | `dialect`: `goldfive`, `adk_events`, or `transcript` |
+| `set_mutation_surface` | `scoring.mutation_surface` | `mutation_surface`: complete suffix-to-comment-syntax mapping |
 | `set_screening` | `scoring.proposer_quality.screen_entries` / `screen_veto_only` | `entries` (≥0), `veto_only` |
 | `edit_board_entry` | `draft.entries` (add/replace by id; validates first) | `entry: BoardEntry` |
+| `add_board_entry` | `draft.entries` (append with duplicate-id refusal) | `entry: BoardEntry` |
 | `remove_board_entry` | `draft.entries` (delete by id; unknown id raises) | `entry_id` |
 | `add_judge` | one entry's `judges` tuple | `entry_id`, `judge: JudgeSpec` |
 | `remove_judge` | one entry's `judges` tuple | `entry_id`, `name` |
 | `set_brief` | `draft.brief` | `text: str` |
 | `set_board_meta` | the board-level `board_meta` header (`draft.disable_drift` / `draft.judge_only`) | `disable_drift` (wholesale token list, validated; `[]` clears, `None` unchanged), `judge_only` |
 
-Three structural facts:
+Four structural facts:
+
+- **Goldfive owns the fields inside its document.** The Builder exposes one
+  JSON-object operation rather than one Zicato control per Goldfive setting.
+  `set_goldfive` asks `RuntimeConfigDocument` to validate, apply defaults, and
+  return the normalized object. Adding a Goldfive field changes Goldfive's
+  document API and scaffold; it does not require a matching dataclass or
+  registry entry in Zicato.
 
 - **The scoring ops compose on nested blocks.** `set_proposer_quality` and
   `set_screening` both edit the *same* `proposer_quality` block — each touches
@@ -709,10 +720,10 @@ becoming) the live contract. It returns an `ApplyResult` carrying `confirmed`,
 - **Dry run (`confirm=False`).** Nothing is written. The result carries the
   *predicted* contract hash, computed by `_predicted_contract_hash`, which
   materializes the draft's board/brief/scoring into a throwaway
-  `tempfile.TemporaryDirectory` and runs the REAL `compute_contract_hash` over
-  them (plus the workspace's live entrypoint / mutable-trees and the draft's
-  proposer). So the operator sees the EXACT hash an apply would land — without
-  touching the workspace. `rolled` is always `False` for a dry run.
+  `tempfile.TemporaryDirectory` and runs the real `compute_contract_hash` over
+  them, the workspace's live adapter identity and mutable trees, and the draft's
+  proposer. The operator sees the hash an apply would land without touching the
+  workspace. `rolled` is always `False` for a dry run.
 - **Confirm (`confirm=True`).** `_write_contract` writes the draft to the
   workspace's LIVE contract source paths — the same `board.jsonl` / `brief.md` /
   `scoring.json` (and proposer dir) that `zicato epoch register` / `zicato epoch new`
@@ -811,9 +822,9 @@ any two drafts, over the SAME canonicalizers the epoch-roll rule uses, so
 "differs here" agrees with "would roll the epoch". It returns
 `changed_components` plus per-component detail (`scoring` keys with `a`/`b`
 values, `board` `added`/`removed`/`changed` ids, `brief`, `proposer`). Because
-its scoring keys come from the contract-canonical form (float-rounded,
-omitted-at-default fields absent), the diff never reports a phantom change the
-hash would not see.
+its scoring keys come from the contract-canonical form (exact parsed numeric
+values, omitted-at-default fields absent, and system-owned integration identity
+included), the diff never reports a phantom change the hash would not see.
 
 > ⚠️ TRAP — the copilot's `compare` tool resolves the literal names `"session"`
 > and `"live"` specially (current working draft, and a fresh
@@ -951,6 +962,11 @@ carry `dataclasses.field(metadata=_knob(...))` declaring:
   that exposes the knob (e.g. `"set_proposer_quality"`), and the arg name when
   it differs from the field name (e.g. `screen_entries` is the `entries` arg of
   `set_screening`).
+
+`ScoringWeights.goldfive` registers only the optional document as one Builder
+operation. Goldfive's `RuntimeConfigDocument` owns every nested field. Do not
+mirror those fields into Zicato's dataclasses, knob registry, API dispatch, or
+GUI controls; update Goldfive's schema and scaffold instead.
 
 The canonicalizer and the registry-driven completeness guard both consume the
 same runtime registry. The latter,
@@ -1196,8 +1212,6 @@ them as a nested `{section: {field: value}}` override. `evolve` does this in
 # src/zicato/cli/commands/evolve.py — _pin_config_flags (excerpt)
     if parallelism is not None:
         pins.setdefault("runtime", {})["parallelism"] = parallelism
-    if harness_call_timeout_ms is not None:
-        pins.setdefault("runtime", {})["harness_call_timeout_ms"] = harness_call_timeout_ms
     if aux_call_timeout is not None:
         pins.setdefault("aux", {})["call_timeout_s"] = aux_call_timeout
     ...
@@ -1216,13 +1230,12 @@ call graph, sees the flag:
     This is the bridge from CLI flags to the config tree: a command
     validates and pins its flag values once at startup, and every later
     :func:`load_config` call — however deep in the call graph — sees
-    them layered on top of the environment ...
+    them layered on top of the dataclass defaults ...
 
     The tournament runner serialises the current pins into every worker
     args file and the worker re-pins them at startup, so a pinned knob
-    consumed inside the worker subprocess (e.g. the harness call
-    timeout) crosses the process boundary without an environment
-    variable.
+    consumed inside the worker subprocess (for example, board-unit
+    parallelism) crosses the process boundary without an environment variable.
 ```
 
 For the rare call site that must tell "explicitly pinned" from "at its default"
@@ -1281,11 +1294,11 @@ Each entry carries a **boundary-kind role** (NOT a process label):
 |---|---|---|
 | `harness-contract` | set by zicato for the inner harness — part of the run contract | `ZICATO_RUN_SCRATCH_DIR` |
 | `internal-handoff` | set and restored by zicato to hand a value across its own processes | `ZICATO_HARMONOGRAF_URL`, `ZICATO_HARMONOGRAF_GRPC` |
-| `secrets-boundary` | operator-NAMED variables so credentials stay in the environment, never in files | `<models.<role>.api_key_env>`, `<runtime.worker_env_passthrough>` |
-| `external-integration` | another tool's own variable that zicato defers to | `GOLDFIVE_AGENT_CALL_TIMEOUT_MS` |
+| `external-integration` | input or child-process control required by an optional external tool | `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `PI_OFFLINE` |
+| `secrets-boundary` | Configuration records a variable name while its credential value remains in the process environment | `<models.<role>.api_key_env>`, Goldfive names returned by `RuntimeConfigDocument.secret_env_names`, and `<runtime.worker_env_passthrough>` when used for credentials |
 | `test-toggle` | CI / test switches; never read on an operator path | `ZICATO_SKIP_HOOK_CHECK`, `ZICATO_PARITY_UPDATE` |
 
-The role is a *boundary taxonomy* of exactly five values; which process
+The role is a *boundary taxonomy* of five values; which process
 sets/reads a variable is prose in the entry's `description` (e.g.
 `ZICATO_RUN_SCRATCH_DIR` is "Set BY the tournament worker FOR the inner
 harness"). The backing type is `EnvVarInfo(name, role, description)`.

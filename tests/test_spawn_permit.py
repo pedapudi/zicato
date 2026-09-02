@@ -8,9 +8,8 @@ real second process and assert this process is blocked by it — an
 in-process test alone would not distinguish a host-wide cap from a
 process-local one.
 
-Every test points ``ZICATO_WORKER_PERMIT_DIR`` at its own ``tmp_path`` so
-the suite never contends with a real run's permits (or with itself under
-``pytest -n auto``).
+Every permit call uses its test's private ``tmp_path`` so the suite never
+contends with a real run's permits or with another parallel test worker.
 """
 
 from __future__ import annotations
@@ -27,7 +26,6 @@ import pytest
 from zicato.runtime.spawn_permit import (
     MIN_AUTO_PERMITS,
     OPEN_PERMIT,
-    PERMIT_DIR_ENV,
     WorkerPermit,
     acquire_worker_permit,
     default_host_worker_permits,
@@ -37,11 +35,9 @@ from zicato.runtime.spawn_permit import (
 
 
 @pytest.fixture
-def permit_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point the permit directory at a private tmp path for this test."""
-    root = tmp_path / "permits"
-    monkeypatch.setenv(PERMIT_DIR_ENV, str(root))
-    return root
+def permit_root(tmp_path: Path) -> Path:
+    """Return a private permit directory for this test."""
+    return tmp_path / "permits"
 
 
 # ---------------------------------------------------------------------------
@@ -68,11 +64,9 @@ def test_zero_disables_and_negatives_clamp_to_zero() -> None:
 
 
 def test_permit_dir_resolution_order(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Explicit env override wins; then XDG; then a uid-scoped temp path."""
-    monkeypatch.setenv(PERMIT_DIR_ENV, "/explicit/override")
-    assert permit_dir() == Path("/explicit/override")
+    """Explicit configuration wins; then XDG; then a uid-scoped temp path."""
+    assert permit_dir("/explicit/override") == Path("/explicit/override")
 
-    monkeypatch.delenv(PERMIT_DIR_ENV, raising=False)
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/4242")
     assert permit_dir() == Path("/run/user/4242/zicato/worker-permits")
 
@@ -90,12 +84,12 @@ def test_permit_dir_resolution_order(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def test_cap_admits_up_to_the_limit_then_queues(permit_root: Path) -> None:
     """N permits admit N holders; the N+1th waits until one is released."""
-    first = await acquire_worker_permit(2)
-    second = await acquire_worker_permit(2)
+    first = await acquire_worker_permit(2, permit_root)
+    second = await acquire_worker_permit(2, permit_root)
     assert first.held and second.held
     assert {first.slot, second.slot} == {0, 1}
 
-    third = asyncio.create_task(acquire_worker_permit(2))
+    third = asyncio.create_task(acquire_worker_permit(2, permit_root))
     await asyncio.sleep(0.2)
     assert not third.done(), "the third acquirer must queue while both slots are held"
 
@@ -110,7 +104,7 @@ async def test_cap_zero_admits_immediately_and_touches_no_filesystem(
     permit_root: Path,
 ) -> None:
     """With the cap off, nothing is created and every acquire is open."""
-    permits = [await acquire_worker_permit(0) for _ in range(50)]
+    permits = [await acquire_worker_permit(0, permit_root) for _ in range(50)]
     assert all(p is OPEN_PERMIT for p in permits)
     assert not any(p.held for p in permits)
     assert not permit_root.exists(), "the disabled cap must not touch the filesystem"
@@ -118,7 +112,7 @@ async def test_cap_zero_admits_immediately_and_touches_no_filesystem(
 
 async def test_release_is_idempotent_and_never_raises(permit_root: Path) -> None:
     """``release`` runs from a ``finally``; it must never raise, ever."""
-    permit = await acquire_worker_permit(1)
+    permit = await acquire_worker_permit(1, permit_root)
     assert permit.held
     permit.release()
     assert not permit.held
@@ -142,10 +136,10 @@ async def test_cancelling_a_waiter_leaks_no_slot_and_no_descriptor(
 
     # The ONLY slot is held, so every waiter below really parks in the poll
     # loop rather than acquiring on its first sweep.
-    held = await acquire_worker_permit(1)
+    held = await acquire_worker_permit(1, permit_root)
     before = len(list(fd_dir.iterdir()))
     for _ in range(50):
-        waiter = asyncio.create_task(acquire_worker_permit(1))
+        waiter = asyncio.create_task(acquire_worker_permit(1, permit_root))
         await asyncio.sleep(0)
         waiter.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -154,7 +148,7 @@ async def test_cancelling_a_waiter_leaks_no_slot_and_no_descriptor(
     held.release()
 
     # The slot is free again, so nothing was stranded.
-    again = await asyncio.wait_for(acquire_worker_permit(1), timeout=5.0)
+    again = await asyncio.wait_for(acquire_worker_permit(1, permit_root), timeout=5.0)
     assert again.held
     again.release()
 
@@ -162,7 +156,7 @@ async def test_cancelling_a_waiter_leaks_no_slot_and_no_descriptor(
 async def test_released_slot_is_immediately_reusable(permit_root: Path) -> None:
     """A released permit frees its slot for the next acquirer."""
     for _ in range(5):
-        permit = await acquire_worker_permit(1)
+        permit = await acquire_worker_permit(1, permit_root)
         assert permit.held
         permit.release()
 
@@ -178,8 +172,8 @@ async def test_unusable_permit_dir_degrades_open(
     """A permit dir that cannot be created admits, rather than failing."""
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("i am a file", encoding="utf-8")
-    monkeypatch.setenv(PERMIT_DIR_ENV, str(blocker / "under-a-file"))
-    permit = await acquire_worker_permit(1)
+    directory = blocker / "under-a-file"
+    permit = await acquire_worker_permit(1, directory)
     assert not permit.held, "an uncreatable permit dir must degrade OPEN"
     permit.release()
 
@@ -198,12 +192,12 @@ async def test_degrade_open_warns_once_per_process(
 
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("i am a file", encoding="utf-8")
-    monkeypatch.setenv(PERMIT_DIR_ENV, str(blocker / "under-a-file"))
+    directory = blocker / "under-a-file"
     monkeypatch.setattr(spawn_permit, "_degraded_open_warned", False)
 
     with caplog.at_level("DEBUG", logger="zicato.runtime.spawn_permit"):
         for _ in range(5):
-            (await acquire_worker_permit(1)).release()
+            (await acquire_worker_permit(1, directory)).release()
 
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert len(warnings) == 1, f"expected exactly one warning, got {len(warnings)}"
@@ -244,7 +238,7 @@ async def test_missing_fcntl_degrades_open(
         return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(builtins, "__import__", _no_fcntl)
-    permit = await acquire_worker_permit(1)
+    permit = await acquire_worker_permit(1, permit_root)
     monkeypatch.undo()
     assert not permit.held, "a platform without flock must degrade OPEN"
     permit.release()
@@ -256,13 +250,12 @@ async def test_missing_fcntl_degrades_open(
 
 
 _HOLDER_SOURCE = """
-import asyncio, os, sys
-os.environ["ZICATO_WORKER_PERMIT_DIR"] = sys.argv[1]
+import asyncio, sys
 from zicato.runtime.spawn_permit import acquire_worker_permit
 
 
 async def main() -> None:
-    permit = await acquire_worker_permit(int(sys.argv[2]))
+    permit = await acquire_worker_permit(int(sys.argv[2]), sys.argv[1])
     assert permit.held, "holder failed to take a permit"
     print("HELD", flush=True)
     # Hold until killed / stdin closes.
@@ -299,7 +292,7 @@ async def test_permit_is_held_across_processes(permit_root: Path) -> None:
     """
     holder = _spawn_holder(permit_root, 1)
     try:
-        waiter = asyncio.create_task(acquire_worker_permit(1))
+        waiter = asyncio.create_task(acquire_worker_permit(1, permit_root))
         await asyncio.sleep(0.3)
         assert not waiter.done(), "another process's permit must block this one"
     finally:
@@ -323,7 +316,7 @@ async def test_killed_holder_leaks_no_permit(permit_root: Path) -> None:
     holder.kill()  # SIGKILL: no chance to clean up after itself
     holder.wait(timeout=10)
 
-    permit = await asyncio.wait_for(acquire_worker_permit(1), timeout=10.0)
+    permit = await asyncio.wait_for(acquire_worker_permit(1, permit_root), timeout=10.0)
     assert permit.held, "a SIGKILLed holder must not leave a permanently-held slot"
     permit.release()
 
@@ -385,15 +378,15 @@ async def test_runner_asks_for_a_permit_and_always_releases_it(
     from zicato.core import ScoringWeights
     from zicato.tournament import runner as runner_mod
 
-    asked: list[int | None] = []
+    asked: list[tuple[int | None, Path | str | None]] = []
     released: list[bool] = []
 
     class _RecordingPermit(WorkerPermit):
         def release(self) -> None:
             released.append(True)
 
-    async def _fake_acquire(limit: int | None) -> WorkerPermit:
-        asked.append(limit)
+    async def _fake_acquire(limit: int | None, directory: Path | str | None = None) -> WorkerPermit:
+        asked.append((limit, directory))
         return _RecordingPermit()
 
     monkeypatch.setattr(runner_mod, "acquire_worker_permit", _fake_acquire)
@@ -414,8 +407,34 @@ async def test_runner_asks_for_a_permit_and_always_releases_it(
     )
     assert loss.abort_cause == "prepare_failed"
 
-    assert asked == [1], "the runner must pass config.host_worker_permits through"
+    assert asked == [(1, None)], "the runner must pass both permit settings through"
     assert released == [True], "the permit must be released on the early-return path too"
+
+
+async def test_worker_spawn_failure_returns_an_aborted_loss(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests._subprocess_worker_support import StubAdapter
+    from zicato.core import ScoringWeights
+    from zicato.tournament import runner as runner_mod
+
+    async def _fail_spawn(*args: object, **kwargs: object) -> object:
+        raise OSError("process table unavailable")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fail_spawn)
+    workspace, generation, entry, config = _stub_run_inputs(tmp_path)
+    loss = await runner_mod._run_single(
+        adapter=StubAdapter(),
+        generation=generation,
+        entry=entry,
+        weights=ScoringWeights(),
+        config=config,
+        workspace_root=workspace,
+        epoch_id="e0",
+        side="parent",
+    )
+    assert loss.abort_cause == "prepare_failed"
 
 
 @pytest.mark.integration
@@ -438,7 +457,10 @@ async def test_two_concurrent_runs_serialise_under_a_one_permit_cap(
     isolated.mkdir()
     monkeypatch.setattr(_tempfile, "tempdir", str(isolated))
 
+    from dataclasses import replace
+
     workspace, generation, entry, config = _stub_run_inputs(tmp_path)
+    config = replace(config, worker_permit_dir=permit_root)
 
     async def _one(side: str) -> LossProfile:
         return await _run_single(
@@ -459,6 +481,6 @@ async def test_two_concurrent_runs_serialise_under_a_one_permit_cap(
     assert all(isinstance(loss, LossProfile) for loss in losses)
 
     # And the cap is free again — nothing leaked out of either run.
-    permit = await asyncio.wait_for(acquire_worker_permit(1), timeout=5.0)
+    permit = await asyncio.wait_for(acquire_worker_permit(1, permit_root), timeout=5.0)
     assert permit.held
     permit.release()

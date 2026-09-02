@@ -1251,6 +1251,38 @@ function telemetryDialectControl(sc) {
   return el('div', { class: 'dn-bld-dialect' }, [sel, caption]);
 }
 
+function goldfiveConfigControl(sc) {
+  if (sc.goldfive == null) {
+    const enable = el('button', {
+      class: 'dn-bld-btn dn-bld-goldfive-enable', type: 'button',
+      text: 'Enable optional Goldfive integration',
+    });
+    enable.addEventListener('click', () => runOp('set_goldfive', { config: {} }));
+    return enable;
+  }
+  const area = el('textarea', {
+    class: 'dn-bld-goldfive-area dn-mono', 'aria-label': 'Goldfive configuration JSON',
+    rows: '10', text: JSON.stringify(sc.goldfive, null, 2),
+  });
+  area.value = JSON.stringify(sc.goldfive, null, 2);
+  const save = el('button', {
+    class: 'dn-bld-btn dn-bld-goldfive-save', type: 'button', text: 'Apply configuration',
+  });
+  save.addEventListener('click', () => {
+    try {
+      const config = JSON.parse(area.value);
+      if (!config || Array.isArray(config) || typeof config !== 'object') throw new Error();
+      area.setAttribute('aria-invalid', 'false');
+      runOp('set_goldfive', { config });
+    } catch (_) { area.setAttribute('aria-invalid', 'true'); }
+  });
+  const remove = el('button', {
+    class: 'dn-bld-btn dn-bld-goldfive-remove', type: 'button', text: 'Remove',
+  });
+  remove.addEventListener('click', () => runOp('set_goldfive', { config: null }));
+  return el('div', { class: 'dn-bld-goldfive' }, [area, save, remove]);
+}
+
 // set_weights had NO GUI before this section: the scalar's drift/pass
 // coefficients plus the per-namespace multi-objective weights (through the
 // dedicated set_namespace_weights op) and the opt-in parsimony term.
@@ -1263,6 +1295,10 @@ function weightsSection(d) {
       title: 'telemetry_dialect', def: 'goldfive',
       body: 'The PRODUCER that reduces a run\'s raw telemetry into the LossProfile the scalar scores. goldfive consumes the full drift-instrument stream; adk_events reduces a generic agent event-log JSONL (no in-process drift instruments, no custom process-judge drift); transcript is the predicate/judge-only floor with a structurally zero drift term. A contract field — changing it selects champions under a different measurement rule and rolls the epoch.',
     }, telemetryDialectControl(sc)),
+    controlRow('Optional Goldfive integration', {
+      title: 'goldfive', def: 'absent until explicitly enabled',
+      body: 'Typed detector, judge, steering, endpoint, and wrapped-call settings. Enable with fixed defaults, edit the JSON object, or remove the integration. Any change rolls the epoch.',
+    }, goldfiveConfigControl(sc)),
     controlRow('Pass weight', {
       title: 'pass_weight', def: '1.0',
       body: 'Coefficient on the (1 − pass_rate) miss term of the scalar.',

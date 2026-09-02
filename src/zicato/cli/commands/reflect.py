@@ -438,8 +438,10 @@ def run_cmd(
     # refuse gate, so a refused run writes no stream) and closed in the
     # finally below. Best-effort; a logging-setup failure never fails the run.
     from zicato.logging_stream import install_log_stream, set_log_context  # noqa: PLC0415
+    from zicato.workspace.config_io import read_workspace_config  # noqa: PLC0415
 
-    _log_stream = install_log_stream(workspace_root)
+    log_level = read_workspace_config(workspace_root).runtime.get("log_level", "INFO")
+    _log_stream = install_log_stream(workspace_root, level=str(log_level))
     set_log_context(epoch_id=resolved_epoch)
     # Contract-load preflight: surface the telemetry-dialect capability
     # warnings ONCE for this invocation — the SAME single seam evolve uses

@@ -80,6 +80,11 @@ class CheckContext:
     def epoch_id(self) -> str | None:
         return self._epoch_override or current_epoch_id(self.workspace_root)
 
+    @property
+    def uses_live_contract(self) -> bool:
+        """Whether validators are inspecting the editable contract files."""
+        return self._live_contract
+
     @cached_property
     def config(self) -> WorkspaceConfig:
         """The workspace ``config.json``; absent or malformed reads as empty."""
@@ -352,17 +357,9 @@ class CheckContext:
 
     @cached_property
     def worker_env(self) -> dict[str, str] | None:
-        """The environment a tournament worker would be given, or ``None``.
-
-        ``None`` means inherit the orchestrator's environment, which is
-        what a worker gets unless the operator opted into
-        ``runtime.scrub_worker_env``. Built through the runtime's own
-        composition seam rather than reconstructed here, so a probe run
-        under it is worker-equivalent by construction: an adapter that
-        needs a variable the scrub drops fails the check instead of
-        failing in every worker, mid-round.
-        """
+        """The environment a tournament worker would be given, or inheritance."""
         from zicato.tournament.worker_transport import (  # noqa: PLC0415
+            adapter_uses_integration,
             scrubbed_worker_env,
         )
 
@@ -375,7 +372,27 @@ class CheckContext:
         if not runtime.get("scrub_worker_env", False):
             return None
         passthrough = tuple(str(name) for name in runtime.get("worker_env_passthrough") or ())
-        return scrubbed_worker_env(models=self.models, extra_env_keys=passthrough)
+        goldfive = (
+            self.scoring.goldfive
+            if adapter_uses_integration(self.adapter_spec, "goldfive")
+            else None
+        )
+        goldfive_secret_names: tuple[str, ...] = ()
+        if goldfive is not None:
+            try:
+                from zicato.integrations.goldfive import secret_env_names  # noqa: PLC0415
+
+                goldfive_secret_names = secret_env_names(goldfive)
+            except (ImportError, TypeError, ValueError):
+                # The Goldfive validator reports a missing runtime or malformed
+                # document. Other checks must still be able to inspect the
+                # worker environment without crashing first.
+                pass
+        return scrubbed_worker_env(
+            models=self.models,
+            secret_env_keys=goldfive_secret_names,
+            extra_env_keys=passthrough,
+        )
 
 
 __all__ = ["CheckContext"]

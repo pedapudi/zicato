@@ -1,14 +1,17 @@
 """Contract hashing for auto-epoching.
 
-An epoch is the unit of *evaluation contract*. Five things make up that
+An epoch is the unit of *evaluation contract*. Six things make up that
 contract:
 
 1. The board — test inputs + expectations + judges (``board.jsonl``).
 2. The proposer brief — operator steering text (``brief.md``).
 3. The scoring — weights + gate thresholds (``scoring.json``).
-4. The registered inner-harness IDENTITY — the ``--adk`` entrypoint
-   string plus the sorted list of ``--mutable-tree`` paths.
-5. The proposer — the agent identity, its tools, and the skill modules
+4. The Zicato evaluator revision — an explicit revision number for changes
+   that alter measurement or tournament-decision semantics.
+5. The registered inner-harness identity — the validated adapter worker
+   specification, the adapter implementation outside the mutable surface,
+   and the sorted list of mutable source-tree paths.
+6. The proposer — the agent identity, its tools, and the skill modules
    under a configured ``proposers/<name>/`` dir (or the built-in default
    proposer when none is configured).
 
@@ -18,7 +21,7 @@ NOT part of the contract, because that is what zicato mutates within an epoch.
 
 This module reduces the contract components to a single
 ``sha256`` hex digest. The hash is *canonicalized* so spurious edits
-(whitespace, board-entry reordering, float-formatting noise) do not
+(whitespace, board-entry reordering, equivalent number spellings) do not
 trigger a roll — only semantic changes do.
 
 The hash is computed at epoch-creation time and stored on
@@ -36,7 +39,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from zicato.core.scoring_config import omit_at_default_fields
 from zicato.workspace.config_io import read_workspace_config
@@ -46,6 +49,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only import
 
 log = logging.getLogger("zicato.epoch.contract")
 
+# Bump only when Zicato's evaluator protocol changes the meaning of a run,
+# loss, or tournament decision. This intentionally excludes presentation,
+# query, dashboard, and integration-specific code.
+ZICATO_EVALUATOR_REVISION = 1
+
 #: Separator between the canonical component forms before hashing.
 #: Chosen to be a byte sequence that cannot appear in any canonical
 #: component (a NUL plus a marker word).
@@ -54,7 +62,7 @@ _SEP = "\x00--zicato-contract-component--\x00"
 
 @dataclass(frozen=True, slots=True)
 class ContractInputs:
-    """The six contract components, resolved to concrete inputs.
+    """The contract inputs supplied by the workspace.
 
     Fields
     ------
@@ -65,7 +73,8 @@ class ContractInputs:
     scoring_path:
         Filesystem path to the live ``scoring.json``.
     entrypoint:
-        The registered ``--adk`` entrypoint string, verbatim.
+        The registered ADK entrypoint string used when a caller constructs
+        inputs directly instead of supplying ``adapter_spec``.
     mutable_trees:
         The registered ``--mutable-tree`` paths. Stored as a tuple of
         strings; :func:`compute_contract_hash` sorts and *normalizes*
@@ -88,6 +97,11 @@ class ContractInputs:
     scoring_path: Path
     entrypoint: str
     mutable_trees: tuple[str, ...]
+    #: Validated worker reconstruction spec for the selected harness adapter.
+    #: ``None`` uses the direct-construction ADK identity in ``entrypoint``.
+    adapter_spec: Mapping[str, Any] | None = None
+    #: Dotted implementations whose module source affects adapter behavior.
+    adapter_source_specs: tuple[str, ...] = ()
     #: Location of the proposer dir (``proposers/<name>/``) frozen for
     #: the epoch, or ``None`` for the built-in default proposer. ``None``
     #: by default so existing construction sites keep working.
@@ -386,7 +400,7 @@ def _canon_brief(brief_path: Path) -> str:
 
 
 def _canon_scoring(scoring_path: Path) -> str:
-    """Canonical form of the scoring config: float-rounded, key-sorted.
+    """Canonical form of the scoring config: fully defaulted and key-sorted.
 
     Parses ``scoring.json`` into a fully-defaulted
     :class:`zicato.core.types.ScoringWeights` and serializes *that*,
@@ -397,10 +411,10 @@ def _canon_scoring(scoring_path: Path) -> str:
     the two canonicalize identically, so an epoch's stored hash matches
     the hash re-derived from the live file.
 
-    Every float is rounded to 6 decimal places (so ``0.1`` and
-    ``0.10000000001`` collapse) and keys are sorted. Reformatting the
-    JSON or float-precision noise does not move the hash; changing a
-    weight does.
+    Keys are sorted. Equivalent JSON number spellings canonicalize to the same
+    parsed Python value, while every distinct runtime value moves the hash.
+    This is required for thresholds: even a small numeric change can alter a
+    detector decision at its boundary.
     """
     if not scoring_path.exists():
         log.warning(
@@ -412,7 +426,7 @@ def _canon_scoring(scoring_path: Path) -> str:
 
     raw = json.loads(scoring_path.read_text(encoding="utf-8"))
     weights = scoring_weights_from_dict(raw)
-    return json.dumps(round_floats(scoring_to_canon(weights)), sort_keys=True)
+    return json.dumps(scoring_contract_to_canon(weights), sort_keys=True)
 
 
 #: ``ScoringWeights`` fields that carry a dotted-spec pointing at an operator
@@ -489,6 +503,45 @@ def scoring_to_canon(weights: object) -> dict[str, object]:
     return out
 
 
+def scoring_contract_to_canon(weights: object) -> dict[str, object]:
+    """Add system-owned evaluator identity to typed scoring configuration."""
+    out = scoring_to_canon(weights)
+    if getattr(weights, "goldfive", None) is None:
+        return out
+    from zicato.integrations.goldfive import normalize_config  # noqa: PLC0415
+
+    goldfive = out.get("goldfive")
+    if not isinstance(goldfive, dict):  # pragma: no cover - structural guard
+        raise TypeError("Goldfive scoring configuration did not canonicalize to an object")
+    normalized = normalize_config(goldfive)
+    identity = evaluation_implementation_identity(weights)
+    normalized["implementation_identity"] = {
+        "goldfive_version": identity["goldfive_version"],
+        "zicato_integration_revision": identity["zicato_goldfive_integration_revision"],
+    }
+    out["goldfive"] = normalized
+    return out
+
+
+def evaluation_implementation_identity(weights: object) -> dict[str, str | int]:
+    """Return the system implementations whose behavior is part of an epoch."""
+    identity: dict[str, str | int] = {
+        "zicato_evaluator_revision": ZICATO_EVALUATOR_REVISION,
+    }
+    if getattr(weights, "goldfive", None) is None:
+        return identity
+    from zicato.integrations.goldfive import (  # noqa: PLC0415
+        GOLDFIVE_IMPLEMENTATION_VERSION,
+        ZICATO_GOLDFIVE_INTEGRATION_REVISION,
+    )
+
+    identity.update(
+        goldfive_version=GOLDFIVE_IMPLEMENTATION_VERSION,
+        zicato_goldfive_integration_revision=ZICATO_GOLDFIVE_INTEGRATION_REVISION,
+    )
+    return identity
+
+
 def _canon_value(value: object) -> object:
     """Canonicalize a single mapping/sequence value for the scoring hash.
 
@@ -505,20 +558,64 @@ def _canon_value(value: object) -> object:
     return value
 
 
-def round_floats(value: object) -> object:
-    """Recursively round every float in a JSON-shaped value to 6 dp."""
-    if isinstance(value, float):
-        return round(value, 6)
-    if isinstance(value, dict):
-        return {k: round_floats(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [round_floats(v) for v in value]
-    return value
+def _canon_adapter(inputs: ContractInputs) -> str:
+    """Canonical adapter reconstruction identity plus implementation source."""
+    if inputs.adapter_spec is None:
+        spec: dict[str, object] = {
+            "kind": "adk",
+            "entrypoint": inputs.entrypoint,
+        }
+    else:
+        spec = {str(key): _canon_value(value) for key, value in inputs.adapter_spec.items()}
+
+    # Mutable source paths have their own normalized contract component.
+    spec.pop("mutable_trees", None)
+    integrations = spec.get("integrations")
+    if isinstance(integrations, list) and all(isinstance(name, str) for name in integrations):
+        spec["integrations"] = sorted(integrations)
+
+    source_specs = inputs.adapter_source_specs or (
+        (inputs.entrypoint,) if inputs.entrypoint else ()
+    )
+    sources = [
+        _canon_dotted_spec(dotted)
+        for dotted in dict.fromkeys(source_specs)
+        if not _dotted_spec_is_within_mutable_trees(dotted, inputs.mutable_trees)
+    ]
+    return json.dumps(
+        {"worker_spec": spec, "implementation_sources": sources},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
-def _canon_entrypoint(entrypoint: str) -> str:
-    """Canonical form of the entrypoint: the string verbatim."""
-    return entrypoint
+def _dotted_spec_is_within_mutable_trees(
+    dotted: str,
+    mutable_trees: tuple[str, ...],
+) -> bool:
+    """Whether a dotted implementation belongs to generation source."""
+    import importlib.util
+
+    module_name = dotted.partition(":")[0].strip()
+    if not module_name:
+        return False
+    try:
+        found = importlib.util.find_spec(module_name)
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+    if found is None or found.origin is None:
+        return False
+    origin = Path(found.origin).resolve()
+    for raw_tree in mutable_trees:
+        tree = Path(raw_tree).resolve()
+        if origin == tree or (tree.is_dir() and origin.is_relative_to(tree)):
+            return True
+    return False
+
+
+def _canon_evaluator_revision() -> str:
+    """Return the explicit revision of Zicato's measurement semantics."""
+    return str(ZICATO_EVALUATOR_REVISION)
 
 
 def _canon_mutable_trees(mutable_trees: tuple[str, ...]) -> str:
@@ -621,9 +718,12 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
       content only.
     * **brief** — read text, normalize line endings to ``\\n``, strip
       trailing whitespace per line, strip leading/trailing blank lines.
-    * **scoring** — ``json.load``, round every float to 6 decimal
-      places, ``json.dumps(sort_keys=True)``.
-    * **entrypoint** — the string verbatim.
+    * **scoring** — parse through the fully defaulted typed configuration and
+      ``json.dumps(sort_keys=True)`` without discarding runtime precision.
+    * **evaluator revision** — the explicit revision of Zicato's measurement
+      and tournament-decision semantics.
+    * **adapter** — the validated worker reconstruction spec plus source hashes
+      for the adapter factory or ADK harness module.
     * **mutable_trees** — sorted tuple of NORMALIZED path strings
       (`os.path.normpath` + POSIX; never filesystem-resolved, so the
       hash does not depend on the process cwd or checkout — bug #10).
@@ -640,7 +740,8 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
         _canon_board(inputs.board_path),
         _canon_brief(inputs.brief_path),
         _canon_scoring(inputs.scoring_path),
-        _canon_entrypoint(inputs.entrypoint),
+        _canon_evaluator_revision(),
+        _canon_adapter(inputs),
         _canon_mutable_trees(inputs.mutable_trees),
         _canon_proposer(
             inputs.proposer_path,
@@ -657,13 +758,15 @@ def compute_component_hashes(inputs: ContractInputs) -> dict[str, str]:
 
     Used by the auto-roll path to report *which* contract component
     changed. The keys are ``"board"``, ``"brief"``, ``"scoring"``,
-    ``"entrypoint"``, ``"mutable_trees"``, ``"proposer"``.
+    ``"evaluator_revision"``, ``"adapter"``, ``"mutable_trees"``, and
+    ``"proposer"``.
     """
     return {
         "board": _sha(_canon_board(inputs.board_path)),
         "brief": _sha(_canon_brief(inputs.brief_path)),
         "scoring": _sha(_canon_scoring(inputs.scoring_path)),
-        "entrypoint": _sha(_canon_entrypoint(inputs.entrypoint)),
+        "evaluator_revision": _sha(_canon_evaluator_revision()),
+        "adapter": _sha(_canon_adapter(inputs)),
         "mutable_trees": _sha(_canon_mutable_trees(inputs.mutable_trees)),
         "proposer": _sha(
             _canon_proposer(
@@ -721,9 +824,37 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
         contract.get("scoring_path") or _default_contract_path(workspace_root, "scoring.json")
     )
 
-    entrypoint = str(config.get("adk_entrypoint", ""))
-    raw_trees = config.get("mutable_trees") or config.get("source_roots") or []
+    from zicato.adapter_factory import make_adapter_from_config  # noqa: PLC0415
+    from zicato.tournament.worker_transport import adapter_worker_spec  # noqa: PLC0415
+
+    adapter_block = config.get("adapter")
+    has_adapter = isinstance(adapter_block, Mapping) or bool(config.get("adk_entrypoint"))
+    worker_spec: dict[str, Any] | None
+    if has_adapter:
+        adapter = make_adapter_from_config(config)
+        worker_spec = adapter_worker_spec(adapter)
+    else:
+        worker_spec = None
+    entrypoint = str((worker_spec or {}).get("entrypoint") or config.get("adk_entrypoint", ""))
+    nested_trees = (
+        adapter_block.get("mutable_trees") if isinstance(adapter_block, Mapping) else None
+    )
+    raw_trees = (
+        (worker_spec or {}).get("mutable_trees")
+        or nested_trees
+        or config.get("mutable_trees")
+        or config.get("source_roots")
+        or []
+    )
     mutable_trees = tuple(str(t) for t in raw_trees)
+    source_specs: list[str] = []
+    if isinstance(adapter_block, Mapping) and isinstance(adapter_block.get("factory"), str):
+        source_specs.append(str(adapter_block["factory"]))
+    worker_factory = (worker_spec or {}).get("factory")
+    if isinstance(worker_factory, str):
+        source_specs.append(worker_factory)
+    if entrypoint:
+        source_specs.append(entrypoint)
 
     # ``contract.proposer_path`` is optional — absent ⇒ the built-in
     # default proposer (``None``). Relative spellings are resolved like
@@ -753,6 +884,8 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
         scoring_path=scoring_path,
         entrypoint=entrypoint,
         mutable_trees=mutable_trees,
+        adapter_spec=worker_spec,
+        adapter_source_specs=tuple(dict.fromkeys(source_specs)),
         proposer_path=proposer_path,
         external_proposer=external_proposer_config(config, workspace_root),
         proposer_static_checks=declared_static_checks(workspace_root),
@@ -817,8 +950,9 @@ __all__ = [
     "ContractInputs",
     "compute_contract_hash",
     "compute_component_hashes",
+    "evaluation_implementation_identity",
     "resolve_contract_inputs",
     "default_contract_paths",
-    "round_floats",
+    "scoring_contract_to_canon",
     "scoring_to_canon",
 ]

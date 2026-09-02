@@ -48,6 +48,11 @@ _BLOCKER = textwrap.dedent(
 )
 
 
+def _requirement_name(requirement: str) -> str:
+    """Return a controlled project requirement's distribution name."""
+    return requirement.partition(";")[0].partition("@")[0].partition("[")[0].strip()
+
+
 def _run_without_goldfive(body: str) -> subprocess.CompletedProcess[str]:
     """Run *body* in a child interpreter that cannot import goldfive."""
     return subprocess.run(
@@ -94,6 +99,9 @@ def test_core_modules_import_without_goldfive() -> None:
                 "zicato", "zicato.core", "zicato.board", "zicato.board.jsonl",
                 "zicato.board.judges", "zicato.board.builder", "zicato.epoch",
                 "zicato.storage", "zicato.workspace_loader", "zicato.cli",
+                "zicato.adapter_factory", "zicato.adapters.base",
+                "zicato.integrations.goldfive",
+                "zicato.tournament.runner",
             ]:
                 importlib.import_module(name)
                 assert "goldfive" not in sys.modules, f"{name} pulled in goldfive"
@@ -240,16 +248,134 @@ def test_cli_help_without_goldfive() -> None:
     assert "Usage:" in stdout
 
 
+def test_generic_tournament_runs_without_goldfive() -> None:
+    """A transcript-scored generic tournament never reaches Goldfive."""
+    _ok(
+        _run_without_goldfive(
+            """
+            import asyncio, sys, tempfile
+            from pathlib import Path
+
+            import zicato.tournament.runner as runner
+            from zicato.core import (
+                BoardEntry, DriftCount, ExpectationResult, Generation, LossProfile,
+                RuntimeConfig, ScoringWeights,
+            )
+
+            async def call_llm(system, user, model):
+                return "unused"
+
+            async def auxiliary_call_llm(system, user, model):
+                return "unused"
+
+            async def run_single(*, generation, entry, **kwargs):
+                del kwargs
+                child = generation.id == "v1"
+                return LossProfile(
+                    run_id=f"{generation.id}-{entry.id}",
+                    entry_id=entry.id,
+                    generation_id=generation.id,
+                    epoch_id="e0",
+                    drift_counts=(DriftCount("off_topic", "info", 0),),
+                    plan_revisions=0,
+                    task_failure_ratio=0.0,
+                    runtime_ms=1,
+                    wall_clock_budget_exceeded=False,
+                    expectation_result=ExpectationResult(kind="predicate", passed=True),
+                    drift_loss=0.0 if child else 1.0,
+                    pass_fail=True,
+                )
+
+            with tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                runner._run_single = run_single
+                result = asyncio.run(runner.run_tournament(
+                    adapter=object(),
+                    parent_gen=Generation(
+                        id="v0", epoch_id="e0", parent_id=None,
+                        snapshot_root=root / "v0", created_at="2024-01-01T00:00:00Z",
+                    ),
+                    child_gen=Generation(
+                        id="v1", epoch_id="e0", parent_id="v0",
+                        snapshot_root=root / "v1", created_at="2024-01-01T00:00:00Z",
+                    ),
+                    board=[BoardEntry(
+                        id="e1", kind="single_turn", wall_clock_budget_seconds=10,
+                        input="hello",
+                    )],
+                    weights=ScoringWeights(telemetry_dialect="transcript"),
+                    config=RuntimeConfig(
+                        instance_id="test",
+                        workspace_root=root,
+                        harness_call_llm=call_llm,
+                        auxiliary_call_llm=auxiliary_call_llm,
+                    ),
+                    workspace_root=root,
+                    epoch_id="e0",
+                ))
+                assert result.outcome.decision == "promoted", result.outcome
+                assert "goldfive" not in sys.modules
+            """
+        )
+    )
+
+
+def test_import_adapter_contract_and_worker_payload_remain_goldfive_free() -> None:
+    """A generic adapter executes with a frozen, worker-bound generic contract."""
+    _ok(
+        _run_without_goldfive(
+            """
+            import asyncio, sys, tempfile
+            from pathlib import Path
+
+            from zicato.adapter_factory import make_adapter_from_config, make_adapter_from_spec
+            from zicato.core import BoardEntry, ScoringWeights
+            from zicato.epoch.contract import scoring_to_canon
+            from zicato.epoch.lifecycle import _scoring_from_dict, scoring_to_dict
+            from zicato.tournament.worker_transport import adapter_worker_spec, _weights_spec
+
+            weights = ScoringWeights(telemetry_dialect="transcript")
+            frozen = scoring_to_dict(weights)
+            worker_weights = _weights_spec(weights)
+            assert "goldfive" not in frozen
+            assert "goldfive" not in worker_weights
+            assert "goldfive" not in scoring_to_canon(weights)
+            assert _scoring_from_dict(frozen) == weights
+
+            adapter = make_adapter_from_config({
+                "adapter": {
+                    "kind": "import",
+                    "factory": "tests._subprocess_worker_support:make_stub_adapter",
+                }
+            })
+            spec = adapter_worker_spec(adapter)
+            assert spec["kind"] == "import"
+            rebuilt = make_adapter_from_spec(spec)
+            entry = BoardEntry(
+                id="generic", kind="single_turn", wall_clock_budget_seconds=10, input="hello"
+            )
+            with tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                events = root / "events.jsonl"
+                session = rebuilt.load(root)
+                asyncio.run(session.run(entry, events))
+                assert events.exists()
+            assert "goldfive" not in sys.modules
+            """
+        )
+    )
+
+
 def test_goldfive_is_declared_as_an_extra() -> None:
     """The packaging half: the import proof alone would not catch a re-add."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    names = [d.split("[")[0].strip() for d in pyproject["project"]["dependencies"]]
+    names = [_requirement_name(d) for d in pyproject["project"]["dependencies"]]
     extras = pyproject["project"]["optional-dependencies"]
 
     assert "goldfive" not in names, "goldfive belongs in the `goldfive` extra"
-    assert "goldfive" in extras["goldfive"]
-    # The ADK adapter path is where goldfive is load-bearing.
-    assert any(d.split("[")[0].strip() == "goldfive" for d in extras["adk"]), extras["adk"]
+    assert any(_requirement_name(d) == "goldfive" for d in extras["goldfive"])
+    # The built-in ADK adapter composes the framework and Goldfive capabilities.
+    assert any(_requirement_name(d) == "goldfive" for d in extras["adk"]), extras["adk"]
 
 
 def test_base_install_excludes_observability_dependencies() -> None:

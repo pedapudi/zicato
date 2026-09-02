@@ -172,6 +172,25 @@ def test_register_writes_entrypoint_and_trees(tmp_path: Path) -> None:
     # register keys written:
     assert config["adk_entrypoint"] == "my_pkg.agent:root_agent"
     assert config["mutable_trees"] == [str(src_a), str(src_b)]
+    scoring = json.loads((tmp_path / "scoring.json").read_text())
+    assert scoring["goldfive"] == {}
+
+
+def test_register_preserves_explicit_goldfive_settings(tmp_path: Path) -> None:
+    workspace = _init_workspace(tmp_path)
+    scoring_file = tmp_path / "scoring.json"
+    scoring = json.loads(scoring_file.read_text())
+    scoring["goldfive"] = {"steering": {"threshold": "critical"}}
+    scoring_file.write_text(json.dumps(scoring))
+
+    result = CliRunner().invoke(
+        register_cmd,
+        ["--workspace", str(workspace), "--adk", "pkg.module:agent"],
+    )
+
+    assert result.exit_code == 0, result.output
+    persisted = json.loads(scoring_file.read_text())
+    assert persisted["goldfive"] == {"steering": {"threshold": "critical"}}
 
 
 def test_register_with_no_mutable_trees(tmp_path: Path) -> None:

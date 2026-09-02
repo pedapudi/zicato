@@ -124,7 +124,7 @@ turned into a live goldfive ``Judge``. Inline judges run on zicato's
 *auxiliary* callable (the two-callable rule); python judges bring their
 own dependencies. When the entry declares no custom judges and the
 board suppresses nothing, the assembled list equals goldfive's default
-set, so behaviour is byte-identical to a plain ``goldfive.run`` call.
+set, so the adapter uses the same judges as a plain ``goldfive.run`` call.
 
 Judge-only mode
 ---------------
@@ -135,42 +135,9 @@ stamped onto each entry's ``context`` by the tournament runner →
 :func:`entry_judge_only`). In judge-only mode goldfive still JUDGES the
 wrapped agent — the drift / process judges stay armed exactly as above —
 but does ZERO steering: no goal-derivation LLM call, no planner
-replanning, no drift-triggered refine. This is implemented by spreading
-:func:`_judge_only_overrides` (a one-task ``StaticPlanner`` so the native
-agent tree still runs on goldfive's overlay path and produces a
-transcript, a ``LiteralGoalDeriver`` so the entry input becomes the goal
-verbatim, AND a :class:`_JudgeOnlySteerer` that suppresses the refine
-loop) into every ``goldfive.run`` call for the entry. The default
-(``judge_only`` False) leaves the steering path untouched and
-byte-identical. The flag folds into the epoch contract hash, so flipping
-it opens a new epoch.
-
-Why the steerer override is required
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The ``StaticPlanner`` alone does NOT yield zero refine attempts. goldfive
-dispatches EVERY non-INFO drift through ``DriftObserver.handle_drift`` →
-the cancel + refine ladder, regardless of which planner is installed. A
-``StaticPlanner`` makes ``planner.refine`` return ``None``, but goldfive
-treats a ``None`` refine as *handler exhaustion* and escalates to
-``DRIFT_KIND_HUMAN_INTERVENTION_REQUIRED`` — emitting ``refine_attempted``
-/ ``refine_failed`` and (under the ``multi_turn_emulated`` persona, where
-a CRITICAL ``no_fabricated_numbers`` judge keeps re-firing) spinning to
-the wall-clock budget and aborting the run. ``SteeringConfig.observation_only``
-does not help either: it gates only the three steer *injection* points
-while ``planner.refine`` still runs.
-
-The custom-judge SCORING signal that zicato's reducer reads is the
-``custom``-kind ``DriftDetected`` event (attributed to its ``judge_name``
-via the paired ``JudgementEmitted``) — and ``handle_drift`` emits that
-``DriftDetected`` *before* it enters the ladder. So judge-only suppresses
-the refine loop WITHOUT losing the scalar by overriding ``handle_drift``
-to emit the ``DriftDetected`` and return, skipping the cancel / promote /
-refine machinery entirely. ``JudgementEmitted`` is published upstream in
-``DefaultSteerer.evaluate_judges`` and is unaffected. Net effect under
-judge-only on EVERY board-run path — gauntlet, multi-challenger, and
-``multi_turn_emulated`` — is pure observe + judge: ZERO ``steering``
-decisions and ZERO ``refine_attempted`` events.
+replanning, or drift-triggered refinement. Goldfive's public ``judge_only``
+mode supplies the static plan and literal goal and keeps its default steerer on
+an observe-only path. The board flag is part of the evaluation contract.
 """
 
 from __future__ import annotations
@@ -185,10 +152,16 @@ import time
 import uuid
 from collections.abc import AsyncGenerator, Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from zicato.core import BoardEntry, MutationPoint, RunResult, RuntimeConfig
+from zicato.core import (
+    BoardEntry,
+    MutationPoint,
+    RunResult,
+    RuntimeConfig,
+)
 from zicato.import_path import explain_attribute_error
+from zicato.integrations.goldfive import run_context as goldfive_run_context
 
 if TYPE_CHECKING:
     from zicato.adapters.base import RunnableHarness
@@ -504,46 +477,17 @@ def _outcome_transcript(outcome: Any) -> tuple[str, ...]:
     return tuple(str(v) for v in completed.values())
 
 
-# ---------------------------------------------------------------------------
-# goldfive RuntimeConfig — per-call LLM timeout
-# ---------------------------------------------------------------------------
-
-
-def _goldfive_runtime() -> Any:
-    """Build the goldfive ``RuntimeConfig`` for a ``goldfive.run`` call.
-
-    goldfive's :class:`~goldfive.config.AgentConfig.call_timeout_ms`
-    defaults to 120 000 ms. A real reasoning model under concurrency
-    legitimately exceeds 120 s on a single long-prompt LLM call, so the
-    raw default aborts healthy calls and fires a spurious
-    ``LLM_CALL_TIMEOUT`` drift. zicato raises the per-call budget to
-    :attr:`zicato.config.RuntimeTuningConfig.harness_call_timeout_ms`
-    (operator-tunable via ``zicato evolve --harness-call-timeout-ms``,
-    whose pinned value reaches this worker-side call site through the
-    worker args file — see ``zicato.config.pin_overrides``).
-
-    We start from :meth:`goldfive.config.RuntimeConfig.from_env` so
-    every other goldfive subsystem (embedding, judge endpoint,
-    drift thresholds, ...) keeps its env-driven configuration, and only
-    replace the ``agent`` sub-config's ``call_timeout_ms``. An explicit
-    ``GOLDFIVE_AGENT_CALL_TIMEOUT_MS`` env var still wins — when set, we
-    leave goldfive's env-resolved value untouched so an operator who
-    tunes goldfive directly is not overridden.
-    """
-    import dataclasses  # noqa: PLC0415
-    import os  # noqa: PLC0415
-
-    from goldfive.config import RuntimeConfig as GoldfiveRuntimeConfig  # noqa: PLC0415
-
-    from zicato.config import load_config  # noqa: PLC0415
-
-    runtime = GoldfiveRuntimeConfig.from_env()
-    if os.environ.get("GOLDFIVE_AGENT_CALL_TIMEOUT_MS"):
-        # Operator tuned goldfive directly — defer to their value.
-        return runtime
-    timeout_ms = load_config().runtime.harness_call_timeout_ms
-    agent = dataclasses.replace(runtime.agent, call_timeout_ms=timeout_ms)
-    return dataclasses.replace(runtime, agent=agent)
+def _unavailable_driver(run_id: str, entry_id: str, reason: str) -> RunResult:
+    """Return the stable abort result for a missing multi-turn driver."""
+    return RunResult(
+        run_id=run_id,
+        entry_id=entry_id,
+        final_output="",
+        transcript=(),
+        runtime_ms=0,
+        aborted=True,
+        abort_reason=reason,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1095,171 +1039,6 @@ def entry_judge_only(entry: BoardEntry) -> bool:
     return str(raw).strip().lower() == "true"
 
 
-def _build_judge_only_steerer(call_llm: Any, runtime: Any) -> Any:
-    """Build the :class:`DefaultSteerer` subclass that suppresses refine.
-
-    Under judge-only the goal is ZERO steering AND ZERO refine attempts
-    while the scoring signal is preserved. The ``StaticPlanner`` alone
-    does not achieve that: goldfive dispatches every non-INFO drift
-    through ``DriftObserver.handle_drift`` → the cancel + refine ladder,
-    and a ``StaticPlanner.refine`` returning ``None`` is treated as
-    handler exhaustion → ``HUMAN_INTERVENTION_REQUIRED`` escalation (which
-    emits ``refine_attempted`` / ``refine_failed`` and, on the persona
-    path, spins to the wall-clock budget).
-
-    The fix is a steerer whose drift observer's ``handle_drift`` emits the
-    ``DriftDetected`` event — the SAME signal zicato's reducer reads to
-    attribute custom-judge loss by ``judge_name`` — and then returns,
-    skipping the entire cancel / promote / refine machinery. This mirrors
-    goldfive's own "emit for observability, skip dispatch" early-return
-    pattern (used on its redundant-verdict and concurrent-refine guards).
-    ``JudgementEmitted`` is published earlier in
-    ``DefaultSteerer.evaluate_judges`` and is therefore unaffected, so the
-    paired judgement + custom drift the reducer needs both still land.
-
-    Detection stays fully wired. ``goldfive.wrap`` builds its default
-    steerer with the judge call_llm + the runtime's drift configs (see
-    its ``resolved_steerer = DefaultSteerer(...)`` branch); passing an
-    explicit ``steerer=`` SKIPS that construction, so this factory must
-    reproduce the same wiring or the built-in goal-/reasoning-drift
-    detectors silently go inert and the scalar changes. We therefore
-    thread the adapter's harness ``call_llm`` (which is exactly what
-    ``goldfive.wrap`` resolves the judge callable to when the caller
-    passes ``call_llm=`` explicitly, as the adapter does) and the
-    resolved ``runtime`` into the same constructor kwargs. The ONLY
-    behavioural delta from goldfive's default steerer is the neutered
-    ``handle_drift``: detectors fire and emit ``DriftDetected`` as they do
-    under goldfive's steerer, and only the refine ladder is skipped.
-
-    Imported lazily so the optional goldfive dependency stays out of this
-    module's import time. The subclass is defined inside the factory so
-    the ``DefaultSteerer`` base symbol is resolved at call time.
-    """
-    from goldfive.steerer import DefaultSteerer  # noqa: PLC0415
-
-    class _JudgeOnlySteerer(DefaultSteerer):
-        """``DefaultSteerer`` that observes + judges but never refines.
-
-        Rebinds the bound :class:`~goldfive.drift_observer.DriftObserver`'s
-        ``handle_drift`` to a variant that emits ``DriftDetected`` (so the
-        scalar reducer still sees the custom-judge-attributed drift) and
-        returns before the refine ladder. Everything else — judge
-        invocation, ``JudgementEmitted`` emission, sink fan-out, the
-        built-in detector wiring — is inherited unchanged.
-        """
-
-        def __init__(self, **kwargs: Any) -> None:
-            super().__init__(**kwargs)
-            observer = self.drift
-
-            # ``DriftObserver.handle_drift`` is the single chokepoint every
-            # drift (built-in detector OR custom-judge verdict) flows
-            # through before the cancel + refine ladder. Replace it on the
-            # instance with an observe-only variant. ``_emit_drift_detected``
-            # is the canonical ``DriftDetected`` emit the reducer keys on.
-            async def _observe_only_handle_drift(drift: Any, session: Any) -> None:
-                await observer._emit_drift_detected(session, drift)
-
-            observer.handle_drift = _observe_only_handle_drift  # type: ignore[method-assign]
-
-    # Mirror ``goldfive.wrap``'s default-steerer construction so the
-    # built-in goal-/reasoning-drift detectors stay wired identically.
-    # Each config field is read defensively: a goldfive RuntimeConfig
-    # revision that renames a sub-config must not crash judge-only — a
-    # missing field falls back to the steerer's own default.
-    kwargs: dict[str, Any] = {}
-    if call_llm is not None:
-        kwargs["goal_drift_call_llm"] = call_llm
-        kwargs["reasoning_drift_call_llm"] = call_llm
-    goal_drift = getattr(runtime, "goal_drift", None)
-    if goal_drift is not None:
-        kwargs["goal_drift_config"] = goal_drift
-    tool_loops = getattr(runtime, "tool_loops", None)
-    if tool_loops is not None:
-        kwargs["tool_loop_config"] = tool_loops
-    reasoning_drift = getattr(runtime, "reasoning_drift", None)
-    if reasoning_drift is not None:
-        kwargs["reasoning_drift_config"] = reasoning_drift
-        mode = getattr(reasoning_drift, "mode", None)
-        if mode is not None:
-            kwargs["reasoning_drift_mode"] = mode
-    steering = getattr(runtime, "steering", None)
-    if steering is not None:
-        kwargs["steering_config"] = steering
-    return _JudgeOnlySteerer(**kwargs)
-
-
-def _judge_only_overrides(agent: Any, call_llm: Any, runtime: Any) -> dict[str, Any]:
-    """Build the ``goldfive.run`` kwargs that turn STEERING off, JUDGING on.
-
-    Judge-only evaluation keeps goldfive's drift / process judges armed
-    (``reasoning_drift_mode="judge"`` is goldfive's default and is left
-    untouched) while removing every steering LLM call AND every refine
-    attempt:
-
-    * ``goal_deriver=LiteralGoalDeriver()`` — the entry input becomes the
-      goal verbatim, so no ``goal_derive`` LLM call fires (goldfive's
-      default :class:`LLMGoalDeriver` would call the LLM here).
-    * ``planner=StaticPlanner(<one task>)`` — installs a single static
-      task assigned to the root agent so the native agent tree runs on
-      goldfive's overlay path (``invoke_passthrough``) and produces a
-      transcript to judge. :class:`StaticPlanner.generate` returns that
-      fixed plan; its ``refine`` / ``handle_turn`` return ``None``, so no
-      replanning LLM call ever fires. (Goldfive's default
-      :class:`LLMPlanner` would replan/refine via the LLM.)
-      ``PassthroughPlanner`` is NOT used: its ``generate``
-      returns ``None`` and aborts the run with an empty transcript,
-      leaving nothing to judge.
-    * ``steerer=_build_judge_only_steerer()`` — a :class:`DefaultSteerer`
-      subclass whose ``handle_drift`` emits ``DriftDetected`` (preserving
-      the custom-judge scoring signal) but skips the cancel + refine
-      ladder. WITHOUT this, the ``StaticPlanner``'s ``None`` refine is
-      mis-read by goldfive as handler exhaustion → ``refine_attempted`` /
-      ``refine_failed`` → ``HUMAN_INTERVENTION_REQUIRED`` escalation,
-      which is exactly the ``multi_turn_emulated`` abort spiral this mode
-      must avoid. See :func:`_build_judge_only_steerer`.
-
-    Symbols are imported lazily so the optional goldfive dependency stays
-    out of this module's import time (matching the lazy-import discipline
-    used at the call sites).
-
-    Empirically (goldfive installed in zicato's ``.venv``): with this set
-    the only ``goldfive_llm_call_start`` events carry judge names
-    (e.g. ``judge_goal_drift``); the steering ``goal_derive`` /
-    ``refine`` / ``refine_steer`` call names never appear, and NO
-    ``refine_attempted`` event is emitted on any path. The
-    ``goal_derived`` / ``plan_revised`` *bookkeeping* events still fire
-    once (literal goal recorded; the static plan's "initial plan install"
-    revision) but neither is LLM-driven nor a refine.
-    """
-    from goldfive import StaticPlanner  # noqa: PLC0415
-    from goldfive.goal_deriver import LiteralGoalDeriver  # noqa: PLC0415
-    from goldfive.types import Plan, Task  # noqa: PLC0415
-
-    one_task_plan = Plan(
-        id="zicato-judge-only",
-        run_id="",
-        goal_ids=("g1",),
-        tasks=(
-            Task(
-                id="t1",
-                title="accomplish the user's request",
-                description="accomplish the user's request",
-                # The overlay's passthrough dispatch routes to the agent
-                # whose name matches the task assignee — the root agent.
-                assignee_agent_id=agent.name,
-            ),
-        ),
-        edges=(),
-        summary="judge-only: run the native agent tree once, no steering",
-    )
-    return {
-        "planner": StaticPlanner(one_task_plan),
-        "goal_deriver": LiteralGoalDeriver(),
-        "steerer": _build_judge_only_steerer(call_llm, runtime),
-    }
-
-
 # ---------------------------------------------------------------------------
 # Concrete RunnableHarness
 # ---------------------------------------------------------------------------
@@ -1508,29 +1287,28 @@ class ADKRunnableHarness:
             aux_call_llm=config.effective_judge_call_llm(),
             # Board reflection's verbatim-capture seam: the worker binds a
             # per-run judge-I/O sink onto the config when persist_judge_io
-            # is on; None (the default) captures nothing (byte-identical).
+            # is on; None (the default) adds no judge-I/O records.
             io_sink=getattr(config, "judge_io_sink", None),
         )
-        # Judge-only mode: spread in the no-steering overrides
-        # (StaticPlanner + LiteralGoalDeriver) so goldfive judges without
-        # deriving goals, replanning, or refining. Judges stay armed in
-        # both paths. When off (the default), the call takes goldfive's
-        # ordinary steering path unchanged.
-        gf_runtime = _goldfive_runtime()
-        overrides = (
-            _judge_only_overrides(self._agent, config.harness_call_llm, gf_runtime)
-            if entry_judge_only(entry)
-            else {}
-        )
-        outcome = await goldfive.run(
-            self._agent,
-            entry.input,
-            sinks=sinks,
-            call_llm=config.harness_call_llm,
-            judges=judges,
-            runtime=gf_runtime,
-            **overrides,
-        )
+        # Goldfive's public judge-only mode judges without deriving goals,
+        # replanning, or refining. Judges stay armed in both paths. The default
+        # path keeps Goldfive steering enabled.
+        async with goldfive_run_context(
+            config.goldfive,
+            config.harness_call_llm,
+            judge_only=entry_judge_only(entry),
+        ) as (
+            gf_runtime,
+            goldfive_kwargs,
+        ):
+            outcome = await goldfive.run(
+                self._agent,
+                entry.input,
+                sinks=sinks,
+                judges=judges,
+                runtime=gf_runtime,
+                **goldfive_kwargs,
+            )
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
         transcript = _outcome_transcript(outcome)
         final_output = transcript[-1] if transcript else ""
@@ -1549,95 +1327,13 @@ class ADKRunnableHarness:
         sinks: list[Any],
         config: RuntimeConfig,
     ) -> RunResult:
-        """Delegate to :mod:`zicato.board.scripted` (lazy import).
-
-        The scripted driver is owned by R2-E and may not exist at the
-        time this adapter is built. We import it lazily and surface a
-        clean abort if it is missing so the adapter degrades gracefully
-        when other modules land out of order.
-
-        The scripted driver expects a ``harness`` object with an
-        ``async run(user_message: str)`` interface (see
-        :func:`zicato.board.scripted._resolve_invoker`). Passing the
-        raw ADK agent would cause :class:`TypeError` because the ADK
-        agent's ``.run()`` method does not accept a bare string
-        positional argument — it expects ADK-specific invocation
-        arguments. We therefore wrap the agent in a thin per-turn
-        caller that calls :func:`goldfive.run` with the correct
-        signature on each scripted turn.
-        """
-        import goldfive  # lazy: keep the optional dep out of import time
-
-        from zicato.judge_runtime import assemble_judges
-
+        """Drive a scripted board entry through the shared multi-turn seam."""
         try:
             from zicato.board import scripted as scripted_driver
         except ImportError:
-            return RunResult(
-                run_id=run_id,
-                entry_id=entry.id,
-                final_output="",
-                transcript=(),
-                runtime_ms=0,
-                aborted=True,
-                abort_reason="scripted_driver_unavailable",
-            )
-
-        judges = assemble_judges(
-            entry_judges=_entry_judge_specs(entry),
-            disable_drift=entry_disable_drift(entry),
-            aux_call_llm=config.effective_judge_call_llm(),
-            # Board reflection's verbatim-capture seam: the worker binds a
-            # per-run judge-I/O sink onto the config when persist_judge_io
-            # is on; None (the default) captures nothing (byte-identical).
-            io_sink=getattr(config, "judge_io_sink", None),
-        )
-        agent = self._agent
-        gf_runtime = _goldfive_runtime()
-        # Judge-only overrides (no-steering, no-refine) applied to every
-        # per-turn goldfive.run call; empty dict on the default steering
-        # path. Built ONCE (the judge-only steerer is reused across turns,
-        # which goldfive explicitly supports — it unwires per-run state at
-        # each run boundary).
-        overrides = (
-            _judge_only_overrides(agent, config.harness_call_llm, gf_runtime)
-            if entry_judge_only(entry)
-            else {}
-        )
-
-        class _PerTurnCaller:
-            """Thin wrapper that calls ``goldfive.run`` per scripted turn.
-
-            The scripted driver calls ``harness.run(user_message)``; this
-            wrapper satisfies that interface and dispatches each call to
-            ``goldfive.run(agent, user_message, ...)`` with the correct
-            ADK-level arguments. The return value is the last user-facing
-            assistant reply extracted from the outcome's
-            ``completed_results``, matching the same extraction path used
-            by :meth:`_run_single_turn`. Returning a plain string lets the
-            scripted driver's :func:`~zicato.board.scripted._coerce_reply`
-            pass it through without any further unwrapping.
-            """
-
-            async def run(self, user_message: str) -> str:
-                outcome = await goldfive.run(
-                    agent,
-                    user_message,
-                    sinks=sinks,
-                    call_llm=config.harness_call_llm,
-                    judges=judges,
-                    runtime=gf_runtime,
-                    **overrides,
-                )
-                transcript = _outcome_transcript(outcome)
-                return transcript[-1] if transcript else ""
-
-        return await scripted_driver.run_scripted(
-            agent=_PerTurnCaller(),
-            entry=entry,
-            sinks=sinks,
-            config=config,
-            run_id=run_id,
+            return _unavailable_driver(run_id, entry.id, "scripted_driver_unavailable")
+        return await self._run_multi_turn_driver(
+            scripted_driver.run_scripted, run_id, entry, sinks, config
         )
 
     async def _run_multi_turn_emulated(
@@ -1647,40 +1343,27 @@ class ADKRunnableHarness:
         sinks: list[Any],
         config: RuntimeConfig,
     ) -> RunResult:
-        """Delegate to :mod:`zicato.emulator` (lazy import).
-
-        The emulator is owned by R2-I and may not exist at the time
-        this adapter is built; same degradation contract as the
-        scripted driver above.
-
-        The emulator driver (:func:`zicato.emulator.run_emulated`)
-        invokes its ``agent`` argument once per emulated turn as
-        ``agent.run(user_message)`` with a bare string. Passing the raw
-        ADK agent would raise :class:`TypeError` because the ADK
-        agent's ``.run()`` does not accept a bare string positional —
-        it expects ADK-specific invocation arguments. The scripted path
-        wraps the agent for the same reason (issue #105). So the emulated
-        path wraps it too: a thin
-        per-turn caller that calls :func:`goldfive.run` with the
-        correct signature on each emulated turn — mirroring
-        :class:`_PerTurnCaller` in :meth:`_run_multi_turn_scripted`.
-        """
-        import goldfive  # lazy: keep the optional dep out of import time
-
-        from zicato.judge_runtime import assemble_judges
-
+        """Drive an emulated board entry through the shared multi-turn seam."""
         try:
             from zicato import emulator
         except ImportError:
-            return RunResult(
-                run_id=run_id,
-                entry_id=entry.id,
-                final_output="",
-                transcript=(),
-                runtime_ms=0,
-                aborted=True,
-                abort_reason="emulator_unavailable",
-            )
+            return _unavailable_driver(run_id, entry.id, "emulator_unavailable")
+        return await self._run_multi_turn_driver(
+            emulator.run_emulated, run_id, entry, sinks, config
+        )
+
+    async def _run_multi_turn_driver(
+        self,
+        run_driver: Any,
+        run_id: str,
+        entry: BoardEntry,
+        sinks: list[Any],
+        config: RuntimeConfig,
+    ) -> RunResult:
+        """Adapt one Goldfive agent to either multi-turn board driver."""
+        import goldfive
+
+        from zicato.judge_runtime import assemble_judges
 
         judges = assemble_judges(
             entry_judges=_entry_judge_specs(entry),
@@ -1688,61 +1371,42 @@ class ADKRunnableHarness:
             aux_call_llm=config.effective_judge_call_llm(),
             # Board reflection's verbatim-capture seam: the worker binds a
             # per-run judge-I/O sink onto the config when persist_judge_io
-            # is on; None (the default) captures nothing (byte-identical).
+            # is on; None (the default) adds no judge-I/O records.
             io_sink=getattr(config, "judge_io_sink", None),
         )
         agent = self._agent
-        gf_runtime = _goldfive_runtime()
-        # Judge-only overrides (no-steering, no-refine) applied to every
-        # per-turn goldfive.run call; empty dict on the default steering
-        # path. This is the path the picky-stakeholder persona runs on —
-        # without the refine-suppressing steerer in these overrides the
-        # CRITICAL no_fabricated_numbers judge's verdict was promoted to a
-        # drift, the StaticPlanner's None-refine was mis-read as handler
-        # exhaustion, and the run escalated to HUMAN_INTERVENTION_REQUIRED
-        # and spun to the 900s wall-clock. Built ONCE; the judge-only
-        # steerer is reused across turns (goldfive supports a shared
-        # steerer — it unwires per-run state at each run boundary).
-        overrides = (
-            _judge_only_overrides(agent, config.harness_call_llm, gf_runtime)
-            if entry_judge_only(entry)
-            else {}
-        )
+        async with goldfive_run_context(
+            config.goldfive,
+            config.harness_call_llm,
+            judge_only=entry_judge_only(entry),
+        ) as (
+            gf_runtime,
+            goldfive_kwargs,
+        ):
 
-        class _PerTurnCaller:
-            """Thin wrapper that calls ``goldfive.run`` per emulated turn.
+            class _PerTurnCaller:
+                async def run(self, user_message: str) -> str:
+                    outcome = await goldfive.run(
+                        agent,
+                        user_message,
+                        sinks=sinks,
+                        judges=judges,
+                        runtime=gf_runtime,
+                        **goldfive_kwargs,
+                    )
+                    transcript = _outcome_transcript(outcome)
+                    return transcript[-1] if transcript else ""
 
-            The emulator driver calls ``agent.run(user_message)``; this
-            wrapper satisfies that interface and dispatches each call to
-            ``goldfive.run(agent, user_message, ...)`` with the correct
-            ADK-level arguments. The return value is the last
-            user-facing assistant reply extracted from the outcome's
-            ``completed_results``, matching the extraction path used by
-            :meth:`_run_single_turn`. Identical in shape to the
-            scripted path's wrapper — the emulator driver and the
-            scripted driver both expect an ``async run(str) -> str``.
-            """
-
-            async def run(self, user_message: str) -> str:
-                outcome = await goldfive.run(
-                    agent,
-                    user_message,
+            return cast(
+                RunResult,
+                await run_driver(
+                    agent=_PerTurnCaller(),
+                    entry=entry,
                     sinks=sinks,
-                    call_llm=config.harness_call_llm,
-                    judges=judges,
-                    runtime=gf_runtime,
-                    **overrides,
-                )
-                transcript = _outcome_transcript(outcome)
-                return transcript[-1] if transcript else ""
-
-        return await emulator.run_emulated(
-            agent=_PerTurnCaller(),
-            entry=entry,
-            sinks=sinks,
-            config=config,
-            run_id=run_id,
-        )
+                    config=config,
+                    run_id=run_id,
+                ),
+            )
 
 
 # ---------------------------------------------------------------------------

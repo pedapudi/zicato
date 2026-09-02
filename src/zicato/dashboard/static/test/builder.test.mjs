@@ -165,6 +165,10 @@ function installBuilderFetch() {
       // mutate the shared draft so the applied envelope is observably different.
       if (body.op === 'set_structure') DRAFT.scoring.tournament.structure = body.args.structure;
       if (body.op === 'set_telemetry_dialect' && body.args.dialect) DRAFT.scoring.telemetry_dialect = body.args.dialect;
+      if (body.op === 'set_goldfive') {
+        if (body.args.config === null) delete DRAFT.scoring.goldfive;
+        else DRAFT.scoring.goldfive = body.args.config;
+      }
       if (body.op === 'set_param') DRAFT.scoring.tournament.params[body.args.key] = body.args.value;
       if (body.op === 'set_gate' && body.args.promote_margin != null) DRAFT.scoring.promote_margin = body.args.promote_margin;
       if (body.op === 'set_holdout' && Array.isArray(body.args.tags)) {
@@ -336,6 +340,26 @@ test('builder view: the telemetry-dialect select posts set_telemetry_dialect + s
   const tier1 = byClass(host, 'dn-bld-dialect-tier')[0];
   assert(tier1 && tier1.textContent.includes('no in-process drift instruments'),
     'the caption re-renders to the adk_events tier after the change');
+});
+
+test('builder view: optional Goldfive settings activate, update, and remove explicitly', async () => {
+  installBuilderFetch();
+  const host = globalThis.document.createElement('div');
+  await view.render(host);
+  byClass(host, 'dn-bld-railitem').find((r) => r.textContent.includes('Weights')).dispatchEvent(makeEvent('click'));
+  await tick();
+  assertEqual(byClass(host, 'dn-bld-goldfive-area').length, 0, 'opening does not activate');
+  byClass(host, 'dn-bld-goldfive-enable')[0].dispatchEvent(makeEvent('click'));
+  await tick();
+  const area = byClass(host, 'dn-bld-goldfive-area')[0];
+  area.value = JSON.stringify({ agent: { call_timeout_ms: 900000 } });
+  byClass(host, 'dn-bld-goldfive-save')[0].dispatchEvent(makeEvent('click'));
+  await tick();
+  byClass(host, 'dn-bld-goldfive-remove')[0].dispatchEvent(makeEvent('click'));
+  await tick();
+  assert(OP_CALLS.some((c) => c.op === 'set_goldfive' && Object.keys(c.args.config || {}).length === 0), 'empty object activates defaults');
+  assert(OP_CALLS.some((c) => c.op === 'set_goldfive' && c.args.config?.agent?.call_timeout_ms === 900000), 'partial object updates');
+  assert(OP_CALLS.some((c) => c.op === 'set_goldfive' && c.args.config === null), 'null removes');
 });
 
 test('builder view: a holdout toggle posts set_holdout tags and re-renders the split strip', async () => {

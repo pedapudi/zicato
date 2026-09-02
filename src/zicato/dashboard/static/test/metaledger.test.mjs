@@ -55,19 +55,19 @@ function chain() {
     epochs: [
       { epoch_id: 'e0', floor: 0.412, champion_gen: 'v3', champion_index: 3, generation_count: 38,
         structure: 'racing', closed: true, open: false,
-        changed_components: { board: false, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false },
+        changed_components: { board: false, brief: false, scoring: false, adapter: false, mutable_trees: false, structure: false, proposer: false },
         changed_list: [], soft: false },
       { epoch_id: 'e1', floor: 0.276, champion_gen: 'v6', champion_index: 6, generation_count: 29,
         structure: 'racing', closed: true, open: false,
-        changed_components: { board: true, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false },
+        changed_components: { board: true, brief: false, scoring: false, adapter: false, mutable_trees: false, structure: false, proposer: false },
         changed_list: ['board'], soft: false },
       { epoch_id: 'e2', floor: 0.331, champion_gen: 'v10', champion_index: 10, generation_count: 57,
         structure: 'swiss', closed: true, open: false,
-        changed_components: { board: false, brief: false, scoring: true, entrypoint: false, mutable_trees: false, structure: true, proposer: false },
+        changed_components: { board: false, brief: false, scoring: true, adapter: false, mutable_trees: false, structure: true, proposer: false },
         changed_list: ['scoring', 'structure'], soft: true },
       { epoch_id: 'e3', floor: 0.229, champion_gen: 'v14', champion_index: 14, generation_count: 22,
         structure: 'swiss', closed: false, open: true,
-        changed_components: { board: false, brief: true, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: true },
+        changed_components: { board: false, brief: true, scoring: false, adapter: false, mutable_trees: false, structure: false, proposer: true },
         changed_list: ['proposer', 'brief'], soft: false },
     ],
   };
@@ -84,8 +84,8 @@ test('metaLoopLedger: renders the staircase, effort bands, and component heatstr
   // (B) effort bands: one band rect per epoch + a champion tick per epoch.
   assertEqual(allByClass(node, 'dn-metaledger-band').length, 4, 'one effort band per epoch');
   assertEqual(allByClass(node, 'dn-metaledger-champtick').length, 4, 'a champion-reign tick per epoch');
-  // (C) heatstrip: 7 component rows × 4 epoch cols = 28 cells.
-  assertEqual(allByClass(node, 'dn-metaledger-cell').length, 7 * 4, '7 components × 4 epochs of cells');
+  // (C) heatstrip: 8 component rows × 4 epoch cols = 32 cells.
+  assertEqual(allByClass(node, 'dn-metaledger-cell').length, 8 * 4, '8 components × 4 epochs of cells');
 });
 
 test('metaLoopLedger: the heatstrip carries the proposer* row the contract-diff omits', () => {
@@ -154,19 +154,19 @@ test('metaLoopLedger: chips do NOT overlap given tight/adjacent boundaries + lon
     epochs: [
       { epoch_id: 'e0', floor: 0.5, champion_gen: 'v1', champion_index: 1, generation_count: 200,
         structure: 'racing', closed: true, open: false,
-        changed_components: { board: false, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false },
+        changed_components: { board: false, brief: false, scoring: false, adapter: false, mutable_trees: false, structure: false, proposer: false },
         changed_list: [], soft: false },
       { epoch_id: 'e1', floor: 0.4, champion_gen: 'v2', champion_index: 1, generation_count: 1,
         structure: 'racing', closed: true, open: false,
-        changed_components: { board: true, brief: true, scoring: true, entrypoint: false, mutable_trees: false, structure: false, proposer: false },
+        changed_components: { board: true, brief: true, scoring: true, adapter: false, mutable_trees: false, structure: false, proposer: false },
         changed_list: ['board', 'brief', 'scoring'], soft: false },
       { epoch_id: 'e2', floor: 0.35, champion_gen: 'v3', champion_index: 1, generation_count: 1,
         structure: 'swiss', closed: true, open: false,
-        changed_components: { board: true, brief: false, scoring: true, entrypoint: false, mutable_trees: false, structure: true, proposer: false },
+        changed_components: { board: true, brief: false, scoring: true, adapter: false, mutable_trees: false, structure: true, proposer: false },
         changed_list: ['board', 'scoring', 'structure'], soft: true },
       { epoch_id: 'e3', floor: 0.3, champion_gen: 'v4', champion_index: 1, generation_count: 1,
         structure: 'swiss', closed: true, open: false,
-        changed_components: { board: false, brief: true, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: true },
+        changed_components: { board: false, brief: true, scoring: false, adapter: false, mutable_trees: false, structure: false, proposer: true },
         changed_list: ['proposer', 'brief'], soft: false },
     ],
   };
@@ -218,7 +218,7 @@ test('metaLoopLedger: degrades on 1 epoch (band + heatstrip, no risers/seams)', 
   assertEqual(allByClass(node, 'dn-metaledger-held').length, 1, 'one held floor level');
   assertEqual(allByClass(node, 'dn-metaledger-riser').length, 0, 'no risers (nothing to step from)');
   assertEqual(allByClass(node, 'dn-metaledger-chiptxt').length, 0, 'no change chips (no predecessor)');
-  assertEqual(allByClass(node, 'dn-metaledger-cell').length, 7, 'the 7-component column still renders');
+  assertEqual(allByClass(node, 'dn-metaledger-cell').length, 8, 'the 8-component column still renders');
 });
 
 test('metaLoopLedger: a missing-floor epoch does not throw and renders a band', () => {
@@ -241,7 +241,7 @@ function soloEpoch(champion_index, generation_count) {
       { epoch_id: 'e0', floor: 0.30, champion_gen: 'v' + champion_index,
         champion_index, generation_count,
         structure: 'racing', closed: true, open: false,
-        changed_components: { board: false, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false },
+        changed_components: { board: false, brief: false, scoring: false, adapter: false, mutable_trees: false, structure: false, proposer: false },
         changed_list: [], soft: false },
     ],
   };
@@ -332,11 +332,11 @@ const WS_LEDGER = {
   ],
   ledger: [
     { epoch_id: 'e0', floor: 42.1, champion_gen: 'v4', champion_index: 4, generation_count: 5, structure: 'racing', closed: true, open: false,
-      changed_components: { board: false, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false }, changed_list: [], soft: false },
+      changed_components: { board: false, brief: false, scoring: false, adapter: false, mutable_trees: false, structure: false, proposer: false }, changed_list: [], soft: false },
     { epoch_id: 'e1', floor: 40.5, champion_gen: 'v7', champion_index: 7, generation_count: 9, structure: 'racing', closed: true, open: false,
-      changed_components: { board: true, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false }, changed_list: ['board'], soft: false },
+      changed_components: { board: true, brief: false, scoring: false, adapter: false, mutable_trees: false, structure: false, proposer: false }, changed_list: ['board'], soft: false },
     { epoch_id: 'e2', floor: 34.2, champion_gen: 'v7', champion_index: 5, generation_count: 6, structure: 'swiss', closed: false, open: true,
-      changed_components: { board: false, brief: false, scoring: true, entrypoint: false, mutable_trees: false, structure: true, proposer: false }, changed_list: ['scoring', 'structure'], soft: true },
+      changed_components: { board: false, brief: false, scoring: true, adapter: false, mutable_trees: false, structure: true, proposer: false }, changed_list: ['scoring', 'structure'], soft: true },
   ],
 };
 
@@ -364,7 +364,7 @@ test('home view: builds the meta-loop ledger from /api/workspace and makes it th
   assert(host.textContent.includes('Environment'), 'the home view rendered');
   // the ledger figure is present: its band rects + the heatstrip cells.
   assertEqual(allByClass(host, 'dn-metaledger-band').length, 3, 'a band per epoch in the ledger figure');
-  assertEqual(allByClass(host, 'dn-metaledger-cell').length, 7 * 3, 'the heatstrip renders 7 components × 3 epochs');
+  assertEqual(allByClass(host, 'dn-metaledger-cell').length, 8 * 3, 'the heatstrip renders 8 components × 3 epochs');
   assert(host.textContent.includes('Meta-loop ledger'), 'the ledger section is titled');
   // the fleet is the lead view; the ledger sits BELOW it as the composed
   // cross-epoch overview.

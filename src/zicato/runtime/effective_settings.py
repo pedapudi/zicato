@@ -56,6 +56,8 @@ RECORDED_RUNTIME_KNOBS: tuple[str, ...] = (
     "parallelism",
     "propose_parallelism",
     "host_worker_permits",
+    "worker_permit_dir",
+    "log_level",
     "scrub_worker_env",
     "worker_env_passthrough",
     "diversity_tolerance",
@@ -90,6 +92,7 @@ UNRECORDED_RUNTIME_FIELDS: Mapping[str, str] = {
     "inner_model": "a live model object built from the models block",
     "token_ledger": "a per-round tally minted at run time, not configuration",
     "judge_io_sink": "a live sink object the worker binds, not configuration",
+    "goldfive": "contract settings recorded in the epoch's scoring.json",
     "supervisor_kill_wait_s": "no tier sets it; the factory never reads it from a file",
 }
 

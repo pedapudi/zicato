@@ -1,7 +1,7 @@
 """Tests for :mod:`zicato.epoch.contract` — contract-hash canonicalization.
 
 The contract hash must be *stable* across spurious edits (whitespace,
-row reordering, float-formatting noise) and *sensitive* to semantic
+row reordering, equivalent number spellings) and *sensitive* to semantic
 changes (a board entry's input, a scoring weight, the entrypoint, the
 mutable-tree set). These tests pin both halves.
 """
@@ -11,9 +11,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from zicato.core.types import ScoringWeights
 from zicato.epoch.contract import (
     ContractInputs,
     compute_contract_hash,
+    evaluation_implementation_identity,
     resolve_contract_inputs,
 )
 
@@ -42,6 +46,27 @@ _BOARD_LINE_B = json.dumps(
 _BRIEF = "# Proposer brief\n\n## Focus\n- Be careful.\n"
 
 _SCORING = json.dumps({"pass_weight": 1.0, "promote_margin": 0.01})
+
+
+class _ContractAdapter:
+    def __init__(self, marker: str, integrations: list[str] | None = None) -> None:
+        self.marker = marker
+        self.integrations = integrations or []
+
+    def worker_spec(self) -> dict[str, object]:
+        return {
+            "kind": "import",
+            "factory": "tests.test_epoch_contract:_make_contract_adapter",
+            "args": [self.marker, self.integrations],
+            "integrations": list(self.integrations),
+        }
+
+
+def _make_contract_adapter(
+    marker: str,
+    integrations: list[str] | None = None,
+) -> _ContractAdapter:
+    return _ContractAdapter(marker, integrations)
 
 
 def _write_contract(
@@ -94,22 +119,83 @@ def test_hash_stable_across_board_entry_reordering(tmp_path: Path) -> None:
     assert h1 == h2
 
 
-def test_hash_stable_across_scoring_float_noise(tmp_path: Path) -> None:
+def test_hash_stable_across_equivalent_scoring_number_spellings(tmp_path: Path) -> None:
     base = _write_contract(tmp_path)
     h1 = compute_contract_hash(base)
 
-    # Float-formatting noise below the 6-dp rounding threshold.
+    # These JSON spellings parse to the same runtime values as _SCORING.
     base.scoring_path.write_text(
         json.dumps(
             {
-                "plan_revision_weight": 0.5000000001,
-                "pass_weight": 0.9999999999,
-                "promote_margin": 0.01,
+                "pass_weight": 1.000000,
+                "promote_margin": 0.010000,
             }
         )
     )
     h2 = compute_contract_hash(base)
     assert h1 == h2
+
+
+def test_hash_changes_for_distinct_goldfive_threshold_values(tmp_path: Path) -> None:
+    """Executed detector precision is preserved in the evaluation contract."""
+    base = _write_contract(
+        tmp_path,
+        scoring=json.dumps(
+            {"goldfive": {"reasoning_drift": {"off_topic_distance_threshold": 0.7000001}}}
+        ),
+    )
+    first_hash = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"goldfive": {"reasoning_drift": {"off_topic_distance_threshold": 0.7000002}}})
+    )
+    assert compute_contract_hash(base) != first_hash
+
+
+def test_hash_changes_when_the_zicato_evaluator_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Cached measurements cannot cross a Zicato implementation change."""
+    import zicato.epoch.contract as contract
+
+    base = _write_contract(tmp_path)
+    monkeypatch.setattr(contract, "_canon_evaluator_revision", lambda: "revision-a")
+    first_hash = compute_contract_hash(base)
+    monkeypatch.setattr(contract, "_canon_evaluator_revision", lambda: "revision-b")
+    assert compute_contract_hash(base) != first_hash
+
+
+def test_goldfive_implementation_changes_only_a_goldfive_contract(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import zicato.integrations.goldfive as goldfive
+
+    generic = _write_contract(tmp_path, scoring=json.dumps({"telemetry_dialect": "transcript"}))
+    generic_hash = compute_contract_hash(generic)
+    monkeypatch.setattr(goldfive, "GOLDFIVE_IMPLEMENTATION_VERSION", "git:revision-a")
+    assert compute_contract_hash(generic) == generic_hash
+
+    generic.scoring_path.write_text(json.dumps({"goldfive": {}}))
+    goldfive_hash = compute_contract_hash(generic)
+    monkeypatch.setattr(goldfive, "GOLDFIVE_IMPLEMENTATION_VERSION", "version:1.2.3")
+    assert compute_contract_hash(generic) != goldfive_hash
+
+
+def test_evaluation_implementation_identity_is_explicit_and_capability_scoped() -> None:
+    from zicato.integrations.goldfive import (
+        GOLDFIVE_IMPLEMENTATION_VERSION,
+        ZICATO_GOLDFIVE_INTEGRATION_REVISION,
+    )
+
+    assert evaluation_implementation_identity(ScoringWeights()) == {
+        "zicato_evaluator_revision": 1,
+    }
+    assert evaluation_implementation_identity(ScoringWeights(goldfive={})) == {
+        "zicato_evaluator_revision": 1,
+        "goldfive_version": GOLDFIVE_IMPLEMENTATION_VERSION,
+        "zicato_goldfive_integration_revision": ZICATO_GOLDFIVE_INTEGRATION_REVISION,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +238,86 @@ def test_hash_changes_on_entrypoint_edit(tmp_path: Path) -> None:
     moved = replace(base, entrypoint="pkg.mod:OTHER_agent")
     h2 = compute_contract_hash(moved)
     assert h1 != h2
+
+
+def test_adapter_integration_order_does_not_change_hash(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    base = _write_contract(tmp_path)
+    one = replace(
+        base,
+        adapter_spec={"kind": "import", "factory": "pkg.mod:factory", "integrations": ["b", "a"]},
+        adapter_source_specs=("pkg.mod:factory",),
+    )
+    two = replace(
+        one,
+        adapter_spec={"kind": "import", "factory": "pkg.mod:factory", "integrations": ["a", "b"]},
+    )
+    assert compute_contract_hash(one) == compute_contract_hash(two)
+
+
+def test_entrypoint_source_inside_a_mutable_tree_is_generation_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+    import sys
+    from dataclasses import replace
+
+    package = tmp_path / "agentpkg"
+    package.mkdir()
+    source = package / "__init__.py"
+    source.write_text('AGENT = "one"\n')
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+
+    base = _write_contract(tmp_path)
+    contract = replace(
+        base,
+        entrypoint="agentpkg:AGENT",
+        mutable_trees=(str(package),),
+        adapter_spec={
+            "kind": "adk",
+            "entrypoint": "agentpkg:AGENT",
+            "mutable_trees": [str(package)],
+            "integrations": ["goldfive"],
+        },
+        adapter_source_specs=("agentpkg:AGENT",),
+    )
+    first = compute_contract_hash(contract)
+    source.write_text('AGENT = "two"\n')
+    sys.modules.pop("agentpkg", None)
+    importlib.invalidate_caches()
+    assert compute_contract_hash(contract) == first
+
+
+def test_external_adapter_factory_source_is_contract_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+    import sys
+    from dataclasses import replace
+
+    driver = tmp_path / "driver.py"
+    driver.write_text("def make():\n    return 'one'\n")
+    mutable = tmp_path / "mutable_agent"
+    mutable.mkdir()
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+
+    base = _write_contract(tmp_path)
+    contract = replace(
+        base,
+        mutable_trees=(str(mutable),),
+        adapter_spec={"kind": "import", "factory": "driver:make"},
+        adapter_source_specs=("driver:make",),
+    )
+    first = compute_contract_hash(contract)
+    driver.write_text("def make():\n    return 'two'\n")
+    sys.modules.pop("driver", None)
+    importlib.invalidate_caches()
+    assert compute_contract_hash(contract) != first
 
 
 def test_hash_changes_on_adding_a_mutable_tree(tmp_path: Path) -> None:
@@ -728,6 +894,67 @@ def test_resolve_contract_inputs_reads_config(tmp_path: Path) -> None:
     assert inputs.mutable_trees == ("/abs/agent",)
     assert inputs.board_path == Path("/abs/board.jsonl")
     assert inputs.brief_path == Path("/abs/brief.md")
+
+
+def test_resolve_contract_inputs_reads_nested_adk_adapter(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    (workspace / "config.json").write_text(
+        json.dumps(
+            {
+                "adapter": {
+                    "kind": "adk",
+                    "entrypoint": "pkg.mod:agent",
+                    "mutable_trees": ["/abs/agent"],
+                }
+            }
+        )
+    )
+    inputs = resolve_contract_inputs(workspace)
+    assert inputs.entrypoint == "pkg.mod:agent"
+    assert inputs.mutable_trees == ("/abs/agent",)
+    assert inputs.adapter_spec == {
+        "kind": "adk",
+        "entrypoint": "pkg.mod:agent",
+        "mutable_trees": ["/abs/agent"],
+        "integrations": ["goldfive"],
+    }
+
+
+def test_generic_adapter_factory_args_and_integrations_are_contract_identity(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    files = _write_contract(tmp_path)
+
+    def write_config(marker: str, integrations: list[str]) -> None:
+        (workspace / "config.json").write_text(
+            json.dumps(
+                {
+                    "adapter": {
+                        "kind": "import",
+                        "factory": "tests.test_epoch_contract:_make_contract_adapter",
+                        "args": [marker, integrations],
+                    },
+                    "contract": {
+                        "board_path": str(files.board_path),
+                        "brief_path": str(files.brief_path),
+                        "scoring_path": str(files.scoring_path),
+                    },
+                }
+            )
+        )
+
+    write_config("one", [])
+    initial = resolve_contract_inputs(workspace)
+    first_hash = compute_contract_hash(initial)
+    assert initial.adapter_source_specs == ("tests.test_epoch_contract:_make_contract_adapter",)
+
+    write_config("two", [])
+    assert compute_contract_hash(resolve_contract_inputs(workspace)) != first_hash
+    write_config("one", ["goldfive"])
+    assert compute_contract_hash(resolve_contract_inputs(workspace)) != first_hash
 
 
 def test_resolve_contract_inputs_accepts_legacy_rubric_path_key(

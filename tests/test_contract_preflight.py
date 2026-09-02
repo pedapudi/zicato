@@ -22,6 +22,7 @@ from dataclasses import replace as _replace
 from pathlib import Path
 
 import zicato_examples.target_0_convergence as _t0_pkg
+from tests._contract_pins import resolved_contract_with_proposer
 from zicato.epoch.lifecycle import _scoring_from_dict, load_epoch, new_epoch
 from zicato.epoch.preflight import (
     PREFLIGHT_REPLICATE_BASE,
@@ -314,7 +315,7 @@ def _bootstrap(
         brief_source=brief,
         weights=resolved_weights,  # type: ignore[arg-type]
         auto_close_previous=False,
-        proposer_path=EXAMPLE_DIR / "proposer",
+        contract=resolved_contract_with_proposer(workspace, EXAMPLE_DIR / "proposer"),
     )
     return workspace, cfg.id
 

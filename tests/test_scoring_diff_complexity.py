@@ -28,7 +28,7 @@ import pytest
 
 from zicato.core import DriftCount, LossProfile, ScoringWeights
 from zicato.core.types import Experiment, HypothesisSpec, Patch
-from zicato.epoch.contract import round_floats, scoring_to_canon
+from zicato.epoch.contract import scoring_to_canon
 from zicato.scoring.builtins import builtin_scalar, diff_complexity_component
 from zicato.scoring.diff_complexity import (
     EXACT_DIFF_MAX_LINES,
@@ -262,9 +262,9 @@ def test_ceiling_off_and_weight_off_is_byte_identical() -> None:
 
 
 def test_canon_omits_ceiling_at_default_and_rolls_when_set() -> None:
-    off = round_floats(scoring_to_canon(ScoringWeights()))
+    off = scoring_to_canon(ScoringWeights())
     assert "diff_complexity_ceiling" not in off
-    on = round_floats(scoring_to_canon(ScoringWeights(diff_complexity_ceiling=10.0)))
+    on = scoring_to_canon(ScoringWeights(diff_complexity_ceiling=10.0))
     assert on["diff_complexity_ceiling"] == 10.0
     assert on != off
 
@@ -298,13 +298,13 @@ def test_diff_size_evidence_empty_when_off() -> None:
 
 
 def test_canon_omits_field_at_default() -> None:
-    canon = round_floats(scoring_to_canon(ScoringWeights()))
+    canon = scoring_to_canon(ScoringWeights())
     assert "diff_complexity_weight" not in canon
 
 
 def test_canon_includes_and_rolls_when_set() -> None:
-    off = round_floats(scoring_to_canon(ScoringWeights()))
-    on = round_floats(scoring_to_canon(ScoringWeights(diff_complexity_weight=0.25)))
+    off = scoring_to_canon(ScoringWeights())
+    on = scoring_to_canon(ScoringWeights(diff_complexity_weight=0.25))
     assert on["diff_complexity_weight"] == 0.25
     # Setting the weight changes the canonical form ⇒ rolls the epoch.
     assert on != off

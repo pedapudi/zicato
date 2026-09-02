@@ -819,6 +819,45 @@ def set_experiment_memory(
     return DraftPatch(op="set_experiment_memory", changed=changed)
 
 
+def set_goldfive(
+    draft: TournamentDraft,
+    *,
+    config: Mapping[str, Any] | None,
+) -> DraftPatch:
+    """Activate, partially update, or remove the optional Goldfive block."""
+    current = draft.scoring.goldfive
+    previous = draft.scoring.to_json().get("goldfive")
+    if config is None:
+        updated = None
+    else:
+        from zicato.integrations.goldfive import normalize_config  # noqa: PLC0415
+
+        def merge(base: Mapping[str, Any], changes: Mapping[str, Any]) -> dict[str, Any]:
+            result = dict(base)
+            for key, value in changes.items():
+                result[key] = (
+                    merge(result[key], value)
+                    if isinstance(value, Mapping) and isinstance(result.get(key), Mapping)
+                    else value
+                )
+            return result
+
+        try:
+            updated = normalize_config(merge(current or {}, config))
+        except ImportError:
+            raise ValueError(
+                "Goldfive configuration requires the optional zicato[goldfive] installation"
+            ) from None
+    changed: dict[str, Any] = {}
+    if updated != previous:
+        draft.scoring = _replace_scoring(draft, goldfive=updated)
+        changed["goldfive"] = {
+            "from": previous,
+            "to": updated,
+        }
+    return DraftPatch(op="set_goldfive", changed=changed)
+
+
 def set_telemetry_dialect(
     draft: TournamentDraft,
     *,
@@ -2057,9 +2096,9 @@ def _predicted_contract_hash(draft: TournamentDraft, workspace_root: Path) -> st
 
     Materializes the draft's board / brief / scoring into a throwaway temp
     directory and runs the real :func:`compute_contract_hash` over them
-    (plus the workspace's live entrypoint / mutable-trees and the draft's
-    proposer). Used by the dry-run preview so the operator sees the exact
-    hash an apply would land — without touching the workspace.
+    while retaining every non-file component from the live contract. Used by
+    the dry-run preview so the operator sees the exact hash an apply would
+    land — without touching the workspace.
     """
     import tempfile
 
@@ -2073,11 +2112,8 @@ def _predicted_contract_hash(draft: TournamentDraft, workspace_root: Path) -> st
 
     try:
         live_inputs = resolve_contract_inputs(workspace_root)
-        entrypoint = live_inputs.entrypoint
-        mutable_trees = live_inputs.mutable_trees
     except FileNotFoundError:
-        entrypoint = ""
-        mutable_trees = ()
+        live_inputs = None
 
     with tempfile.TemporaryDirectory(prefix="zicato-builder-") as tmp:
         tmp_dir = Path(tmp)
@@ -2096,16 +2132,24 @@ def _predicted_contract_hash(draft: TournamentDraft, workspace_root: Path) -> st
         import json as _json
 
         scoring_file.write_text(_json.dumps(scoring_to_dict(draft.scoring)), encoding="utf-8")
-        return compute_contract_hash(
-            ContractInputs(
+        if live_inputs is None:
+            predicted_inputs = ContractInputs(
                 board_path=board_file,
                 brief_path=brief_file,
                 scoring_path=scoring_file,
-                entrypoint=entrypoint,
-                mutable_trees=mutable_trees,
+                entrypoint="",
+                mutable_trees=(),
                 proposer_path=draft.proposer_path,
             )
-        )
+        else:
+            predicted_inputs = dataclasses.replace(
+                live_inputs,
+                board_path=board_file,
+                brief_path=brief_file,
+                scoring_path=scoring_file,
+                proposer_path=draft.proposer_path,
+            )
+        return compute_contract_hash(predicted_inputs)
 
 
 def _write_contract(draft: TournamentDraft, workspace_root: Path) -> None:
@@ -2239,6 +2283,7 @@ __all__ = [
     "set_namespace_weights",
     "set_proposer_quality",
     "set_experiment_memory",
+    "set_goldfive",
     "set_mutation_surface",
     "set_telemetry_dialect",
     "set_screening",

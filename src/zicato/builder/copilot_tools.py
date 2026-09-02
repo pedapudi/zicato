@@ -464,6 +464,15 @@ def set_experiment_memory(cross_epoch: bool | None = None) -> str:
     return _result_json(_summary(patch))
 
 
+def set_goldfive(config: dict[str, Any] | None) -> str:
+    """Configure optional Goldfive behavior; use ``{}`` to enable or ``None`` to remove."""
+    try:
+        patch = ops.set_goldfive(_active_context().draft(), config=config)
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    return _result_json(_summary(patch))
+
+
 def set_telemetry_dialect(dialect: str | None = None) -> str:
     """Set the telemetry dialect — the producer that reduces raw telemetry into the LossProfile.
 
@@ -855,6 +864,7 @@ DEFAULT_BUILDER_TOOLS = (
     set_namespace_weights,
     set_proposer_quality,
     set_experiment_memory,
+    set_goldfive,
     set_telemetry_dialect,
     set_mutation_surface,
     set_screening,
@@ -891,6 +901,7 @@ __all__ = [
     "set_namespace_weights",
     "set_proposer_quality",
     "set_experiment_memory",
+    "set_goldfive",
     "set_telemetry_dialect",
     "set_mutation_surface",
     "set_screening",

@@ -52,9 +52,8 @@ through :func:`pin_overrides`: the CLI command validates and pins the
 flag values once at startup, and every subsequent :func:`load_config`
 in the process layers those pins on top of the defaults. The
 tournament runner threads the pins across the worker subprocess
-boundary in the worker args file, so a flag like
-``--harness-call-timeout-ms`` is honoured inside the worker where the
-value is actually consumed.
+boundary in the worker args file, so a flag like ``--aux-call-timeout``
+is honoured inside the worker where the value is actually consumed.
 
 Env-var surface
 ---------------
@@ -78,10 +77,9 @@ touches — each one an actual process-boundary contract,
 not a configuration knob: the per-run harness contract
 (``ZICATO_RUN_SCRATCH_DIR``), the internal harmonograf handoff pair,
 the secrets boundary (operator-NAMED ``api_key_env`` variables and the
-``runtime.worker_env_passthrough`` allowlist), goldfive's own
-``GOLDFIVE_AGENT_CALL_TIMEOUT_MS``, and two CI/test toggles. The set is
-enumerated (with role labels) by :func:`describe_env_vars` and surfaced
-by ``zicato inspect environment``.
+``runtime.worker_env_passthrough`` allowlist), and two CI/test toggles.
+The set is enumerated (with role labels) by :func:`describe_env_vars`
+and surfaced by ``zicato inspect environment``.
 """
 
 from __future__ import annotations
@@ -258,21 +256,9 @@ class RuntimeTuningConfig:
         tune it with ``zicato evolve --parallelism`` (or the workspace
         ``config.json``'s ``runtime.parallelism``; the flag wins). Must
         be ``>= 1``.
-    harness_call_timeout_ms:
-        Per-LLM-call wall-clock budget, in milliseconds, for the *inner
-        harness* agent's calls — distinct from
-        :attr:`AuxConfig.call_timeout_s` (the auxiliary-LLM budget).
-        goldfive's :class:`~goldfive.config.AgentConfig` defaults this
-        to 120 000 ms, which a real reasoning model legitimately
-        exceeds on a long prompt under concurrency; zicato raises the
-        default to a value sized for reasoning-model latency and
-        threads it into the goldfive ``RuntimeConfig`` it constructs
-        for every ``goldfive.run`` call. Operators tune it with
-        ``zicato evolve --harness-call-timeout-ms``. Must be ``>= 1``.
     """
 
     parallelism: int = 4
-    harness_call_timeout_ms: int = 1_800_000
 
 
 # ---------------------------------------------------------------------------
@@ -289,8 +275,8 @@ class ZicatoConfig:
 
         ZicatoConfig(health=HealthConfig(scoring_window=10))
 
-    or call :func:`load_config` to layer the environment underneath an
-    optional set of explicit overrides.
+    or call :func:`load_config` to layer process-pinned CLI values and an
+    optional set of explicit overrides over the documented defaults.
     """
 
     health: HealthConfig = HealthConfig()
@@ -408,13 +394,14 @@ class EnvVarInfo:
     name:
         The variable name, or an ``<angle-bracketed>`` placeholder for a
         family whose concrete names the operator chooses in
-        ``config.json`` (the secrets boundary).
+        ``config.json`` or ``scoring.json`` (the secrets boundary).
     role:
         Why an environment variable is the RIGHT mechanism here — one of
         ``"harness-contract"``, ``"internal-handoff"``,
-        ``"secrets-boundary"``, ``"external-integration"``,
-        ``"test-toggle"``. Configuration knobs are none of these; they
-        live on CLI flags and in the workspace ``config.json``.
+        ``"external-integration"``, ``"secrets-boundary"``, or
+        ``"test-toggle"``. Configuration
+        knobs are none of these; they live on CLI flags and in workspace
+        configuration or contract files.
     description:
         Who sets it, who reads it, and what crosses the boundary.
     """
@@ -464,6 +451,38 @@ _MERITED_ENV_VARS: tuple[EnvVarInfo, ...] = (
         ),
     ),
     EnvVarInfo(
+        name="ZICATO_PROPOSER_TOOL_CONTEXT",
+        role="internal-handoff",
+        description=(
+            "Set by the proposer launcher for the isolated MCP tool server: "
+            "names the per-round JSON context file that the child process reads."
+        ),
+    ),
+    EnvVarInfo(
+        name="PI_CODING_AGENT_DIR",
+        role="external-integration",
+        description=(
+            "Read as the operator's Pi credential source, then set for each "
+            "isolated Pi proposer process to name its private agent directory."
+        ),
+    ),
+    EnvVarInfo(
+        name="PI_CODING_AGENT_SESSION_DIR",
+        role="external-integration",
+        description=(
+            "Set for an isolated Pi proposer process to keep its sessions under "
+            "the per-challenger agent directory."
+        ),
+    ),
+    EnvVarInfo(
+        name="PI_OFFLINE",
+        role="external-integration",
+        description=(
+            "Set to 1 for an isolated Pi proposer process so it uses the model "
+            "and credentials Zicato supplied without remote package discovery."
+        ),
+    ),
+    EnvVarInfo(
         name="<models.<role>.api_key_env>",
         role="secrets-boundary",
         description=(
@@ -475,21 +494,23 @@ _MERITED_ENV_VARS: tuple[EnvVarInfo, ...] = (
         ),
     ),
     EnvVarInfo(
+        name="<scoring.goldfive.{embedding,judge}.api_key_env>",
+        role="secrets-boundary",
+        description=(
+            "Operator-named variables holding credentials for Goldfive's "
+            "embedding or built-in-judge endpoint. scoring.json stores and "
+            "hashes each variable NAME; the scrubbed tournament worker keeps "
+            "that named variable and resolves its VALUE only when it builds "
+            "the Goldfive runtime."
+        ),
+    ),
+    EnvVarInfo(
         name="<runtime.worker_env_passthrough>",
         role="secrets-boundary",
         description=(
             "Operator-named allowlist (a config.json runtime key) of extra "
             "environment variables a scrubbed worker still receives — the "
             "escape hatch for a target that reads a bespoke variable."
-        ),
-    ),
-    EnvVarInfo(
-        name="GOLDFIVE_AGENT_CALL_TIMEOUT_MS",
-        role="external-integration",
-        description=(
-            "goldfive's own per-call agent timeout. When set, zicato defers "
-            "to it and does not apply --harness-call-timeout-ms, so an "
-            "operator who tunes goldfive directly is never overridden."
         ),
     ),
     EnvVarInfo(
@@ -532,8 +553,7 @@ def describe_env_vars() -> tuple[EnvVarInfo, ...]:
 def _apply_overrides(config: ZicatoConfig, overrides: Mapping[str, Any]) -> ZicatoConfig:
     """Return ``config`` with ``overrides`` applied on top.
 
-    ``overrides`` is a nested mapping ``{section: {field: value}}`` —
-    the same shape :func:`load_config` builds from the environment. Only
+    ``overrides`` is a nested mapping ``{section: {field: value}}``. Only
     known sections and fields are accepted; an unknown key is a
     programming error and raises ``KeyError`` / ``TypeError`` so a typo
     fails loudly rather than being silently ignored.
@@ -572,7 +592,7 @@ def _apply_overrides(config: ZicatoConfig, overrides: Mapping[str, Any]) -> Zica
 #: only by :func:`pin_overrides` (the CLI commands, and the tournament
 #: worker re-pinning the values its args file carried across the process
 #: boundary); read by :func:`load_config`, which layers them on top of
-#: the environment.
+#: the dataclass defaults.
 _PINNED_OVERRIDES: dict[str, dict[str, Any]] = {}
 
 
@@ -582,7 +602,7 @@ def pin_overrides(overrides: Mapping[str, Mapping[str, Any]]) -> None:
     This is the bridge from CLI flags to the config tree: a command
     validates and pins its flag values once at startup, and every later
     :func:`load_config` call — however deep in the call graph — sees
-    them layered on top of the environment (explicit ``overrides``
+    them layered on top of the dataclass defaults (explicit ``overrides``
     passed to :func:`load_config` still win).
 
     Validation is eager: an unknown section or field raises immediately
@@ -593,9 +613,8 @@ def pin_overrides(overrides: Mapping[str, Mapping[str, Any]]) -> None:
 
     The tournament runner serialises the current pins into every worker
     args file and the worker re-pins them at startup, so a pinned knob
-    consumed inside the worker subprocess (e.g. the harness call
-    timeout) crosses the process boundary without an environment
-    variable.
+    consumed inside the worker subprocess (for example, board-unit
+    parallelism) crosses the process boundary without an environment variable.
     """
     # Validate loudly before mutating any state.
     _apply_overrides(ZicatoConfig(), overrides)

@@ -41,8 +41,8 @@ LOGS_DIRNAME = "logs"
 ZICATO_LOGGER_NAME = "zicato"
 
 #: Default capture floor. The stream keeps INFO and above by default; the
-#: reader re-filters on read (``--level``). Overridable via
-#: ``install_log_stream(level=...)`` or the ``ZICATO_LOG_LEVEL`` env var.
+#: reader re-filters on read (``--level``). Callers may pass the workspace's
+#: ``runtime.log_level`` value to :func:`install_log_stream`.
 DEFAULT_CAPTURE_LEVEL = logging.INFO
 
 #: Retention: keep at most this many invocation streams (LOGGING.md §4).
@@ -309,13 +309,9 @@ class LogStreamHandle:
 
 
 def _resolve_level(level: int | str | None) -> int:
-    """Resolve a level from an int / name / env var, defaulting to INFO."""
+    """Resolve a level from an integer or name, defaulting to INFO."""
     if level is None:
-        env = os.environ.get("ZICATO_LOG_LEVEL")
-        if env:
-            level = env
-        else:
-            return DEFAULT_CAPTURE_LEVEL
+        return DEFAULT_CAPTURE_LEVEL
     if isinstance(level, int):
         return level
     named = logging.getLevelName(str(level).upper())

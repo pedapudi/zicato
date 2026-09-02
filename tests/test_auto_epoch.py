@@ -26,6 +26,18 @@ async def _aux_llm(system: str, user: str, model: str) -> str:
     return "stub analysis"
 
 
+def _raise_adapter_factory() -> object:
+    raise RuntimeError("adapter construction failed")
+
+
+def _frozen_contract_codes(workspace: Path, epoch_id: str) -> set[str]:
+    from zicato.check.context import CheckContext
+    from zicato.check.validators import frozen_epoch_contract_identity
+
+    with CheckContext(workspace, epoch_id=epoch_id) as context:
+        return {code for code, _summary, _detail in frozen_epoch_contract_identity(context)}
+
+
 # ---------------------------------------------------------------------------
 # Workspace bootstrap
 # ---------------------------------------------------------------------------
@@ -337,6 +349,108 @@ def test_editing_a_skill_auto_rolls_and_cites_proposer(tmp_path: Path) -> None:
     )
     with pytest.raises(RuntimeError, match="proposer"):
         asyncio.run(ensure_epoch_for_contract(workspace, auto_epoch=False, aux_call_llm=_aux_llm))
+
+
+def test_explicit_epoch_contract_check_rejects_adapter_and_tree_drift(tmp_path: Path) -> None:
+    workspace, _ = _bootstrap(tmp_path)
+    epoch_id = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+    assert "frozen_epoch_contract_mismatch" not in _frozen_contract_codes(workspace, epoch_id)
+
+    config_path = workspace / "config.json"
+    config = json.loads(config_path.read_text())
+    config["adk_entrypoint"] = "pkg.changed:agent"
+    config_path.write_text(json.dumps(config))
+    assert "frozen_epoch_contract_mismatch" in _frozen_contract_codes(workspace, epoch_id)
+
+    config["adk_entrypoint"] = "pkg.mod:agent"
+    config["mutable_trees"].append(str(tmp_path / "another-tree"))
+    config_path.write_text(json.dumps(config))
+    assert "frozen_epoch_contract_mismatch" in _frozen_contract_codes(workspace, epoch_id)
+
+
+@pytest.mark.parametrize("artifact", ["board.jsonl", "scoring.json"])
+def test_explicit_epoch_contract_check_rejects_frozen_artifact_edits(
+    tmp_path: Path,
+    artifact: str,
+) -> None:
+    workspace, _ = _bootstrap(tmp_path)
+    epoch_id = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+    path = workspace / "epochs" / epoch_id / artifact
+    if artifact == "board.jsonl":
+        path.write_text(
+            json.dumps(
+                {
+                    "id": "entry_a",
+                    "kind": "single_turn",
+                    "wall_clock_budget_seconds": 60,
+                    "input": "edited frozen input",
+                }
+            )
+            + "\n"
+        )
+    else:
+        path.write_text(json.dumps({"pass_weight": 2.0}))
+    assert "frozen_epoch_contract_mismatch" in _frozen_contract_codes(workspace, epoch_id)
+
+
+def test_explicit_epoch_contract_check_rejects_proposer_edits(tmp_path: Path) -> None:
+    workspace, _ = _bootstrap(tmp_path)
+    proposer = tmp_path / "proposers" / "p1"
+    (proposer / "skills").mkdir(parents=True)
+    skill = proposer / "skills" / "a.md"
+    skill.write_text(_SKILL)
+    _set_proposer_path(workspace, proposer)
+    epoch_id = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+
+    skill.write_text(
+        "---\nname: tighten\ndescription: keep it terse\n---\n\nChanged proposer behavior.\n"
+    )
+    assert "frozen_epoch_contract_mismatch" in _frozen_contract_codes(workspace, epoch_id)
+
+
+def test_frozen_contract_validator_aggregates_adapter_factory_failures(tmp_path: Path) -> None:
+    workspace, _ = _bootstrap(tmp_path)
+    epoch_id = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+    config_path = workspace / "config.json"
+    config = json.loads(config_path.read_text())
+    config.pop("adk_entrypoint")
+    config["adapter"] = {
+        "kind": "import",
+        "factory": "tests.test_auto_epoch:_raise_adapter_factory",
+    }
+    config_path.write_text(json.dumps(config))
+    assert _frozen_contract_codes(workspace, epoch_id) == {"frozen_epoch_contract_unreadable"}
+
+
+def test_generic_adapter_configuration_changes_auto_roll_the_epoch(tmp_path: Path) -> None:
+    workspace, _ = _bootstrap(tmp_path)
+    config_path = workspace / "config.json"
+    config = json.loads(config_path.read_text())
+    config.pop("adk_entrypoint")
+    config["adapter"] = {
+        "kind": "import",
+        "factory": "tests.test_epoch_contract:_make_contract_adapter",
+        "args": ["one", []],
+    }
+    config_path.write_text(json.dumps(config))
+    first = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+
+    config["adapter"]["args"] = ["two", ["goldfive"]]
+    config_path.write_text(json.dumps(config))
+    second = asyncio.run(
+        ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm)
+    )
+    assert second != first
 
 
 # ---------------------------------------------------------------------------

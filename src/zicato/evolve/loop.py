@@ -476,8 +476,9 @@ async def evolve_n_rounds(
     orchestrator resolves (and, if the contract drifted, auto-rolls) the epoch
     via :func:`ensure_epoch_for_contract`. The resolved id is then pinned for
     every round of this invocation so the loop never re-rolls mid-flight.
-    When ``epoch_id`` is passed explicitly, auto-rolling is skipped entirely
-    — an explicit target always wins.
+    When ``epoch_id`` is passed explicitly, auto-rolling is skipped. The
+    workspace gate still verifies that the selected epoch matches its frozen
+    contract before any model call.
 
     The list of :class:`EvolveRoundOutcome` returned has one entry per
     round attempted (which may be fewer than ``rounds`` if any
@@ -550,7 +551,12 @@ async def evolve_n_rounds(
     # ``.zicato/logs/<stamp>-<pid>.jsonl`` with zero call-site changes.
     # Acquired outside the try (like the lock below) and closed in the same
     # ``finally``. Best-effort: a logging-setup failure never fails the run.
-    log_stream = install_log_stream(workspace_root)
+    log_level = (
+        workspace_loader.load_workspace_config(workspace_root)
+        .get("runtime", {})
+        .get("log_level", "INFO")
+    )
+    log_stream = install_log_stream(workspace_root, level=str(log_level))
     # Tag every orchestrator record with the pinned epoch for this
     # invocation (optional enrichment; the workers bind the full
     # epoch/generation/run context on their side).

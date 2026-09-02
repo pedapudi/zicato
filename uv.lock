@@ -14,7 +14,7 @@ members = [
     "zicato",
     "zicato-examples",
 ]
-overrides = [{ name = "goldfive", git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6" }]
+overrides = [{ name = "goldfive", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" }]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -1231,7 +1231,10 @@ wheels = [
 [[package]]
 name = "goldfive"
 version = "0.1.0"
-source = { git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6#ed44eaaf93215a5d4ae122293c39fbd04ff204d6" }
+source = { git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e#d1d44829d43fee46c11b83c507fc772466b7f14e" }
+dependencies = [
+    { name = "protobuf" },
+]
 
 [[package]]
 name = "google-adk"
@@ -7063,6 +7066,12 @@ dev = [
 goldfive = [
     { name = "goldfive" },
 ]
+goldfive-local-embedding = [
+    { name = "goldfive" },
+]
+goldfive-remote = [
+    { name = "goldfive" },
+]
 mcp = [
     { name = "mcp" },
 ]
@@ -7081,9 +7090,11 @@ tui = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
-    { name = "goldfive", marker = "extra == 'goldfive'", git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6" },
-    { name = "goldfive", extras = ["adk"], marker = "extra == 'adk'", git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6" },
-    { name = "goldfive", extras = ["adk"], marker = "extra == 'all'", git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6" },
+    { name = "goldfive", marker = "extra == 'goldfive'", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" },
+    { name = "goldfive", extras = ["adk"], marker = "extra == 'adk'", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" },
+    { name = "goldfive", extras = ["adk", "embedding", "remote"], marker = "extra == 'all'", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" },
+    { name = "goldfive", extras = ["embedding"], marker = "extra == 'goldfive-local-embedding'", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" },
+    { name = "goldfive", extras = ["remote"], marker = "extra == 'goldfive-remote'", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" },
     { name = "google-adk", extras = ["extensions"], marker = "extra == 'adk'" },
     { name = "google-adk", extras = ["extensions"], marker = "extra == 'all'" },
     { name = "harmonograf-client", marker = "extra == 'all'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=client&rev=ed3a3401e5853f59dbcc28fa36c8131250341735" },
@@ -7122,7 +7133,7 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'observability'", specifier = ">=4.0" },
     { name = "zicato-examples", marker = "extra == 'dev'", editable = "examples" },
 ]
-provides-extras = ["goldfive", "adk", "dashboard", "tui", "observability", "mcp", "all", "dev"]
+provides-extras = ["goldfive", "goldfive-remote", "goldfive-local-embedding", "adk", "dashboard", "tui", "observability", "mcp", "all", "dev"]
 
 [[package]]
 name = "zicato-examples"

@@ -131,6 +131,7 @@ def _config(workspace: Path, *, supervisor_kill_wait_s: float = 20.0) -> Runtime
         harness_call_llm=harness_call_llm,
         auxiliary_call_llm=auxiliary_call_llm,
         supervisor_kill_wait_s=supervisor_kill_wait_s,
+        worker_permit_dir=workspace.parent / "worker-permits",
     )
 
 
@@ -714,8 +715,6 @@ def test_run_single_spawns_worker_in_new_session(
 
     assert isinstance(loss, LossProfile)
     assert captured["start_new_session"] is True
-    # Default: the worker inherits the orchestrator's full env (env=None) —
-    # byte-for-byte today's behavior. The scrub is strictly opt-in.
     assert captured["env"] is None
 
 

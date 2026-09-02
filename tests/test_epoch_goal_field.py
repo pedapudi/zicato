@@ -151,6 +151,28 @@ def test_epoch_config_contract_hash_absent_is_none() -> None:
     assert _config_from_dict(legacy_empty).contract_hash is None
 
 
+def test_epoch_config_round_trips_implementation_identity() -> None:
+    identity = {
+        "zicato_evaluator_revision": 1,
+        "goldfive_version": "git:abcdef",
+        "zicato_goldfive_integration_revision": 1,
+    }
+    cfg = EpochConfig(
+        id="2026-05-27_identity",
+        name="identity",
+        created_at="2026-05-27T00:00:00+00:00",
+        board_path=Path("/board.jsonl"),
+        brief_path=Path("/brief.md"),
+        scoring=ScoringWeights(goldfive={}),
+        contract_hash="feedface00000002",
+        implementation_identity=identity,
+    )
+
+    payload = json.loads(json.dumps(_config_to_dict(cfg)))
+    assert payload["implementation_identity"] == identity
+    assert _config_from_dict(payload).implementation_identity == identity
+
+
 # ---------------------------------------------------------------------------
 # 2. lifecycle writer round-trips goal
 # ---------------------------------------------------------------------------
@@ -177,6 +199,52 @@ def test_new_epoch_writes_goal_into_config_json(
     # Reload through the canonical reader.
     reloaded = load_epoch(workspace, cfg.id)
     assert reloaded.goal == goal
+
+
+def test_new_epoch_writes_evaluator_identity_into_config_json(
+    workspace: Path, board_file: Path, brief_file: Path
+) -> None:
+    cfg = new_epoch(
+        workspace_root=workspace,
+        name="implementation-identity",
+        board_source=board_file,
+        brief_source=brief_file,
+        weights=ScoringWeights(),
+    )
+
+    expected = {"zicato_evaluator_revision": 1}
+    assert cfg.implementation_identity == expected
+    raw = json.loads((workspace / "epochs" / cfg.id / "config.json").read_text())
+    assert raw["implementation_identity"] == expected
+    assert load_epoch(workspace, cfg.id).implementation_identity == expected
+
+
+def test_invalid_goldfive_document_leaves_the_current_epoch_unchanged(
+    workspace: Path,
+    board_file: Path,
+    brief_file: Path,
+) -> None:
+    current = new_epoch(
+        workspace_root=workspace,
+        name="valid-contract",
+        board_source=board_file,
+        brief_source=brief_file,
+        weights=ScoringWeights(),
+    )
+    before_epochs = {path.name for path in (workspace / "epochs").iterdir()}
+
+    with pytest.raises(ValueError, match="unknown"):
+        new_epoch(
+            workspace_root=workspace,
+            name="invalid-goldfive-contract",
+            board_source=board_file,
+            brief_source=brief_file,
+            weights=ScoringWeights(goldfive={"unknown_field": True}),
+        )
+
+    assert load_epoch(workspace, current.id).closed is False
+    assert (workspace / "current_epoch").read_text().strip() == current.id
+    assert {path.name for path in (workspace / "epochs").iterdir()} == before_epochs
 
 
 def test_set_epoch_goal_overwrites_existing(

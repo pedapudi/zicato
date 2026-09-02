@@ -162,35 +162,6 @@ def _isolate_mutation_syntax_table() -> Iterator[None]:
     install_syntax_table(None)
 
 
-@pytest.fixture(scope="session")
-def _session_worker_permit_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """One private host-wide worker-permit directory for this test session."""
-    return tmp_path_factory.mktemp("zicato-worker-permits")
-
-
-@pytest.fixture(autouse=True)
-def _isolate_host_worker_permits(
-    _session_worker_permit_dir: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Point the host-wide worker-permit pool at a session-private directory.
-
-    The pool (:mod:`zicato.runtime.spawn_permit`) is deliberately HOST-wide
-    and workspace-external, so by default the suite would share slots with
-    any real ``evolve`` run on the same machine. Both directions of that are
-    wrong: a test must not be throttled by the operator's run, and a test
-    must not consume the operator's permits. Redirecting the directory keeps
-    the default (AUTO) knob value genuinely exercised while making the pool
-    private to the session.
-
-    Tests that assert on permit behaviour request the ``permit_root``
-    fixture, which sets the same variable to its own ``tmp_path``; it is
-    resolved after this autouse fixture, so the per-test value wins.
-    """
-    from zicato.runtime.spawn_permit import PERMIT_DIR_ENV
-
-    monkeypatch.setenv(PERMIT_DIR_ENV, str(_session_worker_permit_dir))
-
-
 @pytest.fixture(autouse=True)
 def _pin_default_proposer_to_text_shim(
     request: pytest.FixtureRequest,

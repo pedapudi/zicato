@@ -830,6 +830,7 @@ def _worker_config(workspace: Path, seed: int) -> RuntimeConfig:
         auxiliary_call_llm=t0_mocks.aux_llm,
         seed=seed,
         parallelism=4,
+        worker_permit_dir=workspace.parent / "worker-permits",
     )
 
 

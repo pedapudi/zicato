@@ -54,11 +54,16 @@ class _TestAdapter:
     def worker_spec(self) -> dict[str, Any]:
         if self.mode == "bad_spec":
             return {"kind": "not-a-worker-adapter"}
-        return {
+        if self.mode == "bad_integrations":
+            return {"kind": "import", "integrations": "goldfive"}
+        spec = {
             "kind": "import",
             "factory": "tests.test_check_gate:_make_test_adapter",
             "args": [self.mode],
         }
+        if self.mode == "goldfive":
+            spec["integrations"] = ["goldfive"]
+        return spec
 
 
 def _make_test_adapter(mode: str = "normal") -> _TestAdapter:
@@ -88,6 +93,7 @@ def _workspace(
     scoring: dict | None = None,
     board: list[dict] | None = None,
     trees: dict[str, str] | None = None,
+    include_required_goldfive: bool = True,
 ) -> Path:
     """Write a workspace: config.json, one epoch, and any mutable trees."""
     root.mkdir(parents=True, exist_ok=True)
@@ -108,10 +114,17 @@ def _workspace(
     config = {"generation_source_backend": "directory", **config}
     (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
     if scoring is not None or board is not None:
+        scoring = dict(scoring or {})
+        adapter = config.get("adapter")
+        uses_builtin_goldfive_adapter = (
+            isinstance(adapter, dict) and adapter.get("kind") == "adk"
+        ) or bool(config.get("adk_entrypoint"))
+        if uses_builtin_goldfive_adapter and include_required_goldfive:
+            scoring.setdefault("goldfive", {})
         epoch = root / "epochs" / _EPOCH
         epoch.mkdir(parents=True, exist_ok=True)
-        (epoch / "scoring.json").write_text(json.dumps(scoring or {}), encoding="utf-8")
-        (root.parent / "scoring.json").write_text(json.dumps(scoring or {}), encoding="utf-8")
+        (epoch / "scoring.json").write_text(json.dumps(scoring), encoding="utf-8")
+        (root.parent / "scoring.json").write_text(json.dumps(scoring), encoding="utf-8")
         if board is not None:
             rendered_board = "\n".join(json.dumps(row) for row in board)
             (epoch / "board.jsonl").write_text(rendered_board, encoding="utf-8")
@@ -153,6 +166,51 @@ def _entry(entry_id: str, **extra: object) -> dict:
         "wall_clock_budget_seconds": 30,
         **extra,
     }
+
+
+def _write_epoch_implementation_identity(root: Path, identity: object) -> None:
+    epoch_config = root / "epochs" / _EPOCH / "config.json"
+    epoch_config.write_text(
+        json.dumps({"implementation_identity": identity}),
+        encoding="utf-8",
+    )
+
+
+def test_frozen_epoch_requires_readable_implementation_identity(tmp_path: Path) -> None:
+    root = _workspace(tmp_path / ".zicato", scoring={}, board=[_entry("a")])
+    assert "epoch_implementation_identity_unreadable" in _codes(root, live_contract=False)
+
+
+def test_frozen_epoch_refuses_a_different_zicato_evaluator(tmp_path: Path) -> None:
+    root = _workspace(tmp_path / ".zicato", scoring={}, board=[_entry("a")])
+    _write_epoch_implementation_identity(root, {"zicato_evaluator_revision": 0})
+    assert "epoch_implementation_identity_mismatch" in _codes(root, live_contract=False)
+
+
+def test_frozen_goldfive_epoch_refuses_a_different_goldfive_build(tmp_path: Path) -> None:
+    from zicato.integrations.goldfive import ZICATO_GOLDFIVE_INTEGRATION_REVISION
+
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
+                "args": ["goldfive"],
+            }
+        },
+        scoring={"goldfive": {}},
+        board=[_entry("a")],
+    )
+    _write_epoch_implementation_identity(
+        root,
+        {
+            "zicato_evaluator_revision": 1,
+            "goldfive_version": "git:different-build",
+            "zicato_goldfive_integration_revision": ZICATO_GOLDFIVE_INTEGRATION_REVISION,
+        },
+    )
+    assert "epoch_implementation_identity_mismatch" in _codes(root, live_contract=False)
 
 
 # --- hard stop: duplicate mutation ids --------------------------------------
@@ -276,6 +334,21 @@ def test_probe_uses_the_adapters_canonical_worker_spec(tmp_path: Path) -> None:
                 "kind": "import",
                 "factory": "tests.test_check_gate:_make_test_adapter",
                 "args": ["bad_spec"],
+            }
+        },
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "adapter_import_failed" in _codes(root)
+
+
+def test_malformed_adapter_integration_capabilities_are_a_hard_stop(tmp_path: Path) -> None:
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
+                "args": ["bad_integrations"],
             }
         },
         trees={"harness": _MUTABLE.format(point_id="p")},
@@ -829,6 +902,232 @@ def test_a_role_whose_credential_is_set_is_clean(tmp_path: Path, monkeypatch) ->
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
     assert "model_role_credential_unset" not in _codes(root)
+
+
+def test_a_goldfive_endpoint_credential_must_exist_before_workers_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("ZICATO_TEST_MISSING_GOLDFIVE_KEY", raising=False)
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={"adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT}},
+        scoring={
+            "goldfive": {
+                "judge": {
+                    "base_url": "http://judge.example",
+                    "api_key_env": "ZICATO_TEST_MISSING_GOLDFIVE_KEY",
+                }
+            }
+        },
+        board=[_entry("e0")],
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "goldfive_credential_unset" in _codes(root)
+
+
+def test_builtin_adk_declares_goldfive_and_requires_the_contract_block(
+    tmp_path: Path,
+) -> None:
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "mutable_trees": [],
+            }
+        },
+        scoring={},
+        board=[_entry("e0")],
+        trees={"harness": _MUTABLE.format(point_id="p")},
+        include_required_goldfive=False,
+    )
+    assert "goldfive_config_missing" in _codes(root)
+
+
+def test_a_generic_contract_does_not_require_goldfive(tmp_path: Path) -> None:
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
+                "args": [],
+            }
+        },
+        scoring={},
+        board=[_entry("e0")],
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "goldfive_config_missing" not in _codes(root)
+
+
+def test_an_import_adapter_can_declare_goldfive_without_a_kind_check(tmp_path: Path) -> None:
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
+                "args": ["goldfive"],
+            }
+        },
+        scoring={},
+        board=[_entry("e0")],
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "goldfive_config_missing" in _codes(root)
+
+
+def test_a_goldfive_declaring_adapter_requires_the_optional_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import zicato.check.validators as validators
+
+    monkeypatch.setattr(validators, "_module_importable", lambda _name: False)
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
+                "args": ["goldfive"],
+            }
+        },
+        scoring={"goldfive": {}},
+        board=[_entry("e0")],
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "goldfive_runtime_unavailable" in _codes(root)
+
+
+def test_invalid_goldfive_config_is_reported_when_worker_environment_is_scrubbed(
+    tmp_path: Path,
+) -> None:
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT},
+            "runtime": {"scrub_worker_env": True},
+        },
+        scoring={"goldfive": {"unknown_setting": True}},
+        board=[_entry("e0")],
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+
+    assert "goldfive_config_invalid" in _codes(root)
+
+
+def test_goldfive_local_embedding_requires_its_named_install_extra(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import zicato.integrations.goldfive as integration
+
+    monkeypatch.setattr(
+        integration,
+        "missing_runtime_capabilities",
+        lambda _config: ("local_embedding",),
+    )
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={"adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT}},
+        scoring={"goldfive": {"reasoning_drift": {"mode": "embedding"}}},
+        board=[_entry("e0")],
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "goldfive_runtime_capability_missing" in _codes(root)
+
+
+def test_goldfive_judge_endpoint_requires_its_http_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import zicato.integrations.goldfive as integration
+
+    monkeypatch.setattr(
+        integration,
+        "missing_runtime_capabilities",
+        lambda _config: ("remote_judge",),
+    )
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={"adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT}},
+        scoring={"goldfive": {"judge": {"base_url": "http://judge.example"}}},
+        board=[_entry("e0")],
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "goldfive_runtime_capability_missing" in _codes(root)
+
+
+def test_goldfive_implementation_must_match_the_executed_evaluator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import zicato.integrations.goldfive as integration
+
+    monkeypatch.setattr(
+        integration,
+        "installed_goldfive_implementation_version",
+        lambda: "git:" + "0" * 40,
+    )
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={"adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT}},
+        scoring={"goldfive": {}},
+        board=[_entry("e0")],
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "goldfive_implementation_mismatch" in _codes(root)
+
+
+def test_a_present_goldfive_endpoint_credential_passes_the_static_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ZICATO_TEST_GOLDFIVE_KEY", "not-a-real-secret")
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={"adapter": {"kind": "adk", "entrypoint": _VALID_ADK_ENTRYPOINT}},
+        scoring={
+            "goldfive": {
+                "embedding": {
+                    "base_url": "http://embedding.example",
+                    "api_key_env": "ZICATO_TEST_GOLDFIVE_KEY",
+                }
+            }
+        },
+        board=[_entry("e0")],
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "goldfive_credential_unset" not in _codes(root)
+
+
+def test_a_generic_adapter_rejects_an_unused_goldfive_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GENERIC_UNUSED_GOLDFIVE_KEY", "must-not-reach-worker")
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
+                "args": [],
+            },
+            "runtime": {"scrub_worker_env": True},
+        },
+        scoring={
+            "goldfive": {
+                "judge": {
+                    "base_url": "http://judge.example",
+                    "api_key_env": "GENERIC_UNUSED_GOLDFIVE_KEY",
+                }
+            }
+        },
+        board=[_entry("e0")],
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "goldfive_config_unused" in _codes(root)
+    with CheckContext(root, live_contract=True) as ctx:
+        assert ctx.worker_env is not None
+        assert "GENERIC_UNUSED_GOLDFIVE_KEY" not in ctx.worker_env
 
 
 def test_a_role_call_llm_that_does_not_import_is_a_hard_stop(tmp_path: Path) -> None:

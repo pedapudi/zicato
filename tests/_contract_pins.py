@@ -21,6 +21,7 @@ the new value instead.
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from zicato.core.types import (
@@ -28,6 +29,7 @@ from zicato.core.types import (
     ScoringWeights,
     TournamentStructure,
 )
+from zicato.epoch.contract import ContractInputs, resolve_contract_inputs
 
 #: The param pins that restore the historical single-run, gate-off duel.
 DETERMINISTIC_PARAM_PINS: dict[str, Any] = {
@@ -67,4 +69,19 @@ def deterministic_weights(**kwargs: Any) -> ScoringWeights:
     return pin_deterministic(ScoringWeights(**kwargs))
 
 
-__all__ = ["DETERMINISTIC_PARAM_PINS", "deterministic_weights", "pin_deterministic"]
+def resolved_contract_with_proposer(workspace_root: Path, proposer_path: Path) -> ContractInputs:
+    """Return the full workspace contract with a local proposer selected.
+
+    Known-answer tests create epochs through the library API. Carrying the
+    resolved contract keeps the adapter identity and every other non-file
+    component aligned with the workspace that the evolve loop validates.
+    """
+    return replace(resolve_contract_inputs(workspace_root), proposer_path=proposer_path)
+
+
+__all__ = [
+    "DETERMINISTIC_PARAM_PINS",
+    "deterministic_weights",
+    "pin_deterministic",
+    "resolved_contract_with_proposer",
+]

@@ -41,8 +41,9 @@ from typing import Any
 
 import click
 
-from zicato.core.types import Generation
-from zicato.core.workspace import generation_dir
+from zicato.core.drift_kinds import DriftKind
+from zicato.core.types import BoardEntry, Generation, ScoringWeights
+from zicato.core.workspace import board_path, generation_dir, scoring_path
 
 
 @click.command(
@@ -101,17 +102,34 @@ def tournament_cmd(
     workspace_root = Path(workspace).resolve()
 
     loader, adapter_factory, runtime_factory = _resolve_workspace_components()
+    resolved_epoch_id = epoch or _resolve_epoch_id(workspace_root)
+
+    # This command spends the same tournament calls as ``zicato evolve``.
+    # Validate the selected frozen epoch before constructing the adapter or
+    # runtime so an integration/configuration defect cannot become scored
+    # candidate evidence.
+    from zicato.check import (  # noqa: PLC0415
+        WorkspaceCheckError,
+        render_report,
+        require_workspace_valid,
+    )
+
+    try:
+        require_workspace_valid(
+            workspace_root,
+            epoch_id=resolved_epoch_id,
+            live_contract=False,
+        )
+    except WorkspaceCheckError as exc:
+        click.echo(render_report(exc.report), nl=False)
+        raise click.ClickException(str(exc)) from exc
 
     try:
         workspace_config = loader.load_workspace_config(workspace_root)
-    except FileNotFoundError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    resolved_epoch_id = epoch or _resolve_epoch_id(workspace_root)
-    try:
-        board, disable_drift, judge_only = loader.load_current_board_with_meta(workspace_root)
-        weights = loader.load_current_scoring(workspace_root)
-    except FileNotFoundError as exc:
+        board, disable_drift, judge_only, weights = _load_epoch_contract(
+            workspace_root, resolved_epoch_id
+        )
+    except (FileNotFoundError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     # ``--skip-regression`` is a per-invocation override; flip the
@@ -225,6 +243,23 @@ def _resolve_epoch_id(workspace_root: Path) -> str:
             f"{marker} is empty; pass --epoch explicitly or run `zicato epoch new` first"
         )
     return text
+
+
+def _load_epoch_contract(
+    workspace_root: Path,
+    epoch_id: str,
+) -> tuple[list[BoardEntry], tuple[DriftKind, ...], bool, ScoringWeights]:
+    """Load the board and scoring frozen under one explicitly selected epoch."""
+    from zicato.board.jsonl import load_board_with_meta  # noqa: PLC0415
+
+    board, disable_drift, judge_only = load_board_with_meta(board_path(workspace_root, epoch_id))
+    selected_scoring_path = scoring_path(workspace_root, epoch_id)
+    raw_scoring = json.loads(selected_scoring_path.read_text(encoding="utf-8"))
+    if not isinstance(raw_scoring, dict):
+        raise ValueError(f"{selected_scoring_path}: expected a JSON object at top level")
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+
+    return board, disable_drift, judge_only, scoring_weights_from_dict(raw_scoring)
 
 
 def _build_generation(workspace_root: Path, epoch_id: str, generation_id: str) -> Generation:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -111,6 +112,54 @@ def test_builder_op_set_structure_returns_full_envelope(client: TestClient) -> N
     assert body["cost"]["structure"] == "swiss"
     assert "warnings" in body
     assert "structure" in body["diff"]["changed_components"]
+
+
+def test_builder_op_goldfive_requires_explicit_config_and_can_remove(client: TestClient) -> None:
+    missing = client.post(
+        "/builder/op", json={"session": "goldfive", "op": "set_goldfive", "args": {}}
+    )
+    assert missing.status_code == 400
+    enabled = client.post(
+        "/builder/op",
+        json={"session": "goldfive", "op": "set_goldfive", "args": {"config": {}}},
+    )
+    assert "goldfive" in enabled.json()["draft"]["scoring"]
+    removed = client.post(
+        "/builder/op",
+        json={"session": "goldfive", "op": "set_goldfive", "args": {"config": None}},
+    )
+    assert "goldfive" not in removed.json()["draft"]["scoring"]
+
+
+def test_builder_op_goldfive_reports_missing_optional_install(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "goldfive", None)
+
+    response = client.post(
+        "/builder/op",
+        json={"session": "goldfive-missing", "op": "set_goldfive", "args": {"config": {}}},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == (
+        "Goldfive configuration requires the optional zicato[goldfive] installation"
+    )
+
+
+def test_builder_op_goldfive_rejects_non_string_context_editor_rules(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/builder/op",
+        json={
+            "session": "goldfive-rules",
+            "op": "set_goldfive",
+            "args": {"config": {"steering": {"context_editor_rules": [{}]}}},
+        },
+    )
+    assert response.status_code == 400
+    assert "steering.context_editor_rules[0] must be one of" in response.json()["error"]
 
 
 def test_builder_op_accumulates_across_calls_in_a_session(client: TestClient) -> None:

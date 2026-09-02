@@ -210,13 +210,9 @@ async def test_a_snapshot_frame_always_resynchronises() -> None:
         assert client.requested, "a snapshot must refetch even at an unchanged seq"
 
 
-def test_ascii_degrade_reads_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ZICATO_TUI_ASCII", raising=False)
+def test_ascii_degrade_reads_the_terminal_locale(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LANG", "en_US.UTF-8")
     monkeypatch.delenv("LC_ALL", raising=False)
     assert degrade_to_ascii() is False
     monkeypatch.setenv("LANG", "C")
-    assert degrade_to_ascii() is True
-    monkeypatch.setenv("LANG", "en_US.UTF-8")
-    monkeypatch.setenv("ZICATO_TUI_ASCII", "1")
     assert degrade_to_ascii() is True

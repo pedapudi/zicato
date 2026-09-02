@@ -487,15 +487,6 @@ Options:
                                   workspace config.json's runtime.parallelism.
                                   Unset (the default) reads config.json, then
                                   the built-in default of 4.  [x>=1]
-  --harness-call-timeout-ms INTEGER RANGE
-                                  Per-LLM-call wall-clock budget, in
-                                  milliseconds, for the inner harness agent's
-                                  calls. Shadows the
-                                  runtime.harness_call_timeout_ms config knob
-                                  (default 1800000). An explicit
-                                  GOLDFIVE_AGENT_CALL_TIMEOUT_MS still wins — an
-                                  operator who tunes goldfive directly is not
-                                  overridden.  [x>=1]
   --aux-call-timeout FLOAT RANGE  Per-call wall-clock budget, in seconds, for
                                   every auxiliary-LLM (proposer / judge /
                                   emulator / analysis) call. Shadows the
@@ -625,8 +616,7 @@ Usage: zicato inspect environment [OPTIONS]
   NO environment variable is a configuration knob. Every variable printed here
   is a process-boundary contract: the per-run harness contract, the internal
   harmonograf handoff pair, the secrets boundary (operator-named api_key_env
-  variables and the worker passthrough allowlist), goldfive's own timeout
-  variable, and the CI/test toggles.
+  variables and the worker passthrough allowlist), and the CI/test toggles.
 
 Options:
   --json  Emit the set as a JSON array instead of grouped text.

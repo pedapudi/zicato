@@ -27,8 +27,8 @@ Multi-agent systems are the founding and primary use case — a coordinator
 plus specialists, a deep sub-agent tree, a single LLM (Large Language
 Model) agent, any shape — and the only shipped concrete adapter targets
 Google's Agent Development Kit (ADK). The loop itself is not
-agent-specific: it needs an entrypoint it can drive, one or more mutable
-source trees, and a board that scores each run. When you are changing
+agent-specific: it needs an adapter it can reconstruct and drive, one or more
+mutable source trees, and a board that scores each run. When you are changing
 zicato's code, assume the target is "some tree of files with an
 evaluation contract"; an agent tree is one instance of that rather than
 the definition.
@@ -156,6 +156,7 @@ Use this table to jump; the subsections below carry the definitions.
 | drift kinds / severities | `DriftKind`, `DriftSeverity`, `GOLDFIVE_DRIFT_KINDS` | `src/zicato/core/drift_kinds.py` — zicato's string mirror of goldfive's enums (goldfive is an optional extra) |
 | proposer brief | `ProposerBrief` | `src/zicato/proposer/brief.py` |
 | scoring | `ScoringWeights` | `src/zicato/core/scoring_config.py` |
+| Goldfive configuration document | `goldfive.RuntimeConfigDocument` | Goldfive owns the schema; `src/zicato/integrations/goldfive.py` is Zicato's lazy bridge |
 | mutation point / patch | `MutationPoint`, `Patch` | `src/zicato/core/mutation.py` / `src/zicato/mutation/` |
 | loss profile | `LossProfile` | `src/zicato/core/loss.py` (type) / `src/zicato/telemetry/reducer.py` (producer) |
 | scalar | `aggregate_generation_score` | `src/zicato/tournament/scoring.py` |
@@ -196,7 +197,8 @@ Use this table to jump; the subsections below carry the definitions.
 
 **workspace** — the `.zicato/` directory that holds everything zicato
 persists for one target: `config.json` (the registration record —
-adapter, entrypoint, mutable trees, model roles), `current_epoch` marker,
+adapter, ADK entry point when applicable, mutable trees, and model roles),
+`current_epoch` marker,
 `lineage.json`, `index.db`, `epochs/`, `runtime/`, `repo/` (the git
 generation store). Path math is owned by `WorkspaceLayout` in
 `src/zicato/workspace/` (typed canonical reads, the single
@@ -262,11 +264,19 @@ two sides concurrently, so size the LLM endpoint against
 
 ### 2.2 The contract side
 
-**contract / evaluation contract** — the six components whose canonical
-hash IS the epoch's identity: (1) the board, (2) the proposer brief,
-(3) the scoring config, (4) the registered inner-harness entrypoint,
-(5) the registered mutable-tree paths, (6) the proposer (agent identity +
-tools + skill bodies). Owned by `src/zicato/epoch/contract.py`
+**contract / evaluation contract** — the rules that make generations within an
+epoch comparable. The contract hash combines seven canonical forms:
+
+1. the board;
+2. the proposer brief;
+3. the scoring configuration;
+4. Zicato's evaluator revision;
+5. the registered adapter worker document plus implementation source outside
+   the mutable trees;
+6. the registered mutable-tree paths; and
+7. the proposer identity, tools, and skill bodies.
+
+The implementation lives in `src/zicato/epoch/contract.py`
 (`ContractInputs`, `compute_contract_hash`, `compute_component_hashes`).
 The inner harness's *source content* is not part of the contract: it is
 what zicato mutates within an epoch.
@@ -321,6 +331,13 @@ Nested config blocks ride on it and therefore fold into the contract hash
 automatically (the canonicalizer recurses into nested dataclasses):
 `TournamentStructure`, `OverfittingConfig` (+ `LadderConfig`),
 `ProposerQualityConfig`, `ExperimentMemoryConfig`.
+
+The optional `ScoringWeights.goldfive` field is a different kind of contract
+value. Zicato keeps it as an immutable JSON mapping and loads no Goldfive
+schema into `core/`. When the selected adapter declares the capability, the
+lazy bridge in `src/zicato/integrations/goldfive.py` asks Goldfive's public
+`RuntimeConfigDocument` to apply defaults, validate and canonicalize the
+mapping, report required optional backends, and build the live runtime.
 
 **mutation point** — a span, a bracketed region, or a whole file the
 proposer may edit, marked in the target's source with a
@@ -596,6 +613,9 @@ tolerance, infra circuit knobs, per-round token budget. RUNTIME knobs
 never fold into the contract hash and never roll epochs — the mirror
 image of contract knobs. The decision procedure for "which kind is my new
 knob?" is the closing recipe of 03-contract-and-epochs.md.
+`RuntimeConfig.goldfive` is a transported copy of the frozen scoring document,
+rather than a runtime-selectable knob. An adapter receives it only after
+declaring the Goldfive integration.
 
 **EvolveRoundOutcome** — one round's summary returned by `evolve_once`
 (`src/zicato/evolve/round_api.py`): parent/child ids, the decision, the
@@ -613,8 +633,8 @@ shape (assembled from `src/zicato/epoch/lifecycle.py`'s module docstring,
   brief.md                       #   NEXT TO .zicato/, in the project root —
   scoring.json                   #   never inside it (resolve_contract_inputs)
   .zicato/                       # the workspace root
-    config.json                  # registration: adapter, entrypoint,
-                                 #   mutable_trees, contract paths, models
+    config.json                  # registration: adapter, mutable_trees,
+                                 #   contract paths, models
     current_epoch                # marker file, single line = epoch id
     lineage.json                 # the cross-epoch DAG (atomic rewrites)
     index.db                     # DERIVED SQLite index (rebuildable)
@@ -686,7 +706,9 @@ registry. Public face: `from zicato.core import X` (re-exported through
 `core/types.py`, whose namespace also anchors the contract-serde
 annotation resolver — see 03-contract-and-epochs.md). Imports nothing
 domain-heavy; everything imports it. Never put behaviour here beyond
-validation — core is types.
+validation — core is types. Optional integration documents remain generic
+JSON mappings here so an upstream package can own its schema without becoming
+a core dependency.
 
 **`orchestrator.py`** — the stable integration import surface, and nothing
 else: fourteen lines re-exporting `evolve_once`, `evolve_n_rounds`,
@@ -777,6 +799,11 @@ heuristic, the `zicato:emulator` audit lane.
 **`judge_runtime/`** — turns declarative `JudgeSpec`s into live goldfive
 judges (inline → LLM-as-judge on the auxiliary callable; python → dotted
 import).
+
+**`integrations/`** — lazy bridges to optional runtime capabilities. The
+Goldfive bridge delegates document defaults, schema validation, capability
+checks, credential resolution, and runtime construction to Goldfive's public
+API. Importing Zicato core code does not import Goldfive.
 
 **`runtime/`** — the `.zicato/runtime/` state layer: paths, typed state
 dataclasses (heartbeat, active runs, `ActiveTournament`,

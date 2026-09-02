@@ -126,6 +126,7 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _telemetry_helpers,
     _terminate_worker,
     _weights_spec,
+    adapter_uses_integration,
     adapter_worker_spec,
     scrubbed_worker_env,
 )
@@ -425,7 +426,10 @@ async def _run_single(
         # I/O worth bounding). AUTO by default and generous enough that a
         # single ordinary run never waits; degrades OPEN on any
         # infrastructure failure, so it can never block a run.
-        permit = await acquire_worker_permit(config.host_worker_permits)
+        permit = await acquire_worker_permit(
+            config.host_worker_permits,
+            config.worker_permit_dir,
+        )
         spawn_started = time.monotonic()
         try:
             # --- 1. Per-run ephemeral checkout of the code snapshot,
@@ -491,6 +495,7 @@ async def _run_single(
                     pass
             if match_id:
                 harmonograf_metadata["zicato.match_id"] = match_id
+            adapter_spec = adapter_worker_spec(adapter)
             args_payload = {
                 "workspace_root": str(workspace_root),
                 "epoch_id": epoch_id,
@@ -498,7 +503,7 @@ async def _run_single(
                 "snapshot_root": str(ephemeral_snapshot),
                 "scratch_dir": str(scratch_dir),
                 "entry": entry_dict,
-                "adapter": adapter_worker_spec(adapter),
+                "adapter": adapter_spec,
                 "harness_role": _role_worker_spec(
                     "harness", models=_models, fallback_callable=config.harness_call_llm
                 ),
@@ -529,11 +534,11 @@ async def _run_single(
                 "harmonograf_metadata": harmonograf_metadata,
                 "weights": _weights_spec(weights),
                 # Process-pinned config overrides (CLI flags such as
-                # --harness-call-timeout-ms / --aux-call-timeout, pinned
+                # --aux-call-timeout, pinned
                 # via zicato.config.pin_overrides). The worker re-pins
                 # them at startup so a flag whose knob is consumed
-                # INSIDE the worker (the adapter's per-call harness
-                # timeout, the judge/emulator aux budget) crosses the
+                # INSIDE the worker (the judge/emulator auxiliary-call
+                # budget) crosses the
                 # process boundary without an environment variable.
                 "config_pins": _config_pins(),
                 # Board-reflection capture knobs (runtime-only, never
@@ -553,6 +558,7 @@ async def _run_single(
                 "log_stream_path": (
                     str(_lsp) if (_lsp := current_log_stream_path()) is not None else None
                 ),
+                "log_level": config.log_level,
             }
             args_path.write_text(json.dumps(args_payload), encoding="utf-8")
         except (ValueError, OSError) as exc:
@@ -584,26 +590,46 @@ async def _run_single(
         # worker pid alone. It also detaches the worker from the orchestrator's
         # controlling terminal so a Ctrl-C / SIGINT to the orchestrator's
         # terminal group is not broadcast straight into every in-flight worker.
-        # Compose the worker's environment. By default ``env=None`` inherits
-        # the orchestrator's full environment. When the operator opts into
-        # ``scrub_worker_env`` the worker instead gets a MINIMAL explicit env
+        # Compose the worker's environment. When the operator opts into
+        # ``scrub_worker_env`` the worker gets a MINIMAL explicit env
         # (process-essential keys + the api_key_env names the configured roles
         # need + any passthrough), so a mutated worker cannot read every
         # credential in the process env.
-        worker_env: dict[str, str] | None = None
-        if config.scrub_worker_env:
-            worker_env = scrubbed_worker_env(
-                models=_models,
-                extra_env_keys=tuple(config.worker_env_passthrough),
+        try:
+            worker_env: dict[str, str] | None = None
+            if config.scrub_worker_env:
+                goldfive_secret_names: tuple[str, ...] = ()
+                if weights.goldfive is not None and adapter_uses_integration(
+                    adapter_spec, "goldfive"
+                ):
+                    from zicato.integrations.goldfive import secret_env_names  # noqa: PLC0415
+
+                    goldfive_secret_names = secret_env_names(weights.goldfive)
+                worker_env = scrubbed_worker_env(
+                    models=_models,
+                    secret_env_keys=goldfive_secret_names,
+                    extra_env_keys=tuple(config.worker_env_passthrough),
+                )
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "zicato._tournament_worker",
+                str(args_path),
+                start_new_session=True,
+                env=worker_env,
             )
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "zicato._tournament_worker",
-            str(args_path),
-            start_new_session=True,
-            env=worker_env,
-        )
+        except (AttributeError, ImportError, OSError, TypeError, ValueError) as exc:
+            log.warning("run %s could not spawn its worker subprocess: %s", run_id, exc)
+            final_loss = _aborted_loss_profile(
+                run_id=run_id,
+                entry=entry,
+                generation_id=generation.id,
+                epoch_id=epoch_id,
+                runtime_ms=max(0, int((time.monotonic() - spawn_started) * 1000)),
+                match_id=match_id,
+                abort_cause="prepare_failed",
+            )
+            return final_loss
 
         # --- 4. Wait, bounded by budget + GRACE. ---
         killed_by_parent = False

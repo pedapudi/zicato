@@ -26,6 +26,11 @@ An **epoch** is the unit of evaluation contract. It owns:
   for the duration.
 - A frozen scoring configuration (`scoring.json`) — weights,
   tournament thresholds, tolerance bands.
+- A frozen evaluator identity — Zicato's explicit evaluator revision and any
+  enabled integration identity that changes evaluation behavior.
+- A frozen inner-harness identity — the validated adapter worker document,
+  adapter implementation source outside the mutable trees, and the declared
+  mutable-tree paths.
 - A frozen **proposer** — the proposing agent's identity, its tools,
   and the skill modules under the configured `proposers/<name>/` dir
   (or the built-in default proposer when none is configured). See
@@ -49,13 +54,20 @@ An operator starts a new epoch when any of the following hold:
 
 - The board changes (entries added, removed, or edited — including a
   change to the board's `disable_drift` set).
-- The proposer brief's `## Forbidden` list changes — the mutation
-  surface the proposer can act on is materially different.
+- The proposer brief changes semantically, including a change to its
+  `## Forbidden` mutation-point list.
 - The scoring weights change (e.g. the operator decides pass-rate
   matters more relative to drift, or retunes `per_judge_weights`).
 - The tournament structure changes (e.g. `gauntlet → swiss`, or a
   structure param like `swiss.rounds`) — see §9. Generations selected
   under different structures are not comparable.
+- The adapter worker document changes. Examples include selecting another
+  factory, changing its construction arguments or integrations, or changing an
+  ADK entry point.
+- Adapter implementation source outside the mutable trees changes. The source
+  inside the mutable trees remains generation content and does not cause an
+  epoch boundary.
+- The registered mutable-tree path set changes.
 - The **proposer** changes — a different proposer dir is registered, the
   proposer's custom `agent.py` (or declared identity / tools) is edited,
   or one of its `skills/*.md` modules is added, removed, or
@@ -75,16 +87,11 @@ hash.
 
 ### 1.2 What does NOT cause an epoch boundary
 
-- Proposer-brief text edits that do not change `## Forbidden`. The
-  proposer brief steers the proposer rather than binding the contract.
-  The proposer reads it fresh every round.
-- Stylistic edits to the inner harness's source that don't add or
-  remove mutation points.
+- Source edits inside a registered mutable tree. That source is generation
+  content, including its mutation markers, and is the material Zicato evolves.
 - An `auxiliary_call_llm` model swap. The model identity is
   configuration rather than contract, though an epoch boundary is a
   convenient moment to swap.
-- Adding a tag to existing entries. Tags are advisory; pattern
-  slicing changes, the entries themselves do not.
 
 The bias is toward NOT starting a new epoch — the cost of throwing
 away pattern history is significant, and most edits operators want to
@@ -99,7 +106,7 @@ directory.
 
 ```
 .zicato/
-  config.json                        # adapter entrypoint + mutable trees + contract paths
+  config.json                        # adapter registration + mutable trees + contract paths
   current_epoch                      # marker: id of the current epoch
   lineage.json                       # cross-epoch generation DAG
   epochs/
@@ -886,7 +893,7 @@ Contract-hash auto-epoching is the mechanism that makes that true.
 
 ### 10.1 What's in the contract
 
-The **evaluation contract** has five components, and no others:
+The **evaluation contract** has six semantic components:
 
 1. **The board** — test inputs, `expectations`, `judges`, and the
    board's `disable_drift` set (`board.jsonl`).
@@ -896,23 +903,26 @@ The **evaluation contract** has five components, and no others:
    tournament structure** (`scoring.json`; see §9 for the tournament
    block and [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) for the
    full data model).
-4. **The registered inner-harness IDENTITY** — the `--adk` entrypoint
-   string plus the sorted list of `--mutable-tree` paths.
-5. **The proposer** — the proposing agent's identity, its tools, and the
+4. **The Zicato evaluator implementation** — an explicit revision of
+   measurement and tournament-decision semantics.
+5. **The registered inner-harness identity** — the validated worker
+   reconstruction document, implementation source outside the mutable surface,
+   and the sorted mutable-tree paths.
+6. **The proposer** — the proposing agent's identity, its tools, and the
    skill modules under the configured `proposers/<name>/` dir (or the
    built-in default proposer when none is registered). See
    [PROPOSER.md](PROPOSER.md). Note the *proposer brief* (item 2) and the
-   *proposer* (item 5) are distinct contract inputs: the brief is
+   *proposer* (item 6) are distinct contract inputs: the brief is
    per-epoch operator steering text, the proposer is the agent (plus its
    skills) that consumes it.
 
 A change to any one of these means generations on either side are no
 longer directly comparable, so the epoch must roll.
 
-The inner harness's *source content* is **not** in the contract: that
-source is what zicato mutates within an epoch.
-Only the harness *identity* (which agent, which trees) is contractual;
-the bytes inside those trees are not.
+The inner harness's source content inside the registered mutable trees is not
+in the contract. That source is what Zicato mutates within an epoch. The
+contract instead records how a worker reconstructs the harness, the immutable
+adapter implementation that drives it, and which source trees may change.
 
 ### 10.2 Canonical contract paths
 
@@ -948,9 +958,10 @@ so spurious edits do not roll the epoch:
 |---|---|
 | board | `load_board()`, sort entries by id, serialize each to a sorted-key JSON dict (including its `expectations` and `judges`), join; the board's `disable_drift` set sorts into the same canonical form — as the sorted, de-duplicated **kind set**, so changing *which* kinds are disabled rolls the epoch while reordering them does not (an empty set canonicalizes to `false`, the historic byte-form, so a board that disables nothing never re-hashes). Semantic content only — reordering rows or reformatting the JSONL is a no-op. |
 | proposer brief | Read text, normalize line endings to `\n`, strip trailing whitespace per line, strip leading/trailing blank lines. CRLF churn and re-indentation are no-ops. |
-| scoring | Parse into a fully-defaulted `ScoringWeights` — **including the `tournament` structure block** (§9) — round every float to 6 decimal places, `json.dumps(sort_keys=True)`. Partial vs full documents and float-precision noise are no-ops; a structure or param change is NOT a no-op (it rolls the epoch). |
-| entrypoint | The string verbatim. |
-| mutable_trees | Sorted tuple of absolute path strings. Registration order is a no-op. |
+| scoring | Parse into a fully-defaulted `ScoringWeights` — **including the `tournament` structure block** (§9) — preserve every parsed runtime numeric value, then `json.dumps(sort_keys=True)`. Partial and full documents agree, and equivalent JSON spellings of the same number are no-ops. A distinct numeric value, structure, or parameter rolls the epoch. An enabled integration may add system-owned implementation identity before hashing. |
+| evaluator_revision | Serialize the explicit Zicato evaluator revision. Increment it only when measurement or tournament-decision semantics change. |
+| adapter | Remove `mutable_trees` from the validated worker reconstruction document, recursively normalize its JSON values, sort object keys and integration names, and add source hashes for adapter implementations outside the mutable trees. An ADK entry point is one field in its worker document. |
+| mutable_trees | Sorted tuple of normalized, never filesystem-resolved path strings. Registration order is a no-op. |
 | proposer | Resolve the proposer dir (or the builtin default) to a `ProposerSpec` and serialize sorted-key: `agent_id`, sorted `tools`, per-skill normalized-body hashes sorted by name, and the custom `agent.py` source hash. Each skill body is normalized in the same way as the proposer brief, so a whitespace-only skill edit is a no-op; a semantic skill edit (or adding / removing / renaming a skill, or editing `agent.py`) rolls the epoch. The builtin default canonicalizes to a stable form, so a workspace that never registers a proposer keeps a stable hash. |
 
 The canonical forms are concatenated and hashed. Missing files are
@@ -958,10 +969,11 @@ treated as the empty string for that component (so a board-less
 workspace still hashes deterministically) — a warning is logged.
 
 A whitespace-only proposer-brief edit, a whitespace-only skill edit, a
-reordered board, or float noise in `scoring.json` leaves the hash
-unchanged. A changed board input, a retuned `per_judge_weight`, an added
-custom judge, a different entrypoint, an added mutable tree, or a
-registered / edited proposer changes it.
+reordered board, or an equivalent numeric spelling in `scoring.json` leaves
+the hash unchanged. A changed board input, a retuned `per_judge_weight`, an
+evaluator revision bump, an added custom judge, a changed adapter worker
+document, an edit to adapter implementation source outside the mutable trees,
+an added mutable tree, or a registered or edited proposer changes it.
 
 ### 10.4 Roll-at-evolve-time semantics
 
@@ -982,7 +994,7 @@ invocation, before the round loop starts:
      `analysis.md`), opens a fresh one carrying the new contract, and
      runs against it. The roll prints a message naming which
      components changed. The label is the literal component names
-     (`board`, `brief`, `scoring`, `entrypoint`, `mutable_trees`,
+     (`board`, `brief`, `scoring`, `evaluator_revision`, `adapter`, `mutable_trees`,
      `proposer`), comma-joined. It falls back to a generic `contract` when
      the epoch stores no per-component breakdown to compare against:
      ```
@@ -990,9 +1002,13 @@ invocation, before the round loop starts:
      ```
      With `--no-auto-epoch`, it errors instead of rolling.
 
-The resolved epoch is pinned for every round of the invocation — the
-loop never re-rolls mid-flight. Passing `--epoch <id>` explicitly
-**skips auto-epoching entirely**: an explicit target always wins.
+The resolved epoch is pinned for every round of the invocation, so the loop
+never re-rolls mid-flight. Passing `--epoch <id>` disables auto-rolling. The
+workspace gate still verifies the selected epoch's recorded implementation
+identity and recomputes its contract hash from the frozen board, brief, scoring,
+adapter registration, mutable-tree declaration, and proposer. An unreadable or
+drifted frozen contract stops the run instead of silently comparing results
+under different rules.
 
 ### 10.5 Baselining a rolled epoch
 

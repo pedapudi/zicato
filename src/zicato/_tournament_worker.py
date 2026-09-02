@@ -60,6 +60,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -176,6 +177,15 @@ def _resolve_inner_model_from_role(spec: Any) -> Any:
     return built if not isinstance(built, str) else None
 
 
+def _goldfive_config_for_adapter(
+    weights: ScoringWeights, adapter_spec: dict[str, Any]
+) -> Mapping[str, Any] | None:
+    """Expose Goldfive settings only to an adapter that declares the capability."""
+    from zicato.tournament.worker_transport import adapter_uses_integration  # noqa: PLC0415
+
+    return weights.goldfive if adapter_uses_integration(adapter_spec, "goldfive") else None
+
+
 def _load_args(args_path: Path) -> dict[str, Any]:
     """Read and minimally validate the worker's JSON args file.
 
@@ -191,7 +201,8 @@ def _load_args(args_path: Path) -> dict[str, Any]:
           "adapter": {
             "kind": "adk",
             "entrypoint": "module.path:agent_symbol",
-            "mutable_trees": ["<abs path>", ...]
+            "mutable_trees": ["<abs path>", ...],
+            "integrations": ["goldfive"]
           },
           "harness_role":   {"dotted": "pkg.module:callable"} | {"models_role": {...}},
           "auxiliary_role": {"dotted": "pkg.module:callable"} | {"models_role": {...}},
@@ -693,7 +704,7 @@ async def _run(args: dict[str, Any]) -> None:
     from zicato.telemetry import reducer as reducer_mod  # noqa: PLC0415
 
     # Re-pin the orchestrator's process-pinned config overrides (CLI
-    # flags such as --harness-call-timeout-ms / --aux-call-timeout) in
+    # flags such as --aux-call-timeout) in
     # THIS fresh interpreter, before anything calls load_config(). The
     # pins travelled in the args file — the flag-to-config bridge across
     # the worker subprocess boundary; no environment variable involved.
@@ -890,6 +901,7 @@ async def _run(args: dict[str, Any]) -> None:
         persist_run_results=persist_run_results,
         persist_judge_io=persist_judge_io,
         judge_io_sink=judge_io_sink,
+        goldfive=_goldfive_config_for_adapter(weights, adapter_spec),
     )
 
     sinks, tracker = _build_sinks(
@@ -1180,6 +1192,7 @@ def _install_worker_log_stream_from_args(args: dict[str, Any]) -> None:
             epoch_id=epoch_id,
             generation_id=generation_id,
             run_id=run_id,
+            level=str(args.get("log_level") or "INFO"),
         )
     except Exception:  # noqa: BLE001 — logging setup never fails a run
         pass

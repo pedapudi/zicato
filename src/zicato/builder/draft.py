@@ -366,12 +366,12 @@ def _brief_canon(text: str) -> str:
 
 
 def _scoring_canon(weights: ScoringWeights) -> str:
-    """Float-rounded, key-sorted scoring form, matching the contract hash."""
+    """Fully defaulted, key-sorted scoring form matching the contract hash."""
     import json
 
-    from zicato.epoch.contract import round_floats, scoring_to_canon  # noqa: PLC0415
+    from zicato.epoch.contract import scoring_contract_to_canon  # noqa: PLC0415
 
-    return json.dumps(round_floats(scoring_to_canon(weights)), sort_keys=True)
+    return json.dumps(scoring_contract_to_canon(weights), sort_keys=True)
 
 
 #: Slot names are path/JSON-safe short slugs — same spirit as epoch ids.

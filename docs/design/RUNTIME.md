@@ -37,6 +37,14 @@ workspace.
 > process judges grade against the real tool-call ledger the run
 > produced rather than a narrated approximation of it, so a board judge
 > such as `file_findability` sees what the agent actually did.
+> When an adapter's worker spec declares the `goldfive` integration, the same
+> field-enumerating transport carries the contract's nested Goldfive settings.
+> Endpoint credential values are not serialized: `scoring.json` stores each
+> `api_key_env` name, the scrubbed worker retains only that named variable, and
+> the worker resolves its value while building the Goldfive runtime. Workers
+> for adapters without that declaration do not retain those names.
+> [GOLDFIVE-CONFIG.md](GOLDFIVE-CONFIG.md) specifies the settings and secret
+> boundary.
 
 The runtime layer is the production-readiness pass. The meta-loop
 described in [ARCHITECTURE.md](ARCHITECTURE.md) is correct against
@@ -1126,8 +1134,9 @@ The shipped limiter (`zicato.runtime.spawn_permit`) is a **host-wide
 permit** held for a worker's lifetime:
 
 * *N* slot files under a **workspace-external** directory
-  (`$ZICATO_WORKER_PERMIT_DIR`, else `$XDG_RUNTIME_DIR/zicato/...`,
-  else a per-uid path under the system temp dir) — external on
+  (`runtime.worker_permit_dir` when configured, else
+  `$XDG_RUNTIME_DIR/zicato/...`, else a per-uid path under the system temp
+  dir) — external on
   purpose, so the cap spans workspaces and orchestrators;
 * a permit is `fcntl.flock(LOCK_EX | LOCK_NB)` on the first free
   slot; when every slot is held, the acquirer polls with jitter on
@@ -1158,6 +1167,11 @@ part of the frozen evaluation contract, so changing it does not roll
 the epoch. `null`, the default, selects automatic sizing at `max(4, 2 × cores)`,
 generous enough that a single normal run never waits; `0` disables the
 cap entirely; and a value of 1 or more is an explicit ceiling.
+`runtime.worker_permit_dir` selects a nonstandard shared slot directory for
+containers or hosts whose standard runtime directory is unsuitable. The value
+must be an absolute path. A relative path would create different permit pools
+for orchestrators launched from different working directories and would not
+enforce a host-wide ceiling.
 
 The limiter is a throttle rather than a speed-up: it makes an
 over-subscribed host degrade into queueing rather than into swapping.

@@ -875,7 +875,8 @@ is the contract pre-flight and the noise-floor calibration.
 
 - ⚠️ **The persisted field must NEVER be a contract input, or every epoch rolls.**
   `contract_hash` is computed only in `new_epoch` from `ContractInputs`
-  (`board`, `brief`, `scoring`, `entrypoint`, `mutable_trees`, `proposer`) —
+  (`board`, `brief`, `scoring`, `evaluator_revision`, `adapter`,
+  `mutable_trees`, `proposer`) —
   your field is NOT among them. Add it as an *additive* config field written by
   `set_epoch_<field>`, and pin the hash-unchanged assertion. If your datum ever
   DOES belong in the hash, it is not an epoch-open measurement — it is a contract
@@ -1110,7 +1111,7 @@ golden under `tools/parity/golden/` (only after you have justified the update).
 
    | Red gate | Captures | A legitimate red means you changed… |
    |---|---|---|
-   | `CONTRACT-HASH` | the epoch contract hash (+ per-component hashes) | a contract component (board / brief / scoring / proposer / entrypoint) — the hash SHOULD move |
+   | `CONTRACT-HASH` | the epoch contract hash (+ per-component hashes) | a contract component (board / brief / scoring / evaluator revision / adapter / mutable trees / proposer) — the hash SHOULD move |
    | `CLI-HELP` | `zicato --help` + every subcommand `--help` | a command, flag, default, or help string |
    | `REINDEX-DUMP` | the SQLite index rebuilt from a fixture workspace | the index schema or an ingest projection |
    | `MOCK-GOLDEN…` | a deterministic no-live-LLM mock evolve, one gate per (structure, mode, round count) lane | the loop's decision path, event ordering, or scoring — the gate name says which configuration moved |

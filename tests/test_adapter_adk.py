@@ -42,13 +42,22 @@ from google.adk.agents import LlmAgent  # noqa: E402
 from zicato.adapters.adk import (  # noqa: E402
     ADKHarnessAdapter,
     ADKRunnableHarness,
-    _goldfive_runtime,
     _outcome_transcript,
     _split_entrypoint,
     rebind_tree_models_to_call_llm,
 )
 from zicato.adapters.base import HarnessAdapter, RunnableHarness  # noqa: E402
-from zicato.core import BoardEntry, RunResult, RuntimeConfig  # noqa: E402
+from zicato.core import (  # noqa: E402
+    BoardEntry,
+    RunResult,
+    RuntimeConfig,
+)
+from zicato.integrations.goldfive import (  # noqa: E402
+    build_runtime_config,
+)
+from zicato.integrations.goldfive import (  # noqa: E402
+    run_context as goldfive_run_context,
+)
 
 # ---------------------------------------------------------------------------
 # _split_entrypoint
@@ -323,6 +332,7 @@ def _runtime_config(tmp_path: Path) -> RuntimeConfig:
         workspace_root=tmp_path,
         harness_call_llm=harness_llm,
         auxiliary_call_llm=aux_llm,
+        goldfive={},
     )
 
 
@@ -402,6 +412,134 @@ async def test_run_single_turn_forwards_sinks_and_callable(
     # the harness_call_llm — NOT the auxiliary — is forwarded.
     assert seen["call_llm"] is config.harness_call_llm
     assert seen["call_llm"] is not config.auxiliary_call_llm
+
+
+@pytest.mark.asyncio
+async def test_run_single_turn_routes_and_closes_dedicated_goldfive_judge(
+    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A configured built-in judge endpoint is separate and caller-owned."""
+
+    import goldfive
+
+    generation_root, entrypoint = inner_harness
+    adapter = ADKHarnessAdapter(
+        entrypoint=entrypoint,
+        mutable_trees=[generation_root / "demo_inner"],
+    )
+    runnable = adapter.load(generation_root)
+
+    closed: list[tuple[Any, str]] = []
+    built_config: Any = None
+    run_kwargs: dict[str, Any] = {}
+
+    async def dedicated_call_llm(system: str, user: str, model: str) -> str:
+        return "dedicated-judge-reply"
+
+    def make_judge_call_llm(config: Any) -> tuple[Any, str]:
+        nonlocal built_config
+        built_config = config
+        return dedicated_call_llm, config.model
+
+    async def close_judge_call_llm(call_llm: Any, *, label: str) -> None:
+        closed.append((call_llm, label))
+
+    async def fake_goldfive_run(agent: Any, user_input: str, **kwargs: Any) -> _FakeOutcome:
+        run_kwargs.update(kwargs)
+        assert (
+            await kwargs["judge_call_llm"]("judge-system", "judge-user", "")
+            == "dedicated-judge-reply"
+        )
+        return _FakeOutcome({"t1": "reply-from-agent"})
+
+    monkeypatch.setattr(goldfive, "make_default_openai_call_llm", make_judge_call_llm)
+    monkeypatch.setattr(goldfive, "maybe_close_call_llm", close_judge_call_llm)
+    monkeypatch.setattr(goldfive, "run", fake_goldfive_run)
+    monkeypatch.setenv("BUILTIN_JUDGE_KEY", "worker-secret")
+
+    config = dataclasses.replace(
+        _runtime_config(tmp_path),
+        goldfive={
+            "judge": {
+                "base_url": "http://judge.example",
+                "model": "judge-model",
+                "api_key_env": "BUILTIN_JUDGE_KEY",
+                "timeout_ms": 22_000,
+            }
+        },
+    )
+    entry = BoardEntry(
+        id="entry-dedicated-judge",
+        kind="single_turn",
+        wall_clock_budget_seconds=10,
+        input="hello",
+        context={"judge_only": "true"},
+    )
+    entry.validate()
+
+    result = await runnable.run(entry, sinks=[], config=config)
+
+    assert result.final_output == "reply-from-agent"
+    assert run_kwargs["call_llm"] is config.harness_call_llm
+    assert callable(run_kwargs["judge_call_llm"])
+    assert run_kwargs["judge_model"] == "judge-model"
+    assert run_kwargs["judge_only"] is True
+    assert built_config.base_url == "http://judge.example"
+    assert built_config.model == "judge-model"
+    assert built_config.api_key == "worker-secret"
+    assert built_config.timeout_ms == 22_000
+    assert closed == [(dedicated_call_llm, "judge_call_llm")]
+
+
+@pytest.mark.asyncio
+async def test_dedicated_goldfive_judge_closes_when_run_fails(
+    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failed Goldfive run cannot leak its configured judge client."""
+
+    import goldfive
+
+    generation_root, entrypoint = inner_harness
+    runnable = ADKHarnessAdapter(
+        entrypoint=entrypoint,
+        mutable_trees=[generation_root / "demo_inner"],
+    ).load(generation_root)
+    closed: list[tuple[Any, str]] = []
+
+    async def dedicated_call_llm(system: str, user: str, model: str) -> str:
+        return "unused"
+
+    monkeypatch.setattr(
+        goldfive,
+        "make_default_openai_call_llm",
+        lambda config: (dedicated_call_llm, config.model),
+    )
+
+    async def close_judge_call_llm(call_llm: Any, *, label: str) -> None:
+        closed.append((call_llm, label))
+
+    monkeypatch.setattr(goldfive, "maybe_close_call_llm", close_judge_call_llm)
+
+    async def fail_run(agent: Any, user_input: str, **kwargs: Any) -> Any:
+        raise RuntimeError("configured judge test failure")
+
+    monkeypatch.setattr(goldfive, "run", fail_run)
+    config = dataclasses.replace(
+        _runtime_config(tmp_path),
+        goldfive={"judge": {"base_url": "http://judge.example"}},
+    )
+    entry = BoardEntry(
+        id="entry-failed-dedicated-judge",
+        kind="single_turn",
+        wall_clock_budget_seconds=10,
+        input="hello",
+    )
+    entry.validate()
+
+    result = await runnable.run(entry, sinks=[], config=config)
+
+    assert result.abort_reason == "harness_exception:RuntimeError"
+    assert closed == [(dedicated_call_llm, "judge_call_llm")]
 
 
 # ---------------------------------------------------------------------------
@@ -876,22 +1014,20 @@ def testentry_judge_only_reads_context() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_single_turn_judge_only_spreads_overrides_into_goldfive_run(
+async def test_run_single_turn_passes_public_judge_only_to_goldfive_run(
     inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """judge_only ON spreads the no-steering overrides into ``goldfive.run``.
+    """The board policy maps directly to Goldfive's public ``judge_only`` input.
 
     The wiring contract (fast, deterministic, no real goldfive stack):
 
-    * judge_only ON → the call carries ``planner`` + ``goal_deriver``
-      overrides (the no-steering set built by ``_judge_only_overrides``),
-      AND still carries ``judges=`` — judging stays armed.
-    * judge_only OFF → the call carries NEITHER override key (byte-
-      identical to the legacy steering path), and still carries
+    * judge_only ON → the call carries Goldfive's public ``judge_only=True``
+      and still carries ``judges=``.
+    * judge_only OFF → the call omits ``judge_only`` and still carries
       ``judges=``.
 
-    The empirical proof that this override set actually removes steering
-    while the native tree still executes lives in
+    The empirical proof that the public mode removes steering while the native
+    tree still executes lives in
     ``test_run_single_turn_judge_only_no_steering_empirical`` below.
     """
     generation_root, entrypoint = inner_harness
@@ -923,9 +1059,8 @@ async def test_run_single_turn_judge_only_spreads_overrides_into_goldfive_run(
     )
     entry_on.validate()
     await runnable.run(entry_on, sinks=[object()], config=config)
-    assert (
-        "planner" in seen and "goal_deriver" in seen and "steerer" in seen
-    ), "judge_only ON must spread the no-steering, no-refine overrides into goldfive.run"
+    assert seen["judge_only"] is True
+    assert "steerer" not in seen, "Goldfive owns the judge-only steering policy"
     assert "judges" in seen, "judges must stay armed in judge_only mode"
 
     # --- judge_only OFF (default) ---
@@ -937,9 +1072,7 @@ async def test_run_single_turn_judge_only_spreads_overrides_into_goldfive_run(
     )
     entry_off.validate()
     await runnable.run(entry_off, sinks=[object()], config=config)
-    assert (
-        "planner" not in seen and "goal_deriver" not in seen and "steerer" not in seen
-    ), "judge_only OFF must NOT pass any steering override — byte-identical to the legacy path"
+    assert "judge_only" not in seen and "steerer" not in seen
     assert "judges" in seen, "judges must stay armed on the default path too"
 
 
@@ -990,7 +1123,7 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
     as goldfive's own ``test_adk_wrap_passthrough`` does. Events are
     captured via goldfive's :class:`InMemorySink` (passed as the run's
     sink). The simplification vs a full multi-agent tree: a single-leaf
-    agent is enough to prove the override set yields
+    agent is enough to prove the public mode yields
     execution-without-steering — the discriminating signal is the LLM-call
     surface, not the agent's internal fan-out.
 
@@ -1002,12 +1135,12 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
           ``run_completed`` (NOT ``run_aborted``);
         * ZERO ``goldfive_llm_call_start`` events — no steering LLM call
           (goal derivation, planner refine) fired at all.
-    (b) judge_only OFF (the legacy steering path) →
+    (b) judge_only OFF (the default steering path) →
         * a steering LLM call DID fire (``goldfive_llm_call_start`` >= 1,
           the default ``LLMGoalDeriver``'s ``goal_derive`` call), proving
           the two paths differ and that ON genuinely removed steering.
 
-    The stub ``call_llm`` returns prose (not planner JSON) so the legacy
+    The stub ``call_llm`` returns prose (not planner JSON) so the default
     LLMPlanner cannot parse it and the OFF run aborts after its first
     steering call — that is fine: the contract is about the PRESENCE of a
     steering LLM call on the OFF path and its ABSENCE on the ON path.
@@ -1015,11 +1148,7 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
     import goldfive
     from goldfive import InMemorySink
 
-    from zicato.adapters.adk import (
-        _goldfive_runtime,
-        _judge_only_overrides,
-        entry_judge_only,
-    )
+    from zicato.adapters.adk import entry_judge_only
 
     agent = LlmAgent(name="greeter", instruction="Make a presentation.", model="fake-model")
 
@@ -1028,7 +1157,7 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
     ) -> str:
         return "Slide 1: Waffles. Slide 2: Done."
 
-    # --- judge_only ON: drive the real goldfive.run with the overrides. ---
+    # --- judge_only ON: drive the real public Goldfive mode. ---
     on_entry = _EntryStub(
         id="e-on",
         kind="single_turn",
@@ -1038,7 +1167,7 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
     )
     assert entry_judge_only(on_entry) is True
     sink_on = InMemorySink()
-    gf_runtime = _goldfive_runtime()
+    gf_runtime = build_runtime_config({})
     await goldfive.run(
         agent,
         on_entry.input,
@@ -1046,7 +1175,7 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
         call_llm=stub_call_llm,
         judges=[],  # judges stay armed in real usage; empty here keeps the stub deterministic
         runtime=gf_runtime,
-        **_judge_only_overrides(agent, stub_call_llm, gf_runtime),
+        judge_only=True,
     )
     kinds_on, llm_calls_on = _goldfive_event_kinds(sink_on)
 
@@ -1064,7 +1193,7 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
         "pin_resolved",
     }, f"judge_only ON: expected overlay execution events; kinds={sorted(kinds_on)}"
 
-    # --- judge_only OFF: the legacy steering path fires a steering call. ---
+    # --- judge_only OFF: the default steering path fires a steering call. ---
     sink_off = InMemorySink()
     await goldfive.run(
         agent,
@@ -1078,6 +1207,70 @@ async def test_run_single_turn_judge_only_no_steering_empirical(
         "judge_only OFF (steering default) must fire at least one steering LLM "
         f"call (goal derivation); saw {llm_calls_off}"
     )
+
+
+@pytest.mark.asyncio
+async def test_public_judge_only_preserves_critical_evidence_without_refining() -> None:
+    """A critical custom verdict remains scoreable and cannot trigger refinement."""
+    import goldfive
+
+    class _CriticalJudge:
+        name = "critical_schema_judge"
+
+        async def evaluate(self, context: Any) -> Any:
+            del context
+            return goldfive.JudgeVerdict(
+                drift_emitted=True,
+                drift_kind=goldfive.DriftKind.SCHEMA_VIOLATION,
+                severity=goldfive.DriftSeverity.CRITICAL,
+                detail="required output fields are missing",
+            )
+
+    class _RecordingPlanner(goldfive.StaticPlanner):
+        def __init__(self) -> None:
+            self.template = goldfive.Plan(
+                id="p1",
+                run_id="r1",
+                goal_ids=["g1"],
+                tasks=[goldfive.Task(id="t1", title="Produce the required object")],
+                edges=[],
+            )
+            super().__init__(self.template)
+            self.refine_calls = 0
+
+        async def refine(self, **kwargs: Any) -> Any:
+            del kwargs
+            self.refine_calls += 1
+            return None
+
+    planner = _RecordingPlanner()
+    sink = goldfive.InMemorySink()
+    wrapped_agent = goldfive.wrap(
+        LlmAgent(name="judge_target", instruction="Produce an object.", model="fake-model"),
+        judge_only=True,
+        planner=planner,
+        judges=[_CriticalJudge()],
+        sinks=[sink],
+        runtime=build_runtime_config({}),
+    )
+    runner = wrapped_agent.runner
+    runner.steerer.bind(sinks=[sink], planner=planner)
+    session = goldfive.Session(
+        run_id="r1",
+        goals=[goldfive.Goal(id="g1", summary="produce the required object")],
+        plan=planner.template,
+        current_task_id="t1",
+    )
+    await runner.steerer.evaluate_judges(
+        goldfive.JudgeContext(plan=session.plan, session_state=session),
+        session=session,
+        run_id="r1",
+    )
+
+    kinds, steering_calls = _goldfive_event_kinds(sink)
+    assert {"drift_detected", "judgement_emitted"} <= kinds
+    assert steering_calls == 0
+    assert planner.refine_calls == 0
 
 
 @pytest.mark.asyncio
@@ -1442,6 +1635,7 @@ async def test_run_multi_turn_emulated_calls_goldfive_run_per_turn(
         workspace_root=tmp_path,
         harness_call_llm=harness_llm,
         auxiliary_call_llm=aux_llm,
+        goldfive={},
     )
 
     entry = BoardEntry(
@@ -1478,60 +1672,73 @@ async def test_run_multi_turn_emulated_calls_goldfive_run_per_turn(
 
 
 # ---------------------------------------------------------------------------
-# A2: per-call LLM timeout — the adapter raises goldfive's AgentConfig
-# call_timeout_ms above its 120s default so a real reasoning model under
-# concurrency does not get its healthy LLM calls aborted.
+# Goldfive runtime-document conversion
 # ---------------------------------------------------------------------------
 
 
-def test_goldfive_runtime_raises_call_timeout_above_goldfive_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """``_goldfive_runtime`` sets ``agent.call_timeout_ms`` from zicato config.
+def test_goldfive_runtime_preserves_zicato_call_timeout_default() -> None:
+    """An empty document uses Zicato's 30-minute call ceiling.
 
     goldfive's :class:`~goldfive.config.AgentConfig` defaults
-    ``call_timeout_ms`` to 120 000 ms. zicato's
-    :attr:`RuntimeTuningConfig.harness_call_timeout_ms` defaults higher
-    (1 800 000 ms) so a real reasoning model's long LLM call is not
-    aborted; ``_goldfive_runtime`` must thread that value onto the
-    goldfive runtime config it builds.
+    ``call_timeout_ms`` to 120 000 ms. Zicato's explicit Goldfive contract
+    preserves its higher 1 800 000 ms default for reasoning-model latency.
     """
-    monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
-    runtime = _goldfive_runtime()
+    runtime = build_runtime_config({})
     assert runtime.agent.call_timeout_ms == 1_800_000
     assert runtime.agent.call_timeout_ms > 120_000
 
 
-def test_goldfive_runtime_honours_pinned_flag_value(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A pinned ``--harness-call-timeout-ms`` value tunes the per-call budget.
-
-    The value is pinned exactly as the evolve CLI pins it (and as the
-    worker re-pins it from its args file); the deleted
-    ``ZICATO_HARNESS_CALL_TIMEOUT_MS`` env var is set too, to prove it
-    is ignored.
-    """
-    from zicato.config import pin_overrides
-
-    monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
-    monkeypatch.setenv("ZICATO_HARNESS_CALL_TIMEOUT_MS", "123000")  # ignored
-    pin_overrides({"runtime": {"harness_call_timeout_ms": 456000}})
-    runtime = _goldfive_runtime()
+def test_goldfive_runtime_uses_explicit_contract_call_timeout() -> None:
+    """The frozen Goldfive block controls the inner-agent call ceiling."""
+    config = {"agent": {"max_output_tokens": 4096, "call_timeout_ms": 456_000}}
+    runtime = build_runtime_config(config)
     assert runtime.agent.call_timeout_ms == 456000
+    assert runtime.agent.max_output_tokens == 4096
 
 
-def test_goldfive_runtime_defers_to_explicit_goldfive_env(
+def test_explicit_goldfive_timeout_wins_over_ambient_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An explicit ``GOLDFIVE_AGENT_CALL_TIMEOUT_MS`` is not overridden."""
-    from zicato.config import pin_overrides
-
+    """An ambient Goldfive timeout variable cannot alter the contract."""
     monkeypatch.setenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", "999000")
-    pin_overrides({"runtime": {"harness_call_timeout_ms": 111000}})
-    runtime = _goldfive_runtime()
-    # goldfive's own env value wins; zicato does not override it.
-    assert runtime.agent.call_timeout_ms == 999000
+    runtime = build_runtime_config({"agent": {"call_timeout_ms": 111_000}})
+    assert runtime.agent.call_timeout_ms == 111_000
+
+
+@pytest.mark.asyncio
+async def test_goldfive_judge_model_can_override_the_shared_callable(tmp_path: Path) -> None:
+    """A model-only judge setting needs no dedicated endpoint client."""
+
+    config = dataclasses.replace(
+        _runtime_config(tmp_path),
+        goldfive={"judge": {"model": "shared-route-judge"}},
+    )
+    async with goldfive_run_context(config.goldfive, config.harness_call_llm, judge_only=False) as (
+        _runtime,
+        kwargs,
+    ):
+        assert kwargs == {
+            "call_llm": config.harness_call_llm,
+            "judge_model": "shared-route-judge",
+        }
+
+
+@pytest.mark.asyncio
+async def test_goldfive_judge_endpoint_builder_failure_is_not_a_shared_route_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit endpoint must fail loudly if Goldfive cannot construct it."""
+
+    import goldfive
+
+    config = dataclasses.replace(
+        _runtime_config(tmp_path),
+        goldfive={"judge": {"base_url": "http://judge.example"}},
+    )
+    monkeypatch.setattr(goldfive, "make_default_openai_call_llm", lambda config: None)
+    with pytest.raises(RuntimeError, match="could not construct.*judge endpoint"):
+        async with goldfive_run_context(config.goldfive, config.harness_call_llm, judge_only=False):
+            pass
 
 
 @pytest.mark.asyncio
@@ -1539,7 +1746,6 @@ async def test_run_single_turn_forwards_runtime_to_goldfive_run(
     inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """``goldfive.run`` receives a ``runtime`` carrying the raised timeout."""
-    monkeypatch.delenv("GOLDFIVE_AGENT_CALL_TIMEOUT_MS", raising=False)
     generation_root, entrypoint = inner_harness
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
@@ -1571,182 +1777,6 @@ async def test_run_single_turn_forwards_runtime_to_goldfive_run(
     runtime = seen["runtime"]
     assert runtime is not None
     assert runtime.agent.call_timeout_ms == 1_800_000
-
-
-# ---------------------------------------------------------------------------
-# Judge-only steerer: observe + judge, ZERO refine attempts
-# ---------------------------------------------------------------------------
-
-
-def _drift_detected_and_judgement_counts(sink: Any) -> tuple[int, int, int]:
-    """Return (drift_detected, judgement_emitted, refine_attempted) counts.
-
-    Normalises goldfive's :class:`InMemorySink` events (protobuf messages
-    or plain dicts) the same way :func:`_goldfive_event_kinds` does, then
-    counts the three event kinds the judge-only no-refine contract turns
-    on: a custom-judge verdict must still emit ``drift_detected`` +
-    ``judgement_emitted`` (the scalar signal zicato's reducer reads) while
-    firing ZERO ``refine_attempted`` (the abort-spiral trigger).
-    """
-    from google.protobuf.json_format import MessageToDict  # noqa: PLC0415
-
-    drift_detected = 0
-    judgement_emitted = 0
-    refine_attempted = 0
-    for ev in sink.events:
-        if isinstance(ev, dict):
-            kind = str(ev.get("kind", ""))
-            if kind == "drift_detected":
-                drift_detected += 1
-            elif kind == "judgement_emitted":
-                judgement_emitted += 1
-            elif kind == "refine_attempted":
-                refine_attempted += 1
-            continue
-        d = MessageToDict(ev, preserving_proto_field_name=True)
-        if d.get("drift_detected") is not None:
-            drift_detected += 1
-        if d.get("judgement_emitted") is not None:
-            judgement_emitted += 1
-        if d.get("refine_attempted") is not None:
-            refine_attempted += 1
-    return drift_detected, judgement_emitted, refine_attempted
-
-
-class _RefineRecordingPlanner:
-    """A planner whose ``refine`` records that it was invoked at all.
-
-    The discriminating signal for the judge-only contract is whether
-    ``refine`` is reached. A control :class:`DefaultSteerer` routes a
-    CRITICAL custom drift into the refine ladder and calls this; the
-    judge-only steerer must NOT.
-    """
-
-    def __init__(self) -> None:
-        self.refine_calls = 0
-
-    async def generate(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
-        return None
-
-    async def refine(self, *args: Any, **kwargs: Any) -> Any:
-        self.refine_calls += 1
-        return None
-
-    async def handle_turn(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
-        return None
-
-
-class _CriticalFabricationJudge:
-    """Stub of the board's CRITICAL ``no_fabricated_numbers`` judge.
-
-    Emits a drift-flavoured CRITICAL verdict every time it is evaluated —
-    exactly the shape that, on the live emulated path, was promoted to a
-    ``custom`` drift, escalated through the refine ladder, and spun the
-    run to the wall-clock budget.
-    """
-
-    name = "no_fabricated_numbers"
-
-    async def evaluate(self, ctx: Any) -> Any:
-        from goldfive.judges import JudgeVerdict  # noqa: PLC0415
-        from goldfive.types import DriftKind, DriftSeverity  # noqa: PLC0415
-
-        return JudgeVerdict(
-            drift_emitted=True,
-            drift_kind=DriftKind.CUSTOM,
-            severity=DriftSeverity.CRITICAL,
-            detail="The agent fabricated specific metric values it was not given.",
-        )
-
-
-def _judge_only_test_session() -> Any:
-    """Build a minimal bound-ready :class:`Session` carrying a live task.
-
-    A non-empty task is required so the CRITICAL drift has a concrete
-    target for the control steerer's ladder to refine against.
-    """
-    from goldfive.types import Goal, Plan, Session, Task  # noqa: PLC0415
-
-    task = Task(id="t1", title="Draft the Q3 metrics deck", description="draft")
-    goal = Goal(id="g1", summary="produce a Q3 metrics deck")
-    plan = Plan(
-        id="p1",
-        run_id="r1",
-        goal_ids=("g1",),
-        tasks=(task,),
-        edges=(),
-        summary="one-task plan",
-    )
-    session = Session(run_id="r1", goals=[goal], plan=plan, current_task_id="t1")
-    return session
-
-
-@pytest.mark.asyncio
-async def test_judge_only_steerer_emits_drift_but_never_refines() -> None:
-    """Judge-only: a CRITICAL custom-judge verdict scores WITHOUT refining.
-
-    Drives ``evaluate_judges`` directly on the judge-only steerer with the
-    stub CRITICAL ``no_fabricated_numbers`` judge. The contract:
-
-    * ``drift_detected`` IS emitted — the ``custom``-kind drift zicato's
-      reducer attributes to the judge by ``judge_name`` for the scalar;
-    * ``judgement_emitted`` IS emitted — the paired judgement envelope;
-    * ``refine_attempted`` is NEVER emitted AND the bound planner's
-      ``refine`` is NEVER called — zero refine attempts, so no
-      ``HUMAN_INTERVENTION_REQUIRED`` escalation and no wall-clock spin.
-
-    The control half proves the assertion is load-bearing: a plain
-    :class:`DefaultSteerer` with the SAME judge + planner DOES reach
-    ``refine`` (the live behaviour this fix removes).
-    """
-    from goldfive import InMemorySink
-    from goldfive.judges.base import JudgeContext
-    from goldfive.steerer import DefaultSteerer
-
-    from zicato.adapters.adk import _build_judge_only_steerer
-
-    judge = _CriticalFabricationJudge()
-
-    # --- judge-only steerer: observe + judge, NO refine ---
-    jo_sink = InMemorySink()
-    jo_steerer = _build_judge_only_steerer(call_llm=None, runtime=_goldfive_runtime())
-    jo_planner = _RefineRecordingPlanner()
-    jo_steerer.bind(sinks=[jo_sink], planner=jo_planner)
-    jo_steerer.set_judges([judge])
-    jo_session = _judge_only_test_session()
-    jo_ctx = JudgeContext(
-        plan=jo_session.plan,
-        session_state=jo_session,
-        current_task_id="t1",
-    )
-    await jo_steerer.evaluate_judges(jo_ctx, session=jo_session, run_id="r1")
-
-    jo_drift, jo_judgement, jo_refine = _drift_detected_and_judgement_counts(jo_sink)
-    assert jo_drift >= 1, "judge-only must still emit drift_detected (the scalar signal)"
-    assert jo_judgement >= 1, "judge-only must still emit judgement_emitted"
-    assert jo_refine == 0, f"judge-only must fire ZERO refine_attempted; saw {jo_refine}"
-    assert (
-        jo_planner.refine_calls == 0
-    ), f"judge-only must NEVER call planner.refine; called {jo_planner.refine_calls}x"
-
-    # --- control: a plain DefaultSteerer DOES reach refine on the same drift ---
-    ctrl_sink = InMemorySink()
-    ctrl_steerer = DefaultSteerer()
-    ctrl_planner = _RefineRecordingPlanner()
-    ctrl_steerer.bind(sinks=[ctrl_sink], planner=ctrl_planner)
-    ctrl_steerer.set_judges([judge])
-    ctrl_session = _judge_only_test_session()
-    ctrl_ctx = JudgeContext(
-        plan=ctrl_session.plan,
-        session_state=ctrl_session,
-        current_task_id="t1",
-    )
-    await ctrl_steerer.evaluate_judges(ctrl_ctx, session=ctrl_session, run_id="r1")
-
-    assert ctrl_planner.refine_calls >= 1, (
-        "control DefaultSteerer must reach planner.refine on a CRITICAL drift "
-        "(proves the judge-only assertion bites)"
-    )
 
 
 # ---------------------------------------------------------------------------

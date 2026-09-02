@@ -237,11 +237,21 @@ def make_runtime_config(
     # orchestrators, so two concurrent evolve runs cannot over-subscribe the
     # box. A runtime tuning knob only — never contract-hashed.
     host_worker_permits, _permits_source = resolve_host_worker_permits(runtime_dict)
+    permit_dir_raw = runtime_dict.get("worker_permit_dir")
+    if permit_dir_raw is None:
+        worker_permit_dir = None
+    elif not isinstance(permit_dir_raw, str) or not permit_dir_raw:
+        raise ValueError("runtime.worker_permit_dir must be a non-empty absolute path")
+    else:
+        worker_permit_dir = Path(permit_dir_raw).expanduser()
+        if not worker_permit_dir.is_absolute():
+            raise ValueError("runtime.worker_permit_dir must be an absolute path")
+    log_level = str(runtime_dict.get("log_level", "INFO")).upper()
 
     # Worker env-scrub: opt-in containment read from the same ``runtime``
-    # block. Absent ⇒ off (full env inheritance — the default behavior, byte-for-
-    # byte unchanged). ``worker_env_passthrough`` is an optional list of extra
-    # env-var names a scrubbed worker should still receive.
+    # block. Absent ⇒ off (full environment inheritance).
+    # ``worker_env_passthrough`` is an optional list of extra env-var names a
+    # scrubbed worker should still receive.
     scrub_worker_env = bool(runtime_dict.get("scrub_worker_env", False))
     passthrough_raw = runtime_dict.get("worker_env_passthrough") or ()
     worker_env_passthrough = tuple(str(name) for name in passthrough_raw)
@@ -370,6 +380,8 @@ def make_runtime_config(
         persist_run_results=persist_run_results,
         persist_judge_io=persist_judge_io,
         host_worker_permits=host_worker_permits,
+        worker_permit_dir=worker_permit_dir,
+        log_level=log_level,
     )
 
 
