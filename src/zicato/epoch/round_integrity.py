@@ -274,7 +274,7 @@ HARD_INFRA_MARKERS: frozenset[str] = frozenset(
 #:   mutation ids (``proposer/brief.py::enforce_forbidden``).
 #: * ``"patches failed post-apply validation: ..."`` — embeds validator
 #:   findings over the CHILD AGENT'S OWN SOURCE (``proposer/proposer.py``,
-#:   ``proposer/adk_agent.py``).
+#:   ``proposer/foe_agent.py``).
 #:
 #: A challenger that breaks a file named ``auth.py``, a mutation point called
 #: ``api_key_header``, or an enum domain listing ``"service unavailable"``

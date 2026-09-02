@@ -35,9 +35,8 @@ is scoped to one evaluation contract, and how it reaches the prompt.
 
 ## 1. Why the proposer needs settled history
 
-The proposer call (`zicato.proposer.proposer.propose_experiment`)
-assembles its user prompt from several channels (see
-`zicato.proposer.prompts.render_user_prompt`). Four of them describe the
+The proposal episode's task is assembled from several channels (see
+`zicato.proposer.foe_request.render_evidence`). Four of them describe the
 round's present state:
 
 - `current_loss_summary` — a one-line digest of the *current champion's*
@@ -151,8 +150,8 @@ but flagged as in-flight.
 Experiment memory changes **candidate generation** only — the proposer
 step (ARCHITECTURE.md §4.7), upstream of the applier, the tournament,
 and the gate. It is **orthogonal to tournament structure**: the digest
-is assembled the same way and threaded into the same `propose_experiment`
-call whether the round is a gauntlet duel, a Swiss round, a racing
+is assembled the same way and threaded into the same proposal episode
+whether the round is a gauntlet duel, a Swiss round, a racing
 ladder, or an elimination bracket. Every structure proposes challengers;
 every structure benefits identically. The gate, the scalar, and the
 promotion rules are untouched.
@@ -292,9 +291,9 @@ transferable.
 ### 3.5 Where it lands in the prompt, and the rendered shape
 
 The digest reaches the proposer as a `## What's already been tried`
-section of the user prompt, alongside `## Recent telemetry insights`,
+section of the episode's task, alongside `## Recent telemetry insights`,
 `## Current loss summary`, and `## Patterns observed` (see
-`render_user_prompt`). `render_prior_experiments_block` in
+`render_evidence`). `render_prior_experiments_block` in
 `zicato.proposer.prompts` renders it at one line per experiment, to keep
 the prompt small:
 
@@ -431,39 +430,34 @@ epoch-tagged block after the same-epoch blocks.
   Δscalar. The `restrict` flag carries the proposer-visibility discipline
   of [`OVERFITTING.md`](OVERFITTING.md) §11, so the block obeys the same
   leakage restriction as the pattern block.
-- `render_user_prompt` takes a
-  `prior_experiments: Iterable[PriorExperiment] = ()` keyword. When it is
-  non-empty the renderer prepends the `## What's already been tried`
-  section; when it is empty the section is omitted and the prompt is
-  byte-identical, mirroring the `insights`-block conditional. In the
-  assembled prompt the section sits immediately above the core
-  loss/pattern/mutation body, below the round's aggregate signals
-  (`## Recent telemetry insights` and `## Failure-mode profile`) and below
-  the genealogy and prediction-calibration channels when those are
-  present. Settled history therefore reads as the last framing the
-  proposer sees before the current-state body.
-- `render_prior_experiments_block` is listed in the module's `__all__`,
-  and the `render_user_prompt` docstring documents the keyword.
-- `SYSTEM_PROMPT_TEMPLATE` is untouched: experiment memory is advisory
-  user-prompt context and never part of the hard schema.
+- `ProposalEvidence` carries a
+  `prior_experiments: tuple[PriorExperiment, ...] = ()` field. When it is
+  non-empty `render_evidence` prepends the `## What's already been tried`
+  section; when it is empty the section is omitted, mirroring the
+  `insights`-block conditional. In the assembled task the section sits
+  immediately above the core loss/pattern/mutation body, below the round's
+  aggregate signals (`## Recent telemetry insights` and
+  `## Failure-mode profile`) and below the genealogy and
+  prediction-calibration channels when those are present. Settled history
+  therefore reads as the last framing the proposer sees before the
+  current-state body.
+- `render_prior_experiments_block` is listed in the prompts module's
+  `__all__`.
+- The episode's instructions are untouched: experiment memory is advisory
+  task context and never part of the hard schema — which also means it
+  never enters the proposer's contract fingerprint.
 
-### 5.4 Proposer wiring — `zicato/proposer/proposer.py`
+### 5.4 Proposer wiring — `zicato/proposer/foe_agent.py`
 
-- `propose_experiment` takes a keyword-only
-  `prior_experiments: Iterable[PriorExperiment] = ()` — the settled
+- `ProposerContext` carries
+  `prior_experiments: tuple[PriorExperiment, ...] = ()` — the settled
   digest, assembled by the caller. Passing it explicitly, rather than
-  reading the index inside the proposer, keeps the proposer's only
-  filesystem dependency its existing lazy analyzer import, and lets the
-  caller inject the round's in-flight siblings (§2.2) into the same list.
-- The `workspace_root` gate is not reused here. The caller performs the
-  index read and passes the typed list, so the proposer stays a pure
-  prompt-assembler over its inputs. The analyzer-insights surface differs:
-  the proposer reads that one itself through `workspace_root`. Experiment
-  memory is assembled caller-side because only the caller knows the
-  sibling entries.
-- `prior_experiments` is threaded into the `render_user_prompt(...)` call
-  inside the retry loop. It is loop-invariant, so every attempt renders it
-  unchanged.
+  reading the index inside the proposer, keeps the proposer free of that
+  filesystem dependency and lets the caller inject the round's in-flight
+  siblings (§2.2) into the same list.
+- `evidence_from_context` projects the field onto `ProposalEvidence`
+  rather than re-deriving it, so what the orchestrator assembled is what
+  the episode is shown and the projection cannot widen it.
 
 ### 5.5 Loading the digest and threading it through the field
 
@@ -484,7 +478,7 @@ epoch-tagged block after the same-epoch blocks.
   appended to `siblings`. A challenger whose proposer failed contributes
   no sibling entry, because there is no hypothesis to share.
   `_propose_and_apply_challenger` takes a `prior_experiments` keyword and
-  threads it into its inner `propose_experiment(...)` call.
+  threads it onto the `ProposerContext` its episode runs from.
 - **The standalone propose command** (`zicato/cli/commands/propose.py`)
   loads the digest the same way, so `zicato proposer propose` sees the
   section the loop sees.
@@ -501,24 +495,21 @@ epoch-tagged block after the same-epoch blocks.
   cases: with the knob off the result is byte-identical, and with it on the
   flagged entries are appended and never displace same-epoch entries.
 - **`tests/test_proposer_prior_experiments_block.py`** — the renderer.
-  Empty input returns `""` and the section is omitted from
-  `render_user_prompt`; the promoted, rejected, and in-flight groups render
-  as in §3.5; `same_contract=False` entries render without a Δscalar and in
+  Empty input returns `""` and the section is omitted from the rendered
+  evidence; the promoted, rejected, and in-flight groups render as in
+  §3.5; `same_contract=False` entries render without a Δscalar and in
   their own separated block; the section lands between the telemetry
   insights and the loss summary.
-- **`tests/test_proposer_prior_experiments.py`** — the end-to-end prompt. A
-  stub auxiliary LLM captures the user prompt and the tests assert the
-  block appears when `prior_experiments` is non-empty and is absent when it
-  is empty.
-- **`tests/test_orchestrator_prior_experiments.py`** — the field loop.
-  Siblings accumulate, so challenger k's prompt contains the in-flight core
-  ideas of challengers 0..k-1; a failed challenger contributes no sibling
-  line.
+- **`tests/test_orchestrator_prior_experiments.py`** — the field loop, read
+  end to end off the workspace's durable proposer-input capture. Siblings
+  accumulate, so challenger k's task contains the in-flight core ideas of
+  challengers 0..k-1; a challenger whose episode produced nothing
+  contributes no sibling line.
 
 ### 5.7 What experiment memory does not touch
 
 The index schema (`index/schema.py` — `experiments` already carries every
-column), `index/ingest.py`, the system prompt, the scalar and the scoring,
+column), `index/ingest.py`, the episode's instructions, the scalar and the scoring,
 the promote gate, the tournament structures, the dashboard, and
 `journal.md` rendering are all unchanged. The contract-hash and
 auto-epoching machinery is read-only here: the reader scopes by

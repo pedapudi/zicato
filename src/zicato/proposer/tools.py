@@ -1,21 +1,21 @@
-"""Read-only proposer tool registry for custom ADK proposer agents.
+"""The read-only questions a proposer may ask about a round.
 
-A custom proposer (``proposers/<name>/agent.py``) is a real ADK
-``LlmAgent`` that may call tools while it reasons about the next
-experiment. This module ships the tools it may call. They are plain
-module-level functions so a custom agent can simply::
-
-    from zicato.proposer.tools import DEFAULT_PROPOSER_TOOLS
-    agent = LlmAgent(name="my_proposer", instruction="...", tools=list(DEFAULT_PROPOSER_TOOLS))
-
-and ADK wraps each as a ``FunctionTool`` automatically.
+Each is a plain module-level function over the round's bound context. Two
+of them are served to a proposal episode as host tools —
+``mutation_usage``, so an edit can be grounded in how a value is used, and
+``validate_patches``, the episode's completion rule — and the rest are
+this package's own readers, used by the CLI and available to an operator's
+own :class:`~zicato.proposer.external.ExternalProposerAgent`. What a Foe
+episode may call is a narrower, closed list, declared and asserted by name
+as :data:`~zicato.proposer.foe_request.SANCTIONED_TOOLS`; Foe's built-in
+``read`` and ``grep`` cover the snapshot reads directly.
 
 Why a context var
 -----------------
 A tool function cannot carry the per-round runtime context as a bound
-argument, because the custom agent is constructed ONCE at import time —
-long before any round runs — and reused across every challenger. The
-tools therefore read their context from a module-level
+argument, because the implementations are module-level and reused across
+every challenger. The tools therefore read their context from a
+module-level
 :class:`contextvars.ContextVar`. That plumbing lives in
 :mod:`zicato.proposer.tool_context` (see its docstring for the full
 rationale, including why it is a separate module) and is re-exported
@@ -531,11 +531,12 @@ def mutation_usage(mutation_id: str) -> str:
     return "\n\n".join(sections)
 
 
-#: The full proposer tool set a custom proposer agent may opt into at once.
-#: A custom ``agent.py`` does ``tools=list(DEFAULT_PROPOSER_TOOLS)`` to
-#: expose every tool to its ``LlmAgent``. This tuple IS the sanctioned
-#: surface: adding to it widens what every proposer can do, so it is pinned
-#: by name in ``tests/test_proposer_tools.py`` rather than counted.
+#: Every read-only question this package can answer about a round, as one
+#: tuple. It is the sanctioned surface an implementation may draw on:
+#: adding to it widens what a proposer could be given, so it is pinned by
+#: name in ``tests/test_proposer_tools.py`` rather than counted. What a Foe
+#: episode is actually served is the narrower
+#: :data:`~zicato.proposer.foe_request.SANCTIONED_TOOLS`.
 #:
 #: Three groups, in order:
 #:

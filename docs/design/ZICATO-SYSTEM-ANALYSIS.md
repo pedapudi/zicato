@@ -518,7 +518,7 @@ src/zicato/proposer/agent.py:101-107
     restrict_visibility: bool = False
 ```
 
-The same pattern scales up: `propose_experiment` (`src/zicato/proposer/proposer.py:85-247`) is ~160 lines of function signature and per-parameter docstring wrapping a ~180-line body, because each of its many keyword inputs (`restrict_visibility`, `failure_profile`, `prior_experiments`, `skills`, `meta_loop_emitter`, …) documents its default-is-a-no-op contract inline. Reading a single function tells you the whole contract without cross-referencing the design docs.
+The same pattern scales up: `ProposerContext` (`src/zicato/proposer/agent.py`) is a few dozen fields under a few hundred lines of per-field docstring, because each of its optional inputs (`restrict_visibility`, `failure_profile`, `prior_experiments`, `genealogy`, `meta_loop_emitter`, …) documents its default-is-a-no-op contract inline. Reading a single dataclass tells you the whole contract without cross-referencing the design docs.
 
 **2. Additive, byte-identical-by-default contract discipline.** Almost every capability lands as an opt-in that is provably a no-op at its default, and the code both *says so* in a comment and enforces it structurally — often by not even interposing an object. The best-of-N proposer wrapper is the archetype: at the default `best_of_n <= 1` it returns the inner agent unchanged, so a contract that never opts in behaves byte-for-byte the way it does with the feature absent:
 
@@ -545,7 +545,7 @@ The same idiom recurs across the scorer (the `diff_complexity` term is appended 
 
 **3. Defense in depth means layered, redundant checks — each spelled out.** A self-editing loop cannot trust any single validator, so the same fact is verified at multiple layers, and each layer is written out explicitly. Parsing the proposer's output is itself a *two-pass* validation (a JSON-Schema shape pass plus a local cross-check pass the schema cannot express — `src/zicato/proposer/structured.py:1-27`); the applier pre-validates the whole batch and then re-parses every touched file (Section 2); and the Rust supervisor independently re-derives the promotion gate and re-hashes each child snapshot against its parent (Section 5). None of these layers is individually large, but they are all present, all commented with what could go wrong without them, and they compound.
 
-**4. Two parallel proposer paths, pluggable seams, and frozen contract types.** The proposer ships *two* full implementations (a single-shot text-shim engine and a native tool-using ADK agent) behind one `ProposerAgent` protocol, with every `google.adk` import kept lazy so the default path never forces the optional extra (`src/zicato/proposer/adk_agent.py:1-51`). The three pluggable seams (`CallLLM`, `HarnessAdapter`, `StorageBackend` — Section 1) each add a protocol or abstract base class plus at least one concrete implementation. The `src/zicato/core/` frozen dataclasses that every subsystem imports as its contract are exhaustively field-documented, because they are the API surface between subsystems. Zicato is verbose the way a specification with executable tests is verbose: the prose *is* the specification, co-located with the code it governs, which is what a system that rewrites code needs in order to stay auditable.
+**4. Pluggable seams and frozen contract types.** The proposer is one implementation behind a one-method `ProposerAgent` protocol, with the seam retained so an operator can bind a class of their own. The three pluggable seams (`CallLLM`, `HarnessAdapter`, `StorageBackend` — Section 1) each add a protocol or abstract base class plus at least one concrete implementation. The `src/zicato/core/` frozen dataclasses that every subsystem imports as its contract are exhaustively field-documented, because they are the API surface between subsystems. Zicato is verbose the way a specification with executable tests is verbose: the prose *is* the specification, co-located with the code it governs, which is what a system that rewrites code needs in order to stay auditable.
 
 ---
 
@@ -826,68 +826,36 @@ This is corruption-free by construction: a generation is appended to `lineage.js
 
 The proposer is the LLM-authoring stage of the loop — the only place a new candidate is *invented*. Given a generation's loss patterns, the mutation manifest, the operator brief, prior-experiment memory, and a bucketed failure-mode profile, it produces one `Experiment` = a schema-validated `HypothesisSpec` joined with a tuple of concrete `Patch`es (`src/zicato/proposer/__init__.py:1-32`). Everything downstream (apply → tournament → gate) merely *judges* what the proposer emits, so proposal quality is the loop's dominant lever.
 
-### Three resolution paths behind one protocol
+### One runtime behind one protocol
 
-The orchestrator asks `build_proposer_agent` for a `ProposerAgent`, and the resolved spec selects one of three implementations — all satisfying the same `async def propose(ctx) -> Experiment` protocol:
+The orchestrator asks `build_proposer_agent` for a `ProposerAgent`, and the resolved spec has one answer: the class the workspace's proposer binding names, satisfying `async def propose(ctx) -> Experiment`. That is the Foe-backed agent unless the operator bound a class of their own; a workspace that declared neither is refused by name, so no proposer is chosen for an epoch by default.
 
-src/zicato/proposer/agent.py:223-239
+A proposer directory carries `skills/*.md` and nothing executable. It, and every skill body in it, folds into the contract hash and rolls the epoch (`src/zicato/proposer/skills.py`).
+
+### The episode loop: edit → verify → return → project → validate
+
+A proposal is an edit rather than a document about an edit. The episode is granted write on a disposable copy of the parent snapshot, changes files in it, and calls `validate_patches` — which reads the copy back as a patch set, projects each change onto the declared mutation points, and lints the result. Findings go back to the model under Foe's own retry rule, so a broken edit costs a turn; when the retries are spent the episode ends *blocked* rather than proposing something the round would reject. Zicato then parses the returned hypothesis, enforces the brief's forbidden-id list, and runs the caller's optional post-apply validation hook:
+
+src/zicato/proposer/foe_agent.py
 ```python
-    if spec.agent_source_sha256 is not None:
-        if proposer_path is None:
-            raise ValueError(
-                "spec declares a custom proposer agent (agent_source_sha256 is "
-                "set) but no proposer_path was supplied to load "
-                "proposers/<name>/agent.py from"
-            )
-        return ADKProposerAgent(spec=spec, proposer_path=proposer_path)
+        with scratch_working_copy(generation_root) as scratch_root:
+            tools = build_episode_tools(...)
+            request = build_request(config, ..., read_root=generation_root,
+                                    write_root=scratch_root,
+                                    verify_retries=ctx.max_retries)
+            outcome = await self._run_episode(ctx, config, request, workspace_root)
+            experiment = self._experiment_from(ctx, outcome, scratch_root, generation_root)
 
-    if spec == ProposerSpec.default():
-        # The DEFAULT proposer: a tool-using ADK agent bound to the
-        # auxiliary model at propose time. No proposer dir was configured.
-        return ADKProposerAgent(spec=spec, builtin_default=True)
-
-    # A configured proposer dir with skills but no custom agent.py — the
-    # skill-composed single-shot engine, the explicit opt-in.
-    return DefaultProposerAgent(spec)
-```
-
-The **default** (no proposer dir configured) is a native ADK tool-using agent that runs on ADK's own `Runner` with its own `model=` — *not* the auxiliary text shim, which is text-in/text-out and cannot express function calls (`src/zicato/proposer/adk_agent.py:6-33`). Configuring a proposer dir with `skills/*.md` but no `agent.py` is the *explicit opt-in* into the single-shot `DefaultProposerAgent` text-shim engine; dropping an author-owned `agent.py` into the dir yields a fully custom ADK agent. A proposer dir (or an edited skill) folds into the contract hash and rolls the epoch (`src/zicato/proposer/skills.py:15-21`).
-
-### The engine loop: compose → call → parse → enforce → validate → retry
-
-Both the text-shim engine (`propose_experiment`) and the ADK agent share one bounded-retry shape: render prompts, call the model, parse to a typed `Experiment`, enforce the brief's forbidden-id list, then run the caller's optional post-apply validation hook — and feed any failure back as concrete feedback into the next attempt, all inside a `max_retries + 1` budget:
-
-src/zicato/proposer/proposer.py:406-431
-```python
-        # Post-parse validation hook — the experiment is well-formed and
-        # forbidden-id-clean, but its patches may still break the child
-        # snapshot once applied (a dropped import, a syntax error, a
-        # vanished marker). Treat a non-empty finding list exactly like
-        # a parse error: feed the concrete validator strings back and
-        # retry, within the same bounded budget.
-        if validate_experiment is not None:
-            try:
-                post_apply_errors = await validate_experiment(experiment)
-            except PostApplyValidationError as exc:
-                post_apply_errors = exc.errors
-            if post_apply_errors:
-                err = "patches failed post-apply validation: " + "; ".join(post_apply_errors)
-                attempt_errors.append(err)
-                feedback = err
-                # Well-formed JSON whose patches broke the snapshot — a
-                # content failure, not a shape one. The validator findings
-                # in the feedback string are the actionable signal; no
-                # prior-output echo / empty framing.
-                feedback_prior_output = ""
-                feedback_was_empty = False
-                continue
-
+        if ctx.validate_experiment is not None:
+            findings = await ctx.validate_experiment(experiment)
+            if findings:
+                raise ProposerError(
+                    ["patches failed post-apply validation: " + "; ".join(findings)]
+                )
         return experiment
-
-    raise ProposerError(attempt_errors)
 ```
 
-The retry loop is *repair-aware*: a shape failure echoes the prior raw output back so the model can see the stray fence/prose it emitted, whereas a content failure (forbidden id, or a patch that broke the snapshot) feeds the concrete finding without the echo. The post-apply hook is what makes a destructive patch cost one retry instead of a wasted tournament round — the orchestrator supplies a hook that applies the patch set to a fresh child snapshot and runs `validate_post_apply`.
+The repair is *inside* the episode, which is what makes it cheap: the model sees the finding, fixes the file, and calls the verifier again, without re-sending the round's whole evidence. The post-apply hook outside it is the last check — the orchestrator supplies one that applies the patch set to a fresh child snapshot and runs `validate_post_apply`.
 
 ### The patch contract and its two-pass validation
 
@@ -917,22 +885,23 @@ src/zicato/proposer/structured.py:164-181
 
 The `HypothesisSpec` half additionally requires falsifiable predictions — `expected_drift_movements` / `expected_metric_movements` (direction + magnitude enums) and `expected_pass_rate_delta`. These *are* graded against actuals after a tournament settles: `grade_hypothesis_predictions` (`src/zicato/tournament/detail.py:1184`) joins the expected movements against the realised outcome by sign and range-normalised magnitude bucket, and the fraction is folded back into experiment memory as `PriorExperiment.prediction_accuracy` (`src/zicato/index/query.py:485,601`) and surfaced to the proposer as a banded `prediction:low|medium|high` annotation (`src/zicato/proposer/prompts.py:530,588`). What the band is not is **actionable**: it is displayed and never used to bias best-of-N selection, weight proposals, or gate anything, and a repository-wide search finds no reader of `prediction_accuracy` outside the display path. That advisory-only status, rather than a missing implementation, is the gap the recommendations below address.
 
-### Read-only grounding tools
+### The closed tool surface
 
-A tool-using proposer reasons *while reading the world*. The default agent is bound to a fixed read-only tool registry:
+An episode reasons *while reading the world*, and what it may do is a closed list asserted by name:
 
-src/zicato/proposer/tools.py:344-350
+src/zicato/proposer/foe_request.py
 ```python
-DEFAULT_PROPOSER_TOOLS = (
-    list_mutation_points,
-    read_mutable_file,
-    grep_mutable,
-    read_journal,
-    read_insights,
+SANCTIONED_TOOLS: tuple[str, ...] = (
+    "read",
+    "grep",
+    "edit",
+    "block",
+    "mutation_usage",
+    "validate_patches",
 )
 ```
 
-These read the *parent* snapshot, the epoch journal, and the analyzer insights — never write (a writing tool would corrupt the tree the round is about to patch and break the applier's content-hash guard). The per-round context is passed via a `contextvars.ContextVar` bound around each agent run so concurrent challengers never leak context into one another, and `read_mutable_file` / `grep_mutable` reject any path that escapes the mutable subtrees (absolute paths, `..` traversal — `tools.py:178-207`). The proposer runs on its *own* model; because it is not the auxiliary callable, the hard `is`-identity collusion guard does not apply, so a soft WARNING is logged when the proposer model string trivially equals the auxiliary model (`adk_agent.py:319-347`).
+`read` and `grep` reach the *parent* snapshot; `edit` reaches the disposable copy and nothing else, because Foe compiles the two grants into a kernel ruleset every process of the episode inherits. A writing tool over the snapshot would corrupt the tree the round is about to patch and break the applier's content-hash guard, so no tool has one. The two host tools are answered by zicato: `mutation_usage` delegates to the read-only registry (so the containment guard and the match cap apply unchanged), and `validate_patches` projects the copy and lints it. The per-round context both host tools answer about is bound through a `contextvars.ContextVar` around each call, so concurrent challengers never leak context into one another. The episode runs on its *own* model; because it is not the auxiliary callable, the hard `is`-identity collusion guard does not apply, so a soft warning is logged when the two model strings trivially match.
 
 ### The one structural weakness: single-sample generation
 

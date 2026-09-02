@@ -757,14 +757,18 @@ A/A calibration (`calibration.py`), and tournament-detail analytics
 `dead_letter.py`, `diversity.py` (`jaccard`). The gate is imported from
 `tournament/`; strategies never re-decide a duel.
 
-**`proposer/`** — the LLM-driven half: `proposer.py`
-(`propose_experiment`, `ProposerError`), `agent.py` (`ProposerAgent`,
-`ProposerContext`, `build_proposer_agent`), `best_of_n.py` (slate +
-critique + screen + revise wrapper), `prompts.py` (the restricted-
-visibility render boundary), `skills.py` (proposer-dir resolution +
-skill hashing), `hints.py`, `brief.py`, `tools.py` / `adk_agent.py`
-(the tool-using ADK-native proposer). The proposer is a first-class
-contract input — see `docs/design/PROPOSER.md`.
+**`proposer/`** — the LLM-driven half: `foe_agent.py`
+(`FoeProposerAgent` — one Foe episode per candidate), `foe_request.py`
+(the one request builder, for the loop and the CLI), `foe_config.py` (the
+typed `proposer` block), `foe_scratch.py` (the working copy and the
+projection that reads it back as patches), `proposer.py` (the four
+episode outcomes), `agent.py` (`ProposerAgent`, `ProposerContext`,
+`build_proposer_agent`), `external.py` (the seam that names and hashes an
+implementation), `best_of_n.py` (slate + critique + screen + revise
+wrapper), `prompts.py` (the restricted-visibility render boundary),
+`skills.py` (proposer-dir resolution + skill hashing), `hints.py`,
+`brief.py`, `tools.py`. The proposer is a first-class contract input —
+see `docs/design/PROPOSER.md`.
 
 **`mutation/`** — the annotation-driven mutation surface: `markers.py`
 (the marker grammar, in its `"python"` and `"text"` comment syntaxes),
@@ -1258,8 +1262,9 @@ can memorize. The anti-overfitting design (`docs/design/OVERFITTING.md`
   `src/zicato/analyzer/process_exemplars.py`; no LLM performs that
   redaction.
 
-The best-of-N critic is inside the same envelope by construction — it
-renders through the same `render_user_prompt` under the same flag
+The best-of-N critic is inside the same envelope by construction — it is
+shown the very evidence the proposal episode was given, projected off the
+same context and rendered by the same `render_evidence`
 (`src/zicato/proposer/best_of_n.py` §"Overfitting discipline").
 
 **Failure mode when broken.** The loop overfits the board: train scores

@@ -14,7 +14,7 @@ Each script step is one of:
   carries a single ``function_call`` part. ADK's runner invokes the named
   tool, appends the tool's ``FunctionResponse``, and re-invokes the model;
   the NEXT script step answers that re-invocation. This is how a test
-  proves a :data:`~zicato.proposer.tools.DEFAULT_PROPOSER_TOOLS` tool is
+  proves a read-only proposer tool is
   actually called.
 * :class:`TextTurn(text)` — yields a response whose content is a single
   text part (the proposer's final ``{hypothesis, patches}`` JSON, or a

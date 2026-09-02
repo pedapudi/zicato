@@ -418,6 +418,17 @@ def drive_mock_evolve(
     if str(_REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(_REPO_ROOT))
 
+    # Replicate the autouse fixture from tests/conftest.py that the racing
+    # test relies on but that does not fire here (this module lives outside
+    # tests/, so that conftest's autouse fixtures are not applied): neuter
+    # the harmonograf auto-launch so evolve takes its JSONL-only telemetry
+    # branch instead of spawning a real in-process server.
+    #
+    # The proposal runtime needs no fixture: the example workspace declares
+    # the stand-in one in its own config.json, exactly as every other
+    # fixture workspace does, so the captured lane runs a real episode per
+    # candidate against the stand-in binary.
+    import zicato.evolve.lifecycle_services as _lifecycle_services
     from tests._orchestrator_harness import (
         harness_call_llm,
         install_stub_adapter_factory,
@@ -431,33 +442,6 @@ def drive_mock_evolve(
         _preseed_champion_cache,
         bootstrap_example_workspace,
     )
-
-    # Replicate the two autouse fixtures from tests/conftest.py that the
-    # racing test relies on but that do not fire here (this module lives
-    # outside tests/, so that conftest's autouse fixtures are not applied).
-    #
-    # 1) Pin the builtin-default proposer to the text-shim engine driven by
-    #    the stubbed auxiliary callable — otherwise the default proposer is
-    #    the live ADK tool agent and tries to reach a real model (no key).
-    # 2) Neuter the harmonograf auto-launch so evolve takes its JSONL-only
-    #    telemetry branch instead of spawning a real in-process server.
-    from zicato.core.types import ProposerSpec
-    from zicato.proposer import agent as _proposer_agent_mod
-
-    _real_build = _proposer_agent_mod.build_proposer_agent
-
-    def _build_proposer(
-        spec: ProposerSpec,
-        proposer_path: Path | None = None,
-        external_config: object = None,
-    ) -> object:
-        if spec == ProposerSpec.default():
-            return _proposer_agent_mod.DefaultProposerAgent(spec)
-        return _real_build(spec, proposer_path, external_config)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(_proposer_agent_mod, "build_proposer_agent", _build_proposer)
-
-    import zicato.evolve.lifecycle_services as _lifecycle_services
 
     def _no_launch(workspace_root: Path) -> tuple[str, object]:
         del workspace_root

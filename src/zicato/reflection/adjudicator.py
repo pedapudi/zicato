@@ -33,10 +33,10 @@ Independence — the guard that makes the verdict trustworthy
   adjudicate when the adjudicator callable *is* the judge callable — a judge
   cannot grade its own homework.
 * SOFT: :func:`warn_on_adjudicator_collusion` logs a warning (and proceeds)
-  when the adjudicator model string equals any judge's model string — the
-  :meth:`zicato.proposer.adk_agent.ProposerRunner._warn_on_model_collusion`
-  precedent (two distinct callables may still wrap the same endpoint; that is
-  the operator's call, so it is advisory only).
+  when the adjudicator model string equals any judge's model string —
+  following the proposer's own model-collusion warning (two distinct
+  callables may still wrap the same endpoint; that is the operator's call,
+  so it is advisory only).
 
 Protocol — strict JSON, one retry, then ``ambiguous`` (never raises)
 --------------------------------------------------------------------

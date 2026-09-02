@@ -320,44 +320,63 @@ def _isolate_config_pins() -> Iterator[None]:
 > tests may not even land on the same worker — so a one-sided clear produces
 > a flake nobody can reproduce.
 
-### 11.2.2 The default-proposer text-shim pin
+### 11.2.2 The stand-in proposal runtime
 
-The production DEFAULT proposer is the tool-using ADK agent, which pulls in
-the optional `google-adk` extra and a real model at propose time. The
-orchestrator/evolve suites are about the loop rather than the proposer
-model. This fixture therefore pins the builtin-default spec to the text-shim
-engine driven by the stubbed auxiliary callable. EVERY other spec (a custom
-`agent.py`, a skills-only dir) still flows through the real builder:
+A round cannot open without a proposal runtime: there is no built-in
+default to fall back to, and the builder refuses a workspace that declared
+none by name. So every fixture workspace that runs a round declares one,
+and `tests/_foe_support.stand_in_proposer_block` writes it:
 
 ```python
-    module_name = request.module.__name__.rsplit(".", 1)[-1]
-    if module_name in _REAL_DEFAULT_PROPOSER_MODULES:
-        return
-
-    from zicato.core.types import ProposerSpec
-    from zicato.proposer import agent as proposer_agent_mod
-
-    real_build = proposer_agent_mod.build_proposer_agent
-
-    def _build(spec: ProposerSpec, proposer_path: Path | None = None) -> Any:
-        if spec == ProposerSpec.default():
-            return proposer_agent_mod.DefaultProposerAgent(spec)
-        return real_build(spec, proposer_path)
-
-    monkeypatch.setattr(proposer_agent_mod, "build_proposer_agent", _build)
+    (workspace / "config.json").write_text(
+        json.dumps(
+            {
+                ...,
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
+            }
+        )
+    )
 ```
-— `tests/conftest.py`, `_pin_default_proposer_to_text_shim`
+— `tests/_orchestrator_harness.py`, `bootstrap_workspace`
 
-The opt-out set `_REAL_DEFAULT_PROPOSER_MODULES = {"test_proposer_agent",
-"test_proposer_adk_agent"}` names the two modules that assert on the REAL
-selection (or drive the ADK default through their own monkeypatched
-`build_default_adk_agent`), so the real selection path is still tested
-directly there. `_stub_harmonograf_launch` follows the identical shape —
-it replaces `orchestrator._resolve_or_launch_harmonograf` with a no-op that
-returns the same `("", _NoopShutdownHandle())` shape the degraded-install
-path returns, saving ~50s of real server startup across the suite, with
-`_REAL_HARMONOGRAF_LAUNCH_MODULES` opting out the three modules that test the
-launch decision itself.
+The block names two executables written under the workspace's own temp
+directory: the stand-in Foe binary (`tests/_fake_foe.py`), which speaks
+the host protocol without a credential, a network or a Rust toolchain,
+and the transport that answers its model requests. The paths are absolute
+and on disk BECAUSE the tournament workers are separate interpreters —
+they read `config.json` back and see nothing this process patched in
+memory.
+
+Which transport depends on what the test is about.
+`tests/_foe_transport.py` replays a *written* script of turns, and is what
+a test that pins one specific episode uses.
+`tests/_foe_stand_in_proposer.py` writes its own: it enumerates the parent
+snapshot's mutation points, rewrites one string literal, and returns a
+hypothesis naming that point — a proposer that is always right about the
+rules and never has an idea. Its edit is a tag carrying the candidate id,
+which makes it deterministic per candidate, distinct across a field, and
+bounded across rounds.
+
+A test whose subject is a *misbehaving* proposer steers it from the
+workspace rather than scripting turns:
+
+| Key | The episode then |
+|---|---|
+| `idea` | states one fixed core idea, so a field's siblings duplicate each other and the diversity guard fires |
+| `predict` | predicts one named metric, so an undeclared judge name drives a validation refusal |
+| `hypotheses` | takes either of those per candidate id, for a field whose slots must differ |
+| `break_first` | writes N leading edits the verifier must reject, driving the repair loop — and, past the retry budget, the block that ends an unsatisfiable episode |
+| `refuse` | reports a block instead of proposing at all |
+| `contents` | writes an exact literal body per candidate (or per `<candidate>#<slot>`), which is what the known-answer harnesses script |
+
+> ⚠️ TRAP — a proposal is an EPISODE, not an auxiliary call. A test that
+> counts proposer spend counts episodes in the workspace's own durable
+> capture (`read_proposer_inputs`, filtered to `ROLE_PROPOSAL`), never
+> calls into a mock; a test that asserts on what the model saw reads the
+> `user` of that same record, never a patched renderer. The auxiliary
+> callable still serves the critique, the recombination merge and the
+> analyzer, so `make_aux_responder([])` is the ordinary spelling for a
+> round that needs none of those.
 
 > ⚠️ TRAP — these two fixtures are why an evolve/orchestrator test runs with
 > no `google-adk` and no real model traffic. If you write a test that needs

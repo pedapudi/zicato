@@ -42,9 +42,9 @@ The orchestrator round (`evolve_once`,
 1. Resolve the single champion (`parent_id`) from the
    `current_generation` marker (`orchestrator.py:512`,
    `_resolve_current_generation` at `orchestrator.py:1558`).
-2. Ask the proposer for **one** `Experiment`
-   (`propose_experiment`, `src/zicato/proposer/proposer.py:79`,
-   returning a single `Experiment`).
+2. Ask the proposer for **one** `Experiment` — one Foe episode
+   (`FoeProposerAgent.propose`, `src/zicato/proposer/foe_agent.py`),
+   returning a single `Experiment`.
 3. Apply it into **one** child snapshot (`next_id` via
    `_next_generation_id`, `orchestrator.py:1627`).
 4. Run **one** paired board run — `run_tournament` (full,
