@@ -305,6 +305,16 @@ def create_app(
             "/api/epoch/{epoch_id}/analysis.html",
             handlers["api_epoch_analysis_html"],
         ),
+        # Foe's static page for one proposal episode: the availability the
+        # proposer panel captions from, and the page itself.
+        Route(
+            "/api/generation/{epoch_id}/{generation_id}/episode-export",
+            handlers["api_proposal_episode_export"],
+        ),
+        Route(
+            "/api/generation/{epoch_id}/{generation_id}/episode-export.html",
+            handlers["api_proposal_episode_export_html"],
+        ),
         # The file-tree / mutation-site browser.
         Route("/api/files", handlers["api_files"]),
         Route(

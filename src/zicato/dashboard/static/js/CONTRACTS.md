@@ -89,6 +89,11 @@ The drill-down / lazy endpoints (unchanged):
   mutation-surface panes.
 - `GET /api/conversation/{run}` — the run_id-keyed transcript
   (`D.conversation()`; `D.runTranscript()` is the preferred gen×entry read).
+- `GET /api/generation/{epoch}/{gen}/episode-export` — whether that
+  candidate's proposal episode has Foe's static page, plus the episode log's
+  path and the command that renders one (`D.episodeExport()`). The page
+  itself is a whole HTML document served at the same path with an `.html`
+  suffix (`D.episodeExportHref()`), opened in a new tab and never fetched.
 - `GET /api/run/{epoch}/{gen}/{entry}/transcript/delta?after=<cursor>` — the
   live conversation pane's **cursor-append** read. It returns only what
   changed since `after`, so following a running unit never re-sends a

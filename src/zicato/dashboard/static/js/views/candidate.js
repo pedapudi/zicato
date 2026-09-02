@@ -228,12 +228,16 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const mpts = exp && exp.hypothesis && Array.isArray(exp.hypothesis.mutation_points) ? exp.hypothesis.mutation_points.length
     : (exp && Array.isArray(exp.mutation_points) ? exp.mutation_points.length : null);
 
-  const [pe, scorecard] = await Promise.all([
+  const [pe, scorecard, episode] = await Promise.all([
     D.perEntry(epochId, genId),
     // the proposer's PREDICTION-ACCURACY scorecard (DIAGNOSTIC — never the
     // gate): predicted-vs-realised movements + the calibration fraction. A
     // baseline (seed) made no falsifiable claim, so we skip the read for it.
     baseline ? Promise.resolve(null) : D.hypothesisAccuracy(epochId, genId),
+    // Whether this candidate's proposal episode has Foe's static page, and
+    // what to run when it does not. A baseline was never proposed, so it has
+    // no episode and the read is skipped for it.
+    baseline ? Promise.resolve(null) : D.episodeExport(epochId, genId),
   ]);
   const entries = (pe && Array.isArray(pe.entries)) ? pe.entries : [];
   // per-generation mean continuous outcome (#18); null on the pre-score path.
@@ -409,6 +413,10 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
     // the candidate's IDENTITY (§4): the proposer's own idea, reasoning,
     // falsifiable claims and the sites it patched. Null for the seed.
     proposal: buildProposalModel(exp),
+    // Foe's static page for the episode that proposed this candidate, as the
+    // availability payload the proposal header links or captions from. Null
+    // for the seed, which was never proposed.
+    episode,
     primaryDelta, championId, championScalar, scalarByGen, progression,
     compare, driftPresent, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
@@ -695,7 +703,49 @@ export function proposalHeader(model, opts) {
     o.diffHref ? el('a', { class: 'dn-linkbtn dn-proposal-difflink', href: o.diffHref, text: 'see the diff →' }) : null,
   ].filter(Boolean)));
   if (model.risks) card.appendChild(el('p', { class: 'dn-proposal-risks dn-faint', text: 'risks · ' + model.risks }));
+  const episode = episodeRow(o.episode, o.episodeHref);
+  if (episode) card.appendChild(episode);
   return card;
+}
+
+// THE EPISODE ROW — beside the candidate's native summary, the way into Foe's
+// own reading of the same episode. Foe renders a finished episode to one
+// self-contained page and the round writes it beside the episode's log, so an
+// available page is a link and nothing more; the dashboard never embeds it and
+// never serves it live.
+//
+// A page that was not written degrades to what an operator needs to get one by
+// hand: the log on disk, and the command that renders it. A candidate with no
+// episode at all (the seed, or a workspace that never ran one) gets no row —
+// there is nothing to say about a page for an episode that does not exist.
+// PURE (node-testable).
+export function episodeRow(payload, href) {
+  if (!payload || typeof payload !== 'object' || !payload.episode_log) return null;
+  const row = el('p', { class: 'dn-proposal-episode dn-faint' }, [
+    el('span', { class: 'dn-proposal-lab dn-faint', text: 'episode' }),
+  ]);
+  if (payload.export_available && href) {
+    row.appendChild(el('a', {
+      class: 'dn-linkbtn dn-proposal-episodelink', href, target: '_blank', rel: 'noopener',
+      text: 'read it in Foe →',
+    }));
+    return row;
+  }
+  row.appendChild(el('span', { text: 'no Foe page was rendered · ' }));
+  row.appendChild(el('span', { class: 'dn-mono', text: payload.episode_log }));
+  if (payload.command) {
+    row.appendChild(el('span', { text: ' · render it with ' }));
+    row.appendChild(el('span', { class: 'dn-mono', text: payload.command }));
+  }
+  return row;
+}
+
+// Digest fold for the episode row: exactly the three fields that reach the
+// DOM. null (no episode) contributes nothing, so a seed's dossier digest is
+// byte-identical to the pre-feature path. PURE (node-testable).
+export function episodeDigest(payload) {
+  if (!payload || typeof payload !== 'object' || !payload.episode_log) return null;
+  return [payload.episode_log, !!payload.export_available, payload.command || null];
 }
 
 // THE VERDICT SENTENCE — one line, assembled from STRUCTURED gate fields only:
@@ -840,6 +890,9 @@ function candidateDigest(s) {
     // the PROPOSAL header (§4) — the idea/why/claims/sites that lead the
     // dossier. null (the seed) contributes nothing → pre-feature digest.
     proposal: proposalDigest(s.proposal),
+    // the episode row under it: an export appearing when a round settles has
+    // to repaint, and a beat that changes nothing must not.
+    episode: episodeDigest(s.episode),
     // the VERDICT SENTENCE assembled from the structured gate fields — folded
     // so a settling gate rewrites the line and a no-op beat does not.
     verdict: verdictSentence(s.gateExplain),
@@ -1026,6 +1079,10 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   // absent without the other's shape changing.
   const proposalCard = proposalHeader(s.proposal, {
     diffHref: baseline ? null : (ctx.href ? ctx.href('diff', { epochId, gen: genId }) : null),
+    // Foe's own reading of the episode that produced this proposal, beside
+    // the summary zicato reads out of it.
+    episode: s.episode,
+    episodeHref: D.episodeExportHref(epochId, genId),
   });
   if (proposalCard) host.appendChild(proposalCard);
   const verdictLine = verdictSentenceEl(s.gateExplain);

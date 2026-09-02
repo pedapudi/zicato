@@ -1326,6 +1326,12 @@
   .dn-proposal-size { display: flex; align-items: baseline; gap: 12px; margin: 0;
     font-size: calc(11px * var(--dt-font-scale, 1)); }
   .dn-proposal-risks { margin: 0; font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.45; max-width: 88ch; }
+  /* the way out to Foe's own page for this episode, or the path and command
+     that produce one. A path can be long, so the row wraps and breaks. */
+  .dn-proposal-episode { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+    margin: 0; font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.5;
+    overflow-wrap: anywhere; }
+  .dn-proposal-episodelink { white-space: nowrap; }
 
   /* the ONE-LINE verdict sentence, directly under the proposal: decision ·
      deciding rule · what regressed · how far from the margin. The decision

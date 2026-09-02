@@ -184,6 +184,21 @@ class WorkspaceLayout:
         slot = "" if slot_index is None else f"-{slot_index}"
         return self.episodes_dir(epoch_id) / f"{generation_id}{slot}"
 
+    def proposal_episode_export(
+        self, epoch_id: str, generation_id: str, slot_index: int | None = None
+    ) -> Path:
+        """Foe's static page for one proposal episode, beside that episode's log.
+
+        Written when the episode settles, by
+        :func:`zicato.proposer.episode_export.write_episode_export`. Absent
+        whenever that render did not happen, which every reader tolerates.
+        """
+        from zicato.proposer.episode_export import (  # noqa: PLC0415 - avoids an import cycle
+            EXPORT_FILENAME,
+        )
+
+        return self.proposal_episode_dir(epoch_id, generation_id, slot_index) / EXPORT_FILENAME
+
     def rounds_dir(self, epoch_id: str) -> Path:
         """One epoch's ``rounds/`` directory (one sub-dir per evolve round).
 

@@ -379,6 +379,20 @@ export function evalMatrix(epochId) {
 export function perJudgeForGen(epochId, genId) {
   return cachedJson(`/api/generation/${enc(epochId)}/${enc(genId)}/per-judge`);
 }
+// Whether one candidate's proposal episode has Foe's static page — the
+// self-contained HTML the round renders beside the episode's log when the
+// episode settles. `export_available` decides whether the proposal header
+// links `episodeExportHref()` below or captions `command` instead. Rides the
+// `/api/generation/` invalidateLive prefix, so a page written by a round in
+// flight appears on the next bust.
+export function episodeExport(epochId, genId) {
+  return cachedJson(`/api/generation/${enc(epochId)}/${enc(genId)}/episode-export`);
+}
+// Where that page is served. Opened in a new tab rather than fetched: it is a
+// whole document with its own script, styles and fonts inlined.
+export function episodeExportHref(epochId, genId) {
+  return `/api/generation/${enc(epochId)}/${enc(genId)}/episode-export.html`;
+}
 export function matchupGrid(epochId, championId, challengerId) {
   return cachedJson(`/api/matchup-grid/${enc(epochId)}/${enc(championId)}/${enc(challengerId)}`);
 }

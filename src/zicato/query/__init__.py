@@ -259,10 +259,12 @@ from zicato.query.trace_view import (
 )
 from zicato.query.transcript_view import (
     FIDELITY_EVENTS,
+    build_proposal_episode_export,
     build_run_transcript,
     build_run_transcript_delta,
     empty_run_transcript,
     empty_run_transcript_delta,
+    read_proposal_episode_export,
     resolve_conversation,
 )
 
@@ -432,6 +434,7 @@ __all__ = [
     "compute_epoch_delta_summary",
     "find_generation_entry_events",
     "FIDELITY_EVENTS",
+    "build_proposal_episode_export",
     "build_run_transcript",
     "build_run_transcript_delta",
     "empty_run_transcript",
@@ -446,6 +449,7 @@ __all__ = [
     "read_adk_session_id_from_events",
     "read_current_epoch",
     "read_epoch_analysis_html",
+    "read_proposal_episode_export",
     "read_epoch_journal",
     "read_epoch_journal_md",
     "read_run_result",

@@ -8,12 +8,13 @@ is that binary. It is invoked as an executable through
 :func:`fake_foe_binary`, which writes a one-line launcher naming this
 file.
 
-Three command forms are accepted, the three the ``foe`` Python package
-issues:
+Four command forms are accepted, the ones zicato and the ``foe`` Python
+package issue:
 
     fake-foe --config FILE --host --log-dir DIR    run one episode
     fake-foe plan --json --config FILE             print the fingerprint
     fake-foe view DIR --serve                      print a URL and wait
+    fake-foe view DIR                              write the static page
 
 What the episode does is decided by the *scripted transport* the
 document's ``model`` block names under the ``exec`` provider, which
@@ -606,6 +607,37 @@ class Options:
         self.die_after = die_after
 
 
+def _export_page(directory: Path) -> int:
+    """Write one episode directory to standard output as a static page.
+
+    The real binary renders the log with its viewer bundle, which is around
+    650 KB of inlined script, styles and fonts. Nothing zicato does reads
+    inside the page, so the stand-in writes a small self-contained document
+    with the same two properties a test can check: it is one HTML file, and
+    it names the episode it was rendered from. A directory holding no
+    readable log fails the way the real binary does, which is how a test
+    drives the degrade.
+    """
+    log = directory / "episode.jsonl"
+    try:
+        text = log.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"fake foe: {log}: {exc}", file=sys.stderr)
+        return 1
+    events = [line for line in text.splitlines() if line.strip()]
+    if not events:
+        print(f"fake foe: {log}: no events", file=sys.stderr)
+        return 1
+    episode_id = json.loads(events[0]).get("data", {}).get("id", "")
+    sys.stdout.write(
+        "<!doctype html>\n"
+        '<html lang="en"><head><meta charset="utf-8"><title>foe</title></head>'
+        f"<body><h1>episode {episode_id}</h1>"
+        f"<p>{len(events)} events</p></body></html>\n"
+    )
+    return 0
+
+
 def _take_options(argv: list[str]) -> tuple[list[str], Options]:
     log_version: int | None = LOG_VERSION
     runtime = RUNTIME_VERSION
@@ -632,10 +664,12 @@ def main(argv: list[str]) -> int:
             )
         )
         return 0
-    if argv[:1] == ["view"] and "--serve" in argv:
-        print("http://127.0.0.1:34567/", flush=True)
-        sys.stdin.read()
-        return 0
+    if argv[:1] == ["view"]:
+        if "--serve" in argv:
+            print("http://127.0.0.1:34567/", flush=True)
+            sys.stdin.read()
+            return 0
+        return _export_page(Path(argv[1]))
     if "--host" not in argv:
         print("fake foe: only the --host form runs an episode", file=sys.stderr)
         return 1
