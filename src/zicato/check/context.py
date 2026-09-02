@@ -18,6 +18,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from zicato.config import HealthConfig, health_config_from_workspace
 from zicato.core.types import BoardEntry, MutationPoint, ScoringWeights
 from zicato.core.workspace import board_path, scoring_path
 from zicato.epoch.lifecycle import current_epoch_id
@@ -92,6 +93,22 @@ class CheckContext:
             return read_workspace_config(self.workspace_root)
         except (OSError, ValueError):
             return WorkspaceConfig.absent(self.workspace_root)
+
+    @cached_property
+    def health_config(self) -> HealthConfig:
+        """The board-quality thresholds the ``health`` block declares.
+
+        The workspace ``config.json``'s ``health`` block is the one
+        operator surface for these thresholds, so a validator judging a
+        static board property reads the value the loop-health detectors
+        will read after the round. A block that does not parse falls back
+        to the defaults rather than turning a gate run into a crash; the
+        ``zicato health`` command reports the typo itself.
+        """
+        try:
+            return health_config_from_workspace(self.config.raw)
+        except (KeyError, TypeError, ValueError):
+            return HealthConfig()
 
     @cached_property
     def _scoring_path(self) -> Path | None:

@@ -2,7 +2,8 @@
 
 Every finding is provable from the workspace alone. A finding that
 proves the round cannot be measured stops the loop; a finding that
-proves only that something declared contributes nothing is advisory.
+proves only that the round will measure less than the operator most
+likely intended is advisory.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import pytest
 from click.testing import CliRunner
 
 from tests._foe_support import stand_in_proposer_block
-from zicato.check import CheckContext, WorkspaceCheckError, build_report
+from zicato.check import CheckContext, Finding, WorkspaceCheckError, build_report
 from zicato.cli.commands.evolve import evolve_cmd
 from zicato.core.types import ScoringWeights
 from zicato.evolve.loop import evolve_n_rounds
@@ -164,6 +165,13 @@ def _findings(root: Path, *, live_contract: bool = True, **kwargs: object) -> di
     """Map each reported code to whether it stops the run."""
     with CheckContext(root, live_contract=live_contract, **kwargs) as ctx:  # type: ignore[arg-type]
         return {f.code: f.blocking for f in build_report(ctx).findings}
+
+
+def _finding(root: Path, code: str, *, live_contract: bool = True) -> Finding:
+    """The single finding reported under ``code``, text and payload intact."""
+    with CheckContext(root, live_contract=live_contract) as ctx:
+        (finding,) = (f for f in build_report(ctx).findings if f.code == code)
+    return finding
 
 
 def _entry(entry_id: str, **extra: object) -> dict:
@@ -435,8 +443,9 @@ def test_adapter_scoping_excludes_markers_outside_runtime_surface(tmp_path: Path
 
 
 def test_a_drift_only_board_is_a_valid_evaluation_contract(tmp_path: Path) -> None:
+    """Drift loss needs no ground truth, so this board still runs."""
     root = _workspace(tmp_path / ".zicato", board=[_entry("solo")], scoring={})
-    assert "no_expectations" not in _codes(root)
+    assert _findings(root)["no_expectations"] is False
 
 
 def test_a_weight_naming_no_board_judge_is_not_a_defect(tmp_path: Path) -> None:
@@ -460,9 +469,9 @@ def test_a_weight_naming_no_board_judge_is_not_a_defect(tmp_path: Path) -> None:
         board=[judged],
         scoring={"per_judge_weights": {"in_harness_judge": 2.0, "": 1.0, "retired": 0.0}},
     )
-    codes = _codes(root)
-    assert "weight_for_absent_judge" not in codes
-    assert "no_expectations" not in codes
+    findings = _findings(root)
+    assert "weight_for_absent_judge" not in findings
+    assert findings["no_expectations"] is False
 
 
 def test_an_unreadable_board_is_reported_once(tmp_path: Path) -> None:
@@ -646,6 +655,100 @@ def test_every_defect_is_reported_not_just_the_first(tmp_path: Path) -> None:
     assert {"no_mutable_trees", "no_adapter"} <= codes
 
 
+# --- advisory: how much of the board grades what it runs --------------------
+
+
+def _graded(entry_id: str) -> dict:
+    return _entry(entry_id, expectation={"kind": "expected_text", "spec": "hi"})
+
+
+def test_ungraded_entries_are_named_and_counted(tmp_path: Path) -> None:
+    """The operator has to know which entries to attach expectations to."""
+    root = _workspace(
+        tmp_path / ".zicato",
+        board=[_entry("beta"), _entry("alpha"), _graded("gamma")],
+        scoring={},
+    )
+    finding = _finding(root, "no_expectations")
+    assert finding.blocking is False
+    assert finding.summary == (
+        "2/3 board entries have no expectation, so nothing grades what they " "produce: alpha, beta"
+    )
+    assert finding.detail["entry_ids_without_expectation"] == ["alpha", "beta"]
+
+
+def test_the_summary_counts_the_entries_it_stops_naming(tmp_path: Path) -> None:
+    """A large board must not push a whole id list through one log line."""
+    board = [_entry(f"e{index}") for index in range(7)]
+    root = _workspace(tmp_path / ".zicato", board=board, scoring={})
+    finding = _finding(root, "no_expectations")
+    assert finding.summary.endswith("e0, e1, e2, e3, e4 and 2 more")
+    assert len(finding.detail["entry_ids_without_expectation"]) == 7
+
+
+def test_a_mostly_graded_board_is_not_reported(tmp_path: Path) -> None:
+    root = _workspace(
+        tmp_path / ".zicato",
+        board=[_entry("ungraded"), _graded("a"), _graded("b")],
+        scoring={},
+    )
+    assert "no_expectations" not in _codes(root)
+
+
+def test_the_gate_and_the_health_report_apply_one_coverage_rule(tmp_path: Path) -> None:
+    """Both surfaces measure the same board through one declaration.
+
+    The gate judges the board before the round and the loop-health report
+    judges it after, so the two must not be able to disagree about which
+    entries grade nothing or about the threshold that makes the fraction
+    worth reporting.
+    """
+    from zicato.board.jsonl import load_board
+    from zicato.health.diagnostics import detect_no_expectations
+
+    root = _workspace(
+        tmp_path / ".zicato",
+        board=[_entry("beta"), _entry("alpha"), _graded("gamma")],
+        scoring={},
+    )
+    gate = _finding(root, "no_expectations")
+    (health,) = detect_no_expectations(list(load_board(root.parent / "board.jsonl")))
+    assert gate.detail == health.detail
+
+
+def test_the_workspace_threshold_governs_both_surfaces(tmp_path: Path) -> None:
+    """Retuning ``health.no_expectations_fraction`` moves the gate too."""
+    from zicato.board.jsonl import load_board
+    from zicato.config import health_config_from_workspace
+    from zicato.health.diagnostics import detect_no_expectations
+
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={"health": {"no_expectations_fraction": 0.9}},
+        board=[_entry("beta"), _entry("alpha"), _graded("gamma")],
+        scoring={},
+    )
+    assert "no_expectations" not in _codes(root)
+    tuned = health_config_from_workspace(json.loads((root / "config.json").read_text("utf-8")))
+    assert detect_no_expectations(list(load_board(root.parent / "board.jsonl")), tuned) == []
+
+
+def test_an_unparseable_health_block_leaves_the_gate_on_the_default(tmp_path: Path) -> None:
+    """A typo in a threshold must not stop the gate from checking a board.
+
+    ``zicato health`` is where a malformed ``health`` block is reported to
+    the operator; refusing to run the gate over it would withhold every
+    other finding as well.
+    """
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={"health": {"no_expectation_fraction": 0.9}},
+        board=[_entry("beta"), _entry("alpha"), _graded("gamma")],
+        scoring={},
+    )
+    assert _findings(root)["no_expectations"] is False
+
+
 # --- the gate on evolve ----------------------------------------------------
 
 
@@ -716,6 +819,63 @@ def test_a_clean_workspace_dry_runs_to_zero_without_spending(tmp_path: Path) -> 
     assert "Nothing was spent." in result.output
     assert "1 board entry" in result.output
     assert "1 mutation point" in result.output
+
+
+def test_a_dry_run_names_the_ungraded_entries_before_anything_is_spent(
+    tmp_path: Path,
+) -> None:
+    """What the operator reads before spending, and a zero exit under it."""
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "mutable_trees": [],
+            }
+        },
+        board=[_entry("ungraded_a"), _entry("ungraded_b")],
+        scoring={},
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    result = _evolve(root, "--dry-run")
+    assert result.exit_code == 0
+    assert "[ADVISORY] no_expectations" in result.output
+    assert "ungraded_a, ungraded_b" in result.output
+    assert "Nothing was spent." in result.output
+
+
+def test_board_coverage_is_measured_before_any_model_call(tmp_path: Path) -> None:
+    """The finding comes from the gate, so it precedes every spend.
+
+    The workspace here also carries a stop, which is what lets the public
+    loop hand back its whole report without running a round: the advisory
+    is in it, and no model was called to produce it.
+    """
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={"models": _models()},
+        board=[_entry("ungraded_a"), _entry("ungraded_b")],
+        scoring={},
+    )
+    calls: list[str] = []
+
+    async def call_llm(system: str, user: str, model: str) -> str:
+        del system, user, model
+        calls.append("model")
+        return ""
+
+    with pytest.raises(WorkspaceCheckError) as raised:
+        asyncio.run(
+            evolve_n_rounds(
+                rounds=1,
+                workspace_root=root,
+                harness_call_llm=call_llm,
+                auxiliary_call_llm=call_llm,
+            )
+        )
+    assert "no_expectations" in {f.code for f in raised.value.report.advisories}
+    assert calls == []
 
 
 def test_a_workspace_declaring_no_proposal_runtime_is_refused(tmp_path: Path) -> None:

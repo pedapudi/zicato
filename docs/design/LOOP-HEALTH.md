@@ -183,6 +183,14 @@ board is drift-only. Severity is **`info`** rather than `warning`,
 because a drift-loss-only board is supported; the finding is a notice.
 Silent on an empty board.
 
+**Also reported before the first round.** The fraction is a static
+property of the board file, so the pre-spend workspace gate
+(`src/zicato/check/validators.py`) reports it too, as an advisory that
+names the ungraded entries and never blocks a run. Both surfaces read one
+rule, `zicato.board.expectation_coverage.measure_expectation_coverage`,
+including the `no_expectations_fraction` threshold, so a board reads the
+same way at both moments and retuning the threshold moves both.
+
 ### 3.5 Dead judge — `dead_judge`
 
 **What it catches.** A board-declared in-run **process judge that never

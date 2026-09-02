@@ -42,7 +42,9 @@ HealthConfig / ``health`` key      Default
   a tournament counts as "produced no signal".
 * ``no_expectations_fraction`` — :func:`detect_no_expectations` fires
   when the fraction of board entries lacking an expectation is strictly
-  greater than this value.
+  greater than this value. The same threshold governs the pre-spend
+  advisory the workspace gate raises on such a board; both read it
+  through :mod:`zicato.board.expectation_coverage`.
 * ``stalled_rejects`` — how many consecutive ``rejected`` generations
   :func:`detect_stalled_loop` treats as a stall.
 * ``generalization_gap_warn`` / ``generalization_gap_crit`` — the
@@ -57,6 +59,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from zicato.board.expectation_coverage import measure_expectation_coverage
 from zicato.config import HealthConfig, load_config
 from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
 from zicato.core.runtime import PREFLIGHT_GATE_DEFAULT
@@ -470,10 +473,16 @@ def detect_no_expectations(
 ) -> list[HealthFinding]:
     """Report when most of the board carries no pass/fail expectation.
 
-    Computes the fraction of board entries whose ``expectation`` is
-    ``None``. When that fraction is strictly greater than
-    ``config.no_expectations_fraction``, the pass/fail side of the loss
-    is mostly absent — the loop leans almost entirely on drift loss.
+    The rule — which entries count as ungraded, and the
+    ``config.no_expectations_fraction`` their fraction must strictly
+    exceed — is
+    :func:`~zicato.board.expectation_coverage.measure_expectation_coverage`,
+    which the pre-spend workspace gate reports from as well. This is the
+    post-run half: the same board reads the same way before the first
+    round is spent and after rounds have run, and only the wording
+    differs. When the fraction is over the threshold, the pass/fail side
+    of the loss is mostly absent and the loop leans almost entirely on
+    drift loss.
 
     Severity is ``info``: a drift-only board is a legitimate operator
     choice, but it is worth surfacing because a flat-drift epoch on such
@@ -484,14 +493,8 @@ def detect_no_expectations(
     ``config`` defaults to the env-sourced
     :class:`~zicato.config.HealthConfig` via :func:`load_config`.
     """
-    total = len(board_entries)
-    if total == 0:
-        return []
-
-    threshold = _resolve_health_config(config).no_expectations_fraction
-    without = [entry for entry in board_entries if entry.expectation is None]
-    fraction = len(without) / total
-    if fraction <= threshold:
+    coverage = measure_expectation_coverage(board_entries, config)
+    if not coverage.reportable:
         return []
 
     return [
@@ -499,16 +502,11 @@ def detect_no_expectations(
             code="no_expectations",
             severity="info",
             summary=(
-                f"{len(without)}/{total} board entries ({fraction:.0%}) have no "
+                f"{len(coverage.ungraded_ids)}/{coverage.total} board entries "
+                f"({coverage.fraction:.0%}) have no "
                 "expectation — the pass/fail side of the loss is mostly absent"
             ),
-            detail={
-                "entries_without_expectation": len(without),
-                "total_entries": total,
-                "fraction": fraction,
-                "threshold": threshold,
-                "entry_ids_without_expectation": sorted(entry.id for entry in without),
-            },
+            detail=coverage.finding_detail(),
         )
     ]
 
