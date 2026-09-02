@@ -5,6 +5,7 @@
 
 import { svgEl, el } from './core/dom.js';
 import { attachHovercard } from './hovercard.js';
+import * as M from './matrix.js';
 
 export const NS = 'http://www.w3.org/2000/svg';
 
@@ -3577,42 +3578,31 @@ export function diversityMatrix(opts) {
   const isPaired = (g) => pair.includes(g);
   const onCompetitor = typeof o.onCompetitor === 'function' ? o.onCompetitor : null;
 
-  const table = el('table', { class: 'dn-mtx dn-divmtx' });
+  const table = M.matrixTable('dn-divmtx');
   const hr = el('tr');
-  hr.appendChild(el('th', { class: 'dn-mtx-corner', text: 'site · challenger →' }));
+  hr.appendChild(M.matrixCorner('site · challenger →'));
   for (const g of gens) {
-    const cell = el('th', { class: 'dn-mtx-gen' + (isPaired(g) ? ' dn-divmtx-paired' : '') }, [
-      onCompetitor
-        ? clickable(el('span', { class: 'dn-mtx-genlink', text: shortLabel(g, 14) }), () => onCompetitor(g))
-        : el('span', { class: 'dn-mtx-genlink', text: shortLabel(g, 14) }),
-    ]);
-    hr.appendChild(cell);
+    const label = M.matrixColumnLabel(shortLabel(g, 14));
+    hr.appendChild(M.matrixColumnHeader({ extra: isPaired(g) ? 'dn-divmtx-paired' : null },
+      [onCompetitor ? clickable(label, () => onCompetitor(g)) : label]));
   }
   table.appendChild(el('thead', null, [hr]));
   const tbody = el('tbody');
   for (const s of sites) {
-    const tr = el('tr', { class: 'dn-mtx-row' });
-    tr.appendChild(el('th', { class: 'dn-mtx-site', scope: 'row' }, [
-      el('span', { class: 'dn-mtx-file', text: s }),
-    ]));
+    const tr = M.matrixRow();
+    tr.appendChild(M.matrixRowHeader(null, [el('span', { class: 'dn-mtx-file', text: s })]));
     for (const g of gens) {
       const on = touched.get(g).has(s);
-      const td = el('td', { class: 'dn-mtx-cell' + (on ? ' dn-mtx-on' : '') + (isPaired(g) ? ' dn-divmtx-paired' : ''),
-        'data-gen': g, 'data-site': s });
-      if (on) {
-        td.appendChild(svgEl('svg', { class: 'dn-mtx-mark', width: 16, height: 16, viewBox: '0 0 16 16', role: 'img' }, [
-          svgEl('rect', { x: 3, y: 3, width: 10, height: 10, rx: 2, class: 'dn-mtx-square' }),
-        ]));
-      } else {
-        td.appendChild(el('span', { class: 'dn-mtx-blank', 'aria-hidden': 'true', text: '·' }));
-      }
-      tr.appendChild(td);
+      tr.appendChild(M.matrixCell(on, {
+        extra: isPaired(g) ? 'dn-divmtx-paired' : null,
+        attrs: { 'data-gen': g, 'data-site': s },
+      }, [on ? M.matrixMark() : M.matrixBlank()]));
     }
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
   return el('div', { class: 'dn-divmtx-wrap' }, [
-    el('div', { class: 'dn-table-scroll' }, [table]),
+    M.matrixScroll(table),
     el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
       text: 'column = challenger · row = mutation site · ▪ = touched here · coinciding columns are the same idea (the overlap the ribbon scores)' }),
   ]);

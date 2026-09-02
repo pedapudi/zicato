@@ -32,6 +32,7 @@
 import { el, svgEl } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
+import * as M from '../matrix.js';
 import { section, empty, gatedSwap, verdictPill } from '../ui.js';
 import { epochIsLive } from '../livestatus.js';
 import { CROWN, fmt } from '../svg.js';
@@ -341,14 +342,14 @@ function buildToolbar(host, ctx, matrix) {
 }
 
 function buildMatrix(ctx, epochId, candidates, entries, cells, live, ghosts, epochLive) {
-  const table = el('table', { class: 'dn-mtx dn-evalmtx' });
+  const table = M.matrixTable('dn-evalmtx');
 
   // ── column group header (round_index grouped) + the candidate header ──
   const thead = el('thead');
   const groupRow = roundGroupRow(candidates);
   if (groupRow) thead.appendChild(groupRow);
   const hr = el('tr', { class: 'dn-evalmtx-headrow' });
-  hr.appendChild(el('th', { class: 'dn-mtx-corner', text: 'entry · candidate →' }));
+  hr.appendChild(M.matrixCorner('entry · candidate →'));
   for (const c of candidates) {
     hr.appendChild(candidateHeader(ctx, epochId, c, epochLive));
   }
@@ -362,7 +363,7 @@ function buildMatrix(ctx, epochId, candidates, entries, cells, live, ghosts, epo
     const row = Array.isArray(cells[ri]) ? cells[ri] : [];
     if (!rowPasses(entry, row)) return;
     shown += 1;
-    const tr = el('tr', { class: 'dn-mtx-row dn-evalmtx-row' + (entry.slice === 'holdout' ? ' dn-evalmtx-holdout' : '') });
+    const tr = M.matrixRow({ extra: 'dn-evalmtx-row' + (entry.slice === 'holdout' ? ' dn-evalmtx-holdout' : '') });
     tr.appendChild(entryHeader(entry));
     candidates.forEach((c, ci) => {
       tr.appendChild(cellNode(ctx, epochId, entry, c, row[ci], live));
@@ -389,7 +390,7 @@ function buildMatrix(ctx, epochId, candidates, entries, cells, live, ghosts, epo
   table.appendChild(tbody);
 
   const wrap = el('div', { class: 'dn-evalmtx-wrap' });
-  wrap.appendChild(el('div', { class: 'dn-table-scroll' }, [table]));
+  wrap.appendChild(M.matrixScroll(table));
   if (!shown) {
     wrap.appendChild(el('p', { class: 'dn-empty', text: 'No entries match the active filters.' }));
   }
@@ -405,9 +406,9 @@ function buildMatrix(ctx, epochId, candidates, entries, cells, live, ghosts, epo
 // + the apply affordance. No scored glyphs, no drift numbers.
 function ghostRow(ctx, g, candCount) {
   const viz = g.viz || vizFromFeedAdmission(null);
-  const tr = el('tr', {
-    class: 'dn-mtx-row dn-evalmtx-row dn-evalmtx-ghost',
-    'data-ghost': '1', 'data-entry': String(g.entry_id),
+  const tr = M.matrixRow({
+    extra: 'dn-evalmtx-row dn-evalmtx-ghost',
+    attrs: { 'data-ghost': '1', 'data-entry': String(g.entry_id) },
   });
   // the row header — the entry id + the suggested marker + the flip whisker.
   const head = el('div', { class: 'dn-evalmtx-sitehead dn-evalmtx-ghosthead-cell' }, [
@@ -419,9 +420,9 @@ function ghostRow(ctx, g, candCount) {
     el('span', { class: 'dn-evalmtx-ghost-flip', title: 'A/A flip rate the instrument would measure (admission)' },
       [flipWhisker(viz.flip)]),
   ]);
-  tr.appendChild(el('th', {
-    class: 'dn-mtx-site dn-evalmtx-site dn-evalmtx-ghost-site', scope: 'row',
-    'data-entry': String(g.entry_id),
+  tr.appendChild(M.matrixRowHeader({
+    extra: 'dn-evalmtx-site dn-evalmtx-ghost-site',
+    attrs: { 'data-entry': String(g.entry_id) },
   }, [head]));
   // one spanning cell — the admission evidence WHERE CELLS WOULD BE, never a
   // fabricated verdict (nothing scored this draft).
@@ -447,9 +448,9 @@ function ghostRow(ctx, g, candCount) {
       text: 'stage in builder →',
     }));
   }
-  tr.appendChild(el('td', {
-    class: 'dn-mtx-cell dn-evalmtx-cell dn-evalmtx-ghostcell',
-    colspan: String(Math.max(1, candCount)),
+  tr.appendChild(M.matrixCell(false, {
+    extra: 'dn-evalmtx-cell dn-evalmtx-ghostcell',
+    attrs: { colspan: String(Math.max(1, candCount)) },
   }, [body]));
   return tr;
 }
@@ -460,7 +461,7 @@ function ghostRow(ctx, g, candCount) {
 function roundGroupRow(candidates) {
   if (!candidates.some((c) => Number.isInteger(c.round_index))) return null;
   const tr = el('tr', { class: 'dn-evalmtx-grouprow' });
-  tr.appendChild(el('th', { class: 'dn-mtx-corner dn-evalmtx-groupcorner', 'aria-hidden': 'true' }));
+  tr.appendChild(M.matrixCorner(null, { extra: 'dn-evalmtx-groupcorner', attrs: { 'aria-hidden': 'true' } }));
   let i = 0;
   while (i < candidates.length) {
     const r = candidates[i].round_index;
@@ -496,10 +497,9 @@ function candidateHeader(ctx, epochId, c, epochLive) {
       text: CROWN.current,
     }));
   }
-  kids.push(el('a', {
-    class: 'dn-mtx-genlink dn-evalmtx-genlink',
+  kids.push(M.matrixColumnLabel(shortId(c.generation_id, 14), {
+    extra: 'dn-evalmtx-genlink',
     href: ctx.href('candidate', { epochId, gen: c.generation_id }),
-    text: shortId(c.generation_id, 14),
   }));
   // the shipped decision vocabulary, TRISTATE (§3.1 / F1): the seed → 'baseline'
   // (it faced no gate, so it never WON one), promoted → dn-promoted, rejected →
@@ -507,9 +507,9 @@ function candidateHeader(ctx, epochId, c, epochLive) {
   // NEVER collapse a null into rejected (the Class-B bug).
   const decision = c.decision || 'pending';
   kids.push(verdictPill(decision, { live: epochLive, label: c.decision_label }));
-  return el('th', {
-    class: 'dn-mtx-gen dn-evalmtx-gen' + (spine ? ' dn-evalmtx-spine' : ''),
-    scope: 'col', 'data-gen': String(c.generation_id),
+  return M.matrixColumnHeader({
+    extra: 'dn-evalmtx-gen' + (spine ? ' dn-evalmtx-spine' : ''),
+    attrs: { scope: 'col', 'data-gen': String(c.generation_id) },
   }, [el('div', { class: 'dn-evalmtx-genhead' }, kids)]);
 }
 
@@ -520,9 +520,9 @@ function entryHeader(entry) {
     kids.push(el('span', { class: 'dn-evalmtx-holdout-tag', title: 'held-out entry (not scored into the gate)', text: 'holdout' }));
   }
   kids.push(flipBadge(entry));
-  return el('th', {
-    class: 'dn-mtx-site dn-evalmtx-site', scope: 'row',
-    'data-entry': String(entry.entry_id),
+  return M.matrixRowHeader({
+    extra: 'dn-evalmtx-site',
+    attrs: { 'data-entry': String(entry.entry_id) },
   }, [el('div', { class: 'dn-evalmtx-sitehead' }, kids)]);
 }
 
@@ -532,9 +532,7 @@ function entryHeader(entry) {
 // clickable through to the run transcript + a harmonograf deep-link when live.
 function cellNode(ctx, epochId, entry, cand, cell, live) {
   if (!cell) {
-    return el('td', { class: 'dn-mtx-cell dn-evalmtx-cell dn-evalmtx-none' }, [
-      el('span', { class: 'dn-mtx-blank', 'aria-hidden': 'true', text: '·' }),
-    ]);
+    return M.matrixCell(false, { extra: 'dn-evalmtx-cell dn-evalmtx-none' }, [M.matrixBlank()]);
   }
   const pass = cell.pass_fail;
   const tone = pass === true ? 'dn-evalmtx-pass' : pass === false ? 'dn-evalmtx-fail' : 'dn-evalmtx-neutral';
@@ -543,13 +541,13 @@ function cellNode(ctx, epochId, entry, cand, cell, live) {
   // client-side replicate count.
   const evid = cell.evidence === 'replicated' ? 'dn-evalmtx-firm'
     : cell.evidence === 'single' ? 'dn-evalmtx-single dn-faint' : 'dn-evalmtx-single dn-faint';
-  const cls = 'dn-mtx-cell dn-evalmtx-cell ' + tone + ' ' + evid
-    + (cell.cached ? ' dn-evalmtx-cached' : '');
-  const td = el('td', {
-    class: cls,
-    'data-entry': String(entry.entry_id), 'data-gen': String(cand.generation_id),
-    'data-evidence': String(cell.evidence || ''),
-    'data-pass': pass === true ? 'pass' : pass === false ? 'fail' : 'none',
+  const td = M.matrixCell(false, {
+    extra: 'dn-evalmtx-cell ' + tone + ' ' + evid + (cell.cached ? ' dn-evalmtx-cached' : ''),
+    attrs: {
+      'data-entry': String(entry.entry_id), 'data-gen': String(cand.generation_id),
+      'data-evidence': String(cell.evidence || ''),
+      'data-pass': pass === true ? 'pass' : pass === false ? 'fail' : 'none',
+    },
   });
 
   const drift = typeof cell.drift_loss === 'number' ? fmt(cell.drift_loss, 2) : '—';
@@ -571,7 +569,7 @@ function cellNode(ctx, epochId, entry, cand, cell, live) {
     title,
     'aria-label': title,
   }, [
-    svgEl('svg', { class: 'dn-mtx-mark dn-evalmtx-mark', width: 14, height: 14, viewBox: '0 0 14 14', role: 'img' }, [
+    M.matrixMarkFrame(14, { extra: 'dn-evalmtx-mark' }, [
       pass === false
         ? svgEl('path', { class: 'dn-evalmtx-glyph', d: 'M3 3 L11 11 M11 3 L3 11', 'stroke-width': 2, fill: 'none' })
         : svgEl('rect', { x: 3, y: 3, width: 8, height: 8, rx: 2, class: 'dn-evalmtx-square' }),

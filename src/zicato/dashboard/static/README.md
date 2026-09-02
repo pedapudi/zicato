@@ -39,6 +39,8 @@ in `js/CONTRACTS.md`.
   `survivalFunnel`/`swissLadder`/`swissOverview`/`elimFlow`/`duelFlow`,
   the epoch figures `roundTimeline`/`waterfall`/`reignGantt`, the
   `sankey`, the side-by-side diff), `dag.js` (the lifecycle DAG),
+  `matrix.js` (the `dn-mtx` table grid the mutation surface, the
+  field-diversity figure and the evals matrix are all built from),
   `live.js` and `livestatus.js` (the live-run controller and its status
   derivation), `hovercard.js` (the singleton hover-for-detail card),
   `compare.js` (the side-by-side compare picker and split frame),
