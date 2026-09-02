@@ -6,11 +6,13 @@ import sqlite3
 from typing import Any
 
 from zicato.query._sqlite import (
+    INDEX_NOT_BUILT_NOTE,
     _IndexAbsent,
     _opt_json,
     _query,
     _rget,
     open_index_ro,
+    with_index_not_built_note,
 )
 from zicato.query.epoch_view import (
     _normalize_structure,
@@ -80,12 +82,9 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
         with open_index_ro(paths.index_db) as conn:
             return _bracket_from_conn(paths, conn, epoch_id)
     except _IndexAbsent:
-        return {
-            "epoch_id": epoch_id,
-            "champion_lineage": [],
-            "matchups": [],
-            "note": "index not built; run zicato repair index",
-        }
+        return with_index_not_built_note(
+            {"epoch_id": epoch_id, "champion_lineage": [], "matchups": []}
+        )
     except sqlite3.Error:
         return {"epoch_id": epoch_id, "champion_lineage": [], "matchups": []}
 
@@ -542,7 +541,7 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
             "delta_scalar": None,
             "patches": [],
             "ab_grid": [],
-            "note": "index not built; run zicato repair index",
+            "note": INDEX_NOT_BUILT_NOTE,
         }
     except sqlite3.Error:
         return {

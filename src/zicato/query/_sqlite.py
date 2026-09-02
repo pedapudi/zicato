@@ -22,6 +22,23 @@ class _IndexAbsent(Exception):
     """``index.db`` does not exist on disk."""
 
 
+#: THE ``note`` a reader serves when the analytical index could not answer.
+#: It names the repair the operator runs, so a client renders it verbatim
+#: rather than deciding for itself what an empty payload means; every reader
+#: that degrades on an unusable index serves this exact string, which is what
+#: lets a client match on it.
+INDEX_NOT_BUILT_NOTE = "index not built; run zicato repair index"
+
+
+def with_index_not_built_note(payload: dict[str, Any]) -> dict[str, Any]:
+    """``payload`` plus :data:`INDEX_NOT_BUILT_NOTE` on its ``note`` field.
+
+    A new dict, so an empty-payload template the caller reuses is not
+    mutated. ``note`` lands last, where every degrading reader already put it.
+    """
+    return {**payload, "note": INDEX_NOT_BUILT_NOTE}
+
+
 def _open_index(path: Path) -> sqlite3.Connection:
     if not path.exists():
         raise _IndexAbsent
