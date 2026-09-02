@@ -1163,13 +1163,12 @@ declared `CritiqueSelected.slate` type — the decoder re-tuples top-level lists
 on read, so emitting a list would leave a written event unequal to its own
 decoded form.
 
-On the `pi` path the index and the rationale come back as separate structured
-fields of the `select_candidate` tool call, and they are parsed with DIFFERENT
-strictness: an unusable index degrades the selection to the heuristic, while an
-unusable rationale is dropped on its own. A note about a decision must never
-veto the decision. The session records the rationale only after the index
-clears its range check, so it never carries a sentence for a choice it
-rejected. It is PROVENANCE:
+The index and the rationale are parsed with DIFFERENT strictness: an
+unusable index degrades the selection to the heuristic, while an unusable
+rationale is dropped on its own. A note about a decision must never veto
+the decision, and the rationale is recorded only after the index clears its
+range check, so it never carries a sentence for a choice that was rejected.
+It is PROVENANCE:
 nothing in the loop reads it back, and truncation costs a reader the end of a
 sentence and costs the step nothing. Its visibility envelope is the critic's
 own — the critic can only paraphrase what it was shown, and it was shown

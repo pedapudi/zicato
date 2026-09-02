@@ -21,10 +21,10 @@ Asserted here, per ``docs/design/PROCESS-EXEMPLARS.md``:
   board input text (the task prompt rides ``run_started.goal_summary``,
   an unlisted case), and no run id reaches the prompt.
 
-The prompt is captured by wrapping the single-shot engine's
-``render_user_prompt`` seam (the target_0 proposer dir is skill-composed,
-so it drives :func:`zicato.proposer.proposer.propose_experiment`
-in-process); the subprocess workers are untouched.
+What the model saw is read back from the workspace's own durable capture
+(:func:`zicato.proposer.input_capture.read_proposer_inputs`, filtered to
+the proposal role), so the assertion is over the text the episode was
+actually given rather than over a patched renderer.
 """
 
 from __future__ import annotations

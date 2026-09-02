@@ -664,8 +664,8 @@ single inner `propose` with NO critique and NO extra work):
    `screen_veto_only`. `critique_selected{index, reason, slate,
    rationale}` — the mode, a per-candidate summary of the whole slate
    (core idea + mutation ids), and, when a critic chose, its one-line
-   reason. Both selection routes (the aux critic and pi's in-session
-   `select_candidate` tool) write the identical shape.
+   reason. The critic and the deterministic heuristic write the identical
+   shape, so a reader cannot tell which route chose from the event's form.
 5. **Mount the chosen candidate** (`_mount_chosen`) — the step easiest to
    overlook. Each slate slot validates into its OWN scratch
    tree (`GenerationStore.derive_scratch`, leased per slot by

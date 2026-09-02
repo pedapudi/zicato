@@ -962,7 +962,7 @@ parallel (`-n auto`) and is the FAST TIER: it excludes the Node shim and
 the opt-in cascade measurement by marker, and the `slow` tier by a hook
 that fires only when nothing was named on the command line. Markers: `slow` (one test
 measured at 15 s or more), `integration` (crosses a process or network
-boundary, so its runtime IS its coverage), `node`, `cascade_oc`, `pi`. The
+boundary, so its runtime IS its coverage), `node`, `cascade_oc`. The
 full suite is `uv run pytest -m "not node and not cascade_oc"`, which is
 what `make test` and CI run — note a command-line `-m` REPLACES the
 pyproject default rather than intersecting with it, hence both terms. See

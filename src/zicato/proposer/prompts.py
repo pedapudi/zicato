@@ -1,30 +1,26 @@
 # ruff: noqa: E501
-# This module is a prompt template — several lines inside the embedded
-# one-shot JSON example exceed the project line limit by design. Breaking
-# the example across lines would change what the model sees, so the
-# whole file is exempted from E501 rather than splitting prompt content.
-"""System + user prompt templates for the structured proposer.
+# One model-visible line in the metric-targets block — the worked
+# "metric_name" example a proposer copies — exceeds the project line limit.
+# Wrapping it would change what the model reads, so the file is exempted
+# rather than the example split.
+"""The blocks a proposal episode's evidence is rendered from.
 
-The proposer is asked to emit a single JSON object containing a typed
-hypothesis and a list of patches. The schema description in the system
-prompt is verbose by design — LLM compliance with JSON-only output
-improves materially when the prompt is explicit about what counts as a
-valid response and shows a one-shot worked example.
+Every channel the round assembles reaches the model through one of the
+renderers here, and every band, bucket and aggregation the
+restricted-visibility envelope requires is applied at this boundary — see
+``docs/design/OVERFITTING.md`` §11. A channel that renders raw per-entry
+material here has leaked, whatever the caller intended.
 
-Two layers of templating:
+Each renderer returns the empty string for its no-data case, which is the
+sentinel meaning "omit the section entirely". That convention is what
+makes a round that opts into none of the optional channels render the
+three blocks that are always present and nothing else.
 
-* :data:`SYSTEM_PROMPT_TEMPLATE` — operator-tone scaffolding, schema
-  description, and an embedded one-shot example. The proposer-brief body
-  is spliced in verbatim so the operator's free-form guidance reaches
-  the model.
-* :data:`USER_PROMPT_TEMPLATE` — per-round payload: loss summary,
-  observed patterns, mutation-point manifest. The body is filled in by
-  the orchestrator at call time.
-
-Rendering helpers (:func:`render_pattern_block`,
-:func:`render_mutation_block`, :func:`render_pattern_block`) keep the
-formatting logic out of the
-orchestrator.
+The one prompt this module still templates whole is the LLM-guided
+recombination merge (:data:`MERGE_SYSTEM_PROMPT_TEMPLATE`), which is a
+single JSON answer rather than an episode. The episode's own instructions
+and task are assembled in :mod:`zicato.proposer.foe_request`, from the
+blocks here.
 """
 
 from __future__ import annotations
