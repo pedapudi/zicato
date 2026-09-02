@@ -1052,12 +1052,13 @@ operator's workspace would spuriously roll its epoch on the next run.
 ```
 — `tools/parity/lib/contract_hash.py` (module docstring)
 
-The component breakdown (board / brief / scoring / entrypoint /
+The component breakdown (board / brief / scoring / evaluator revision / adapter /
 mutable_trees / proposer) localizes a regression to the exact canonicalizer
 that moved. **Reds legitimately** when a canonicalizer changes what it hashes
-(rare — usually a bug). The fixture pins fixed entrypoint + mutable_trees so
-the hash depends only on committed file contents + those literals, never on
-anything host- or clock-derived.
+(rare — usually a bug). The fixture pins a fixed adapter reconstruction
+document and fixed mutable-tree paths. The hash therefore depends only on
+committed file contents and those literals, never on host- or clock-derived
+state.
 
 **Checkout-independence** is the related in-suite pin
 (`tests/test_epoch_contract.py::test_contract_hash_is_cwd_and_checkout_invariant`).

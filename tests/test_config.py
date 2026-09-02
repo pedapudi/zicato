@@ -15,6 +15,8 @@ isolated from the real process environment — no ``monkeypatch`` of
 from __future__ import annotations
 
 import dataclasses
+import re
+from pathlib import Path
 
 import pytest
 
@@ -168,8 +170,8 @@ def test_health_block_non_object_raises() -> None:
 # ---------------------------------------------------------------------------
 
 #: Every deleted env binding, with a plausible value. The redundant trio
-#: was fully shadowed by pre-existing CLI flags; six more were converted
-#: to flags (`zicato evolve --parallelism / --harness-call-timeout-ms /
+#: was fully shadowed by pre-existing CLI flags; five more were converted
+#: to flags (`zicato evolve --parallelism /
 #: --aux-call-timeout / --supervisor-binary / --harmonograf-url`,
 #: `zicato dashboard|builder --static-dir`); the six ZICATO_HEALTH_*
 #: thresholds moved to the workspace config.json 'health' block.
@@ -233,8 +235,8 @@ def test_deleted_env_vars_absent_from_describe() -> None:
 _VALID_ROLES = {
     "harness-contract",
     "internal-handoff",
-    "secrets-boundary",
     "external-integration",
+    "secrets-boundary",
     "test-toggle",
 }
 
@@ -247,12 +249,15 @@ def test_describe_env_vars_is_the_labelled_merited_set() -> None:
         assert info.role in _VALID_ROLES, info
         assert info.description, info
     names = {info.name for info in infos}
-    # The harness contract + the internal handoff pair + the goldfive
-    # deferral + the CI/test toggles are all present.
+    # The harness contract, internal handoff pair, secret references, and
+    # CI/test toggles are all present.
     assert "ZICATO_RUN_SCRATCH_DIR" in names
     assert "ZICATO_HARMONOGRAF_URL" in names
     assert "ZICATO_HARMONOGRAF_GRPC" in names
-    assert "GOLDFIVE_AGENT_CALL_TIMEOUT_MS" in names
+    assert "ZICATO_PROPOSER_TOOL_CONTEXT" in names
+    assert "PI_CODING_AGENT_DIR" in names
+    assert "PI_CODING_AGENT_SESSION_DIR" in names
+    assert "PI_OFFLINE" in names
     assert "ZICATO_SKIP_HOOK_CHECK" in names
     assert "ZICATO_PARITY_UPDATE" in names
 
@@ -273,6 +278,32 @@ def test_merited_set_harmonograf_is_internal_handoff() -> None:
     by_name = {info.name: info for info in describe_env_vars()}
     assert by_name["ZICATO_HARMONOGRAF_URL"].role == "internal-handoff"
     assert by_name["ZICATO_HARMONOGRAF_GRPC"].role == "internal-handoff"
+
+
+def test_project_specific_environment_names_are_in_the_inventory() -> None:
+    """Every project-owned process variable in production source is discoverable."""
+    source_root = Path(__file__).parents[1] / "src" / "zicato"
+    mentioned: set[str] = set()
+    for path in source_root.rglob("*.py"):
+        if path.name == "config.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        mentioned.update(re.findall(r"\b(?:ZICATO|PI)_[A-Z][A-Z0-9_]*\b", text))
+
+    non_environment_symbols = {
+        "ZICATO_DEFAULTS",
+        "ZICATO_EVALUATOR_REVISION",
+        "ZICATO_GOLDFIVE_INTEGRATION_REVISION",
+        "ZICATO_HEALTH_",
+        "ZICATO_LOGGER_NAME",
+        "PI_PACKAGE_DIR",
+    }
+    deleted_names_documented_by_tests = set(_DELETED_ENV_VARS) - {"ZICATO_HARMONOGRAF_URL"}
+    discovered = {info.name for info in describe_env_vars() if not info.name.startswith("<")}
+    test_tooling_only = {"ZICATO_SKIP_HOOK_CHECK", "ZICATO_PARITY_UPDATE"}
+    assert mentioned - non_environment_symbols - deleted_names_documented_by_tests == (
+        discovered - test_tooling_only
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -392,7 +423,7 @@ def test_pinned_override_reports_only_explicit_pins() -> None:
     assert pinned_override("runtime", "parallelism") is None
     pin_overrides({"runtime": {"parallelism": 7}})
     assert pinned_override("runtime", "parallelism") == 7
-    assert pinned_override("runtime", "harness_call_timeout_ms") is None
+    assert pinned_override("aux", "call_timeout_s") is None
 
 
 def test_clear_pinned_overrides_restores_defaults() -> None:

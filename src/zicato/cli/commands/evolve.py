@@ -9,14 +9,15 @@ Each invocation:
 
 1. **Resolves the evaluation contract** via
    :func:`zicato.epoch.contract.resolve_contract_inputs` — the board,
-   the proposer brief, the scoring config, and the registered
-   inner-harness identity (entrypoint + mutable trees).
+   the proposer brief, scoring, evaluator revision, adapter identity,
+   mutable source paths, and proposer identity.
 2. **Compares the contract hash to the current epoch.** On *any*
    change it closes the current epoch (writing its ``analysis.md``) and
    opens a fresh one carrying the new contract, before running. This is
    contract-hash auto-epoching; it is ON by default. ``--no-auto-epoch``
-   makes a drifted contract a hard error instead; ``--epoch`` pins an
-   explicit epoch and skips the check entirely.
+   makes a drifted contract a hard error instead. ``--epoch`` pins an
+   explicit epoch without auto-rolling; the workspace gate still checks the
+   pinned epoch against its frozen contract before any model call.
 3. **Runs the loop** for ``--rounds`` rounds. Each round proposes one
    experiment, applies it, runs the tournament, and either promotes or
    rejects the child generation.
@@ -71,7 +72,6 @@ from zicato.import_path import import_dotted_path
 def _pin_config_flags(
     *,
     parallelism: int | None,
-    harness_call_timeout_ms: int | None,
     aux_call_timeout: float | None,
     supervisor_binary: str | None,
     harmonograf_url: str | None,
@@ -87,8 +87,6 @@ def _pin_config_flags(
     pins: dict[str, dict[str, Any]] = {}
     if parallelism is not None:
         pins.setdefault("runtime", {})["parallelism"] = parallelism
-    if harness_call_timeout_ms is not None:
-        pins.setdefault("runtime", {})["harness_call_timeout_ms"] = harness_call_timeout_ms
     if aux_call_timeout is not None:
         pins.setdefault("aux", {})["call_timeout_s"] = aux_call_timeout
     if supervisor_binary is not None:
@@ -735,18 +733,6 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
     ),
 )
 @click.option(
-    "--harness-call-timeout-ms",
-    default=None,
-    type=click.IntRange(min=1),
-    help=(
-        "Per-LLM-call wall-clock budget, in milliseconds, for the inner "
-        "harness agent's calls. Shadows the "
-        "runtime.harness_call_timeout_ms config knob (default 1800000). "
-        "An explicit GOLDFIVE_AGENT_CALL_TIMEOUT_MS still wins — an "
-        "operator who tunes goldfive directly is not overridden."
-    ),
-)
-@click.option(
     "--aux-call-timeout",
     default=None,
     type=click.FloatRange(min=0, min_open=True),
@@ -849,7 +835,6 @@ def evolve_cmd(
     max_consecutive_rejections: int,
     max_wall_clock_seconds: int | None,
     parallelism: int | None,
-    harness_call_timeout_ms: int | None,
     aux_call_timeout: float | None,
     supervisor_binary: str | None,
     harmonograf_url: str | None,
@@ -888,7 +873,6 @@ def evolve_cmd(
     # a defaulted flag never masks the workspace config.json.
     _pin_config_flags(
         parallelism=parallelism,
-        harness_call_timeout_ms=harness_call_timeout_ms,
         aux_call_timeout=aux_call_timeout,
         supervisor_binary=supervisor_binary,
         harmonograf_url=harmonograf_url,

@@ -200,6 +200,47 @@ def test_host_worker_permits_reads_the_runtime_block(tmp_path: Path) -> None:
     assert off.host_worker_permits == 0
 
 
+def test_worker_permit_directory_and_log_level_read_the_runtime_block(tmp_path: Path) -> None:
+    permit_dir = tmp_path / "shared-worker-permits"
+    cfg = make_runtime_config(
+        {
+            "runtime": {
+                "worker_permit_dir": str(permit_dir),
+                "log_level": "debug",
+            }
+        },
+        workspace_root=tmp_path,
+        harness_call_llm=_stub_harness,
+        auxiliary_call_llm=_stub_aux,
+    )
+    assert cfg.worker_permit_dir == permit_dir
+    assert cfg.log_level == "DEBUG"
+
+
+@pytest.mark.parametrize("value", ["./shared-worker-permits", "", 42])
+def test_worker_permit_directory_requires_an_absolute_path(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    with pytest.raises(ValueError, match="worker_permit_dir must be .*absolute path"):
+        make_runtime_config(
+            {"runtime": {"worker_permit_dir": value}},
+            workspace_root=tmp_path,
+            harness_call_llm=_stub_harness,
+            auxiliary_call_llm=_stub_aux,
+        )
+
+
+def test_runtime_log_level_rejects_an_unknown_name(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="RuntimeConfig.log_level"):
+        make_runtime_config(
+            {"runtime": {"log_level": "verbose"}},
+            workspace_root=tmp_path,
+            harness_call_llm=_stub_harness,
+            auxiliary_call_llm=_stub_aux,
+        )
+
+
 def test_host_worker_permits_reads_a_json_boolean_as_intent(tmp_path: Path) -> None:
     """``true`` means AUTO, not ``int(True) == 1``.
 

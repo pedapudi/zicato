@@ -3815,9 +3815,16 @@ def test_build_contract_diff_no_predecessor(workspace: Path) -> None:
     assert diff["epoch_id"] == "2026-05-16_e0"
     assert diff["predecessor_epoch_id"] is None
     assert diff["any_changed"] is False
-    # Stable five-row matrix even when no diff is possible.
+    # Stable six-row matrix even when no diff is possible.
     names = [c["name"] for c in diff["components"]]
-    assert names == ["board", "brief", "scoring", "entrypoint", "mutable_trees"]
+    assert names == [
+        "board",
+        "brief",
+        "scoring",
+        "evaluator_revision",
+        "adapter",
+        "mutable_trees",
+    ]
     for c in diff["components"]:
         assert c["changed"] is False
 
@@ -3834,7 +3841,7 @@ def test_build_contract_diff_flags_changed_components(workspace: Path) -> None:
             "board": "boardhash_v0",
             "brief": "briefhash_v0",
             "scoring": "scoringhash_v0",
-            "entrypoint": "entryhash_v0",
+            "adapter": "adapterhash_v0",
             "mutable_trees": "treeshash_v0",
         },
     )
@@ -3847,7 +3854,7 @@ def test_build_contract_diff_flags_changed_components(workspace: Path) -> None:
             "board": "boardhash_v0",
             "brief": "briefhash_v1",
             "scoring": "scoringhash_v0",
-            "entrypoint": "entryhash_v0",
+            "adapter": "adapterhash_v0",
             "mutable_trees": "treeshash_v0",
         },
     )
@@ -3894,7 +3901,14 @@ def test_api_contract_diff_endpoint_returns_payload(client: TestClient) -> None:
     assert body["epoch_id"] == "2026-05-16_e0"
     assert "components" in body
     names = [c["name"] for c in body["components"]]
-    assert names == ["board", "brief", "scoring", "entrypoint", "mutable_trees"]
+    assert names == [
+        "board",
+        "brief",
+        "scoring",
+        "evaluator_revision",
+        "adapter",
+        "mutable_trees",
+    ]
 
 
 def test_api_contract_diff_endpoint_rejects_unsafe_id(client: TestClient) -> None:

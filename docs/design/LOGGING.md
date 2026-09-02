@@ -94,12 +94,15 @@ the handler in its `finally`. Installation:
 1. resolves the stream path (§1),
 2. prunes old streams (§4),
 3. attaches a `JsonlStreamHandler` to the **`zicato` logger** rather than
-   the root logger, at a configurable floor level (default `INFO`).
+   the root logger, at the `runtime.log_level` capture floor (default `INFO`).
 
 Attaching to `zicato` rather than `root` means the stream captures every
 `zicato.*` child logger by propagation while ignoring third-party chatter
 (goldfive internals, `httpx`, `asyncio`) that would otherwise flood the
-file. The floor level gates capture; the reader re-filters on read.
+file. The floor level gates capture; the reader re-filters on read. Valid
+configured levels are `DEBUG`, `INFO`, `WARNING`, `ERROR`, and `CRITICAL`.
+The worker receives the same value in its argument document, so orchestrator
+and worker records use one capture floor.
 
 Because it is a stdlib `Handler`, every `log.*` call is captured without an
 edit; the handler is the single structuring point.

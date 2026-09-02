@@ -86,8 +86,8 @@ def bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
                 # generations from git tags this fixture never writes.
                 "generation_source_backend": "directory",
                 "adapter": {
-                    "kind": "stub",
-                    # We replace the dispatch in the test below.
+                    "kind": "import",
+                    "factory": "tests._stub_adapter:make_stub_adapter",
                 },
             }
         )

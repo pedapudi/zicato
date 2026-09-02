@@ -118,6 +118,20 @@ def test_below_floor_records_are_not_captured(tmp_path: Path) -> None:
     assert [r["message"] for r in _read_lines(handle.path)] == ["kept"]
 
 
+def test_deleted_log_level_environment_variable_has_no_effect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    monkeypatch.setenv("ZICATO_LOG_LEVEL", "DEBUG")
+    handle = install_log_stream(ws, pid=31)
+    log = logging.getLogger("zicato.orchestrator")
+    log.debug("hidden")
+    log.info("visible")
+    handle.close()
+    assert [row["message"] for row in _read_lines(handle.path)] == ["visible"]
+
+
 def test_third_party_loggers_are_not_captured(tmp_path: Path) -> None:
     """Only ``zicato.*`` records reach the stream — not library chatter."""
     ws = tmp_path / ".zicato"

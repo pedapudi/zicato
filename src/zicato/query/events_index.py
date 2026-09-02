@@ -693,7 +693,8 @@ _CONTRACT_COMPONENT_NAMES = (
     "board",
     "brief",
     "scoring",
-    "entrypoint",
+    "evaluator_revision",
+    "adapter",
     "mutable_trees",
 )
 
@@ -736,7 +737,7 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
         }
 
     A component is listed even when both hashes are missing, so the
-    contract-diff view renders a stable five-row matrix. ``changed`` is ``True``
+    contract-diff view renders a stable six-row matrix. ``changed`` is ``True``
     iff the two hashes differ AND both are non-empty: an unknown predecessor
     hash is "no diff signal" rather than "everything changed".
 
@@ -801,7 +802,7 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
 #     and folded in as its own change signal so a structure roll is attributed.
 #   * ``proposer`` — IS persisted in ``contract_components.json`` (the
 #     orchestrator's :func:`compute_component_hashes` emits it), but the epoch
-#     contract-diff endpoint surfaces only the five contract sub-hashes. The
+#     contract-diff endpoint surfaces only six contract sub-hashes. The
 #     meta-loop
 #     ledger restores it: "proposer/skills change rolls the epoch", so it must
 #     read as a first-class lever in the cross-epoch attribution.
@@ -809,7 +810,8 @@ _LEDGER_COMPONENT_NAMES = (
     "board",
     "brief",
     "scoring",
-    "entrypoint",
+    "evaluator_revision",
+    "adapter",
     "mutable_trees",
     "structure",
     "proposer",
@@ -852,7 +854,7 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
     * ``structure``        — the epoch's frozen tournament structure token.
     * ``closed`` / ``open`` — lifecycle, so the open epoch dashes.
     * ``changed_components`` — the per-component change MAP vs the
-      PREDECESSOR epoch over :data:`_LEDGER_COMPONENT_NAMES` (the five surfaced
+      PREDECESSOR epoch over :data:`_LEDGER_COMPONENT_NAMES` (the six surfaced
       contract components PLUS ``structure`` and ``proposer``). A component is
       ``True`` iff it has a comparable signal that differs from the
       predecessor: contract sub-hashes are compared when BOTH are present (a

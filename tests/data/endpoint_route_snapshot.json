@@ -211,7 +211,8 @@
             "board": false,
             "brief": false,
             "scoring": false,
-            "entrypoint": false,
+            "evaluator_revision": false,
+            "adapter": false,
             "mutable_trees": false,
             "structure": false,
             "proposer": false
@@ -232,7 +233,8 @@
             "board": true,
             "brief": true,
             "scoring": false,
-            "entrypoint": false,
+            "evaluator_revision": false,
+            "adapter": false,
             "mutable_trees": false,
             "structure": false,
             "proposer": false
@@ -256,7 +258,8 @@
             "board": true,
             "brief": true,
             "scoring": false,
-            "entrypoint": false,
+            "evaluator_revision": false,
+            "adapter": false,
             "mutable_trees": false,
             "structure": false,
             "proposer": false
@@ -1272,8 +1275,14 @@
           "changed": false
         },
         {
-          "name": "entrypoint",
-          "current_hash": "entry-const",
+          "name": "evaluator_revision",
+          "current_hash": null,
+          "previous_hash": null,
+          "changed": false
+        },
+        {
+          "name": "adapter",
+          "current_hash": null,
           "previous_hash": null,
           "changed": false
         },

@@ -94,6 +94,9 @@ _FROZEN_OMIT_AT_DEFAULT_FIELDS = frozenset(
         "genealogy",
         "calibration_feedback",
         "telemetry_dialect",
+        # Optional integration settings are absent from generic contracts.
+        # Activating the block makes every nested value contract-bearing.
+        "goldfive",
     }
 )
 

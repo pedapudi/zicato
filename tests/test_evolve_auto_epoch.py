@@ -18,12 +18,12 @@ from typing import Any
 import pytest
 
 from tests._orchestrator_harness import harness_call_llm
+from tests._stub_adapter import make_stub_adapter
 from zicato.core.types import (
     BoardEntry,
     DriftCount,
     ExpectationResult,
     LossProfile,
-    RunResult,
 )
 from zicato.epoch.lifecycle import current_epoch_id, list_epochs
 
@@ -129,7 +129,10 @@ def _bootstrap_registered(tmp_path: Path) -> tuple[Path, Path]:
         json.dumps(
             {
                 "instance_id": "test",
-                "adapter": {"kind": "stub"},
+                "adapter": {
+                    "kind": "import",
+                    "factory": "tests._stub_adapter:make_stub_adapter",
+                },
                 "adk_entrypoint": "pkg.mod:agent",
                 # This suite asserts the directory-backend snapshot layout
                 # (epochs/.../generations/v0/snapshot/) after a contract
@@ -155,33 +158,11 @@ def _bootstrap_registered(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _install_stub_adapter_factory(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _StubSession:
-        async def run(self, entry: BoardEntry, sinks: list[Any], config: Any) -> RunResult:
-            del sinks, config
-            return RunResult(
-                run_id=f"r-{entry.id}",
-                entry_id=entry.id,
-                final_output="hello world",
-                transcript=("hello world",),
-                runtime_ms=100,
-            )
-
-    class _StubAdapter:
-        name = "stub"
-
-        def load(self, snapshot_root: Path) -> _StubSession:
-            del snapshot_root
-            return _StubSession()
-
-        def mutation_points(self, source_roots: list[Path] | None = None) -> list[Any]:
-            del source_roots
-            return []
-
     fake_factory = types.ModuleType("zicato.adapter_factory")
 
     def make_adapter_from_config(workspace_config: dict[str, Any]) -> Any:
         del workspace_config
-        return _StubAdapter()
+        return make_stub_adapter()
 
     fake_factory.make_adapter_from_config = make_adapter_from_config  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "zicato.adapter_factory", fake_factory)

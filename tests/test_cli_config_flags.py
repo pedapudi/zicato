@@ -1,8 +1,7 @@
 """Flag→config threading for the env-var-rationalization CLI flags.
 
-Six operator knobs that used to be ``ZICATO_*`` environment variables
-are now ``zicato evolve`` flags (``--parallelism``,
-``--harness-call-timeout-ms``, ``--aux-call-timeout``,
+Five operator knobs that used to be ``ZICATO_*`` environment variables
+are now ``zicato evolve`` flags (``--parallelism``, ``--aux-call-timeout``,
 ``--supervisor-binary``, ``--harmonograf-url``) plus ``--static-dir`` on
 ``zicato dashboard`` / ``zicato dashboard --view builder`` (covered in their own test
 files). The evolve flags land on the typed config tree via
@@ -14,7 +13,7 @@ files). The evolve flags land on the typed config tree via
   dataclass defaults stay in charge);
 * the tournament runner threads the pins into the worker args file, and
   a real worker subprocess honours them (the cross-process leg of
-  ``--harness-call-timeout-ms`` / ``--aux-call-timeout``);
+  ``--aux-call-timeout``);
 * the harmonograf split: the FLAG is the operator surface, while the
   ``ZICATO_HARMONOGRAF_URL`` env var survives strictly as the internal
   auto-launch handoff channel — read after the flag, before the
@@ -87,14 +86,6 @@ def test_parallelism_flag_pins_runtime_parallelism(
     del mock_dashboard_spawn
     _invoke_evolve(monkeypatch, "--parallelism", "11")
     assert load_config().runtime.parallelism == 11
-
-
-def test_harness_call_timeout_flag_pins_runtime_knob(
-    monkeypatch: pytest.MonkeyPatch, mock_dashboard_spawn: list[Any]
-) -> None:
-    del mock_dashboard_spawn
-    _invoke_evolve(monkeypatch, "--harness-call-timeout-ms", "424242")
-    assert load_config().runtime.harness_call_timeout_ms == 424242
 
 
 def test_aux_call_timeout_flag_reaches_deep_call_site(
@@ -237,7 +228,6 @@ def test_runner_threads_pins_into_worker_args_file(
 
     pin_overrides(
         {
-            "runtime": {"harness_call_timeout_ms": 424242},
             "aux": {"call_timeout_s": 7.5},
         }
     )
@@ -273,10 +263,7 @@ def test_runner_threads_pins_into_worker_args_file(
     )
 
     assert isinstance(loss, LossProfile)
-    assert captured_args["config_pins"] == {
-        "runtime": {"harness_call_timeout_ms": 424242},
-        "aux": {"call_timeout_s": 7.5},
-    }
+    assert captured_args["config_pins"] == {"aux": {"call_timeout_s": 7.5}}
 
 
 @pytest.mark.integration
@@ -284,8 +271,8 @@ def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
     """A real worker subprocess re-pins the args-file pins before running.
 
     The probe adapter records the WORKER-side ``load_config()`` view of
-    the two knobs consumed inside the worker; both must reflect the
-    orchestrator's flag pins, with no environment variable involved.
+    the auxiliary-call budget consumed inside the worker; it must reflect
+    the orchestrator's flag pin, with no environment variable involved.
     """
     import os
     import subprocess
@@ -330,7 +317,6 @@ def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
                 "harmonograf_url": "",
                 "weights": {},
                 "config_pins": {
-                    "runtime": {"harness_call_timeout_ms": 424242},
                     "aux": {"call_timeout_s": 7.5},
                 },
             }
@@ -352,5 +338,4 @@ def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr.decode()
 
     probe = json.loads((sink_path.parent / "config_probe.json").read_text(encoding="utf-8"))
-    assert probe["harness_call_timeout_ms"] == 424242
     assert probe["aux_call_timeout_s"] == 7.5

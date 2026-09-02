@@ -51,6 +51,7 @@ import pytest
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests import _best_of_n_slate_support as slate_mocks
+from tests._contract_pins import resolved_contract_with_proposer
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 
 EXAMPLE_DIR = Path(_t0_pkg.__file__).resolve().parent
@@ -111,7 +112,7 @@ def _bootstrap(
         brief_source=brief,
         weights=weights,
         auto_close_previous=False,
-        proposer_path=EXAMPLE_DIR / "proposer",
+        contract=resolved_contract_with_proposer(workspace, EXAMPLE_DIR / "proposer"),
     )
     return workspace, cfg.id
 

@@ -135,6 +135,13 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
         )
     if op == "set_experiment_memory":
         return ops.set_experiment_memory(draft, cross_epoch=_opt_bool(args, "cross_epoch"))
+    if op == "set_goldfive":
+        if "config" not in args:
+            raise ValueError("set_goldfive requires an object or null config")
+        config = args["config"]
+        if config is not None and not isinstance(config, Mapping):
+            raise ValueError("set_goldfive config must be an object or null")
+        return ops.set_goldfive(draft, config=config)
     if op == "set_telemetry_dialect":
         return ops.set_telemetry_dialect(draft, dialect=_opt_str(args, "dialect"))
     if op == "set_mutation_surface":

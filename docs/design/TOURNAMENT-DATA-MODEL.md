@@ -547,11 +547,11 @@ it once per round.
 The `tournament` block is part of the **scoring** contract component
 (§1.2), so it factors into the contract hash through the **existing**
 `_canon_scoring` canonicalizer (`contract.py:236`) with one change:
-`_scoring_to_canon` (`contract.py:266`) already serializes *every public
-field* of `ScoringWeights` via `dataclasses.fields`, so once
+`scoring_to_canon` already serializes *every public field* of
+`ScoringWeights` via `dataclasses.fields`, so once
 `ScoringWeights` carries a `tournament_structure` field (§5), it is
-folded into the canonical form **automatically** — `_round_floats` /
-`json.dumps(sort_keys=True)` already handle a nested
+folded into the canonical form **automatically**. Recursive structural
+normalization plus `json.dumps(sort_keys=True)` handle a nested
 `{structure, params}` dict.
 
 The one care point: the `params` mapping must canonicalize

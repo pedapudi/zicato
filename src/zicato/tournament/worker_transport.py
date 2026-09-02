@@ -565,6 +565,7 @@ def _api_key_env_names(models: Any) -> list[str]:
 def scrubbed_worker_env(
     *,
     models: Any,
+    secret_env_keys: tuple[str, ...] = (),
     extra_env_keys: tuple[str, ...] = (),
     base_env: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
@@ -576,7 +577,9 @@ def scrubbed_worker_env(
 
     * the process-essential keys in :data:`_WORKER_ESSENTIAL_ENV_KEYS`,
     * the ``api_key_env`` NAMEs every configured model role legitimately needs
-      to authenticate (:func:`_api_key_env_names`), and
+      to authenticate (:func:`_api_key_env_names`),
+    * the credential-variable names declared by the frozen evaluation
+      contract, and
     * any operator-named ``extra_env_keys`` (an escape hatch for a target that
       reads a bespoke variable; opt-in, named explicitly).
 
@@ -586,7 +589,7 @@ def scrubbed_worker_env(
     """
     source: Mapping[str, str] = os.environ if base_env is None else base_env
     wanted: list[str] = list(_WORKER_ESSENTIAL_ENV_KEYS)
-    for name in (*_api_key_env_names(models), *extra_env_keys):
+    for name in (*_api_key_env_names(models), *secret_env_keys, *extra_env_keys):
         if name and name not in wanted:
             wanted.append(name)
     return {key: source[key] for key in wanted if key in source}
@@ -599,8 +602,8 @@ def adapter_worker_spec(adapter: Any) -> dict[str, Any]:
     :func:`zicato._tournament_worker.build_adapter`). Resolution order:
 
     1. If the adapter exposes a ``worker_spec()`` method, its return
-       value is used verbatim — the adapter knows best how to make
-       itself re-constructible in a subprocess. This is the
+       value is validated and returned — the adapter knows best how to
+       make itself re-constructible in a subprocess. This is the
        extensibility hook for non-ADK adapters.
     2. Otherwise the :class:`~zicato.adapters.adk.ADKHarnessAdapter`
        shape is recognised by its ``name == "adk"`` plus the private
@@ -613,7 +616,7 @@ def adapter_worker_spec(adapter: Any) -> dict[str, Any]:
     if callable(worker_spec):
         spec = worker_spec()
         if isinstance(spec, dict):
-            return spec
+            return _validated_adapter_worker_spec(adapter, spec)
         raise ValueError(
             f"adapter {adapter!r}.worker_spec() returned {type(spec).__name__}, expected a dict"
         )
@@ -627,7 +630,39 @@ def adapter_worker_spec(adapter: Any) -> dict[str, Any]:
             "worker_spec() method) is supported"
         )
     trees = [str(Path(p)) for p in getattr(adapter, "mutable_trees", []) or []]
-    return {"kind": "adk", "entrypoint": str(entrypoint), "mutable_trees": trees}
+    return _validated_adapter_worker_spec(
+        adapter,
+        {
+            "kind": "adk",
+            "entrypoint": str(entrypoint),
+            "mutable_trees": trees,
+            "integrations": ["goldfive"],
+        },
+    )
+
+
+def _validated_adapter_worker_spec(adapter: Any, spec: dict[str, Any]) -> dict[str, Any]:
+    integrations = spec.get("integrations")
+    if "integrations" in spec and (
+        not isinstance(integrations, list)
+        or any(
+            not isinstance(name, str) or not name or name != name.strip() for name in integrations
+        )
+        or len(set(integrations)) != len(integrations)
+    ):
+        raise ValueError(
+            f"adapter {adapter!r}.worker_spec()['integrations'] must be a JSON list "
+            "of unique, trimmed, non-empty strings"
+        )
+    return spec
+
+
+def adapter_uses_integration(spec: Mapping[str, Any] | None, name: str) -> bool:
+    """Return whether an adapter worker spec declares an integration."""
+    if spec is None:
+        return False
+    integrations = spec.get("integrations")
+    return isinstance(integrations, list) and name in integrations
 
 
 def _weights_spec(weights: ScoringWeights) -> dict[str, Any]:
@@ -701,12 +736,11 @@ def _entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
 def _config_pins() -> dict[str, dict[str, Any]]:
     """Snapshot the process-pinned config overrides for the worker args file.
 
-    CLI flags that shadow typed-config knobs (``--harness-call-timeout-ms``,
-    ``--aux-call-timeout``, ...) are pinned process-wide via
+    CLI flags that shadow typed-config knobs (``--aux-call-timeout``, ...) are
+    pinned process-wide via
     :func:`zicato.config.pin_overrides`. Some of those knobs are consumed
-    INSIDE the worker subprocess — the adapter reads the harness call
-    timeout when it builds the goldfive runtime, the judge/emulator call
-    sites read the aux budget — so the pins must cross the process
+    INSIDE the worker subprocess — the judge/emulator call sites read the
+    auxiliary-call budget — so the pins must cross the process
     boundary. They travel in the args file (this snapshot) and the worker
     re-pins them at startup; no environment variable is involved.
 

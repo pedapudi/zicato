@@ -6,7 +6,7 @@ Split out of :mod:`zicato.core.types`; re-exported from there and from
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -231,6 +231,16 @@ class RuntimeConfig:
         — it never enters the scoring canonical form, so changing it does
         not roll the epoch. Negative values are clamped to ``0`` (off)
         rather than rejected: a throttle must not fail a run on a typo.
+    worker_permit_dir:
+        Optional absolute, workspace-external directory holding the host-wide
+        worker permit slots. ``None`` uses the platform runtime directory.
+        An absolute path ensures orchestrators launched from different working
+        directories share one permit pool. Configure this only when several
+        orchestrators must share a nonstandard runtime filesystem.
+    log_level:
+        Minimum structured-log severity captured for orchestrator and worker
+        records. One of ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR``, or
+        ``CRITICAL``. The default is ``INFO``.
     propose_parallelism:
         Maximum number of best-of-N slate SAMPLES the proposer keeps in
         flight at once — the propose-phase analogue of :attr:`parallelism`
@@ -255,8 +265,7 @@ class RuntimeConfig:
         :attr:`worker_env_passthrough` keys) — instead of inheriting the
         orchestrator's full environment. This denies a mutated worker
         read-access to every credential in the orchestrator's process env.
-        Defaults to ``False`` (full inheritance — the default behavior), so a
-        run is byte-for-byte unchanged unless an operator opts in.
+        Defaults to ``False`` (full inheritance).
     worker_env_passthrough:
         Extra environment-variable NAMES a scrubbed worker should still
         receive (a target that reads a bespoke variable). Only consulted
@@ -489,10 +498,17 @@ class RuntimeConfig:
     #: every orchestrator on the machine (:attr:`parallelism` bounds only
     #: this process). ``None`` — the default — is AUTO
     #: (``max(4, 2 * cores)``); ``0`` disables the cap; ``>= 1`` is an
-    #: explicit ceiling. Declared LAST so the positional field order of
-    #: every existing construction site is unchanged. See the class
-    #: docstring and :mod:`zicato.runtime.spawn_permit`.
+    #: explicit ceiling. This field remains in its original positional slot;
+    #: later fields append after it so existing positional construction sites
+    #: stay valid. See the class docstring and
+    #: :mod:`zicato.runtime.spawn_permit`.
     host_worker_permits: int | None = None
+    worker_permit_dir: Path | None = None
+    log_level: str = "INFO"
+    #: Goldfive measurement, steering, endpoint, and agent-limit settings from
+    #: the epoch's frozen scoring contract. Tournament workers bind this field
+    #: from the same :class:`ScoringWeights` instance they use to reduce loss.
+    goldfive: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         """Validate the cheap scalar invariants (``parallelism`` + tolerance)."""
@@ -505,6 +521,16 @@ class RuntimeConfig:
             raise ValueError(
                 f"RuntimeConfig.propose_parallelism must be >= 1, got "
                 f"{self.propose_parallelism!r}; use 1 for a fully serial best-of-N slate"
+            )
+        if self.worker_permit_dir is not None and not Path(self.worker_permit_dir).is_absolute():
+            raise ValueError(
+                "RuntimeConfig.worker_permit_dir must be an absolute path so every "
+                "orchestrator uses the same host-wide permit pool"
+            )
+        if self.log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            raise ValueError(
+                "RuntimeConfig.log_level must be DEBUG, INFO, WARNING, ERROR, or CRITICAL, "
+                f"got {self.log_level!r}"
             )
         if self.diversity_tolerance is not None and not (0.0 < self.diversity_tolerance <= 1.0):
             raise ValueError(

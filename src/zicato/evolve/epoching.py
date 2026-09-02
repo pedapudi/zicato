@@ -1,9 +1,10 @@
 """Contract-hash auto-epoching split out of :mod:`zicato.orchestrator`.
 
-The "evaluation contract" is the board + proposer brief + scoring + the
-registered inner-harness identity (entrypoint + mutable trees). A change
-to any of those means generations on either side of the change are no
-longer comparable, so the epoch must roll. This module owns the
+The evaluation contract includes the board, proposer brief, scoring, Zicato
+evaluator revision, adapter identity, mutable source paths, and proposer. A
+change makes measurements across that boundary incomparable, so the epoch
+must roll.
+This module owns the
 roll-at-evolve-time decision and its supporting helpers:
 
 * :func:`ensure_epoch_for_contract` — the evolve entry hook that resolves
@@ -12,9 +13,9 @@ roll-at-evolve-time decision and its supporting helpers:
   contract inputs;
 * :func:`_promoted_head_snapshot` — locate an epoch's promoted-head
   snapshot dir (the cross-epoch lineage seed source);
-* the per-component sub-hash bookkeeping
-  (:func:`_stored_component_hashes`, :func:`_write_component_hashes`,
-  :func:`_component_diff_label`) and the v0-seed marker path
+* the per-component sub-hash reader and drift labeling
+  (:func:`_stored_component_hashes`, :func:`_component_diff_label`) and the
+  v0-seed marker path
   (:func:`_roll_seed_marker`).
 
 Public epoch resolution is exported by :mod:`zicato.orchestrator`; the
@@ -51,8 +52,9 @@ def _component_diff_label(prev_components: dict[str, str], cur_components: dict[
     """Return a human-readable label naming which contract components moved.
 
     Compares the per-component sub-hashes; returns a comma-joined list
-    of the component names that differ (``board``, ``brief``,
-    ``scoring``, ``entrypoint``, ``mutable_trees``). Falls back to a
+    of the component names that differ (``board``, ``brief``, ``scoring``,
+    ``evaluator_revision``, ``adapter``, ``mutable_trees``, ``proposer``).
+    Falls back to a
     generic ``"contract"`` when no per-component breakdown is available,
     which is the case for an epoch that stored no components.
     """
@@ -84,18 +86,6 @@ def _stored_component_hashes(workspace_root: Path, epoch_id: str) -> dict[str, s
     return {str(k): str(v) for k, v in raw.items()}
 
 
-def _write_component_hashes(
-    workspace_root: Path, epoch_id: str, components: dict[str, str]
-) -> None:
-    """Persist an epoch's per-component contract sub-hashes."""
-    path = WorkspaceLayout.from_root(workspace_root).contract_components(epoch_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(components, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
 async def ensure_epoch_for_contract(
     workspace_root: Path,
     *,
@@ -106,8 +96,8 @@ async def ensure_epoch_for_contract(
 ) -> str:
     """Resolve the epoch ``evolve`` should run against, auto-rolling on drift.
 
-    The "evaluation contract" is the board + proposer brief + scoring +
-    the registered inner-harness identity (entrypoint + mutable trees).
+    The evaluation contract includes the board, proposer brief, scoring,
+    evaluator revision, adapter identity, mutable source paths, and proposer.
     A change to any of those means generations on either side are no
     longer comparable, so the epoch must roll. This function is the
     roll-at-evolve-time hook: it is called before the orchestrator
@@ -174,7 +164,6 @@ async def ensure_epoch_for_contract(
             name=epoch_name or "e0",
             aux_call_llm=aux_call_llm,
         )
-        _write_component_hashes(workspace_root, new_id, current_components)
         return new_id
 
     cfg = load_epoch(workspace_root, cur)
@@ -237,8 +226,6 @@ async def ensure_epoch_for_contract(
         name=epoch_name or f"e{next_n}",
         aux_call_llm=aux_call_llm,
     )
-    _write_component_hashes(workspace_root, new_id, current_components)
-
     # Record where the new epoch's v0 should be seeded from: the
     # promoted head of the epoch we just closed. `_ensure_baseline_snapshot`
     # reads this marker on the first evolve round of the new epoch.

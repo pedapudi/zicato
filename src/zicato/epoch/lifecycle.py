@@ -141,9 +141,7 @@ def scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
     byte-compatible with the historical hand-written form: the tournament
     structure is still emitted under the ``"tournament"`` key.
     """
-    from zicato.epoch.contract_serde import dataclass_to_jsonable  # noqa: PLC0415
-
-    return dataclass_to_jsonable(weights)
+    return weights.to_json()
 
 
 def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
@@ -183,6 +181,10 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         # ``None`` ⇒ an epoch written before contract hashing, stored as
         # null. A newly created epoch always carries a computed hash.
         "contract_hash": cfg.contract_hash,
+        # System revisions whose behavior contributes to the contract hash.
+        # Stored explicitly so an archived workspace remains auditable without
+        # reversing an opaque hash.
+        "implementation_identity": dict(cfg.implementation_identity),
         "goal": cfg.goal,
         # ``None`` ⇒ built-in default proposer. Written as null so an
         # epoch that never configured a proposer round-trips cleanly.
@@ -220,6 +222,7 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
     raw_proposer = d.get("proposer_path")
     raw_floor = d.get("noise_floor")
     raw_preflight = d.get("preflight")
+    raw_identity = d.get("implementation_identity")
     return EpochConfig(
         id=d["id"],
         name=d["name"],
@@ -230,6 +233,15 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
         closed=bool(d.get("closed", False)),
         closed_at=d.get("closed_at", ""),
         contract_hash=(str(raw_hash) if (raw_hash := d.get("contract_hash")) else None),
+        implementation_identity=(
+            {
+                key: value
+                for key, value in raw_identity.items()
+                if isinstance(key, str) and (isinstance(value, str) or type(value) is int)
+            }
+            if isinstance(raw_identity, dict)
+            else {}
+        ),
         goal=str(d.get("goal", "")),
         proposer_path=Path(raw_proposer) if raw_proposer else None,
         # ``noise_floor`` defaults to ``None`` (never measured) so epochs
@@ -413,9 +425,9 @@ def new_epoch(
       3. Create ``.zicato/epochs/{id}/`` and write the frozen board +
          proposer brief into it.
       4. Serialize ``weights`` to ``scoring.json``.
-      5. Compute the contract hash over the frozen board/brief/scoring
-         plus ``entrypoint`` + ``mutable_trees``, and store it on the
-         :class:`EpochConfig`. See :mod:`zicato.epoch.contract`.
+      5. Compute the contract hash over the frozen file inputs plus the
+         registered evaluator, adapter, mutation-surface, and proposer
+         identities, and store it on :class:`EpochConfig`.
       6. Write ``config.json`` and update ``lineage.json``.
       7. Update the ``current_epoch`` marker.
 
@@ -475,6 +487,14 @@ def new_epoch(
             "one spelling would silently lose"
         )
 
+    # Validate optional integration documents before closing an epoch or
+    # creating files. Contract canonicalization repeats this check after
+    # materialization; running it here keeps failure transactional.
+    if weights.goldfive is not None:
+        from zicato.integrations.goldfive import normalize_config  # noqa: PLC0415
+
+        normalize_config(weights.goldfive)
+
     workspace_root.mkdir(parents=True, exist_ok=True)
 
     # 1. Auto-close previous if open.
@@ -523,7 +543,9 @@ def new_epoch(
     # produces.
     from zicato.epoch.contract import (  # noqa: PLC0415
         ContractInputs,
+        compute_component_hashes,
         compute_contract_hash,
+        evaluation_implementation_identity,
     )
 
     if contract is None:
@@ -545,6 +567,11 @@ def new_epoch(
             scoring_path=target_scoring,
         )
     contract_hash = compute_contract_hash(contract)
+    component_path = WorkspaceLayout.from_root(workspace_root).contract_components(epoch_id)
+    component_path.write_text(
+        json.dumps(compute_component_hashes(contract), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
     # 6. Config + lineage. ``EpochConfig.brief_path`` carries the path
     # to the frozen proposer brief (the ``brief.md`` file).
@@ -567,6 +594,7 @@ def new_epoch(
         closed=False,
         closed_at="",
         contract_hash=contract_hash,
+        implementation_identity=evaluation_implementation_identity(weights),
         goal=goal,
         # Read off the hashed contract rather than the shorthand parameter, so the
         # proposer this epoch's rounds are built with is the one its hash

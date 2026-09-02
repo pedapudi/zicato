@@ -1146,6 +1146,32 @@ def test_set_experiment_memory() -> None:
     assert serialized["scoring"]["experiment_memory"]["cross_epoch"] is True
 
 
+def test_set_goldfive_activation_partial_update_and_removal() -> None:
+    draft = TournamentDraft()
+    activated = ops.set_goldfive(draft, config={})
+    assert activated.changed["goldfive"]["from"] is None
+    assert draft.scoring.goldfive is not None
+    ops.set_goldfive(draft, config={"judge": {"model": "judge-a"}})
+    ops.set_goldfive(draft, config={"steering": {"threshold": "critical"}})
+    assert draft.scoring.goldfive["judge"]["model"] == "judge-a"
+    assert draft.scoring.goldfive["steering"]["threshold"] == "critical"
+    assert ops.set_goldfive(draft, config=None).changed["goldfive"]["to"] is None
+    assert draft.scoring.goldfive is None
+
+
+def test_set_goldfive_list_update_is_stable_and_preserved_by_later_edits() -> None:
+    draft = TournamentDraft()
+    config = {"steering": {"context_editor_rules": ["prune_stale_steer"]}}
+
+    assert ops.set_goldfive(draft, config=config).changed
+    assert ops.set_goldfive(draft, config=config).changed == {}
+    ops.set_goldfive(draft, config={"steering": {"threshold": "critical"}})
+
+    stored = draft.scoring.to_json()["goldfive"]
+    assert stored["steering"]["context_editor_rules"] == ["prune_stale_steer"]
+    assert stored["steering"]["threshold"] == "critical"
+
+
 def test_set_telemetry_dialect() -> None:
     """The telemetry dialect round-trips via the changed-dict pattern; the
     default (goldfive) is a no-op; an unknown name raises; None leaves it be."""

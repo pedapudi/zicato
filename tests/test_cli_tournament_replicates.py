@@ -42,9 +42,6 @@ def _make_cli_stubs(
     """Wire CLI-side stubs so ``tournament_cmd`` runs without a real workspace."""
     loader_mod = types.SimpleNamespace(
         load_workspace_config=lambda root: {"mutable_trees": []},
-        load_current_board=lambda root: _board(),
-        load_current_board_with_meta=lambda root: (_board(), (), False),
-        load_current_scoring=lambda root: weights or ScoringWeights(),
     )
     adapter_factory_mod = types.SimpleNamespace(
         make_adapter_from_config=lambda cfg: object(),
@@ -56,6 +53,11 @@ def _make_cli_stubs(
         "zicato.cli.commands.tournament._resolve_workspace_components",
         lambda: (loader_mod, adapter_factory_mod, runtime_factory_mod),
     )
+    monkeypatch.setattr(
+        "zicato.cli.commands.tournament._load_epoch_contract",
+        lambda root, epoch_id: (_board(), (), False, weights or ScoringWeights()),
+    )
+    monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *args, **kwargs: None)
 
 
 def _fake_result() -> TournamentResult:
@@ -258,3 +260,148 @@ def test_cli_fast_mode_replicates_override_reproduces_old_behavior(
 
     assert res.exit_code == 0, res.output
     assert captured["replicates"] == 1
+
+
+def test_cli_explicit_epoch_uses_that_epochs_frozen_contract(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit epoch selects its own board, scoring, gate, and output paths."""
+    import json
+
+    from click.testing import CliRunner
+
+    from zicato.board.jsonl import save_board
+    from zicato.cli.commands.tournament import tournament_cmd
+    from zicato.core.workspace import board_path, scoring_path
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    current_epoch = "current_epoch"
+    selected_epoch = "selected_epoch"
+    (workspace / "current_epoch").write_text(current_epoch, encoding="utf-8")
+
+    current_board = [
+        BoardEntry(
+            id="current_entry",
+            kind="single_turn",
+            wall_clock_budget_seconds=60,
+            input="current",
+        )
+    ]
+    selected_board = [
+        BoardEntry(
+            id="selected_entry",
+            kind="single_turn",
+            wall_clock_budget_seconds=60,
+            input="selected",
+        )
+    ]
+    for epoch_id, board, replicates in (
+        (current_epoch, current_board, 7),
+        (selected_epoch, selected_board, 5),
+    ):
+        board_path(workspace, epoch_id).parent.mkdir(parents=True, exist_ok=True)
+        save_board(board, board_path(workspace, epoch_id))
+        weights = ScoringWeights(
+            tournament_structure=TournamentStructure(
+                structure="gauntlet",
+                params={"replicates": replicates},
+            )
+        )
+        scoring_path(workspace, epoch_id).write_text(
+            json.dumps(weights.to_json()), encoding="utf-8"
+        )
+
+    for generation_id in ("v0", "v1"):
+        (workspace / "epochs" / selected_epoch / "generations" / generation_id / "snapshot").mkdir(
+            parents=True
+        )
+
+    events: list[str] = []
+    loader_mod = types.SimpleNamespace(
+        load_workspace_config=lambda root: events.append("config") or {"mutable_trees": []},
+    )
+    adapter_factory_mod = types.SimpleNamespace(
+        make_adapter_from_config=lambda cfg: events.append("adapter") or object(),
+    )
+    runtime_factory_mod = types.SimpleNamespace(
+        make_runtime_config=lambda cfg, *, workspace_root: runtime_config(workspace_root),
+    )
+    monkeypatch.setattr(
+        "zicato.cli.commands.tournament._resolve_workspace_components",
+        lambda: (loader_mod, adapter_factory_mod, runtime_factory_mod),
+    )
+
+    def fake_gate(root: Path, *, epoch_id: str, live_contract: bool) -> None:
+        assert root == workspace
+        assert epoch_id == selected_epoch
+        assert live_contract is False
+        events.append("gate")
+
+    monkeypatch.setattr("zicato.check.require_workspace_valid", fake_gate)
+    captured: dict[str, Any] = {}
+
+    async def fake_run_tournament(**kwargs: Any) -> Any:
+        events.append("run")
+        captured.update(kwargs)
+        return _fake_result()
+
+    monkeypatch.setattr("zicato.tournament.run_tournament", fake_run_tournament)
+
+    result = CliRunner().invoke(
+        tournament_cmd,
+        ["v0", "v1", "--workspace", str(workspace), "--epoch", selected_epoch],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert events == ["gate", "config", "adapter", "run"]
+    assert captured["epoch_id"] == selected_epoch
+    assert [entry.id for entry in captured["board"]] == ["selected_entry"]
+    assert captured["replicates"] == 5
+
+
+def test_cli_workspace_gate_stops_before_adapter_construction_or_spend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from click.testing import CliRunner
+
+    from zicato.check import CheckReport, Finding, WorkspaceCheckError
+    from zicato.cli.commands.tournament import tournament_cmd
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    events: list[str] = []
+    loader_mod = types.SimpleNamespace(
+        load_workspace_config=lambda root: events.append("config"),
+    )
+    adapter_factory_mod = types.SimpleNamespace(
+        make_adapter_from_config=lambda cfg: events.append("adapter"),
+    )
+    runtime_factory_mod = types.SimpleNamespace(
+        make_runtime_config=lambda cfg, *, workspace_root: events.append("runtime"),
+    )
+    monkeypatch.setattr(
+        "zicato.cli.commands.tournament._resolve_workspace_components",
+        lambda: (loader_mod, adapter_factory_mod, runtime_factory_mod),
+    )
+
+    def reject_workspace(root: Path, *, epoch_id: str, live_contract: bool) -> None:
+        events.append("gate")
+        raise WorkspaceCheckError(
+            CheckReport(
+                workspace_root=str(root),
+                findings=(Finding("broken_contract", "contract is not measurable", {}),),
+            )
+        )
+
+    monkeypatch.setattr("zicato.check.require_workspace_valid", reject_workspace)
+
+    result = CliRunner().invoke(
+        tournament_cmd,
+        ["v0", "v1", "--workspace", str(workspace), "--epoch", "selected_epoch"],
+    )
+
+    assert result.exit_code != 0
+    assert events == ["gate"]
+    assert "contract is not measurable" in result.output

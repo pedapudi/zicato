@@ -99,7 +99,7 @@ def _chain_workspace(tmp_path: Path) -> Path:
             "board": "hb0",
             "brief": "hr0",
             "scoring": "hs0",
-            "entrypoint": "he0",
+            "adapter": "he0",
             "mutable_trees": "hm0",
             "proposer": "hp0",
         },
@@ -114,7 +114,7 @@ def _chain_workspace(tmp_path: Path) -> Path:
             "board": "hb1",
             "brief": "hr0",
             "scoring": "hs0",
-            "entrypoint": "he0",
+            "adapter": "he0",
             "mutable_trees": "hm0",
             "proposer": "hp0",
         },
@@ -129,7 +129,7 @@ def _chain_workspace(tmp_path: Path) -> Path:
             "board": "hb1",
             "brief": "hr0",
             "scoring": "hs2",
-            "entrypoint": "he0",
+            "adapter": "he0",
             "mutable_trees": "hm0",
             "proposer": "hp2",
         },
@@ -206,7 +206,7 @@ def test_ledger_champion_index_early_vs_late(tmp_path: Path) -> None:
         "board": "b",
         "brief": "r",
         "scoring": "s",
-        "entrypoint": "e",
+        "adapter": "e",
         "mutable_trees": "m",
         "proposer": "p",
     }
@@ -254,7 +254,7 @@ def test_ledger_champion_index_null_without_a_floor(tmp_path: Path) -> None:
             "board": "b",
             "brief": "r",
             "scoring": "s",
-            "entrypoint": "e",
+            "adapter": "e",
             "mutable_trees": "m",
         },
         structure="gauntlet",
@@ -289,7 +289,8 @@ def test_ledger_first_epoch_has_all_unchanged_map(tmp_path: Path) -> None:
         "board",
         "brief",
         "scoring",
-        "entrypoint",
+        "evaluator_revision",
+        "adapter",
         "mutable_trees",
         "structure",
         "proposer",
@@ -306,7 +307,7 @@ def test_ledger_detects_a_board_change_only(tmp_path: Path) -> None:
     assert e1["changed_components"]["structure"] is False
     assert e1["soft"] is False
     # nothing else moved.
-    for name in ("brief", "scoring", "entrypoint", "mutable_trees", "proposer"):
+    for name in ("brief", "scoring", "adapter", "mutable_trees", "proposer"):
         assert e1["changed_components"][name] is False
 
 
@@ -347,7 +348,7 @@ def test_ledger_legacy_missing_proposer_hash_is_not_a_change(tmp_path: Path) -> 
             "board": "b",
             "brief": "r",
             "scoring": "s",
-            "entrypoint": "e",
+            "adapter": "e",
             "mutable_trees": "m",
         },
         structure="gauntlet",
@@ -362,7 +363,7 @@ def test_ledger_legacy_missing_proposer_hash_is_not_a_change(tmp_path: Path) -> 
             "board": "b",
             "brief": "r",
             "scoring": "s",
-            "entrypoint": "e",
+            "adapter": "e",
             "mutable_trees": "m",
             "proposer": "p1",
         },

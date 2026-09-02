@@ -9,12 +9,33 @@ operator passthrough — and that an absent key is never invented.
 
 from __future__ import annotations
 
+import pytest
+
 from zicato.models_config import ModelsConfig, RoleSpec
 from zicato.tournament.worker_transport import (
     _WORKER_ESSENTIAL_ENV_KEYS,
     _api_key_env_names,
+    adapter_uses_integration,
+    adapter_worker_spec,
     scrubbed_worker_env,
 )
+
+
+class _Adapter:
+    def __init__(self, integrations: object) -> None:
+        self.integrations = integrations
+
+    def worker_spec(self) -> dict[str, object]:
+        return {"kind": "import", "integrations": self.integrations}
+
+
+def test_adapter_integration_capabilities_are_explicit_and_validated() -> None:
+    spec = adapter_worker_spec(_Adapter(["goldfive"]))
+    assert adapter_uses_integration(spec, "goldfive")
+    assert not adapter_uses_integration(spec, "other")
+    for malformed in (None, "goldfive", [""], [" goldfive"], ["goldfive", "goldfive"]):
+        with pytest.raises(ValueError, match="unique, trimmed, non-empty strings"):
+            adapter_worker_spec(_Adapter(malformed))
 
 
 def test_api_key_env_names_empty_for_unconfigured_models() -> None:
@@ -80,6 +101,24 @@ def test_scrubbed_env_passthrough_keys() -> None:
     )
     assert env["CUSTOM_TARGET_VAR"] == "v"
     assert "OTHER" not in env
+
+
+def test_scrubbed_env_keeps_goldfive_contract_credentials() -> None:
+    """Goldfive endpoint credentials named by scoring survive the scrub."""
+    base = {
+        "PATH": "/usr/bin",
+        "EMBEDDING_KEY": "embedding-secret",
+        "JUDGE_KEY": "judge-secret",
+        "UNRELATED_KEY": "drop-me",
+    }
+    env = scrubbed_worker_env(
+        models=ModelsConfig(),
+        secret_env_keys=("EMBEDDING_KEY", "JUDGE_KEY", "EMBEDDING_KEY"),
+        base_env=base,
+    )
+    assert env["EMBEDDING_KEY"] == "embedding-secret"
+    assert env["JUDGE_KEY"] == "judge-secret"
+    assert "UNRELATED_KEY" not in env
 
 
 def test_scrubbed_env_does_not_invent_missing_passthrough() -> None:

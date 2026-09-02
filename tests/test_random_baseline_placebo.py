@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 import zicato_examples.target_0_convergence as _t0_pkg
-from tests._contract_pins import pin_deterministic
+from tests._contract_pins import pin_deterministic, resolved_contract_with_proposer
 from tests._orchestrator_harness import (
     install_stub_adapter_factory,
     install_telemetry_stubs,
@@ -238,7 +238,7 @@ def _bootstrap_t0(tmp_path: Path, *, every_n: int) -> tuple[Path, str]:
         brief_source=brief,
         weights=weights,
         auto_close_previous=False,
-        proposer_path=EXAMPLE_DIR / "proposer",
+        contract=resolved_contract_with_proposer(workspace, EXAMPLE_DIR / "proposer"),
     )
     return workspace, cfg.id
 

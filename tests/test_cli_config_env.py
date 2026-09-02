@@ -43,15 +43,16 @@ def test_config_env_reports_the_merited_set() -> None:
     for role in (
         "harness-contract",
         "internal-handoff",
-        "secrets-boundary",
         "external-integration",
+        "secrets-boundary",
         "test-toggle",
     ):
         assert f"[{role}]" in result.output, f"missing role heading {role}"
 
-    # ...and the operator pointer: knobs live on flags + config.json.
+    # ...and the operator pointer: knobs live on flags and JSON config files.
     assert "CLI flags" in result.output
     assert "config.json" in result.output
+    assert "scoring.json" in result.output
 
     # None of the deleted operator env knobs are advertised.
     for deleted in (
@@ -75,9 +76,12 @@ def test_config_env_golden_text_shape() -> None:
     assert "ZICATO_RUN_SCRATCH_DIR" in text
     assert "ZICATO_HARMONOGRAF_URL" in text
     assert "ZICATO_HARMONOGRAF_GRPC" in text
+    assert "ZICATO_PROPOSER_TOOL_CONTEXT" in text
+    assert "PI_CODING_AGENT_DIR" in text
     assert "<models.<role>.api_key_env>" in text
+    assert "<scoring.goldfive.{embedding,judge}.api_key_env>" in text
     assert "<runtime.worker_env_passthrough>" in text
-    assert "GOLDFIVE_AGENT_CALL_TIMEOUT_MS" in text
+    assert "GOLDFIVE_AGENT_CALL_TIMEOUT_MS" not in text
     assert "ZICATO_SKIP_HOOK_CHECK" in text
     assert "ZICATO_PARITY_UPDATE" in text
     # The harmonograf handoff is explicitly marked as not an operator knob.

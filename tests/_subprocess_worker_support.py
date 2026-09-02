@@ -352,9 +352,8 @@ def artifact_inventory_is_visible(result: Any) -> bool:
 class _ConfigProbeSession:
     """A session that records the WORKER process's resolved typed config.
 
-    Writes the worker-side ``load_config()`` view of the two knobs that
-    are consumed inside the worker (the aux call budget and the harness
-    call timeout) to ``config_probe.json`` next to the events file. The
+    Writes the worker-side ``load_config()`` view of the auxiliary-call
+    budget to ``config_probe.json`` next to the events file. The
     config-pins threading test reads it back to prove a value pinned in
     the ORCHESTRATOR process (a CLI flag) crossed the subprocess
     boundary via the args file — with no environment variable involved.
@@ -367,10 +366,7 @@ class _ConfigProbeSession:
 
         del entry
         cfg = load_config()
-        probe = {
-            "aux_call_timeout_s": cfg.aux.call_timeout_s,
-            "harness_call_timeout_ms": cfg.runtime.harness_call_timeout_ms,
-        }
+        probe = {"aux_call_timeout_s": cfg.aux.call_timeout_s}
         sink_path.parent.mkdir(parents=True, exist_ok=True)
         (sink_path.parent / "config_probe.json").write_text(json.dumps(probe), encoding="utf-8")
         sink_path.write_text("", encoding="utf-8")

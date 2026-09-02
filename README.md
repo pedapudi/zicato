@@ -19,12 +19,12 @@ so the next generation goes less wrong.
 Multi-agent systems are the founding and primary use case — a coordinator +
 specialists, a deep sub-agent tree, a single LlmAgent, whatever shape — and the
 shipped reference adapter targets Google ADK. But nothing in the loop is
-agent-specific. The contract asks for three things: an **entrypoint** the runner
-can drive, one or more **mutable trees** of source the proposer may edit, and a
-**board** of tasks with typed expectations. Anything that fits that shape can be
-the target — a library, a prompt set, a rule engine — and the entrypoint may sit
-*outside* every mutable tree, which is how you evolve a dependency while the
-driver holds still.
+agent-specific. The contract asks for three things: an **adapter** that the
+runner can reconstruct, one or more **mutable trees** of source the proposer may
+edit, and a **board** of tasks with typed expectations. Anything that fits that
+shape can be the target — a library, a prompt set, or a rule engine. The adapter
+driver may sit outside every mutable tree, which lets the driver remain fixed
+while Zicato evolves its dependency.
 
 zicato is the third member of an ecosystem:
 
@@ -61,8 +61,8 @@ rewrite the harness".
 ## Status
 
 Alpha. Design and surface are under active iteration — the public API will
-break. The first reference adapter targets Google ADK (the framework goldfive
-itself wires deepest into). The design is **framework-agnostic at its core**:
+break. The first reference adapter targets Google ADK. The design is
+**framework-agnostic at its core**:
 the `HarnessAdapter` protocol asks only for `load`, `mutable_subpaths`, and
 `mutation_points`, and the loaded harness only for
 `run(entry, sinks, config) -> RunResult` — nothing in it mentions agents. A
@@ -76,15 +76,22 @@ deterministic policy adapter with **no LLM anywhere**, whose mutable surface
 is a module-level string constant, driven through `kind = "import"`. The
 whole loop — propose, apply, run, reduce, gate — runs against it in CI.
 
-**goldfive is an optional extra** — `pip install zicato[goldfive]`. The core
-import surface is goldfive-free: `import zicato`, `import zicato.core`,
-board load/save, and the CLI all work without it, because
-`src/zicato/core/drift_kinds.py` carries a string mirror of goldfive's
-`DriftKind` / `DriftSeverity` vocabulary rather than importing the upstream
-enums. What you lose without the extra: the ADK adapter path, the built-in
-and custom in-run process judges, and the default `goldfive` telemetry
-dialect. (`tests/test_no_goldfive_import.py` proves the property against an
-interpreter that cannot import goldfive, so it does not rot.)
+**Goldfive is an optional integration.** `pip install zicato[goldfive]`
+installs its event runtime for any harness adapter that declares the
+capability. An optional `scoring.json` object carries Goldfive configuration as
+ordinary JSON; Goldfive's public configuration-document API owns its schema,
+defaults, validation, capability checks, and runtime construction. Zicato
+loads that API only for a Goldfive-enabled contract.
+
+The core import surface remains Goldfive-free: `import zicato`, `import
+zicato.core`, board load/save, and the CLI all work without it.
+`src/zicato/core/drift_kinds.py` carries a string mirror of Goldfive's
+`DriftKind` and `DriftSeverity` vocabulary, so core code need not import the
+upstream enums. Without the extra, an adapter cannot use Goldfive's runtime or
+in-run process judges. The built-in Google ADK adapter is a separate
+composition: install `zicato[adk]` to get both ADK and its Goldfive
+capabilities. `tests/test_no_goldfive_import.py` verifies this import boundary
+against an interpreter that cannot import Goldfive.
 
 The base install keeps the evolve loop and canonical JSONL telemetry while
 leaving operator interfaces optional. Install `zicato[observability]` for the
@@ -164,6 +171,7 @@ The full design lives under [`docs/design/`](docs/design/). Read
 - [`docs/design/EPOCHS-AND-JOURNALING.md`](docs/design/EPOCHS-AND-JOURNALING.md) — epoch lifecycle, the `Experiment` artifact (hypothesis + patches + outcome), `journal.md` and the closing analysis pass, cross-epoch lineage.
 - [`docs/design/TELEMETRY.md`](docs/design/TELEMETRY.md) — capturing goldfive's `goldfive.v1.Event` stream via its `JSONLPersistenceSink`, the post-run reducer, the `LossProfile` shape, the emulator's `zicato:emulator` audit lane.
 - [`docs/design/SCORING.md`](docs/design/SCORING.md) — the weighted drift-loss formula, the pass-rate side, the tournament promotion gate (margin on drift + strict monotonicity on pass-rate), fast mode.
+- [`docs/design/GOLDFIVE-CONFIG.md`](docs/design/GOLDFIVE-CONFIG.md) — how an adapter opts into Goldfive, how Zicato delegates schema and runtime construction to Goldfive, and how named credential variables cross the worker boundary without entering contract files.
 - [`docs/design/OVERFITTING.md`](docs/design/OVERFITTING.md) — why repeated adaptive evaluation overfits a fixed board, how the train/holdout split works, what one holdout query means, and how the Ladder query budget limits feedback from the hidden slice.
 - [`docs/design/TOURNAMENT.md`](docs/design/TOURNAMENT.md) — the competition model: the king-of-the-hill gauntlet (champion vs successive challengers), the dashboard Tournament view (bracket + per-matchup detail), the tournament-detail analytics (verdict transparency, per-entry A/B grid, hypothesis ledger, optimization trajectory, mutation heat map, cost), and the harmonograf split — execution view vs competition view.
 - [`docs/design/SELECTION.md`](docs/design/SELECTION.md) — the decision theory under the tournament: how reinforcement-learning gating, racing, and bracket schedulers make the champion-versus-challenger decision; why zicato's gauntlet is a degenerate elitist iterated race; why brackets (single and double elimination, Swiss) are the wrong primitive here; and the ordered path to replication-based racing (a paired significance gate, winner's-curse confirmation, a trust-region step bound). Diagrams and cited sources.

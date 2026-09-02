@@ -74,6 +74,7 @@ def test_init_writes_full_effective_scoring_scaffold(tmp_path: Path) -> None:
     assert raw["proposer_quality"]["best_of_n"] == 3
     assert raw["proposer_quality"]["screen_entries"] == 2
     assert raw["overfitting"]["min_board_size_for_split"] == 6
+    assert "goldfive" not in raw
 
     # The generated file round-trips to exactly the recommended weights.
     from zicato.epoch.lifecycle import _scoring_from_dict

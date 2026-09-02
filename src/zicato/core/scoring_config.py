@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, field, fields
+from types import MappingProxyType
 from typing import Any, get_args
 
 from zicato.core.constraints import (
@@ -1162,6 +1163,16 @@ class ScoringWeights:
         default_factory=_default_experiment_memory_config,
         metadata=_knob(omit_at_default=True),
     )
+    # Goldfive settings are absent unless the selected adapter declares that
+    # integration; an explicit block then binds all behavior to the epoch.
+    goldfive: Mapping[str, Any] | None = field(
+        default=None,
+        metadata=_knob(
+            omit_at_default=True,
+            builder_op="set_goldfive",
+            builder_arg="config",
+        ),
+    )
     # Optional operator outcome-summarizer hook (Capability 2 of issue #18,
     # item 8). A dotted spec (``pkg.mod:fn`` / ``pkg.mod.fn``) resolved like
     # predicates / judges. The resolved callable receives the TRAIN-SLICE
@@ -1328,6 +1339,10 @@ class ScoringWeights:
         """
         from zicato.scoring.transforms import validate_transform_spec  # noqa: PLC0415
 
+        if self.goldfive is not None:
+            if not isinstance(self.goldfive, Mapping):
+                raise ValueError("goldfive must be an object or null")
+            object.__setattr__(self, "goldfive", _freeze_json(self.goldfive))
         validate_knobs(self)
         if self.holdout_margin is not None:
             require_finite_number("holdout_margin", self.holdout_margin)
@@ -1396,10 +1411,11 @@ class ScoringWeights:
         the wire — used by BOTH the tournament runner (to hand weights to the
         subprocess worker) and the frozen-contract snapshot. Because it walks
         ``dataclasses.fields()`` (see
-        :mod:`zicato.epoch.contract_serde`) it covers EVERY field
-        automatically, recursing into nested config dataclasses. Adding a
-        field can therefore never silently desync the worker into scoring
-        under defaults — the historical ``per_judge_weights`` /
+        :mod:`zicato.epoch.contract_serde`) it covers every applicable field,
+        recursing into nested config dataclasses. An inactive optional
+        integration is omitted. Adding a field can therefore never silently
+        desync the worker into scoring under defaults — the historical
+        ``per_judge_weights`` /
         ``pass_rate_monotonicity_scope`` / ``drift_kind_aggregation`` desync
         class that two hand-aligned field lists kept re-introducing.
 
@@ -1408,7 +1424,10 @@ class ScoringWeights:
         """
         from zicato.epoch.contract_serde import dataclass_to_jsonable  # noqa: PLC0415
 
-        return dataclass_to_jsonable(self)
+        serialized = dataclass_to_jsonable(self)
+        if self.goldfive is None:
+            serialized.pop("goldfive")
+        return serialized
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any] | None) -> ScoringWeights:
@@ -1438,6 +1457,19 @@ class ScoringWeights:
         if raw_scope is not None and raw_scope not in ("per_entry", "aggregate"):
             data = {**data, "pass_rate_monotonicity_scope": cls().pass_rate_monotonicity_scope}
         return jsonable_to_dataclass(cls, data)
+
+
+def _freeze_json(value: Any) -> Any:
+    """Copy a JSON-shaped value into immutable mappings and tuples."""
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("goldfive object keys must be strings")
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_json(item) for item in value)
+    if value is not None and type(value) not in {bool, int, float, str}:
+        raise ValueError("goldfive must contain only JSON-compatible values")
+    return value
 
 
 CONTRACT_KNOB_TYPES: tuple[type, ...] = (
@@ -1511,8 +1543,8 @@ def recommended_scaffold_weights() -> ScoringWeights:
     operator can see and price: under racing the crowning-pair replicates
     amortize through the per-unit cache, and the builder's cost meter
     reflects the ``replicates`` knob. Everything else is the dataclass
-    default; the field-enumerating serializer then writes every field, so
-    the generated ``scoring.json`` IS the effective contract.
+    default; the field-enumerating serializer then writes every applicable
+    field. Optional integration blocks remain absent until selected.
 
     A pure recommendation for NEW workspaces — the in-code default
     structure when a contract says nothing remains the gauntlet, with no

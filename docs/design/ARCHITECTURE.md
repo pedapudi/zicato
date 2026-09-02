@@ -23,9 +23,9 @@ arbitrary callable that fronts a model — and the only concrete adapter
 shipped so far targets Google ADK. But the definition is not agent-shaped.
 The loop requires:
 
-* an **entrypoint** the runner can drive to produce an output;
+* an **adapter** the worker can reconstruct and drive to produce an output;
 * one or more **mutable trees** — source roots the proposer may edit,
-  which need not contain the entrypoint;
+  which need not contain the adapter driver;
 * a **board** of tasks carrying typed expectations, so each run yields a
   score.
 
@@ -37,8 +37,10 @@ graphs: the enforced adapter contract is
 carries strings. The markers are not Python-only either: a marker may sit
 in any allowlisted text file, so a markdown prompt or a YAML policy is
 first-class mutable surface (see
-[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §2.4). The entrypoint is still
-Python, because the runner drives it.
+[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §2.4). Shipped adapter factories are
+importable Python callables because a worker reconstructs them across a
+subprocess boundary. The system the loaded adapter drives does not need to be a
+Python agent.
 
 The in-tree proof is `examples/zicato_examples/target_0_convergence`: a
 `DeterministicPolicyAdapter`, registered through `adapter.kind = "import"`,
@@ -46,7 +48,7 @@ whose mutable surface is a module-level string constant and whose
 docstring notes there is **no LLM anywhere**. The full loop — propose,
 apply, worker, reduce, gate — runs against it under continuous
 integration. The other end of the range is goldfive itself: a library,
-mutated with the entrypoint outside every mutable tree (see
+mutated with the adapter driver outside every mutable tree (see
 [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)).
 
 Across many runs of that inner harness, zicato:
@@ -325,10 +327,11 @@ specific harness framework. The adapter implementer is the
 inner-harness author; zicato treats the adapter as the only handle on
 the system under test.
 
-**Consumes.** A registration (`zicato epoch register --adk path:agent
-[--mutable-tree <path>]` for the ADK adapter; one entrypoint per
-adapter kind). The registration captures the agent factory and the
-list of source roots that contain mutation-point annotations.
+**Consumes.** A registration. For example, `zicato epoch register --adk
+path:agent [--mutable-tree <path>]` records an ADK entry point. A generic
+import adapter records an importable factory and its construction arguments.
+Every registration also records the source roots that contain mutation-point
+annotations.
 
 **Produces.** Two pieces of behaviour:
 

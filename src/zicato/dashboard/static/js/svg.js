@@ -4030,15 +4030,15 @@ export function reignGantt(opts) {
 //                changed_list:[..], soft }],
 //     currentEpochId, onEpoch(epoch_id), responsive
 //   }
-const LEDGER_COMPONENTS = ['board', 'brief', 'scoring', 'entrypoint', 'mutable_trees', 'structure', 'proposer'];
+const LEDGER_COMPONENTS = ['board', 'brief', 'scoring', 'evaluator_revision', 'adapter', 'mutable_trees', 'structure', 'proposer'];
 const LEDGER_COMP_LABEL = {
-  board: 'board', brief: 'brief', scoring: 'scoring', entrypoint: 'entrypoint',
-  mutable_trees: 'mutable_trees', structure: 'structure', proposer: 'proposer*',
+  board: 'board', brief: 'brief', scoring: 'scoring', adapter: 'adapter',
+  evaluator_revision: 'evaluator revision', mutable_trees: 'mutable_trees', structure: 'structure', proposer: 'proposer*',
 };
 // component → accent for the change-chip primary colour (mirrors the study's rcol).
 const LEDGER_COMP_COLOR = {
   board: 'var(--v2-accent)', scoring: 'var(--v2-good)', brief: 'var(--v2-caution)',
-  structure: 'var(--v2-bad)', entrypoint: 'var(--v2-accent)',
+  evaluator_revision: 'var(--v2-caution)', structure: 'var(--v2-bad)', adapter: 'var(--v2-accent)',
   mutable_trees: 'var(--v2-ink-soft)', proposer: 'var(--v2-ink-faint)',
 };
 

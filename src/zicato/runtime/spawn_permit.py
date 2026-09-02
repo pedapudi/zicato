@@ -67,11 +67,6 @@ from pathlib import Path
 
 log = logging.getLogger("zicato.runtime.spawn_permit")
 
-#: Environment variable overriding the permit directory. Useful for
-#: containers with no ``XDG_RUNTIME_DIR``, and for tests that must not
-#: contend with a real run's permits.
-PERMIT_DIR_ENV = "ZICATO_WORKER_PERMIT_DIR"
-
 #: Floor on the AUTO permit count. Keeps a small (or cgroup-limited)
 #: machine — where :func:`_usable_cpus` can report 1 — from serialising a
 #: normal run down to one worker at a time.
@@ -128,13 +123,12 @@ def effective_permit_count(limit: int | None) -> int:
     return max(0, int(limit))
 
 
-def permit_dir() -> Path:
+def permit_dir(configured: Path | str | None = None) -> Path:
     """The workspace-EXTERNAL directory holding the permit slot files.
 
     Resolution order:
 
-    1. ``$ZICATO_WORKER_PERMIT_DIR`` when set (explicit operator/test
-       override);
+    1. absolute ``runtime.worker_permit_dir`` when configured;
     2. ``$XDG_RUNTIME_DIR/zicato/worker-permits`` — the standard per-user
        runtime location on Linux, and a tmpfs, so slot files cost nothing;
     3. ``<tempdir>/zicato-worker-permits-<uid>`` — the portable fallback,
@@ -144,9 +138,14 @@ def permit_dir() -> Path:
     The path is only computed here; :func:`acquire_worker_permit` is what
     creates it, and treats a failure to create it as "degrade open".
     """
-    override = os.environ.get(PERMIT_DIR_ENV)
-    if override:
-        return Path(override)
+    if configured is not None:
+        configured_path = Path(configured)
+        if not configured_path.is_absolute():
+            raise ValueError(
+                "runtime.worker_permit_dir must be absolute so every orchestrator "
+                "uses the same host-wide permit pool"
+            )
+        return configured_path
     xdg = os.environ.get("XDG_RUNTIME_DIR")
     if xdg:
         return Path(xdg) / "zicato" / "worker-permits"
@@ -223,7 +222,7 @@ def _warn_degraded_open(reason: str) -> None:
     _degraded_open_warned = True
     log.warning(
         message + " (set runtime.host_worker_permits to 0 to disable this cap "
-        "deliberately, or $ZICATO_WORKER_PERMIT_DIR to a writable path)",
+        "deliberately, or runtime.worker_permit_dir to a writable path)",
         reason,
     )
 
@@ -267,7 +266,10 @@ def _acquire_once(directory: Path, count: int, start: int) -> WorkerPermit | Non
     return None
 
 
-async def acquire_worker_permit(limit: int | None) -> WorkerPermit:
+async def acquire_worker_permit(
+    limit: int | None,
+    directory: Path | str | None = None,
+) -> WorkerPermit:
     """Acquire a host-wide worker permit, waiting if every slot is held.
 
     Parameters
@@ -276,6 +278,9 @@ async def acquire_worker_permit(limit: int | None) -> WorkerPermit:
         The :attr:`~zicato.core.RuntimeConfig.host_worker_permits` value.
         ``None`` ⇒ AUTO, ``0`` ⇒ no cap (returns :data:`OPEN_PERMIT`
         immediately, touching no filesystem at all).
+    directory:
+        Explicit workspace configuration for the shared slot directory, or
+        ``None`` to use the standard per-user runtime location.
 
     Returns
     -------
@@ -296,7 +301,7 @@ async def acquire_worker_permit(limit: int | None) -> WorkerPermit:
     if count <= 0:
         return OPEN_PERMIT
 
-    directory = permit_dir()
+    directory = permit_dir(directory)
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -342,7 +347,6 @@ async def acquire_worker_permit(limit: int | None) -> WorkerPermit:
 __all__ = [
     "MIN_AUTO_PERMITS",
     "OPEN_PERMIT",
-    "PERMIT_DIR_ENV",
     "WorkerPermit",
     "acquire_worker_permit",
     "default_host_worker_permits",

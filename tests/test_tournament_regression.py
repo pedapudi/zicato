@@ -534,13 +534,6 @@ def _make_cli_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     """Wire CLI-side stubs so ``tournament_cmd`` runs without a real workspace."""
     loader_mod = types.SimpleNamespace(
         load_workspace_config=lambda root: {"mutable_trees": []},
-        load_current_board=lambda root: _board(),
-        # The CLI threads board-level disable_drift + judge_only, so it
-        # loads the board via load_current_board_with_meta; this board has
-        # no board_meta header, so the suppression tuple is empty and
-        # judge_only is False (steering on, the default).
-        load_current_board_with_meta=lambda root: (_board(), (), False),
-        load_current_scoring=lambda root: ScoringWeights(regression_gate_enabled=True),
     )
     adapter_factory_mod = types.SimpleNamespace(
         make_adapter_from_config=lambda cfg: object(),
@@ -552,6 +545,16 @@ def _make_cli_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
         "zicato.cli.commands.tournament._resolve_workspace_components",
         lambda: (loader_mod, adapter_factory_mod, runtime_factory_mod),
     )
+    monkeypatch.setattr(
+        "zicato.cli.commands.tournament._load_epoch_contract",
+        lambda root, epoch_id: (
+            _board(),
+            (),
+            False,
+            ScoringWeights(regression_gate_enabled=True),
+        ),
+    )
+    monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *args, **kwargs: None)
 
 
 def test_cli_skip_regression_bypasses_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

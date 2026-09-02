@@ -881,7 +881,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "16fa4a1736dd4cf346c7a9af3dbfecdbd344994cfb52bda6ee71bdb777848329"
+          "contract_hash": "e183e71c24d7bf22eb92085dc88ec522afd339910ba9cb063ddc85e559900b32"
         },
         "scope": {},
         "seq": 1,

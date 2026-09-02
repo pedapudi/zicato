@@ -864,7 +864,7 @@ def _write_epoch(ws: Path, epoch_id: str) -> None:
             "board": f"board-{epoch_id}",
             "brief": f"brief-{epoch_id}",
             "scoring": "scoring-const",
-            "entrypoint": "entry-const",
+            "adapter": "adapter-const",
             "mutable_trees": "trees-const",
             "proposer": "proposer-const",
         },

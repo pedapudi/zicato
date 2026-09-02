@@ -1,10 +1,10 @@
 # 03 — The Contract and Epochs
 
 > **Covers:** the entire epoch/contract subsystem —
-> the five contract components and the six canonical forms they reduce to, the
+> the six contract components and the seven canonical forms they reduce to, the
 > per-component canonicalizer (`_canon_board` incl. judge/predicate source
 > folding, `_canon_brief`, `_canon_scoring` + the recursive `scoring_to_canon`,
-> `_canon_entrypoint`, `_canon_mutable_trees` and its normalize-never-resolve
+> the explicit evaluator revision, `_canon_adapter`, `_canon_mutable_trees` and its normalize-never-resolve
 > rule, `_canon_proposer` incl. skill hashing but excluding the runtime tool
 > registry), the ONE source-hashing mechanism
 > (`_canon_dotted_spec`/`spec_with_source_hash`), the omit-at-default discipline
@@ -58,8 +58,9 @@
 
 | File | What lives there | Approx. size |
 |---|---|---|
-| `src/zicato/epoch/contract.py` | `ContractInputs`, every `_canon_*`, `compute_contract_hash` / `compute_component_hashes`, `resolve_contract_inputs`, `_SCORING_OMIT_AT_DEFAULT_FIELDS`, `scoring_to_canon`, `round_floats` | 776 lines |
-| `src/zicato/core/scoring_config.py` | `ScoringWeights` + nested config dataclasses, the runtime-derived contract-knob registry, `to_json`/`from_json`, `recommended_scaffold_weights` | — |
+| `src/zicato/epoch/contract.py` | `ContractInputs`, every `_canon_*`, `compute_contract_hash` / `compute_component_hashes`, `resolve_contract_inputs`, `_SCORING_OMIT_AT_DEFAULT_FIELDS`, `scoring_to_canon`, `scoring_contract_to_canon` | 776 lines |
+| `src/zicato/core/scoring_config.py` | `ScoringWeights`, Zicato-owned nested config dataclasses, the frozen optional Goldfive JSON mapping, the runtime-derived contract-knob registry, `to_json`/`from_json`, `recommended_scaffold_weights` | — |
+| `src/zicato/integrations/goldfive.py` | Lazy bridge to Goldfive's public configuration document, runtime construction, and implementation identity | — |
 | `src/zicato/core/epoch.py` | `EpochConfig` (the frozen contract record) and `Generation` (one lineage node) | 177 lines |
 | `src/zicato/epoch/lifecycle.py` | `new_epoch`, `close_epoch` / `close_epoch_async`, `load_epoch` / `list_epochs`, `switch_epoch`, `set_epoch_goal` / `set_epoch_noise_floor` / `set_epoch_preflight`, `scoring_to_dict` | 769 lines |
 | `src/zicato/evolve/epoching.py` | `ensure_epoch_for_contract` (the auto-roll), `_create_epoch_from_contract`, the per-component sub-hash bookkeeping | 349 lines |
@@ -88,22 +89,23 @@ evolve entry (evolve/loop.py)
 ```
 
 `compute_contract_hash` reduces the contract to ONE sha256 by canonicalizing
-six components independently, joining them with a NUL-delimited separator, and
+seven forms independently, joining them with a NUL-delimited separator, and
 hashing the join:
 
 ```
 _canon_board(board_path)          ─┐
 _canon_brief(brief_path)           │
 _canon_scoring(scoring_path)       ├─ _SEP.join(...) ─→ sha256 hex
-_canon_entrypoint(entrypoint)      │
+_canon_evaluator_revision()        │
+_canon_adapter(inputs)             │
 _canon_mutable_trees(mutable_trees)│
 _canon_proposer(proposer_path)    ─┘
 ```
 
-> ⚠️ TRAP — the six canonical forms are joined with a specific separator that
+> ⚠️ TRAP — the seven canonical forms are joined with a specific separator that
 > "cannot appear in any canonical component" — a NUL byte plus a marker word
 > (`_SEP = "\x00--zicato-contract-component--\x00"`,
-> `src/zicato/epoch/contract.py`). If you add a seventh component, append it to
+> `src/zicato/epoch/contract.py`). If you add another component, append it to
 > BOTH `compute_contract_hash`'s `components` list and
 > `compute_component_hashes`'s dict, in the same order semantics, or the two
 > disagree about what changed and the auto-roll message names the wrong
@@ -111,25 +113,29 @@ _canon_proposer(proposer_path)    ─┘
 
 ---
 
-## 3.1 The five components — and why they are the contract
+## 3.1 The six components — and why they are the contract
 
 An epoch is the unit of **evaluation contract**. The module docstring names the
-five things that make it up (`src/zicato/epoch/contract.py`):
+six things that make it up (`src/zicato/epoch/contract.py`):
 
 1. **The board** — test inputs + expectations + judges (`board.jsonl`).
 2. **The proposer brief** — operator steering text (`brief.md`).
 3. **The scoring** — weights + gate thresholds (`scoring.json`).
-4. **The registered inner-harness IDENTITY** — the `--adk` entrypoint string
-   plus the sorted `--mutable-tree` paths.
-5. **The proposer** — agent identity, tools, and the skill modules under a
+4. **The Zicato evaluator implementation** — an explicit revision of the
+   measurement and tournament-decision semantics.
+5. **The registered inner-harness identity** — the validated worker
+   reconstruction document, implementation source outside the mutable surface,
+   and the sorted mutable-tree paths.
+6. **The proposer** — agent identity, tools, and the skill modules under a
    configured `proposers/<name>/` dir (or the built-in default when none is
    configured).
 
-Five conceptual components reduce to **six canonical forms**: harness identity
-(item 4) splits into `entrypoint` and `mutable_trees`. The two canonicalize by
-different rules — a verbatim string against a sorted normalized path set — and
-`compute_component_hashes` reports them separately, so the auto-roll message can
-name which of the two moved.
+Six conceptual components reduce to **seven canonical forms**: harness identity
+(item 5) splits into `adapter` and `mutable_trees`. The adapter form captures
+how a worker reconstructs the harness and the immutable implementation that
+drives it. The mutable-tree form captures which source paths may vary between
+generations. `compute_component_hashes` reports the forms separately, so an
+auto-roll message can identify which part changed.
 
 One rule motivates all of it: **a change to any component means generations
 scored on either side of the change are not directly comparable, so the epoch
@@ -145,9 +151,9 @@ component change.
 > being optimized under those rules. Folding source into the hash would roll the
 > epoch on every promotion — the loop would never accumulate a lineage.
 
-`ContractInputs` (`src/zicato/epoch/contract.py`) is the frozen bundle the
-hasher consumes — three live file paths plus the two harness-identity strings
-plus the proposer's three optional fields:
+`ContractInputs` (`src/zicato/epoch/contract.py`) is the bundle the hasher
+consumes. It carries three contract-file paths, the registered adapter identity,
+the mutable source paths, and the proposer identity:
 
 ```python
 # src/zicato/epoch/contract.py — ContractInputs
@@ -156,6 +162,8 @@ plus the proposer's three optional fields:
     scoring_path: Path
     entrypoint: str
     mutable_trees: tuple[str, ...]
+    adapter_spec: Mapping[str, Any] | None = None
+    adapter_source_specs: tuple[str, ...] = ()
     #: Location of the proposer dir (``proposers/<name>/``) frozen for
     #: the epoch, or ``None`` for the built-in default proposer. ``None``
     #: by default so existing construction sites keep working.
@@ -167,19 +175,26 @@ plus the proposer's three optional fields:
     proposer_static_checks: tuple[str, ...] = ()
 ```
 
-The last three all canonicalize into the single `proposer` component: which
-agent proposes, and under what self-imposed checks.
+`entrypoint` supports direct ADK construction when no `adapter_spec` is
+available. A registered workspace supplies the validated worker reconstruction
+document as `adapter_spec`. The dotted callables in `adapter_source_specs` name
+the adapter implementations whose source affects behavior. The three proposer
+fields canonicalize into the single `proposer` component: which agent proposes,
+and under what self-imposed checks.
 
 `resolve_contract_inputs(workspace_root)` builds it from the workspace's
 `config.json`, loaded through the one owner of that file
 (`read_workspace_config`): `contract.board_path` / `brief_path` (also accepted
-as `rubric_path`) / `scoring_path`, `adk_entrypoint`, `mutable_trees` (also
-accepted as `source_roots`), the optional `contract.proposer_path`,
-`runtime.proposer_agent`, and `contract.proposer_static_checks`. A relative
-`proposer_path` is absolutized against the workspace's *parent* (the operator's
-project root). A missing `config.json` raises `FileNotFoundError` telling the
-operator to run `zicato epoch register` — the remedy this call passes to
-`WorkspaceConfig.require`.
+as `rubric_path`) / `scoring_path`, the adapter registration, the mutable trees,
+the optional `contract.proposer_path`, `runtime.proposer_agent`, and
+`contract.proposer_static_checks`. The resolver constructs the registered
+adapter and asks it for a transport-safe worker specification. It records the
+configured adapter factory and worker factory as implementation sources. An ADK
+registration contributes its entry point through the worker specification. A
+relative `proposer_path` is absolutized against the workspace's *parent* (the
+operator's project root). A missing `config.json` raises `FileNotFoundError`
+telling the operator to run `zicato epoch register` — the remedy this call
+passes to `WorkspaceConfig.require`.
 
 > ⚠️ TRAP — the live contract files sit NEXT TO the `.zicato/` directory (the
 > operator's project root) rather than inside it. `_default_contract_path` resolves
@@ -194,16 +209,17 @@ operator to run `zicato epoch register` — the remedy this call passes to
 > re-points only its three file paths at the copies it just froze; both
 > creators — `zicato epoch new` and `_create_epoch_from_contract` — pass what
 > `resolve_contract_inputs` returned. Passing one keyword per component drops
-> whichever component the call site forgets. A creator that carries only
-> `entrypoint` and `mutable_trees` freezes `proposer_path` as `None`, so a
+> whichever component the call site forgets. A creator that carries only an
+> ADK `entrypoint` and `mutable_trees` freezes `adapter_spec`,
+> `adapter_source_specs`, and `proposer_path` at their defaults, so a
 > workspace with a registered proposer dir runs its whole epoch under the
 > built-in proposer. A creator that omits `external_proposer` and
 > `proposer_static_checks` can never match the hash `evolve` recomputes
 > (issue #186). `tests/test_epoch_contract_carryover.py` is the guard: a
 > component added to `ContractInputs` fails it until the fixture registers it.
 > The `entrypoint` / `mutable_trees` / `proposer_path` keywords on `new_epoch`
-> are shorthand for callers with no workspace config to resolve, which in
-> practice means tests.
+> are shorthand for callers with no workspace config to resolve. Registered
+> workspaces pass the complete `ContractInputs` object through `contract=`.
 
 ### 3.1.1 The on-disk epoch layout
 
@@ -253,7 +269,7 @@ marker names the promoted head — what a cross-epoch roll seeds the next epoch'
 ## 3.2 The canonicalizer, component by component
 
 Every `_canon_*` function draws the same boundary. Spurious edits — whitespace,
-reordering, float-format noise, path spelling — must leave the hash fixed, and
+reordering, equivalent numeric spelling, path spelling — must leave the hash fixed, and
 semantic edits must move it. Getting the boundary wrong in either direction
 produces one of two failures. A **false roll** lets a cosmetic edit orphan the
 lineage and discard the warm start, which is the promoted tree the next epoch
@@ -354,7 +370,7 @@ it parses the file into a **fully-defaulted `ScoringWeights`** and serializes
 
     raw = json.loads(scoring_path.read_text(encoding="utf-8"))
     weights = scoring_weights_from_dict(raw)
-    return json.dumps(round_floats(scoring_to_canon(weights)), sort_keys=True)
+    return json.dumps(scoring_contract_to_canon(weights), sort_keys=True)
 ```
 
 Routing through `ScoringWeights` is what makes the live and frozen copies
@@ -365,10 +381,9 @@ never match the re-derived one and the epoch would roll on every `evolve`.
 Passing both through the same fully-defaulted `ScoringWeights` collapses the two
 spellings.
 
-`round_floats` rounds every float to 6 decimal places, so `0.1` and
-`0.10000000001` collapse and float-format noise below the threshold does not
-move the hash
-(`tests/test_epoch_contract.py::test_hash_stable_across_scoring_float_noise`).
+JSON spellings that parse to the same Python number canonicalize identically.
+Distinct runtime values remain distinct, even when they are close, because a
+small threshold change can alter a detector decision at its boundary.
 
 `scoring_to_canon(weights)` walks `dataclasses.fields()`, so it covers every
 field automatically and can never desync from the dataclass. It handles each
@@ -389,6 +404,32 @@ what lets a default-off knob *nested* on `OverfittingConfig` or
 `_SCORING_OMIT_AT_DEFAULT_FIELDS` name check runs at every recursion depth
 (§3.4).
 
+The optional `goldfive` mapping is the exception to Zicato's nested-dataclass
+model. `ScoringWeights` freezes it as generic JSON, while
+`scoring_contract_to_canon` passes it to
+`goldfive.RuntimeConfigDocument` through the lazy integration bridge.
+Goldfive applies its defaults, validates its schema and field relationships,
+and returns the complete canonical mapping. A sparse workspace object and a
+complete epoch snapshot therefore hash identically when they describe the same
+Goldfive runtime.
+
+Zicato owns only its tournament-specific default overlay and the identity it
+adds after Goldfive normalization. The overlay sets the wrapped-agent call
+timeout to 1,800,000 milliseconds unless the operator supplies a value. The
+identity records the required Goldfive package revision and an explicit
+revision of Zicato's bridge. Neither value appears as an editable workspace
+field. An implementation update therefore rolls only a Goldfive-enabled
+contract; generic contracts remain unchanged.
+
+### Evaluator revision — `_canon_evaluator_revision`
+
+`ZICATO_EVALUATOR_REVISION` identifies Zicato behavior that changes the meaning
+of a run, loss, or tournament decision. Increment it with such a semantic
+change. Do not increment it for presentation, query, dashboard, or
+integration-specific changes. The explicit revision avoids hashing arbitrary
+source files while preventing measurements produced by different evaluator
+semantics from sharing an epoch.
+
 The flat omit set is a projection rather than a second registry.
 `contract_knobs()` walks every declared scoring field once at import time,
 preserving its owner, default, omit rule, and builder mapping.
@@ -405,15 +446,43 @@ registry is committed to the tree; the records exist only at runtime.
 > rolls every existing epoch. If it is intended to roll, add a byte-identity test
 > anyway (§3.11 step 8).
 
-### 3.2.4 entrypoint — `_canon_entrypoint`
+### 3.2.4 adapter — `_canon_adapter`
 
-The simplest component: the registered `--adk` entrypoint string, verbatim
-(`_canon_entrypoint(entrypoint) -> entrypoint`). Changing the entrypoint (e.g.
-`pkg.mod:agent` → `pkg.mod:OTHER_agent`) points the loop at a different inner
-harness, which is a different contract, so it rolls
-(`tests/test_epoch_contract.py::test_hash_changes_on_entrypoint_edit`). There is
-no normalization — an entrypoint is an identifier, and any byte difference is
-semantic.
+The adapter component identifies how a subprocess worker reconstructs and
+drives the registered inner harness. `resolve_contract_inputs` constructs the
+adapter, validates its transport boundary, and obtains its worker reconstruction
+document through `adapter_worker_spec`. `_canon_adapter` removes
+`mutable_trees`, because those paths have their own component, and recursively
+normalizes the remaining JSON values. Object keys are sorted during
+serialization. Declared integration names are sorted because declaration order
+does not change behavior.
+
+The worker document contains the behavior-bearing registration fields. An
+import adapter contributes its factory, arguments, and declared integrations.
+An ADK adapter contributes its kind and entry point. Changing an ADK entry point
+therefore moves the `adapter` component
+(`tests/test_epoch_contract.py::test_hash_changes_on_entrypoint_edit`). Changing
+a generic adapter's factory arguments or integration declarations does the same
+(`test_generic_adapter_factory_args_and_integrations_are_contract_identity`).
+Reordering an unchanged integration set leaves the hash fixed
+(`test_adapter_integration_order_does_not_change_hash`).
+
+The component also hashes the modules that implement the adapter. The source
+specifications include the configured adapter factory, the worker factory from
+the validated worker document, and the ADK entry point when present. Each
+external source specification passes through `_canon_dotted_spec`, so editing
+the resolved module rolls the epoch even when its dotted name stays fixed
+(`test_external_adapter_factory_source_is_contract_identity`).
+
+Implementation source inside a registered mutable tree is excluded. Those
+bytes belong to each generation and are the material Zicato is allowed to
+change. Hashing them as adapter identity would roll the epoch after a normal
+promotion. `_dotted_spec_is_within_mutable_trees` enforces the exclusion, and
+`test_entrypoint_source_inside_a_mutable_tree_is_generation_content` pins it.
+
+Direct `ContractInputs` construction may omit `adapter_spec`. That compatibility
+surface canonicalizes an ADK worker document from `entrypoint`; registered
+workspaces use the validated worker document.
 
 ### 3.2.5 mutable_trees — `_canon_mutable_trees` normalizes without resolving
 
@@ -559,11 +628,18 @@ edit should roll.
 | re-indent / CRLF-churn the brief | brief | stable | `test_hash_stable_across_whitespace_only_brief_edits` |
 | edit the brief prose | brief | **rolls** | (brief sensitivity) |
 | retune a scoring weight | scoring | **rolls** | `test_hash_changes_on_scoring_weight_edit` |
-| float-format noise below 6dp | scoring | stable | `test_hash_stable_across_scoring_float_noise` |
+| equivalent JSON spelling of the same number | scoring | stable | numeric canonicalization tests |
+| change a threshold by any runtime-visible amount | scoring | **rolls** | `test_close_threshold_values_have_distinct_contract_hashes` |
+| upgrade Goldfive or its Zicato bridge while Goldfive is enabled | scoring | **rolls** | `test_goldfive_implementation_identity_is_conditional_system_metadata` |
+| change the Zicato evaluator revision | evaluator_revision | **rolls** | `test_hash_changes_when_the_zicato_evaluator_changes` |
 | flip an `overfitting` / `ladder` knob | scoring | **rolls** | `test_hash_changes_on_overfitting_knob_edit`, `test_hash_changes_on_ladder_knob_edit` |
 | set `screen_entries`/`process_exemplars` to non-default | scoring | **rolls** | `test_hash_changes_when_screening_opted_in` |
 | spell out a default-off knob's default explicitly | scoring | stable | `test_hash_stable_when_screening_fields_at_default` |
-| change the `--adk` entrypoint | entrypoint | **rolls** | `test_hash_changes_on_entrypoint_edit` |
+| change the `--adk` entrypoint | adapter | **rolls** | `test_hash_changes_on_entrypoint_edit` |
+| change a generic adapter's factory, arguments, or integration set | adapter | **rolls** | `test_generic_adapter_factory_args_and_integrations_are_contract_identity` |
+| reorder a generic adapter's unchanged integration set | adapter | stable | `test_adapter_integration_order_does_not_change_hash` |
+| edit adapter implementation source outside every mutable tree | adapter | **rolls** | `test_external_adapter_factory_source_is_contract_identity` |
+| edit harness implementation source inside a mutable tree | generation content | stable | `test_entrypoint_source_inside_a_mutable_tree_is_generation_content` |
 | add/remove a mutable tree | mutable_trees | **rolls** | `test_hash_changes_on_adding_a_mutable_tree` |
 | reorder / re-spell mutable-tree paths; run from a different cwd | mutable_trees | stable | `test_hash_stable_across_mutable_tree_reordering`, `test_contract_hash_is_cwd_and_checkout_invariant` |
 | edit a skill body semantically / add / remove / rename a skill | proposer | **rolls** | `test_proposer_skill_body_edit_changes_hash`, `_adding_`, `_removing_`, `_renaming_` |
@@ -918,7 +994,7 @@ loop-health detector — not a rule the tournament scores under.
 
 ## 3.7 Computing the hash — `compute_contract_hash` / `compute_component_hashes`
 
-`compute_contract_hash(inputs)` canonicalizes the six components, joins them with
+`compute_contract_hash(inputs)` canonicalizes the seven forms, joins them with
 `_SEP`, and returns the sha256 hex digest (`src/zicato/epoch/contract.py`). A
 missing file for any component hashes as the empty string for that component
 (with a logged warning), so a partially-registered workspace still hashes
@@ -926,8 +1002,8 @@ deterministically. The digest is 64 hex chars
 (`tests/test_epoch_contract.py::test_missing_files_hash_deterministically`).
 
 `compute_component_hashes(inputs)` returns the per-component sub-hashes under the
-keys `board` / `brief` / `scoring` / `entrypoint` / `mutable_trees` /
-`proposer`. This is what the auto-roll uses to tell the operator *which*
+keys `board` / `brief` / `scoring` / `evaluator_revision` / `adapter` /
+`mutable_trees` / `proposer`. This is what the auto-roll uses to tell the operator *which*
 component drifted (§3.8.3). The two functions share every `_canon_*` helper, so
 they can never disagree about a component's canonical bytes.
 
@@ -962,7 +1038,7 @@ an epoch. Its steps, in order:
    `ProposerBrief` / a `str` of brief text / a `Path` to copy verbatim);
 4. serialize `weights` to the frozen `scoring.json` through the storage seam;
 5. **compute the contract hash over the just-written frozen copies** plus the
-   `entrypoint` + `mutable_trees` + `proposer_path`;
+   adapter reconstruction identity, `mutable_trees`, and proposer identity;
 6. write `config.json`, register the epoch in `lineage.json`;
 7. point the `current_epoch` marker at the new id.
 
@@ -970,10 +1046,11 @@ The key design property: given in-memory objects, `new_epoch` owns
 canonicalization and persistence end to end. It writes the on-disk files the
 contract hash is computed from, so a caller never needs a prior `.save()`.
 
-`entrypoint`, `mutable_trees`, and `proposer_path` default to empty / `None`, so
-a caller may omit them. An epoch created without them hashes those components as
-empty, and `proposer_path=None` canonicalizes to the built-in default's stable
-form.
+The direct-construction `entrypoint`, `mutable_trees`, and `proposer_path`
+parameters default to empty / `None`, so a caller may omit them. Registered
+workspaces pass `contract=` with the validated adapter document and its source
+specifications. `proposer_path=None` canonicalizes to the built-in default's
+stable form.
 
 > ⚠️ TRAP — `new_epoch`'s `auto_close_previous` default is `True`, but the
 > auto-roll path (§3.8.3) passes `auto_close_previous=False` because
@@ -1606,16 +1683,16 @@ first `evolve` on a fresh workspace (no current_epoch marker):
   ensure_epoch_for_contract(auto_epoch=True)                 evolve/epoching.py
     inputs = resolve_contract_inputs(root)                   # from config.json
       board=<parent>/board.jsonl  brief=<parent>/brief.md    # LIVE copies (§3.1)
-      scoring=<parent>/scoring.json  entrypoint  mutable_trees  proposer_path
+      scoring=<parent>/scoring.json  adapter  mutable_trees  proposer
     cur = current_epoch_id(root)  → None
     _create_epoch_from_contract(name="e0"):
       new_epoch(root, "e0", board, brief, weights, …):        epoch/lifecycle.py
         edir = epochs/2026-…_e0/  (mkdir exist_ok=False)
         materialize FROZEN board.jsonl / brief.md / scoring.json into edir
         contract_hash = compute_contract_hash(               epoch/contract.py
-            ContractInputs(FROZEN paths, entrypoint, mutable_trees, proposer))
+            ContractInputs(FROZEN paths, adapter, mutable_trees, proposer))
           _canon_board  _canon_brief  _canon_scoring          # §3.2
-          _canon_entrypoint  _canon_mutable_trees  _canon_proposer
+          _canon_adapter  _canon_mutable_trees  _canon_proposer
         write config.json (format_version=1, contract_hash, noise_floor=null)
         register_epoch(lineage.json, v0_parent=None)          epoch/lineage.py
         switch_epoch → current_epoch = "2026-…_e0"
@@ -1704,7 +1781,7 @@ Where to add (and what will catch) a regression, by concern:
 
 | Concern | Tests |
 |---|---|
-| hash stability (whitespace / reorder / float noise) + sensitivity (board / scoring / entrypoint / mutable trees) | `tests/test_epoch_contract.py` |
+| hash stability (whitespace / reorder / numeric spelling) + sensitivity (board / scoring / adapter / mutable trees) | `tests/test_epoch_contract.py` |
 | cwd and checkout invariance + path-spelling normalization | `tests/test_epoch_contract.py::test_contract_hash_is_cwd_and_checkout_invariant` |
 | board-level meta (judges / disable_drift) + per-entry grading source folding | `tests/test_epoch_contract.py` (`test_canon_board_meta_*`, `test_canon_judges_*`) |
 | proposer component: skill body / add / remove / rename / agent source / whitespace / fs-reorder / builtin-vs-dir | `tests/test_epoch_contract.py` (`test_proposer_*`) |

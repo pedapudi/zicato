@@ -256,7 +256,10 @@ def bootstrap_example_workspace(
                 # so the git default does not look for git tags this fixture
                 # never writes.
                 "generation_source_backend": "directory",
-                "adapter": {"kind": "stub"},
+                "adapter": {
+                    "kind": "import",
+                    "factory": "tests._stub_adapter:make_stub_adapter",
+                },
                 # This e2e asserts the racing tournament's champion-caching
                 # behaviour; opt out of the default-on achievable-signal
                 # pre-flight (issue #84) whose A/A floor legitimately runs the
@@ -267,6 +270,7 @@ def bootstrap_example_workspace(
     )
 
     weights = _scoring_from_dict(json.loads(scoring_path.read_text()))
+    from zicato.epoch.contract import resolve_contract_inputs
 
     cfg = new_epoch(
         workspace,
@@ -275,6 +279,7 @@ def bootstrap_example_workspace(
         brief_source=BRIEF_PATH,
         weights=weights,
         auto_close_previous=False,
+        contract=resolve_contract_inputs(workspace),
     )
 
     # v0 snapshot == a copy of the vendored example agent tree. The stub

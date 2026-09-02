@@ -1,15 +1,12 @@
 """``zicato inspect environment`` — zicato's configuration surface.
 
-ADVANCED — off the happy path. Operator knobs live on CLI flags (each
-``--help`` names the config knob a flag shadows) and in the workspace
-``config.json`` (the ``health`` block, the ``runtime`` block, the
-``models`` block, ``harmonograf_url``). No environment variable is a
-configuration knob.
+ADVANCED — off the happy path. Operator knobs live on CLI flags, in the
+workspace ``config.json``, and in contract files such as ``scoring.json``.
+No environment variable is a configuration knob.
 
 The command prints the small MERITED set of environment variables zicato
 touches. Each is a process-boundary contract: a harness contract, an
-internal handoff, the secrets boundary, an external integration, or a
-CI/test toggle. The set is sourced from
+internal handoff, the secrets boundary, or a CI/test toggle. The set is sourced from
 :func:`zicato.config.describe_env_vars`, so this command cannot drift
 from the code.
 
@@ -36,12 +33,12 @@ _ROLE_HEADINGS: tuple[tuple[str, str], ...] = (
         "set and restored by zicato itself to hand a value across its own processes",
     ),
     (
-        "secrets-boundary",
-        "operator-NAMED variables so credentials stay in the environment, never in files",
+        "external-integration",
+        "inputs and child-process controls required by an optional external tool",
     ),
     (
-        "external-integration",
-        "another tool's own variable that zicato defers to",
+        "secrets-boundary",
+        "operator-NAMED variables so credentials stay in the environment, never in files",
     ),
     (
         "test-toggle",
@@ -63,8 +60,8 @@ def render_env_report() -> str:
     lines.append(
         "Operator knobs are NOT here: they live on CLI flags (see each "
         "command's --help;\nevery flag names the config knob it shadows) "
-        "and in the workspace config.json\n(health / runtime / models "
-        "blocks, harmonograf_url). Everything below is a\nprocess-boundary "
+        "and in workspace JSON files\n(config.json and contract files such "
+        "as scoring.json). Everything below is a\nprocess-boundary "
         "contract, kept on purpose."
     )
     for role, meaning in _ROLE_HEADINGS:
@@ -94,8 +91,7 @@ def config_env_cmd(as_json: bool) -> None:
     printed here is a process-boundary contract: the per-run harness
     contract, the internal harmonograf handoff pair, the secrets
     boundary (operator-named api_key_env variables and the worker
-    passthrough allowlist), goldfive's own timeout variable, and the
-    CI/test toggles.
+    passthrough allowlist), and the CI/test toggles.
     """
     if as_json:
         payload = [

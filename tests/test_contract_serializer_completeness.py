@@ -45,7 +45,7 @@ from zicato.core.types import (
     ScoringWeights,
     TournamentStructure,
 )
-from zicato.epoch.contract import round_floats, scoring_to_canon
+from zicato.epoch.contract import scoring_to_canon
 from zicato.epoch.contract_serde import (
     _persisted_key,
     dataclass_to_jsonable,
@@ -107,6 +107,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "cross_epoch": True,
     },
     "ScoringWeights": {
+        "goldfive": {"fail_fast_on_revision_rejection": True},
         "pass_weight": 3.5,
         "severity_weights": {"info": 2.0, "warning": 4.0, "critical": 11.0},
         "per_kind_weights": {"off_topic": 1.5},
@@ -167,7 +168,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
 
 def _canon(weights: ScoringWeights) -> str:
     """The contract-hash canonical string for one ScoringWeights."""
-    return json.dumps(round_floats(scoring_to_canon(weights)), sort_keys=True)
+    return json.dumps(scoring_to_canon(weights), sort_keys=True)
 
 
 def _distinct_value(cls: type, field_name: str) -> Any:

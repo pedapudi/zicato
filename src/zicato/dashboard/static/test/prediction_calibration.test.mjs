@@ -242,9 +242,9 @@ const WS = {
   ],
   ledger: [
     { epoch_id: 'e0', floor: 42.1, champion_gen: 'v4', champion_index: 4, generation_count: 5, structure: 'racing', closed: true, open: false,
-      changed_components: { board: false, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false }, changed_list: [], soft: false },
+      changed_components: { board: false, brief: false, scoring: false, adapter: false, mutable_trees: false, structure: false, proposer: false }, changed_list: [], soft: false },
     { epoch_id: 'e1', floor: 34.2, champion_gen: 'v7', champion_index: 5, generation_count: 6, structure: 'swiss', closed: false, open: true,
-      changed_components: { board: true, brief: false, scoring: false, entrypoint: false, mutable_trees: false, structure: false, proposer: false }, changed_list: ['board'], soft: false },
+      changed_components: { board: true, brief: false, scoring: false, adapter: false, mutable_trees: false, structure: false, proposer: false }, changed_list: ['board'], soft: false },
   ],
 };
 

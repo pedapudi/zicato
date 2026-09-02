@@ -35,16 +35,23 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The drift-instrumented ecosystem harness. Optional because zicato's
-# core is goldfive-free by construction: zicato/core/drift_kinds.py
-# mirrors the drift vocabulary as strings, and
-# tests/test_no_goldfive_import.py proves the import surface against an
-# interpreter that cannot import goldfive. The extra buys the ADK
-# adapter path, the in-run process judges, and the default `goldfive`
-# telemetry dialect. The observability profile also resolves goldfive
-# transitively; the base profile does not.
-goldfive = ["goldfive"]
-adk = ["google-adk[extensions]", "goldfive[adk]"]
+# Optional Goldfive capabilities. Zicato's core keeps the drift vocabulary as
+# strings and imports Goldfive only for an adapter that declares the
+# integration. The base extra supplies the event runtime; remote endpoints,
+# local embeddings, and the built-in ADK composition have separate profiles.
+goldfive = [
+    "goldfive @ git+https://github.com/pedapudi/goldfive.git@d1d44829d43fee46c11b83c507fc772466b7f14e",
+]
+goldfive-remote = [
+    "goldfive[remote] @ git+https://github.com/pedapudi/goldfive.git@d1d44829d43fee46c11b83c507fc772466b7f14e",
+]
+goldfive-local-embedding = [
+    "goldfive[embedding] @ git+https://github.com/pedapudi/goldfive.git@d1d44829d43fee46c11b83c507fc772466b7f14e",
+]
+adk = [
+    "google-adk[extensions]",
+    "goldfive[adk] @ git+https://github.com/pedapudi/goldfive.git@d1d44829d43fee46c11b83c507fc772466b7f14e",
+]
 # The standalone dashboard service: a Starlette/ASGI app served by
 # uvicorn, with a watchdog-backed file watcher for the SSE stream.
 dashboard = [
@@ -81,7 +88,7 @@ mcp = ["mcp >= 1.0"]
 # Complete runtime profile. Keep this explicit so wheel metadata alone defines
 # the profile and installers need no project-specific composition rules.
 all = [
-    "goldfive[adk]",
+    "goldfive[adk,embedding,remote] @ git+https://github.com/pedapudi/goldfive.git@d1d44829d43fee46c11b83c507fc772466b7f14e",
     "google-adk[extensions]",
     "starlette >= 0.40",
     "uvicorn >= 0.30",
@@ -91,6 +98,7 @@ all = [
     "harmonograf-server",
     "mcp >= 1.0",
 ]
+
 dev = [
     "pytest >= 8",
     "pytest-asyncio >= 0.23",
@@ -138,6 +146,9 @@ dev = [
     # wheel.
     "zicato-examples",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [project.scripts]
 zicato = "zicato.cli:main"
@@ -202,7 +213,7 @@ select = [
 "zicato.runtime._atomic".msg = "deleted shim: use the public zicato.storage face (read_json / atomic_write_json / atomic_write_text / atomic_claim)"
 "zicato.storage._atomic.read_json".msg = "use the public face: from zicato.storage import read_json"
 "zicato.epoch.lifecycle._scoring_to_dict".msg = "promoted: use zicato.epoch.lifecycle.scoring_to_dict"
-"zicato.epoch.contract._round_floats".msg = "promoted: use zicato.epoch.contract.round_floats"
+"zicato.epoch.contract._round_floats".msg = "deleted: use zicato.epoch.contract.scoring_contract_to_canon for contract scoring canonicalization"
 "zicato.epoch.contract._scoring_to_canon".msg = "promoted: use zicato.epoch.contract.scoring_to_canon"
 "zicato.board.jsonl._entry_to_dict".msg = "promoted: use zicato.board.jsonl.entry_to_dict"
 "zicato.board.jsonl._board_meta_to_dict".msg = "promoted: use zicato.board.jsonl.board_meta_to_dict"
@@ -493,29 +504,17 @@ members = ["examples"]
 # its own [tool.uv.sources] entry — uv treats the two URL forms as
 # distinct sources and refuses to resolve. Both forms resolve to the
 # same commit (harmonograf's `third_party/goldfive` is itself pinned at
-# the goldfive rev zicato wants), so `override-dependencies` forces a
-# single canonical goldfive across the graph: harmonograf-client uses
-# zicato's [tool.uv.sources] goldfive entry, eliminating the duplicate
-# URL split. Bump this in lock-step with the `[tool.uv.sources]`
-# goldfive rev above.
+# the goldfive revision zicato wants), so `override-dependencies` forces a
+# single canonical Goldfive source across the graph. The direct reference also
+# lives in each public optional extra so standard pip installs do not depend on
+# uv-only source configuration. Bump these references in lock-step.
 [tool.uv]
 override-dependencies = [
-    "goldfive",
+    "goldfive @ git+https://github.com/pedapudi/goldfive.git@d1d44829d43fee46c11b83c507fc772466b7f14e",
 ]
 
 [tool.uv.sources]
 zicato-examples = { workspace = true }
-# goldfive is a co-developed sibling package, not yet published to a
-# package index. It IS, however, public on GitHub
-# (github.com/pedapudi/goldfive), so uv resolves it from a git source:
-# this works both for a local `uv sync` and in CI (a public git
-# dependency clones with the default GITHUB_TOKEN — no secret needed).
-# The rev is pinned so `uv.lock` is reproducible; bump it when zicato
-# needs a newer goldfive. When goldfive is eventually published to an
-# index, this entry is dropped and the `goldfive` / `adk` extras resolve
-# it from there. (The harmonograf-client entry below mirrors
-# this pattern for the live-streaming sink.)
-goldfive = { git = "https://github.com/pedapudi/goldfive.git", rev = "ed44eaaf93215a5d4ae122293c39fbd04ff204d6" }
 # harmonograf is a monorepo whose `harmonograf-client` subpackage lives
 # under `client/` — so the git source pins a rev AND a subdirectory.
 # `harmonograf_client` is the package the lazy import in

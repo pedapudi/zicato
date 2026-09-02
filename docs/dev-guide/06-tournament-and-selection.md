@@ -66,7 +66,7 @@ owns it, and the selection layer only *reads* its verdict.
 | `src/zicato/tournament/runner.py` | The four public entry points (`run_tournament` full A/B, `run_fast_mode`, `run_matchup`, `confirm_crowning_holdout`), `_run_single` (the run lifecycle — the test suite's monkeypatch anchor), `_gate_with_regression`, `TournamentResult`, the progress-bumping sink | 1636 lines |
 | `src/zicato/tournament/scheduling.py` | The board-unit schedulers: `_run_replicated`, `_run_board_units_full` / `_run_board_units_full_budgeted` / `_run_board_units_fast`, `_run_unit_cache_first` (the cache-first choke point), `_run_full_board_unit`, `_IncrementalScorer`, `_effective_unit_semaphore`, `_token_budget_spent` | 1196 lines |
 | `src/zicato/tournament/unit_cache.py` | The per-unit loss cache + provenance: `_unit_loss_path`, `_resolve_cached_unit`, `_persist_unit_loss`, `_skipped_unit_loss`, `_average_losses`, `_UnitProvenance` | 288 lines |
-| `src/zicato/tournament/worker_transport.py` | The process boundary: `_adapter_spec`, `_role_worker_spec` + `_callable_dotted_path`, `_scrubbed_worker_env` + `_api_key_env_names`, `_config_pins`, `_checkout_run_snapshot`, `_aborted_loss_profile`, `_weights_spec`, `_entry_to_dict`, the `_stamp_*` context threaders, `_terminate_worker` | 923 lines |
+| `src/zicato/tournament/worker_transport.py` | The process boundary: `adapter_worker_spec`, `_role_worker_spec` + `_callable_dotted_path`, `scrubbed_worker_env` + `_api_key_env_names`, `_config_pins`, `_checkout_run_snapshot`, `_aborted_loss_profile`, `_weights_spec`, `_entry_to_dict`, the `_stamp_*` context threaders, `_terminate_worker` | 923 lines |
 | `src/zicato/_tournament_worker.py` | The subprocess worker: the args-file protocol (`_load_args`), `_build_adapter`, `_drive_session`, `_evaluate_expectation`, the config re-pin, the abort provenance stamp, `main` | 838 lines |
 | `src/zicato/tournament/gate.py` | `evaluate_gate` (the three rungs), `GateOutcome`, `holdout_confirms`, `diff_size_evidence`, the tolerance constants | 566 lines |
 | `src/zicato/selection/strategy.py` | The `SelectionStrategy` ABC + the value types (`Contestant`, `Matchup`, `MatchupResult`, `SelectionDecision`, `Standing`, `RoundRecord`, `MatchRecord`), `pending_match_record`, `rung_for_match_id` | 564 lines |
@@ -90,7 +90,7 @@ Two facts about the file layout matter before you edit anything:
 > ⚠️ TRAP — `runner.py` re-exports the entire public surface of
 > `scheduling.py`, `unit_cache.py`, and `worker_transport.py` (three big
 > `from … import …  # noqa: F401` blocks). The re-export is intentional: the
-> test suite reaches `_unit_loss_path`, `_average_losses`, `_adapter_spec`,
+> test suite reaches `_unit_loss_path`, `_average_losses`, `adapter_worker_spec`,
 > `_terminate_worker`, the timeout constants — everything — through
 > `zicato.tournament.runner`, and it **monkeypatches them there**. `_run_single`
 > stays in `runner.py` for that reason: it is the one anchor the whole
@@ -594,10 +594,15 @@ subprocess must re-import.
 
 ### 6.3.2 The scrubbed environment, and why flags do not cross through it
 
-By default the worker inherits the orchestrator's full environment (byte-for-
-byte unchanged). When the operator sets `scrub_worker_env`, the worker instead
-gets a MINIMAL explicit env, because a mutated worker running proposer-patched
-code could otherwise read every credential in the process env:
+By default the worker inherits the orchestrator's environment. When an adapter
+declares the Goldfive integration, Zicato passes the frozen JSON object to
+Goldfive's `RuntimeConfigDocument`. Goldfive applies the recorded defaults and
+builds the runtime without consulting its environment-derived behavior
+settings. Ambient Goldfive variables therefore cannot reconfigure the bridge.
+The wrapped target remains user code and may read inherited variables for its
+own purposes. When the operator sets `scrub_worker_env`, the worker receives a
+small explicit environment because proposer-patched code could otherwise read
+every credential in the orchestrator's environment:
 
 ```python
 _WORKER_ESSENTIAL_ENV_KEYS: tuple[str, ...] = (
@@ -623,28 +628,30 @@ _WORKER_ESSENTIAL_ENV_KEYS: tuple[str, ...] = (
 ```
 — `src/zicato/tournament/worker_transport.py`
 
-The scrubbed env is composed of exactly three things: these essential keys, the
-`api_key_env` NAMEs every configured model role legitimately needs
-(`_api_key_env_names` — names, never secret values), and any operator-named
-`worker_env_passthrough` keys. Each is copied from the source env ONLY if
-present — an unset key is omitted, never invented.
+The scrubbed env has four sources: these essential keys; the `api_key_env`
+names required by configured model roles; the credential-variable names
+declared by an enabled Goldfive scoring block; and operator-named
+`worker_env_passthrough` keys. Each value is copied from the source environment
+only when present. An unset key is omitted, never invented.
 
-The credential-threading is the subtle half. A model-spec role resolves its
-credential by reading `os.environ[api_key_env]` **in the worker**, so the
-scrubbed env must keep those named variables, while the secret VALUE never
-crosses the boundary. The worker re-resolves it in its own interpreter
-(`_resolve_role_call_llm`, §6.3.4).
+Each configuration stores a credential-variable name, such as
+`LOCAL_JUDGE_API_KEY`, rather than the credential value. The name crosses in
+the JSON arguments and enters the contract hash. The value crosses only in the
+worker's process environment. A model-spec role reads its named variable in
+the worker (`_resolve_role_call_llm`, §6.3.4). Goldfive similarly exposes the
+required names through `RuntimeConfigDocument.secret_env_names` and resolves
+their values only when building its runtime.
 
 **And this is the load-bearing part for a contract author: a flag crosses the
 boundary through a config pin rather than through the environment.** CLI flags that shadow typed-config knobs
-(`--harness-call-timeout-ms`, `--aux-call-timeout`, …) are pinned process-wide
+(`--aux-call-timeout`, for example) are pinned process-wide
 via `zicato.config.pin_overrides`; some are consumed *inside* the worker, so
 they must cross. They travel in the args file — a snapshot taken by
 `_config_pins()` — and the worker re-pins them at startup:
 
 ```python
     # Re-pin the orchestrator's process-pinned config overrides (CLI
-    # flags such as --harness-call-timeout-ms / --aux-call-timeout) in
+    # flags such as --aux-call-timeout) in
     # THIS fresh interpreter, before anything calls load_config(). The
     # pins travelled in the args file — the flag-to-config bridge across
     # the worker subprocess boundary; no environment variable involved.
@@ -666,7 +673,7 @@ they must cross. They travel in the args file — a snapshot taken by
 
 ### 6.3.3 The adapter spec — `worker_spec()` wins, ADK is the fallback shape
 
-A harness adapter is serialized by `_adapter_spec`, and the resolution order is
+A harness adapter is serialized by `adapter_worker_spec`, and the resolution order is
 the extensibility contract for non-ADK harnesses:
 
 ```python
@@ -674,7 +681,7 @@ the extensibility contract for non-ADK harnesses:
     if callable(worker_spec):
         spec = worker_spec()
         if isinstance(spec, dict):
-            return spec
+            return _validated_adapter_worker_spec(adapter, spec)
         raise ValueError(...)
 
     name = getattr(adapter, "name", None)
@@ -682,19 +689,37 @@ the extensibility contract for non-ADK harnesses:
     if name != "adk" or not entrypoint:
         raise ValueError(...)
     trees = [str(Path(p)) for p in getattr(adapter, "mutable_trees", []) or []]
-    return {"kind": "adk", "entrypoint": str(entrypoint), "mutable_trees": trees}
+    return {
+        "kind": "adk",
+        "entrypoint": str(entrypoint),
+        "mutable_trees": trees,
+        "integrations": ["goldfive"],
+    }
 ```
-— `src/zicato/tournament/worker_transport.py`, `_adapter_spec` (abridged)
+— `src/zicato/tournament/worker_transport.py`, `adapter_worker_spec` (abridged)
 
 The order is:
 
-- If the adapter exposes a `worker_spec()` method, its dict is used verbatim.
-  The adapter knows best how to make itself re-constructible in a subprocess,
-  and this is the hook §6.15 uses.
+- If the adapter exposes a `worker_spec()` method, its dict is validated and
+  returned. An optional `integrations` value must be a JSON list of unique,
+  trimmed, non-empty strings. The adapter still owns the reconstructible
+  shape, and this is the hook §6.15 uses.
 - Otherwise the ADK shape is recognized by `name == "adk"` plus the private
-  `_entrypoint` attribute and the public `mutable_trees` list.
+  `_entrypoint` attribute and the public `mutable_trees` list. Its worker spec
+  declares `integrations: ["goldfive"]` because integration selection is an
+  adapter capability rather than an inference from `kind`. Any adapter can
+  make the same declaration in its own `worker_spec()`; Goldfive is not tied
+  to the ADK reconstruction shape.
 
-If neither path applies, `_adapter_spec` raises `ValueError` and `_run_single`
+Declaring the capability makes the frozen `RuntimeConfig.goldfive` JSON mapping
+and its named endpoint credentials available to the worker. The adapter must
+then consume that configuration, normally through the shared
+`zicato.integrations.goldfive` bridge. The bridge delegates schema validation,
+defaults, canonicalization, optional-backend checks, and runtime construction
+to Goldfive's public `RuntimeConfigDocument`. A declaration alone does not wrap
+the target or install ADK behavior.
+
+If neither path applies, `adapter_worker_spec` raises `ValueError` and `_run_single`
 records the run as `prepare_failed`. The worker reconstructs from the spec via
 `_build_adapter`, which understands two `kind`s:
 

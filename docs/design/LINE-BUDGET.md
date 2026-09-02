@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 460,805 | +52,144 |
-| Production | 197,702 | 202,307 | +4,605 |
-| Production logic | 110,276 | 112,659 | +2,383 |
+| Total | 408,661 | 462,862 | +54,201 |
+| Production | 197,702 | 202,799 | +5,097 |
+| Production logic | 110,276 | 113,261 | +2,985 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -221,3 +221,6 @@ dropped rows named.
 | Replayable field settlement and lineage-authoritative index (total) | 457,351 | +3,454 | 460,805 | Issues #379 and #54: a retained receipt makes every resolved tournament recoverable across outcome, lineage, champion-marker, journal, bracket, promotion-hook, and grouped index-projection boundaries. The increase includes crash injection at every write, receipt-tampering refusals, directory and Git source cleanup, contract-roll recovery, health and dashboard visibility, index reconstruction, and documentation. |
 | Replayable field settlement and lineage-authoritative index (production) | 200,545 | +1,762 | 202,307 | Issues #379 and #54: production gains one field-specific receipt protocol, atomic lineage resolution and discard, source cleanup through `GenerationStore`, a grouped derived-index transaction, and operator-visible repair states. Settlement remains field-specific rather than introducing a generic transaction layer; lineage is the sole authority for parentage and promotion in the index. |
 | Replayable field settlement and lineage-authoritative index (production logic) | 111,043 | +1,616 | 112,659 | Issues #379 and #54: executable growth is strict receipt validation, ordered idempotent replay, at-most-once promotion-hook delivery, conservative receiptless-field cleanup, verification of Git ref and worktree pruning, and atomic index projection. The receipt deliberately carries one independent primary-champion checksum because multi-promotion outcomes do not identify the single champion-marker target. |
+| Optional contract-bound Goldfive integration (total) | 460,805 | +2,057 | 462,862 | Issue #386: Goldfive owns and validates its runtime configuration document, while Zicato activates the integration only for adapters that declare it. Evaluator, adapter, and integration identities prevent cached measurements from crossing implementation changes. Regression coverage exercises generic adapters, the public judge-only path, frozen-contract validation, malformed configuration, process transport, Builder and API surfaces, environment-backed credentials, explicit epoch selection, and pre-spend checks. |
+| Optional contract-bound Goldfive integration (production) | 202,307 | +492 | 202,799 | Issue #386: the lazy integration bridge, capability-gated worker projection, generic adapter identity, frozen-contract verification, explicit runtime settings, dependency validation, and Builder surface replace Zicato's private Goldfive schema and ADK judge-only implementation. Adapters that do not declare Goldfive carry no Goldfive configuration or import requirement. Tournament commands validate and load the selected frozen epoch before constructing a runtime, and absolute worker-permit paths preserve the configured host-wide ceiling across working directories. |
+| Optional contract-bound Goldfive integration (production logic) | 112,659 | +602 | 113,261 | Issue #386: executable growth covers capability and dependency checks, credential-name transport, upstream runtime projection, full adapter identity, verifiable implementation revisions, frozen-contract comparison, selected-epoch tournament loading, and measured worker-preparation failures. Deleting the private configuration parser and judge-only path offsets part of that growth. |

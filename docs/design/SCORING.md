@@ -154,6 +154,17 @@ The weights are stored in `scoring.json` per epoch. Keys are the
 }
 ```
 
+An adapter that declares the `goldfive` integration in its worker spec requires
+a nested `goldfive` block for runtime measurement and steering behavior;
+`"goldfive": {}` selects fixed defaults. The built-in Google ADK adapter
+declares this capability. The offline check rejects a missing block for a
+consuming adapter and an unused block for any other adapter. Generic contracts omit it.
+Every configured field is serialized and hashed because changing a detector
+threshold, built-in judge endpoint, steering policy, context rule, or
+inner-agent limit can change a tournament result. See
+[GOLDFIVE-CONFIG.md](GOLDFIVE-CONFIG.md) for the complete scaffold, defaults,
+validation, and credential boundary.
+
 `pass_rate_monotonicity_scope` is optional and defaults to `"per_entry"`;
 set it to `"aggregate"` to gate on the overall pass-rate instead of every
 individual entry (see the pass-rate monotonicity rule in §5).

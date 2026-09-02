@@ -52,7 +52,6 @@ The dashboard is launched automatically; its URL is printed
 | `--mode full\|fast` | `fast` (default) = **cache-first**: every `(generation, entry, replicate)` board UNIT is evaluated at most once and reused across all pairings / rounds / structures — only cache misses run. So a carried champion is reused rather than re-run (the round records `champion_eval_mode` = `fast`, or `fast-degraded` when some units had to run to seed the cache). The contract's `replicates` knob reaches this path: on the gauntlet the challenger board runs `replicates` times (default **2** — so the default configuration doubles challenger board runs) while the champion stays ONE frozen cached aggregate, making the noise reduction one-sided; a warning says so and names `--mode full`. `full` = bypass the cache and re-run every unit on both sides. Use `full` for the mock smoke, for independent draws on both sides, and when you don't trust the cache; `fast` for cheaper real runs (and it is what makes a multi-challenger field affordable). |
 | `--max-wall-clock-seconds INTEGER` | Total wall-clock budget for the whole invocation. The loop stops cleanly between rounds once spent; a single round that would overrun is cancelled and recorded as aborted. Unset = unbounded. Stacks on top of each board entry's own `wall_clock_budget_seconds`. |
 | `--parallelism INTEGER` | Board units in flight at once. Shadows `runtime.parallelism`; wins over the workspace `config.json` value (default 4). Per-*process* only — two concurrent runs on one box admit `2 × parallelism` between them, which is what the host-wide `runtime.host_worker_permits` bounds (`None` = AUTO `max(4, 2 × cpu_count)`, `0` = off; a run whose permits are held queues rather than over-subscribing). |
-| `--harness-call-timeout-ms INTEGER` | Per-call budget for a target adapter using the text-call seam. Shadows `runtime.harness_call_timeout_ms` (default 1800000). |
 | `--aux-call-timeout FLOAT` | Per-call budget (seconds) for evaluator-side text consumers (judge, emulator, analysis, and text proposers). Shadows `aux.call_timeout_s` (default 120). |
 | `--supervisor-binary PATH` | Path to the zicato-supervisor watchdog binary. Shadows `integration.supervisor_binary`. |
 | `--harmonograf-url TEXT` | External harmonograf server URL (opt out of auto-launch). Shadows `integration.harmonograf_url`; wins over the `config.json` `harmonograf_url` key. |
@@ -63,6 +62,14 @@ The dashboard is launched automatically; its URL is printed
 | `--epoch-name TEXT` | Name for an auto-created epoch (default: the `e{N}` scheme). |
 | `--dashboard-port INTEGER` | Dashboard HTTP port, bound on 127.0.0.1 (default 7892). |
 | `--no-dashboard` | Skip the dashboard + watchdog supervisor. Use for the mock smoke / CI; do **not** use for an operator-facing run. |
+
+For an adapter that declares the `goldfive` integration, add `"goldfive": {}`
+to `scoring.json` to select fixed Goldfive defaults. The built-in Google ADK
+adapter declares it. Custom detector, steering, endpoint, and inner-agent
+settings belong in that nested block rather than process flags. For example,
+the wrapped agent's per-call timeout is `goldfive.agent.call_timeout_ms`.
+Adapters that do not declare the integration omit the block. See
+[`docs/design/GOLDFIVE-CONFIG.md`](../../docs/design/GOLDFIVE-CONFIG.md).
 
 There is **no `--dashboard-bind` flag** — the dashboard always binds 127.0.0.1;
 only the port is configurable. Viewing from another host is the operator's
