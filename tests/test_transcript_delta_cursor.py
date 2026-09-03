@@ -29,12 +29,12 @@ from typing import Any
 import pytest
 
 from zicato.query import (
-    FIDELITY_EVENTS,
     build_run_transcript_delta,
     empty_run_transcript_delta,
     transcript_view,
 )
 from zicato.query.paths import WorkspacePaths
+from zicato.query.transcript_view import FIDELITY_EVENTS
 
 EPOCH = "2026-08-09_e1"
 GEN = "v3"

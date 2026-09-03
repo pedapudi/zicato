@@ -43,12 +43,12 @@ from zicato.query import (
     conversations_view,
     read_epoch_journal,
     read_epoch_journal_md,
-    read_run_result,
     resolve_conversation,
-    resolve_run_id_for_entry,
     transcript_view,
 )
 from zicato.query._sqlite import _IndexAbsent, open_index_ro, open_index_ro_or_none
+from zicato.query.events_index import read_run_result
+from zicato.query.judge_view import resolve_run_id_for_entry
 from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-06-01_e0"

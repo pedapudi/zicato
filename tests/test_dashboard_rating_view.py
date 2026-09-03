@@ -17,11 +17,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from zicato.query import (
-    WorkspacePaths,
-    build_gate_breakdown,
-    build_rating_view,
-)
+from zicato.query import WorkspacePaths, build_gate_breakdown
+from zicato.query.gate_view import build_rating_view
 from zicato.selection.dead_letter import InconclusiveRecord, record_inconclusive
 
 EPOCH_ID = "2026-06-10_e0"

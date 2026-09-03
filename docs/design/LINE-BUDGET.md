@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 463,989 | +55,328 |
-| Production | 197,702 | 202,728 | +5,026 |
-| Production logic | 110,276 | 113,187 | +2,911 |
+| Total | 408,661 | 463,616 | +54,955 |
+| Production | 197,702 | 202,416 | +4,714 |
+| Production logic | 110,276 | 112,899 | +2,623 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point

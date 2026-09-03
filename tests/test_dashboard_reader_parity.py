@@ -32,6 +32,7 @@ from tests._reader_parity_harness import (
     epoch_order_of,
 )
 from zicato import query as sr
+from zicato.query.paths import list_epoch_ids
 
 _GOLDEN = Path(__file__).parent / "data" / "reader_parity_snapshot.json"
 
@@ -73,7 +74,7 @@ def test_canonical_epoch_order_is_timestamp_first(tmp_path: Path) -> None:
     name/natural order is the WRONG order the bug produced (e0 first)."""
     ws = build_fixture_workspace(tmp_path)
     paths = sr.WorkspacePaths(ws)
-    assert sr.list_epoch_ids(paths) == CANONICAL_EPOCH_ORDER
+    assert list_epoch_ids(paths) == CANONICAL_EPOCH_ORDER
     # The bug mirror: e0's name sorts first but it is created last.
     assert CANONICAL_EPOCH_ORDER[0] == "e1"
     assert CANONICAL_EPOCH_ORDER[-1] == "e0"

@@ -17,11 +17,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from zicato.query import (
-    WorkspacePaths,
-    build_epoch_view,
-    compute_board_split,
-)
+from zicato.query import WorkspacePaths, build_epoch_view
+from zicato.query.epoch_view import compute_board_split
 
 EPOCH = "2026-06-04_e0"
 

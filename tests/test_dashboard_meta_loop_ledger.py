@@ -25,11 +25,8 @@ import json
 import sqlite3
 from pathlib import Path
 
-from zicato.query import (
-    WorkspacePaths,
-    build_meta_loop_ledger,
-    build_workspace_view,
-)
+from zicato.query import WorkspacePaths, build_workspace_view
+from zicato.query.events_index import build_meta_loop_ledger
 
 
 def _write_json(path: Path, value: object) -> None:

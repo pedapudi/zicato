@@ -32,6 +32,8 @@ from tests._workspace_support import (
     write_workspace_config,
 )
 from zicato import query as sr
+from zicato.query.epoch_view import build_epochs_summary
+from zicato.query.events_index import build_meta_loop_ledger
 
 # ---------------------------------------------------------------------------
 # The multi-epoch fixture
@@ -238,9 +240,9 @@ def capture_snapshot(ws: Path) -> dict[str, Any]:
 
     # --- workspace-wide (epoch-list-bearing where noted) -------------------
     snap["workspace_view"] = sr.build_workspace_view(paths)
-    snap["epochs_summary"] = sr.build_epochs_summary(paths)
+    snap["epochs_summary"] = build_epochs_summary(paths)
     snap["lineage_view"] = sr.build_lineage_view(paths)
-    snap["meta_loop_ledger"] = sr.build_meta_loop_ledger(paths)
+    snap["meta_loop_ledger"] = build_meta_loop_ledger(paths)
     snap["health_report"] = sr.build_health_report(paths)
     snap["snapshot"] = sr.build_snapshot(paths)
     snap["run_log"] = sr.build_run_log(paths, limit=50)

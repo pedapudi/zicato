@@ -11,12 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from zicato.query import (
-    WorkspacePaths,
-    _natural_key,
-    build_lineage_view,
-    list_epoch_ids,
-)
+from zicato.query import WorkspacePaths, build_lineage_view
+from zicato.query.paths import _natural_key, list_epoch_ids
 
 
 def _write(path: Path, data: dict) -> None:
