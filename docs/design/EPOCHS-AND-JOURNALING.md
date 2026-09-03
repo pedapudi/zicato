@@ -29,8 +29,8 @@ An **epoch** is the unit of evaluation contract. It owns:
 - A frozen evaluator identity — Zicato's explicit evaluator revision and any
   enabled integration identity that changes evaluation behavior.
 - A frozen inner-harness identity — the validated adapter worker document,
-  adapter implementation source outside the mutable trees, and the declared
-  mutable-tree paths.
+  the declared adapter block behind it, adapter implementation source
+  outside the mutable trees, and the declared mutable-tree paths.
 - A frozen **proposer** — the proposing agent's identity, its tools,
   and the skill modules under the configured `proposers/<name>/` dir
   (or the built-in default proposer when none is configured). See
@@ -61,9 +61,9 @@ An operator starts a new epoch when any of the following hold:
 - The tournament structure changes (e.g. `gauntlet → swiss`, or a
   structure param like `swiss.rounds`) — see §9. Generations selected
   under different structures are not comparable.
-- The adapter worker document changes. Examples include selecting another
-  factory, changing its construction arguments or integrations, or changing an
-  ADK entry point.
+- The declared adapter block or the worker document it produces changes.
+  Examples include selecting another factory, changing its construction
+  arguments or integrations, or changing an ADK entry point.
 - Adapter implementation source outside the mutable trees changes. The source
   inside the mutable trees remains generation content and does not cause an
   epoch boundary.
@@ -906,8 +906,9 @@ The **evaluation contract** has six semantic components:
 4. **The Zicato evaluator implementation** — an explicit revision of
    measurement and tournament-decision semantics.
 5. **The registered inner-harness identity** — the validated worker
-   reconstruction document, implementation source outside the mutable surface,
-   and the sorted mutable-tree paths.
+   reconstruction document, the declared adapter block behind it,
+   implementation source outside the mutable surface, and the sorted
+   mutable-tree paths.
 6. **The proposer** — the proposing agent's identity, its tools, and the
    skill modules under the configured `proposers/<name>/` dir (or the
    built-in default proposer when none is registered). See
@@ -921,8 +922,9 @@ longer directly comparable, so the epoch must roll.
 
 The inner harness's source content inside the registered mutable trees is not
 in the contract. That source is what Zicato mutates within an epoch. The
-contract instead records how a worker reconstructs the harness, the immutable
-adapter implementation that drives it, and which source trees may change.
+contract instead records how the operator declared the adapter, how a worker
+reconstructs the harness, the immutable adapter implementation that drives it,
+and which source trees may change.
 
 ### 10.2 Canonical contract paths
 
@@ -960,7 +962,7 @@ so spurious edits do not roll the epoch:
 | proposer brief | Read text, normalize line endings to `\n`, strip trailing whitespace per line, strip leading/trailing blank lines. CRLF churn and re-indentation are no-ops. |
 | scoring | Parse into a fully-defaulted `ScoringWeights` — **including the `tournament` structure block** (§9) — preserve every parsed runtime numeric value, then `json.dumps(sort_keys=True)`. Partial and full documents agree, and equivalent JSON spellings of the same number are no-ops. A distinct numeric value, structure, or parameter rolls the epoch. An enabled integration may add system-owned implementation identity before hashing. |
 | evaluator_revision | Serialize the explicit Zicato evaluator revision. Increment it only when measurement or tournament-decision semantics change. |
-| adapter | Remove `mutable_trees` from the validated worker reconstruction document, recursively normalize its JSON values, sort object keys and integration names, and add source hashes for adapter implementations outside the mutable trees. An ADK entry point is one field in its worker document. |
+| adapter | Remove `mutable_trees` from the validated worker reconstruction document, recursively normalize its JSON values, sort object keys and integration names, and add source hashes for adapter implementations outside the mutable trees. An ADK entry point is one field in its worker document. Normalize the operator's declared `adapter` block the same way, and hash alongside the worker document every declared field that document does not already state, because an adapter built by operator code decides its own worker document and need not report what it was declared with. A field the worker document repeats verbatim is dropped, so an adapter that reports its declaration faithfully — every ADK registration among them — adds nothing and keeps the component it had. A declared factory whose defining module has no readable source stops the hash with an error rather than hashing as a bare name. |
 | mutable_trees | Sorted tuple of normalized, never filesystem-resolved path strings. Registration order is a no-op. |
 | proposer | Resolve the proposer dir (or the builtin default) to a `ProposerSpec` and serialize sorted-key: `agent_id`, sorted `tools`, per-skill normalized-body hashes sorted by name, and the custom `agent.py` source hash. Each skill body is normalized in the same way as the proposer brief, so a whitespace-only skill edit is a no-op; a semantic skill edit (or adding / removing / renaming a skill, or editing `agent.py`) rolls the epoch. The builtin default canonicalizes to a stable form, so a workspace that never registers a proposer keeps a stable hash. |
 
@@ -971,9 +973,10 @@ workspace still hashes deterministically) — a warning is logged.
 A whitespace-only proposer-brief edit, a whitespace-only skill edit, a
 reordered board, or an equivalent numeric spelling in `scoring.json` leaves
 the hash unchanged. A changed board input, a retuned `per_judge_weight`, an
-evaluator revision bump, an added custom judge, a changed adapter worker
-document, an edit to adapter implementation source outside the mutable trees,
-an added mutable tree, or a registered or edited proposer changes it.
+evaluator revision bump, an added custom judge, a changed adapter declaration
+or worker document, an edit to adapter implementation source outside the
+mutable trees, an added mutable tree, or a registered or edited proposer
+changes it.
 
 ### 10.4 Roll-at-evolve-time semantics
 

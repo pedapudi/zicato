@@ -28,7 +28,8 @@ epoch                      a sealed evaluation CONTRACT + a goal
 
 - **Epoch** — the unit of evaluation **contract**: a frozen board + proposer
   brief + scoring (weights + gate + tournament structure) + the registered
-  target-adapter *identity* (entrypoint + mutable trees), plus an operator
+  target-adapter *identity* (the declared adapter block, the worker document
+  that rebuilds it, and the mutable trees), plus an operator
   **goal**. Generations *within* an epoch are directly comparable; *across*
   epochs they are not. Generations are linearly ordered `v0 → v1 → … → vN`;
   `v0` is the baseline (a fresh epoch's `v0` is the promoted head of the
@@ -91,9 +92,13 @@ brief / scoring, run `zicato evolve`, and the right thing happens.
 2. **proposer brief** — operator steering text (`brief.md`).
 3. **scoring** — weights + gate thresholds **and the per-epoch tournament
    structure** block (`scoring.json`).
-4. **target-adapter IDENTITY** — the registered entrypoint string + the sorted
-   list of mutable-tree paths (NOT the source bytes inside those trees — that
-   source is exactly what zicato mutates within the epoch).
+4. **target-adapter IDENTITY** — the declared `adapter` block, the worker
+   document that rebuilds it, a source hash of every adapter implementation
+   outside the mutable trees, and the sorted list of mutable-tree paths (NOT
+   the source bytes inside those trees — that source is exactly what zicato
+   mutates within the epoch). For a custom adapter this means the factory
+   path, its constructor arguments, and the implementation behind that path
+   are all contract: change any of them and the epoch rolls on its own.
 5. **proposer** — the proposing agent's identity (for the Foe runtime, the
    fingerprint the runtime reports for its own contract), its tools, and the
    skill modules under the configured `proposers/<name>/` dir. Distinct

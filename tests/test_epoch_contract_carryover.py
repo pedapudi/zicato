@@ -79,6 +79,16 @@ def workspace(tmp_path: Path) -> Path:
             {
                 "adk_entrypoint": "pkg.mod:agent",
                 "mutable_trees": ["src/agent"],
+                # An adapter whose factory ignores its arguments and reports a
+                # worker document naming only itself, so the declared ``args``
+                # reach the contract through the declaration alone. A
+                # declaration the worker document repeats would leave nothing
+                # for a carryover to drop.
+                "adapter": {
+                    "kind": "import",
+                    "factory": "tests._stub_adapter:make_stub_adapter",
+                    "args": ["carryover"],
+                },
                 "contract": {
                     "board_path": str(tmp_path / "board.jsonl"),
                     "brief_path": str(tmp_path / "brief.md"),

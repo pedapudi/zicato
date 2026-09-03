@@ -9,8 +9,9 @@ contract:
 4. The Zicato evaluator revision — an explicit revision number for changes
    that alter measurement or tournament-decision semantics.
 5. The registered inner-harness identity — the validated adapter worker
-   specification, the adapter implementation outside the mutable surface,
-   and the sorted list of mutable source-tree paths.
+   specification, the operator's declared adapter block, the adapter
+   implementation outside the mutable surface, and the sorted list of
+   mutable source-tree paths.
 6. The proposer — the agent identity, its tools, and the skill modules
    under a configured ``proposers/<name>/`` dir (or the built-in default
    proposer when none is configured).
@@ -102,6 +103,13 @@ class ContractInputs:
     adapter_spec: Mapping[str, Any] | None = None
     #: Dotted implementations whose module source affects adapter behavior.
     adapter_source_specs: tuple[str, ...] = ()
+    #: The operator's declared ``adapter`` block from ``config.json``, or
+    #: ``None`` when the workspace declares none. An adapter built by
+    #: operator code reports its own ``worker_spec()``, which need not echo
+    #: what the operator declared, so every declared field the worker
+    #: document does not already carry is hashed in its own right — see
+    #: :func:`_canon_adapter_declaration`.
+    adapter_declaration: Mapping[str, Any] | None = None
     #: Location of the proposer dir (``proposers/<name>/``) frozen for
     #: the epoch, or ``None`` for the built-in default proposer. ``None``
     #: by default so existing construction sites keep working.
@@ -559,20 +567,23 @@ def _canon_value(value: object) -> object:
 
 
 def _canon_adapter(inputs: ContractInputs) -> str:
-    """Canonical adapter reconstruction identity plus implementation source."""
-    if inputs.adapter_spec is None:
-        spec: dict[str, object] = {
-            "kind": "adk",
-            "entrypoint": inputs.entrypoint,
-        }
-    else:
-        spec = {str(key): _canon_value(value) for key, value in inputs.adapter_spec.items()}
+    """Canonical adapter reconstruction identity plus implementation source.
 
-    # Mutable source paths have their own normalized contract component.
-    spec.pop("mutable_trees", None)
-    integrations = spec.get("integrations")
-    if isinstance(integrations, list) and all(isinstance(name, str) for name in integrations):
-        spec["integrations"] = sorted(integrations)
+    Three pieces make up the effective harness identity:
+
+    * ``worker_spec`` — the validated document a tournament worker rebuilds
+      the adapter from, with ``mutable_trees`` removed (they carry their own
+      contract component) and integration names sorted;
+    * ``implementation_sources`` — a source hash per dotted implementation
+      that drives the adapter and sits outside the mutable trees;
+    * ``declaration`` — whatever the operator's declared ``adapter`` block
+      states that the worker document does not (see
+      :func:`_canon_adapter_declaration`).
+    """
+    if inputs.adapter_spec is None:
+        spec = _canon_adapter_document({"kind": "adk", "entrypoint": inputs.entrypoint})
+    else:
+        spec = _canon_adapter_document(inputs.adapter_spec)
 
     source_specs = inputs.adapter_source_specs or (
         (inputs.entrypoint,) if inputs.entrypoint else ()
@@ -582,11 +593,94 @@ def _canon_adapter(inputs: ContractInputs) -> str:
         for dotted in dict.fromkeys(source_specs)
         if not _dotted_spec_is_within_mutable_trees(dotted, inputs.mutable_trees)
     ]
-    return json.dumps(
-        {"worker_spec": spec, "implementation_sources": sources},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    canon: dict[str, object] = {"worker_spec": spec, "implementation_sources": sources}
+    if inputs.adapter_declaration is not None:
+        declared = _canon_adapter_document(inputs.adapter_declaration)
+        _require_declared_factory_source(declared, sources)
+        declaration = _canon_adapter_declaration(declared, spec)
+        if declaration:
+            canon["declaration"] = declaration
+    return json.dumps(canon, sort_keys=True, separators=(",", ":"))
+
+
+def _canon_adapter_document(document: Mapping[str, Any]) -> dict[str, object]:
+    """Normalize one adapter document — a worker spec or a declared block.
+
+    Values are normalized recursively and the object keys sort at
+    serialization, so key order and equivalent JSON number spellings are
+    no-ops. ``mutable_trees`` is dropped because the declared source roots
+    are their own contract component, and integration names are sorted so
+    their declaration order is a no-op as well.
+    """
+    canon = {str(key): _canon_value(value) for key, value in document.items()}
+    canon.pop("mutable_trees", None)
+    integrations = canon.get("integrations")
+    if isinstance(integrations, list) and all(isinstance(name, str) for name in integrations):
+        canon["integrations"] = sorted(integrations)
+    return canon
+
+
+def _canon_adapter_declaration(
+    declared: Mapping[str, object],
+    worker_spec: Mapping[str, object],
+) -> dict[str, object]:
+    """Return what the declared adapter block states that the worker document does not.
+
+    ``worker_spec()`` belongs to the adapter, so an adapter built by operator
+    code decides for itself how much of its construction to report. One that
+    reports a constant document leaves the contract blind to the factory path
+    and constructor arguments it was actually built from, and an operator
+    could then swap either — a different harness — with the contract
+    standing. Every declared field the worker document does not already carry
+    is therefore hashed in its own right.
+
+    A field the worker document repeats verbatim is dropped, because a change
+    to it moves the worker document anyway. That keeps this an addition
+    rather than a re-hash: an adapter whose worker document mirrors what the
+    operator declared, which includes every ADK registration, contributes an
+    empty residue and keeps the adapter component it already had.
+    """
+    return {
+        key: value
+        for key, value in declared.items()
+        if key not in worker_spec or worker_spec[key] != value
+    }
+
+
+def _require_declared_factory_source(
+    declaration: Mapping[str, object],
+    sources: list[dict[str, object]],
+) -> None:
+    """Refuse to hash a declared factory whose implementation is unreadable.
+
+    The declared dotted path is only a name. Two workspaces naming the same
+    factory over different implementations of it are running different
+    harnesses, so the contract records a hash of the defining module's
+    source alongside the name. When that hash is unavailable — the module
+    does not import from here, or has no inspectable source — the adapter
+    component would silently carry the name alone and let an implementation
+    change pass as the same contract. Raise instead, so the operator fixes
+    the workspace rather than accumulating generations that are not
+    comparable.
+
+    A factory inside the registered mutable trees is exempt: that source is
+    generation content Zicato itself rewrites, so it is excluded from
+    ``sources`` upstream and there is no entry to check.
+    """
+    factory = declaration.get("factory")
+    if not isinstance(factory, str) or not factory:
+        return
+    for source in sources:
+        if source.get("spec") != factory:
+            continue
+        if source.get("source_sha256") is None:
+            raise ValueError(
+                f"adapter factory {factory!r} could not be resolved to hashable "
+                "source, so the evaluation contract cannot record which harness "
+                "implementation it names. Make the factory's module importable "
+                "from the workspace before evolving."
+            )
+        return
 
 
 def _dotted_spec_is_within_mutable_trees(
@@ -719,8 +813,9 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
       ``json.dumps(sort_keys=True)`` without discarding runtime precision.
     * **evaluator revision** — the explicit revision of Zicato's measurement
       and tournament-decision semantics.
-    * **adapter** — the validated worker reconstruction spec plus source hashes
-      for the adapter factory or ADK harness module.
+    * **adapter** — the validated worker reconstruction spec, source hashes
+      for the adapter factory or ADK harness module, and whatever the
+      operator's declared adapter block states that the spec does not.
     * **mutable_trees** — sorted tuple of NORMALIZED path strings
       (`os.path.normpath` + POSIX; never filesystem-resolved, so the
       hash does not depend on the process cwd or checkout — bug #10).
@@ -883,6 +978,7 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
         mutable_trees=mutable_trees,
         adapter_spec=worker_spec,
         adapter_source_specs=tuple(dict.fromkeys(source_specs)),
+        adapter_declaration=adapter_block if isinstance(adapter_block, Mapping) else None,
         proposer_path=proposer_path,
         external_proposer=external_proposer_config(config, workspace_root),
         proposer_static_checks=declared_static_checks(workspace_root),
