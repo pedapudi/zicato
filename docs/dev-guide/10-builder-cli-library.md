@@ -8,7 +8,7 @@
 > and its fork/compare slots; (2) the **CLI** — the auto-discovered `click`
 > command tree, the flag → pin → config-knob → worker-propagation layer, `zicato
 > config env`, and `CLI.md`; (3) the **library facade** — the small lazy
-> `zicato` surface, the seven import-linter contracts, the TID251 bans, and how a
+> `zicato` surface, the import-linter contracts, the TID251 bans, and how a
 > name (or a driver edge) is added; and (4) **packaging** — the wheel, the
 > extras, the uv workspace member, and the supervisor-binary build hook.
 >
@@ -37,7 +37,7 @@
 > | L5 | the builder-never-rolls-the-epoch rule | The builder never rolls the epoch and never starts a live evolve. `apply(confirm=True)` writes the contract source files and lets the auto-epoch machinery roll on the next resolve; the copilot's apply tool is always `confirm=False`. |
 > | L6 | the config-pins-not-environment rule | Flags cross the worker boundary via `config_pins`, never an environment variable. No environment variable is a configuration knob; operator knobs are CLI flags (pinned via `pin_overrides`) and `config.json` blocks. |
 > | L7 | the lazy-pure-facade rule | `import zicato` imports only `zicato`; every facade name is `is`-identical to its home-module attribute; the `TYPE_CHECKING` mirror is the static view of the runtime lazy surface. |
-> | L8 | the library-never-imports-a-driver rule | The only driver→driver edges are `cli → dashboard` and `dashboard → builder`; the five import-linter contracts pin exactly that. |
+> | L8 | the library-never-imports-a-driver rule | The only driver→driver edges are `cli → dashboard` and `dashboard → builder`; the import-linter contracts pin exactly that. |
 
 ---
 
@@ -81,7 +81,7 @@ forbidden** — §10.11 is the enforcement.
 | `src/zicato/cli/commands/*.py` | one command (or sub-group) per file — the inventory in §10.9 | — |
 | `src/zicato/config.py` | `pin_overrides` / `pinned_override` / `load_config` + `describe_env_vars` | ~690 lines |
 | `src/zicato/__init__.py` | the lazy `_EXPORTS` facade + `__getattr__` + `TYPE_CHECKING` mirror | ~75 lines |
-| `pyproject.toml` | the seven import-linter contracts, TID251 bans, extras, uv workspace, wheel packaging | 422 lines |
+| `pyproject.toml` | the import-linter contracts, TID251 bans, extras, uv workspace, wheel packaging | ~660 lines |
 | `hatch_build.py` | the custom build hook that bundles `zicato-supervisor` into the wheel | ~98 lines |
 
 ---
@@ -1439,24 +1439,37 @@ touch-points, and the tests catch a half-done addition:
 > protocols, board/config loaders, and scoring types. Other APIs remain
 > reachable at their owning subpackages. Do not add forwarding aliases.
 
-### 10.11.3 The five import-linter contracts
+### 10.11.3 The import-linter contracts
 
-The library/driver boundary is enforced by `import-linter` (`uv run
-lint-imports`, wired into `make check` and CI — the green-gates rule,
-`01-orientation.md §4`). There are exactly five contracts in `pyproject.toml`,
-all of type `forbidden`:
+`import-linter` enforces the boundaries (`uv run lint-imports`, wired into
+`make check` and CI — the green-gates rule, `01-orientation.md §4`). Every
+contract in `pyproject.toml` is of type `forbidden`, and they fall into two
+groups. Prose cites a contract by its name, which is the string
+`lint-imports` prints.
 
-| # | Name | Forbids |
-|---|---|---|
-| 1 | the library must not import the drivers (cli / dashboard / builder) | any of the 34 listed library packages → `zicato.cli` / `zicato.dashboard` / `zicato.builder` |
-| 2 | dashboard driver: no import of the cli | `zicato.dashboard` → `zicato.cli` |
-| 3 | builder driver: no import of the other drivers | `zicato.builder` → `zicato.cli` / `zicato.dashboard` |
-| 4 | cli driver: no direct import of the builder | `zicato.cli` → `zicato.builder` (`allow_indirect_imports = true`) |
-| 5 | the query layer stays dashboard-free | `zicato.query` → `zicato.dashboard` |
+The driver boundary:
 
-Contract 1 lists every library package explicitly as a `source_module` —
-including `zicato.query`, which is **library** code (the workspace query
-layer the dashboard consumes) rather than a driver. Contract 4 sets
+| Name | Forbids |
+|---|---|
+| the library must not import the drivers (cli / dashboard / builder) | any of the 34 listed library packages → `zicato.cli` / `zicato.dashboard` / `zicato.builder` / `zicato.tui` |
+| tui driver: no import of the other drivers (it speaks HTTP, not Python) | `zicato.tui` → `zicato.cli` / `zicato.dashboard` / `zicato.builder` |
+| dashboard driver: no import of the cli | `zicato.dashboard` → `zicato.cli` |
+| builder driver: no import of the other drivers | `zicato.builder` → `zicato.cli` / `zicato.dashboard` |
+| cli driver: no direct import of the builder | `zicato.cli` → `zicato.builder` (`allow_indirect_imports = true`) |
+| the query layer stays dashboard-free | `zicato.query` → `zicato.dashboard` |
+
+The cuts inside the library:
+
+| Name | Forbids |
+|---|---|
+| the proposer's patch validator has no path to the board | `zicato.proposer.validate` → the board, the judge runtime, the emulator, the adapters, the adapter factory, the tournament worker |
+| the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, or the drivers | any of the 24 listed modelling and execution packages → `zicato.analyzer` / `zicato.check` / `zicato.evolve` / `zicato.health` / `zicato.orchestrator` / `zicato.query` / `zicato.reflection` / the four drivers |
+| the shared primitives import nothing else in the library | `zicato.aux_timeout` / `zicato.config` / `zicato.import_path` / `zicato.integrations` / `zicato.logging_stream` / `zicato.storage` / `zicato.util` → every other top-level package |
+
+The library-must-not-import-the-drivers contract lists every library package
+explicitly as a `source_module` — including `zicato.query`, which is
+**library** code (the workspace query layer the dashboard consumes) rather
+than a driver. The cli-no-direct-import-of-the-builder contract sets
 `allow_indirect_imports = true` on purpose: the CLI legitimately reaches the
 builder *transitively* through the two declared edges (cli → dashboard.server →
 builder.api mount); what it forbids is the CLI growing its OWN direct builder
@@ -1466,18 +1479,36 @@ The two — and only two — permitted driver→driver edges fall out of these
 contracts: `cli → dashboard` (the CLI launches the server) and `dashboard →
 builder` (the server mounts the builder REST routes).
 
+The modelling-and-execution contract declares a cut, not an ordering. Its
+source list is the code that defines the data model, runs harnesses, scores
+entries and reads and writes the workspace; its forbidden list is the code
+that decides a round, renders reports, diagnoses a workspace, serves reads,
+adjudicates the evaluation contract, or drives a session. Seven library
+packages are deliberately outside the source list because each imports
+something in the forbidden set: `epoch` and `proposer` import the report
+renderer, `index` and `runtime` import `evolve.settlement_recovery`, and
+`tournament`, `workspace_loader` and `_tournament_worker` reach the renderer
+through those. Packages on the same side of the cut stay free to import each
+other, and no contract orders them: the shared type model puts
+`core.scoring_config` on a path from every package to the epoch serialiser,
+the scoring transforms and the evidence gate, so any finer ordering would
+fail for reasons that describe the type model rather than the layering.
+
 > ⛔ NEVER add a driver→driver edge. You almost certainly do not need one. If the
 > CLI needs a builder capability, it reaches it through the dashboard mount (the
 > declared transitive path), or the capability belongs in the library where both
-> can import it. Adding, say, a `cli → builder` direct import reds contract 4 —
-> and the fix is architectural (move the shared code into a library package),
-> never loosening the contract. A genuine new edge is a design change requiring
-> its own PR and a rewrite of the contract with a documented rationale.
+> can import it. Adding, say, a `cli → builder` direct import reds the
+> cli-no-direct-import-of-the-builder contract — and the fix is architectural
+> (move the shared code into a library package), never loosening the contract. A
+> genuine new edge is a design change requiring its own PR and a rewrite of the
+> contract with a documented rationale.
 
-> ✅ ALWAYS add a new library package to contract 1's `source_modules` list when
-> you create one. The list is explicit rather than a wildcard, so a new
-> package is a conscious addition; a package omitted from the list is silently
-> unprotected and can grow a driver import nobody notices until it ships.
+> ✅ ALWAYS add a new library package to the `source_modules` list of the
+> library-must-not-import-the-drivers contract when you create one, and to the
+> modelling-and-execution contract's list if it imports nothing above the cut.
+> Both lists are explicit rather than wildcards, so a new package is a conscious
+> addition; a package omitted from a list is silently unprotected and can grow a
+> forbidden import nobody notices until it ships.
 
 ### 10.11.4 TID251 — the banned private-reach paths
 
@@ -1603,7 +1634,7 @@ build can still run the hook.
 - 11-testing.md §11.7 "The six parity gates, one by one" (including the CLI-HELP
   gate), §11.9 "Node behaviour-suite conventions" (including §11.9.5, the
   cross-language correspondence pattern this chapter's cost meter uses), and
-  §11.8 "The seven import contracts + the TID251 bans".
+  §11.8 "The import contracts + the TID251 bans".
 - 13-recipes.md — the short-form cookbook; §10.8 and §10.10.3 here are the
   long-form builder-op and CLI-flag procedures.
 - `docs/design/TOURNAMENT-BUILDER.md` — the full builder design record (the

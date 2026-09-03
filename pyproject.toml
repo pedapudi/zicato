@@ -335,9 +335,9 @@ markers = [
 # resolve via the installed/editable package consistently.
 pythonpath = ["."]
 
-# The library/driver import contracts (`uv run lint-imports`; wired into
-# `make check` and CI). zicato is a library first — the surface declared
-# in zicato/__init__.py — with three drivers on top: zicato.cli,
+# The import contracts (`uv run lint-imports`; wired into `make check`
+# and CI). zicato is a library first — the surface declared in
+# zicato/__init__.py — with three drivers on top: zicato.cli,
 # zicato.dashboard (the HTTP server), zicato.builder. The contracts pin:
 #
 # 1. No library package imports a driver. zicato.query is LIBRARY code
@@ -347,6 +347,20 @@ pythonpath = ["."]
 #    cli -> dashboard (the CLI launches the server and resolves its
 #    static bundle) and dashboard -> builder (server.py mounts the
 #    builder's REST routes). Everything else is forbidden.
+# 3. One cut runs through the library itself: the packages that model,
+#    execute, score and store import nothing in the packages that decide
+#    a round, render reports, diagnose a workspace, serve reads,
+#    adjudicate the evaluation contract, or drive a session.
+# 4. The shared primitives — the storage backend, the process
+#    configuration, the utilities, the import-path resolver, the
+#    auxiliary-timeout helper, the log stream and the integration
+#    bridges — import nothing else in the library.
+#
+# Nothing here is an ordering. Contracts 3 and 4 declare two cuts; the
+# packages on either side of a cut stay free to import each other. The
+# library has real cycles between the epoch lifecycle, the round loop,
+# the proposer and the workspace layout, so no single order over the
+# packages would describe it honestly.
 [tool.importlinter]
 root_packages = ["zicato"]
 
@@ -473,6 +487,127 @@ name = "the query layer stays dashboard-free"
 type = "forbidden"
 source_modules = ["zicato.query"]
 forbidden_modules = ["zicato.dashboard"]
+
+# The cut inside the library. The source list is the code that defines
+# the data model, loads and validates boards, runs harnesses, judges and
+# scores entries, enumerates mutations, rates and selects candidates,
+# writes telemetry, and reads and writes the workspace on disk. The
+# forbidden list is the code that decides a round (evolve, orchestrator,
+# check), renders reports (analyzer), diagnoses a workspace (health),
+# serves reads (query), adjudicates the evaluation contract (reflection),
+# and drives a session (cli, dashboard, builder, tui).
+#
+# Seven library packages are deliberately absent from the source list,
+# because each imports something in the forbidden set: epoch and proposer
+# import the report renderer, index and runtime import the round loop's
+# crash-recovery helper, and tournament, workspace_loader and
+# _tournament_worker reach the renderer through those. Leaving them out
+# is what keeps the cut a checked property rather than a plan.
+#
+# The entry with the thinnest margin is runtime_factory. It clears the
+# contract because its only reach into the runtime package is
+# runtime.effective_settings; importing runtime.resume would break it,
+# because that module imports evolve.settlement_recovery. That break
+# would be the contract working: a factory that assembles a runtime has
+# no reason to reach the round loop.
+[[tool.importlinter.contracts]]
+name = "the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, or the drivers"
+type = "forbidden"
+source_modules = [
+    "zicato.adapter_factory",
+    "zicato.adapters",
+    "zicato.aux_timeout",
+    "zicato.board",
+    "zicato.config",
+    "zicato.core",
+    "zicato.emulator",
+    "zicato.import_path",
+    "zicato.integrations",
+    "zicato.judge_runtime",
+    "zicato.logging_stream",
+    "zicato.models_config",
+    "zicato.mutation",
+    "zicato.patterns",
+    "zicato.reasoning",
+    "zicato.runtime_factory",
+    "zicato.scoring",
+    "zicato.selection",
+    "zicato.storage",
+    "zicato.synthetic",
+    "zicato.telemetry",
+    "zicato.testing",
+    "zicato.util",
+    "zicato.workspace",
+]
+forbidden_modules = [
+    "zicato.analyzer",
+    "zicato.check",
+    "zicato.evolve",
+    "zicato.health",
+    "zicato.orchestrator",
+    "zicato.query",
+    "zicato.reflection",
+    "zicato.builder",
+    "zicato.cli",
+    "zicato.dashboard",
+    "zicato.tui",
+]
+
+# Seven packages carry no dependency on the rest of the library at all.
+# Keeping the storage backend usable against any workspace and the
+# configuration loader free of the code it configures is a design
+# constraint that this contract is the only record of. The seven may
+# import each other — aux_timeout imports config — so the forbidden list
+# is every other top-level package in the distribution.
+[[tool.importlinter.contracts]]
+name = "the shared primitives import nothing else in the library"
+type = "forbidden"
+source_modules = [
+    "zicato.aux_timeout",
+    "zicato.config",
+    "zicato.import_path",
+    "zicato.integrations",
+    "zicato.logging_stream",
+    "zicato.storage",
+    "zicato.util",
+]
+forbidden_modules = [
+    "zicato._tournament_worker",
+    "zicato.adapter_factory",
+    "zicato.adapters",
+    "zicato.analyzer",
+    "zicato.board",
+    "zicato.builder",
+    "zicato.check",
+    "zicato.cli",
+    "zicato.core",
+    "zicato.dashboard",
+    "zicato.emulator",
+    "zicato.epoch",
+    "zicato.evolve",
+    "zicato.health",
+    "zicato.index",
+    "zicato.judge_runtime",
+    "zicato.models_config",
+    "zicato.mutation",
+    "zicato.orchestrator",
+    "zicato.patterns",
+    "zicato.proposer",
+    "zicato.query",
+    "zicato.reasoning",
+    "zicato.reflection",
+    "zicato.runtime",
+    "zicato.runtime_factory",
+    "zicato.scoring",
+    "zicato.selection",
+    "zicato.synthetic",
+    "zicato.telemetry",
+    "zicato.testing",
+    "zicato.tournament",
+    "zicato.tui",
+    "zicato.workspace",
+    "zicato.workspace_loader",
+]
 
 # uv workspace: the vendored dogfood targets under examples/ are a
 # distinct distribution (zicato-examples). Declaring examples/ as a

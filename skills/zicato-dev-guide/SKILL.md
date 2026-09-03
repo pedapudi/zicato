@@ -33,7 +33,7 @@ because breaking it caused a real failure.
 - **G2 — `uv sync --all-extras`, always.** Bare `uv sync` deletes pytest/mypy/ruff/uv from `.venv`.
 - **G3 — No live model run without explicit operator go-ahead.** The deterministic `examples/zicato_examples/target_0_convergence/RUN.md` is the sanctioned e2e vehicle. Every live run also reports its dashboard URL.
 - **G4 — The two oracles are green before ANY commit.** `tests/test_convergence_known_answer.py` (the loop converges to an exact floor) + `tests/test_decision_procedure_power.py` (the decision procedure's measured operating characteristics).
-- **G5 — Parity + import contracts + node.** `bash tools/parity.sh` (6 gates), `uv run lint-imports` (5 contracts), `make node-test`.
+- **G5 — Parity + import contracts + node.** `bash tools/parity.sh` (6 gates), `uv run lint-imports` (the import contracts), `make node-test`.
 - **G6 — Omit-at-default.** A new default-off contract field MUST declare `metadata=_knob(omit_at_default=True)` — `_SCORING_OMIT_AT_DEFAULT_FIELDS` is DERIVED from that flag — or every workspace spuriously rolls its epoch (`03-contract-and-epochs.md`).
 - **G7 — Reserved replicate-base ledger.** Duels `0..`, calibration `1000`, preflight `2000`, screening `3000/3001`, evidence `4000`. Squatting a base corrupts the unit cache — this was bugs #1 and #8 (`04-evaluation-statistics.md`).
 - **G8 — Restricted-visibility envelope.** Nothing entry-identifying (entry ids, task text, holdout data, raw per-entry outcomes) reaches the proposer; every channel is banded/aggregated/anonymized/redacted (`05-proposer.md`).
