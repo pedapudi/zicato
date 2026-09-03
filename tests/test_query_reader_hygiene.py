@@ -23,6 +23,14 @@ from pathlib import Path
 
 import pytest
 
+from tests._workspace_support import (
+    seed_index,
+    workspace,
+    write_epoch,
+    write_json,
+    write_jsonl,
+    write_run,
+)
 from zicato.core import run_id_for_unit
 from zicato.query import (
     WorkspacePaths,
@@ -41,24 +49,18 @@ from zicato.query import (
     transcript_view,
 )
 from zicato.query._sqlite import _IndexAbsent, open_index_ro, open_index_ro_or_none
+from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-06-01_e0"
 GEN = "v1"
 ENTRY = "entry-a"
 
 
-def _write_json(path: Path, obj: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj), encoding="utf-8")
-
-
-def _base_workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / ".zicato"
-    (ws / "runtime").mkdir(parents=True)
-    (ws / "current_epoch").write_text(EPOCH, encoding="utf-8")
-    edir = ws / "epochs" / EPOCH
-    _write_json(edir / "config.json", {"contract_hash": "h", "closed": False})
-    return ws
+def _base_workspace(tmp_path: Path) -> WorkspaceLayout:
+    layout = workspace(tmp_path)
+    layout.runtime_dir.mkdir(parents=True)
+    write_epoch(layout, EPOCH, config={"contract_hash": "h", "closed": False}, current=True)
+    return layout
 
 
 class _FakeTranscript:
@@ -89,14 +91,10 @@ def _install_fake_reconstruct(monkeypatch: pytest.MonkeyPatch, payload: dict) ->
 
 def test_open_index_ro_refuses_writes(tmp_path: Path) -> None:
     """The shared connection path is READ-ONLY: a write through it fails."""
-    db = tmp_path / "index.db"
-    seed = sqlite3.connect(db)
-    seed.execute("CREATE TABLE judge_losses(judge_name TEXT)")
-    seed.commit()
-    seed.close()
+    db = seed_index(workspace(tmp_path), {})
     with open_index_ro(db) as conn:
         with pytest.raises(sqlite3.OperationalError, match="readonly"):
-            conn.execute("INSERT INTO judge_losses VALUES ('j1')")
+            conn.execute("INSERT INTO judge_losses(judge_name) VALUES ('j1')")
 
 
 def test_open_index_ro_raises_index_absent_and_creates_nothing(tmp_path: Path) -> None:
@@ -139,8 +137,8 @@ def test_per_judge_trend_never_creates_index_db(tmp_path: Path) -> None:
     A missing index degrades field-by-field: empty ``judges``, the
     lineage-derived ``generations`` spine, NO stray file left behind.
     """
-    ws = _base_workspace(tmp_path)
-    paths = WorkspacePaths(ws)
+    layout = _base_workspace(tmp_path)
+    paths = WorkspacePaths(layout.root)
     out = build_per_judge_trend(paths, EPOCH)
     # F5: an absent index now carries the harmonized degrade note (the
     # generations spine still renders field-by-field).
@@ -159,23 +157,23 @@ def test_per_judge_trend_never_creates_index_db(tmp_path: Path) -> None:
 
 
 def test_read_epoch_journal_degrades_to_empty_string(tmp_path: Path) -> None:
-    paths = WorkspacePaths(_base_workspace(tmp_path))
+    paths = WorkspacePaths(_base_workspace(tmp_path).root)
     out = read_epoch_journal(paths, EPOCH)
     assert out == {"epoch_id": EPOCH, "journal": ""}
 
 
 def test_read_epoch_journal_shape(tmp_path: Path) -> None:
-    ws = _base_workspace(tmp_path)
-    (ws / "epochs" / EPOCH / "journal.md").write_text("# log\nentry", encoding="utf-8")
-    out = read_epoch_journal(WorkspacePaths(ws), EPOCH)
+    layout = _base_workspace(tmp_path)
+    layout.journal(EPOCH).write_text("# log\nentry", encoding="utf-8")
+    out = read_epoch_journal(WorkspacePaths(layout.root), EPOCH)
     assert out == {"epoch_id": EPOCH, "journal": "# log\nentry"}
 
 
 def test_read_epoch_journal_md_none_vs_text(tmp_path: Path) -> None:
-    ws = _base_workspace(tmp_path)
-    paths = WorkspacePaths(ws)
+    layout = _base_workspace(tmp_path)
+    paths = WorkspacePaths(layout.root)
     assert read_epoch_journal_md(paths, EPOCH) is None
-    (ws / "epochs" / EPOCH / "journal.md").write_text("raw", encoding="utf-8")
+    layout.journal(EPOCH).write_text("raw", encoding="utf-8")
     assert read_epoch_journal_md(paths, EPOCH) == "raw"
 
 
@@ -185,7 +183,7 @@ def test_read_epoch_journal_md_none_vs_text(tmp_path: Path) -> None:
 
 
 def test_build_epoch_analysis_degrades_same_shape(tmp_path: Path) -> None:
-    paths = WorkspacePaths(_base_workspace(tmp_path))
+    paths = WorkspacePaths(_base_workspace(tmp_path).root)
     out = build_epoch_analysis(paths, EPOCH)
     assert out == {
         "epoch_id": EPOCH,
@@ -196,10 +194,10 @@ def test_build_epoch_analysis_degrades_same_shape(tmp_path: Path) -> None:
 
 
 def test_build_epoch_analysis_shape_with_report(tmp_path: Path) -> None:
-    ws = _base_workspace(tmp_path)
-    (ws / "epochs" / EPOCH / "analysis.md").write_text("# report", encoding="utf-8")
-    (ws / "epochs" / EPOCH / "analysis.html").write_text("<html></html>", encoding="utf-8")
-    out = build_epoch_analysis(WorkspacePaths(ws), EPOCH)
+    layout = _base_workspace(tmp_path)
+    layout.analysis_md(EPOCH).write_text("# report", encoding="utf-8")
+    layout.analysis_html(EPOCH).write_text("<html></html>", encoding="utf-8")
+    out = build_epoch_analysis(WorkspacePaths(layout.root), EPOCH)
     assert out["epoch_id"] == EPOCH
     assert out["analysis_md"] == "# report"
     assert out["analysis_html_available"] is True
@@ -218,7 +216,7 @@ def test_read_run_result_none_when_absent(tmp_path: Path) -> None:
 
 
 def test_read_run_result_projects_the_dashboard_subset(tmp_path: Path) -> None:
-    _write_json(
+    write_json(
         tmp_path / "loss.json",
         {
             "run_id": "r1",
@@ -248,23 +246,23 @@ def test_read_run_result_projects_the_dashboard_subset(tmp_path: Path) -> None:
 
 
 def test_resolve_run_id_for_entry_reads_loss_json(tmp_path: Path) -> None:
-    ws = _base_workspace(tmp_path)
-    run_dir = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY
-    _write_json(run_dir / "loss.json", {"run_id": "canonical-run-7"})
-    assert resolve_run_id_for_entry(WorkspacePaths(ws), EPOCH, GEN, ENTRY) == "canonical-run-7"
+    layout = _base_workspace(tmp_path)
+    write_json(layout.loss(EPOCH, GEN, ENTRY), {"run_id": "canonical-run-7"})
+    paths = WorkspacePaths(layout.root)
+    assert resolve_run_id_for_entry(paths, EPOCH, GEN, ENTRY) == "canonical-run-7"
 
 
 def test_resolve_run_id_for_entry_falls_back_to_entry_id(tmp_path: Path) -> None:
-    paths = WorkspacePaths(_base_workspace(tmp_path))
+    paths = WorkspacePaths(_base_workspace(tmp_path).root)
     assert resolve_run_id_for_entry(paths, EPOCH, GEN, ENTRY) == ENTRY
 
 
 def test_per_judge_entry_reader_selects_replicate_loss(tmp_path: Path) -> None:
-    ws = _base_workspace(tmp_path)
-    paths = WorkspacePaths(ws)
-    run_dir = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY
-    _write_json(run_dir / "loss.json", {"run_id": "goldfive-r0"})
-    _write_json(
+    layout = _base_workspace(tmp_path)
+    paths = WorkspacePaths(layout.root)
+    run_dir = layout.run_dir(EPOCH, GEN, ENTRY)
+    write_json(run_dir / "loss.json", {"run_id": "goldfive-r0"})
+    write_json(
         run_dir / "loss.r1.json",
         {
             "run_id": "goldfive-r1",
@@ -303,24 +301,22 @@ def test_per_judge_entry_reader_selects_replicate_loss(tmp_path: Path) -> None:
 
 
 def test_resolve_conversation_none_on_empty_workspace(tmp_path: Path) -> None:
-    paths = WorkspacePaths(_base_workspace(tmp_path))
+    paths = WorkspacePaths(_base_workspace(tmp_path).root)
     assert resolve_conversation(paths, "nope") is None
     assert resolve_conversation(paths, "nope", gen=GEN, entry=ENTRY, epoch=EPOCH) is None
 
 
 def test_resolve_conversation_finds_the_entry_events(tmp_path: Path) -> None:
-    ws = _base_workspace(tmp_path)
-    events = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY / "events.jsonl"
-    events.parent.mkdir(parents=True)
-    events.write_text('{"runId": "r1"}\n', encoding="utf-8")
-    got = resolve_conversation(WorkspacePaths(ws), "r1", gen=GEN, entry=ENTRY, epoch=EPOCH)
-    assert got == events
+    layout = _base_workspace(tmp_path)
+    write_run(layout, EPOCH, GEN, ENTRY, events=[{"runId": "r1"}])
+    got = resolve_conversation(WorkspacePaths(layout.root), "r1", gen=GEN, entry=ENTRY, epoch=EPOCH)
+    assert got == layout.events(EPOCH, GEN, ENTRY)
 
 
 def test_build_run_transcript_absent_run_is_honest_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    paths = WorkspacePaths(_base_workspace(tmp_path))
+    paths = WorkspacePaths(_base_workspace(tmp_path).root)
     _install_fake_reconstruct(monkeypatch, {})
     out = build_run_transcript(paths, EPOCH, GEN, ENTRY)
     assert out["turns"] == []
@@ -332,14 +328,12 @@ def test_build_run_transcript_absent_run_is_honest_empty(
 def test_build_run_transcript_stamps_coordinates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ws = _base_workspace(tmp_path)
-    events = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY / "events.jsonl"
-    events.parent.mkdir(parents=True)
-    events.write_text('{"runId": "r1"}\n', encoding="utf-8")
-    _write_json(events.parent / "artifacts.json", {"files": [{"path": "report.html", "size": 42}]})
+    layout = _base_workspace(tmp_path)
+    run_dir = write_run(layout, EPOCH, GEN, ENTRY, events=[{"runId": "r1"}])
+    write_json(run_dir / "artifacts.json", {"files": [{"path": "report.html", "size": 42}]})
     payload = {"run_id": "", "turns": [{"role": "user"}], "annotations": [], "event_count": 1}
     _install_fake_reconstruct(monkeypatch, payload)
-    out = build_run_transcript(WorkspacePaths(ws), EPOCH, GEN, ENTRY)
+    out = build_run_transcript(WorkspacePaths(layout.root), EPOCH, GEN, ENTRY)
     # The documented stamping step: coordinates + fallback run_id.
     assert out["epoch_id"] == EPOCH
     assert out["generation_id"] == GEN
@@ -358,12 +352,10 @@ def test_full_and_delta_transcripts_select_exact_replicate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Both transcript readers must resolve the requested sibling, never r0."""
-    ws = _base_workspace(tmp_path)
-    run_dir = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY
-    run_dir.mkdir(parents=True)
-    (run_dir / "events.jsonl").write_text('{"runId": "goldfive-r0"}\n', encoding="utf-8")
-    replicate_events = run_dir / "events.r1.jsonl"
-    replicate_events.write_text('{"runId": "goldfive-r1"}\n', encoding="utf-8")
+    layout = _base_workspace(tmp_path)
+    write_run(layout, EPOCH, GEN, ENTRY, events=[{"runId": "goldfive-r0"}])
+    replicate_events = layout.events(EPOCH, GEN, ENTRY, 1)
+    write_jsonl(replicate_events, [{"runId": "goldfive-r1"}])
 
     seen: list[Path] = []
 
@@ -381,8 +373,9 @@ def test_full_and_delta_transcripts_select_exact_replicate(
 
     _install_reconstruct(monkeypatch, reconstruct)
     runtime_run_id = run_id_for_unit(GEN, ENTRY, 1)
-    full = build_run_transcript(WorkspacePaths(ws), EPOCH, GEN, ENTRY, run_id=runtime_run_id)
-    delta = build_run_transcript_delta(WorkspacePaths(ws), EPOCH, GEN, ENTRY, run_id=runtime_run_id)
+    paths = WorkspacePaths(layout.root)
+    full = build_run_transcript(paths, EPOCH, GEN, ENTRY, run_id=runtime_run_id)
+    delta = build_run_transcript_delta(paths, EPOCH, GEN, ENTRY, run_id=runtime_run_id)
 
     assert seen == [replicate_events, replicate_events]
     assert full["run_id"] == "goldfive-r1"
@@ -393,16 +386,14 @@ def test_full_and_delta_transcripts_select_exact_replicate(
 def test_build_run_transcript_failure_degrades_same_shape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ws = _base_workspace(tmp_path)
-    events = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY / "events.jsonl"
-    events.parent.mkdir(parents=True)
-    events.write_text('{"runId": "r1"}\n', encoding="utf-8")
+    layout = _base_workspace(tmp_path)
+    write_run(layout, EPOCH, GEN, ENTRY, events=[{"runId": "r1"}])
 
     def boom(events_path: Path, *, partial_ok: bool = False) -> None:
         raise RuntimeError("torn read")
 
     _install_reconstruct(monkeypatch, boom)
-    out = build_run_transcript(WorkspacePaths(ws), EPOCH, GEN, ENTRY)
+    out = build_run_transcript(WorkspacePaths(layout.root), EPOCH, GEN, ENTRY)
     assert out["error"] == "transcript failed: torn read"
     assert out["turns"] == []
     assert out["run_id"] == ENTRY
@@ -416,8 +407,8 @@ def test_build_run_transcript_failure_degrades_same_shape(
 # ---------------------------------------------------------------------------
 
 
-def _live_events_path(ws: Path) -> Path:
-    p = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY / "events.jsonl"
+def _live_events_path(layout: WorkspaceLayout) -> Path:
+    p = layout.events(EPOCH, GEN, ENTRY)
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -451,9 +442,9 @@ def _agent_turn(agent: str, text: str, seq: int) -> list[str]:
 
 
 def test_build_run_transcript_partial_grows_across_reads(tmp_path: Path) -> None:
-    ws = _base_workspace(tmp_path)
-    paths = WorkspacePaths(ws)
-    events = _live_events_path(ws)
+    layout = _base_workspace(tmp_path)
+    paths = WorkspacePaths(layout.root)
+    events = _live_events_path(layout)
 
     # In-flight: a runStarted goal + one agent turn, NO runCompleted (not terminal).
     lines = [
@@ -480,9 +471,9 @@ def test_build_run_transcript_partial_grows_across_reads(tmp_path: Path) -> None
 
 
 def test_build_run_transcript_partial_tolerates_torn_tail_line(tmp_path: Path) -> None:
-    ws = _base_workspace(tmp_path)
-    paths = WorkspacePaths(ws)
-    events = _live_events_path(ws)
+    layout = _base_workspace(tmp_path)
+    paths = WorkspacePaths(layout.root)
+    events = _live_events_path(layout)
 
     good = [
         _evline("runStarted", {"goalSummary": "Build a thing"}, 0),
@@ -504,9 +495,9 @@ def test_build_run_transcript_partial_tolerates_torn_tail_line(tmp_path: Path) -
 def test_build_run_transcript_settled_run_matches_direct_reconstruct(tmp_path: Path) -> None:
     from zicato.query.transcript_reconstruction import reconstruct_transcript
 
-    ws = _base_workspace(tmp_path)
-    paths = WorkspacePaths(ws)
-    events = _live_events_path(ws)
+    layout = _base_workspace(tmp_path)
+    paths = WorkspacePaths(layout.root)
+    events = _live_events_path(layout)
 
     lines = [
         _evline("runStarted", {"goalSummary": "Build a thing"}, 0),
@@ -534,16 +525,16 @@ def test_build_run_transcript_settled_run_matches_direct_reconstruct(tmp_path: P
 
 
 def test_matchup_conversations_degrade_without_tournament(tmp_path: Path) -> None:
-    paths = WorkspacePaths(_base_workspace(tmp_path))
+    paths = WorkspacePaths(_base_workspace(tmp_path).root)
     assert build_matchup_conversations(paths, ENTRY) == {"champion": None, "challenger": None}
 
 
 def test_matchup_conversations_shape_both_sides(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ws = _base_workspace(tmp_path)
-    _write_json(
-        ws / "runtime" / "active_tournament.json",
+    layout = _base_workspace(tmp_path)
+    write_json(
+        layout.active_tournament,
         {
             "tournament_id": "t1",
             "parent_generation_id": "v0",
@@ -555,12 +546,16 @@ def test_matchup_conversations_shape_both_sides(
         },
     )
     for gen in ("v0", GEN):
-        run_dir = ws / "epochs" / EPOCH / "generations" / gen / "runs" / ENTRY
-        run_dir.mkdir(parents=True)
-        (run_dir / "events.jsonl").write_text('{"runId": "r"}\n', encoding="utf-8")
-        _write_json(run_dir / "loss.json", {"drift_loss": 0.1, "pass_fail": True})
+        write_run(
+            layout,
+            EPOCH,
+            gen,
+            ENTRY,
+            events=[{"runId": "r"}],
+            loss={"drift_loss": 0.1, "pass_fail": True},
+        )
     _install_fake_reconstruct(monkeypatch, {"turns": []})
-    out = build_matchup_conversations(WorkspacePaths(ws), ENTRY)
+    out = build_matchup_conversations(WorkspacePaths(layout.root), ENTRY)
     for side, gen in (("champion", "v0"), ("challenger", GEN)):
         record = out[side]
         assert record is not None
@@ -574,9 +569,9 @@ def test_matchup_conversations_failed_reconstruction_still_serves_results(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """DQ3: a failed reconstruction degrades that transcript, not the payload."""
-    ws = _base_workspace(tmp_path)
-    _write_json(
-        ws / "runtime" / "active_tournament.json",
+    layout = _base_workspace(tmp_path)
+    write_json(
+        layout.active_tournament,
         {
             "tournament_id": "t1",
             "parent_generation_id": "v0",
@@ -584,14 +579,12 @@ def test_matchup_conversations_failed_reconstruction_still_serves_results(
             "entries": [],
         },
     )
-    run_dir = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY
-    run_dir.mkdir(parents=True)
-    (run_dir / "events.jsonl").write_text('{"runId": "r"}\n', encoding="utf-8")
+    write_run(layout, EPOCH, GEN, ENTRY, events=[{"runId": "r"}])
 
     def boom(events_path: Path, *, partial_ok: bool = False) -> None:
         raise RuntimeError("torn read")
 
     _install_reconstruct(monkeypatch, boom)
-    out = build_matchup_conversations(WorkspacePaths(ws), ENTRY)
+    out = build_matchup_conversations(WorkspacePaths(layout.root), ENTRY)
     assert out["challenger"]["transcript"] == {"error": "transcript failed: torn read"}
     assert out["challenger"]["generation_id"] == GEN

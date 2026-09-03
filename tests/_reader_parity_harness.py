@@ -21,6 +21,16 @@ import json
 from pathlib import Path
 from typing import Any
 
+from tests._workspace_support import (
+    experiment_record,
+    set_current_epoch,
+    workspace,
+    write_epoch,
+    write_generation,
+    write_lineage,
+    write_run,
+    write_workspace_config,
+)
 from zicato import query as sr
 
 # ---------------------------------------------------------------------------
@@ -64,16 +74,6 @@ _EPOCHS: list[dict[str, Any]] = [
 CANONICAL_EPOCH_ORDER = ["e1", "e2", "e0"]
 
 
-def _write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-
-def _write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
 def build_fixture_workspace(tmp_path: Path) -> Path:
     """Materialize the multi-epoch fixture under ``tmp_path/.zicato``.
 
@@ -82,52 +82,51 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
     ``config.json`` / ``board.jsonl`` / ``scoring.json`` / ``brief.md`` /
     ``contract_components.json`` and per-generation ``experiment.json`` /
     ``gen_score.json`` / ``runs/<entry>/loss.json``.
+
+    Composed from :mod:`tests._workspace_support`, so every location here
+    is the one :class:`~zicato.workspace.WorkspaceLayout` declares. The
+    files are written with two-space indentation because this tree's exact
+    bytes are what the golden snapshot below is captured against.
     """
-    ws = tmp_path / ".zicato"
-    ws.mkdir(parents=True, exist_ok=True)
+    layout = workspace(tmp_path)
 
     # Workspace-level harness config (read by ``_read_harness``).
-    _write_json(
-        ws / "config.json",
+    write_workspace_config(
+        layout,
         {
             "adapter": {
                 "entrypoint": "pkg.module:agent",
                 "mutable_trees": ["src/pkg"],
             }
         },
+        indent=2,
     )
 
     # The current epoch is the chronologically-latest one (e0).
-    _write_text(ws / "current_epoch", "e0\n")
+    set_current_epoch(layout, "e0", newline=True)
 
     for order, spec in enumerate(_EPOCHS):
         eid = spec["id"]
-        edir = ws / "epochs" / eid
-        _write_json(
-            edir / "config.json",
-            {
+        write_epoch(
+            layout,
+            eid,
+            config={
                 "id": eid,
                 "created_at": spec["created_at"],
                 "closed": spec["closed"],
                 "goal": spec["goal"],
                 "contract_hash": f"hash-{eid}",
             },
-        )
-        _write_text(edir / "brief.md", f"# Brief {eid}\n\n## Goal\n\n{spec['goal']}\n")
-        # A frozen scoring block carrying a (deterministic) tournament
-        # structure so the meta-loop ledger surfaces a structure token.
-        _write_json(
-            edir / "scoring.json",
-            {
+            brief=f"# Brief {eid}\n\n## Goal\n\n{spec['goal']}\n",
+            # A frozen scoring block carrying a (deterministic) tournament
+            # structure so the meta-loop ledger surfaces a structure token.
+            scoring={
                 "pass_weight": 1.0,
                 "tournament": {"structure": "gauntlet", "params": {}},
             },
-        )
-        # Per-component contract sub-hashes; vary one component per epoch so
-        # the contract-diff / ledger change-maps are non-trivial.
-        _write_json(
-            edir / "contract_components.json",
-            {
+            # Per-component contract sub-hashes; vary one component per epoch
+            # so the contract-diff / ledger change-maps are non-trivial.
+            contract_components={
                 "board": f"board-{order}",
                 "brief": f"brief-{eid}",
                 "scoring": "scoring-const",
@@ -135,72 +134,66 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
                 "mutable_trees": "trees-const",
                 "proposer": "proposer-const",
             },
-        )
-        # Board: a meta header + two entries.
-        _write_text(
-            edir / "board.jsonl",
-            "\n".join(
-                [
-                    json.dumps({"board_meta": True, "disable_drift": False}),
-                    json.dumps(
-                        {
-                            "id": "t1",
-                            "kind": "single_turn",
-                            "input": "Say hello.",
-                            "expectation": {"kind": "rubric"},
-                            "weight": 1.0,
-                            "tags": ["smoke"],
-                        }
-                    ),
-                    json.dumps(
-                        {
-                            "id": "t2",
-                            "kind": "single_turn",
-                            "input": "Say goodbye.",
-                            "expectation": {"kind": "predicate"},
-                            "weight": 2.0,
-                            "tags": [],
-                        }
-                    ),
-                ]
-            )
-            + "\n",
+            # Board: a meta header + two entries.
+            board=[
+                {"board_meta": True, "disable_drift": False},
+                {
+                    "id": "t1",
+                    "kind": "single_turn",
+                    "input": "Say hello.",
+                    "expectation": {"kind": "rubric"},
+                    "weight": 1.0,
+                    "tags": ["smoke"],
+                },
+                {
+                    "id": "t2",
+                    "kind": "single_turn",
+                    "input": "Say goodbye.",
+                    "expectation": {"kind": "predicate"},
+                    "weight": 2.0,
+                    "tags": [],
+                },
+            ],
+            indent=2,
         )
 
         for gi, gid in enumerate(spec["gens"]):
-            gdir = edir / "generations" / gid
             promoted = gi == 0
-            _write_json(
-                gdir / "experiment.json",
-                {
-                    "generation_id": gid,
-                    "parent_generation_id": None if gid == "v0" else "v0",
-                    "proposed_at": spec["created_at"],
-                    "hypothesis": {"summary": f"hyp {eid} {gid}"},
-                    "outcome": {
+            write_generation(
+                layout,
+                eid,
+                gid,
+                experiment=experiment_record(
+                    gid,
+                    parent_generation_id=None if gid == "v0" else "v0",
+                    proposed_at=spec["created_at"],
+                    hypothesis={"summary": f"hyp {eid} {gid}"},
+                    outcome={
                         "decision": "promoted" if promoted else "rejected",
                         "scalar_score_delta": -0.05 if promoted else 0.02,
                     },
-                },
-            )
-            _write_json(
-                gdir / "gen_score.json",
-                {"scalar": 0.5 - 0.01 * gi, "pass_rate": 1.0},
+                ),
+                gen_score={"scalar": 0.5 - 0.01 * gi, "pass_rate": 1.0},
+                indent=2,
             )
             for entry in ("t1", "t2"):
-                _write_json(
-                    gdir / "runs" / entry / "loss.json",
-                    {
+                write_run(
+                    layout,
+                    eid,
+                    gid,
+                    entry,
+                    loss={
                         "entry_id": entry,
                         "run_id": f"{eid}-{gid}-{entry}",
                         "drift_loss": 0.3 + 0.01 * gi,
                         "pass_fail": True,
                         "score": 0.9,
                     },
+                    indent=2,
                 )
 
-    _write_json(
-        ws / "lineage.json",
+    write_lineage(
+        layout,
         {
             "epochs": [
                 {
@@ -218,9 +211,10 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
                 for spec in _EPOCHS
             ]
         },
+        indent=2,
     )
 
-    return ws
+    return layout.root
 
 
 # ---------------------------------------------------------------------------
