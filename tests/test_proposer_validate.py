@@ -317,7 +317,10 @@ def test_content_hash_has_exactly_one_reader() -> None:
 
     root = Path(__file__).resolve().parent.parent / "src" / "zicato"
     hits = subprocess.run(
-        ["grep", "-rn", r"\.content_hash", str(root)],
+        # -R, not -r. GNU grep's -r does NOT follow symlinks it meets while
+        # recursing, so over a tree of symlinked sources it walks, matches
+        # nothing and exits 1 -- which reads exactly like "no reader found".
+        ["grep", "-Rn", r"\.content_hash", str(root)],
         capture_output=True,
         text=True,
         check=False,
