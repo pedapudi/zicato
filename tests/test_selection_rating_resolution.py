@@ -9,8 +9,8 @@ Covers the four pieces of the selection rating/resolution layer
    order disagrees with the strength order.
 3. Ranked Pairs / Smith on a cyclic margin matrix (the auditable
    lock/skip trace; Smith prune).
-4. The uncertainty pre-gate guard defers a noisy near-tie but is ABSENT by
-   default (the default path is byte-identical to the legacy gauntlet/swiss).
+4. The knobs wired into the strategies, where an absent or unrecognised
+   value leaves each structure on its unchanged scalar/Copeland path.
 
 All synthetic — no live runs.
 """
@@ -38,12 +38,7 @@ from zicato.selection import (
 )
 from zicato.selection.rating import fit_plackett_luce
 from zicato.selection.resolve import Duel
-from zicato.selection.standings_ext import (
-    apply_uncertainty_guard,
-    read_rating,
-    read_resolver,
-    read_uncertainty_threshold,
-)
+from zicato.selection.standings_ext import read_rating, read_resolver
 from zicato.tournament.gate import GateOutcome
 
 # ---------------------------------------------------------------------------
@@ -289,122 +284,15 @@ def test_copeland_order_is_margin_blind() -> None:
 def test_param_readers_default_to_none() -> None:
     assert read_rating({}) is None
     assert read_resolver({}) is None
-    assert read_uncertainty_threshold({}) is None
     # Explicit "none" / unrecognised ⇒ today's behaviour.
     assert read_rating({"rating": "none"}) is None
     assert read_resolver({"resolver": "bogus"}) is None
-    # Out-of-range thresholds degrade to None (no guard).
-    assert read_uncertainty_threshold({"uncertainty_gate": 0.0}) is None
-    assert read_uncertainty_threshold({"uncertainty_gate": 1.0}) is None
-    assert read_uncertainty_threshold({"uncertainty_gate": "nope"}) is None
 
 
 def test_param_readers_accept_valid_knobs() -> None:
     assert read_rating({"rating": "bradley_terry"}) == "bradley_terry"
     assert read_resolver({"resolver": "ranked_pairs"}) == "ranked_pairs"
     assert read_resolver({"resolver": "copeland"}) == "copeland"
-    assert read_uncertainty_threshold({"uncertainty_gate": 0.95}) == 0.95
-
-
-# ---------------------------------------------------------------------------
-# Uncertainty pre-gate guard
-# ---------------------------------------------------------------------------
-
-
-def _audit_pair(
-    parent: str, child: str, *, child_wins: int, parent_wins: int
-) -> list[MatchupResult]:
-    """A synthetic audit of replicated parent-vs-child duels.
-
-    ``child`` is ``right`` (a negative ``delta_scalar`` means the child
-    won that replicate). Each list entry is one duel record.
-    """
-    out: list[MatchupResult] = []
-    for _ in range(child_wins):
-        out.append(
-            MatchupResult(
-                matchup_id="m",
-                left_id=parent,
-                right_id=child,
-                left_agg={"scalar": 1.0},
-                right_agg={"scalar": 0.5},
-                outcome=GateOutcome("promoted", "", delta_scalar=-0.5, delta_pass_rate=0.0),
-            )
-        )
-    for _ in range(parent_wins):
-        out.append(
-            MatchupResult(
-                matchup_id="m",
-                left_id=parent,
-                right_id=child,
-                left_agg={"scalar": 0.5},
-                right_agg={"scalar": 1.0},
-                outcome=GateOutcome("rejected", "", delta_scalar=0.5, delta_pass_rate=0.0),
-            )
-        )
-    return out
-
-
-def test_uncertainty_guard_defers_a_noisy_near_tie() -> None:
-    # A coin-flip record (3 child wins, 3 parent wins): the child is not
-    # confidently stronger, so a 0.95 guard defers the gate's promotion.
-    audit = _audit_pair("v0", "v1", child_wins=3, parent_wins=3)
-    decision, reason, deferred = apply_uncertainty_guard(
-        "promoted",
-        "",
-        audit=audit,
-        parent_id="v0",
-        child_id="v1",
-        threshold=0.95,
-    )
-    assert deferred is True
-    assert decision == "deferred"
-    assert "uncertainty" in reason
-
-
-def test_uncertainty_guard_allows_a_clearly_separated_win() -> None:
-    # A lopsided record (8 child wins, 0 parent wins): the child is
-    # confidently stronger, so the guard does NOT block the promotion.
-    audit = _audit_pair("v0", "v1", child_wins=8, parent_wins=0)
-    decision, reason, deferred = apply_uncertainty_guard(
-        "promoted",
-        "",
-        audit=audit,
-        parent_id="v0",
-        child_id="v1",
-        threshold=0.95,
-    )
-    assert deferred is False
-    assert decision == "promoted"
-
-
-def test_uncertainty_guard_is_a_noop_when_absent() -> None:
-    # threshold None ⇒ the gate verdict is returned untouched, even on a
-    # coin-flip record (the byte-identical default).
-    audit = _audit_pair("v0", "v1", child_wins=3, parent_wins=3)
-    decision, reason, deferred = apply_uncertainty_guard(
-        "promoted",
-        "ok",
-        audit=audit,
-        parent_id="v0",
-        child_id="v1",
-        threshold=None,
-    )
-    assert (decision, reason, deferred) == ("promoted", "ok", False)
-
-
-def test_uncertainty_guard_never_forces_a_promotion() -> None:
-    # A rejected gate verdict stays rejected — the guard only ever blocks.
-    audit = _audit_pair("v0", "v1", child_wins=8, parent_wins=0)
-    decision, reason, deferred = apply_uncertainty_guard(
-        "rejected",
-        "did not clear",
-        audit=audit,
-        parent_id="v0",
-        child_id="v1",
-        threshold=0.95,
-    )
-    assert (decision, deferred) == ("rejected", False)
 
 
 # ---------------------------------------------------------------------------
@@ -512,13 +400,13 @@ def test_swiss_default_path_is_byte_identical_with_and_without_absent_knobs() ->
 
 def test_gauntlet_is_untouched_by_the_knobs() -> None:
     # field_size==1 / gauntlet is the back-compat anchor: it must ignore the
-    # rating/resolver/uncertainty knobs entirely and resolve as today.
+    # rating/resolver knobs entirely and resolve as today.
     champion = _champion("v0")
     challengers = [_challenger("v1")]
     scalars = {"v0": 0.5, "v1": 0.2}
     spec = TournamentStructure(
         structure="gauntlet",
-        params={"rating": "bradley_terry", "resolver": "ranked_pairs", "uncertainty_gate": 0.95},
+        params={"rating": "bradley_terry", "resolver": "ranked_pairs"},
     )
     strat = make_strategy(spec)
     decision = _drive(strat, champion, challengers, scalars)
@@ -541,89 +429,6 @@ def test_single_elim_resolver_leader_opt_in_runs_end_to_end() -> None:
     # A finalist was chosen and crowned (it beat the champion on scalar).
     assert decision.decision in {"promoted", "rejected", "deferred"}
     assert decision.standings
-
-
-def _result_with(
-    matchup: Matchup,
-    *,
-    left_scalar: float,
-    right_scalar: float,
-    decision: str,
-) -> MatchupResult:
-    delta = right_scalar - left_scalar
-    return MatchupResult(
-        matchup_id=matchup.matchup_id,
-        left_id=matchup.left.generation_id,
-        right_id=matchup.right.generation_id,
-        left_agg={"scalar": left_scalar, "pass_rate": 1.0},
-        right_agg={"scalar": right_scalar, "pass_rate": 1.0},
-        outcome=GateOutcome(
-            decision=decision,  # type: ignore[arg-type]
-            reason="" if decision == "promoted" else "reject",
-            delta_scalar=delta,
-            delta_pass_rate=0.0,
-        ),
-        stage_index=matchup.stage_index,
-        bracket_slot=matchup.bracket_slot,
-    )
-
-
-def test_swiss_uncertainty_gate_defers_a_gate_promotion_end_to_end() -> None:
-    # Drive a 2-challenger swiss where the leader (v1) and champion (v0)
-    # trade duels across the rounds (a noisy near-tie), but the FINAL
-    # champion-gate duel is a (marginal) promote. With the uncertainty_gate
-    # opt-in, the noisy rating defers the crowning instead of promoting.
-    champion = _champion("v0")
-    challengers = [_challenger("v1"), _challenger("v2")]
-    spec = TournamentStructure(
-        structure="swiss",
-        params={"field_size": 2, "rounds_n": 2, "uncertainty_gate": 0.95},
-    )
-    strat = make_strategy(spec)
-    strat.seed(champion, challengers)
-    # Alternate which of v0/v1 "wins" each swiss duel so the BT fit puts
-    # them in a near-tie, while v2 is clearly weak.
-    toggle = {"v0_v1": True}
-
-    def scalar_for(left: str, right: str) -> tuple[float, float]:
-        if {left, right} == {"v0", "v1"}:
-            # Coin-flip: alternate the winner each time this pair meets.
-            if toggle["v0_v1"]:
-                toggle["v0_v1"] = False
-                lo, hi = 0.40, 0.41
-            else:
-                toggle["v0_v1"] = True
-                lo, hi = 0.41, 0.40
-            return (lo, hi) if left == "v0" else (hi, lo)
-        # Anyone vs v2: v2 is clearly worse (higher scalar).
-        return (0.4, 0.9) if right == "v2" else (0.9, 0.4)
-
-    while not strat.resolved():
-        batch = strat.next_matchups()
-        if not batch:
-            break
-        for m in batch:
-            lid, rid = m.left.generation_id, m.right.generation_id
-            if m.matchup_id == "swiss-final":
-                # Force the gate to PROMOTE on the final duel (a marginal win).
-                strat.record_result(
-                    _result_with(m, left_scalar=0.41, right_scalar=0.40, decision="promoted")
-                )
-            else:
-                ls, rs = scalar_for(lid, rid)
-                strat.record_result(
-                    _result_with(
-                        m,
-                        left_scalar=ls,
-                        right_scalar=rs,
-                        decision=("promoted" if rs < ls else "rejected"),
-                    )
-                )
-    decision = strat.champion()
-    # The gate promoted, but the uncertainty guard turned it into a defer
-    # (the existing "deferred" literal is now a real outcome).
-    assert decision.decision == "deferred"
-    assert decision.promoted_generation_id is None
 
 
 def test_double_elim_resolver_and_rating_opt_in_runs_end_to_end() -> None:

@@ -172,7 +172,7 @@ lineage. See `zicato-analyze-epoch` and
 
 By default swiss collapses its duel matrix with **Copeland** (count of duels
 won), which is margin-blind, and a noisy loss can leave the matrix **cyclic**
-(A>B, B>C, C>A). Three **opt-in** `tournament.params` knobs — read by `swiss`,
+(A>B, B>C, C>A). Two **opt-in** `tournament.params` knobs — read by `swiss`,
 `single_elim` and `double_elim` only — now sit over that
 ([SELECTION-THEORY.md](../../docs/design/SELECTION-THEORY.md)):
 
@@ -180,12 +180,16 @@ won), which is margin-blind, and a noisy loss can leave the matrix **cyclic**
 |---|---|---|
 | `resolver` | `ranked_pairs` \| `copeland` | Re-picks the INTERNAL leader from the net-margin matrix: Condorcet fast path, then Smith-set prune, then Ranked Pairs (recommended) or Copeland order. |
 | `rating` | `bradley_terry` | Fits BT strengths from the audited duels for standings + the `P(θ_child > θ_parent)` uncertainty it needs. |
-| `uncertainty_gate` | a probability in `(0, 1)` | Promote only when `P(θ_child > θ_parent)` clears the bar, else defer. It can only ever BLOCK a promotion. |
 
-All three are derived from already-measured duel data (the gate's
+Both are derived from already-measured duel data (the gate's
 `delta_scalar` and the two side scalars), so they cost **zero new board runs**;
 absent or set to `none` they leave each structure's existing pick
 byte-identical. Maximal lotteries remain unimplemented.
+
+Neither knob holds a promotion. Requiring confidence before a crowning promote
+is the evidence gate's job — `promote_confidence_threshold` plus
+`promote_confidence_replicates`, which apply to every structure and buy the
+confidence with extra replicates rather than only refusing the crown.
 
 The one operating rule to remember now: **replicate first, resolve second.**
 Most cycles zicato sees are noise artifacts that replication dissolves; only

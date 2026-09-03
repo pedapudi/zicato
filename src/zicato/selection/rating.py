@@ -496,9 +496,10 @@ def prob_stronger(
     difference is positive. When both SEs are zero the answer is a hard
     ``1.0`` / ``0.0`` / ``0.5`` (degenerate point estimates).
 
-    This is the quantity the opt-in uncertainty pre-gate guard
-    (FUNCTIONALITY-RECOMMENDATIONS.md §5) thresholds: promote only if the
-    child's strength is above the parent's with enough confidence.
+    This is the quantity the opt-in evidence pre-gate
+    (:mod:`zicato.selection.evidence_gate`, FUNCTIONALITY-RECOMMENDATIONS.md
+    §5) thresholds: crown only if the child's strength is above the parent's
+    with enough confidence.
     """
     diff = theta_a - theta_b
     var = se_a * se_a + se_b * se_b

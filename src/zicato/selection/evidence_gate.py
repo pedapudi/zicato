@@ -1,16 +1,12 @@
 """Crown on evidence rather than a point estimate — the Bradley--Terry pre-gate.
 
 The opt-in uncertainty pre-gate of ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md``
-§5 / ``docs/design/SELECTION-THEORY.md`` §7.1, raised from the single-shot
-``uncertainty_gate`` guard (:mod:`zicato.selection.standings_ext`) to a full
-**defer → replicate → refit** schedule with a genuine terminal third state.
-
-Where the ``uncertainty_gate`` guard answers a yes/no "is the crowning win
-within rating noise?", this module answers the operator's fuller question —
-*"is there enough
-evidence to crown, and if not, what is the cheapest duel to replicate to find
-out?"* — by reading the fitted Bradley--Terry strengths AND their confidence
-intervals:
+§5 / ``docs/design/SELECTION-THEORY.md`` §7.1: the one layer that may hold a
+crowning promotion the measured ratings cannot separate from noise. It runs a
+**defer → replicate → refit** schedule, so it answers two questions together —
+is there enough evidence to crown, and when there is not, which duel is the
+cheapest to replicate to find out — by reading the fitted Bradley--Terry
+strengths AND their confidence intervals:
 
 * :func:`evidence_verdict` fits BT over the strategy's already-measured duel
   audit and returns one of three verdicts for the crowning pair:

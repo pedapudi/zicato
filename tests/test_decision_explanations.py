@@ -27,7 +27,7 @@ from zicato.evolve.loop import log_effective_concurrency
 from zicato.health.diagnostics import detect_placebo_promoted, detect_stalled_loop
 from zicato.runtime.effective_settings import SOURCE_DEFAULT, SOURCE_WORKSPACE
 from zicato.runtime_factory import resolve_parallelism
-from zicato.selection.standings_ext import uncertainty_blocks_promotion
+from zicato.selection.evidence_gate import evidence_verdict
 from zicato.tournament.gate import _namespace_regression_reason, evaluate_gate
 
 # ---------------------------------------------------------------------------
@@ -197,12 +197,22 @@ def test_placebo_alarm_without_calibration_still_reports_the_delta() -> None:
     assert finding.detail["noise_floor_max_abs_delta"] is None
 
 
-def test_uncertainty_guard_returns_the_measured_probability() -> None:
+def test_evidence_gate_reports_the_measured_probability() -> None:
     """The bar alone does not say how far the win fell short of it."""
-    blocks, p = uncertainty_blocks_promotion((), "v0", "v1", 0.9)
-    assert blocks is False
-    # No audit ⇒ nothing was fitted, which is NOT the same as p == 0.0.
-    assert p is None
+    verdict = evidence_verdict(
+        "promoted",
+        "ok",
+        audit=(),
+        parent_id="v0",
+        child_id="v1",
+        threshold=0.9,
+        replicate_budget=3,
+    )
+    # An empty audit fits nothing, so the gate's verdict stands untouched and
+    # the probability is absent rather than 0.0 — no measurement was made.
+    assert verdict.decision == "promoted"
+    assert verdict.credible is False
+    assert verdict.p_stronger is None
 
 
 def _agg(scalar: float, namespaces: dict[str, float]) -> dict[str, Any]:
