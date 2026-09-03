@@ -16,6 +16,7 @@ import pytest
 from zicato.core.types import ScoringWeights
 from zicato.epoch.contract import (
     ContractInputs,
+    compute_component_hashes,
     compute_contract_hash,
     evaluation_implementation_identity,
     resolve_contract_inputs,
@@ -67,6 +68,31 @@ def _make_contract_adapter(
     integrations: list[str] | None = None,
 ) -> _ContractAdapter:
     return _ContractAdapter(marker, integrations)
+
+
+class _ConstantSpecAdapter:
+    """An adapter whose worker document reports none of its construction.
+
+    ``worker_spec()`` is the adapter's own method, so an operator adapter is
+    free to return a constant — a legitimate implementation, since the
+    factory path alone is enough for a worker to rebuild an adapter that
+    takes no arguments it cares about. It leaves the contract with no view
+    of the construction arguments, which is why the declared ``adapter``
+    block is hashed alongside the worker document.
+    """
+
+    def __init__(self, marker: str) -> None:
+        self.marker = marker
+
+    def worker_spec(self) -> dict[str, object]:
+        return {
+            "kind": "import",
+            "factory": "tests.test_epoch_contract:_make_constant_spec_adapter",
+        }
+
+
+def _make_constant_spec_adapter(marker: str) -> _ConstantSpecAdapter:
+    return _ConstantSpecAdapter(marker)
 
 
 def _write_contract(
@@ -955,6 +981,210 @@ def test_generic_adapter_factory_args_and_integrations_are_contract_identity(
     assert compute_contract_hash(resolve_contract_inputs(workspace)) != first_hash
     write_config("one", ["goldfive"])
     assert compute_contract_hash(resolve_contract_inputs(workspace)) != first_hash
+
+
+# ---------------------------------------------------------------------------
+# The declared adapter block is contract identity in its own right
+# ---------------------------------------------------------------------------
+
+#: The adapter component digest for a workspace that declares no ``adapter``
+#: block, with the entry point ``pkg.mod:agent`` over the single mutable tree
+#: ``/abs/agent``. Pinned as a literal so folding the declared adapter block
+#: into the component cannot move the contract of a workspace that declares
+#: none: every such epoch keeps the hash it was created under.
+_ADAPTER_DIGEST_WITHOUT_DECLARATION = (
+    "dbacf86237c27038f8038d3f94b38b01365b31f55a9fb50e18a27ec77857165c"
+)
+
+#: The same digest for a workspace declaring the stock ADK adapter over that
+#: entry point and mutable tree. An ADK adapter is built from those two
+#: fields alone and its worker document repeats both, so the declaration adds
+#: nothing and the component is pinned unchanged here too.
+_ADAPTER_DIGEST_FOR_STOCK_ADK = "ad8a9dc2dfd6033df0335fc90774b2a2f1666e40eae3d0299ff7b45b6bd6b9a6"
+
+
+def _adapter_digest_fixture(tmp_path: Path) -> ContractInputs:
+    """Contract inputs whose adapter component is machine-independent.
+
+    The two pinned digests must hold on any checkout, so nothing that varies
+    between them may reach the adapter component: the entry point names a
+    module that does not import (its source hashes as absent everywhere) and
+    the mutable tree is a fixed absolute string rather than ``tmp_path``.
+    """
+    return _write_contract(tmp_path)
+
+
+def test_adapter_component_is_unchanged_without_a_declared_adapter(tmp_path: Path) -> None:
+    inputs = _adapter_digest_fixture(tmp_path)
+    assert inputs.adapter_declaration is None
+    assert compute_component_hashes(inputs)["adapter"] == _ADAPTER_DIGEST_WITHOUT_DECLARATION
+
+
+def test_adapter_component_is_unchanged_for_a_declared_adk_adapter(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    base = _adapter_digest_fixture(tmp_path)
+    entrypoint = base.entrypoint
+    trees = list(base.mutable_trees)
+    inputs = replace(
+        base,
+        adapter_spec={
+            "kind": "adk",
+            "entrypoint": entrypoint,
+            "mutable_trees": trees,
+            "integrations": ["goldfive"],
+        },
+        adapter_source_specs=(entrypoint,),
+        adapter_declaration={
+            "kind": "adk",
+            "entrypoint": entrypoint,
+            "mutable_trees": trees,
+        },
+    )
+    assert compute_component_hashes(inputs)["adapter"] == _ADAPTER_DIGEST_FOR_STOCK_ADK
+
+
+def test_declared_adapter_arguments_are_contract_identity(tmp_path: Path) -> None:
+    """A changed constructor argument rolls the epoch even when the adapter hides it.
+
+    ``_ConstantSpecAdapter`` reports a worker document that names only its
+    factory, so before the declaration was hashed both configurations below
+    produced one contract while running two different harnesses.
+    """
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    files = _write_contract(tmp_path)
+
+    def hash_for(marker: str) -> str:
+        (workspace / "config.json").write_text(
+            json.dumps(
+                {
+                    "adapter": {
+                        "kind": "import",
+                        "factory": "tests.test_epoch_contract:_make_constant_spec_adapter",
+                        "args": [marker],
+                    },
+                    "contract": {
+                        "board_path": str(files.board_path),
+                        "brief_path": str(files.brief_path),
+                        "scoring_path": str(files.scoring_path),
+                    },
+                }
+            )
+        )
+        return compute_contract_hash(resolve_contract_inputs(workspace))
+
+    first = hash_for("one")
+    assert hash_for("one") == first
+    assert hash_for("two") != first
+
+
+def test_declared_adapter_mirrored_by_the_worker_document_is_not_rehashed(
+    tmp_path: Path,
+) -> None:
+    """An adapter that reports what it was declared with keeps its component.
+
+    ``_ContractAdapter`` repeats its factory and constructor arguments in its
+    worker document, so the declaration states nothing new and the adapter
+    component is what it would be with no declaration read at all. This is
+    what keeps every epoch whose adapter reports itself faithfully — every
+    ADK registration among them — on the hash it was created under.
+    """
+    from dataclasses import replace
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    files = _write_contract(tmp_path)
+    (workspace / "config.json").write_text(
+        json.dumps(
+            {
+                "adapter": {
+                    "kind": "import",
+                    "factory": "tests.test_epoch_contract:_make_contract_adapter",
+                    "args": ["one", []],
+                },
+                "contract": {
+                    "board_path": str(files.board_path),
+                    "brief_path": str(files.brief_path),
+                    "scoring_path": str(files.scoring_path),
+                },
+            }
+        )
+    )
+    inputs = resolve_contract_inputs(workspace)
+    assert inputs.adapter_declaration is not None
+    without = replace(inputs, adapter_declaration=None)
+    assert (
+        compute_component_hashes(inputs)["adapter"] == compute_component_hashes(without)["adapter"]
+    )
+
+
+def test_declared_adapter_factory_source_is_contract_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Editing the implementation behind an unchanged factory path rolls the epoch."""
+    import importlib
+    import sys
+
+    factory_module = tmp_path / "declared_driver.py"
+
+    def write_factory(reply: str) -> None:
+        factory_module.write_text(
+            "class Adapter:\n"
+            "    def worker_spec(self):\n"
+            "        return {'kind': 'import', 'factory': 'declared_driver:make'}\n"
+            "    def reply(self):\n"
+            f"        return {reply!r}\n"
+            "def make():\n"
+            "    return Adapter()\n"
+        )
+
+    write_factory("one")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+
+    files = _write_contract(tmp_path)
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    (workspace / "config.json").write_text(
+        json.dumps(
+            {
+                "adapter": {"kind": "import", "factory": "declared_driver:make"},
+                "contract": {
+                    "board_path": str(files.board_path),
+                    "brief_path": str(files.brief_path),
+                    "scoring_path": str(files.scoring_path),
+                },
+            }
+        )
+    )
+
+    first = compute_contract_hash(resolve_contract_inputs(workspace))
+    write_factory("two")
+    sys.modules.pop("declared_driver", None)
+    importlib.invalidate_caches()
+    assert compute_contract_hash(resolve_contract_inputs(workspace)) != first
+
+
+def test_declared_adapter_factory_without_hashable_source_is_refused(tmp_path: Path) -> None:
+    """An adapter implementation the contract cannot read stops the hash.
+
+    Hashing it as absent would let the named factory stand for any
+    implementation of it, so generations either side of an implementation
+    change would share a contract.
+    """
+    from dataclasses import replace
+
+    spec = {"kind": "import", "factory": "declared_driver_that_does_not_import:make"}
+    inputs = replace(
+        _write_contract(tmp_path),
+        adapter_spec=dict(spec),
+        adapter_source_specs=(str(spec["factory"]),),
+        adapter_declaration=dict(spec),
+    )
+    with pytest.raises(ValueError, match="hashable source"):
+        compute_contract_hash(inputs)
 
 
 def test_resolve_contract_inputs_accepts_legacy_rubric_path_key(
