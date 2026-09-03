@@ -1331,7 +1331,7 @@ the violation knows the fix:
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "zicato.orchestrator._compute_field_diversity".msg = "moved: use zicato.selection.diversity.compute_field_diversity"
 "zicato.storage._atomic.read_json".msg = "use the public face: from zicato.storage import read_json"
-"zicato.analyzer.aggregator._to_snake".msg = "private to the aggregator: use zicato.query.paths.to_snake"
+"zicato.analyzer.aggregator._to_snake".msg = "deleted: use zicato.telemetry.event_log.to_snake"
 ...
 ```
 — `pyproject.toml`, `[tool.ruff.lint.flake8-tidy-imports.banned-api]` (excerpt)

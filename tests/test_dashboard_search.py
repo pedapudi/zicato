@@ -23,11 +23,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
-from zicato.query import (
-    SEARCH_LIMIT_PER_CATEGORY,
-    WorkspacePaths,
-    build_search_results,
-)
+from zicato.query import WorkspacePaths, build_search_results
+from zicato.query.judge_view import SEARCH_LIMIT_PER_CATEGORY
 
 
 def _write(path: Path, text: str) -> None:

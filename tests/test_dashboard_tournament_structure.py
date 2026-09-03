@@ -27,11 +27,11 @@ from starlette.testclient import TestClient
 from zicato.dashboard.server import create_app
 from zicato.query import (
     WorkspacePaths,
-    _normalize_tournament_statuses,
     build_bracket,
     build_epoch_view,
     build_tournament_structure,
 )
+from zicato.query.runtime_view import _normalize_tournament_statuses
 
 
 def _write_json(path: Path, obj: object) -> None:

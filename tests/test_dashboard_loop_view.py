@@ -29,10 +29,13 @@ from zicato.dashboard.server import create_app
 from zicato.query import (
     WorkspacePaths,
     build_optimization_trajectory,
-    build_round_pipeline,
     build_tournament_cost,
 )
-from zicato.query.loop_view import _epoch_open_step, _project_pipeline
+from zicato.query.loop_view import (
+    _epoch_open_step,
+    _project_pipeline,
+    build_round_pipeline,
+)
 
 EPOCH = "2026-06_e0"
 

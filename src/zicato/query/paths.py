@@ -11,15 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from zicato.storage import read_json
-from zicato.telemetry import event_log as _event_log
 from zicato.workspace import WorkspaceLayout
 from zicato.workspace import epochs as _ws_epochs
 
 # The ONE definition of epoch ordering and enumeration lives in
 # :mod:`zicato.workspace.epochs`. The four names below re-export it, so a
 # ``from zicato.query.paths import _natural_key`` / ``_NUM_RUN`` /
-# ``_epoch_sort_key`` import (and the readers' ``__init__`` exports) resolves
-# to that one definition. There is no second definition.
+# ``_epoch_sort_key`` import resolves to that one definition. There is no
+# second definition.
 _NUM_RUN = _ws_epochs._NUM_RUN
 _natural_key = _ws_epochs.natural_key
 _epoch_created_at = _ws_epochs.epoch_created_at
@@ -133,12 +132,6 @@ def _read_json_value(path: Path) -> Any | None:
         return read_json(path)
     except Exception:
         return None
-
-
-# The casing rule belongs to the event-log reader, which is where the names
-# it converts come from; this re-export keeps ``zicato.query.to_snake``
-# resolving to that one definition. There is no second definition.
-to_snake = _event_log.to_snake
 
 
 def _preview(text: str) -> str:

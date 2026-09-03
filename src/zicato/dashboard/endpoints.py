@@ -41,6 +41,9 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from zicato import query
 from zicato.query import WorkspacePaths
+from zicato.query.eval_view import _empty_dossier, _empty_health, _empty_matrix
+from zicato.query.judge_roster import _empty_judge_roster
+from zicato.query.trace_view import _empty_provenance
 from zicato.query.transcript_reconstruction import reconstruct_transcript
 
 # ---------------------------------------------------------------------------
@@ -580,7 +583,7 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         reader=query.build_eval_matrix,
         serves="The entries × candidates outcomes matrix for one epoch.",
         params=("epoch_id",),
-        degrade=lambda _paths, c: query._empty_matrix(c["epoch_id"]),
+        degrade=lambda _paths, c: _empty_matrix(c["epoch_id"]),
         off_event_loop=True,
     ),
     ReadEndpoint(
@@ -588,7 +591,7 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         reader=query.build_eval_dossier,
         serves="One board entry's instrument-quality dossier.",
         params=("epoch_id", "entry_id"),
-        degrade=lambda _paths, c: query._empty_dossier(c["epoch_id"], c["entry_id"]),
+        degrade=lambda _paths, c: _empty_dossier(c["epoch_id"], c["entry_id"]),
         off_event_loop=True,
     ),
     ReadEndpoint(
@@ -596,7 +599,7 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         reader=query.build_eval_health,
         serves="The instrument-quality panel for one epoch.",
         params=("epoch_id",),
-        degrade=lambda _paths, c: query._empty_health(c["epoch_id"]),
+        degrade=lambda _paths, c: _empty_health(c["epoch_id"]),
         off_event_loop=True,
     ),
     ReadEndpoint(
@@ -604,7 +607,7 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         reader=query.build_judge_roster,
         serves="What is armed to judge a run on one epoch's board.",
         params=("epoch_id",),
-        degrade=lambda _paths, c: query._empty_judge_roster(c["epoch_id"]),
+        degrade=lambda _paths, c: _empty_judge_roster(c["epoch_id"]),
         off_event_loop=True,
     ),
     # -- generation- and run-coordinate reads ---------------------------
@@ -830,7 +833,7 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         reader=query.build_suggestion_provenance,
         serves="One suggestion's provenance chain, from episodes back to trace segments.",
         params=("reflection_id", "suggestion_id"),
-        degrade=lambda _paths, c: query._empty_provenance(c["reflection_id"], c["suggestion_id"]),
+        degrade=lambda _paths, c: _empty_provenance(c["reflection_id"], c["suggestion_id"]),
         off_event_loop=True,
     ),
 )

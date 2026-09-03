@@ -876,7 +876,8 @@ def test_epoch_view_board_skips_board_meta_header(workspace: Path) -> None:
 
 def test_build_epochs_summary_distils_goal_from_brief(workspace: Path) -> None:
     """build_epochs_summary distils a one-line goal from each epoch brief."""
-    from zicato.query import WorkspacePaths, build_epochs_summary
+    from zicato.query import WorkspacePaths
+    from zicato.query.epoch_view import build_epochs_summary
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     _write(
@@ -895,7 +896,8 @@ def test_build_epochs_summary_distils_goal_from_brief(workspace: Path) -> None:
 
 def test_build_epochs_summary_goal_none_when_no_goal_section(workspace: Path) -> None:
     """A brief with no ``## Goal`` section yields a null goal, not an error."""
-    from zicato.query import WorkspacePaths, build_epochs_summary
+    from zicato.query import WorkspacePaths
+    from zicato.query.epoch_view import build_epochs_summary
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     _write(epoch_dir / "brief.md", "# Proposer brief\n\n## Preferred edits\n\nNo goal here.\n")
@@ -905,7 +907,8 @@ def test_build_epochs_summary_goal_none_when_no_goal_section(workspace: Path) ->
 
 def test_build_epochs_summary_reads_legacy_rubric_md(workspace: Path) -> None:
     """The goal distillation falls back to the legacy ``rubric.md`` name."""
-    from zicato.query import WorkspacePaths, build_epochs_summary
+    from zicato.query import WorkspacePaths
+    from zicato.query.epoch_view import build_epochs_summary
 
     epoch_dir = workspace / "epochs" / "2026-05-16_e0"
     (epoch_dir / "brief.md").unlink()
@@ -1071,7 +1074,7 @@ def test_compute_epoch_delta_summary_champion_spine_vs_gross() -> None:
     across the promoted hops — ``-10 + -15 = -25``. The gross net sums
     every recorded delta, promoted or not — ``-10 + 5 + -15 + 20 = 0``.
     """
-    from zicato.query import compute_epoch_delta_summary
+    from zicato.query.epoch_view import compute_epoch_delta_summary
 
     experiments = [
         # v0 is the baseline — no outcome, no delta.
@@ -1094,7 +1097,7 @@ def test_compute_epoch_delta_summary_t6_run8_shape() -> None:
     gross = sum of all five = ``+19.482`` — exactly the discrepancy the
     operator caught on the Epoch header.
     """
-    from zicato.query import compute_epoch_delta_summary
+    from zicato.query.epoch_view import compute_epoch_delta_summary
 
     experiments = [
         _exp(gen="v1", parent="v0", decision="promoted", delta=-14.429),
@@ -1116,7 +1119,7 @@ def test_compute_epoch_delta_summary_empty_and_lone_promotion() -> None:
     spine reads "—" until a second promotion lands. The gross figure
     still sums every recorded delta — it is the all-experiments view.
     """
-    from zicato.query import compute_epoch_delta_summary
+    from zicato.query.epoch_view import compute_epoch_delta_summary
 
     # An epoch with no promoted experiments at all.
     only_rejected = [
@@ -1153,7 +1156,7 @@ def test_compute_epoch_delta_summary_no_deltas_returns_none() -> None:
     written an outcome yet. Neither tile should read "0.000" — both
     must read "—" (no comparison possible yet).
     """
-    from zicato.query import compute_epoch_delta_summary
+    from zicato.query.epoch_view import compute_epoch_delta_summary
 
     experiments = [
         {"generation_id": "v0", "parent_generation_id": None},
@@ -1166,7 +1169,7 @@ def test_compute_epoch_delta_summary_no_deltas_returns_none() -> None:
 
 def test_compute_epoch_delta_summary_skips_malformed_entries() -> None:
     """Best-effort: non-dicts, missing ids, non-finite deltas are skipped."""
-    from zicato.query import compute_epoch_delta_summary
+    from zicato.query.epoch_view import compute_epoch_delta_summary
 
     experiments: list[dict[str, object]] = [
         # Wrong types — silently skipped.
@@ -3678,58 +3681,6 @@ def test_empty_workspace_endpoints_do_not_500(tmp_path: Path, static_dir: Path) 
             "/api/health-report",
         ):
             assert c.get(path).status_code == 200, path
-
-
-# ---------------------------------------------------------------------------
-# ADK session id utility — read_adk_session_id_from_events
-# ---------------------------------------------------------------------------
-
-
-def test_read_adk_session_id_from_events_camel(tmp_path: Path) -> None:
-    """Reads ``sessionId`` (camelCase) from the first line of an events.jsonl."""
-    from zicato.query import read_adk_session_id_from_events
-
-    p = tmp_path / "events.jsonl"
-    _write(
-        p,
-        json.dumps({"eventId": "e0", "runId": "r0", "sessionId": "sid-camel-xyz"}) + "\n",
-    )
-    assert read_adk_session_id_from_events(str(p)) == "sid-camel-xyz"
-
-
-def test_read_adk_session_id_from_events_snake(tmp_path: Path) -> None:
-    """Reads ``session_id`` (snake_case) when ``sessionId`` is absent."""
-    from zicato.query import read_adk_session_id_from_events
-
-    p = tmp_path / "events.jsonl"
-    _write(
-        p,
-        json.dumps({"event_id": "e0", "run_id": "r0", "session_id": "sid-snake-abc"}) + "\n",
-    )
-    assert read_adk_session_id_from_events(str(p)) == "sid-snake-abc"
-
-
-def test_read_adk_session_id_from_events_missing_file(tmp_path: Path) -> None:
-    """A missing file degrades to ``""``."""
-    from zicato.query import read_adk_session_id_from_events
-
-    assert read_adk_session_id_from_events(str(tmp_path / "no-such-file.jsonl")) == ""
-
-
-def test_read_adk_session_id_from_events_none_path() -> None:
-    """A ``None`` path degrades to ``""``."""
-    from zicato.query import read_adk_session_id_from_events
-
-    assert read_adk_session_id_from_events(None) == ""
-
-
-def test_read_adk_session_id_from_events_no_session_field(tmp_path: Path) -> None:
-    """An events.jsonl with no session envelope key degrades to ``""``."""
-    from zicato.query import read_adk_session_id_from_events
-
-    p = tmp_path / "events.jsonl"
-    _write(p, json.dumps({"event_id": "e0", "run_id": "r0"}) + "\n")
-    assert read_adk_session_id_from_events(str(p)) == ""
 
 
 # ---------------------------------------------------------------------------

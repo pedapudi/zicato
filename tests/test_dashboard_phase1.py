@@ -33,16 +33,16 @@ from zicato.dashboard.server import create_app
 from zicato.query import (
     WorkspacePaths,
     build_epoch_view,
-    build_epochs_summary,
     build_per_entry_for_generation,
     build_per_judge_comparison,
     build_per_judge_for_entry,
     build_per_judge_for_generation,
     build_per_judge_for_run,
     build_per_judge_trend,
-    build_workspace_identity,
     build_workspace_view,
 )
+from zicato.query.epoch_view import build_epochs_summary
+from zicato.query.judge_view import build_workspace_identity
 
 
 def _write(path: Path, text: str) -> None:

@@ -574,7 +574,7 @@ def test_gate_endpoint_carries_scalars_and_live_keys(tmp_path: Path, static_dir:
 
 def test_provenance_parser_token_shapes() -> None:
     """The parser decomposes every documented token shape (incl. fail-open)."""
-    from zicato.query import _parse_scoring_provenance
+    from zicato.query.gate_view import _parse_scoring_provenance
 
     # None / builtin -> quiet built-in (None additionally marks present=False).
     none_view = _parse_scoring_provenance(None)
@@ -609,7 +609,7 @@ def test_provenance_parser_token_shapes() -> None:
 def test_provenance_parser_flags_fail_open() -> None:
     """A ``(fallback: …)`` token is flagged fail-open with its reason, while
     the underlying pre-plugin token is still classified."""
-    from zicato.query import _parse_scoring_provenance
+    from zicato.query.gate_view import _parse_scoring_provenance
 
     view = _parse_scoring_provenance("builtin (fallback: raised ValueError)")
     assert view["fail_open"] is True

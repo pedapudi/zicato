@@ -52,7 +52,7 @@ server + the JS). Nothing in the library knows the driver exists.
 | File | What lives there | Approx. size |
 |---|---|---|
 | `src/zicato/query/__init__.py` | the package face — re-exports every reader; the "library, not driver" module docstring | 341 lines |
-| `src/zicato/query/paths.py` | `WorkspacePaths` (the `.zicato/` layout), the coercers `coerce_float` / `to_snake` / `_opt_bool`, `_resolve_epoch_id` (the traversal guard), epoch enumeration re-exports | 274 lines |
+| `src/zicato/query/paths.py` | `WorkspacePaths` (the `.zicato/` layout), the coercers `coerce_float` / `_opt_bool`, `_resolve_epoch_id` (the traversal guard), epoch enumeration re-exports | 260 lines |
 | `src/zicato/query/decisions.py` | THE one decision classifier: `canonical_decision`, `promoted_tristate`, `stamp_experiment_decision`, `PROMOTED_DECISIONS` | 94 lines |
 | `src/zicato/query/contracts.py` | typed envelopes and the exhaustive JSON endpoint registry | — |
 | `src/zicato/query/_sqlite.py` | `_open_index` (read-only `mode=ro`), `_query` (swallow-to-`[]`), `_opt_json`, `_IndexAbsent` | 41 lines |
@@ -682,7 +682,7 @@ This is the SECOND line of defence behind `_is_safe_id` in the endpoint
 (§9.5); the endpoint rejects a malformed coordinate before it reaches the
 reader, and the reader re-validates against the actual epoch set.
 
-### 9.3.4 The coercers — `coerce_float`, `to_snake`
+### 9.3.4 The coercer — `coerce_float`
 
 `coerce_float` is THE numeric payload coercer — it replaced dozens of
 inline `float(x) if isinstance(x, int|float) else None` copies, and it
@@ -702,10 +702,11 @@ def coerce_float(value: Any) -> float | None:
 ```
 — `src/zicato/query/paths.py`, `coerce_float`
 
-`to_snake` normalizes a `camelCase`/`PascalCase` key to `snake_case`, and
-it is one half of a two-language contract — it **mirrors the Rust
-`run_log::to_snake`** so event kinds key on ONE stable vocabulary across
-both servers:
+The other normalization the readers depend on lives outside this package.
+`zicato.telemetry.event_log.to_snake` folds a `camelCase`/`PascalCase`
+event key to `snake_case`, and it is one half of a two-language contract —
+it **mirrors the Rust `run_log::to_snake`** so event kinds key on ONE
+stable vocabulary across both servers:
 
 ```python
 def to_snake(name: str) -> str:
@@ -716,7 +717,7 @@ def to_snake(name: str) -> str:
     (the zicato#1 normalization).
     """
 ```
-— `src/zicato/query/paths.py`, `to_snake` (docstring)
+— `src/zicato/telemetry/event_log.py`, `to_snake` (docstring)
 
 > ⚠️ TRAP — `to_snake` has a Rust twin. If you change how a goldfive event
 > key is normalized on the Python side, the Rust supervisor's run-log tailer
@@ -2545,7 +2546,7 @@ Where to add (and what will catch) a regression, by concern:
 |---|---|
 | decision classifier: canonical token + tri-state + Class-B `null` | `tests/test_dashboard_decision_surface.py` |
 | reader degrade (missing index ⇒ empty + note; malformed epoch ⇒ empty) | `tests/test_dashboard_loop_view.py`, per-reader `tests/test_*_view*.py` |
-| coercers: `coerce_float` bool-exclusion, `to_snake` Rust parity, `_opt_bool` | no dedicated suite — exercised only INDIRECTLY, through the reader suites that consume them. A direct unit test for `zicato/query/paths.py` is the standing gap here |
+| coercers: `coerce_float` bool-exclusion, `_opt_bool` | no dedicated suite — exercised only INDIRECTLY, through the reader suites that consume them. A direct unit test for `zicato/query/paths.py` is the standing gap here |
 | entry-status four-bucket canon + `status_raw` preservation | `tests/test_dashboard_*runtime*` / the runtime-view suite |
 | `_is_safe_id` / degrade-to-200 / `?epoch=` 404 | `tests/test_dashboard_server.py` (+ `tests/test_issue_250_pins.py` for the `_is_safe_id`/Rust mirror) |
 | the served joins (round-timeline / racing-field) match the client mock | `tests/test_dashboard_racing_and_rounds.py` + `test/mock_server.mjs` |
