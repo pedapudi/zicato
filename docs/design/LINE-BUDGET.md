@@ -50,8 +50,8 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 463,972 | +55,311 |
-| Production | 197,702 | 202,517 | +4,815 |
+| Total | 408,661 | 463,982 | +55,321 |
+| Production | 197,702 | 202,522 | +4,820 |
 | Production logic | 110,276 | 112,933 | +2,657 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
@@ -264,3 +264,5 @@ dropped rows named.
 | Swiss standings count the pairings a contestant lost (total) | 463,952 | +20 | 463,972 | Issue #337: the Swiss standing wrote a zero into every contestant's `losses` field while `wins` carried the Copeland score, so a settled five-contestant field reported four lost pairings as none. `tests/test_selection_strategies.py` carries 15 of the rise for a four-contestant field over two rounds with a known result table, asserting the wins and the losses of all four against it. Production carries the remaining 5. |
 | Swiss standings count the pairings a contestant lost (production) | 202,512 | +5 | 202,517 | Issue #337: `selection/strategies/swiss.py` names the loser of each settled pairing beside the winner and tallies it into the loss map the champion-gate base already declares, which is the same map the other bracket structures fold into. Its standings docstring gains the rule a reader otherwise has to derive: a bye raises `wins` with no pairing to lose, so `wins + losses` is the pairings a contestant played plus the byes it received. |
 | Swiss standings count the pairings a contestant lost (production logic) | 112,931 | +2 | 112,933 | Issue #337: the executable growth is the loser lookup and the increment that tallies it; the standings row reads the tally in place of the literal zero it held. |
+| One entry order for the eval-health payload (total) | 463,972 | +10 | 463,982 | Issue #353: the per-entry instrument map was folded through a set, so an epoch whose board does not load served its `insufficient` and `runtime_cost` entries in an order that changed with the process's hash seed. `tests/test_query_eval_view.py` gains 19 lines building that payload from a seeded epoch with its board removed and pinning both lists in id order, which is the assertion that fails under the seeds the old fold reordered; two reads inside one process agreed even before the fix, so the round trip alone would not have caught it. Against that, `tests/_endpoint_snapshot_harness.py` loses 14: the endpoint snapshot compared one list sorted rather than as served, and with the order decided at the source it compares every list as served. Production carries the remaining 5. |
+| One entry order for the eval-health payload (production) | 202,517 | +5 | 202,522 | Issue #353: `query/eval_view.py` sorts the union of the two sources it folds the instrument map from, and its docstring states the rule the sort holds — the payload walks this map in its own order for every entry the board does not name, so the fold decides what identical reads serve. Production logic does not move: the sort replaces the bare set expression on the same line. |
