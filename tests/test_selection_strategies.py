@@ -341,6 +341,21 @@ def test_swiss_standings_rank_by_copeland() -> None:
     assert dec.standings[0].generation_id == "v1"
 
 
+def test_swiss_standings_count_a_loss_for_every_pairing_lost() -> None:
+    s = make_strategy(
+        TournamentStructure(structure="swiss", params={"field_size": 3, "rounds_n": 2})
+    )
+    champ = _champion("v0")
+    challengers = [_challenger("v1"), _challenger("v2"), _challenger("v3")]
+    # An even field pairs (v0,v1) and (v2,v3) in round 1 — v1 and v2 win.
+    # Round 2 pairs the two winners and the two losers: v1 beats v2, v3
+    # beats v0. Byes never occur, so wins and losses balance per round.
+    scalars = {"v0": 0.9, "v1": 0.2, "v2": 0.5, "v3": 0.6}
+    dec = _run_strategy(s, champ, challengers, scalars)
+    tally = {r.generation_id: (r.wins, r.losses) for r in dec.standings}
+    assert tally == {"v1": (2, 0), "v2": (1, 1), "v3": (1, 1), "v0": (0, 2)}
+
+
 # ---------------------------------------------------------------------------
 # Racing
 # ---------------------------------------------------------------------------

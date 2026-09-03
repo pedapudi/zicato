@@ -232,7 +232,9 @@ class SwissStrategy(ChampionGateStrategy):
             return
         left, right = pair
         winner_id = result.lower_scalar_id()
+        loser_id = right.generation_id if winner_id == left.generation_id else left.generation_id
         self._copeland[winner_id] = self._copeland.get(winner_id, 0) + 1
+        self._losses[loser_id] = self._losses.get(loser_id, 0) + 1
         self._round_matches.append(
             MatchRecord(
                 match_id=result.matchup_id,
@@ -297,8 +299,11 @@ class SwissStrategy(ChampionGateStrategy):
 
         The pairing order IS the Swiss standing, so this replaces the
         duel-tally standings rather than sorting rows into them: ``wins``
-        carries the Copeland score, ``scalar`` the mean over every duel the
-        contestant played, and no contestant is ever eliminated.
+        carries the Copeland score, ``losses`` the settled pairings the
+        contestant lost, ``scalar`` the mean over every duel the contestant
+        played, and no contestant is ever eliminated. A bye raises ``wins``
+        with no pairing to lose, so ``wins + losses`` is the pairings a
+        contestant played plus the byes it received.
         """
         rows: list[Standing] = []
         for gid in self._standing_order():
@@ -314,7 +319,7 @@ class SwissStrategy(ChampionGateStrategy):
                     rank=0,
                     scalar=self._mean_scalar(gid),
                     wins=self._copeland.get(gid, 0),
-                    losses=0,
+                    losses=self._losses.get(gid, 0),
                     status=status,  # type: ignore[arg-type]
                     role=role,  # type: ignore[arg-type]
                 )

@@ -501,7 +501,7 @@
         },
         {
           "generation_id": "v4",
-          "losses": 0,
+          "losses": 1,
           "rank": 3,
           "role": "challenger",
           "scalar": 1.6,
@@ -510,7 +510,7 @@
         },
         {
           "generation_id": "v0",
-          "losses": 0,
+          "losses": 1,
           "rank": 4,
           "role": "champion",
           "scalar": 2.0,
@@ -519,7 +519,7 @@
         },
         {
           "generation_id": "v3",
-          "losses": 0,
+          "losses": 2,
           "rank": 5,
           "role": "challenger",
           "scalar": 1.2,
