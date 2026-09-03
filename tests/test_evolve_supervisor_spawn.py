@@ -450,3 +450,47 @@ def test_group_kill_aimed_at_dashboard_child_cannot_reach_evolve(
                 await proc.wait()
 
     asyncio.run(_scenario())
+
+
+def test_a_layout_shallower_than_a_source_checkout_resolves_to_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Running out of parents means no candidate, not an exception.
+
+    The dev-checkout candidate is the fifth parent of this module's file. An
+    installed layout can sit shallower than that, and the resolver's contract
+    is to return ``None`` when nothing resolves, so the walk has to be bounded
+    rather than raising ``IndexError`` out of the command that called it.
+    """
+    import zicato
+    import zicato.cli.commands.evolve as ev
+
+    pkg_root = tmp_path / "site" / "zicato"
+    pkg_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(zicato, "__file__", str(pkg_root / "__init__.py"))
+    # One parent, where the dev-checkout candidate needs five.
+    monkeypatch.setattr(ev, "__file__", "/evolve.py")
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-path"))
+
+    assert _resolve_supervisor_binary() is None
+
+
+def test_a_dashboard_argv_that_cannot_be_built_only_warns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A dashboard that cannot be started degrades to a warning, never to an abort.
+
+    ``sys.executable`` is empty or ``None`` under an embedded interpreter, and a
+    ``None`` argv[0] raises ``TypeError`` out of ``os.path.dirname`` rather than
+    the ``OSError`` a spawn guard expects. Building the argv therefore belongs
+    inside the same guard that covers the spawn it feeds.
+    """
+    import zicato.cli.commands.evolve as ev
+
+    def _unbuildable(*_a: object, **_k: object) -> list[str]:
+        raise TypeError("expected str, bytes or os.PathLike object, not NoneType")
+
+    monkeypatch.setattr(ev, "_dashboard_spawn_argv", _unbuildable)
+
+    assert asyncio.run(_maybe_spawn_dashboard(tmp_path, 7892, disabled=False)) is None
+    assert "dashboard disabled" in capsys.readouterr().err
