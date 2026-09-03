@@ -459,9 +459,10 @@ async def _propose_and_apply_challenger(
     )
     # Lineage is the creation commit marker. Write the pending node before
     # experiment.json so recovery can identify every applied field sibling
-    # without inferring membership from directory order. A crash before this
-    # marker leaves source-only residue outside lineage-based recovery; a crash
-    # after it can discard the complete field.
+    # without inferring membership from directory order. A crash after this
+    # marker can discard the complete field; a crash before it leaves source
+    # that no canonical record names, which startup prunes through the store
+    # (:func:`zicato.runtime.resume._discard_unrecorded_source`).
     append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id, pending=True)
     write_experiment(workspace_root, epoch_id, next_id, experiment)
     _ingest_experiment_into_index(workspace_root, epoch_id, next_id)

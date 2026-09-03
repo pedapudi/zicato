@@ -50,6 +50,15 @@ well as its directory. If a multi-challenger field reached a decision, its
 durable settlement receipt resolves every sibling together; without a
 receipt, recovery discards every pending sibling in the field.
 
+Source state can precede both canonical registers. ``derive_generation``
+commits the candidate's tree before the pending lineage node is written. A
+stop inside that interval therefore leaves a source generation that neither a
+record directory nor lineage names — under the Git backend, a tag and a
+worktree living outside ``epochs/`` entirely. Startup discards that source
+through the configured store once settlement receipts have replayed and
+before it classifies any generation, which keeps the identifier the next
+proposal allocates free of an earlier commit.
+
 Scope
 -----
 Tournament execution resumes in place only for one challenger with a readable
@@ -64,7 +73,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from zicato.runtime.paths import (
     active_runs_dir,
@@ -84,6 +93,12 @@ if TYPE_CHECKING:
     from zicato.epoch.genstore import GenerationStore
 
 log = logging.getLogger("zicato.runtime.resume")
+
+#: The epoch's seed generation. Its source tree is materialised before either
+#: canonical register names it, and a workspace whose baseline record was lost
+#: keeps a valid tree that ``zicato repair v0-baseline`` rewrites the record
+#: for, so the baseline is never treated as unrecorded source.
+_BASELINE_GENERATION_ID = "v0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,30 +261,32 @@ def _prune_generation_records(
             raise RuntimeError(f"generation record cleanup failed for {epoch_id}/{generation_id}")
 
 
-def _pending_lineage_groups(
-    workspace_root: Path,
-    epoch_id: str,
-) -> dict[tuple[int, str], tuple[str, ...]]:
-    """Return unresolved generations grouped by their immutable field coordinates."""
+def _lineage_generation_rows(workspace_root: Path, epoch_id: str) -> list[dict[str, Any]]:
+    """Every generation node one epoch's lineage holds, resolved or pending."""
     from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
 
-    lineage = load_lineage(workspace_root)
     epoch = next(
         (
             row
-            for row in lineage.get("epochs", [])
+            for row in load_lineage(workspace_root).get("epochs", [])
             if isinstance(row, dict) and row.get("id") == epoch_id
         ),
         None,
     )
     if epoch is None:
-        return {}
+        return []
+    return [row for row in epoch.get("generations", []) if isinstance(row, dict)]
+
+
+def _pending_lineage_groups(
+    workspace_root: Path,
+    epoch_id: str,
+) -> dict[tuple[int, str], tuple[str, ...]]:
+    """Return unresolved generations grouped by their immutable field coordinates."""
     groups: dict[tuple[int, str], list[str]] = {}
     promoted_groups: set[tuple[int, str]] = set()
     seen: set[str] = set()
-    for row in epoch.get("generations", []):
-        if not isinstance(row, dict):
-            continue
+    for row in _lineage_generation_rows(workspace_root, epoch_id):
         generation_id = row.get("id")
         if not isinstance(generation_id, str) or not generation_id or generation_id in seen:
             raise RuntimeError("lineage contains an invalid or duplicate generation id")
@@ -314,6 +331,59 @@ def _pending_lineage_groups(
         )
         for key, generation_ids in groups.items()
     }
+
+
+def _discard_unrecorded_source(
+    workspace_root: Path,
+    epoch_id: str,
+    store: GenerationStore,
+) -> tuple[str, ...]:
+    """Discard source generations that no canonical record accounts for.
+
+    A candidate's source tree is committed by
+    :meth:`~zicato.epoch.genstore.GenerationStore.derive_generation` before the
+    round writes its pending lineage node and its ``experiment.json``. Under
+    the Git backend that source is a tag and a worktree outside
+    ``epochs/{epoch}/generations/``. A process that stops inside that interval
+    therefore leaves source that no canonical enumeration reaches, holding an
+    identifier the next proposal will allocate. The directory backend cannot reach
+    the same state: its source tree lives under the generation record
+    directory, so materialising the source creates the record this
+    reconciliation looks for.
+
+    A generation is canonical when the epoch holds a record directory for it,
+    or lineage holds a node for it. Recovery, promotion and the derived index
+    all read those two registers. Source in neither is interrupted candidate
+    creation: nothing proves which patches produced it, nothing places it in a
+    round, and no evaluation may be cached against it. It is discarded through
+    :func:`_prune_generation_records`, which prunes the store — deleting the
+    tag, the reusable worktree and any registered temporary checkout, and
+    rewinding an epoch branch that ends at a discarded commit — and verifies
+    the source is gone. Its record-directory removal is a no-op here by
+    construction: an id in neither register has no record directory, and no
+    derived-index row either.
+
+    Returns the discarded ids, empty when every source generation is
+    accounted for. Idempotent: a second call lists no source for them.
+    """
+    canonical = set(generation_ids(WorkspaceLayout.from_root(workspace_root), epoch_id)) | {
+        generation_id
+        for row in _lineage_generation_rows(workspace_root, epoch_id)
+        if isinstance(generation_id := row.get("id"), str)
+    }
+    unrecorded = tuple(
+        generation_id
+        for generation_id in store.list_generations(epoch_id)
+        if generation_id != _BASELINE_GENERATION_ID and generation_id not in canonical
+    )
+    if not unrecorded:
+        return ()
+    _prune_generation_records(workspace_root, epoch_id, unrecorded, store)
+    log.warning(
+        "resume: discarded source generations with no canonical record: %s",
+        ", ".join(unrecorded),
+    )
+    return unrecorded
 
 
 def _unrecorded_fields_without_receipts(
@@ -448,13 +518,16 @@ def _has_any_loss(workspace_root: Path, epoch_id: str, generation_id: str) -> bo
 
 
 def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
-    """Recover receipts, discard ambiguous fields, and classify one restart.
+    """Recover receipts, discard unusable state, and classify one restart.
 
-    Settlement receipts complete before generation inspection. Pending
-    siblings without a receipt are discarded together. A remaining single
-    challenger resumes only when its experiment, pending lineage coordinates,
-    source snapshot, and at least one cached loss all agree; every ambiguous
-    state is discarded so the round can be proposed again.
+    Settlement receipts complete before generation inspection. Source
+    generations no canonical record accounts for are discarded next, so an
+    interrupted derivation cannot hold an identifier a later proposal
+    allocates. Pending siblings without a receipt are then discarded together.
+    A remaining single challenger resumes only when its experiment, pending
+    lineage coordinates, source snapshot, and at least one cached loss all
+    agree; every ambiguous state is discarded so the round can be proposed
+    again.
     """
     # A field settlement has a complete, replayable receipt before its first
     # outcome write. Finish those commits before classifying generations: an
@@ -467,6 +540,10 @@ def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
 
     store = default_generation_store(workspace_root)
     recover_field_settlements(workspace_root, epoch_id)
+    # Receipt replay writes the canonical records a settled field is missing,
+    # so source coordinates are compared against the registers only once those
+    # writes have landed.
+    _discard_unrecorded_source(workspace_root, epoch_id, store)
     discarded_field = _discard_unrecorded_fields(workspace_root, epoch_id, store)
     clear_runtime_state(workspace_root)
     if discarded_field:
@@ -476,7 +553,7 @@ def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
         )
 
     latest = _latest_generation_id(workspace_root, epoch_id)
-    if latest is None or latest == "v0":
+    if latest is None or latest == _BASELINE_GENERATION_ID:
         # No challenger generation has ever been minted (only the v0
         # seed, or nothing). Nothing to resume — a fresh round runs as
         # always.

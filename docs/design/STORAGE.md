@@ -195,10 +195,29 @@ The on-disk layout is byte-identical to a direct write.
 Candidate creation first records the applied generation as a pending lineage
 node (`promoted=null`), then writes the patch records, and writes
 `experiment.json` last. The pending lineage node is the cleanup commit marker:
-a crash before it leaves source-only residue that the current lineage-based
-recovery cannot identify, while a crash after it gives resume enough
-coordinates to discard the complete candidate field. Writing patch records
-before `experiment.json` prevents a dangling `patch_ids` reference.
+a crash after it gives resume the coordinates to discard the complete
+candidate field. Writing patch records before `experiment.json` prevents a
+dangling `patch_ids` reference.
+
+A crash before that marker leaves derived source that no canonical record
+names, and startup reconciles it separately. It compares
+`GenerationStore.list_generations` against two registers: the epoch's
+generation record directories, and its lineage nodes. Every non-baseline
+source generation that neither register names is interrupted candidate
+creation, and it is pruned through the configured store.
+
+Only the Git backend reaches that state. A directory snapshot lives under
+`epochs/{epoch}/generations/{generation}/`, so materialising the source
+creates the record directory; a Git generation is a tag and a worktree outside
+`epochs/` entirely. The reconciliation touches source alone. It deletes the
+tag, removes the reusable worktree and any registered temporary checkout, and
+rewinds an epoch branch whose head is a discarded commit. It removes no record
+and no derived-index row, because a generation that neither register names has
+none.
+
+The baseline is exempt from the comparison. It is seeded before either
+register names it, and a workspace whose baseline record was lost keeps a
+valid tree that `zicato repair v0-baseline` rewrites the record for.
 
 A resolved field round spans several atomic records. Before updating the first
 experiment outcome, zicato writes
