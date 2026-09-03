@@ -47,6 +47,7 @@
 |---|---|
 | `tests/conftest.py` | the suite root: `sys.path` pin + the six autouse fixtures (config-pin isolation, mutation-syntax-table isolation, worker-permit redirection, the default-proposer text-shim, the harmonograf launch stub, the provenance-scoped dashboard reaper) |
 | `tests/_contract_pins.py` | `pin_deterministic` / `deterministic_weights` — the deterministic scripted-test knob pins |
+| `tests/_workspace_support.py` | the builders a read-side test composes its `.zicato/` fixture from — paths off `WorkspaceLayout`, `index.db` off `zicato.index.schema`, so a fixture cannot re-spell either. A new read-side test uses these instead of hand-writing DDL or joining `"epochs"` into a path; the module docstring states the default and the two cases that fall outside it |
 | `tests/_subprocess_worker_support.py` | module-level importable adapters + callables the worker subprocess resolves by dotted path (the worker-boundary test support) |
 | `tests/_best_of_n_slate_support.py` | the scripted best-of-N slate whose slot-2 fabricates its metrics, so a wrongly mounted tree is detectable |
 | `tests/test_convergence_known_answer.py` | **the convergence oracle** — the full loop to an exact, hand-computable floor, no tournament stubs |
