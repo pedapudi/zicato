@@ -16,17 +16,25 @@ from __future__ import annotations
 import json
 import os
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import foe
 import pytest
 
 from tests._foe_support import fake_foe_binary
+from zicato.core.mutation import MutationPoint
 from zicato.epoch.contract import _canon_proposer
 from zicato.proposer.external import external_proposer_config
 from zicato.proposer.foe_agent import FoeProposerAgent, build_episode_tools
 from zicato.proposer.foe_config import ProposerConfigError, load_foe_proposer_config
-from zicato.proposer.foe_request import identity_contract
+from zicato.proposer.foe_request import (
+    ProposalEvidence,
+    build_contract,
+    identity_contract,
+    rebase_mutations,
+    render_task,
+)
 from zicato.proposer.skills import resolve_proposer_spec
 
 
@@ -37,6 +45,11 @@ def _workspace(tmp_path: Path, **proposer: object) -> dict[str, object]:
     }
     block.update(proposer)
     return {"proposer": block}
+
+
+def _foe_config(tmp_path: Path) -> object:
+    """The loaded proposer config `build_contract` takes."""
+    return load_foe_proposer_config(_workspace(tmp_path), tmp_path)
 
 
 def _identity(tmp_path: Path, config: dict[str, object]) -> dict[str, object]:
@@ -86,8 +99,11 @@ def test_changing_a_grant_path_leaves_the_hash_alone(tmp_path: Path) -> None:
     contract = identity_contract(config, _tools(tmp_path))
     before = contract.fingerprint(config.binary)
 
+    # Only the SHAPE of the grants is fingerprinted, so the substitute keeps
+    # it: the working copy is granted read as well as write, and granted
+    # first, so ``read`` is two roots rather than one.
     moved = tmp_path / "elsewhere"
-    contract.grants = foe.Grants(read=[moved / "read"], write=[moved / "write"])
+    contract.grants = foe.Grants(read=[moved / "write", moved / "read"], write=[moved / "write"])
     assert contract.fingerprint(config.binary) == before
 
 
@@ -164,3 +180,81 @@ def test_a_workspace_that_declares_no_proposer_resolves_none(tmp_path: Path) -> 
     assert external_proposer_config({}, tmp_path) is None
     spec = resolve_proposer_spec(None, None)
     assert spec.external_path is None
+
+
+# ---------------------------------------------------------------------------
+# The episode has to be able to edit the tree it is told to edit
+# ---------------------------------------------------------------------------
+
+
+def _a_point(read_root: Path) -> MutationPoint:
+    return MutationPoint(
+        id="p1",
+        kind="span",
+        file=read_root / "agent" / "agent.py",
+        source_root=read_root,
+        line_start=1,
+        line_end=1,
+        content="hello",
+        content_hash="sha256:0",
+    )
+
+
+def test_the_working_copy_is_readable_and_leads_the_read_roots(tmp_path: Path) -> None:
+    """``edit`` is read-modify-write, and a bare path has to mean the copy.
+
+    A ``grants.write`` directory confers no read, so a write-only working
+    copy cannot be edited at all. And a relative path argument is taken from
+    the FIRST read root, so the copy has to lead -- anchored to the snapshot
+    instead, every relative edit is refused as out-of-grants and the episode
+    ends blocked with nothing proposed.
+    """
+    read_root = tmp_path / "snapshot"
+    write_root = tmp_path / "scratch"
+    contract = build_contract(
+        _foe_config(tmp_path),
+        instructions={"10-charter": "improve it"},
+        host_tools=_tools(tmp_path),
+        read_root=read_root,
+        write_root=write_root,
+        verify_retries=2,
+    )
+
+    grants = contract.grants.to_dict()
+    assert grants["read"][0] == str(write_root), "the working copy must lead grants.read"
+    assert str(read_root) in grants["read"], "the snapshot stays readable"
+    assert grants["write"] == [str(write_root)]
+
+
+def test_the_mutation_manifest_addresses_the_working_copy(tmp_path: Path) -> None:
+    """The only concrete paths an episode is handed must be writable ones.
+
+    Points are enumerated against the snapshot, so their files are snapshot
+    paths. Rendered unchanged into the task they aim every edit at the one
+    tree the episode may not write.
+    """
+    read_root = tmp_path / "snapshot"
+    write_root = tmp_path / "scratch"
+    evidence = ProposalEvidence(mutations=(_a_point(read_root),))
+
+    task = render_task(evidence, read_root=read_root, write_root=write_root)
+
+    assert f"file={write_root / 'agent' / 'agent.py'}" in task
+    assert f"file={read_root / 'agent' / 'agent.py'}" not in task
+    # The episode block still names both trees.
+    assert f"Read-only parent snapshot: {read_root}" in task
+    assert f"Your writable working copy: {write_root}" in task
+
+
+def test_a_point_outside_the_snapshot_is_left_alone(tmp_path: Path) -> None:
+    """A path that is not under the snapshot is not ours to move."""
+    read_root = tmp_path / "snapshot"
+    write_root = tmp_path / "scratch"
+    elsewhere = tmp_path / "elsewhere" / "x.py"
+    point = replace(_a_point(read_root), file=elsewhere, source_root=elsewhere.parent)
+
+    rebased = rebase_mutations(
+        ProposalEvidence(mutations=(point,)), read_root=read_root, write_root=write_root
+    )
+
+    assert rebased.mutations[0].file == elsewhere

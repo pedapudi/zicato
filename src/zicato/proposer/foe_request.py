@@ -27,7 +27,7 @@ retry rule, so a broken edit costs a turn rather than a tournament round.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -393,12 +393,45 @@ def render_evidence(evidence: ProposalEvidence) -> str:
     return "\n\n".join(blocks)
 
 
+def rebase_mutations(
+    evidence: ProposalEvidence, *, read_root: Path, write_root: Path
+) -> ProposalEvidence:
+    """Re-address the mutation manifest to the tree the episode may write.
+
+    Mutation points are enumerated against the parent snapshot, so
+    :attr:`MutationPoint.file` is an absolute path inside ``read_root``.
+    That is the right address for everything that reads them -- but the
+    manifest is also the ONLY place the episode is handed concrete file
+    paths, and the charter tells it to change the working copy. Rendered
+    unchanged, every path the model is given names the one tree it may not
+    write: it edits the snapshot, ``edit`` refuses each call as
+    out-of-grants, and the episode ends blocked with nothing proposed.
+
+    Rebasing onto ``write_root`` makes the manifest address the copy. Ids,
+    line ranges and content are untouched, and a point whose file is somehow
+    not under ``read_root`` is left exactly as it is.
+    """
+
+    def _rebase(path: Path) -> Path:
+        try:
+            return write_root / path.relative_to(read_root)
+        except ValueError:
+            return path
+
+    rebased = tuple(
+        replace(mp, file=_rebase(mp.file), source_root=_rebase(mp.source_root))
+        for mp in evidence.mutations
+    )
+    return replace(evidence, mutations=rebased)
+
+
 def render_task(evidence: ProposalEvidence, *, read_root: Path, write_root: Path) -> str:
     """The one text a proposal episode is given: where it works, and why.
 
     The episode block comes first because it names the trees every later
     instruction refers to, and the closing line is the ask.
     """
+    evidence = rebase_mutations(evidence, read_root=read_root, write_root=write_root)
     return "\n\n".join(
         [
             "## This episode\n"
@@ -430,7 +463,24 @@ def build_contract(
         name=CONTRACT_NAME,
         instructions=dict(instructions),
         tools=ordered,
-        grants=foe.Grants(read=[read_root], write=[write_root]),
+        # The working copy is granted for BOTH read and write, and FIRST.
+        #
+        # Read, because a ``grants.write`` directory confers write, truncate,
+        # create, remove, rename and link -- and no read (Foe's
+        # docs/sandbox.md). The built-in ``edit`` is read-modify-write: it has
+        # to see the span it is replacing. Granted write-only, the copy cannot
+        # be edited at all, and ``read`` / ``grep`` cannot inspect what an
+        # earlier step of the same episode already changed.
+        #
+        # First, because a relative path argument is taken from the first read
+        # root and ``grep`` defaults its search there (Foe's docs/tools.md).
+        # The episode's work happens in the copy, so a bare ``agent/agent.py``
+        # has to mean the copy; anchored to the snapshot instead, every
+        # relative edit is refused as out-of-grants.
+        #
+        # The parent snapshot stays read-only -- that is the boundary that
+        # matters -- and stays reachable by absolute path for reference.
+        grants=foe.Grants(read=[write_root, read_root], write=[write_root]),
         budget=foe.Budget(
             model_calls=config.budget.model_calls,
             seconds=config.budget.seconds,
