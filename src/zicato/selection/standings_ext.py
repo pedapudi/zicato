@@ -34,7 +34,6 @@ from typing import Any
 from zicato.selection.rating import (
     DuelOutcome,
     fit_bradley_terry,
-    prob_stronger,
     theta_rank,
 )
 from zicato.selection.resolve import Duel, MarginMatrix, build_matrix, resolve_leader
@@ -77,27 +76,6 @@ def read_resolver(params: Mapping[str, Any]) -> str | None:
         return None
     token = raw.strip().lower()
     return token if token in _VALID_RESOLVERS else None
-
-
-def read_uncertainty_threshold(params: Mapping[str, Any]) -> float | None:
-    """The opt-in uncertainty pre-gate threshold, or ``None`` when absent.
-
-    Reads ``params["uncertainty_gate"]`` — the probability bar a promotion
-    must clear: promote only if ``P(theta_child > theta_parent)`` exceeds it,
-    else defer. Absent / non-numeric / out of ``(0, 1)`` ⇒ ``None`` (no
-    guard). The guard can only ever BLOCK a promotion, never force one, so a
-    bad value safely degrades to "no guard" rather than crowning on noise.
-    """
-    raw = params.get("uncertainty_gate", None)
-    if raw is None:
-        return None
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    if value <= 0.0 or value >= 1.0:
-        return None
-    return value
 
 
 def audit_duels(audit: Sequence[MatchupResult]) -> list[DuelOutcome]:
@@ -172,95 +150,11 @@ def resolver_leader(audit: Sequence[MatchupResult], resolver: str) -> str | None
     return resolve_leader(matrix, resolver)
 
 
-def uncertainty_blocks_promotion(
-    audit: Sequence[MatchupResult],
-    parent_id: str,
-    child_id: str,
-    threshold: float,
-) -> tuple[bool, float | None]:
-    """``(blocks, p)`` — whether the guard should DEFER, and the measured p.
-
-    Fits Bradley--Terry over the audit and returns ``blocks=True`` when
-    ``P(theta_child > theta_parent)`` does **not** clear ``threshold`` —
-    i.e. the crowning win is too noisy to trust and the promotion should be
-    deferred to spend more replicates. Returns ``False`` (allow the gate's
-    verdict to stand) when the probability clears the bar, or when there is
-    not enough audit data to fit either contestant (we never invent a block
-    from missing evidence — the guard can only block on positive evidence of
-    a near-tie, never on absence).
-
-    ``p`` is the fitted probability, or ``None`` on the two
-    not-enough-evidence paths where none was computed. It rides back out so
-    the deferral reason can quote the number that decided it rather than
-    only the bar it missed (issue #129) — the same discipline
-    :mod:`zicato.selection.evidence_gate` already applies to its own
-    defer/inconclusive reasons.
-
-    This guard ONLY ever blocks; it never forces a promotion. The gate has
-    already said "promote" before this is consulted, so a ``False`` here is
-    a no-op and the gate's promotion stands.
-    """
-    duels = audit_duels(audit)
-    if not duels:
-        return False, None
-    rating = fit_bradley_terry(duels)
-    if parent_id not in rating or child_id not in rating:
-        return False, None
-    theta_child, se_child = rating[child_id]
-    theta_parent, se_parent = rating[parent_id]
-    p = prob_stronger(theta_child, se_child, theta_parent, se_parent)
-    return p <= threshold, p
-
-
-def apply_uncertainty_guard(
-    decision: str,
-    reason: str,
-    *,
-    audit: Sequence[MatchupResult],
-    parent_id: str,
-    child_id: str,
-    threshold: float | None,
-) -> tuple[str, str, bool]:
-    """Maybe defer a gate-promotion that is too noisy to trust.
-
-    The opt-in uncertainty pre-gate guard
-    (FUNCTIONALITY-RECOMMENDATIONS.md §5). Given the gate's verdict for the
-    crowning duel, returns ``(decision, reason, deferred)``:
-
-    * When ``threshold`` is ``None`` (the knob is absent), or the gate did
-      not promote, returns the inputs unchanged with ``deferred=False`` —
-      the guard is a no-op, so behaviour is byte-identical to the default path.
-    * When the gate promoted AND ``P(theta_child > theta_parent)`` fails to
-      clear ``threshold``, flips the decision to ``"deferred"`` with an
-      explanatory reason and ``deferred=True``. The promotion is held to
-      spend more replicates rather than crown on a noisy near-tie.
-
-    The guard can ONLY block a promotion; it never turns a reject into a
-    promote. So the protected-incumbent invariant strictly strengthens — the
-    worst case is a deferred (not promoted) challenger.
-    """
-    if threshold is None or decision != "promoted":
-        return decision, reason, False
-    blocks, p = uncertainty_blocks_promotion(audit, parent_id, child_id, threshold)
-    if blocks:
-        measured = f"P(theta_child > theta_parent)={p:.3f}" if p is not None else "the fitted P"
-        deferred_reason = (
-            f"deferred: {measured} did not clear the "
-            f"{threshold:.2f} uncertainty bar — the crowning win is within "
-            f"rating noise; replicate before promoting"
-        )
-        return "deferred", deferred_reason, True
-    return decision, reason, False
-
-
 __all__ = [
     "read_rating",
     "read_resolver",
-    "read_uncertainty_threshold",
     "audit_duels",
     "audit_matrix",
     "rating_order",
     "resolver_leader",
-    "uncertainty_blocks_promotion",
-    "apply_uncertainty_guard",
 ]

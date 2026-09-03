@@ -20,7 +20,6 @@ from typing import Any
 from zicato.selection.standings_ext import (
     read_rating,
     read_resolver,
-    read_uncertainty_threshold,
 )
 from zicato.selection.strategies.champion_gate import ChampionGateStrategy
 from zicato.selection.strategy import (
@@ -52,13 +51,11 @@ class SingleEliminationStrategy(ChampionGateStrategy):
         self._round_matches: list[MatchRecord] = []
         self._eliminated_round: dict[str, int] = {}
         self._survivor: Contestant | None = None
-        # Opt-in rating / resolver / uncertainty-guard knobs (absent ⇒
-        # the scalar behaviour, byte-identical). They only re-order the
-        # INTERNAL standings / survivor pick and add a promotion-blocking
-        # defer — never the gate.
+        # Opt-in rating / resolver knobs (absent ⇒ the scalar behaviour,
+        # byte-identical). They only re-order the INTERNAL standings /
+        # survivor pick — never the gate.
         self._rating = read_rating(self.params)
         self._resolver = read_resolver(self.params)
-        self._uncertainty_threshold = read_uncertainty_threshold(self.params)
 
     def seed(self, champion: Contestant, challengers: Sequence[Contestant]) -> None:
         super().seed(champion, challengers)

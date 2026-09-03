@@ -431,11 +431,14 @@ def test_recovery_preserves_a_deferred_field_receipt(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """An uncertainty hold remains deferred and never advances the champion."""
+    """An evidence-gate hold remains deferred and never advances the champion."""
     workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=2)
     scoring_path = workspace / "epochs" / epoch_id / "scoring.json"
     scoring = json.loads(scoring_path.read_text(encoding="utf-8"))
-    scoring["tournament"]["params"]["uncertainty_gate"] = 0.999
+    # A bar no fit can clear, with budget for the pre-gate to reach the
+    # credibility floor before it holds: the crowning promote lands deferred.
+    scoring["tournament"]["params"]["promote_confidence_threshold"] = 0.999
+    scoring["tournament"]["params"]["promote_confidence_replicates"] = 2
     scoring_path.write_text(json.dumps(scoring), encoding="utf-8")
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(

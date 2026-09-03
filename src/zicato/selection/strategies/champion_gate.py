@@ -31,11 +31,7 @@ from dataclasses import replace
 from typing import Any, ClassVar, Literal
 
 from zicato.core.types import TournamentDecision
-from zicato.selection.standings_ext import (
-    apply_uncertainty_guard,
-    rating_order,
-    resolver_leader,
-)
+from zicato.selection.standings_ext import rating_order, resolver_leader
 from zicato.selection.strategy import (
     Contestant,
     MatchRecord,
@@ -84,13 +80,11 @@ class ChampionGateStrategy(SelectionStrategy):
         self._wins: dict[str, int] = {}
         self._losses: dict[str, int] = {}
         # The opt-in standings knobs. A structure that accepts them assigns
-        # them in its own ``__init__`` from ``read_rating`` / ``read_resolver``
-        # / ``read_uncertainty_threshold``; one that does not accept them
-        # leaves all three ``None``, which is the scalar behaviour these
-        # templates take by default.
+        # them in its own ``__init__`` from ``read_rating`` / ``read_resolver``;
+        # one that does not accept them leaves both ``None``, which is the
+        # scalar behaviour these templates take by default.
         self._rating: str | None = None
         self._resolver: str | None = None
-        self._uncertainty_threshold: float | None = None
 
     def field_size(self) -> int:
         """How many challengers the proposer must emit this round."""
@@ -159,9 +153,11 @@ class ChampionGateStrategy(SelectionStrategy):
 
         Without a decided crowning duel the champion stands and the reason
         is the structure's own account of why. With one, the verdict is the
-        gate's, passed through the opt-in uncertainty guard: a promotion the
-        fitted ratings cannot separate from noise becomes a defer, and every
-        other verdict is unchanged.
+        gate's verbatim. Holding a crowning promote that the fitted ratings
+        cannot separate from noise belongs to the driver's opt-in evidence
+        pre-gate (:mod:`zicato.selection.evidence_gate`), which sees this
+        decision after the strategy returns it and owns the replicate budget
+        that resolves the near-tie rather than only naming it.
         """
         audit = tuple(self._audit)
         finalist = self._finalist()
@@ -174,19 +170,11 @@ class ChampionGateStrategy(SelectionStrategy):
                 standings=self._standings(None),
             )
         outcome = self._final_result.outcome
-        decision, reason, _deferred = apply_uncertainty_guard(
-            outcome.decision,
-            outcome.reason,
-            audit=self._audit,
-            parent_id=self._champion.generation_id,
-            child_id=finalist.generation_id,
-            threshold=self._uncertainty_threshold,
-        )
-        promoted_id = finalist.generation_id if decision == "promoted" else None
+        promoted_id = finalist.generation_id if outcome.decision == "promoted" else None
         return SelectionDecision(
             promoted_generation_id=promoted_id,
-            decision=decision,  # type: ignore[arg-type]
-            reason=reason,
+            decision=outcome.decision,
+            reason=outcome.reason,
             matchups=audit,
             crowning_matchup_id=self._final_match_id,
             standings=self._standings(promoted_id),

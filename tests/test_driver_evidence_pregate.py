@@ -8,6 +8,7 @@ today when ``pre_gate`` is ``None`` (the default). These tests pass a
 * a noisy near-tie spends its closest-CI replicates, then converges to a crown,
 * a duel that never separates exhausts its budget and lands ``inconclusive`` +
   fires the dead-letter callback,
+* a field structure (swiss) reaches the same hold on its crowning promote,
 * with no ``replicate_duel`` runner the pre-gate terminates (no dangling defer),
 * a gauntlet still promotes/rejects untouched when the pre-gate cannot fit
   (single duel, below the credibility floor),
@@ -193,6 +194,73 @@ def test_pregate_inconclusive_fires_dead_letter_on_unresolvable_tie() -> None:
     assert res.verdict.ci_overlap is True
     # The CI history traced every refit step.
     assert len(res.ci_history) >= 2
+
+
+# ---------------------------------------------------------------------------
+# A field structure's crowning promote is held on the same evidence
+# ---------------------------------------------------------------------------
+
+
+def test_pregate_holds_a_noisy_swiss_crowning_promote() -> None:
+    # The pre-gate runs over every structure's decision, the gauntlet's single
+    # duel and a field structure's crowning duel alike. Swiss sends its leader
+    # (v1) to the champion gate after trading duels with the champion (v0)
+    # round by round, so the two sit on top of each other in the fit while v2
+    # is clearly weaker. The crowning duel is a marginal promote, and every
+    # replicate the loop spends flips the other way, so the CIs never
+    # separate: the crown is held on the evidence rather than awarded on a
+    # 0.01 win.
+    s = make_strategy(
+        TournamentStructure(structure="swiss", params={"field_size": 2, "rounds_n": 2})
+    )
+    champ = _champion("v0")
+    challengers = [_challenger("v1"), _challenger("v2")]
+    toggle = {"v0_wins": True}
+    flip = {"n": 0}
+    inconclusive: list[EvidenceResolution] = []
+
+    async def request_field(n: int):
+        return champ, challengers
+
+    async def run_matchup(m: Matchup) -> MatchupResult:
+        left, right = m.left.generation_id, m.right.generation_id
+        if m.matchup_id == "swiss-final":
+            # A marginal champion-gate promote: the challenger wins by 0.01.
+            return _result(m, left_scalar=0.41, right_scalar=0.40)
+        if {left, right} == {"v0", "v1"}:
+            # Coin flip: alternate which side takes the lower (better) scalar.
+            winner = "v0" if toggle["v0_wins"] else "v1"
+            toggle["v0_wins"] = not toggle["v0_wins"]
+            return _result(
+                m,
+                left_scalar=0.40 if left == winner else 0.41,
+                right_scalar=0.40 if right == winner else 0.41,
+            )
+        # Anyone against v2: v2 takes the higher (worse) scalar.
+        return _result(
+            m,
+            left_scalar=0.9 if left == "v2" else 0.4,
+            right_scalar=0.9 if right == "v2" else 0.4,
+        )
+
+    async def replicate_duel(left_id: str, right_id: str) -> MatchupResult:
+        flip["n"] += 1
+        return _replicate_result(left_id, right_id, child_won=(flip["n"] % 2 == 0))
+
+    dec = asyncio.run(
+        resolve_tournament(
+            s,
+            request_field=request_field,
+            run_matchup=run_matchup,
+            pre_gate=EvidencePreGate(threshold=0.95, replicate_budget=4),
+            replicate_duel=replicate_duel,
+            on_inconclusive=inconclusive.append,
+        )
+    )
+    assert dec.decision == "deferred"
+    assert dec.promoted_generation_id is None
+    assert len(inconclusive) == 1
+    assert inconclusive[0].verdict.ci_overlap is True
 
 
 # ---------------------------------------------------------------------------

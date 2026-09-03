@@ -1691,10 +1691,11 @@ The optional `resolver` knob (§6.12) only *proposes* an internal leader from th
 duel matrix; if it names the champion or yields nothing, the default top-non-
 champion standing pick wins. The resolver only proposes, and the unchanged
 champion gate still decides promotion: that is **the
-only-promotion-advances-the-champion rule** made concrete. The optional
-uncertainty guard (`apply_uncertainty_guard`) can add a promotion-blocking
-`deferred`, but can never force a promote. Standing is the Copeland score (duels
-won) tie-broken by mean scalar; a bye is a free Copeland point.
+only-promotion-advances-the-champion rule** made concrete. Holding a crowning
+promote belongs to the opt-in evidence pre-gate (§6.11), which reads the
+strategy's decision afterwards and can defer it but never force one. Standing is
+the Copeland score (duels won) tie-broken by mean scalar; a bye is a free
+Copeland point.
 
 ### 6.10.3 Racing — board slices and per-lane live progress
 
@@ -1745,21 +1746,20 @@ on the same skeleton. `replicates >= 2` is the recommended default here — "a
 strong candidate dies to one unlucky run otherwise" — which is why
 `_default_replicates` is 2 (§6.8.3).
 
-### 6.10.5 The opt-in rating / resolver / uncertainty-guard layer
+### 6.10.5 The opt-in rating / resolver layer
 
-Three `TournamentStructure.params` knobs re-order a non-gauntlet structure's
-INTERNAL standings/leader pick and can add a promotion-blocking defer, while
-never touching the gate itself. All three are opt-in and cost **zero new board
-runs**: they are derived entirely from the audit the strategy already
-accumulated. The glue is `zicato.selection.standings_ext`, which reads the knobs
-and converts the flat `MatchupResult` audit into the inputs the pure layers
+Two `TournamentStructure.params` knobs re-order a non-gauntlet structure's
+INTERNAL standings/leader pick, while never touching the gate itself. Both are
+opt-in and cost **zero new board runs**: they are derived entirely from the
+audit the strategy already accumulated. The glue is
+`zicato.selection.standings_ext`, which reads the knobs and converts the flat
+`MatchupResult` audit into the inputs the pure layers
 consume (`audit_duels` → BT outcomes; `audit_matrix` → the resolver matrix).
 
 | Knob | Values | Effect | Reads |
 |---|---|---|---|
 | `rating` | `bradley_terry` | order the standings by fitted latent strength (`rating_order`) instead of Copeland/scalar; unrated contestants sort after rated ones | `zicato.selection.rating.fit_bradley_terry` |
 | `resolver` | `copeland` / `ranked_pairs` | propose the internal leader from the duel matrix (Condorcet fast path → Smith prune → the resolver) instead of the top standing | `zicato.selection.resolve.resolve_leader` (§6.12) |
-| `uncertainty_gate` | a float in `(0,1)` | DEFER a gate-promotion whose `P(theta_child > theta_parent)` fails to clear the bar — the crowning win is within rating noise | `apply_uncertainty_guard` |
 
 The rating backbone (`rating.py`) is a pure Bradley–Terry maximum-likelihood fit
 over the pairwise outcomes — a convex problem with a single global optimum, solved by a
@@ -1769,24 +1769,25 @@ perfect/empty record at a finite strength; it also guarantees the Fisher
 information is positive-definite, so the standard error is always finite. That
 SE is the operational payoff: `prob_stronger(theta_a, se_a, theta_b, se_b)`
 treats the two strengths as independent normals and returns `P(a > b)` — the
-quantity both the `uncertainty_gate` guard and the full BT pre-gate (§6.11)
-threshold. The uncertainty guard's whole contract, from the code:
+quantity the evidence pre-gate of §6.11 thresholds.
+
+Promotion confidence is that one layer's business. Neither knob here can hold a
+crowning promote: they order standings and nominate a finalist, and the gate
+still decides. The single mechanism that thresholds `P(theta_child >
+theta_champion)` against a bar is the pre-gate, which runs in the driver after
+the strategy returns its decision, so it covers every structure rather than only
+the ones that read these knobs. Its contract, from the code:
 
 ```python
-    The guard can ONLY block a promotion; it never turns a reject into a
-    promote. So the protected-incumbent invariant strictly strengthens — the
-    worst case is a deferred (not promoted) challenger.
+    Only ever consulted when the gate has already said ``"promoted"`` — a
+    non-promote verdict passes straight through (the pre-gate can hold a
+    promotion, never force one, so the protected-incumbent invariant strictly
+    strengthens).
 ```
-— `src/zicato/selection/standings_ext.py`, `apply_uncertainty_guard`
+— `src/zicato/selection/evidence_gate.py`, `evidence_verdict`
 
-Note the two uncertainty layers: `uncertainty_gate` (a single-shot yes/no guard
-in `standings_ext`) vs the full BT pre-gate of §6.11 (a defer→replicate→refit
-schedule with a genuine `inconclusive` terminal). The pre-gate is the raised,
-richer form; both share `fit_bradley_terry`/`prob_stronger`, and both can only
-ever HOLD a promotion.
-
-> ⚠️ TRAP — `resolver`, `rating`, and `uncertainty_gate` all read defensively
-> from the opaque `params` map: an absent, unrecognised, or out-of-range value
+> ⚠️ TRAP — both `resolver` and `rating` read defensively from the opaque
+> `params` map: an absent, unrecognised, or out-of-range value
 > returns `None` and leaves the strategy on its unchanged default path. Keep
 > that discipline in any new knob — `params` is operator-supplied, so a knob
 > that raises on a bad value turns a typo into a crashed tournament.

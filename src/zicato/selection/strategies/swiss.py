@@ -22,7 +22,6 @@ from zicato.selection.standings_ext import (
     rating_order,
     read_rating,
     read_resolver,
-    read_uncertainty_threshold,
     resolver_leader,
 )
 from zicato.selection.strategies.champion_gate import ChampionGateStrategy
@@ -59,13 +58,11 @@ class SwissStrategy(ChampionGateStrategy):
         self._round_matches: list[MatchRecord] = []
         self._scheduled_round = -1  # last round we emitted pairings for
         self._leader: Contestant | None = None
-        # Opt-in rating / resolver / uncertainty-guard knobs (absent ⇒
-        # the Copeland/scalar behaviour, byte-identical). These only
-        # ever re-order the INTERNAL standings / leader pick and add a
-        # promotion-blocking defer — never the gate.
+        # Opt-in rating / resolver knobs (absent ⇒ the Copeland/scalar
+        # behaviour, byte-identical). These only ever re-order the
+        # INTERNAL standings / leader pick — never the gate.
         self._rating = read_rating(self.params)
         self._resolver = read_resolver(self.params)
-        self._uncertainty_threshold = read_uncertainty_threshold(self.params)
 
     def seed(self, champion: Contestant, challengers: Sequence[Contestant]) -> None:
         super().seed(champion, challengers)
