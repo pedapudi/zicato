@@ -27,6 +27,7 @@ from zicato.runtime.spawn_permit import (
     MIN_AUTO_PERMITS,
     OPEN_PERMIT,
     WorkerPermit,
+    _usable_cpus,
     acquire_worker_permit,
     default_host_worker_permits,
     effective_permit_count,
@@ -50,7 +51,13 @@ def test_none_means_auto_and_auto_is_generous() -> None:
     auto = default_host_worker_permits()
     assert effective_permit_count(None) == auto
     assert auto >= MIN_AUTO_PERMITS
-    assert auto >= 2 * (os.cpu_count() or 1)
+    # Against the cores this process may actually RUN on, not the host's.
+    # AUTO is 2x the cpuset -- that is the whole point of `_usable_cpus`,
+    # whose docstring gives the case: inside a container pinned to two CPUs
+    # on a 128-core box, `os.cpu_count()` still answers 128. Asserting
+    # against it fails on exactly the machines the implementation was
+    # written for.
+    assert auto >= 2 * _usable_cpus()
 
 
 def test_zero_disables_and_negatives_clamp_to_zero() -> None:
