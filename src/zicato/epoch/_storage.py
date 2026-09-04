@@ -89,7 +89,18 @@ def journal_key(epoch_id: str) -> str:
 RECORD_FORMAT_VERSION = 1
 
 
-class RecordFormatError(RuntimeError):
+class RecordError(RuntimeError):
+    """A canonical JSON record is present and cannot be understood.
+
+    The base every record decoder's refusal shares, so a view degrading at
+    its own boundary catches one type and renders ``str(exc)`` as the
+    reason. Absence is NOT this: a record that was never written raises
+    :class:`FileNotFoundError` or is reported as ``None`` by a reader whose
+    return type says so.
+    """
+
+
+class RecordFormatError(RecordError):
     """A canonical JSON record's ``format_version`` is not readable here."""
 
 

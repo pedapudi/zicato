@@ -1452,8 +1452,8 @@ def test_generation_ordering_is_numeric_aware_and_content_preserved(tmp_path: Pa
     AFTER it numerically — the order the analyzer must present. A
     sibling epoch with NO generations confirms the empty case degrades to
     an empty view (never an exception). This is the
-    ``read_experiments`` (``natural_key``) ordering the analyzer now routes
-    through the workspace seam.
+    ``read_epoch_experiments`` (``natural_key``) ordering the analyzer now
+    routes through the record's own decoder.
     """
     ws = tmp_path / ".zicato"
     epoch = "2026-06-14_order"

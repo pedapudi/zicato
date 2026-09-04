@@ -58,8 +58,9 @@ from zicato.dashboard.mutations import (
     reconstructed_spans,
     recorded_generation_ids,
 )
+from zicato.epoch._storage import RecordError
 from zicato.epoch.genstore import GenerationStore, default_generation_store
-from zicato.epoch.journal import read_generation_patches
+from zicato.epoch.journal import patch_body, read_generation_patches
 from zicato.query import WorkspacePaths
 from zicato.query.paths import list_epoch_ids
 from zicato.storage import workspace_backend
@@ -213,7 +214,7 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
                 file_count = 0
             try:
                 patch_count = len(read_generation_patches(records, epoch_id, generation_id).patches)
-            except (FileNotFoundError, OSError, ValueError):
+            except (FileNotFoundError, OSError, RecordError, ValueError):
                 patch_count = 0
             generations.append(
                 {
@@ -323,15 +324,6 @@ def read_generation_file(
     }
 
 
-def _patch_to_dict(patch: Any) -> dict[str, Any]:
-    """Render a :class:`~zicato.core.types.Patch` for the wire.
-
-    ``Patch`` is a frozen dataclass; :func:`dataclasses.asdict` gives a
-    JSON-serialisable mapping with every field.
-    """
-    return asdict(patch)
-
-
 def build_generation_patches(
     paths: WorkspacePaths, epoch_id: str, generation_id: str
 ) -> dict[str, Any]:
@@ -344,7 +336,7 @@ def build_generation_patches(
     try:
         backend = workspace_backend(paths.root, start=True)
         record = read_generation_patches(backend, epoch_id, generation_id)
-    except (FileNotFoundError, OSError, ValueError) as exc:
+    except (FileNotFoundError, OSError, RecordError, ValueError) as exc:
         return {
             "epoch_id": epoch_id,
             "generation_id": generation_id,
@@ -354,7 +346,7 @@ def build_generation_patches(
     return {
         "epoch_id": epoch_id,
         "generation_id": generation_id,
-        "patches": [_patch_to_dict(p) for p in record.patches],
+        "patches": [patch_body(p) for p in record.patches],
     }
 
 
@@ -371,7 +363,7 @@ def _recorded_parent(paths: WorkspacePaths, epoch_id: str, generation_id: str) -
 
     try:
         experiment = read_experiment(paths.root, epoch_id, generation_id)
-    except (FileNotFoundError, OSError, ValueError):
+    except (FileNotFoundError, OSError, RecordError, ValueError):
         return None
     recorded = (experiment.parent_generation_id or "").strip()
     if not recorded or recorded == generation_id:

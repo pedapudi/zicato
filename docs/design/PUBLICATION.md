@@ -104,8 +104,9 @@ omission.
 
 ## Data binding — where each section is sourced
 
-Prefer the canonical workspace layer (`WorkspaceLayout`, `read_experiments`,
-`read_gen_score`, `read_loss`), the durable per-round event log
+Prefer the canonical workspace layer (`WorkspaceLayout`, `read_gen_score`,
+`read_loss`), the generation record's own decoder
+(`epoch/journal.py` → `read_epoch_experiments`), the durable per-round event log
 (`epoch/round_log.py` → `RoundRecord` fold), the frozen scoring config
 (`scoring.json`, which serialises `ScoringWeights` including
 `tournament_structure`, `telemetry_dialect`, and the nested

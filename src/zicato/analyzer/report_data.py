@@ -24,11 +24,14 @@ The artifacts read here, all under ``epochs/{epoch_id}/``:
   loss profile.
 * ``journal.md`` — the running narrative.
 
-Every read is best-effort: a missing or malformed file degrades to an
-empty / default value rather than raising, so the report still
-generates on a partially-populated workspace (the common case
-mid-epoch). The one structural exception is the path math, which is
-pure.
+Every read degrades rather than raising, so the report still generates
+on a partially-populated workspace (the common case mid-epoch). Where a
+record has an owning codec the strict decode is caught at this boundary
+and the reason is carried into the view — a generation whose
+``experiment.json`` does not parse lands in
+:attr:`EpochReportData.unreadable_generations` rather than vanishing
+from a report that then reads as complete. The one structural exception
+is the path math, which is pure.
 
 The :class:`EpochReportData` view is JSON-friendly throughout — it is
 both rendered into the report's deterministic sections AND serialised
@@ -39,11 +42,19 @@ numbers the operator reads.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from zicato.core.types import (
+    DriftMovementActual,
+    ExpectedDriftMovement,
+    Experiment,
+    MetricMovementActual,
+)
 from zicato.core.workspace import _normalise_workspace_root
+from zicato.epoch.journal import read_epoch_experiments
 from zicato.workspace import (
     ScalarStep,
     WorkspaceLayout,
@@ -51,7 +62,6 @@ from zicato.workspace import (
     per_judge_loss_totals,
     read_board_entries,
     read_epoch_config,
-    read_experiments,
     read_gen_score,
     read_round_records,
 )
@@ -165,6 +175,12 @@ class EpochReportData:
     # round, so the validity / proposer-analytics sections light up as
     # rounds accrue and degrade honestly before the first one settles).
     round_records: tuple[Any, ...] = ()
+    # One named reason per generation whose ``experiment.json`` is present
+    # and does not parse. Such a generation is absent from
+    # :attr:`generations`, and without this the report would present a
+    # short epoch as a complete one; the renderer states the reason
+    # instead. Empty on every intact epoch.
+    unreadable_generations: tuple[str, ...] = ()
 
     @property
     def attempted(self) -> int:
@@ -375,49 +391,45 @@ def load_mutation_surface(layout: WorkspaceLayout, epoch_id: str) -> tuple[dict[
     return tuple(out)
 
 
-def _str_movements(raw: Any) -> tuple[dict[str, str], ...]:
-    """Coerce a list of expected-movement dicts to string-valued dicts."""
-    out: list[dict[str, str]] = []
-    for m in raw or ():
-        if isinstance(m, dict):
-            out.append({str(k): str(v) for k, v in m.items()})
-    return tuple(out)
+def _str_movements(
+    movements: Sequence[ExpectedDriftMovement],
+) -> tuple[dict[str, str], ...]:
+    """Project the predicted drift movements to string-valued dicts."""
+    return tuple(
+        {"kind": str(m.kind), "direction": str(m.direction), "magnitude": str(m.magnitude)}
+        for m in movements
+    )
 
 
 def _load_one_generation(
     layout: WorkspaceLayout,
     epoch_id: str,
     gen_id_dir: str,
-    exp_raw: dict[str, Any],
-) -> GenerationView | None:
-    """Reduce one generation's experiment dict to a :class:`GenerationView`.
+    experiment: Experiment,
+) -> GenerationView:
+    """Reduce one generation's experiment to a :class:`GenerationView`.
 
-    ``exp_raw`` is the generation's already-read ``experiment.json`` (the
-    canonical enumeration only yields generations whose experiment parsed
-    cleanly). ``gen_id_dir`` is the generation directory name — the
-    fallback id when ``experiment.json`` carries none. The per-generation
-    cached aggregate, patches, and run-level loss totals are read off the
-    layout. Always returns a view (never ``None`` for a present
-    experiment); a generation with an experiment but no outcome yields a
-    view with ``decision="pending"``.
+    ``experiment`` is the generation's decoded record; ``gen_id_dir`` is
+    the generation directory name, which is where the per-generation
+    cached aggregate and run-level loss totals are read from. A generation
+    with an experiment but no outcome yields a view with
+    ``decision="pending"``.
     """
-    hyp = exp_raw.get("hypothesis")
-    hyp = hyp if isinstance(hyp, dict) else {}
-    outcome = exp_raw.get("outcome")
-    outcome = outcome if isinstance(outcome, dict) else None
+    hypothesis = experiment.hypothesis
+    outcome = experiment.outcome
 
-    parent = str(exp_raw.get("parent_generation_id", "") or "")
-    gen_id = str(exp_raw.get("generation_id", gen_id_dir))
+    parent = experiment.parent_generation_id or ""
+    gen_id = experiment.generation_id
     is_baseline = not parent or parent == gen_id
 
     if outcome is not None:
-        decision = str(outcome.get("tournament_decision", "pending") or "pending")
-        rejection_reason = str(outcome.get("rejection_reason", "") or "")
-        scalar_delta = _as_float(outcome.get("scalar_score_delta"))
-        drift_delta = _as_float(outcome.get("drift_loss_delta"))
-        pass_delta = _as_float(outcome.get("pass_rate_delta"))
-        drift_movements = _movement_dicts(outcome.get("drift_movements"))
-        metric_movements = _movement_dicts(outcome.get("metric_movements"))
+        decision = str(outcome.tournament_decision) or "pending"
+        rejection_reason = outcome.rejection_reason
+        scalar_delta = outcome.scalar_score_delta
+        drift_delta = outcome.drift_loss_delta
+        pass_delta = outcome.pass_rate_delta
+        drift_movements = _movement_dicts(outcome.drift_movements)
+        metric_movements = _movement_dicts(outcome.metric_movements)
     else:
         decision = "baseline" if is_baseline else "pending"
         rejection_reason = ""
@@ -425,7 +437,7 @@ def _load_one_generation(
         drift_movements = ()
         metric_movements = ()
 
-    patches = _load_patches(layout, epoch_id, gen_id_dir, exp_raw)
+    patches = _patch_views(experiment)
     gen_score = read_gen_score(layout, epoch_id, gen_id_dir)
     per_judge_totals = _load_per_judge_totals(layout, epoch_id, gen_id_dir)
 
@@ -433,13 +445,13 @@ def _load_one_generation(
         generation_id=gen_id,
         parent_generation_id=parent,
         is_baseline=is_baseline,
-        proposed_at=str(exp_raw.get("proposed_at", "") or ""),
-        core_idea=str(hyp.get("core_idea", "") or ""),
-        why=str(hyp.get("why", "") or ""),
-        risks=str(hyp.get("risks", "") or ""),
-        modulating=tuple(str(m) for m in hyp.get("modulating", []) or ()),
-        expected_pass_rate_delta=str(hyp.get("expected_pass_rate_delta", "") or ""),
-        expected_drift_movements=_str_movements(hyp.get("expected_drift_movements")),
+        proposed_at=experiment.proposed_at,
+        core_idea=hypothesis.core_idea,
+        why=hypothesis.why,
+        risks=hypothesis.risks,
+        modulating=tuple(str(m) for m in hypothesis.modulating),
+        expected_pass_rate_delta=hypothesis.expected_pass_rate_delta,
+        expected_drift_movements=_str_movements(hypothesis.expected_drift_movements),
         decision=decision,
         rejection_reason=rejection_reason,
         scalar_score_delta=scalar_delta,
@@ -477,52 +489,28 @@ def _load_per_judge_totals(
     )
 
 
-def _load_patches(
-    layout: WorkspaceLayout,
-    epoch_id: str,
-    generation_id: str,
-    exp_raw: dict[str, Any],
-) -> tuple[dict[str, str], ...]:
-    """Resolve a generation's patches from inline or per-patch storage.
+def _patch_views(experiment: Experiment) -> tuple[dict[str, str], ...]:
+    """Reduce a generation's patches to the report-relevant string fields.
 
-    The journal writer persists patches one-file-each under
-    ``patches/{id}.json`` and lists their ids in ``experiment.json``;
-    workspaces predating that refactor inline a ``patches`` list. Both
-    shapes resolve here to the same reduced view.
+    The patches come off the decoded record, which resolved them from the
+    sibling ``patches/{id}.json`` files, so the report never opens those
+    files itself.
     """
-    out: list[dict[str, str]] = []
-    inline = exp_raw.get("patches")
-    if isinstance(inline, list):
-        for p in inline:
-            if isinstance(p, dict):
-                out.append(_patch_view(p))
-        return tuple(out)
-    patch_ids = exp_raw.get("patch_ids")
-    if isinstance(patch_ids, list):
-        patches_dir = layout.patches_dir(epoch_id, generation_id)
-        for pid in patch_ids:
-            p = _read_json(patches_dir / f"{pid}.json")
-            if isinstance(p, dict):
-                out.append(_patch_view(p))
-    return tuple(out)
+    return tuple(
+        {
+            "mutation_id": patch.mutation_id,
+            "op": str(patch.op),
+            "rationale": patch.rationale,
+        }
+        for patch in experiment.patches
+    )
 
 
-def _patch_view(p: dict[str, Any]) -> dict[str, str]:
-    """Reduce one patch dict to the report-relevant string fields."""
-    return {
-        "mutation_id": str(p.get("mutation_id", "")),
-        "op": str(p.get("op", "")),
-        "rationale": str(p.get("rationale", "")),
-    }
-
-
-def _movement_dicts(raw: Any) -> tuple[dict[str, Any], ...]:
-    """Coerce a list of realised-movement dicts to plain dicts."""
-    out: list[dict[str, Any]] = []
-    for m in raw or ():
-        if isinstance(m, dict):
-            out.append(dict(m))
-    return tuple(out)
+def _movement_dicts(
+    movements: Sequence[DriftMovementActual] | Sequence[MetricMovementActual],
+) -> tuple[dict[str, Any], ...]:
+    """Project the realised movements to plain dicts."""
+    return tuple(asdict(m) for m in movements)
 
 
 def _as_float(value: Any) -> float:
@@ -607,11 +595,11 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
     brief_text = _read_text(layout.brief(epoch_id), _MAX_BRIEF_CHARS)
     journal_text = _read_text(layout.journal(epoch_id), _MAX_JOURNAL_CHARS)
 
-    raw_generations: list[GenerationView] = []
-    for gen_id_dir, exp_raw in read_experiments(layout, epoch_id):
-        view = _load_one_generation(layout, epoch_id, gen_id_dir, exp_raw)
-        if view is not None:
-            raw_generations.append(view)
+    experiments, unreadable_generations = read_epoch_experiments(layout.root, epoch_id)
+    raw_generations = [
+        _load_one_generation(layout, epoch_id, gen_id_dir, experiment)
+        for gen_id_dir, experiment in experiments
+    ]
     generations = _cumulate_scalar(raw_generations)
 
     timestamps = [g.proposed_at for g in generations if g.proposed_at]
@@ -645,6 +633,7 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
         tournament_structure=tournament_structure,
         proposer_quality=proposer_quality,
         round_records=round_records,
+        unreadable_generations=tuple(unreadable_generations),
     )
 
 

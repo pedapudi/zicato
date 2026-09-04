@@ -7,6 +7,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from zicato.epoch._storage import RecordError
+from zicato.epoch.journal import (
+    patch_body,
+    read_experiment_body,
+    read_generation_patches,
+)
 from zicato.query.board_scan import board_entry_id, iter_board_rows
 from zicato.query.decisions import (
     experiment_decision,
@@ -24,7 +30,8 @@ from zicato.query.paths import (
     layout_of,
 )
 from zicato.query.promoted_head import read_recorded_heads, recorded_head_ids
-from zicato.workspace import WorkspaceLayout, generation_ids, iter_epochs, read_experiment
+from zicato.storage import workspace_backend
+from zicato.workspace import WorkspaceLayout, generation_ids, iter_epochs
 from zicato.workspace.config_io import read_workspace_config
 
 # ---------------------------------------------------------------------------
@@ -425,9 +432,9 @@ def _read_epoch_experiments(
     """The epoch's per-generation experiment records, in round-number order.
 
     Returns one record per generation that has an ``experiment.json``. Each
-    carries the raw ``experiment.json`` fields plus a ``patch_content``
-    mapping from mutation id to the raw patch dict (from ``patches/*.json``)
-    so the frontend can render diffs without a second round-trip.
+    carries the record's stored fields plus a ``patches`` mapping from
+    mutation id to the patch record the experiment references, so the
+    frontend can render diffs without a second round-trip.
 
     Every record is stamped with the CANONICAL decision surface — a
     ``decision`` token (``promoted`` / ``rejected`` / ``deferred`` /
@@ -437,29 +444,39 @@ def _read_epoch_experiments(
     nested ``outcome``.
     """
     experiments: list[dict[str, Any]] = []
+    backend = workspace_backend(layout.root, start=False)
     for generation_id in generation_ids(layout, epoch_id):
-        exp = read_experiment(layout, epoch_id, generation_id)
-        if exp is None:
+        try:
+            body = read_experiment_body(layout.root, epoch_id, generation_id)
+            patches = read_generation_patches(backend, epoch_id, generation_id).patches
+        except RecordError as exc:
+            # Degrade at this boundary rather than failing the endpoint: the
+            # generation still appears, carrying the reason its fields are
+            # missing instead of a row of blanks the reader cannot account
+            # for. ``stamp_experiment_decision`` reads the absent outcome as
+            # in-flight, which is the correct unknown here.
+            record: dict[str, Any] = {
+                "generation_id": generation_id,
+                "patches": {},
+                "unreadable": str(exc),
+            }
+            stamp_experiment_decision(record)
+            experiments.append(record)
             continue
-        # Collect patches keyed by mutation_id so the render layer can
-        # display the diff alongside the hypothesis.
-        patches: dict[str, Any] = {}
-        patches_dir = layout.patches_dir(epoch_id, generation_id)
-        if patches_dir.is_dir():
-            for patch_file in sorted(patches_dir.iterdir()):
-                if patch_file.suffix != ".json":
-                    continue
-                patch = _read_json_value(patch_file)
-                if not isinstance(patch, dict):
-                    continue
-                mutation_id = patch.get("mutation_id")
-                if isinstance(mutation_id, str) and mutation_id:
-                    patches[mutation_id] = patch
-        record = dict(exp)
+        if body is None:
+            continue
+        record = dict(body)
         # Always stamp generation_id from the directory name so the
-        # frontend can key on it even when the JSON omits it.
+        # frontend can key on it even when the record names another.
         record["generation_id"] = generation_id
-        record["patches"] = patches
+        # Patches keyed by mutation_id so the render layer can display the
+        # diff alongside the hypothesis. They come off the record's own
+        # patch reader, so only the patches the experiment references are
+        # served — an orphan file left by a crash between the two write
+        # phases is not one of them.
+        record["patches"] = {
+            patch.mutation_id: patch_body(patch) for patch in patches if patch.mutation_id
+        }
         # The canonical decision surface: ``decision`` + tri-state
         # ``promoted``, stamped by the shared classifier so this feed can
         # never disagree with the lineage view.

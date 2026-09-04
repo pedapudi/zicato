@@ -22,10 +22,14 @@ how it parses, and the typed shape of what is in it
 module opens. It owns the per-epoch / per-generation **path math**
 (:class:`WorkspaceLayout`) and the **typed canonical reads** the
 enumerations feed (:func:`read_epoch_config`, :func:`read_board`,
-:func:`read_experiment`, :func:`read_experiments`, :func:`read_loss`,
-:func:`read_gen_score`, and the measurement-history readers
-:func:`read_gen_score_history` / :func:`read_events_history`), so the leaf
-filename joins stop being re-implemented at dozens of call sites.
+:func:`read_loss`, :func:`read_gen_score`, and the measurement-history
+readers :func:`read_gen_score_history` / :func:`read_events_history`), so
+the leaf filename joins stop being re-implemented at dozens of call
+sites. A record that has an owning codec is read through that codec
+instead of here — ``experiment.json`` through
+:func:`zicato.epoch.journal.read_experiment` and
+:func:`~zicato.epoch.journal.read_epoch_experiments` — so the record's
+field spellings live in exactly one module.
 
 Above the raw reads sit the quantities that combine several records or decode
 one record's nested structure (:mod:`zicato.workspace.aggregates`): a
@@ -78,8 +82,6 @@ from zicato.workspace.reads import (
     generation_ids,
     read_board,
     read_events_history,
-    read_experiment,
-    read_experiments,
     read_gen_score,
     read_gen_score_history,
     read_loss,
@@ -110,8 +112,6 @@ __all__ = [
     "read_board_entries",
     "read_epoch_config",
     "read_events_history",
-    "read_experiment",
-    "read_experiments",
     "read_gen_score",
     "read_gen_score_history",
     "read_loss",

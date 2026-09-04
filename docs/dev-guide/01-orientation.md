@@ -851,7 +851,7 @@ over possibly-torn files.
 
 **`workspace/`** (package) and **`workspace_loader.py`** — the typed
 canonical-read layer (`WorkspaceLayout`, `iter_epochs`/`list_epoch_ids` —
-the single epoch-ordering authority, `read_experiments`) and the
+the single epoch-ordering authority) and the
 board/scoring/brief loaders (`load_current_board_with_meta`,
 `scoring_weights_from_dict`). The workspace root's `config.json` has one
 owner: `workspace/config_io.py`, whose `read_workspace_config` decides where

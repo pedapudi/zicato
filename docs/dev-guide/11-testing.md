@@ -1915,7 +1915,7 @@ Its fixture is built around the orderings those readers disagree about:
 
 - **Eleven generations, `v0` through `v10`.** Numeric-aware ordering puts
   `v2` before `v10`; lexical ordering puts `v10` between `v1` and `v2`. The
-  golden records both: `zicato.workspace.reads.read_experiments` and
+  golden records both: `zicato.epoch.journal.read_epoch_experiments` and
   the `zicato health` command sort numerically, while the index's
   `experiments_for_epoch` selector orders by the id column and so sorts
   lexically.
@@ -1942,7 +1942,7 @@ FIRST:
 ```python
 ORDER_ENFORCED: dict[str, str | int | None] = {
     # Numeric-aware generation order: v2 before v10.
-    "zicato.workspace.read_experiments::e2": 0,
+    "zicato.epoch.journal.read_epoch_experiments::e2": 0,
     "zicato.cli.health.generation_ids::e2": None,
     ...
 }

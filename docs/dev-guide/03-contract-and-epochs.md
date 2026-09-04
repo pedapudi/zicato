@@ -1254,8 +1254,9 @@ leaves *orphan patch files* (harmless — no reader picks them up because the
 patch file. Each individual write is atomic (the storage backend's tmp → fsync →
 rename discipline; 07-runtime-and-durability.md §"The atomic-write contract").
 `experiment.json` is stamped with `RECORD_FORMAT_VERSION` at write and checked
-with `check_record_format` at read (§3.10); the reader accepts BOTH the
-per-patch shape (`patch_ids`) and the inline shape (`patches: [...]`).
+with `check_record_format` at read (§3.10); the reader accepts the per-patch
+shape (`patch_ids`) and nothing else, and refuses a body carrying an inline
+`patches: [...]` array by name.
 
 `update_experiment_outcome` re-reads the experiment, `replace`s only its
 `outcome`, and rewrites `experiment.json` (the patch files are NOT rewritten —

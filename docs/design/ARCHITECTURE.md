@@ -1117,8 +1117,7 @@ configured at runtime, so workspaces never cross-talk.
 
 `experiment.json` carries `patch_ids: [...]` and each patch lives in
 its own `patches/{patch_id}.json` file. Writes go patches-first,
-`experiment.json` last; the read helper transparently accepts the
-older inline `patches: [...]` form for backward compatibility. See
+`experiment.json` last; that is the only shape the reader accepts. See
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3.2 for the
 write-order rationale.
 

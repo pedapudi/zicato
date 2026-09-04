@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from zicato.epoch.journal import read_epoch_experiments, read_experiment_if_present
 from zicato.workspace import (
     Epoch,
     WorkspaceLayout,
@@ -22,8 +23,6 @@ from zicato.workspace import (
     natural_key,
     read_board,
     read_epoch_config,
-    read_experiment,
-    read_experiments,
     read_gen_score,
     read_loss,
 )
@@ -233,29 +232,49 @@ def test_read_board_lines_and_missing(tmp_path: Path) -> None:
     assert read_board(layout, "missing") is None
 
 
-def test_read_experiments_in_numeric_order(tmp_path: Path) -> None:
+def test_epoch_experiments_in_numeric_order(tmp_path: Path) -> None:
     ws = tmp_path / ".zicato"
     for gid in ("v0", "v1", "v2", "v10"):
         _write(
             ws / "epochs" / "e0" / "generations" / gid / "experiment.json",
             {"generation_id": gid},
         )
-    # A generation with no experiment.json is skipped.
+    # A generation with no experiment.json is an interrupted round, not a
+    # defect: it is absent from the records and from the reasons alike.
     (ws / "epochs" / "e0" / "generations" / "v3").mkdir(parents=True)
-    layout = WorkspaceLayout.from_root(ws)
-    out = read_experiments(layout, "e0")
-    assert [gid for gid, _ in out] == ["v0", "v1", "v2", "v10"]
-    assert out[0][1] == {"generation_id": "v0"}
-    # Single-generation reader agrees.
-    assert read_experiment(layout, "e0", "v1") == {"generation_id": "v1"}
-    assert read_experiment(layout, "e0", "missing") is None
+    records, unreadable = read_epoch_experiments(ws, "e0")
+    assert [gid for gid, _ in records] == ["v0", "v1", "v2", "v10"]
+    assert records[0][1].generation_id == "v0"
+    assert unreadable == []
+    # The single-generation reader agrees, and reports the same absence.
+    assert read_experiment_if_present(ws, "e0", "v1").generation_id == "v1"
+    assert read_experiment_if_present(ws, "e0", "missing") is None
 
 
-def test_read_experiments_empty_when_no_generations(tmp_path: Path) -> None:
+def test_epoch_experiments_report_a_record_that_will_not_parse(tmp_path: Path) -> None:
+    """A present record that does not parse is named, not silently dropped.
+
+    The generation leaves the record list — nothing can be said about it —
+    but it leaves a reason behind, so a view can tell its reader that the
+    epoch it is showing is short one generation and why.
+    """
+    ws = tmp_path / ".zicato"
+    _write(ws / "epochs" / "e0" / "generations" / "v0" / "experiment.json", {})
+    gen_dir = ws / "epochs" / "e0" / "generations" / "v1"
+    gen_dir.mkdir(parents=True)
+    (gen_dir / "experiment.json").write_text("{ not json", encoding="utf-8")
+
+    records, unreadable = read_epoch_experiments(ws, "e0")
+    assert [gid for gid, _ in records] == ["v0"]
+    assert len(unreadable) == 1
+    assert "v1" in unreadable[0]
+    assert "not valid JSON" in unreadable[0]
+
+
+def test_epoch_experiments_empty_when_no_generations(tmp_path: Path) -> None:
     ws = tmp_path / ".zicato"
     (ws / "epochs" / "e0").mkdir(parents=True)
-    layout = WorkspaceLayout.from_root(ws)
-    assert read_experiments(layout, "e0") == []
+    assert read_epoch_experiments(ws, "e0") == ([], [])
 
 
 def test_read_loss_and_gen_score(tmp_path: Path) -> None:

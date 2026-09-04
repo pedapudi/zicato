@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
+from zicato.epoch._storage import RecordError
 from zicato.util import best_effort
 from zicato.workspace import WorkspaceLayout, generation_ids
 
@@ -484,7 +485,7 @@ def _collect_epoch_health_inputs(
             losses_by_generation[gen_id] = gen_losses
         try:
             experiments.append(read_experiment(workspace_root, epoch_id, gen_id))
-        except (FileNotFoundError, OSError, ValueError, KeyError):
+        except (FileNotFoundError, OSError, RecordError, ValueError, KeyError):
             # v0 (the seed) has no experiment.json; skip silently.
             continue
 

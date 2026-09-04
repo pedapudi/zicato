@@ -10,6 +10,8 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
+from zicato.epoch._storage import RecordError
+from zicato.epoch.journal import read_experiment_body
 from zicato.query.decisions import decision_surface
 from zicato.query.paths import (
     WorkspacePaths,
@@ -19,7 +21,7 @@ from zicato.query.paths import (
     layout_of,
 )
 from zicato.query.ratings import RATING_FIELDS, rating_by_generation
-from zicato.workspace import generation_ids, iter_epochs, read_experiment
+from zicato.workspace import generation_ids, iter_epochs
 
 # ---------------------------------------------------------------------------
 # Lineage view (directory-derived)
@@ -101,7 +103,17 @@ def build_lineage_view(
         epoch_created[eid] = epoch.created_at
         for generation_id in generation_ids(layout, eid):
             meta = legacy.get((eid, generation_id), {})
-            experiment = read_experiment(layout, eid, generation_id)
+            unreadable: str | None = None
+            try:
+                experiment = read_experiment_body(layout.root, eid, generation_id)
+            except RecordError as exc:
+                # Degrade at this boundary: lineage.json is the authority for
+                # topology and gate outcome, so the node still renders with the
+                # right shape. Only the proposal metadata below is unavailable,
+                # and the node says why rather than presenting the same blanks
+                # a generation that simply has no record would present.
+                experiment = None
+                unreadable = str(exc)
 
             # lineage.json is the single authority for topology and gate
             # outcome. experiment.json remains proposal metadata only.
@@ -152,6 +164,12 @@ def build_lineage_view(
                 node["decision"], node["decision_label"] = decision_surface(parent, promoted)
             else:
                 node["decision"], node["decision_label"] = "pending", "undecided"
+            # CONDITIONAL key, on the same absent-not-null discipline as
+            # ``round_index`` below: present only when the generation HAS a
+            # record and it would not parse, so every node whose record is
+            # intact or legitimately absent keeps its prior payload.
+            if unreadable is not None:
+                node["unreadable"] = unreadable
             # Only surface round_index when the stamp is present, so a
             # payload written before the stamp existed stays byte-identical
             # (the key is absent rather than null) and the dashboard's

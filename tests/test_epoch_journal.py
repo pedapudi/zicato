@@ -23,6 +23,7 @@ from zicato.core.workspace import (
     patches_dir,
 )
 from zicato.epoch import (
+    ExperimentRecordError,
     append_journal_entry,
     read_experiment,
     read_journal,
@@ -358,48 +359,55 @@ def test_read_experiment_defaults_round_index_when_absent(
     assert read_experiment(ws, eid, "v1").round_index == 0
 
 
-def test_read_experiment_accepts_legacy_inline_form(
+def test_read_experiment_refuses_an_inline_patches_body(
     epoch_root: tuple[Path, str],
 ) -> None:
-    """Workspaces created before the refactor have inline ``patches: [...]``."""
+    """A body inlining its patches refuses by name rather than reading empty.
+
+    The record referenced its patches inline before they moved to one file
+    each. Under the current rules that key is not read, so the danger is
+    not a crash but a silent one: the experiment would load with no patches
+    at all and every downstream diff would show an empty mutation set. The
+    decode names the shape instead.
+    """
     ws, eid = epoch_root
-    gdir = generation_dir(ws, eid, "v_legacy")
+    gdir = generation_dir(ws, eid, "v_inline")
     gdir.mkdir(parents=True)
 
-    legacy_body = {
-        "id": "exp_legacy",
-        "epoch_id": eid,
-        "generation_id": "v_legacy",
-        "parent_generation_id": "v0",
-        "proposed_at": "2026-04-08T12:00:00+00:00",
-        "hypothesis": {
-            "core_idea": "legacy",
-            "modulating": ["x"],
-            "why": "history",
-            "expected_drift_movements": [],
-            "expected_pass_rate_delta": "+0.0",
-            "risks": "",
-        },
-        # Inline patches — the OLD on-disk shape.
-        "patches": [
+    (gdir / "experiment.json").write_text(
+        json.dumps(
             {
-                "id": "p_legacy",
-                "mutation_id": "x",
-                "op": "replace",
-                "new_content": "hello",
-                "new_numeric": None,
-                "new_enum": None,
-                "rationale": "legacy",
+                "id": "exp_inline",
+                "epoch_id": eid,
+                "generation_id": "v_inline",
+                "parent_generation_id": "v0",
+                "proposed_at": "2026-04-08T12:00:00+00:00",
+                "hypothesis": {
+                    "core_idea": "inline",
+                    "modulating": ["x"],
+                    "why": "history",
+                    "expected_drift_movements": [],
+                    "expected_pass_rate_delta": "+0.0",
+                    "risks": "",
+                },
+                "patches": [
+                    {
+                        "id": "p_inline",
+                        "mutation_id": "x",
+                        "op": "replace",
+                        "new_content": "hello",
+                        "new_numeric": None,
+                        "new_enum": None,
+                        "rationale": "inline",
+                    }
+                ],
+                "outcome": None,
             }
-        ],
-        "outcome": None,
-    }
-    (gdir / "experiment.json").write_text(json.dumps(legacy_body))
+        )
+    )
 
-    loaded = read_experiment(ws, eid, "v_legacy")
-    assert len(loaded.patches) == 1
-    assert loaded.patches[0].id == "p_legacy"
-    assert loaded.patches[0].new_content == "hello"
+    with pytest.raises(ExperimentRecordError, match="inline 'patches' array"):
+        read_experiment(ws, eid, "v_inline")
 
 
 def test_update_experiment_outcome_preserves_patches(
@@ -580,29 +588,29 @@ def test_recombined_from_key_omitted_at_default(epoch_root: tuple[Path, str]) ->
     assert read_experiment(ws, eid, "v1").recombined_from == ()
 
 
-def test_recombined_from_absent_on_legacy_record_reads_empty(
+def test_recombined_from_absent_from_the_body_reads_empty(
     epoch_root: tuple[Path, str],
 ) -> None:
-    """An old-shape record (legacy inline patches, no key) reads as ()."""
+    """``recombined_from`` is a conditional key; a body without it reads as ()."""
     ws, eid = epoch_root
     gen_dir = generation_dir(ws, eid, "v9")
     gen_dir.mkdir(parents=True)
     (gen_dir / "experiment.json").write_text(
         json.dumps(
             {
-                "id": "exp_legacy",
+                "id": "exp_plain",
                 "epoch_id": eid,
                 "generation_id": "v9",
                 "parent_generation_id": "v0",
                 "proposed_at": "2026-01-01T00:00:00+00:00",
                 "hypothesis": {
-                    "core_idea": "legacy",
+                    "core_idea": "plain",
                     "modulating": [],
                     "why": "",
                     "expected_drift_movements": [],
                     "expected_pass_rate_delta": "",
                 },
-                "patches": [],
+                "patch_ids": [],
                 "outcome": None,
             }
         )

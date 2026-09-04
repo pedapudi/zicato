@@ -61,7 +61,7 @@ def _experiment(epoch_id: str, generation_id: str, parent: str) -> dict[str, Any
         "parent_generation_id": parent,
         "proposed_at": "2026-01-01T00:00:00Z",
         "hypothesis": {"core_idea": f"idea for {generation_id}", "why": "because"},
-        "patches": [],
+        "patch_ids": [],
         "outcome": None,
     }
 
