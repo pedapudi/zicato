@@ -407,8 +407,11 @@ promotion gate. The standalone `zicato tournament` command defaults to
 `--mode full` (re-run every entry against both generations); `--mode
 fast` skips the parent re-run and uses the parent's historical
 aggregate (less rigorous; faster). Note `zicato evolve` defaults to
-`fast`. The gate requires (a) the challenger beats the champion by
-`promote_margin` on the scalar score and (b) strict pass-rate
-monotonicity on pre-existing entries (the challenger must not regress
-any pre-existing pass).
+`fast`. The gate applies three rules in order: (a) the challenger beats the
+champion by `promote_margin` on the scalar score; (b) strict pass-rate
+monotonicity on pre-existing entries, so a challenger may not regress
+any entry that already passed; and (c) per-namespace monotonicity for
+each namespace whose `namespace_monotonicity` flag is set, with every
+regressing namespace named in the rejection reason. A hidden-holdout
+confirmation can revise the result the three rules reach.
 See [SCORING.md §5](SCORING.md#5-the-tournament-promotion-gate).
