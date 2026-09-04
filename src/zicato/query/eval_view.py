@@ -1143,6 +1143,11 @@ def _instrument_by_entry(
     PK forbids them). Runtime + ``replicate_total`` fold the index loss rows in
     one pass. The matchup grid reads are pooled inside
     :func:`_discrimination_by_entry`; this feeds the threadpool-wrapped endpoint.
+
+    Entries are keyed in id order. The two sources are folded through a set,
+    and :func:`build_eval_health` walks this map in its own order for every
+    entry the epoch's board does not name, so an unordered fold would serve
+    two tied entries in either order across identical reads.
     """
     disc_by_entry = _discrimination_by_entry(paths, epoch_id, experiments)
     runtimes: dict[str, list[Any]] = {}
@@ -1156,7 +1161,7 @@ def _instrument_by_entry(
             runtimes.setdefault(eid, []).append(_row_get(r, "runtime_ms"))
 
     out: dict[str, dict[str, Any]] = {}
-    for eid in set(totals) | set(disc_by_entry):
+    for eid in sorted(set(totals) | set(disc_by_entry)):
         rate, n_pairs = disc_by_entry.get(eid, (None, 0))
         out[eid] = {
             "discrimination": rate,

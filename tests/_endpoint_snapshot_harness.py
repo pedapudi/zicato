@@ -150,16 +150,6 @@ ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     ("suggestion_provenance/rejected", f"/api/reflection/r1/suggestion/{REJECTED}/provenance"),
 )
 
-#: Probe fields whose list order the reader does not decide. The fixture's
-#: board rows do not carry what ``_load_board_entries`` requires, so
-#: ``build_eval_health`` falls back to its instrument map, whose insertion
-#: order is set-derived: two entries that tie come back in either order across
-#: identical reads. The snapshot sorts those lists so the comparison tests the
-#: endpoint layer rather than that. Every other list order is compared as
-#: served, because ordering is part of what a reader promises.
-UNORDERED_LISTS: tuple[tuple[str, str], ...] = (("eval_health", "insufficient"),)
-
-
 #: Keys whose value is read-time wall-clock noise rather than fixture data.
 #: Replaced by a constant before comparison, the same masking the reader
 #: parity harness applies.
@@ -199,10 +189,6 @@ def capture_route_snapshot(tmp_path: Path, static_dir: Path) -> dict[str, Any]:
             except json.JSONDecodeError:
                 body = response.text
             out[label] = {"status": response.status_code, "body": _mask(body, root)}
-    for label, field in UNORDERED_LISTS:
-        body = out.get(label, {}).get("body")
-        if isinstance(body, dict) and isinstance(body.get(field), list):
-            body[field] = sorted(body[field], key=lambda row: json.dumps(row, sort_keys=True))
     return out
 
 

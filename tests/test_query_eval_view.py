@@ -747,6 +747,25 @@ def test_health_round_trip_byte_identical(tmp_path: Path) -> None:
     )
 
 
+def test_health_orders_entries_by_id_when_the_board_does_not_load(tmp_path: Path) -> None:
+    """A board that does not load leaves the payload the instrument's own order.
+
+    That order used to come off a set, so a process started with a different
+    hash seed served the tied entries differently. Two reads inside one
+    process agreed even then, so the id order below is what pins it; the
+    round trip pins that the two reads still agree.
+    """
+    _seed(tmp_path)
+    (tmp_path / "epochs" / EPOCH / "board.jsonl").unlink()
+    p = _paths(tmp_path)
+    h = ev.build_eval_health(p, EPOCH)
+    assert [r["entry_id"] for r in h["insufficient"]] == ["entryA", "entryB", "entryC"]
+    assert [r["entry_id"] for r in h["runtime_cost"]] == ["entryA", "entryB", "entryC"]
+    assert json.dumps(h, sort_keys=True) == json.dumps(
+        ev.build_eval_health(p, EPOCH), sort_keys=True
+    )
+
+
 def test_endpoint_eval_health(tmp_path: Path) -> None:
     with _client(tmp_path) as c:
         r = c.get(f"/api/epoch/{EPOCH}/eval-health")
