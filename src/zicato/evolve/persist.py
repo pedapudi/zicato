@@ -14,7 +14,7 @@ routing remains stable.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -232,6 +232,24 @@ async def _persist_rejected_round(
     from zicato.runtime import progress_log  # noqa: PLC0415
     from zicato.workspace import generation_round_number  # noqa: PLC0415
 
+    if proposer_retries_exhausted and infrastructure_outage(validation_errors):
+        # The round measured nothing: every attempt died on the transport,
+        # so there is no proposal to judge and no generation to journal.
+        # Recording a rejection here would burn a generation id and write an
+        # experiment blaming the proposer for an outage. Defer instead --
+        # the same decision the tournament side reaches when its runs hit the
+        # endpoint-outage threshold -- and leave the round un-outcomed so a
+        # resume re-proposes cleanly once the endpoint is back.
+        return _deferred_infra_proposer_outage(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            parent_id=parent_id,
+            next_id=next_id,
+            attempts=validation_errors,
+            round_index=round_index,
+            beater=beater,
+            round_log=round_log,
+        )
     write_experiment(workspace_root, epoch_id, next_id, experiment)
     if proposer_retries_exhausted:
         rejection_reason = "proposer_retries_exhausted: " + "; ".join(validation_errors)
@@ -303,6 +321,136 @@ async def _persist_rejected_round(
         delta_scalar=0.0,
         health_summary=health_summary,
         health_critical=health_critical,
+    )
+
+
+#: Substrings that mark a proposal attempt as INFRASTRUCTURE-failed rather
+#: than proposal-failed. Deliberately narrow and about the transport, not
+#: about content: a refused credential, an unreachable or overloaded
+#: endpoint, a severed connection. A model that answered and answered badly
+#: is not here, and must keep rejecting the round as it always has.
+#:
+#: Matched case-insensitively against the proposer's per-attempt trail,
+#: which carries the transport's own message verbatim.
+_INFRA_FAILURE_MARKERS: tuple[str, ...] = (
+    "reauthentication is needed",
+    "refresheror",
+    "refresh error",
+    "invalid_grant",
+    "could not automatically determine credentials",
+    "default credentials were not found",
+    "permission denied on resource project",
+    "http 401",
+    "http 403",
+    "http 429",
+    "http 500",
+    "http 502",
+    "http 503",
+    "http 504",
+    "connection refused",
+    "connection reset",
+    "connection aborted",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "read timed out",
+    "timed out",
+)
+
+
+def _is_infrastructure_failure(attempt: str) -> bool:
+    """Whether one proposal attempt failed for a transport reason."""
+    lowered = attempt.lower()
+    return any(marker in lowered for marker in _INFRA_FAILURE_MARKERS)
+
+
+def infrastructure_outage(attempts: Sequence[str]) -> bool:
+    """Whether EVERY proposal attempt this round failed on infrastructure.
+
+    All of them, not any: one slot losing its connection while the others
+    proposed badly is still a round about the proposals. A round where the
+    whole trail is transport failures measured nothing, and recording it as
+    a rejection attributes an outage to the proposer -- it burns a
+    generation id and journals an experiment whose stated cause ("failed
+    parsing or post-apply validation") never happened.
+
+    Empty trail is NOT an outage: there is nothing to say it was one, and
+    the caller's existing rejection path is the honest default.
+    """
+    attempts = list(attempts)
+    return bool(attempts) and all(_is_infrastructure_failure(a) for a in attempts)
+
+
+
+
+def _deferred_infra_proposer_outage(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    parent_id: str,
+    next_id: str,
+    attempts: list[str],
+    round_index: int,
+    beater: HeartbeatBeater | None,
+    round_log: _RoundLogEmitter | None,
+) -> EvolveRoundOutcome:
+    """Close a round whose proposals all died on the transport.
+
+    The deferred-infra decision is the loop's existing way of saying "this
+    round measured nothing, keep it un-outcomed for resume". The tournament
+    side reaches it when its runs hit the endpoint-outage threshold; this is
+    the same statement made one phase earlier, before any generation exists.
+
+    Nothing is journalled: no experiment is written and no generation is
+    finalised, so the ledger carries no fabricated proposal and the id is
+    free for the next attempt. The round log still records the deferral, and
+    the operator gets a WARNING naming the transport, because an outage that
+    leaves no trace is the failure mode this replaces.
+    """
+    from zicato.evolve.round_api import (  # noqa: PLC0415
+        DEFERRED_INFRA_DECISION,
+        EvolveRoundOutcome,
+    )
+
+    reason = "deferred_infra: every proposal attempt failed on the transport: " + "; ".join(
+        attempts
+    )
+    log.warning(
+        "evolve: round %d (%s) DEFERRED — every proposal attempt failed on the "
+        "transport, so the round measured nothing and is left un-outcomed for "
+        "resume (check the model endpoint / credentials): %s",
+        round_index,
+        next_id,
+        "; ".join(attempts),
+    )
+    if round_log is not None:
+        round_log.emit(
+            "decision_recorded",
+            {
+                "decision": DEFERRED_INFRA_DECISION,
+                "provenance": {
+                    "reason": reason,
+                    "parent_generation_id": parent_id,
+                    "promoted_generation_id": None,
+                },
+            },
+        )
+        round_log.emit("round_closed")
+    _beat(
+        beater,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        generation_id=next_id,
+        round_index=round_index,
+        phase=f"deferred_infra:round_{round_index}:{next_id}",
+    )
+    return EvolveRoundOutcome(
+        parent_generation_id=parent_id,
+        proposed_generation_id="",
+        tournament_decision=DEFERRED_INFRA_DECISION,
+        rejection_reason=reason,
+        parent_scalar=0.0,
+        child_scalar=0.0,
+        delta_scalar=0.0,
     )
 
 
