@@ -257,7 +257,7 @@ def test_the_command_names_the_binary_the_workspace_configured(tmp_path: Path) -
             {
                 "proposer": {
                     "binary": str(binary),
-                    "model": {"provider": "exec", "model": "stand-in"},
+                    "model": {"provider": "fixture", "model": "mechanical"},
                 }
             }
         ),

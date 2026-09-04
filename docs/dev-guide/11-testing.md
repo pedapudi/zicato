@@ -340,23 +340,18 @@ and `tests/_foe_support.stand_in_proposer_block` writes it:
 ```
 — `tests/_orchestrator_harness.py`, `bootstrap_workspace`
 
-The block names two executables written under the workspace's own temp
-directory: the stand-in Foe binary (`tests/_fake_foe.py`), which speaks
-the host protocol without a credential, a network or a Rust toolchain,
-and the transport that answers its model requests. The paths are absolute
-and on disk BECAUSE the tournament workers are separate interpreters —
-they read `config.json` back and see nothing this process patched in
-memory.
+The block names one executable written under the workspace's own temporary
+directory: the stand-in Foe binary (`tests/_fake_foe.py`). It speaks the host
+protocol without a credential, a network, or a Rust toolchain. The absolute
+path stays on disk because tournament workers are separate interpreters. They
+read `config.json` and see nothing this process patched in memory.
 
-Which transport depends on what the test is about.
-`tests/_foe_transport.py` replays a *written* script of turns, and is what
-a test that pins one specific episode uses.
-`tests/_foe_stand_in_proposer.py` writes its own: it enumerates the parent
-snapshot's mutation points, rewrites one string literal, and returns a
-hypothesis naming that point — a proposer that is always right about the
-rules and never has an idea. Its edit is a tag carrying the candidate id,
-which makes it deterministic per candidate, distinct across a field, and
-bounded across rounds.
+The stand-in runtime owns two model fixtures. A scripted fixture replays a
+written list of turns when a test pins one episode. The mechanical fixture in
+`tests/_foe_stand_in_proposer.py` enumerates the parent snapshot's mutation
+points, rewrites one string literal, and returns a hypothesis naming that point.
+Its edit is a tag carrying the candidate id. The result is deterministic per
+candidate, distinct across a field, and bounded across rounds.
 
 A test whose subject is a *misbehaving* proposer steers it from the
 workspace rather than scripting turns:

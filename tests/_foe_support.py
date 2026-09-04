@@ -1,14 +1,12 @@
 """Builders for the Foe stand-in binary and the model turns it replays.
 
-A test that exercises the proposer needs two executables: a binary for
-``FoeProposerConfig.binary`` and, under it, the ``exec``-provider
-transport that answers each model request. Both are written here as
-one-line launchers over Python modules in this package, so a test names
-a temporary directory and gets a pair of absolute paths back.
+A test that exercises the proposer writes one executable for
+``FoeProposerConfig.binary``. The stand-in runtime owns its model behavior,
+just as the production binary does when the root contract declares a model.
 
-The transport replays a *script*: a list of turns, one per model request,
-each naming the text and the tool calls that request produces. A test
-therefore writes what the proposer model does and nothing else.
+A scripted model is a list of turns, one per request. Each turn names the text
+and tool calls the request produces. The stand-in reads the script file itself,
+so no second response-provider process is involved.
 """
 
 from __future__ import annotations
@@ -88,14 +86,14 @@ def block_turn(code: str, message: str = "") -> dict[str, Any]:
 
 
 def error_turn(message: str, *, retryable: bool = False) -> dict[str, Any]:
-    """A turn the transport reports as a failed model request."""
+    """A turn that reports a failed model request."""
     return {"error": message, "retryable": retryable}
 
 
-def scripted_transport(
+def scripted_model(
     directory: Path, turns: Sequence[dict[str, Any]], *, name: str = "turns"
-) -> Path:
-    """Write an ``exec``-provider transport replaying ``turns`` in order.
+) -> dict[str, Any]:
+    """Write ``turns`` and return the stand-in model block that replays them.
 
     Requests past the end of the script replay the last turn, so a script
     of one turn answers an episode of any length. That keeps a test's
@@ -104,33 +102,11 @@ def scripted_transport(
     directory.mkdir(parents=True, exist_ok=True)
     script_path = directory / f"{name}.json"
     script_path.write_text(json.dumps(list(turns)), encoding="utf-8")
-    body = (
-        f"#!{sys.executable}\n"
-        "import sys\n"
-        f"sys.path.insert(0, {str(_HERE.parent)!r})\n"
-        "from tests._foe_transport import main\n"
-        f"sys.exit(main({str(script_path)!r}))\n"
-    )
-    return _executable(directory / f"{name}-transport", body)
-
-
-def stand_in_transport(directory: Path, *, name: str = "stand-in") -> Path:
-    """Write the mechanical proposer transport (:mod:`tests._foe_stand_in_proposer`).
-
-    Unlike :func:`scripted_transport` this one carries no script: it reads
-    the working copy the task names and proposes against whatever it
-    finds, so a workspace can declare it once and every round of every
-    epoch gets a well-formed candidate.
-    """
-    directory.mkdir(parents=True, exist_ok=True)
-    body = (
-        f"#!{sys.executable}\n"
-        "import sys\n"
-        f"sys.path.insert(0, {str(_HERE.parent)!r})\n"
-        "from tests._foe_stand_in_proposer import main\n"
-        "sys.exit(main())\n"
-    )
-    return _executable(directory / f"{name}-transport", body)
+    return {
+        "provider": "fixture",
+        "model": "scripted",
+        "options": {"script_file": str(script_path)},
+    }
 
 
 def stand_in_proposer_block(
@@ -148,10 +124,9 @@ def stand_in_proposer_block(
 
     Every fixture workspace that runs a round needs one, because a
     workspace that declares no proposal runtime cannot open a round. The
-    block written here names the stand-in binary and the mechanical
-    transport above, both placed under ``directory``, so the workspace
-    proposes for real — one episode per candidate, over the host protocol
-    — without a credential, a network, or a model.
+    block written here names the stand-in binary and its mechanical model,
+    so the workspace runs one real episode per candidate without a
+    credential, a network, or a model service.
 
     ``directory`` must outlive the workspace: the absolute paths written
     here are read back by the tournament workers, which are separate
@@ -172,10 +147,10 @@ def stand_in_proposer_block(
     bodies that
     candidate writes — ``{"v1": {"style_rules": "verbose-prose"}}`` —
     which is how a known-answer harness scripts the exact tree each
-    candidate produces. All of them ride the model options, because that
-    is the one part of the block Foe forwards to the transport.
+    candidate produces. All of them ride the model options because the
+    stand-in runtime reads those fields from the root model block.
     """
-    options = {"exec": str(stand_in_transport(directory))}
+    options: dict[str, str] = {}
     if idea:
         options["idea"] = idea
     if break_first:
@@ -191,7 +166,7 @@ def stand_in_proposer_block(
     return {
         "binary": str(fake_foe_binary(directory)),
         "budget": {"model_calls": model_calls, "seconds": 300},
-        "model": {"provider": "exec", "model": "stand-in", "options": options},
+        "model": {"provider": "fixture", "model": "mechanical", "options": options},
     }
 
 
@@ -249,8 +224,7 @@ __all__ = [
     "read_episode_log",
     "request_texts",
     "return_turn",
-    "scripted_transport",
+    "scripted_model",
     "stand_in_proposer_block",
-    "stand_in_transport",
     "text_turn",
 ]

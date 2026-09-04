@@ -7,8 +7,8 @@ about that episode is declared in one block of its ``config.json``::
       "binary": "/usr/local/bin/foe",
       "budget": {"model_calls": 12, "seconds": 900,
                  "input_tokens": 400000, "output_tokens": 60000},
-      "model": {"provider": "example", "model": "example-model",
-                "options": {"api_key_file": "/home/me/.config/foe/key.json"}},
+      "model": {"provider": "<managed-cloud provider>", "model": "<model id>",
+                "options": {"project": "example-project", "location": "example-region"}},
       "viewer": "off"
     }
 
@@ -17,10 +17,12 @@ runs, named by absolute path because the episode's grants are absolute
 and a relative one would mean different things to the loop and to a
 worker. The **budget** bounds the episode in Foe's own dimensions and is
 part of what Foe fingerprints, so raising it rolls the epoch. The
-**model** block is what Foe's built-in transport calls; its credential is
-a file Foe reads, per ``foe/docs/models.md``, never an environment
-variable this package invents, and model selection rolls no epoch. The
-**viewer** decides when a finished episode's trajectory is served for an
+**model** block selects the endpoint Foe's built-in model client calls.
+Provider-specific options pass through unchanged. They can select a compatible
+HTTP endpoint, name managed-cloud connection fields, or override a credential
+file. Foe may also use the credential recorded by its login command. This
+package reads no credential and defines no credential environment variable.
+The **viewer** decides when a finished episode's trajectory is served for an
 operator to read.
 
 The block carries no instructions: those are the epoch's proposer brief
@@ -112,13 +114,12 @@ class FoeBudget:
 
 @dataclass(frozen=True, slots=True)
 class FoeModelRole:
-    """The ``model`` block Foe's built-in transport calls.
+    """The ``model`` block Foe's built-in model client calls.
 
     ``options`` carries the provider-specific flat strings
-    ``foe/docs/models.md`` lists — ``api_key_file``, ``base_url``,
-    ``reasoning_effort``, and the rest. A credential is always a FILE Foe
-    reads: this package neither reads nor forwards a credential, and it
-    defines no environment variable of its own.
+    ``foe/docs/models.md`` lists. They include endpoint, credential-file,
+    project, location, and request-control fields. This package preserves the
+    mapping without interpreting it. Foe resolves and reads any credential.
 
     Model selection is runtime infrastructure and never rolls an epoch,
     matching the standing rule that keeps every ``models.*`` role out of
@@ -198,15 +199,15 @@ def scaffold_proposer_block() -> dict[str, Any]:
         "model": {
             "provider": "<foe provider>",
             "model": "<model id>",
-            "options": {"api_key_file": "<absolute path of the credential file Foe reads>"},
+            "options": {},
         },
         "viewer": "off",
         "_guide": {
             "binary": "absolute path of the foe binary this workspace's episodes run",
             "budget": "what one proposal episode may spend; raising any dimension rolls the epoch",
             "model": (
-                "the provider and model Foe's transport calls; the credential is a FILE "
-                "Foe reads, named under options, never an environment variable"
+                "the provider and model Foe calls; options are provider-specific flat "
+                "strings for endpoint, credential, project, location, and request controls"
             ),
             "viewer": f"when a finished episode is served: {', '.join(VIEWER_POLICIES)}",
         },
@@ -240,8 +241,7 @@ def load_foe_proposer_config(
     model_block = _mapping(block, "model")
     if not model_block:
         raise ProposerConfigError(
-            "proposer.model: name the Foe provider and model the episode "
-            "calls; a credential is a file Foe reads, named under `options`"
+            "proposer.model: name the Foe provider and model the episode calls"
         )
     options_block = _mapping(model_block, "options")
     budget_block = _mapping(block, "budget")

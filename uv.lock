@@ -1117,7 +1117,7 @@ wheels = [
 [[package]]
 name = "foe"
 version = "0.2.0"
-source = { git = "https://github.com/pedapudi/foe.git?subdirectory=python&rev=63ba2c61486eaa45c935e720b693209db0670ef5#63ba2c61486eaa45c935e720b693209db0670ef5" }
+source = { git = "https://github.com/pedapudi/foe.git?subdirectory=python&rev=84a97b9603383fb38aec8dd4d6b9e88df0ed2a36#84a97b9603383fb38aec8dd4d6b9e88df0ed2a36" }
 
 [[package]]
 name = "frozenlist"
@@ -7091,7 +7091,7 @@ tui = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
-    { name = "foe", git = "https://github.com/pedapudi/foe.git?subdirectory=python&rev=63ba2c61486eaa45c935e720b693209db0670ef5" },
+    { name = "foe", git = "https://github.com/pedapudi/foe.git?subdirectory=python&rev=84a97b9603383fb38aec8dd4d6b9e88df0ed2a36" },
     { name = "goldfive", marker = "extra == 'goldfive'", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" },
     { name = "goldfive", extras = ["adk"], marker = "extra == 'adk'", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" },
     { name = "goldfive", extras = ["adk", "embedding", "remote"], marker = "extra == 'all'", git = "https://github.com/pedapudi/goldfive.git?rev=d1d44829d43fee46c11b83c507fc772466b7f14e" },
