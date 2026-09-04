@@ -36,7 +36,7 @@ from zicato.cli.discovery import (
 # ---------------------------------------------------------------------------
 
 
-async def _harness_call_llm(system: str, user: str, model: str) -> str:
+async def _target_call_llm(system: str, user: str, model: str) -> str:
     del system, user, model
     return ""
 
@@ -170,7 +170,7 @@ def test_evolve_passes_auto_epoch_true_by_default(
         evolve_cmd,
         [
             "--harness-call-llm",
-            "tests.test_cli_help:_harness_call_llm",
+            "tests.test_cli_help:_target_call_llm",
             "--auxiliary-call-llm",
             "tests.test_cli_help:_aux_call_llm",
             "--no-dashboard",
@@ -192,7 +192,7 @@ def test_evolve_no_auto_epoch_flag_disables_auto_epoching(
         evolve_cmd,
         [
             "--harness-call-llm",
-            "tests.test_cli_help:_harness_call_llm",
+            "tests.test_cli_help:_target_call_llm",
             "--auxiliary-call-llm",
             "tests.test_cli_help:_aux_call_llm",
             "--no-auto-epoch",
@@ -266,7 +266,7 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
             await ensure_epoch_for_contract(
                 kwargs["workspace_root"],
                 auto_epoch=kwargs.get("auto_epoch", True),
-                aux_call_llm=kwargs["auxiliary_call_llm"],
+                aux_call_llm=kwargs["evaluation_call_llm"],
                 epoch_name=kwargs.get("epoch_name"),
             )
         stop_reason_out = kwargs.get("stop_reason_out")
@@ -289,7 +289,7 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
             "--workspace",
             str(workspace),
             "--harness-call-llm",
-            "tests.test_cli_help:_harness_call_llm",
+            "tests.test_cli_help:_target_call_llm",
             "--auxiliary-call-llm",
             "tests.test_cli_help:_aux_call_llm",
             "--no-dashboard",
@@ -321,7 +321,7 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
             "--workspace",
             str(workspace),
             "--harness-call-llm",
-            "tests.test_cli_help:_harness_call_llm",
+            "tests.test_cli_help:_target_call_llm",
             "--auxiliary-call-llm",
             "tests.test_cli_help:_aux_call_llm",
             "--no-dashboard",

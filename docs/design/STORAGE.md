@@ -33,7 +33,7 @@ three of the five.
 |---|---|---|
 | 1 | **Runtime state** | The orchestrator's live state, read by the supervisor and the dashboard: `heartbeat.json`, `lock.json`, `active_tournament.json`, the per-run `active_runs/*.json`, and the control-protocol flag files. |
 | 2 | **Telemetry** | The `goldfive.v1.Event` stream of each tournament run — one `events.jsonl` per run. |
-| 3 | **Generation source trees** | The post-apply inner-harness source at each generation: a tagged commit under Git or `generations/vN/snapshot/` under the directory backend. |
+| 3 | **Generation source trees** | The post-apply system-under-test source at each generation: a tagged commit under Git or `generations/vN/snapshot/` under the directory backend. |
 | 4 | **Lineage / experiments / journals** | The typed evolutionary record: `experiment.json` + per-patch files, `journal.md`, `lineage.json`, per-epoch `config.json` / `board.jsonl` / `scoring.json` / `brief.md`, cached `gen_score.json`. |
 | 5 | **The analytical index** | The relational projection answering cross-run `GROUP BY` / `JOIN` questions: `.zicato/index.db`. |
 
@@ -328,7 +328,7 @@ the generation repo so the same names never enter a commit.
 
 Run output is routed elsewhere rather than only excluded from the copy.
 The tournament runner creates a per-run scratch directory outside every
-snapshot and exports it to the inner harness through the
+snapshot and exports it to the system under test through the
 `ZICATO_RUN_SCRATCH_DIR` environment variable, and a target writes its
 run output there. After the harness returns and before outcome grading,
 the worker deterministically inventories every regular file beneath

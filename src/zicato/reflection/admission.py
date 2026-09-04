@@ -324,8 +324,8 @@ async def admit_suggestion(
 # ---------------------------------------------------------------------------
 
 
-async def _noop_harness(system: str, user: str, model: str) -> str:  # pragma: no cover
-    """Placeholder harness callable for the probe RuntimeConfig.
+async def _noop_target(system: str, user: str, model: str) -> str:  # pragma: no cover
+    """Placeholder target callable for the probe RuntimeConfig.
 
     The admission probes drive the board-unit runner, which invokes the ADAPTER,
     not this callable; ``make_runtime_config`` merely requires a callable when no
@@ -335,8 +335,8 @@ async def _noop_harness(system: str, user: str, model: str) -> str:  # pragma: n
     return ""
 
 
-async def _noop_auxiliary(system: str, user: str, model: str) -> str:  # pragma: no cover
-    """Placeholder auxiliary callable for the probe RuntimeConfig — see :func:`_noop_harness`."""
+async def _noop_evaluation(system: str, user: str, model: str) -> str:  # pragma: no cover
+    """Placeholder evaluation callable for the probe RuntimeConfig — see :func:`_noop_target`."""
     return ""
 
 
@@ -532,7 +532,7 @@ def _model_families(workspace_root: Path) -> tuple[str | None, str | None]:
         models = load_models_config(cfg)
     except Exception:  # noqa: BLE001 — no/!bad config → no families
         return None, None
-    return _role_family(models.auxiliary), _role_family(models.judge)
+    return _role_family(models.evaluation), _role_family(models.judge)
 
 
 def _role_family(spec: Any) -> str | None:
@@ -602,8 +602,8 @@ def _probe_context(
         config = runtime_factory.make_runtime_config(
             cfg,
             workspace_root=workspace_root,
-            harness_call_llm=_noop_harness,
-            auxiliary_call_llm=_noop_auxiliary,
+            target_call_llm=_noop_target,
+            evaluation_call_llm=_noop_evaluation,
         )
     except (ValueError, OSError, FileNotFoundError):
         config = _placeholder_config(workspace_root)
@@ -644,8 +644,8 @@ def _placeholder_config(workspace_root: Path) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="default",
         workspace_root=workspace_root,
-        harness_call_llm=_noop_harness,
-        auxiliary_call_llm=_noop_auxiliary,
+        target_call_llm=_noop_target,
+        evaluation_call_llm=_noop_evaluation,
     )
 
 
@@ -875,7 +875,7 @@ def _leakage_check(
       the canonical holdout binding.
     * **Emulator guard** — a ``multi_turn_emulated`` draft opts into the
       collusion guard through its :class:`UserPersona` (the only runtime input
-      the emulator sees), and the harness / auxiliary callables must be distinct
+      the emulator sees), and the target / evaluation callables must be distinct
       (:func:`assert_distinct_callables`).
     * **Self-preference** — the expected answer and its judge must not share a
       model family; a match is FLAGGED, never rejected.

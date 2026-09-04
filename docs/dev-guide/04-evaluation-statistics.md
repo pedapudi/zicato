@@ -439,7 +439,7 @@ the second column. The full ladder, including the pieces wired around
 
 **The regression-suite rung** runs *before* the scoring gate, in
 `_gate_with_regression` on the runner path: a patch can improve
-`drift_loss`/`pass_rate` on the board while breaking the inner harness's own
+`drift_loss`/`pass_rate` on the board while breaking the system under test's own
 invariants, and no scoring signal may override a failing suite. It is opt-in because many adapters ship no
 tests; a snapshot with no `tests/` directory is a silent, journaled skip
 (`"no tests/ directory; skipped"`), never a stall. A timeout counts as a
@@ -1820,7 +1820,7 @@ down-weight the noisy judge rather than letting it thrash the scalar.
 Surface: `zicato board judges --test-retest [--retest-k K]
 --auxiliary-call-llm <dotted-path>` over a settled transcript from a prior run
 or the synthetic `FIXTURE_TRANSCRIPT`. The `aux_call_llm` parameter is the
-endpoint seam — tests script it; a real auxiliary endpoint slots in unchanged
+endpoint seam — tests script it; a real evaluation endpoint slots in unchanged
 (that live measurement is endpoint-gated; see 14-goals-and-roadmap.md
 §"The endpoint-gated backlog").
 

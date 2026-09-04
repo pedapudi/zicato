@@ -27,11 +27,11 @@ import pytest
 
 from tests._orchestrator_harness import (
     bootstrap_workspace,
-    harness_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
+    target_call_llm,
 )
 from zicato.epoch.preflight import PreflightReport
 from zicato.tournament.calibration import NoiseFloor
@@ -188,8 +188,8 @@ def test_refuse_mode_stops_evolve_n_rounds_before_spending_rounds(
             rounds=3,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             stop_reason_out=stop_reason,
         )
     )

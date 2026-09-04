@@ -265,7 +265,7 @@ def test_generic_tournament_runs_without_goldfive() -> None:
             async def call_llm(system, user, model):
                 return "unused"
 
-            async def auxiliary_call_llm(system, user, model):
+            async def evaluation_call_llm(system, user, model):
                 return "unused"
 
             async def run_single(*, generation, entry, **kwargs):
@@ -307,8 +307,8 @@ def test_generic_tournament_runs_without_goldfive() -> None:
                     config=RuntimeConfig(
                         instance_id="test",
                         workspace_root=root,
-                        harness_call_llm=call_llm,
-                        auxiliary_call_llm=auxiliary_call_llm,
+                        target_call_llm=call_llm,
+                        evaluation_call_llm=evaluation_call_llm,
                     ),
                     workspace_root=root,
                     epoch_id="e0",

@@ -12,7 +12,7 @@ This package is the runtime bridge between the two:
 
 * :func:`judge_spec_to_goldfive` turns one :class:`JudgeSpec` into one
   live goldfive ``Judge``. Inline specs become an LLM-as-a-judge driven
-  by zicato's *auxiliary* callable (the two-callable rule — a judge must
+  by zicato's *evaluation* callable (the two-callable rule — a judge must
   not share the inner agent's LLM surface); python specs become a thin
   wrapper around operator-supplied code.
 * :func:`assemble_judges` composes the full judge list for one board

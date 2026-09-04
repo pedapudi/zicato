@@ -121,8 +121,8 @@ def test_exemplar_block_renders_redacted_from_the_first_round(
             rounds=2,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=t0_mocks.harness_llm,
-            auxiliary_call_llm=t0_mocks.aux_llm,
+            target_call_llm=t0_mocks.target_llm,
+            evaluation_call_llm=t0_mocks.aux_llm,
             auto_epoch=False,
             fast_mode=True,
         )

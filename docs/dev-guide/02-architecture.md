@@ -666,7 +666,7 @@ single inner `propose` with NO critique and NO extra work):
    and returns it if it survives. A vetoed replacement degrades to
    critic-over-all. No new config knob: the revise rides
    `screen_entries > 0`.
-4. **Select** (`_select_best` / `_select_over`): the auxiliary-LLM
+4. **Select** (`_select_best` / `_select_over`): the evaluation-LLM
    self-critique when `critique_enabled` (scored against a quality bar
    — grounded in a tool call? targets a real failure mode? minimal
    diff?), else the deterministic heuristic (smallest diff targeting an

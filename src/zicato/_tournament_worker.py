@@ -131,7 +131,7 @@ def _resolve_role_call_llm(spec: Any, *, role: str) -> Any:
     (measured at 0.80 s / 88 MB per worker — RUNTIME.md §5.5.8) is paid on the
     role's FIRST CALL rather than at worker startup. A unit that never
     exercises a role — an entry with no LLM judge, a run that never reaches
-    the auxiliary side — therefore never pays for it, and a unit that does
+    the evaluation side — therefore never pays for it, and a unit that does
     exercise it pays exactly the same cost, just later. The spec *shape* is
     still validated eagerly, so a malformed ``models`` block fails fast here.
     """
@@ -148,11 +148,11 @@ def _resolve_role_call_llm(spec: Any, *, role: str) -> Any:
     raise ValueError(f"{role} role spec has neither 'dotted' nor 'models_role': {spec!r}")
 
 
-def _resolve_inner_model_from_role(spec: Any) -> Any:
-    """Build the inner ADK agent model from the harness role worker spec.
+def _resolve_target_model_from_role(spec: Any) -> Any:
+    """Build the inner ADK agent model from the target role worker spec.
 
     Mirrors :mod:`zicato.runtime_factory`'s inner-model construction inside the
-    fresh worker interpreter: when the harness role is a ``models_role`` *model
+    fresh worker interpreter: when the target role is a ``models_role`` *model
     spec* (model + endpoint/api_key_env), build the ADK model object (a
     ``LiteLlm``) so the adapter rebinds the target's agents to it with native
     tool/function calling. Returns ``None`` for a dotted call_llm role or an
@@ -171,7 +171,7 @@ def _resolve_inner_model_from_role(spec: Any) -> Any:
     if not role_spec.model:
         return None
     try:
-        built = build_adk_model(role_spec, role="harness")
+        built = build_adk_model(role_spec, role="target")
     except ValueError:
         return None
     return built if not isinstance(built, str) else None
@@ -204,8 +204,8 @@ def _load_args(args_path: Path) -> dict[str, Any]:
             "mutable_trees": ["<abs path>", ...],
             "integrations": ["goldfive"]
           },
-          "harness_role":   {"dotted": "pkg.module:callable"} | {"models_role": {...}},
-          "auxiliary_role": {"dotted": "pkg.module:callable"} | {"models_role": {...}},
+          "target_role":   {"dotted": "pkg.module:callable"} | {"models_role": {...}},
+          "evaluation_role": {"dotted": "pkg.module:callable"} | {"models_role": {...}},
           "judge_role":     {"dotted": "pkg.module:callable"} | {"models_role": {...}},
           "sink_events_path": "<abs path to events.jsonl>",
           "loss_path": "<abs path to loss.json>",
@@ -231,8 +231,8 @@ def _load_args(args_path: Path) -> dict[str, Any]:
         "snapshot_root",
         "entry",
         "adapter",
-        "harness_role",
-        "auxiliary_role",
+        "target_role",
+        "evaluation_role",
         "sink_events_path",
         "loss_path",
         "result_path",
@@ -729,7 +729,7 @@ async def _run(args: dict[str, Any]) -> None:
         str(key): str(value) for key, value in (args.get("harmonograf_metadata") or {}).items()
     }
 
-    # Export the per-run scratch directory so the inner harness routes
+    # Export the per-run scratch directory so the system under test routes
     # its run output OUTSIDE the generation snapshot. Without this a
     # target writing next to its own code (e.g. the presentation agent's
     # ``output/``) would pollute the snapshot, and the pollution would
@@ -770,7 +770,7 @@ async def _run(args: dict[str, Any]) -> None:
         from zicato.runtime.lock import pid_start_time as _pid_start_time
 
         # Record the worker's OWN process-group id so the supervisor can
-        # group-kill the worker plus any grandchildren the inner harness
+        # group-kill the worker plus any grandchildren the system under test
         # spawned (shells, helper tools) rather than just the worker pid. The
         # runner spawns us with ``start_new_session=True`` so we lead our
         # own group; ``os.getpgid`` is unavailable on a few platforms, so
@@ -825,13 +825,13 @@ async def _run(args: dict[str, Any]) -> None:
     # from the worker's OWN os.environ — secrets never crossed the boundary).
     #
     # Deliberately placed AFTER the active-runs write + heartbeat start
-    # above rather than before. An endpoint-shaped harness role (spec.model +
+    # above rather than before. An endpoint-shaped target role (spec.model +
     # endpoint/api_key_env — the live-validation shape) forces
-    # ``_resolve_inner_model_from_role`` to import the whole ``google.adk``
+    # ``_resolve_target_model_from_role`` to import the whole ``google.adk``
     # graph right here, a measured ~1 s / 80 MB / ~1500 modules (RUNTIME.md
     # §5.5.8), and ``ADKHarnessAdapter.load()`` a few lines below imports
     # the SAME graph unconditionally for every ADK-adapter run regardless of
-    # ``inner_model`` — so the import cost is unavoidable for this shape and
+    # ``target_model`` — so the import cost is unavoidable for this shape and
     # deferring it past ``.load()`` saves nothing on top (measured: building
     # the ``LiteLlm`` object after ``google.adk`` is already resident costs
     # ~2 ms, vs. ~1 s to import ``google.adk`` itself; see §5.5.8's refuted
@@ -842,20 +842,20 @@ async def _run(args: dict[str, Any]) -> None:
     # import instead of after, closing the window where a live worker looks
     # unregistered to the supervisor while it pays a tax neither the runner
     # nor the watchdog cares about it paying eagerly.
-    harness_call_llm = _resolve_role_call_llm(args["harness_role"], role="harness")
-    # Inner ADK agent model: when the harness role is a model spec, the agents
+    target_call_llm = _resolve_role_call_llm(args["target_role"], role="target")
+    # Inner ADK agent model: when the target role is a model spec, the agents
     # run on the configured endpoint (function-calling) instead of the shim.
-    # Only the ADK adapter ever reads ``config.inner_model``
+    # Only the ADK adapter ever reads ``config.target_model``
     # (``ADKHarnessAdapter.run``) — resolving it for a non-ADK adapter kind
     # would import ADK for a value nothing consumes, so it is skipped there.
     adapter_spec = args["adapter"]
     adapter_kind = adapter_spec.get("kind") if isinstance(adapter_spec, dict) else None
-    inner_model = (
-        _resolve_inner_model_from_role(args["harness_role"]) if adapter_kind == "adk" else None
+    target_model = (
+        _resolve_target_model_from_role(args["target_role"]) if adapter_kind == "adk" else None
     )
-    auxiliary_call_llm = _resolve_role_call_llm(args["auxiliary_role"], role="auxiliary")
+    evaluation_call_llm = _resolve_role_call_llm(args["evaluation_role"], role="evaluation")
     # The judge role falls back to ``None`` when unconfigured, so
-    # ``RuntimeConfig.effective_judge_call_llm`` resolves to the auxiliary.
+    # ``RuntimeConfig.effective_judge_call_llm`` resolves to the evaluation callable.
     judge_call_llm = None
     judge_role = args.get("judge_role")
     if isinstance(judge_role, dict) and (judge_role.get("dotted") or judge_role.get("models_role")):
@@ -892,12 +892,12 @@ async def _run(args: dict[str, Any]) -> None:
     config = RuntimeConfig(
         instance_id=str(args.get("instance_id", "default")),
         workspace_root=workspace_root,
-        harness_call_llm=harness_call_llm,
-        auxiliary_call_llm=auxiliary_call_llm,
+        target_call_llm=target_call_llm,
+        evaluation_call_llm=evaluation_call_llm,
         seed=args.get("seed"),
         judge_call_llm=judge_call_llm,
         user_emulator_call_llm=user_emulator_call_llm,
-        inner_model=inner_model,
+        target_model=target_model,
         persist_run_results=persist_run_results,
         persist_judge_io=persist_judge_io,
         judge_io_sink=judge_io_sink,

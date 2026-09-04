@@ -3,7 +3,7 @@
 This runs a deterministic, no-live-LLM evolve of the real
 ``target_1_presentation`` example contract (board + a scoring contract +
 annotated ``agent/`` tree + the example's ``mocks.aux_llm`` proposer), with
-the inner harness + loss reducer mocked exactly as the orchestrator test
+the system under test + loss reducer mocked exactly as the orchestrator test
 suite mocks them. It is the same drive
 ``tests/test_example_target_1_racing.py`` performs, generalised over the
 three axes that select which production branches execute: the tournament
@@ -430,9 +430,9 @@ def drive_mock_evolve(
     # candidate against the stand-in binary.
     import zicato.evolve.lifecycle_services as _lifecycle_services
     from tests._orchestrator_harness import (
-        harness_call_llm,
         install_stub_adapter_factory,
         install_telemetry_stubs,
+        target_call_llm,
     )
     from tests._stub_adapter import stub_adapter_pythonpath
     from tests.test_example_target_1_racing import (
@@ -542,8 +542,8 @@ def drive_mock_evolve(
             rounds=lane.rounds,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_make_example_aux_responder(),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_make_example_aux_responder(),
             fast_mode=lane.fast_mode,
         )
     )

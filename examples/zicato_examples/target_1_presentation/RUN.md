@@ -14,7 +14,7 @@ no meaningful improvement signal.
 ## Prerequisites
 
 The walkthrough exercises the full orchestrator path, which imports
-goldfive (for the inner-harness runner) and the agent development kit
+goldfive (for the system-under-test runner) and the agent development kit
 (for the agent tree). Install the repository with its development
 extras, which pulls in goldfive, the kit, and the `zicato-examples`
 package that makes `zicato_examples.*` importable from anywhere:
@@ -81,7 +81,7 @@ $PY -m zicato.cli inspect mutations --workspace .zicato
 #    new one.
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 2 --mode full \
-    --harness-call-llm   zicato_examples.target_1_presentation.mocks:harness_llm \
+    --harness-call-llm   zicato_examples.target_1_presentation.mocks:target_llm \
     --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
 
 # 6. Close the epoch to produce analysis.md and analysis.html.
@@ -113,7 +113,7 @@ cp $EX/scoring.json ./scoring.json
 # files above, and auto-opens epoch e0 before running the loop.
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 2 --mode full \
-    --harness-call-llm   zicato_examples.target_1_presentation.mocks:harness_llm \
+    --harness-call-llm   zicato_examples.target_1_presentation.mocks:target_llm \
     --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
 ```
 
@@ -207,7 +207,7 @@ $PY -m zicato.cli epoch new t1_racing --workspace .zicato \
 # proposes a 4-challenger field and runs the rung ladder.
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 2 --mode full \
-    --harness-call-llm   zicato_examples.target_1_presentation.mocks:harness_llm \
+    --harness-call-llm   zicato_examples.target_1_presentation.mocks:target_llm \
     --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
 ```
 
@@ -227,7 +227,7 @@ $PY -m zicato.cli evolve --workspace .zicato \
     --tournament-param eta=2 \
     --tournament-param board_fraction=0.4 \
     --tournament-param replicates=2 \
-    --harness-call-llm   zicato_examples.target_1_presentation.mocks:harness_llm \
+    --harness-call-llm   zicato_examples.target_1_presentation.mocks:target_llm \
     --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
 ```
 
@@ -241,7 +241,7 @@ taken as a string. The flags are only applied when
 > `--tournament-param board_ids='["waffles_single", ...]'` to race on a
 > *subset*; an explicit list overrides the default.
 
-### The mock-harness test that runs this
+### The mock-target test that runs this
 
 `tests/test_example_target_1_racing.py` drives this contract end to end
 with **no live model**. It loads `scoring.racing.json`, seeds a `v0`
@@ -301,7 +301,7 @@ A contract that cannot tell a challenger from its champion reports every
 round as a tie (`delta_scalar = 0.0`) while calling the loop healthy.
 Three properties of this example keep that from happening.
 
-1. **`harness_llm` reads the `system` prompt, and only the researcher
+1. **`target_llm` reads the `system` prompt, and only the researcher
    carries the marker.** The mutated researcher instruction changes the
    output: a baseline instruction lets the writer slip in an uncited,
    fabricated figure, and a citation-demanding challenger instruction
@@ -417,7 +417,7 @@ so a reader does not mistake it for a fault.
   intact for the live planner to score the difference, and the
   `LLMPlanner` prose passthrough drops it. Closing that gap needs live
   endpoints and an operator go-ahead.
-* **`harness_llm` returns prose rather than JSON.** goldfive's
+* **`target_llm` returns prose rather than JSON.** goldfive's
   `LLMPlanner` expects a planner-shaped JSON envelope; the mock returns
   slide-shaped prose. The planner falls back to its passthrough
   behaviour and emits the `JSON parse failed: ...` warnings visible on
@@ -432,8 +432,8 @@ so a reader does not mistake it for a fault.
   on the events stream. The reducer treats those as a zero-signal run
   and the tournament continues.
 * **`analysis.md` is the stub form.** `epoch close` does not thread a
-  real auxiliary callable through, so the close path writes the "_no
-  auxiliary LLM was supplied_" stub plus the journal snapshot. The HTML
+  real evaluation callable through, so the close path writes the "_no
+  evaluation LLM was supplied_" stub plus the journal snapshot. The HTML
   companion carries the full report shape and is informative on its own.
 
 ## Swapping in real models
@@ -441,19 +441,19 @@ so a reader does not mistake it for a fault.
 Two extension points:
 
 1. **Replace the mocks.** Author your own
-   `pkg.module:harness_call_llm` and `pkg.module:auxiliary_call_llm`
+   `pkg.module:target_call_llm` and `pkg.module:evaluation_call_llm`
    conforming to `Callable[[str, str, str], Awaitable[str]]` and pass
    them via `--harness-call-llm` / `--auxiliary-call-llm`. Anything
    that returns the right text — a real model client, a local cache,
    a replay log — works the same way.
 
-2. **Configure the auxiliary callable in the workspace.** Edit
+2. **Configure the evaluation callable in the workspace.** Edit
    `.zicato/config.json` to add a `runtime` block:
 
    ```json
    "runtime": {
-     "harness_call_llm":   "pkg.module:harness_call_llm",
-     "auxiliary_call_llm": "pkg.module:aux_call_llm"
+     "target_call_llm":   "pkg.module:target_call_llm",
+     "evaluation_call_llm": "pkg.module:aux_call_llm"
    }
    ```
 
@@ -462,6 +462,6 @@ Two extension points:
    `--*-call-llm` flags still win when supplied — useful for one-off
    replays against a different model without touching config.
 
-The auxiliary callable must NOT be the same Python object as the
-harness callable; the runner enforces `is`-distinctness as a
+The evaluation callable must NOT be the same Python object as the
+target callable; the runner enforces `is`-distinctness as a
 collusion guard for multi-turn emulated entries.

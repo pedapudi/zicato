@@ -22,7 +22,7 @@ assumes them.
 
 ## 1. The two facets of a board entry
 
-A `BoardEntry` evaluates the inner harness along two independent
+A `BoardEntry` evaluates the system under test along two independent
 facets. An entry that confuses the two measures the wrong thing, so
 the distinction governs every authoring decision below.
 
@@ -210,7 +210,7 @@ property spans turns; `OutputScope.FINAL` (the default) for
 single-turn entries and for multi-turn entries whose contract is
 satisfied by the last reply alone.
 
-The grader runs through `auxiliary_call_llm`, never the harness
+The grader runs through `evaluation_call_llm`, never the target
 callable — the model grading the output must not be the model that
 produced it (see [EMULATOR.md](EMULATOR.md) §3 on collusion).
 
@@ -387,7 +387,7 @@ board = Board(
 
 This suppresses the `LOOPING_TOOL_CALL` built-in judge for the whole
 board. Use it when a built-in detector produces noise that is
-irrelevant or expected for *this* inner harness — for instance, an
+irrelevant or expected for *this* system under test — for instance, an
 agent that legitimately retries a flaky tool will trip
 `LOOPING_TOOL_CALL` without it being a real failure.
 
@@ -724,7 +724,7 @@ message naming the field.
 
 ## 8. The proposer brief
 
-The board defines *what the inner harness is evaluated against*. The
+The board defines *what the system under test is evaluated against*. The
 **proposer brief** is the separate document that steers *how the
 proposer rewrites the harness* in response.
 
@@ -829,5 +829,5 @@ this guide, and `zicato evolve`.
 | How the `expectation`, `judges`, and weights enter the score | [SCORING.md](SCORING.md) |
 | The proposer brief and epoch boundaries | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
 | Drift counting, `judge_name` in the loss profile | [TELEMETRY.md](TELEMETRY.md) |
-| Why `auxiliary_call_llm` grades rubrics (collusion) | [EMULATOR.md](EMULATOR.md) |
+| Why `evaluation_call_llm` grades rubrics (collusion) | [EMULATOR.md](EMULATOR.md) |
 | The evolve-centric CLI; advanced/debug subcommands | [CLI.md](CLI.md) |

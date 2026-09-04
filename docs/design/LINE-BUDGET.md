@@ -52,7 +52,7 @@ above the baseline and negative where it stands below.
 |---|---:|---:|---:|
 | Total | 408,661 | 465,167 | +56,506 |
 | Production | 197,702 | 202,926 | +5,224 |
-| Production logic | 110,276 | 112,996 | +2,720 |
+| Production logic | 110,276 | 112,995 | +2,719 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point

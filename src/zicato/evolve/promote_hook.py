@@ -22,7 +22,7 @@ which owns the champion-marker advance under
   about experiments, lineage, and the journal, and by design not about
   adapters. Threading a :class:`~zicato.adapters.base.HarnessAdapter`
   through it would give a persistence module a dependency on the
-  inner-harness Protocol purely to carry it one frame deeper.
+  system-under-test Protocol purely to carry it one frame deeper.
 
 The settlement caller already holds the adapter and invokes
 :func:`fire_on_promote` after the complete canonical settlement commits.

@@ -37,11 +37,11 @@ import zicato.tournament.runner as _runner_mod
 # sys.modules with a stub that has no working read/write).
 from tests._orchestrator_harness import (
     bootstrap_workspace,
-    harness_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
+    target_call_llm,
 )
 from zicato.telemetry.reducer import read_loss_profile as _REAL_READ_LOSS
 from zicato.telemetry.reducer import write_loss_profile as _REAL_WRITE_LOSS
@@ -133,8 +133,8 @@ def test_resume_reuses_completed_units_without_rerun(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_aux_must_not_propose,
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_aux_must_not_propose,
         )
     )
 
@@ -188,8 +188,8 @@ def test_clean_workspace_evolve_is_unchanged(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
         )
     )
 

@@ -47,7 +47,7 @@
 > | T5 | the config-pins-not-environment rule | Contract and config flags cross the worker boundary through **config pins in the args file** rather than through the environment. A scrubbed worker environment carries only the process-essential keys plus the declared `api_key_env` names. |
 > | T6 | the gate-is-the-per-duel-decider rule | `evaluate_gate` is the one accept/reject test for a duel. A `SelectionStrategy` reads a `GateOutcome` and interprets it per its own bracket/Swiss/racing rules; it never re-implements or re-runs the gate. |
 > | T7 | the only-promotion-advances-the-champion rule | The champion pointer advances ONLY on a `"promoted"` `SelectionDecision`. Every layer above the gate (the Bradley–Terry pre-gate, the resolvers, the placebo) can only HOLD a promotion; none can force one. |
-> | T8 | the disjoint-reserved-bases rule | The reserved replicate bases are pairwise disjoint (duels `0..`, calibration `1000`, preflight `2000`, screen `3000`/`3001`, evidence `4000`) so an auxiliary draw can neither read nor clobber a canonical replicate slot. |
+> | T8 | the disjoint-reserved-bases rule | The reserved replicate bases are pairwise disjoint (duels `0..`, calibration `1000`, preflight `2000`, screen `3000`/`3001`, evidence `4000`) so an evaluation draw can neither read nor clobber a canonical replicate slot. |
 > | T9 | the mounted-tree-matches-the-chosen-candidate rule | The child snapshot the tournament mounts is derived from the patches of the experiment the round persists. The enforcing seam is 05-proposer.md §"5.6.5 Mounting the chosen candidate". |
 > | T10 | the distinct-draws-only rule | The Bradley–Terry audit only ever accumulates DISTINCT draws; a duplicate matchup id is refused, because identical data re-presented to the fit separates confidence intervals by repetition alone. |
 > | T11 | the placebo-never-crowns rule | The placebo arm is a real lineage child scored by the unchanged gate, but it NEVER advances the champion pointer and is split out of the optimization-stream health detectors. |
@@ -225,7 +225,7 @@ EVIDENCE_REPLICATE_BASE: int = 4000
 
 > ⛔ NEVER add a new replicated evaluation that draws at slot 0 or at an
 > already-reserved base. Pick a fresh base ≥ 5000, add it to this table, and
-> add its constant next to the others. A collision means an auxiliary draw
+> add its constant next to the others. A collision means an evaluation draw
 > either *reads* a canonical sample it should not (silent contamination) or
 > *writes over* one that crash-resume and `zicato repair index` key on. That is
 > the class of bug the evidence-gate replicate-slot reuse case documents
@@ -437,7 +437,7 @@ mechanism. It is one of:
 `is_infra_abort_cause` (`zicato.core`) is the predicate that separates the two
 cacheable causes (`None`, `BUDGET_ABORT_CAUSE`) from the five infra ones. The
 evidence-gate replicate-slot reuse case (`12-bug-casebook.md` case 8) is the
-same shape one layer up: there an auxiliary draw poisons a rating fit by reusing
+same shape one layer up: there an evaluation draw poisons a rating fit by reusing
 a sample, and here a transient blip would poison a unit's score by being cached
 as a permanent worst-case hit. Both are answered by keeping a non-signal out of
 a slot.
@@ -747,7 +747,7 @@ JSON-serializable.
 
 ### 6.3.4 The role worker spec — dotted vs models_role
 
-Each LLM role (harness / auxiliary / judge) is serialized by `_role_worker_spec`
+Each LLM role (target / evaluation / judge) is serialized by `_role_worker_spec`
 into one of two shapes:
 
 ```python
@@ -879,8 +879,8 @@ docstring:
             "entrypoint": "module.path:agent_symbol",
             "mutable_trees": ["<abs path>", ...]
           },
-          "harness_role":   {"dotted": "pkg.module:callable"} | {"models_role": {...}},
-          "auxiliary_role": {"dotted": "pkg.module:callable"} | {"models_role": {...}},
+          "target_role":   {"dotted": "pkg.module:callable"} | {"models_role": {...}},
+          "evaluation_role": {"dotted": "pkg.module:callable"} | {"models_role": {...}},
           "judge_role":     {"dotted": "pkg.module:callable"} | {"models_role": {...}},
           "sink_events_path": "<abs path to events.jsonl>",
           "loss_path": "<abs path to loss.json>",

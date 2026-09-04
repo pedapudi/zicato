@@ -5,7 +5,7 @@ Covers FUNCTIONALITY-RECOMMENDATIONS.md §4.1:
 * ``best_of_n == 1`` is byte-identical to today — the wrapper returns the
   inner agent UNCHANGED and a single ``propose`` runs with no critique call;
 * ``best_of_n > 1`` samples N candidates and the self-critique pass picks the
-  better of two scripted candidates through the (mock) auxiliary LLM;
+  better of two scripted candidates through the (mock) evaluation LLM;
 * the deterministic heuristic selects the smaller diff that targets an
   observed failure mode when critique is disabled;
 * a failing / unparseable critic falls back to the heuristic;
@@ -1706,7 +1706,7 @@ async def _plain_aux(system: str, user: str, model: str) -> str:
 @pytest.mark.asyncio
 async def test_ens_sampling_uses_breadth_critique_uses_depth() -> None:
     """Slate SAMPLING runs on breadth (N times); the CRITIQUE call runs on
-    depth — and both are distinct from the context's base auxiliary, proving
+    depth — and both are distinct from the context's base evaluation callable, proving
     the wrapper actually swapped ``ctx.aux_call_llm`` per call class."""
     candidates = [
         _experiment(core_idea="a", mutation_id="router__sp", new_content="a"),
@@ -1728,7 +1728,7 @@ async def test_ens_sampling_uses_breadth_critique_uses_depth() -> None:
     # SAMPLING: the inner was handed the breadth callable on every slate slot.
     assert inner.calls == 3
     assert [c.aux_call_llm for c in inner.contexts] == [breadth, breadth, breadth]
-    # CRITIQUE: exactly one depth call; the base auxiliary was NEVER the critic.
+    # CRITIQUE: exactly one depth call; the base evaluation was NEVER the critic.
     assert len(depth.system_prompts) == 1
     assert len(base_aux.system_prompts) == 0
     # The critic's pick (index 0) is returned.
@@ -1754,7 +1754,7 @@ async def test_ens_absent_roles_are_byte_identical_same_callable_object() -> Non
     )
     await agent.propose(_context(base_aux))
 
-    # Sampling fell back to the base auxiliary — the SAME object, not a copy.
+    # Sampling fell back to the base evaluation — the SAME object, not a copy.
     assert all(c.aux_call_llm is base_aux for c in inner.contexts)
     # Critique fell back to that same object too (one call).
     assert len(base_aux.system_prompts) == 1
@@ -1894,7 +1894,7 @@ async def test_ens_spec_role_swaps_ctx_model_for_default_proposer() -> None:
 @pytest.mark.asyncio
 async def test_ens_callable_only_role_leaves_ctx_model_unchanged() -> None:
     """A callable-only role (no model name — a bare call_llm / test callable)
-    swaps ``ctx.aux_call_llm`` but LEAVES ``ctx.model`` at the auxiliary string
+    swaps ``ctx.aux_call_llm`` but LEAVES ``ctx.model`` at the evaluation string
     (the documented degrade: it steers only proposers that read
     ``ctx.aux_call_llm``, not the default ADK proposer)."""
     candidates = [
@@ -1954,7 +1954,7 @@ async def test_ens_absent_roles_leave_ctx_model_byte_identical() -> None:
 #: that reaches the log re-wrapped or re-worded is an error that reader cannot
 #: classify as an outage.
 _CREDENTIAL_ERROR = (
-    "auxiliary LLM call raised AuthenticationError: Error code: 401 - "
+    "evaluation LLM call raised AuthenticationError: Error code: 401 - "
     "{'error': {'message': 'invalid x-api-key', 'type': 'authentication_error'}}"
 )
 
@@ -2017,7 +2017,7 @@ async def test_failed_slot_errors_are_logged_even_when_a_sibling_survives() -> N
     assert events[-1][1]["reason"] == "sole_candidate"
     # The error text is VERBATIM: the reader's marker scan anchors on the
     # call-boundary prefix, so a re-wrapped error would be unclassifiable.
-    assert attempts[0]["errors"][0].startswith("auxiliary LLM call raised ")
+    assert attempts[0]["errors"][0].startswith("evaluation LLM call raised ")
 
 
 @pytest.mark.asyncio
@@ -2091,7 +2091,7 @@ async def test_all_failed_slate_does_not_double_report_its_attempts() -> None:
 async def test_swallowed_merge_call_error_reaches_the_log() -> None:
     """Pin (d): the LLM-merge degrade stops being invisible.
 
-    ``recombine_merge="llm"`` issues ONE auxiliary call for the last slot. Its
+    ``recombine_merge="llm"`` issues ONE evaluation call for the last slot. Its
     exception is swallowed to a fresh sample, which is right — a merge failure
     must never narrow the slate — but it was swallowed to a ``debug`` line, so
     a round whose merge endpoint was refusing looked exactly like a round that
@@ -2136,7 +2136,7 @@ async def test_swallowed_merge_call_error_reaches_the_log() -> None:
     assert len(attempts) == 1
     assert attempts[0]["slot_index"] == 2
     (text,) = attempts[0]["errors"]
-    assert text.startswith("auxiliary LLM call raised RuntimeError: ")
+    assert text.startswith("evaluation LLM call raised RuntimeError: ")
     assert "invalid x-api-key" in text
     assert "recombination merge" in text
     # It precedes the slot's own candidate — the degrade happened first.

@@ -60,11 +60,11 @@ def _now_iso() -> str:
     return _dt.datetime.now(_dt.UTC).isoformat()
 
 
-async def _noop_harness(system: str, user: str, model: str) -> str:  # pragma: no cover
-    """Placeholder harness callable — reflection adjudication never runs it.
+async def _noop_target(system: str, user: str, model: str) -> str:  # pragma: no cover
+    """Placeholder target callable — reflection adjudication never runs it.
 
     Adjudication re-reads the ALREADY-persisted transcripts and calls only the
-    independent adjudicator; the harness/auxiliary surfaces are never invoked.
+    independent adjudicator; the target/evaluation surfaces are never invoked.
     A distinct placeholder satisfies ``make_runtime_config``'s required-callable
     contract (and keeps the independence guard's identity comparison honest)
     without wiring a live endpoint.
@@ -72,8 +72,8 @@ async def _noop_harness(system: str, user: str, model: str) -> str:  # pragma: n
     return ""
 
 
-async def _noop_auxiliary(system: str, user: str, model: str) -> str:  # pragma: no cover
-    """Placeholder auxiliary callable — see :func:`_noop_harness`."""
+async def _noop_evaluation(system: str, user: str, model: str) -> str:  # pragma: no cover
+    """Placeholder evaluation callable — see :func:`_noop_target`."""
     return ""
 
 
@@ -660,8 +660,8 @@ def _run_adjudication(
     config = runtime_factory.make_runtime_config(
         workspace_config,
         workspace_root=workspace_root,
-        harness_call_llm=_noop_harness,
-        auxiliary_call_llm=_noop_auxiliary,
+        target_call_llm=_noop_target,
+        evaluation_call_llm=_noop_evaluation,
     )
     config = dataclasses.replace(config, adjudicator_call_llm=adjudicator_call_llm)
 

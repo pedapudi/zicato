@@ -19,7 +19,7 @@ lives there. This module composes ``events_jsonl_path`` with a parent-
 directory ``mkdir`` so the goldfive sink can lazily open the file
 without the caller pre-creating the directory tree.
 
-Scope: this module wires harmonograf to the **inner-harness** event
+Scope: this module wires harmonograf to the **system-under-test** event
 stream (one goldfive.v1.Event stream per entry run) — the board-run
 session of the harmonograf taxonomy. Zicato's **meta-loop** — the
 orchestrator's own proposer + process-judge calls — is its OWN

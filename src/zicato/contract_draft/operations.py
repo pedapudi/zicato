@@ -82,7 +82,7 @@ class CostLine:
         Human-readable term name (e.g. ``"per-duel runs"``).
     runs:
         Runs this term contributes. Board-runs for every term except the
-        clearly-labelled auxiliary lines (``best-of-N propose calls``),
+        clearly-labelled evaluation lines (``best-of-N propose calls``),
         which count LLM calls and are excluded from the board-runs
         headline — the label + detail say so.
     detail:
@@ -707,7 +707,7 @@ def set_proposer_quality(
         How many candidate experiments each propose-step samples before
         selection. ``1`` is a single sample with no critique. Must be >= 1.
     ``critique_enabled``
-        Toggles the auxiliary self-critique selection pass. Inert at
+        Toggles the evaluation self-critique selection pass. Inert at
         ``best_of_n == 1``.
     ``process_exemplars``
         Opts the proposer into up to that many REDACTED drift-anchored event
@@ -719,7 +719,7 @@ def set_proposer_quality(
         best-of-N slot mints the patch union of two rejected complementary
         challengers instead of sampling the LLM. REQUIRES ``best_of_n > 1``
         to have any effect, since a single-sample proposer has no slate slot
-        to mint into. Cost-neutral: the mint REPLACES that slot's auxiliary
+        to mint into. Cost-neutral: the mint REPLACES that slot's evaluation
         propose call (:mod:`zicato.epoch.recombine`); flipping it rolls the
         epoch.
     ``recombine_merge``
@@ -1241,12 +1241,12 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
 
     * ``candidate-screen runs`` — the pre-tournament tryout panel
       (``proposes × best_of_n × panel``).
-    * ``best-of-N propose calls`` — ``proposes × best_of_n`` AUXILIARY
+    * ``best-of-N propose calls`` — ``proposes × best_of_n`` EVALUATION
       LLM calls per round (the slate SAMPLING, which runs on the
       ensemble proposer's breadth role; the critique / revise DEPTH calls
       run on the depth role and are not separately metered). These are
-      auxiliary calls rather than board runs, so the line is labelled
-      auxiliary and EXCLUDED from the board-runs headline. It is still
+      evaluation calls rather than board runs, so the line is labelled
+      evaluation and EXCLUDED from the board-runs headline. It is still
       real money and belongs on the meter.
     * ``crowning-confirm runs`` — the evidence gate's defer→replicate
       budget: each replicate is a FRESH board sweep for BOTH crowning
@@ -1356,7 +1356,7 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
             per_round += screen_runs
 
     # Best-of-N propose multiplier: each propose-step samples best_of_n
-    # candidate experiments — auxiliary LLM CALLS rather than board runs, so the
+    # candidate experiments — evaluation LLM CALLS rather than board runs, so the
     # line is labelled and EXCLUDED from the board-runs headline. Real
     # spend the operator should still see priced. An UPPER BOUND under the
     # recombination slot (proposer_quality.recombine): a round that mints
@@ -1368,7 +1368,7 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
             CostLine(
                 "best-of-N propose calls",
                 propose_calls,
-                f"proposes {proposes} × best_of_n {quality.best_of_n} — auxiliary "
+                f"proposes {proposes} × best_of_n {quality.best_of_n} — evaluation "
                 "LLM calls on the proposer-breadth role (sampling); critique / "
                 "revise run on proposer-depth. Not board runs (excluded from the "
                 "headline)",
@@ -1969,7 +1969,7 @@ async def preflight(
     HONEST DEGRADE, never a crash: each missing prerequisite returns
     ``available=False`` with a ``reason`` naming exactly what is missing
     (no current epoch / no seeded baseline generation / no adapter block /
-    no ``runtime.harness_call_llm`` dotted callables / an empty draft
+    no ``runtime.target_call_llm`` dotted callables / an empty draft
     board / no mutation points). The result is RECOMMEND-ONLY and is NOT
     persisted onto the epoch record — the draft is not the live contract,
     so its measurement must never masquerade as the live epoch's.
@@ -2045,7 +2045,7 @@ async def preflight(
             available=False,
             reason=(
                 "preflight requires the runtime call_llm config "
-                f"(config.json `runtime.harness_call_llm` / `runtime.auxiliary_call_llm`): {exc}"
+                f"(config.json `runtime.target_call_llm` / `runtime.evaluation_call_llm`): {exc}"
             ),
         )
 

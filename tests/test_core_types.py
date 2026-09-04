@@ -633,8 +633,8 @@ def test_runtime_config_parallelism_defaults_to_four(tmp_path: Path) -> None:
     config = RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=harness_call,  # type: ignore[arg-type]
-        auxiliary_call_llm=aux_call,  # type: ignore[arg-type]
+        target_call_llm=harness_call,  # type: ignore[arg-type]
+        evaluation_call_llm=aux_call,  # type: ignore[arg-type]
     )
     assert config.parallelism == 4
 
@@ -645,8 +645,8 @@ def test_runtime_config_parallelism_accepts_one(tmp_path: Path) -> None:
     config = RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=harness_call,  # type: ignore[arg-type]
-        auxiliary_call_llm=aux_call,  # type: ignore[arg-type]
+        target_call_llm=harness_call,  # type: ignore[arg-type]
+        evaluation_call_llm=aux_call,  # type: ignore[arg-type]
         parallelism=1,
     )
     assert config.parallelism == 1
@@ -658,8 +658,8 @@ def test_runtime_config_parallelism_accepts_high_value(tmp_path: Path) -> None:
     config = RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=harness_call,  # type: ignore[arg-type]
-        auxiliary_call_llm=aux_call,  # type: ignore[arg-type]
+        target_call_llm=harness_call,  # type: ignore[arg-type]
+        evaluation_call_llm=aux_call,  # type: ignore[arg-type]
         parallelism=32,
     )
     assert config.parallelism == 32
@@ -673,8 +673,8 @@ def test_runtime_config_rejects_sub_one_parallelism(tmp_path: Path, bad: int) ->
         RuntimeConfig(
             instance_id="test",
             workspace_root=tmp_path,
-            harness_call_llm=harness_call,  # type: ignore[arg-type]
-            auxiliary_call_llm=aux_call,  # type: ignore[arg-type]
+            target_call_llm=harness_call,  # type: ignore[arg-type]
+            evaluation_call_llm=aux_call,  # type: ignore[arg-type]
             parallelism=bad,
         )
 

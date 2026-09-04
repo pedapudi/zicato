@@ -104,7 +104,7 @@ def import_dotted_path(path: str, *, label: str = "dotted path") -> Any:
         The dotted path to resolve.
     label:
         Human-readable name for the path used in :class:`ValueError`
-        messages (e.g. ``"harness_call_llm"`` or ``"predicate"``).
+        messages (e.g. ``"target_call_llm"`` or ``"predicate"``).
 
     Returns
     -------

@@ -304,7 +304,7 @@ def _render_findings(reflection: Any) -> str:
     "draft_spec",
     default=None,
     help=(
-        "Dotted path to an auxiliary call_llm used to REFINE each remedy's prose. "
+        "Dotted path to an evaluation call_llm used to REFINE each remedy's prose. "
         "Optional — the drafted edits are complete without it."
     ),
 )

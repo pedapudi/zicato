@@ -14,7 +14,7 @@ met, and propose the patch. Every decision in the loop then comes
 from one model evaluating itself, and the pass-rate signal stops
 measuring the agent. The construction in this document makes the
 emulator a peer agent under the same observability posture as the
-inner harness, with no privileged knowledge of the answer.
+system under test, with no privileged knowledge of the answer.
 
 The rules below are hard rules rather than best-effort guidance.
 Several of them refuse the run when violated, because a refused run
@@ -26,7 +26,7 @@ plausible-looking results that are worth nothing.
 The emulator IS:
 
 - A peer agent that plays "a user trying to accomplish a goal".
-- Driven by an LLM, called through `auxiliary_call_llm`.
+- Driven by an LLM, called through `evaluation_call_llm`.
 - Bound by a persona shape with three string fields: `goal`,
   `constraints`, `stop_when` (each a single string — `constraints`
   is one free-text block rather than a list).
@@ -40,7 +40,7 @@ The emulator IS NOT:
 - A judge that evaluates whether the agent's output was correct.
 - A scripted bot that replays a fixed transcript (that is the
   `multi_turn_scripted` kind).
-- Capable of seeing anything the inner harness's user-facing
+- Capable of seeing anything the system under test's user-facing
   transcript does not already contain.
 
 That asymmetry is the design's purpose. The agent has its full
@@ -64,7 +64,7 @@ async def naive_emulate_turn(persona, transcript_so_far):
 ```
 
 That construction is safe only while `call_llm` differs from the
-callable the inner harness uses. When it is the same callable:
+callable the system under test uses. When it is the same callable:
 
 - The emulator is the same model that played the agent. Same
   prompt-conditioning biases, same failure modes, same blind spots.
@@ -90,11 +90,11 @@ close.
 
 zicato is configured with **two** distinct `call_llm` callables:
 
-- `harness_call_llm` — used by the inner harness only. The
+- `target_call_llm` — used by the system under test only. The
   `goldfive.wrap(...)` plumbing passes this through to the agent's
   LLM calls. Reaches the agent code; the agent talks to the world
   through this callable.
-- `auxiliary_call_llm` — used by everything zicato itself drives:
+- `evaluation_call_llm` — used by everything zicato itself drives:
   the multi-turn user emulator, the patch proposer, the in-run
   process judges, the analysis pass at epoch close, and the rubric
   grader.
@@ -108,10 +108,10 @@ runner re-check defensively before a run. It is a **pure identity
 check**:
 
 ```python
-def assert_distinct_callables(harness_call_llm, auxiliary_call_llm):
-    if harness_call_llm is auxiliary_call_llm:
+def assert_distinct_callables(target_call_llm, evaluation_call_llm):
+    if target_call_llm is evaluation_call_llm:
         raise RuntimeError(
-            "harness_call_llm and auxiliary_call_llm must be distinct "
+            "target_call_llm and evaluation_call_llm must be distinct "
             "callables; shared callables risk collusion in multi-turn "
             "emulated entries"
         )
@@ -131,7 +131,7 @@ The check accepts:
 The check rejects:
 
 - The exact same callable object passed for both roles
-  (`harness_call_llm is auxiliary_call_llm`).
+  (`target_call_llm is evaluation_call_llm`).
 
 It is **identity (`is`) only** — there is no `model=` override
 carve-out and no inspection of the model argument. The check catches
@@ -187,7 +187,7 @@ class UserVisibleTurn:
 The emulator NEVER sees, and the typed context construction physically
 cannot deliver:
 
-- The agent's **system prompt** — the inner harness's instructions
+- The agent's **system prompt** — the system under test's instructions
   to its specialists.
 - The agent's **tool calls** and tool outputs — the actions the
   agent took to produce the user-visible text.
@@ -228,7 +228,7 @@ system rather than in convention.
 
 ### 4.2 What "user-visible transcript" means
 
-The inner harness's agent emits many things: tool calls, intermediate
+The system under test's agent emits many things: tool calls, intermediate
 LLM responses, the agent's internal thinking. Only the **user-visible
 text** — the chat-shaped responses the agent produces for the user —
 is included in `user_visible_transcript`. The reduction happens
@@ -320,7 +320,7 @@ another. Three fields:
 ### 6.1 `stop_when` evaluation
 
 The emulator is asked, on each turn, whether `stop_when` is satisfied.
-The check is a separate, lightweight `auxiliary_call_llm` call with a
+The check is a separate, lightweight `evaluation_call_llm` call with a
 narrow prompt:
 
 ```
@@ -383,7 +383,7 @@ Span fields:
 | Field | Value |
 |---|---|
 | `name` | `"emulator_turn"` |
-| `model` | The emulator's model (from `auxiliary_call_llm`). |
+| `model` | The emulator's model (from `evaluation_call_llm`). |
 | `input_preview` | `"persona_hash=<sha256 hex prefix>; transcript_chars_in=<int>"`. The persona's contents are NOT in the preview (operator may consider the persona sensitive). |
 | `output_preview` | The emulator's produced user turn, truncated to 512 chars. |
 | `target_agent_id` | `"zicato:emulator"` (the lane identifier). |
@@ -414,7 +414,7 @@ The audit trail supplies that evidence. Without it the operator has
 no way to validate the run.
 
 The audit trail also makes a change in the emulator's own behaviour
-visible. Swapping the auxiliary model can produce shorter,
+visible. Swapping the evaluation model can produce shorter,
 less-probing user turns, for instance. An operator who sees emulator
 turns shortening across a series of entries has the evidence to
 attribute that change to the swap.
@@ -465,15 +465,15 @@ Honest accounting:
   verbatim", the emulator will do that. The persona is the
   operator's authoring surface; zicato does not validate persona
   contents beyond schema.
-- **Auxiliary model swap during an epoch.** Swapping the auxiliary
+- **Evaluation model swap during an epoch.** Swapping the evaluation
   callable mid-epoch changes the emulator's behaviour without
-  changing the contract. zicato does not enforce auxiliary-model
+  changing the contract. zicato does not enforce evaluation-model
   stability; the operator's discipline is the guard.
-- **Alignment across providers.** If `harness_call_llm` and
-  `auxiliary_call_llm` are different APIs backed by the same
+- **Alignment across providers.** If `target_call_llm` and
+  `evaluation_call_llm` are different APIs backed by the same
   underlying provider, collusion at the model-family level remains
   possible. The two-callable rule catches identity collusion only.
-  Pinning the auxiliary callable's provider family at config time is
+  Pinning the evaluation callable's provider family at config time is
   unimplemented.
 
 ## 12. Cross-references
@@ -483,4 +483,4 @@ Honest accounting:
 | Persona schema, `multi_turn_emulated` entry kind | [BOARD-FORMAT.md](BOARD-FORMAT.md) |
 | Emulator spans on the `zicato:emulator` lane | [TELEMETRY.md](TELEMETRY.md) |
 | Why hard error rather than warning on the two-callable check | [RATIONALE.md](RATIONALE.md) |
-| `auxiliary_call_llm` use by proposer, judge, analysis pass | [ARCHITECTURE.md §4.10](ARCHITECTURE.md#410-the-two-call_llm-callables) |
+| `evaluation_call_llm` use by proposer, judge, analysis pass | [ARCHITECTURE.md §4.10](ARCHITECTURE.md#410-the-two-call_llm-callables) |

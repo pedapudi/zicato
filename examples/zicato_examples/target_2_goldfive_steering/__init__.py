@@ -1,6 +1,6 @@
 """Dogfood target 2 — driving goldfive's own steering layer.
 
-The inner harness here is goldfive itself: the proposer emits patches
+The system under test here is goldfive itself: the proposer emits patches
 against goldfive's prompt + threshold surface and the tournament
 scores the snapshots against an adversarial board. See ``RUN.md`` in
 this directory for the end-to-end walkthrough.

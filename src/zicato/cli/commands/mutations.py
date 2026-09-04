@@ -1,4 +1,4 @@
-"""``zicato inspect mutations`` — audit the mutable surface in the registered inner harness.
+"""``zicato inspect mutations`` — audit the mutable surface in the registered system under test.
 
 ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` enumerates
 the mutable surface internally when it proposes. Run ``zicato
@@ -44,7 +44,7 @@ def _load_source_roots(workspace_dir: Path) -> list[Path]:
     if not config.exists:
         raise click.ClickException(
             f"No workspace config at {config.path}. "
-            "Run `zicato epoch register` to point this workspace at an inner harness."
+            "Run `zicato epoch register` to point this workspace at a system under test."
         )
     if not config.source_roots:
         raise click.ClickException(
@@ -201,7 +201,7 @@ def mutations_cmd(
     show_mode: str,
     fmt: str,
 ) -> None:
-    """Advanced: list the mutable spans in the registered inner harness.
+    """Advanced: list the mutable spans in the registered system under test.
 
     Off the happy path — `zicato evolve` enumerates these itself.
     Use this to audit what the proposer is allowed to change.

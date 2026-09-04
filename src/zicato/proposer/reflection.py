@@ -710,7 +710,7 @@ async def draft_remedy(
     model: str,
     proposer_path: Path | None = None,
 ) -> ProposerFinding:
-    """Return ``finding`` with its remedy prose redrafted by the auxiliary model.
+    """Return ``finding`` with its remedy prose redrafted by the evaluation model.
 
     OPTIONAL and off by default: :func:`derive_findings` already produces a
     complete, appliable remedy, so the model is a polish pass over guidance the
@@ -730,7 +730,7 @@ async def draft_remedy(
         indent=2,
         sort_keys=True,
     )
-    # Wrapped in the shared per-call auxiliary budget, like every other aux
+    # Wrapped in the shared per-call evaluation budget, like every other aux
     # call site. A hung endpoint must not wedge a reflection pass — and the
     # timeout matters MORE here than elsewhere, because this call is optional
     # polish over a remedy that is already complete: there is nothing to wait
@@ -751,7 +751,7 @@ async def draft_remedy(
         name=slug,
         description=description,
         guidance=guidance,
-        evidence="`zicato proposer reflect`, refined by the auxiliary model",
+        evidence="`zicato proposer reflect`, refined by the evaluation model",
     )
     kind, diff = _diff_against(proposer_path, finding.remedy.relative_path, text)
     remedy = ProposerRemedy(

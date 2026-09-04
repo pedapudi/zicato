@@ -1,7 +1,7 @@
 # Mutation surface
 
-The mutation surface is the set of source locations in the inner
-harness that zicato is allowed to rewrite. It is **annotated** rather than
+The mutation surface is the set of source locations in the system
+under test that zicato is allowed to rewrite. It is **annotated** rather than
 free-form: every mutable location is marked in the source with a
 comment-form marker. The patch proposer addresses mutations by stable id;
 the applier resolves each id to one location and rewrites only what
@@ -462,8 +462,8 @@ class HarnessAdapter(Protocol):
 
 `mutation_points()` returns a list over the **registered list of source
 roots** rather than over a single tree. One root is the common case: the
-inner harness's package. Two roots are needed when the target is a library
-the harness wraps, such as the inner harness together with the
+system under test's package. Two roots are needed when the target is a library
+the harness wraps, such as the system under test together with the
 adapter-instrumented goldfive checkout (the goldfive steering target — see
 [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)).
 
@@ -644,7 +644,7 @@ source root. Use the id glob (`--id`) to narrow it to a subset.
 
 The intended workflow is:
 
-1. Operator marks new mutation points in the inner harness's source.
+1. Operator marks new mutation points in the system under test's source.
 2. Operator runs `zicato inspect mutations` to confirm every marker resolves
    cleanly (no warnings, no duplicate ids).
 3. Operator runs `zicato evolve` and the proposer addresses patches
@@ -658,7 +658,7 @@ listing.
 
 ## 8. Adding new markers to existing code
 
-The recommended workflow for marking up an inner harness:
+The recommended workflow for marking up a system under test:
 
 1. Identify the smallest unit the proposer should be able to rewrite.
    Usually one string literal — a specialist instruction, a coordinator

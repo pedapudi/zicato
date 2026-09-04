@@ -413,8 +413,8 @@ async def evolve_n_rounds(
     rounds: int,
     workspace_root: Path,
     epoch_id: str | None = None,
-    harness_call_llm: CallLLM,
-    auxiliary_call_llm: CallLLM,
+    target_call_llm: CallLLM,
+    evaluation_call_llm: CallLLM,
     instance_id: str = "default",
     fast_mode: bool = False,
     max_consecutive_rejections: int = 3,
@@ -523,7 +523,7 @@ async def evolve_n_rounds(
     # and gates itself the same way). Keeping the gate here rather than in a
     # command-layer helper is what makes it unbypassable: a library caller
     # reaches it without going through the CLI. It must precede
-    # auto-epoching, because resolving contract drift may call the auxiliary
+    # auto-epoching, because resolving contract drift may call the evaluation
     # model. Every round below is then handed ``workspace_checked=True``, so
     # a multi-round invocation pays for the gate once.
     # Imported per call rather than at module scope. Suites that drive this
@@ -623,7 +623,7 @@ async def evolve_n_rounds(
             epoch_id = await ensure_epoch_for_contract(
                 workspace_root,
                 auto_epoch=auto_epoch,
-                aux_call_llm=auxiliary_call_llm,
+                aux_call_llm=evaluation_call_llm,
                 epoch_name=epoch_name,
                 before_contract_roll=discard_resume_before_roll,
             )
@@ -793,7 +793,7 @@ async def evolve_n_rounds(
                     workspace_root,
                     _rubric.payload,
                     auto_epoch=auto_epoch,
-                    aux_call_llm=auxiliary_call_llm,
+                    aux_call_llm=evaluation_call_llm,
                     epoch_name=epoch_name,
                 )
                 # The rubric replacement rolled the epoch (a contract edit) — the
@@ -841,8 +841,8 @@ async def evolve_n_rounds(
                     return await evolve_once(
                         workspace_root=workspace_root,
                         epoch_id=_epoch_id,
-                        harness_call_llm=harness_call_llm,
-                        auxiliary_call_llm=auxiliary_call_llm,
+                        target_call_llm=target_call_llm,
+                        evaluation_call_llm=evaluation_call_llm,
                         instance_id=instance_id,
                         fast_mode=fast_mode,
                         max_proposer_retries=max_proposer_retries,

@@ -86,8 +86,8 @@ def _runtime_config(workspace: Path) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=workspace,
-        harness_call_llm=_call,
-        auxiliary_call_llm=_call,
+        target_call_llm=_call,
+        evaluation_call_llm=_call,
     )
 
 

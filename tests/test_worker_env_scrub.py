@@ -46,8 +46,8 @@ def test_api_key_env_names_empty_for_unconfigured_models() -> None:
 def test_api_key_env_names_collects_configured_roles() -> None:
     """Each model-spec role's api_key_env NAME is collected, de-duplicated."""
     models = ModelsConfig(
-        harness=RoleSpec(model="m1", api_key_env="HARNESS_KEY"),
-        auxiliary=RoleSpec(model="m2", api_key_env="AUX_KEY"),
+        target=RoleSpec(model="m1", api_key_env="HARNESS_KEY"),
+        evaluation=RoleSpec(model="m2", api_key_env="AUX_KEY"),
         # A duplicate name across roles must appear once.
         judge=RoleSpec(model="m3", api_key_env="AUX_KEY"),
     )
@@ -58,8 +58,8 @@ def test_api_key_env_names_collects_configured_roles() -> None:
 def test_api_key_env_names_ignores_dotted_path_roles() -> None:
     """A dotted-path (call_llm) role carries no api_key_env and is skipped."""
     models = ModelsConfig(
-        harness=RoleSpec(call_llm="pkg.mod:fn"),
-        auxiliary=RoleSpec(model="m", api_key_env="ONLY_KEY"),
+        target=RoleSpec(call_llm="pkg.mod:fn"),
+        evaluation=RoleSpec(model="m", api_key_env="ONLY_KEY"),
     )
     assert _api_key_env_names(models) == ["ONLY_KEY"]
 
@@ -84,7 +84,7 @@ def test_scrubbed_env_includes_configured_api_key_env() -> None:
         "HARNESS_KEY": "sk-secret",
         "UNRELATED_KEY": "nope",
     }
-    models = ModelsConfig(harness=RoleSpec(model="m", api_key_env="HARNESS_KEY"))
+    models = ModelsConfig(target=RoleSpec(model="m", api_key_env="HARNESS_KEY"))
     env = scrubbed_worker_env(models=models, base_env=base)
     assert env["HARNESS_KEY"] == "sk-secret"
     # A credential NOT named by any role is excluded.

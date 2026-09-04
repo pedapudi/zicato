@@ -153,7 +153,7 @@ wall-clock timer.
   is data-derived (it is present iff `config.json` has not been marked closed);
   the close render removes it automatically because the epoch is then closed.
 * **The full render with LLM prose happens at epoch close.** The close seam
-  runs the bounded auxiliary-LLM prose pass, producing the finished paper and
+  runs the bounded evaluation-LLM prose pass, producing the finished paper and
   dropping the LIVING DRAFT stamp.
 * **`zicato repair report` renders on demand.** The manual backfill runs the
   full render, or the deterministic sections alone under `--no-llm`.
@@ -195,7 +195,7 @@ fails the suite.
 * `report_figures.py` + `svg/` — the inline-SVG figures, drawn from the same
   view; labels are kept inside their boxes by the shared text-fitting
   primitives.
-* `report_prompts.py` — the bounded auxiliary-LLM prompt for the four prose
+* `report_prompts.py` — the bounded evaluation-LLM prompt for the four prose
   blocks.
 * `report.py` — assembly, the markdown→paper-HTML renderer, the deterministic
   refresh (`regenerate_epoch_report_deterministic`), the masthead re-stamp, and

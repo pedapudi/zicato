@@ -641,7 +641,7 @@ pub fn is_signalable_run_pid(pid: i32, protected: &HashSet<i32>) -> bool {
 /// been vetted (signalable + alive + identity-matched) by the caller.
 ///
 /// The single worker pid is upgraded to a whole-process-group kill — taking
-/// down the worker AND any grandchildren the inner harness spawned — ONLY
+/// down the worker AND any grandchildren the system under test spawned — ONLY
 /// when every safety condition holds:
 ///
 /// * the run records a `pgid`,

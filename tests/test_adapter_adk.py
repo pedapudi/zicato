@@ -86,12 +86,12 @@ def test_split_entrypoint_rejects_multiple_colons() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tiny inner harness on disk
+# Tiny system under test on disk
 # ---------------------------------------------------------------------------
 
 
-def _write_inner_harness(root: Path, module_name: str = "demo_inner") -> Path:
-    """Write a minimal inner-harness module with mutable markers.
+def _write_system_under_test(root: Path, module_name: str = "demo_system") -> Path:
+    """Write a minimal system-under-test module with mutable markers.
 
     The module declares a single :class:`LlmAgent` named ``agent`` whose
     instruction is preceded by a ``# zicato:mutable`` marker. The
@@ -120,18 +120,18 @@ def _write_inner_harness(root: Path, module_name: str = "demo_inner") -> Path:
 
 
 @pytest.fixture
-def inner_harness(tmp_path: Path) -> tuple[Path, str]:
-    """Yield ``(generation_root, entrypoint)`` for a tmp_path inner harness."""
-    _write_inner_harness(tmp_path)
-    return tmp_path, "demo_inner.agent:agent"
+def system_under_test(tmp_path: Path) -> tuple[Path, str]:
+    """Yield ``(generation_root, entrypoint)`` for a tmp_path system under test."""
+    _write_system_under_test(tmp_path)
+    return tmp_path, "demo_system.agent:agent"
 
 
 @pytest.fixture(autouse=True)
 def _cleanup_sys_modules() -> Any:
-    """Drop any ``demo_inner*`` modules between tests so reloads are clean."""
+    """Drop any ``demo_system*`` modules between tests so reloads are clean."""
     yield
     for name in list(sys.modules):
-        if name.startswith("demo_inner"):
+        if name.startswith("demo_system"):
             sys.modules.pop(name, None)
 
 
@@ -171,12 +171,12 @@ def test_adk_adapter_conforms_to_harness_adapter_protocol(tmp_path: Path) -> Non
 
 
 def test_load_resolves_agent_symbol_from_generation_root(
-    inner_harness: tuple[Path, str],
+    system_under_test: tuple[Path, str],
 ) -> None:
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
     assert isinstance(runnable, ADKRunnableHarness)
@@ -187,13 +187,13 @@ def test_load_resolves_agent_symbol_from_generation_root(
 
 def test_load_raises_on_missing_symbol(tmp_path: Path) -> None:
     """When the module exists but the symbol does not, surface AttributeError."""
-    _write_inner_harness(tmp_path, module_name="demo_inner_missing_symbol")
+    _write_system_under_test(tmp_path, module_name="demo_system_missing_symbol")
     # Tweak the module to remove ``agent``
-    agent_py = tmp_path / "demo_inner_missing_symbol" / "agent.py"
+    agent_py = tmp_path / "demo_system_missing_symbol" / "agent.py"
     agent_py.write_text(agent_py.read_text().replace("agent = ", "_other = "))
 
     adapter = ADKHarnessAdapter(
-        entrypoint="demo_inner_missing_symbol.agent:agent",
+        entrypoint="demo_system_missing_symbol.agent:agent",
     )
     with pytest.raises(AttributeError, match="has no symbol"):
         adapter.load(tmp_path)
@@ -212,7 +212,7 @@ def test_mutation_points_returns_empty_when_no_trees() -> None:
 
 
 def test_mutation_points_delegates_to_enumerator_when_available(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When the enumerator is present, ``mutation_points`` forwards to it.
 
@@ -223,12 +223,12 @@ def test_mutation_points_delegates_to_enumerator_when_available(
     """
     from zicato.core import MutationPoint
 
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     fake_point = MutationPoint(
         id="greeter_instruction",
         kind="span",
-        file=generation_root / "demo_inner" / "agent.py",
-        source_root=generation_root / "demo_inner",
+        file=generation_root / "demo_system" / "agent.py",
+        source_root=generation_root / "demo_system",
         line_start=4,
         line_end=4,
         content="You greet the user and report success.",
@@ -250,12 +250,12 @@ def test_mutation_points_delegates_to_enumerator_when_available(
 
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     points = adapter.mutation_points()
     assert len(points) >= 1
     assert points[0].id == "greeter_instruction"
-    assert called_with["roots"] == [generation_root / "demo_inner"]
+    assert called_with["roots"] == [generation_root / "demo_system"]
 
 
 def test_mutation_points_uses_explicit_source_roots_override(
@@ -287,10 +287,10 @@ def test_mutation_points_uses_explicit_source_roots_override(
 
 
 def test_mutation_points_raises_clear_error_when_enumerator_missing(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When the enumerator module is not importable, surface a clear ImportError."""
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
 
     # Force the import to fail by inserting a sentinel that raises on attr access.
     monkeypatch.delitem(sys.modules, "zicato.mutation", raising=False)
@@ -307,7 +307,7 @@ def test_mutation_points_raises_clear_error_when_enumerator_missing(
 
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     with pytest.raises(ImportError, match="zicato.mutation.enumerator"):
         adapter.mutation_points()
@@ -321,7 +321,7 @@ def test_mutation_points_raises_clear_error_when_enumerator_missing(
 def _runtime_config(tmp_path: Path) -> RuntimeConfig:
     """Build a throwaway :class:`RuntimeConfig` for adapter tests."""
 
-    async def harness_llm(system: str, user: str, model: str) -> str:
+    async def target_llm(system: str, user: str, model: str) -> str:
         return "harness-reply"
 
     async def aux_llm(system: str, user: str, model: str) -> str:
@@ -330,8 +330,8 @@ def _runtime_config(tmp_path: Path) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=harness_llm,
-        auxiliary_call_llm=aux_llm,
+        target_call_llm=target_llm,
+        evaluation_call_llm=aux_llm,
         goldfive={},
     )
 
@@ -366,13 +366,13 @@ def test_outcome_transcript_handles_empty_completed_results() -> None:
 
 @pytest.mark.asyncio
 async def test_run_single_turn_forwards_sinks_and_callable(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``ADKRunnableHarness.run`` forwards sinks + harness_call_llm to goldfive.run."""
-    generation_root, entrypoint = inner_harness
+    """``ADKRunnableHarness.run`` forwards sinks + target_call_llm to goldfive.run."""
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
 
@@ -409,23 +409,23 @@ async def test_run_single_turn_forwards_sinks_and_callable(
     assert seen["user_input"] == "hello"
     # sinks passed through verbatim
     assert seen["sinks"] == [sentinel_sink]
-    # the harness_call_llm — NOT the auxiliary — is forwarded.
-    assert seen["call_llm"] is config.harness_call_llm
-    assert seen["call_llm"] is not config.auxiliary_call_llm
+    # the target_call_llm — NOT the evaluation — is forwarded.
+    assert seen["call_llm"] is config.target_call_llm
+    assert seen["call_llm"] is not config.evaluation_call_llm
 
 
 @pytest.mark.asyncio
 async def test_run_single_turn_routes_and_closes_dedicated_goldfive_judge(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A configured built-in judge endpoint is separate and caller-owned."""
 
     import goldfive
 
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
 
@@ -480,7 +480,7 @@ async def test_run_single_turn_routes_and_closes_dedicated_goldfive_judge(
     result = await runnable.run(entry, sinks=[], config=config)
 
     assert result.final_output == "reply-from-agent"
-    assert run_kwargs["call_llm"] is config.harness_call_llm
+    assert run_kwargs["call_llm"] is config.target_call_llm
     assert callable(run_kwargs["judge_call_llm"])
     assert run_kwargs["judge_model"] == "judge-model"
     assert run_kwargs["judge_only"] is True
@@ -493,16 +493,16 @@ async def test_run_single_turn_routes_and_closes_dedicated_goldfive_judge(
 
 @pytest.mark.asyncio
 async def test_dedicated_goldfive_judge_closes_when_run_fails(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A failed Goldfive run cannot leak its configured judge client."""
 
     import goldfive
 
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     runnable = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     ).load(generation_root)
     closed: list[tuple[Any, str]] = []
 
@@ -550,7 +550,7 @@ async def test_dedicated_goldfive_judge_closes_when_run_fails(
 
 
 def _write_multi_agent_harness(root: Path, module_name: str = "demo_tree") -> Path:
-    """Write an inner harness with a root + two string-model sub_agents.
+    """Write a system under test with a root + two string-model sub_agents.
 
     Mirrors the real target's multi-agent shape (a coordinator with
     sub-agents) so the rebind walker is exercised over ``sub_agents`` edges,
@@ -624,7 +624,7 @@ def test_rebind_replaces_string_models_with_call_llm_backed_basellm() -> None:
 
 
 def test_rebind_is_noop_without_call_llm() -> None:
-    """No harness call_llm ⇒ the model-string live path is left unchanged."""
+    """No target call_llm ⇒ the model-string live path is left unchanged."""
     agent = LlmAgent(name="solo", instruction="s", model="gemma-3-12b-it")
     assert rebind_tree_models_to_call_llm(agent, None) == 0
     assert agent.model == "gemma-3-12b-it"
@@ -793,7 +793,7 @@ class _EntryStub:
 
 @pytest.mark.asyncio
 async def test_run_single_turn_passes_judges_into_goldfive_run(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The adapter forwards an explicit judge list to ``goldfive.run``.
 
@@ -804,9 +804,9 @@ async def test_run_single_turn_passes_judges_into_goldfive_run(
     """
     import goldfive
 
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
-        entrypoint=entrypoint, mutable_trees=[generation_root / "demo_inner"]
+        entrypoint=entrypoint, mutable_trees=[generation_root / "demo_system"]
     )
     runnable = adapter.load(generation_root)
 
@@ -839,20 +839,20 @@ async def test_run_single_turn_passes_judges_into_goldfive_run(
     assert "reasoning_drift" in names
     assert "tool_error" in names
     assert names == [j.name for j in goldfive.builtin_judges.default_judges()]
-    # the harness callable is still forwarded; judges did not displace it.
-    assert seen["call_llm"] is config.harness_call_llm
+    # the target callable is still forwarded; judges did not displace it.
+    assert seen["call_llm"] is config.target_call_llm
 
 
 @pytest.mark.asyncio
 async def test_run_single_turn_includes_entry_custom_judges(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An entry's declared ``JudgeSpec`` judges land in the ``goldfive.run`` list."""
     import goldfive
 
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
-        entrypoint=entrypoint, mutable_trees=[generation_root / "demo_inner"]
+        entrypoint=entrypoint, mutable_trees=[generation_root / "demo_system"]
     )
     runnable = adapter.load(generation_root)
 
@@ -892,14 +892,14 @@ async def test_run_single_turn_includes_entry_custom_judges(
 
 @pytest.mark.asyncio
 async def test_run_single_turn_disable_drift_suppresses_builtin(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A board's ``disable_drift`` drops the matching built-in from ``judges=``."""
     import goldfive
 
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
-        entrypoint=entrypoint, mutable_trees=[generation_root / "demo_inner"]
+        entrypoint=entrypoint, mutable_trees=[generation_root / "demo_system"]
     )
     runnable = adapter.load(generation_root)
 
@@ -1015,7 +1015,7 @@ def testentry_judge_only_reads_context() -> None:
 
 @pytest.mark.asyncio
 async def test_run_single_turn_passes_public_judge_only_to_goldfive_run(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The board policy maps directly to Goldfive's public ``judge_only`` input.
 
@@ -1030,10 +1030,10 @@ async def test_run_single_turn_passes_public_judge_only_to_goldfive_run(
     tree still executes lives in
     ``test_run_single_turn_judge_only_no_steering_empirical`` below.
     """
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
 
@@ -1114,7 +1114,7 @@ def _goldfive_event_kinds(sink: Any) -> tuple[set[str], int]:
 
 @pytest.mark.asyncio
 async def test_run_single_turn_judge_only_no_steering_empirical(
-    inner_harness: tuple[Path, str], tmp_path: Path
+    system_under_test: tuple[Path, str], tmp_path: Path
 ) -> None:
     """EMPIRICAL acceptance contract: judge_only judges WITHOUT steering.
 
@@ -1275,13 +1275,13 @@ async def test_public_judge_only_preserves_critical_evidence_without_refining() 
 
 @pytest.mark.asyncio
 async def test_run_enforces_wall_clock_budget(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """When goldfive.run hangs past the budget, return aborted=wall_clock_budget."""
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
 
@@ -1323,13 +1323,13 @@ async def test_run_enforces_wall_clock_budget(
 
 @pytest.mark.asyncio
 async def test_run_catches_harness_exception(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Exceptions inside goldfive.run surface as aborted RunResults."""
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
 
@@ -1357,13 +1357,13 @@ async def test_run_catches_harness_exception(
 
 @pytest.mark.asyncio
 async def test_run_unsupported_kind_returns_aborted_result(
-    inner_harness: tuple[Path, str], tmp_path: Path
+    system_under_test: tuple[Path, str], tmp_path: Path
 ) -> None:
     """Reserved forward-compat kinds return aborted=unsupported_kind."""
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
 
@@ -1383,13 +1383,13 @@ async def test_run_unsupported_kind_returns_aborted_result(
 
 @pytest.mark.asyncio
 async def test_run_multi_turn_scripted_graceful_when_driver_missing(
-    inner_harness: tuple[Path, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    system_under_test: tuple[Path, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Without ``zicato.board.scripted`` installed, return scripted_driver_unavailable."""
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
 
@@ -1415,13 +1415,13 @@ async def test_run_multi_turn_scripted_graceful_when_driver_missing(
 
 @pytest.mark.asyncio
 async def test_run_multi_turn_emulated_graceful_when_emulator_missing(
-    inner_harness: tuple[Path, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    system_under_test: tuple[Path, str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Without ``zicato.emulator`` installed, return emulator_unavailable."""
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
 
@@ -1473,7 +1473,7 @@ async def test_run_multi_turn_emulated_graceful_when_emulator_missing(
 
 @pytest.mark.asyncio
 async def test_run_multi_turn_scripted_calls_goldfive_run_per_turn(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Scripted multi-turn entries drive goldfive.run once per scripted turn.
 
@@ -1490,17 +1490,17 @@ async def test_run_multi_turn_scripted_calls_goldfive_run_per_turn(
     * ``goldfive.run`` is called once per scripted turn (not zero times,
       not once for the whole entry).
     * The final transcript contains one reply per turn, in order.
-    * The harness_call_llm (not auxiliary_call_llm) is forwarded on each
+    * The target_call_llm (not evaluation_call_llm) is forwarded on each
       turn — the two-callable collusion guard holds for scripted entries.
     """
     import goldfive
 
     from zicato.core import ScriptedTurn
 
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
 
@@ -1544,10 +1544,10 @@ async def test_run_multi_turn_scripted_calls_goldfive_run_per_turn(
     assert len(calls) == 3
     assert [c["user_input"] for c in calls] == ["turn-one", "turn-two", "turn-three"]
 
-    # The harness_call_llm (not auxiliary) is forwarded on every turn.
+    # The target_call_llm (not evaluation) is forwarded on every turn.
     for call in calls:
-        assert call["call_llm"] is config.harness_call_llm
-        assert call["call_llm"] is not config.auxiliary_call_llm
+        assert call["call_llm"] is config.target_call_llm
+        assert call["call_llm"] is not config.evaluation_call_llm
 
     # Sinks are forwarded on every turn.
     for call in calls:
@@ -1570,7 +1570,7 @@ async def test_run_multi_turn_scripted_calls_goldfive_run_per_turn(
 
 @pytest.mark.asyncio
 async def test_run_multi_turn_emulated_calls_goldfive_run_per_turn(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Emulated multi-turn entries drive goldfive.run once per emulated turn.
 
@@ -1588,19 +1588,19 @@ async def test_run_multi_turn_emulated_calls_goldfive_run_per_turn(
 
     * No TypeError is raised.
     * ``goldfive.run`` is called once per harness (emulated) turn.
-    * The harness_call_llm (not auxiliary_call_llm) is forwarded on each
+    * The target_call_llm (not evaluation_call_llm) is forwarded on each
       turn — the two-callable collusion guard holds for emulated entries.
-    * The auxiliary_call_llm drives the emulator's user turns.
+    * The evaluation_call_llm drives the emulator's user turns.
     """
     import goldfive
 
     from zicato.core import UserPersona
     from zicato.emulator.sealed import END_TOKEN
 
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
 
@@ -1627,14 +1627,14 @@ async def test_run_multi_turn_emulated_calls_goldfive_run_per_turn(
         aux_state["i"] += 1
         return out
 
-    async def harness_llm(system: str, user: str, model: str) -> str:
+    async def target_llm(system: str, user: str, model: str) -> str:
         return "harness-reply"
 
     config = RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=harness_llm,
-        auxiliary_call_llm=aux_llm,
+        target_call_llm=target_llm,
+        evaluation_call_llm=aux_llm,
         goldfive={},
     )
 
@@ -1664,10 +1664,10 @@ async def test_run_multi_turn_emulated_calls_goldfive_run_per_turn(
     assert len(calls) == 1
     assert calls[0]["user_input"] == "I need a laptop for travel."
 
-    # The harness_call_llm (not auxiliary) is forwarded on every turn.
+    # The target_call_llm (not evaluation) is forwarded on every turn.
     for call in calls:
-        assert call["call_llm"] is config.harness_call_llm
-        assert call["call_llm"] is not config.auxiliary_call_llm
+        assert call["call_llm"] is config.target_call_llm
+        assert call["call_llm"] is not config.evaluation_call_llm
         assert call["sinks"] == [sentinel_sink]
 
 
@@ -1713,12 +1713,12 @@ async def test_goldfive_judge_model_can_override_the_shared_callable(tmp_path: P
         _runtime_config(tmp_path),
         goldfive={"judge": {"model": "shared-route-judge"}},
     )
-    async with goldfive_run_context(config.goldfive, config.harness_call_llm, judge_only=False) as (
+    async with goldfive_run_context(config.goldfive, config.target_call_llm, judge_only=False) as (
         _runtime,
         kwargs,
     ):
         assert kwargs == {
-            "call_llm": config.harness_call_llm,
+            "call_llm": config.target_call_llm,
             "judge_model": "shared-route-judge",
         }
 
@@ -1737,19 +1737,19 @@ async def test_goldfive_judge_endpoint_builder_failure_is_not_a_shared_route_fal
     )
     monkeypatch.setattr(goldfive, "make_default_openai_call_llm", lambda config: None)
     with pytest.raises(RuntimeError, match="could not construct.*judge endpoint"):
-        async with goldfive_run_context(config.goldfive, config.harness_call_llm, judge_only=False):
+        async with goldfive_run_context(config.goldfive, config.target_call_llm, judge_only=False):
             pass
 
 
 @pytest.mark.asyncio
 async def test_run_single_turn_forwards_runtime_to_goldfive_run(
-    inner_harness: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    system_under_test: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """``goldfive.run`` receives a ``runtime`` carrying the raised timeout."""
-    generation_root, entrypoint = inner_harness
+    generation_root, entrypoint = system_under_test
     adapter = ADKHarnessAdapter(
         entrypoint=entrypoint,
-        mutable_trees=[generation_root / "demo_inner"],
+        mutable_trees=[generation_root / "demo_system"],
     )
     runnable = adapter.load(generation_root)
 
@@ -1884,11 +1884,11 @@ def _weather_tool() -> Any:
 
 
 @pytest.mark.asyncio
-async def test_inner_model_rebind_preserves_tool_function_declarations() -> None:
+async def test_target_model_rebind_preserves_tool_function_declarations() -> None:
     """(b) REGRESSION: the config-driven inner-model rebind keeps tool-calling.
 
     Under :func:`rebind_tree_models_to_adk_model` (the path taken when a
-    ``models.harness`` inner model is configured), an agent that declares a
+    ``models.target`` inner model is configured), an agent that declares a
     ``FunctionTool`` must still be driven WITH its tools: ADK assembles the
     ``LlmRequest`` with the tool's ``function_declarations`` on
     ``config.tools``. We capture that request via a fake ``BaseLlm`` (the

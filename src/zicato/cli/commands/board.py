@@ -6,7 +6,7 @@ by ``zicato evolve`` automatically (a board change rolls the epoch).
 Use ``zicato board`` to inspect or hand-edit a frozen per-epoch board.
 
 The board lives at ``{workspace}/epochs/{epoch_id}/board.jsonl`` and is
-the frozen-per-epoch list of evaluations the inner harness is scored
+the frozen-per-epoch list of evaluations the system under test is scored
 against. This command group exposes the three operations the operator
 needs in a single epoch:
 
@@ -202,13 +202,13 @@ def remove_cmd(entry_id: str, workspace: str) -> None:
     "--harness-call-llm",
     "harness_dotted",
     required=True,
-    help="Dotted import path of the harness call_llm (e.g. mymodule:harness).",
+    help="Dotted import path of the target call_llm (e.g. mymodule:target).",
 )
 @click.option(
     "--auxiliary-call-llm",
     "auxiliary_dotted",
     required=True,
-    help="Dotted import path of the auxiliary call_llm (e.g. mymodule:aux).",
+    help="Dotted import path of the evaluation call_llm (e.g. mymodule:evaluation).",
 )
 def audit_cmd(
     workspace: str,
@@ -246,8 +246,8 @@ def audit_cmd(
             "(or `zicato epoch new`) first, or pass --epoch"
         )
 
-    harness_call_llm = _import_callable(harness_dotted, kind="harness_call_llm")
-    auxiliary_call_llm = _import_callable(auxiliary_dotted, kind="auxiliary_call_llm")
+    target_call_llm = _import_callable(harness_dotted, kind="target_call_llm")
+    evaluation_call_llm = _import_callable(auxiliary_dotted, kind="evaluation_call_llm")
 
     try:
         epoch_cfg = load_epoch(workspace_root, resolved_epoch)
@@ -263,8 +263,8 @@ def audit_cmd(
     config = runtime_factory.make_runtime_config(
         workspace_config,
         workspace_root=workspace_root,
-        harness_call_llm=harness_call_llm,
-        auxiliary_call_llm=auxiliary_call_llm,
+        target_call_llm=target_call_llm,
+        evaluation_call_llm=evaluation_call_llm,
     )
 
     # Resolve the current champion generation through the same seams the
@@ -374,13 +374,13 @@ def audit_cmd(
     "--harness-call-llm",
     "harness_dotted",
     required=True,
-    help="Dotted import path of the harness call_llm (e.g. mymodule:harness).",
+    help="Dotted import path of the target call_llm (e.g. mymodule:target).",
 )
 @click.option(
     "--auxiliary-call-llm",
     "auxiliary_dotted",
     required=True,
-    help="Dotted import path of the auxiliary call_llm (e.g. mymodule:aux).",
+    help="Dotted import path of the evaluation call_llm (e.g. mymodule:evaluation).",
 )
 def preflight_cmd(
     workspace: str,
@@ -440,8 +440,8 @@ def preflight_cmd(
             "(or `zicato epoch new`) first, or pass --epoch"
         )
 
-    harness_call_llm = _import_callable(harness_dotted, kind="harness_call_llm")
-    auxiliary_call_llm = _import_callable(auxiliary_dotted, kind="auxiliary_call_llm")
+    target_call_llm = _import_callable(harness_dotted, kind="target_call_llm")
+    evaluation_call_llm = _import_callable(auxiliary_dotted, kind="evaluation_call_llm")
 
     try:
         epoch_cfg = load_epoch(workspace_root, resolved_epoch)
@@ -457,8 +457,8 @@ def preflight_cmd(
     config = runtime_factory.make_runtime_config(
         workspace_config,
         workspace_root=workspace_root,
-        harness_call_llm=harness_call_llm,
-        auxiliary_call_llm=auxiliary_call_llm,
+        target_call_llm=target_call_llm,
+        evaluation_call_llm=evaluation_call_llm,
     )
 
     from zicato.evolve.generation_phase import (  # noqa: PLC0415
@@ -675,7 +675,7 @@ def preflight_cmd(
     "auxiliary_dotted",
     default=None,
     help=(
-        "Dotted import path of the judge/aux call_llm (e.g. mymodule:aux). "
+        "Dotted import path of the judge/evaluation call_llm (e.g. mymodule:evaluation). "
         "Required with --test-retest — inline judges are LLM-backed."
     ),
 )
@@ -742,7 +742,7 @@ def judges_cmd(
         )
     from zicato.cli.commands.evolve import _import_callable  # noqa: PLC0415
 
-    aux_call_llm = _import_callable(auxiliary_dotted, kind="auxiliary_call_llm")
+    aux_call_llm = _import_callable(auxiliary_dotted, kind="evaluation_call_llm")
     transcript = (
         Path(transcript_path).read_text(encoding="utf-8") if transcript_path else FIXTURE_TRANSCRIPT
     )
@@ -762,7 +762,7 @@ def judges_cmd(
         if rel.errors:
             click.echo(
                 f"    WARNING: the judge's callable RAISED on {rel.errors}/{rel.k} "
-                "calls — check the judge/auxiliary endpoint and model config; "
+                "calls — check the judge/evaluation endpoint and model config; "
                 "this probe measured only the calls that answered.",
                 err=True,
             )

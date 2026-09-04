@@ -74,8 +74,8 @@ def _config(tmp_path: Path) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=_harness_call,
-        auxiliary_call_llm=_aux_call,
+        target_call_llm=_harness_call,
+        evaluation_call_llm=_aux_call,
     )
 
 

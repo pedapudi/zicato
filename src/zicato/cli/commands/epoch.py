@@ -36,7 +36,7 @@ end to end. Because ``epoch new`` publishes the *same* bytes it freezes,
 the contract hash a later ``evolve`` derives matches the epoch's stored
 hash, so ``evolve`` does not spuriously roll the epoch.
 
-The auxiliary LLM callable required by ``epoch new --auto-close`` and
+The evaluation LLM callable required by ``epoch new --auto-close`` and
 ``epoch close`` is **not** wired through the CLI in this patch. A later
 patch lands ``zicato config`` to bind the callable from the operator's
 chosen provider; for now the CLI passes ``aux_call_llm=None`` and the
@@ -271,7 +271,7 @@ def new_cmd(
     by hand only to force an epoch boundary.
 
     If a previous epoch is still open it is auto-closed first; the auto
-    close emits a stub analysis.md (no auxiliary LLM is wired through
+    close emits a stub analysis.md (no evaluation LLM is wired through
     the CLI yet — see module docstring).
 
     The supplied contract files are both frozen into the epoch
@@ -290,7 +290,7 @@ def new_cmd(
     # contexts (CI, piped input, automation).
     resolved_goal = goal if goal is not None else _prompt_for_goal()
 
-    # Carry the workspace's registered contract components (inner-harness
+    # Carry the workspace's registered contract components (system-under-test
     # identity, proposer dir, external proposer, proposer static checks)
     # into the epoch's contract hash, read through the SAME resolver
     # `zicato evolve` uses. Freezing the epoch with any component missing
@@ -354,7 +354,7 @@ def close_cmd(epoch_id: str | None, workspace: str) -> None:
 
     Off the happy path — `zicato evolve` closes epochs on its own when
     the contract rolls. When EPOCH_ID is omitted, the current epoch is
-    closed. The analysis pass runs only if an auxiliary LLM has been
+    closed. The analysis pass runs only if an evaluation LLM has been
     configured — until then this writes a stub analysis.md that the
     operator can regenerate later.
     """

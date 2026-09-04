@@ -61,9 +61,9 @@ def assemble_judges(
         suppressed. Translated into the built-in judges to drop from
         the default set (see :mod:`zicato.judge_runtime.disable`).
     aux_call_llm:
-        zicato's auxiliary LLM callable (``RuntimeConfig.auxiliary_call_llm``).
+        zicato's evaluation LLM callable (``RuntimeConfig.evaluation_call_llm``).
         Inline judges use it; python judges ignore it. Per the
-        two-callable rule this is NOT the harness callable — judges
+        two-callable rule this is NOT the target callable — judges
         must not run on the same LLM surface as the agent they grade.
     io_sink:
         Optional :class:`zicato.judge_runtime.io_capture.JudgeIOSink`

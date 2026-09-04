@@ -35,8 +35,8 @@ CallLLM = Callable[[str, str, str], Awaitable[str]]
 ```
 
 `(system, user, model) -> response`. A `RuntimeConfig` binds **two** of these
-(plus an optional third for judges): `harness_call_llm` for the inner harness
-and `auxiliary_call_llm` for everything zicato itself runs — the proposer, the
+(plus an optional third for judges): `target_call_llm` for the system under test
+and `evaluation_call_llm` for everything zicato itself runs — the proposer, the
 judges, the analysis pass, the multi-turn emulator. The two MUST differ by
 callable identity or explicit `model=` override; that is the collusion guard
 ([ARCHITECTURE.md §4.10](ARCHITECTURE.md#410-the-two-call_llm-callables),
@@ -168,7 +168,7 @@ runaway in production.
 Make reasoning-model semantics a first-class, zicato-provided concern: a
 **reasoning-aware wrapper** that takes a raw, channel-emitting backend callable
 and returns a `CallLLM` honouring the existing `(system, user, model) -> str`
-contract — so it drops into either seam (`harness_` / `auxiliary_`) with no
+contract — so it drops into either seam (`harness_` / `evaluation_`) with no
 change to any caller. The wrapper owns four behaviours.
 
 ### 4.1 Model the two channels explicitly
@@ -220,7 +220,7 @@ Two placements are possible:
 
 1. **Push it onto every workspace backend**, which is what happens without a
    provided wrapper. Each operator wires reasoning handling into their own
-   `auxiliary_call_llm` or `harness_call_llm`. This placement is what produced
+   `evaluation_call_llm` or `target_call_llm`. This placement is what produced
    the workspace-local helper and the scratchpad-substituting default of §2.2.
    The failure is intrinsic to running zicato on a reasoning model, which is
    its most common target, so leaving it to each backend guarantees each
@@ -234,7 +234,7 @@ Two placements are possible:
    byte-for-byte unchanged for it.
 
 This keeps the seam's signature and its collusion guarantee intact — the wrapper
-preserves callable identity semantics, so `harness_` and `auxiliary_` wrapped
+preserves callable identity semantics, so `harness_` and `evaluation_` wrapped
 separately remain identity-distinct ([EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule)).
 
 ---
@@ -254,7 +254,7 @@ and the required output is structured:
   (§3) becomes rare rather than common.
 - **The judges / rubric matchers** (`zicato/board/rubric.py`,
   `zicato/board/matchers.py`) also demand structured verdicts. They run on
-  `effective_judge_call_llm` — the auxiliary surface or a dedicated
+  `effective_judge_call_llm` — the evaluation surface or a dedicated
   `judge_call_llm` — and are equally exposed to a reasoning runaway swallowing
   the verdict. The same wrapper, applied to the judge callable, gives them a
   clean `content` to parse.

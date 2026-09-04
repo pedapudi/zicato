@@ -1,7 +1,7 @@
 """Meta-loop goldfive event emitter.
 
 The orchestrator's evolve loop is, conceptually, its OWN goldfive session
-— the proposer's auxiliary LLM call and any in-process LLM "process
+— the proposer's evaluation LLM call and any in-process LLM "process
 judges" (today: the decision-telemetry analyzer's insight call) are
 events worth recording on the same harmonograf timeline that workers
 already feed.
@@ -27,7 +27,7 @@ The emitter holds:
 * the resolved ``session_id``.
 
 It exposes two coarse-grained emit methods — ``proposer_started`` /
-``proposer_completed`` for the auxiliary proposer call, and
+``proposer_completed`` for the evaluation proposer call, and
 ``judge_invoked`` / ``judgment_emitted`` for in-process judges — and
 :meth:`close` to flush every sink at evolve teardown. The methods reuse
 goldfive's canonical envelopes (``AgentInvocationStarted`` /

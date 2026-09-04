@@ -2,12 +2,12 @@
 
 Two callables are exported:
 
-* :func:`harness_llm` — stands in for the inner harness's LLM. The
+* :func:`target_llm` — stands in for the system under test's LLM. The
   multi-agent presentation tree under :mod:`zicato_examples.target_1_presentation.agent`
-  drives this via :mod:`goldfive`; ``harness_llm`` returns canned
+  drives this via :mod:`goldfive`; ``target_llm`` returns canned
   multi-line replies shaped to look like coordinator / researcher /
   writer turns.
-* :func:`aux_llm` — stands in for every auxiliary call site (proposer,
+* :func:`aux_llm` — stands in for every evaluation call site (proposer,
   emulator, judge, epoch analysis). The function dispatches on stable
   fragments of the system prompt the call sites use today.
 
@@ -31,7 +31,7 @@ import json
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# harness_llm — the inner harness's LLM surface
+# target_llm — the system under test's LLM surface
 # ---------------------------------------------------------------------------
 
 
@@ -139,7 +139,7 @@ def _is_researcher_instruction(system: str) -> bool:
     return _RESEARCHER_INSTRUCTION_MARKER in system.lower()
 
 
-async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
+async def target_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     """Return a canned response whose QUALITY depends on the instruction.
 
     Dispatches on lowercase-substring matches in ``user`` for the base deck,
@@ -454,7 +454,7 @@ def _is_inline_judge_prompt(system_lower: str) -> bool:
 
 
 async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
-    """Return canned auxiliary responses keyed off the system prompt.
+    """Return canned evaluation responses keyed off the system prompt.
 
     Dispatch order:
 
@@ -485,7 +485,7 @@ async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
         sites. The model is opaque to the mock.
     _kwargs:
         Swallowed for forward-compat (same rationale as
-        :func:`harness_llm`).
+        :func:`target_llm`).
     """
     _ = model
     sys_lower = system.lower()
@@ -576,4 +576,4 @@ async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     return "ok"
 
 
-__all__ = ["aux_llm", "harness_llm"]
+__all__ = ["aux_llm", "target_llm"]

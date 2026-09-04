@@ -11,7 +11,7 @@ This subpackage owns the post-run side of the loop:
   monotonicity on pre-existing entries.
 * :mod:`zicato.tournament.runner` orchestrates the actual A/B (full
   mode) or A-against-historical-aggregate (fast mode) tournament, by
-  driving the inner harness via a :class:`HarnessAdapter` and pulling
+  driving the system under test via a :class:`HarnessAdapter` and pulling
   reduced loss profiles through the lazily-imported
   :mod:`zicato.telemetry` layer.
 

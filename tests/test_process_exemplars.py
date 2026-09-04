@@ -678,7 +678,7 @@ def test_the_episode_task_carries_the_context_s_process_exemplars() -> None:
     from zicato.proposer.foe_request import render_evidence
 
     async def _unused(system: str, user: str, model: str) -> str:  # pragma: no cover
-        raise AssertionError("an episode never calls the auxiliary text shim")
+        raise AssertionError("an episode never calls the evaluation text shim")
 
     ctx = ProposerContext(
         epoch_id="ep1",

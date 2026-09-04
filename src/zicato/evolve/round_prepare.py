@@ -828,7 +828,7 @@ def _warn_erroring_judges(epoch_id: str, round_n: int, health: LoopHealth) -> No
         or (
             "a judge that raised did not decide anything: its silence lowered "
             "this round's drift loss without evidence. Check the judge / "
-            "auxiliary endpoint and model config."
+            "evaluation endpoint and model config."
         ),
     )
 

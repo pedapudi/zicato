@@ -4,7 +4,7 @@ The comprehensive epoch report is a hybrid artifact. The data-bearing
 sections are templated deterministically from the workspace
 (:mod:`zicato.analyzer.report_sections`); the *interpretive* sections —
 the Abstract, the Introduction prose, the What-Worked/What-Didn't
-Analysis, and the Conclusion — are written by the auxiliary LLM.
+Analysis, and the Conclusion — are written by the evaluation LLM.
 
 This module renders the prompt for that single bounded LLM call. The
 user prompt hands the model the complete structured data view plus the

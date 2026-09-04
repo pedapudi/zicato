@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from tests._foe_support import stand_in_proposer_block
-from tests._orchestrator_harness import harness_call_llm
+from tests._orchestrator_harness import target_call_llm
 from tests._stub_adapter import make_stub_adapter
 from zicato.core.types import (
     BoardEntry,
@@ -322,8 +322,8 @@ def test_evolve_auto_creates_then_rolls_on_rubric_edit(
             rounds=1,
             workspace_root=workspace,
             epoch_id=None,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_make_aux(),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_make_aux(),
         )
     )
     assert len(outcomes) == 1
@@ -341,8 +341,8 @@ def test_evolve_auto_creates_then_rolls_on_rubric_edit(
             rounds=1,
             workspace_root=workspace,
             epoch_id=None,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_make_aux(),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_make_aux(),
         )
     )
     assert len(outcomes2) == 1
@@ -411,8 +411,8 @@ def test_pending_settlement_finishes_before_contract_drift_rolls_epoch(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=None,
-                harness_call_llm=harness_call_llm,
-                auxiliary_call_llm=_make_aux(),
+                target_call_llm=target_call_llm,
+                evaluation_call_llm=_make_aux(),
             )
         )
     crashed_epoch = current_epoch_id(workspace)
@@ -426,8 +426,8 @@ def test_pending_settlement_finishes_before_contract_drift_rolls_epoch(
             rounds=1,
             workspace_root=workspace,
             epoch_id=None,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_make_aux(),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_make_aux(),
         )
     )
 
@@ -472,8 +472,8 @@ def test_contract_drift_discards_unsettled_candidate_before_closing_epoch(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=None,
-                harness_call_llm=harness_call_llm,
-                auxiliary_call_llm=_make_aux(),
+                target_call_llm=target_call_llm,
+                evaluation_call_llm=_make_aux(),
             )
         )
     crashed_epoch = current_epoch_id(workspace)
@@ -486,8 +486,8 @@ def test_contract_drift_discards_unsettled_candidate_before_closing_epoch(
             rounds=1,
             workspace_root=workspace,
             epoch_id=None,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_make_aux(),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_make_aux(),
         )
     )
 
@@ -523,8 +523,8 @@ def test_evolve_no_auto_epoch_errors_on_drift(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=None,
-                harness_call_llm=harness_call_llm,
-                auxiliary_call_llm=_make_aux(),
+                target_call_llm=target_call_llm,
+                evaluation_call_llm=_make_aux(),
                 auto_epoch=False,
             )
         )
@@ -536,8 +536,8 @@ def test_evolve_no_auto_epoch_errors_on_drift(
             rounds=1,
             workspace_root=workspace,
             epoch_id=None,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_make_aux(),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_make_aux(),
         )
     )
     rubric.write_text("# Rubric\n- totally different steering text\n")
@@ -547,8 +547,8 @@ def test_evolve_no_auto_epoch_errors_on_drift(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=None,
-                harness_call_llm=harness_call_llm,
-                auxiliary_call_llm=_make_aux(),
+                target_call_llm=target_call_llm,
+                evaluation_call_llm=_make_aux(),
                 auto_epoch=False,
             )
         )

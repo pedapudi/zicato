@@ -28,7 +28,7 @@ that mean nothing beyond ordering, and there is no third directory.
   [`target_1_presentation/RUN.md`](zicato_examples/target_1_presentation/RUN.md).
 - **The goldfive steering layer**
   (`zicato_examples/target_2_goldfive_steering/`) — drives the sibling
-  project goldfive's own steering layer as the inner harness. See
+  project goldfive's own steering layer as the system under test. See
   [`target_2_goldfive_steering/RUN.md`](zicato_examples/target_2_goldfive_steering/RUN.md).
 - **The coding-agent configuration**
   (`zicato_examples/target_4_agent_config/`) — an external coding

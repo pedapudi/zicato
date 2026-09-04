@@ -4,7 +4,7 @@ Every judge here is scripted/deterministic (no endpoints): python-mode
 judges are plain classes in this module resolved by dotted path through
 the SAME builder real runs use, and inline judges run on a scripted aux
 callable. The seam the mechanism exposes (``aux_call_llm`` — zicato's
-``CallLLM`` shape) is exactly where a real auxiliary endpoint slots in
+``CallLLM`` shape) is exactly where a real evaluation endpoint slots in
 later, unchanged (endpoint-gated).
 """
 

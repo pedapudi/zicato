@@ -43,8 +43,8 @@ class RunResult:
     multi-turn-pattern detectors. Carries only the user-facing surface —
     internal agent reasoning, tool calls, and goldfive events are stored
     elsewhere (the events JSONL) and intentionally not exposed here so
-    the emulator and the judge cannot trivially collude with the inner
-    harness.
+    the emulator and the judge cannot trivially collude with the system
+    under test.
 
     Fields
     ------

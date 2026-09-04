@@ -351,8 +351,8 @@ def _run_preflight(workspace: Path, epoch_id: str, runs: int = 3, **kwargs: obje
     config = runtime_factory.make_runtime_config(
         workspace_config,
         workspace_root=workspace,
-        harness_call_llm=t0_mocks.harness_llm,
-        auxiliary_call_llm=t0_mocks.aux_llm,
+        target_call_llm=t0_mocks.target_llm,
+        evaluation_call_llm=t0_mocks.aux_llm,
     )
     epoch_cfg = load_epoch(workspace, epoch_id)
     return asyncio.run(
@@ -745,7 +745,7 @@ def test_board_preflight_cli_measures_and_persists(tmp_path: Path) -> None:
             "--runs",
             "3",
             "--harness-call-llm",
-            "zicato_examples.target_0_convergence.mocks:harness_llm",
+            "zicato_examples.target_0_convergence.mocks:target_llm",
             "--auxiliary-call-llm",
             "zicato_examples.target_0_convergence.mocks:aux_llm",
         ],
@@ -777,8 +777,8 @@ def test_epoch_open_hook_persists_verdict(tmp_path: Path) -> None:
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=t0_mocks.harness_llm,
-            auxiliary_call_llm=t0_mocks.aux_llm,
+            target_call_llm=t0_mocks.target_llm,
+            evaluation_call_llm=t0_mocks.aux_llm,
             auto_epoch=False,
             fast_mode=True,
         )
@@ -865,8 +865,8 @@ def test_preflight_voids_on_infra_abort_instead_of_persisting_a_poisoned_floor(
     config = runtime_factory.make_runtime_config(
         wc,
         workspace_root=workspace,
-        harness_call_llm=t0_mocks.harness_llm,
-        auxiliary_call_llm=t0_mocks.aux_llm,
+        target_call_llm=t0_mocks.target_llm,
+        evaluation_call_llm=t0_mocks.aux_llm,
     )
     epoch_cfg = load_epoch(workspace, epoch_id)
     floor = asyncio.run(

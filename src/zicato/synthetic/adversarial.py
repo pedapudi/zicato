@@ -241,7 +241,7 @@ async def _run_under_wrap(
     runner = goldfive.wrap(
         agent,
         sinks=list(sinks),
-        call_llm=config.harness_call_llm,
+        call_llm=config.target_call_llm,
     )
     return await runner.run(user_input)
 

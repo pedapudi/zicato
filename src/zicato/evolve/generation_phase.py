@@ -91,8 +91,8 @@ class FieldRound:
     fast_mode: bool
     beater: Any
     meta_loop_emitter: Any
-    auxiliary_call_llm: Any
-    auxiliary_model: str
+    evaluation_call_llm: Any
+    evaluation_model: str
     field_size: int
 
 

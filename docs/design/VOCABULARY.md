@@ -12,9 +12,9 @@ The terms are listed alphabetically.
 
 The `HarnessAdapter` protocol implementation that decouples zicato
 from any specific multi-agent framework. The adapter is what zicato
-talks to; the inner harness is what the adapter wraps. The one
+talks to; the system under test is what the adapter wraps. The one
 adapter in the tree (`src/zicato/adapters/adk.py`) targets the agent
-development kit (ADK) the harness runs on; any other framework needs its
+development kit (ADK) the system under test runs on; any other framework needs its
 own implementation of the protocol.
 An adapter has exactly two methods of interest to zicato:
 `run_entry(entry, sinks=[...])` and `mutation_points()`. See
@@ -53,19 +53,9 @@ in, the emulator's output, and the model identity. Operators replay
 the lane in harmonograf to see what the emulator did during a run.
 See [EMULATOR.md §8](EMULATOR.md#8-audit-trail-the-zicatoemulator-lane).
 
-## Auxiliary `call_llm`
-
-One of the two required `call_llm` callables. Used by everything
-zicato itself runs: the patch proposer, the analysis pass, the
-multi-turn user emulator, `rubric`-kind outcome checks (the LLM
-grader). MUST be distinct from `harness_call_llm` by callable
-identity or by explicit model override. zicato refuses to start if
-the two are identical. See
-[EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule).
-
 ## Board
 
-The frozen-per-epoch list of tasks the inner harness is evaluated
+The frozen-per-epoch list of tasks the system under test is evaluated
 against. One JSONL file per epoch at
 `.zicato/epochs/{epoch}/board.jsonl`, one entry per line. Three entry
 kinds (`single_turn`, `multi_turn_scripted`, `multi_turn_emulated`)
@@ -105,13 +95,23 @@ boundaries. An epoch is closed by the operator (`zicato epoch close`)
 or auto-closed on `zicato epoch new` with a warning. See
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md).
 
+## Evaluation `call_llm`
+
+One of the two required `call_llm` callables. Used by everything
+zicato itself runs: the patch proposer, the analysis pass, the
+multi-turn user emulator, `rubric`-kind outcome checks (the LLM
+grader). MUST be distinct from `target_call_llm` by callable
+identity or by explicit model override. zicato refuses to start if
+the two are identical. See
+[EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule).
+
 ## Expectation
 
 An **outcome** check on a board entry — a matcher run post-hoc on the
 run's output or transcript. An entry's `expectations` list holds
 zero or more. Five kinds: `predicate` (Python callable),
 `expected_text` (exact string), `regex` (Python regex), `json_schema`
-(JSON-schema), and `rubric` (LLM-graded via `auxiliary_call_llm`).
+(JSON-schema), and `rubric` (LLM-graded via `evaluation_call_llm`).
 Authored with the `Predicate` and `Rubric` namespaces. The loss
 reducer ANDs the list into `pass_fail: bool`; an empty list →
 drift-loss-only scoring for the entry. Distinct from a *judge* (a
@@ -148,7 +148,7 @@ steering). See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
 
 ## Generation
 
-A specific version of the inner harness's source. Named `vN` within
+A specific version of the system under test's source. Named `vN` within
 an epoch (`v0`, `v1`, ...). `v0` is the baseline (the registered
 source at epoch start, or the final promoted generation of the
 previous epoch). Each subsequent generation is the result of an
@@ -156,13 +156,6 @@ applier writing a candidate snapshot from an `Experiment`. A
 generation's directory holds its `snapshot/`, its `experiment.json`,
 its per-entry `runs/`, and its `gen_score.json`. See
 [ARCHITECTURE.md §6](ARCHITECTURE.md#6-storage-layout).
-
-## Harness `call_llm`
-
-One of the two required `call_llm` callables. Used by the inner
-harness only — `goldfive.wrap`'s `call_llm=` parameter routes through
-it to the agent code. MUST be distinct from `auxiliary_call_llm`.
-See [EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule).
 
 ## Holdout confirmation
 
@@ -188,22 +181,6 @@ proposer responses are rejected; the proposer is re-prompted with the
 error. The hypothesis is the load-bearing journaling decision —
 without it, journals degenerate into "what changed, what scored". See
 [EPOCHS-AND-JOURNALING.md §3.1](EPOCHS-AND-JOURNALING.md#31-hypothesis-schema-mandatory).
-
-## Inner harness
-
-The system zicato wraps and optimizes. Typically a multi-agent system —
-any shape (single agent, coordinator + specialists, deep sub-agents) —
-but the term is not agent-specific: a library or any other Python source
-tree with an entrypoint and a scoring board is an inner harness too.
-zicato treats it as a black box behind a `HarnessAdapter`.
-
-Under the default `goldfive` telemetry dialect the inner harness emits a
-`goldfive.v1.Event` stream, wrapped with `goldfive.wrap` by the adapter.
-That dialect is what yields drift kinds; it is not a requirement on the
-harness. The `adk_events` and `transcript` dialects read a harness that
-never runs under goldfive at all. See
-[ARCHITECTURE.md §1](ARCHITECTURE.md#1-what-zicato-is-and-why) and
-[TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md).
 
 ## Instance
 
@@ -334,7 +311,7 @@ ready to attach to a board entry's `expectations` list. Paired with
 
 The component that reads patterns and the operator-edited proposer
 brief and emits an `Experiment` (hypothesis + patches). Driven by
-`auxiliary_call_llm`. Schema-enforced output. See
+`evaluation_call_llm`. Schema-enforced output. See
 [ARCHITECTURE.md §4.7](ARCHITECTURE.md#47-patch-proposer).
 
 ## Proposer brief
@@ -381,7 +358,7 @@ no rubric helper carries that name. Not to be confused with the
 
 ## Run
 
-One execution of the inner harness against one board entry, captured
+One execution of the system under test against one board entry, captured
 as one `events.jsonl` file at
 `.zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/events.jsonl`.
 A run terminates with `goldfive.v1.RunCompleted` or `RunAborted`.
@@ -393,10 +370,34 @@ runs — one per entry per generation). See
 ## Snapshot
 
 The directory under `generations/v{N}/snapshot/` holding the full
-source of the inner harness at this generation. A full copy rather than
+source of the system under test at this generation. A full copy rather than
 a git reference. Self-contained: copying or deleting a snapshot does not
 affect any other generation. See
 [ARCHITECTURE.md §6](ARCHITECTURE.md#6-storage-layout).
+
+## System under test
+
+The system zicato wraps and optimizes. Typically a multi-agent system —
+any shape (single agent, coordinator + specialists, deep sub-agents) —
+but the term is not agent-specific: a library or any other Python source
+tree with an entrypoint and a scoring board is a system under test too.
+zicato treats it as a black box behind a `HarnessAdapter`.
+
+Under the default `goldfive` telemetry dialect the system under test emits a
+`goldfive.v1.Event` stream, wrapped with `goldfive.wrap` by the adapter.
+That dialect is what yields drift kinds; it is not a requirement on the
+harness. The `adk_events` and `transcript` dialects read a harness that
+never runs under goldfive at all. See
+[ARCHITECTURE.md §1](ARCHITECTURE.md#1-what-zicato-is-and-why) and
+[TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md).
+
+## Target `call_llm`
+
+One of the two required `call_llm` callables. Used by the system under
+test only — `goldfive.wrap`'s `call_llm=` parameter routes through it to
+the agent code. MUST be distinct from `evaluation_call_llm`. A system
+under test that calls no model at all — a deterministic program — leaves
+this role unused. See [EMULATOR.md §3](EMULATOR.md#3-the-two-callable-rule).
 
 ## Tournament
 

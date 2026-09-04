@@ -76,7 +76,7 @@ The fields the recipes below key on are the **real** on-disk fields:
    predict a priori — a **trivially-correct stub** (should pass every entry with
    an expectation) and a **trivially-wrong stub** (should fail them). Use the
    deterministic mock-target path (see [`zicato-bootstrap`](../zicato-bootstrap/SKILL.md),
-   the `mocks:harness_llm` / `mocks:aux_llm` callables) so no model budget is
+   the `mocks:target_llm` / `mocks:aux_llm` callables) so no model budget is
    spent and the behavior is fixed. The point is that *expected verdicts are
    known before you look*.
 3. **Audit the run for harness mechanics**, explicitly *not* for whether the

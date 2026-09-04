@@ -435,7 +435,7 @@ def render_approach_section(data: EpochReportData) -> str:
     n_mut = len(data.mutation_surface)
     parts.append(
         f"The proposer was offered {n_mut} enumerated mutation "
-        f"{'point' if n_mut == 1 else 'points'} on the inner harness's "
+        f"{'point' if n_mut == 1 else 'points'} on the system under test's "
         "editable surface (the snapshot below reflects the most recent "
         "round's enumeration). Every patch a generation applied addresses "
         "an id drawn from this surface."
@@ -1205,7 +1205,7 @@ def render_threats_section(data: EpochReportData) -> str:
     bullets.append(
         f"**Board size.** The evaluation board carries {n_entries} "
         f"{'entry' if n_entries == 1 else 'entries'}. A small board "
-        "narrows coverage of the inner harness's behaviour space; a "
+        "narrows coverage of the system under test's behaviour space; a "
         "scalar improvement may not generalise beyond the entries "
         "exercised here."
     )

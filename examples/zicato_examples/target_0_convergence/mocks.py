@@ -5,14 +5,14 @@ runner serialises each role callable as a re-importable dotted path for
 the subprocess worker, and a closure-local callable is rejected at spawn
 time):
 
-* :func:`harness_llm` — the harness-role placeholder. The deterministic
+* :func:`target_llm` — the target-role placeholder. The deterministic
   policy adapter never calls an LLM, so this is never invoked; it exists
   because the runtime requires two distinct role callables and the
   worker spec must serialise.
-* :func:`aux_llm` — every auxiliary call site: the epoch-analysis
+* :func:`aux_llm` — every evaluation call site: the epoch-analysis
   narrative, and a short acknowledgement for anything else.
 
-The proposer is not an auxiliary call. It runs as its own episode, and
+The proposer is not an evaluation call. It runs as its own episode, and
 what it writes is scripted here as a policy per candidate —
 :data:`GAUNTLET_POLICIES` for the three-round gauntlet and
 :data:`RACING_POLICIES` for the four-candidate racing field — which a
@@ -88,7 +88,7 @@ _ANALYSIS_NARRATIVE = (
 
 
 def _dispatch(system: str) -> str:
-    """The canned response for one auxiliary call site."""
+    """The canned response for one evaluation call site."""
     if _ANALYSIS_FINGERPRINT in system.lower():
         return _ANALYSIS_NARRATIVE
     # No emulator / judge call sites exist on this board; anything else
@@ -96,8 +96,8 @@ def _dispatch(system: str) -> str:
     return "ok"
 
 
-async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
-    """The harness-role placeholder. Deterministic; never actually invoked.
+async def target_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
+    """The target-role placeholder. Deterministic; never actually invoked.
 
     The deterministic policy adapter synthesises its output without any
     LLM call — this callable exists only because the runtime contract
@@ -109,7 +109,7 @@ async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str
 
 
 async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
-    """Every auxiliary call site this harness has.
+    """Every evaluation call site this harness has.
 
     Epoch-analysis calls get a canned narrative; anything else gets a
     short acknowledgement. The proposer is not among them: it runs as its
@@ -120,4 +120,4 @@ async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     return _dispatch(system)
 
 
-__all__ = ["GAUNTLET_POLICIES", "RACING_POLICIES", "aux_llm", "harness_llm"]
+__all__ = ["GAUNTLET_POLICIES", "RACING_POLICIES", "aux_llm", "target_llm"]

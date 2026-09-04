@@ -18,8 +18,8 @@ touching the repo or driving a workspace. The human-facing overview is
 
 ## What zicato is, in one paragraph
 
-zicato wraps an inner harness in an **evolve loop**: it proposes a
-small structured edit to the harness (for the primary agent use case:
+zicato wraps a system under test in an **evolve loop**: it proposes a
+small structured edit to that system (for the primary agent use case:
 an agent instruction, a tool description, a planner template, a role
 scope — in general, any annotated mutation point), runs a scored
 **tournament** between the parent (champion) and the child (challenger)
@@ -28,7 +28,7 @@ drift telemetry plus per-task pass/fail predicates, and promotes the
 child only when it beats the gate. Rounds group into **generations**;
 generations group into **epochs**; an epoch is defined by its
 **evaluation contract** (board + proposer brief + scoring +
-inner-harness identity + the proposer itself) and by a **goal**. Change
+system-under-test identity + the proposer itself) and by a **goal**. Change
 the contract and the next `zicato evolve` auto-rolls a fresh epoch.
 
 The whole tool, for most operators, is two commands:
@@ -46,7 +46,7 @@ workspace. `evolve` orchestrates the loop for you.
 ## Vocabulary (load-bearing)
 
 - **epoch** — a sealed evaluation contract + a goal; houses many generations.
-- **generation** (`v0`, `v1`, …) — one candidate snapshot of the inner harness; houses many board runs.
+- **generation** (`v0`, `v1`, …) — one candidate snapshot of the system under test; houses many board runs.
 - **run** — one board entry executed against one generation; emits `events.jsonl` + `loss.json`.
 - **round** — one propose → apply → tournament → promote/reject cycle.
 - **champion / challenger** — the tournament roles (the pair being compared). **parent / child** — the same pair named by lineage. Use champion/challenger for tournament framing, parent/child for lineage.

@@ -6,7 +6,7 @@ files and exercise:
 * ``analyze_epoch_telemetry`` happy path → markdown written.
 * Empty epoch (no events) → fallback markdown written, no LLM call.
 * ``load_latest_insights`` concatenation across multiple round files.
-* Timeout enforcement when the auxiliary callable hangs.
+* Timeout enforcement when the evaluation callable hangs.
 * An aux callable that raises → fallback body cites the exception.
 """
 

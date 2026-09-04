@@ -141,7 +141,7 @@ def test_epoch_new_publishes_contract_so_evolve_can_resolve_it(tmp_path: Path) -
     assert inputs.board_path.exists(), f"board missing at {inputs.board_path}"
     assert inputs.brief_path.exists(), f"brief missing at {inputs.brief_path}"
     assert inputs.scoring_path.exists(), f"scoring missing at {inputs.scoring_path}"
-    # The registered inner-harness identity still resolves too.
+    # The registered system-under-test identity still resolves too.
     assert inputs.entrypoint == "agent.agent:agent"
     assert inputs.mutable_trees
 

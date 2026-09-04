@@ -4,7 +4,7 @@ Loop-health diagnostics is zicato's subsystem for detecting when the
 meta-loop runs without optimising anything.
 
 The robustness layers in [ROBUSTNESS.md](ROBUSTNESS.md) make the loop
-survive hangs, crashes, and pathological inner-harness code. They
+survive hangs, crashes, and pathological system-under-test code. They
 answer whether the loop is broken. Loop health answers a quieter
 question: whether the loop is meaningless. A loop can pass every
 robustness measure — no hangs, no crashes, every round completing
@@ -155,7 +155,7 @@ localises which entries are inert, so the operator knows what to fix.
 
 **What it catches.** The drift telemetry — zicato's primary loss
 signal — counted nothing at all across the epoch. Three causes are
-possible: the inner harness produces no drift, which happens but is
+possible: the system under test produces no drift, which happens but is
 rare; drift detection is misconfigured or unwired; or the board's tasks
 are too easy to provoke any drift.
 

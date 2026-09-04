@@ -13,7 +13,7 @@ The **proposer** is the agent that, each round, reads the epoch's brief, the
 mutation manifest, the loss patterns, and the prior experiments, and emits the
 next `Experiment` (`{hypothesis, patches}`) for the tournament to judge. It is
 a **first-class evaluation-contract input**, alongside the board, the proposer
-brief, the scoring, and the inner-harness identity
+brief, the scoring, and the system-under-test identity
 ([EPOCHS-AND-JOURNALING.md §10.1](EPOCHS-AND-JOURNALING.md#101-whats-in-the-contract)).
 
 **The proposer is a contract input rather than configuration.** A different
@@ -202,7 +202,7 @@ single fix; the union clears the gate
 that neither half could, so the slot bypasses the minimal-diff selection
 heuristic, whose diff key would otherwise starve the larger union.
 
-The slot is cost-neutral: the mint REPLACES the slot's auxiliary propose call
+The slot is cost-neutral: the mint REPLACES the slot's evaluation propose call
 rather than adding one, so a recombining round spends `best_of_n − 1` calls.
 It is also envelope-clean. Selection runs on per-entry PASS-FLIP evidence
 computed orchestrator-side and intersected with the TRAIN board there, so
@@ -239,7 +239,7 @@ dependent-knob house style, as `screen_veto_only` is inert without
   recombining round spends `best_of_n − 1` propose calls (the free mint
   replaces the slot's own sample call).
 
-- **`llm`** — the last slot issues ONE auxiliary call (the depth
+- **`llm`** — the last slot issues ONE evaluation call (the depth
   refinement-class role, as the self-critique call does) rendering a MERGE
   prompt from the selected pair. The response flows through the NORMAL
   proposal parse, `enforce_forbidden`, and validate path, so it is a proposal
@@ -821,7 +821,7 @@ That line separates a legitimate self-check from a proposer grading its own
 work. If the proposer could run against a slice it chose, it would be doing the
 tournament's job with none of the tournament's guards — the overfitting failure
 the whole meta-loop exists to prevent (see the non-goal in issue #147: *the
-proposer does not run the inner harness*). Everything in the tool is therefore
+proposer does not run the system under test*). Everything in the tool is therefore
 static: the tree it writes to is a disposable scratch copy, the checks read
 source, and the load probe resolves the harness entry point **without invoking
 it**.
@@ -1119,7 +1119,7 @@ surface to climb.
 
 Emission is **deterministic and free** — no model is called, so the operator's
 queue is reproducible from the same round logs. `--draft-with-llm` adds an
-optional polish pass over the remedy's prose through the auxiliary-call seam,
+optional polish pass over the remedy's prose through the evaluation-call seam,
 wrapped in `aux_call_timeout_s` like every other aux call site; a failed,
 timed-out, or empty call keeps the deterministic remedy rather than degrading
 it. The budget matters more here than elsewhere: the remedy is already complete

@@ -649,7 +649,7 @@ def detect_dead_judge(
                     "recommendation": (
                         "a judge that raised did not decide anything — its silence "
                         "lowered the generation's drift loss without evidence. Check "
-                        "the auxiliary/judge endpoint and model config (the judge role "
+                        "the evaluation/judge endpoint and model config (the judge role "
                         "in the workspace models config) before reading this epoch's "
                         "scores; a board audit is the WRONG next step here"
                     ),
@@ -1480,7 +1480,7 @@ def detect_infra_outage(infra_outage: tuple[int, int] | None) -> list[HealthFind
                 "infra_aborted_runs": aborted,
                 "infra_abort_round_threshold": threshold,
                 "recommendation": (
-                    "check the harness/auxiliary endpoint health and credentials; "
+                    "check the target/evaluation endpoint health and credentials; "
                     "the deferred round resumes (or discards cleanly) via the "
                     "standard crash-resume reconciliation"
                 ),

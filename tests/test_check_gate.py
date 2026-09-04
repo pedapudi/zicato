@@ -72,12 +72,12 @@ def _make_test_adapter(mode: str = "normal") -> _TestAdapter:
     return _TestAdapter(mode)
 
 
-async def _harness_call_llm(system: str, user: str, model: str) -> str:
+async def _target_call_llm(system: str, user: str, model: str) -> str:
     del system, user, model
     return ""
 
 
-async def _auxiliary_call_llm(system: str, user: str, model: str) -> str:
+async def _evaluation_call_llm(system: str, user: str, model: str) -> str:
     del system, user, model
     return ""
 
@@ -759,9 +759,9 @@ def _evolve(root: Path, *args: str):
             "--workspace",
             str(root),
             "--harness-call-llm",
-            "tests.test_check_gate:_harness_call_llm",
+            "tests.test_check_gate:_target_call_llm",
             "--auxiliary-call-llm",
-            "tests.test_check_gate:_auxiliary_call_llm",
+            "tests.test_check_gate:_evaluation_call_llm",
             "--no-dashboard",
             *args,
         ],
@@ -793,8 +793,8 @@ def test_public_evolve_loop_runs_gate_before_any_model_or_auto_epoch(tmp_path: P
             evolve_n_rounds(
                 rounds=1,
                 workspace_root=root,
-                harness_call_llm=call_llm,
-                auxiliary_call_llm=call_llm,
+                target_call_llm=call_llm,
+                evaluation_call_llm=call_llm,
             )
         )
     assert calls == []
@@ -870,8 +870,8 @@ def test_board_coverage_is_measured_before_any_model_call(tmp_path: Path) -> Non
             evolve_n_rounds(
                 rounds=1,
                 workspace_root=root,
-                harness_call_llm=call_llm,
-                auxiliary_call_llm=call_llm,
+                target_call_llm=call_llm,
+                evaluation_call_llm=call_llm,
             )
         )
     assert "no_expectations" in {f.code for f in raised.value.report.advisories}
@@ -1003,7 +1003,7 @@ def test_dry_run_rejects_an_unresolvable_llm_callable(tmp_path: Path) -> None:
             "--harness-call-llm",
             "no_such_module:harness",
             "--auxiliary-call-llm",
-            "tests.test_check_gate:_auxiliary_call_llm",
+            "tests.test_check_gate:_evaluation_call_llm",
             "--dry-run",
         ],
     )
@@ -1456,8 +1456,8 @@ def test_evolve_once_gates_its_own_workspace(tmp_path: Path) -> None:
         asyncio.run(
             evolve_once(
                 workspace_root=root,
-                harness_call_llm=_harness_call_llm,
-                auxiliary_call_llm=_auxiliary_call_llm,
+                target_call_llm=_target_call_llm,
+                evaluation_call_llm=_evaluation_call_llm,
             )
         )
 
@@ -1479,8 +1479,8 @@ def test_a_multi_round_invocation_pays_for_the_gate_once(tmp_path: Path, monkeyp
             evolve_n_rounds(
                 rounds=3,
                 workspace_root=root,
-                harness_call_llm=_harness_call_llm,
-                auxiliary_call_llm=_auxiliary_call_llm,
+                target_call_llm=_target_call_llm,
+                evaluation_call_llm=_evaluation_call_llm,
             )
         )
     assert len(calls) == 1

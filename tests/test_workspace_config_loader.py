@@ -35,7 +35,7 @@ def test_absent_file_reads_as_defaults(tmp_path: Path) -> None:
     assert config.runtime == {}
     assert config.contract == {}
     assert config.source_roots == ()
-    assert config.auxiliary_model == ""
+    assert config.evaluation_model == ""
     assert config.generation_source_backend == ""
 
 
@@ -48,7 +48,7 @@ def test_typed_fields_project_the_blocks_and_keys(tmp_path: Path) -> None:
     root = _workspace(
         tmp_path,
         {
-            "runtime": {"parallelism": 8, "auxiliary_model": "from-runtime"},
+            "runtime": {"parallelism": 8, "evaluation_model": "from-runtime"},
             "contract": {"board_path": "/live/board.jsonl"},
             "source_roots": ["src", "tools"],
             "generation_source_backend": "git",
@@ -61,17 +61,17 @@ def test_typed_fields_project_the_blocks_and_keys(tmp_path: Path) -> None:
     assert config.contract["board_path"] == "/live/board.jsonl"
     assert config.source_roots == ("src", "tools")
     assert config.generation_source_backend == "git"
-    assert config.auxiliary_model == "from-runtime"
+    assert config.evaluation_model == "from-runtime"
     # Keys with no typed field stay reachable on the whole mapping.
     assert config.raw["adk_entrypoint"] == "pkg.mod:agent"
 
 
-def test_a_top_level_auxiliary_model_outranks_the_runtime_block(tmp_path: Path) -> None:
+def test_a_top_level_evaluation_model_outranks_the_runtime_block(tmp_path: Path) -> None:
     root = _workspace(
         tmp_path,
-        {"auxiliary_model": "from-top-level", "runtime": {"auxiliary_model": "from-runtime"}},
+        {"evaluation_model": "from-top-level", "runtime": {"evaluation_model": "from-runtime"}},
     )
-    assert read_workspace_config(root).auxiliary_model == "from-top-level"
+    assert read_workspace_config(root).evaluation_model == "from-top-level"
 
 
 def test_wrong_json_types_read_as_the_absent_key_default(tmp_path: Path) -> None:

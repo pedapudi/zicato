@@ -99,8 +99,8 @@ def _run(coro):  # tiny asyncio.run shim
 
 def test_harness_output_depends_on_the_mutated_instruction() -> None:
     user = "Draft a Q3 metrics outline with concrete numbers."
-    baseline = _run(mocks.harness_llm(_BASELINE_INSTRUCTION, user, ""))
-    improved = _run(mocks.harness_llm(_IMPROVED_INSTRUCTION, user, ""))
+    baseline = _run(mocks.target_llm(_BASELINE_INSTRUCTION, user, ""))
+    improved = _run(mocks.target_llm(_IMPROVED_INSTRUCTION, user, ""))
 
     assert baseline != improved, "the mutation surface must change the output"
     assert "unverified estimate" in baseline.lower()
@@ -112,8 +112,8 @@ def test_only_the_researcher_output_carries_the_marker() -> None:
     """A-3: a non-researcher agent never emits the tail, so it cannot mask a
     researcher-only mutation by carrying the fabricated marker itself."""
     user = "q3 metrics"
-    researcher = _run(mocks.harness_llm(_BASELINE_INSTRUCTION, user, ""))
-    web_dev = _run(mocks.harness_llm(_WEB_DEVELOPER_INSTRUCTION, user, ""))
+    researcher = _run(mocks.target_llm(_BASELINE_INSTRUCTION, user, ""))
+    web_dev = _run(mocks.target_llm(_WEB_DEVELOPER_INSTRUCTION, user, ""))
 
     assert "unverified estimate" in researcher.lower()
     # The web developer's transcript is UNTAILED — neither the fabricated nor
@@ -132,8 +132,8 @@ def test_real_inline_judge_fires_on_baseline_and_passes_on_improved() -> None:
     """The REAL ``_InlineCriterionJudge`` (built through the production seam)
     fires on the champion's fabricated output and passes on the challenger's
     cited output when run against ``mocks.aux_llm`` (A-1)."""
-    baseline = _run(mocks.harness_llm(_BASELINE_INSTRUCTION, "q3 metrics", ""))
-    improved = _run(mocks.harness_llm(_IMPROVED_INSTRUCTION, "q3 metrics", ""))
+    baseline = _run(mocks.target_llm(_BASELINE_INSTRUCTION, "q3 metrics", ""))
+    improved = _run(mocks.target_llm(_IMPROVED_INSTRUCTION, "q3 metrics", ""))
 
     spec = Judge.custom(
         "no_fabricated_numbers", _NO_FAB_CRITERION, severity=goldfive.DriftSeverity.CRITICAL
@@ -150,8 +150,8 @@ def test_real_inline_judge_fires_on_baseline_and_passes_on_improved() -> None:
 
 def test_json_judge_shape_still_has_teeth() -> None:
     """The retained JSON ``{"pass": bool}`` protocol still fires / passes."""
-    baseline = _run(mocks.harness_llm(_BASELINE_INSTRUCTION, "q3 metrics", ""))
-    improved = _run(mocks.harness_llm(_IMPROVED_INSTRUCTION, "q3 metrics", ""))
+    baseline = _run(mocks.target_llm(_BASELINE_INSTRUCTION, "q3 metrics", ""))
+    improved = _run(mocks.target_llm(_IMPROVED_INSTRUCTION, "q3 metrics", ""))
 
     verdict_baseline = json.loads(_run(mocks.aux_llm(_JUDGE_SYSTEM, baseline, "")))
     verdict_improved = json.loads(_run(mocks.aux_llm(_JUDGE_SYSTEM, improved, "")))
@@ -242,13 +242,13 @@ def _reduce_entry(
 ):
     """Drive one board entry through the REAL judge runtime + REAL reducer.
 
-    ``mocks.harness_llm`` (A-3-gated) synthesises the researcher's output; when
+    ``mocks.target_llm`` (A-3-gated) synthesises the researcher's output; when
     the entry declares the judge it is built through the production
     :func:`judge_spec_to_goldfive` seam and evaluated against ``mocks.aux_llm``
     (A-1); the verdict is written to a real goldfive events stream and reduced
     through :func:`reduce_loss`. Returns the run's ``LossProfile``.
     """
-    output = _run(mocks.harness_llm(researcher_instruction, topic, ""))
+    output = _run(mocks.target_llm(researcher_instruction, topic, ""))
 
     verdict = None
     if has_judge:

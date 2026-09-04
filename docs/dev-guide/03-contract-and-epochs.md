@@ -123,7 +123,7 @@ six things that make it up (`src/zicato/epoch/contract.py`):
 3. **The scoring** — weights + gate thresholds (`scoring.json`).
 4. **The Zicato evaluator implementation** — an explicit revision of the
    measurement and tournament-decision semantics.
-5. **The registered inner-harness identity** — the validated worker
+5. **The registered system-under-test identity** — the validated worker
    reconstruction document, implementation source outside the mutable surface,
    and the sorted mutable-tree paths.
 6. **The proposer** — agent identity, tools, and the skill modules under a
@@ -144,8 +144,8 @@ different board; a challenger scored under margin 0.01 is not comparable to one
 scored under margin 0.05. The contract hash is the mechanical detector for a
 component change.
 
-> ⛔ NEVER add the inner-harness's *source content* to the contract. The
-> docstring is explicit: "The inner harness's *source content* is deliberately
+> ⛔ NEVER add the system under test's *source content* to the contract. The
+> docstring is explicit: "The system under test's *source content* is deliberately
 > NOT part of the contract — that is exactly what zicato mutates within an
 > epoch." The contract fixes the *rules of comparison*; the source is the thing
 > being optimized under those rules. Folding source into the hash would roll the
@@ -449,7 +449,7 @@ registry is committed to the tree; the records exist only at runtime.
 ### 3.2.4 adapter — `_canon_adapter`
 
 The adapter component identifies how a subprocess worker reconstructs and
-drives the registered inner harness. `resolve_contract_inputs` constructs the
+drives the registered system under test. `resolve_contract_inputs` constructs the
 adapter, validates its transport boundary, and obtains its worker reconstruction
 document through `adapter_worker_spec`. `_canon_adapter` removes
 `mutable_trees`, because those paths have their own component, and recursively
@@ -1523,7 +1523,7 @@ screen is scaffolded and the process-exemplar channel is not.
    MUST add a `CostLine` so the operator sees and prices the extra spend before
    opting in; `screen_entries` adds `proposes × best_of_n × panel` panel runs, and
    its cost line says so. If your knob adds runs, add the line and label
-   auxiliary-LLM-call costs separately from the board-runs headline (the existing
+   evaluation-LLM-call costs separately from the board-runs headline (the existing
    `candidate-screen runs` and `best-of-N propose calls` split is the model).
    **Verify:**
    ```bash

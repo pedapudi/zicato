@@ -115,7 +115,7 @@ $PY -m zicato.cli inspect mutations --workspace .zicato
 #    Dashboard: http://127.0.0.1:7892) — watch the bracket live.
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 3 --mode full \
-    --harness-call-llm   zicato_examples.target_0_convergence.mocks:harness_llm \
+    --harness-call-llm   zicato_examples.target_0_convergence.mocks:target_llm \
     --auxiliary-call-llm zicato_examples.target_0_convergence.mocks:aux_llm
 
 # 6. Close the epoch to produce analysis.md / analysis.html.
@@ -138,7 +138,7 @@ $PY -m zicato.cli epoch close --workspace .zicato
 contract under a **racing** tournament (`field_size: 4`,
 `replicates: 2`) with the Bradley–Terry evidence pre-gate enabled
 (`promote_confidence_threshold: 0.8`). Use
-`mocks:racing_aux_llm` as the auxiliary callable. It serves four
+`mocks:racing_aux_llm` as the evaluation callable. It serves four
 distinct experiments per round whose defect-token sets form a strict
 superset chain, so the rung cuts are deterministic and the best arm
 (only `verbose-prose` left, scalar `1.2`) survives to be crowned.
@@ -173,7 +173,7 @@ EOF
 # (v2, scalar 1.2) survives every rung and is PROMOTED at the floor.
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 1 --mode full \
-    --harness-call-llm   zicato_examples.target_0_convergence.mocks:harness_llm \
+    --harness-call-llm   zicato_examples.target_0_convergence.mocks:target_llm \
     --auxiliary-call-llm zicato_examples.target_0_convergence.mocks:racing_aux_llm
 ```
 

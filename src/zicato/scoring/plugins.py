@@ -13,7 +13,7 @@ Design constraints:
 
 * **Pure / deterministic / no-LLM / no-I/O / no-wall-clock.** A scoring plugin
   is a pure function over a frozen context, so re-scoring an epoch is
-  reproducible. Unlike judges there is no auxiliary callable to pass.
+  reproducible. Unlike judges there is no evaluation callable to pass.
 * **Same importer as predicates / judges.** Resolution goes through
   :func:`zicato.import_path.import_dotted_path`, so ``pkg.mod:fn`` and
   ``pkg.mod.fn`` resolve identically everywhere — and Seam 1's resolution works

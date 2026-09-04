@@ -36,7 +36,7 @@ from zicato.dashboard.static_assets import resolve_static_dir
 # ---------------------------------------------------------------------------
 
 
-async def _harness_call_llm(system: str, user: str, model: str) -> str:
+async def _target_call_llm(system: str, user: str, model: str) -> str:
     del system, user, model
     return ""
 
@@ -216,7 +216,7 @@ def _install_evolve_mocks(monkeypatch: pytest.MonkeyPatch) -> list[FakeDashboard
 def _evolve_args(*extra: str) -> list[str]:
     return [
         "--harness-call-llm",
-        "tests.test_cli_dashboard:_harness_call_llm",
+        "tests.test_cli_dashboard:_target_call_llm",
         "--auxiliary-call-llm",
         "tests.test_cli_dashboard:_aux_call_llm",
         *extra,

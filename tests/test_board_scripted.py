@@ -15,7 +15,7 @@ async def _harness_call(_: str, __: str, ___: str) -> str:
     return ""
 
 
-async def _harness_call_aux(_: str, __: str, ___: str) -> str:
+async def _evaluation_call(_: str, __: str, ___: str) -> str:
     return ""
 
 
@@ -24,8 +24,8 @@ def runtime_config(tmp_path: Path) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="default",
         workspace_root=tmp_path,
-        harness_call_llm=_harness_call,
-        auxiliary_call_llm=_harness_call_aux,
+        target_call_llm=_harness_call,
+        evaluation_call_llm=_evaluation_call,
     )
 
 

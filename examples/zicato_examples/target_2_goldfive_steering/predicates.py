@@ -1,6 +1,6 @@
 """Outcome predicates for target 2 (goldfive steering optimization).
 
-Target 2 is unusual among zicato dogfood targets: the *inner harness* is
+Target 2 is unusual among zicato dogfood targets: the *system under test* is
 goldfive itself, and the mutable surface lives inside goldfive's source
 tree (judge prompts, intervention-ladder threshold knobs, the refine
 template). The agent under test is some other agent that goldfive

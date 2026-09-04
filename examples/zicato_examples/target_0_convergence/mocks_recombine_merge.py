@@ -26,7 +26,7 @@ the ``drift:`` channel and ``pass_weight`` both at ``1.0``, 5-entry board):
 
 The single fixes are scripted per slate slot (:data:`SLATE_POLICIES`) and
 written by the proposal episodes themselves. The MERGE is the one
-proposal that is still a single auxiliary call — it composes two patch
+proposal that is still a single evaluation call — it composes two patch
 sets that already exist rather than investigating a tree — and
 :func:`aux_llm` recognises it by the merge prompt's opening sentence and
 answers with the true union. The merge SUBSTITUTES the last slot's own
@@ -122,7 +122,7 @@ def merge_calls() -> int:
     """How many LLM merge calls this interpreter has answered so far.
 
     The merge is the one proposal this fixture still makes as a single
-    auxiliary call — it composes two patch sets that already exist rather
+    evaluation call — it composes two patch sets that already exist rather
     than investigating a tree — so it is the one counted here. Proposal
     EPISODES are counted from the workspace's own durable record.
 
@@ -135,7 +135,7 @@ def merge_calls() -> int:
 
 
 async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
-    """The LLM merge, plus every other auxiliary call site."""
+    """The LLM merge, plus every other evaluation call site."""
     del model
     if MERGE_MARKER in user:
         _STATE["merges"] += 1

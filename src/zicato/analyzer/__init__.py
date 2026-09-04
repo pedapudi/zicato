@@ -14,7 +14,7 @@ The analyzer has two outputs, both regenerated as the evolve loop runs:
   generation and persisted as ``epochs/{epoch}/analysis.md`` plus a
   rendered ``analysis.html``. Its data-bearing sections are templated
   exactly from the structured workspace; its prose sections are written
-  by one bounded auxiliary-LLM call.
+  by one bounded evaluation-LLM call.
 
 Public surface:
 

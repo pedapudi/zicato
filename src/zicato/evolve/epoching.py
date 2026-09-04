@@ -201,9 +201,9 @@ async def ensure_epoch_for_contract(
     # Mid-run the publication is refreshed deterministically each round (no
     # LLM), carrying a LIVING DRAFT stamp and preserving whatever prose was
     # last authored. The epoch is now closed, so run the FULL render — the
-    # bounded auxiliary-LLM prose pass over the final data — which produces
+    # bounded evaluation-LLM prose pass over the final data — which produces
     # the finished paper and drops the LIVING DRAFT stamp (the masthead now
-    # reads "closed"). When no auxiliary callable is available, fall back to
+    # reads "closed"). When no evaluation callable is available, fall back to
     # the cheap deterministic masthead re-stamp so the persisted files still
     # reflect the closed state. Best-effort — never blocks the epoch roll.
     with best_effort(

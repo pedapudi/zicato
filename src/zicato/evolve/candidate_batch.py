@@ -172,10 +172,10 @@ async def produce_candidate_batch(
             patterns=list(prepared.patterns),
             brief=prepared.brief,
             loss_summary=prepared.loss_summary,
-            auxiliary_call_llm=prepared.config.effective_proposer_call_llm(),
-            auxiliary_model=(
+            evaluation_call_llm=prepared.config.effective_proposer_call_llm(),
+            evaluation_model=(
                 prepared.config.proposer_model
-                or str(prepared.workspace_config.get("auxiliary_model", ""))
+                or str(prepared.workspace_config.get("evaluation_model", ""))
             ),
             max_proposer_retries=prepared.max_proposer_retries,
             beater=prepared.beater,

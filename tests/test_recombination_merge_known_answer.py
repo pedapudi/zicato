@@ -155,8 +155,8 @@ def _run_rounds(workspace: Path, epoch_id: str, rounds: int, *, aux) -> list:
             rounds=rounds,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=t0_mocks.harness_llm,
-            auxiliary_call_llm=aux,
+            target_call_llm=t0_mocks.target_llm,
+            evaluation_call_llm=aux,
             auto_epoch=False,
             max_consecutive_rejections=3,
         )
@@ -288,7 +288,7 @@ def test_llm_merge_garbage_response_degrades_to_fresh_sample(tmp_path: Path) -> 
 
 
 async def _garbage_merge_aux(system: str, user: str, model: str, **kwargs) -> str:
-    """Answer every auxiliary site normally but GARBAGE on the merge call."""
+    """Answer every evaluation site normally but GARBAGE on the merge call."""
     if merge_mocks.MERGE_MARKER in user:
         return "this is not a JSON object at all — {oops"
     return await merge_mocks.aux_llm(system, user, model, **kwargs)

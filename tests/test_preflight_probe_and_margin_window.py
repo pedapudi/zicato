@@ -557,8 +557,8 @@ def test_probe_knobs_are_read_from_the_runtime_block() -> None:
         default = make_runtime_config(
             {"runtime": {}},
             workspace_root=root,
-            harness_call_llm=_llm,
-            auxiliary_call_llm=_aux,
+            target_call_llm=_llm,
+            evaluation_call_llm=_aux,
         )
         assert default.preflight_probe_points == PREFLIGHT_PROBE_POINTS_DEFAULT
         assert default.preflight_probe_mutation_ids == ()
@@ -571,8 +571,8 @@ def test_probe_knobs_are_read_from_the_runtime_block() -> None:
                 }
             },
             workspace_root=root,
-            harness_call_llm=_llm,
-            auxiliary_call_llm=_aux,
+            target_call_llm=_llm,
+            evaluation_call_llm=_aux,
         )
         assert tuned.preflight_probe_points == 2
         assert tuned.preflight_probe_mutation_ids == ("coordinator_instruction", "reviewer")
@@ -583,16 +583,16 @@ def test_probe_knobs_are_read_from_the_runtime_block() -> None:
             make_runtime_config(
                 {"runtime": {"preflight_probe_mutation_ids": "coordinator_instruction"}},
                 workspace_root=root,
-                harness_call_llm=_llm,
-                auxiliary_call_llm=_aux,
+                target_call_llm=_llm,
+                evaluation_call_llm=_aux,
             )
 
         with pytest.raises(ValueError, match="must be >= 1"):
             make_runtime_config(
                 {"runtime": {"preflight_probe_points": 0}},
                 workspace_root=root,
-                harness_call_llm=_llm,
-                auxiliary_call_llm=_aux,
+                target_call_llm=_llm,
+                evaluation_call_llm=_aux,
             )
 
 

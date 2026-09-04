@@ -310,7 +310,7 @@ class ActiveRun:
         OS process-group id of the run's own worker process. The worker
         is spawned in its OWN session/process-group (``start_new_session``),
         so the supervisor can GROUP-kill the worker AND any grandchildren
-        the inner harness spawned (shells, helper tools) by negating this
+        the system under test spawned (shells, helper tools) by negating this
         id, rather than leaking them when it kills the worker pid alone.
         ``None`` for a record that omits the field, and on a platform
         without process groups; the supervisor then falls back to the

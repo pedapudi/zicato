@@ -100,10 +100,10 @@ class WorkspaceConfig:
     #: The ``source_roots`` key: the mutable source trees ``zicato epoch
     #: register`` recorded.
     source_roots: tuple[str, ...] = ()
-    #: The model id forwarded to the auxiliary LLM, from the top-level
-    #: ``auxiliary_model`` key or the ``runtime`` block's, in that order.
+    #: The model id forwarded to the evaluation LLM, from the top-level
+    #: ``evaluation_model`` key or the ``runtime`` block's, in that order.
     #: Empty when neither is set.
-    auxiliary_model: str = ""
+    evaluation_model: str = ""
     #: The ``generation_source_backend`` key — which store holds the
     #: generation source trees. Empty is what
     #: :func:`zicato.epoch.genstore.resolve_generation_store_backend`
@@ -166,7 +166,7 @@ def read_workspace_config(workspace_root: Path) -> WorkspaceConfig:
         runtime=runtime,
         contract=_mapping(raw.get("contract")),
         source_roots=_str_tuple(raw.get("source_roots")),
-        auxiliary_model=str(raw.get("auxiliary_model") or runtime.get("auxiliary_model") or ""),
+        evaluation_model=str(raw.get("evaluation_model") or runtime.get("evaluation_model") or ""),
         generation_source_backend=backend if isinstance(backend, str) else "",
     )
 

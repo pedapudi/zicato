@@ -2,7 +2,7 @@
 
 A :class:`ScriptedMultiTurnDriver` walks a
 :class:`~zicato.core.BoardEntry` of kind ``"multi_turn_scripted"`` and
-plays its pre-written user turns against an inner harness, accumulating
+plays its pre-written user turns against a system under test, accumulating
 the agent's user-facing replies into a single
 :class:`~zicato.core.RunResult`.
 
@@ -63,7 +63,7 @@ from zicato.core.types import BoardEntry, RunResult, RuntimeConfig
 
 
 class ScriptedMultiTurnDriver:
-    """Drive a scripted multi-turn entry against an inner harness.
+    """Drive a scripted multi-turn entry against a system under test.
 
     The driver is intentionally tiny — it owns turn iteration, budget
     accounting, and transcript accumulation. Concerns it does NOT own:
@@ -86,7 +86,7 @@ class ScriptedMultiTurnDriver:
         Parameters
         ----------
         harness:
-            The inner harness reference. Must expose either an async
+            The system under test reference. Must expose either an async
             ``run(user_message)`` method or an async ``call(user_message)``
             method. The driver awaits whichever is present.
         entry:

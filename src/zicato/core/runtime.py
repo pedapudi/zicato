@@ -147,29 +147,29 @@ class RuntimeConfig:
     workspace_root:
         Absolute path to the ``.zicato/`` directory this instance
         writes under.
-    harness_call_llm:
-        LLM callable used BY the inner harness during runs. Zicato
+    target_call_llm:
+        LLM callable used BY the system under test during runs. Zicato
         never invokes this directly; it is forwarded to the harness
         adapter at construction.
-    auxiliary_call_llm:
+    evaluation_call_llm:
         LLM callable used by every zicato-internal LLM consumer — the
         emulator, the proposer, the judge, the analysis pass. MUST be
-        a distinct callable from :attr:`harness_call_llm` (identity-
+        a distinct callable from :attr:`target_call_llm` (identity-
         unequal) so the emulator cannot trivially collude with the
-        inner harness through shared state.
+        system under test through shared state.
     judge_call_llm:
         Optional LLM callable used by the in-run process judges /
         rubric matchers. ``None`` (the default) ⇒ judges fall back to
-        :attr:`auxiliary_call_llm` (the default behavior). When set (from
+        :attr:`evaluation_call_llm` (the default behavior). When set (from
         the workspace ``models.judge`` block) it lets an operator point
         the judges at a separate endpoint/model from the rest of the
-        auxiliary surface. Read via :meth:`effective_judge_call_llm`.
+        evaluation surface. Read via :meth:`effective_judge_call_llm`.
     adjudicator_call_llm:
         Optional LLM callable used by the board-reflection meta-judge
         (the independent adjudicator that re-reads a captured transcript
         and decides whether each judge got it right — pillar 3). ``None``
         (the default) ⇒ the adjudicator falls back to
-        :attr:`auxiliary_call_llm`, mirroring :attr:`judge_call_llm`'s
+        :attr:`evaluation_call_llm`, mirroring :attr:`judge_call_llm`'s
         fall-back onto the same surface. Read via
         :meth:`effective_adjudicator_call_llm`. Independence is
         load-bearing: the adjudication engine asserts this callable is
@@ -185,8 +185,8 @@ class RuntimeConfig:
         Model id paired with generate for native and process-backed proposers.
     seed:
         Optional integer seed for any zicato-internal random number
-        generators. Adapters may or may not honor it for the inner
-        harness.
+        generators. Adapters may or may not honor it for the system
+        under test.
     parallelism:
         Maximum number of **board units** the tournament runner keeps
         in flight at once — i.e. "how many boards run in parallel". The
@@ -396,7 +396,7 @@ class RuntimeConfig:
     token_ledger:
         The ROUND-scoped mutable :class:`RoundTokenLedger`, rebound per
         round by the orchestrator when :attr:`max_tokens_per_round` is
-        on (the ``inner_model`` live-object precedent). ``None`` — the
+        on (the ``target_model`` live-object precedent). ``None`` — the
         default, and every round with the knob off — disables every
         ledger consultation. Never read from workspace config.
     persist_run_results:
@@ -427,7 +427,7 @@ class RuntimeConfig:
         The LIVE judge-I/O sink object (the
         :class:`zicato.judge_runtime.io_capture.JudgeIOSink` protocol)
         the worker binds per run when :attr:`persist_judge_io` is on —
-        the ``token_ledger`` / ``inner_model`` live-object precedent.
+        the ``token_ledger`` / ``target_model`` live-object precedent.
         ``None`` (the default, and every run with the knob off) disables
         capture entirely: the judge path is byte-identical to before the
         seam existed. Never read from workspace config. Typed ``Any`` so
@@ -455,8 +455,8 @@ class RuntimeConfig:
 
     instance_id: str
     workspace_root: Path
-    harness_call_llm: CallLLM
-    auxiliary_call_llm: CallLLM
+    target_call_llm: CallLLM
+    evaluation_call_llm: CallLLM
     seed: int | None = None
     parallelism: int = 4
     propose_parallelism: int = 4
@@ -482,7 +482,7 @@ class RuntimeConfig:
     preflight_probe_mutation_ids: tuple[str, ...] = ()
     token_ledger: RoundTokenLedger | None = None
     #: The ADK model object (a ``BaseLlm``, typically a ``LiteLlm``) the inner
-    #: ADK agents run on, built from a ``models.harness`` *model spec* (model +
+    #: ADK agents run on, built from a ``models.target`` *model spec* (model +
     #: endpoint + api_key_env) via :func:`zicato.models_config.build_adk_model`.
     #: When set, the ADK adapter rebinds the target's string-model agents to it
     #: so they reach the configured endpoint with native tool/function calling
@@ -490,7 +490,7 @@ class RuntimeConfig:
     #: text-only ``call_llm`` shim. ``None`` (the default) ⇒ no inner model was
     #: configured; the adapter falls back to its guarded shim rebind. Typed
     #: ``Any`` so :mod:`zicato.core` carries no import dependency on ADK.
-    inner_model: Any = None
+    target_model: Any = None
     persist_run_results: bool = True
     persist_judge_io: bool = True
     judge_io_sink: Any = None
@@ -577,21 +577,21 @@ class RuntimeConfig:
             )
 
     def effective_judge_call_llm(self) -> CallLLM:
-        """The callable judges run on: :attr:`judge_call_llm` or the auxiliary.
+        """The callable judges run on: :attr:`judge_call_llm` or the evaluation callable.
 
-        Judges run on :attr:`auxiliary_call_llm` by default; a workspace
+        Judges run on :attr:`evaluation_call_llm` by default; a workspace
         ``models.judge`` block may override them onto a separate endpoint via
         :attr:`judge_call_llm`. This single accessor centralises that
         fall-back so every judge call site reads the same rule.
         """
-        return self.judge_call_llm if self.judge_call_llm is not None else self.auxiliary_call_llm
+        return self.judge_call_llm if self.judge_call_llm is not None else self.evaluation_call_llm
 
     def effective_user_emulator_call_llm(self) -> CallLLM:
         """The user-emulator callable, or the evaluation default."""
         return (
             self.user_emulator_call_llm
             if self.user_emulator_call_llm is not None
-            else self.auxiliary_call_llm
+            else self.evaluation_call_llm
         )
 
     def effective_proposer_call_llm(self) -> CallLLM:
@@ -599,20 +599,20 @@ class RuntimeConfig:
         return (
             self.proposer_call_llm
             if self.proposer_call_llm is not None
-            else self.auxiliary_call_llm
+            else self.evaluation_call_llm
         )
 
     def effective_adjudicator_call_llm(self) -> CallLLM:
         """The callable the reflection adjudicator runs on.
 
-        :attr:`adjudicator_call_llm` when set, else the auxiliary surface
+        :attr:`adjudicator_call_llm` when set, else the evaluation surface
         — the same fall-back rule as :meth:`effective_judge_call_llm`.
 
         This fall-back exists only so a config is CONSTRUCTIBLE without a
         dedicated adjudicator callable; it is NOT a licence to adjudicate
-        on the auxiliary endpoint. Active adjudication REQUIRES a callable
+        on the evaluation endpoint. Active adjudication REQUIRES a callable
         distinct from every judge's: if the judges also run on the
-        auxiliary surface (the common case), the auxiliary fall-back is the
+        evaluation surface (the common case), the evaluation fall-back is the
         SAME object the judges use, and
         :func:`zicato.reflection.adjudicator.adjudicate_corpus` refuses via
         :func:`zicato.core.workspace.assert_distinct_callables` (a judge
@@ -623,45 +623,45 @@ class RuntimeConfig:
         return (
             self.adjudicator_call_llm
             if self.adjudicator_call_llm is not None
-            else self.auxiliary_call_llm
+            else self.evaluation_call_llm
         )
 
     def effective_proposer_breadth_call_llm(self) -> CallLLM:
         """Convenience accessor mirroring :meth:`effective_judge_call_llm`.
 
         Returns :attr:`proposer_breadth_call_llm` when set, else the
-        auxiliary surface. NOT the live read path: the best-of-N wrapper
+        evaluation surface. NOT the live read path: the best-of-N wrapper
         does its OWN fall-back onto the propose-time ``ctx.aux_call_llm``
         (the context rather than this config is the propose-time source of truth
-        for the auxiliary surface), so it never calls this accessor. Kept
+        for the evaluation surface), so it never calls this accessor. Kept
         for parity with the judge/adjudicator accessors and for callers that
         want the resolved callable off a config in hand.
 
         Unlike the judge/adjudicator accessors this carries NO distinctness
         obligation: breadth and depth are both proposer-side roles in one
         trust domain (see the field docstring), so the fall-back onto the
-        shared auxiliary surface is not merely constructible but fully
+        shared evaluation surface is not merely constructible but fully
         supported — it is the default.
         """
         return (
             self.proposer_breadth_call_llm
             if self.proposer_breadth_call_llm is not None
-            else self.auxiliary_call_llm
+            else self.evaluation_call_llm
         )
 
     def effective_proposer_depth_call_llm(self) -> CallLLM:
         """Convenience accessor mirroring :meth:`effective_proposer_breadth_call_llm`.
 
-        Returns :attr:`proposer_depth_call_llm` when set, else the auxiliary
+        Returns :attr:`proposer_depth_call_llm` when set, else the evaluation
         surface. NOT the live read path (the wrapper falls back to the
         propose-time ``ctx.aux_call_llm`` itself); see the note on
         :meth:`effective_proposer_breadth_call_llm`. No distinctness
         obligation applies against the breadth role (same proposer-side
-        trust domain); both defaulting to the auxiliary callable is the
+        trust domain); both defaulting to the evaluation callable is the
         supported, byte-identical default.
         """
         return (
             self.proposer_depth_call_llm
             if self.proposer_depth_call_llm is not None
-            else self.auxiliary_call_llm
+            else self.evaluation_call_llm
         )

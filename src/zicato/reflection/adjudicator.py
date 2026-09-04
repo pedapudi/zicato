@@ -452,7 +452,7 @@ async def _adjudicate_once(
     the model returned. Never raises on a malformed response.
 
     Each attempt is bounded by :func:`asyncio.wait_for` against
-    :func:`aux_call_timeout_s`, the same budget every other auxiliary-LLM
+    :func:`aux_call_timeout_s`, the same budget every other evaluation-LLM
     consumer uses. A hung adjudicator degrades EXACTLY as a malformed one does
     — that attempt yields no parse and its timeout text becomes the raw
     response — because this function's contract is that it never raises, and a
@@ -471,7 +471,7 @@ async def _adjudicate_once(
 
 
 async def _call_bounded(call_llm: Any, system: str, user: str, model: str) -> str:
-    """One adjudicator call under the auxiliary timeout; a timeout returns text.
+    """One adjudicator call under the evaluation timeout; a timeout returns text.
 
     The timeout is rendered as the attempt's RAW RESPONSE rather than raised,
     so it survives into an ambiguous verdict's ``raw_response`` and the

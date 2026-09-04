@@ -83,9 +83,9 @@ chosen by ``proposer_quality.recombine_merge``:
 
 * ``"mechanical"`` (default) — a PURE mint of the disjoint patch union
   (:mod:`zicato.proposer.recombine`), NO LLM call — cost-neutral by
-  construction (the mint REPLACES the slot's auxiliary propose call, so a
+  construction (the mint REPLACES the slot's evaluation propose call, so a
   recombining round spends ``best_of_n − 1`` calls).
-* ``"llm"`` — ONE auxiliary merge call (the depth refinement role) whose
+* ``"llm"`` — ONE evaluation merge call (the depth refinement role) whose
   response flows through the NORMAL parse/validate path; it SUBSTITUTES the
   slot's own sample call (cost: ``best_of_n`` calls, a recombine-off round)
   and reaches OVERLAPPING pairs the mechanical mint cannot compose.
@@ -1157,7 +1157,7 @@ class BestOfNProposerAgent:
 
         The ``recombine_merge = "llm"`` counterpart to :meth:`_mint_recombined`
         (PROPOSER.md §2.6.1): instead of mechanically concatenating a disjoint
-        patch union, it issues ONE auxiliary merge call — the DEPTH refinement
+        patch union, it issues ONE evaluation merge call — the DEPTH refinement
         role (:meth:`_depth_call_llm`, exactly as the self-critique call), so
         the merge SUBSTITUTES the slot's own sample call (cost: n calls, a
         recombine-off round). The merge prompt
@@ -1228,7 +1228,7 @@ class BestOfNProposerAgent:
             )
             # The swallowed CALL exception is the one degrade the round log
             # must not lose (issue #141). It is rendered with the SAME
-            # call-boundary template the retry loop uses for an auxiliary call
+            # call-boundary template the retry loop uses for an evaluation call
             # (``proposer/proposer.py``) so the integrity reader's marker scan,
             # which anchors on that prefix, sees a merge-call outage exactly as
             # it sees a sample-call outage. The suffix is zicato-authored and
@@ -1237,7 +1237,7 @@ class BestOfNProposerAgent:
             # about a response that DID come back — they carry no infra
             # evidence, so they stay a debug line.
             return None, (
-                f"auxiliary LLM call raised {type(exc).__name__}: {exc}"
+                f"evaluation LLM call raised {type(exc).__name__}: {exc}"
                 " (recombination merge; degraded to a fresh sample)",
             )
         try:
@@ -1520,7 +1520,7 @@ class BestOfNProposerAgent:
     ) -> tuple[int, str, str]:
         """Return ``(best index, mode, rationale)`` against the §4.1 quality bar.
 
-        Runs the self-critique LLM pass when it is enabled and an auxiliary
+        Runs the self-critique LLM pass when it is enabled and an evaluation
         callable is available; otherwise (or on any critique failure) falls
         back to the deterministic :func:`_heuristic_best_index`. Either way
         the selection sees ONLY the restricted proposer context. The mode
@@ -1662,7 +1662,7 @@ def wrap_with_proposer_quality(
     :class:`~zicato.core.runtime.RuntimeConfig`): the slate SAMPLING callable
     and the CRITIQUE + REVISE callable. Both default to ``None``, in which
     case the wrapper resolves each per-propose to ``ctx.aux_call_llm`` — the
-    workspace's auxiliary callable, so an unconfigured ensemble runs every
+    workspace's evaluation callable, so an unconfigured ensemble runs every
     call on it. They are irrelevant on the ``best_of_n <= 1`` pass-through
     (no wrapper, no critique).
 

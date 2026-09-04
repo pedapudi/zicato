@@ -472,7 +472,7 @@ built-in kinds (`expected_text`, `regex`, `json_schema`, `predicate`, `rubric`).
    `def _eval_<name>(expectation, result, ...) -> ExpectationResult`. Return the
    uniform `ExpectationResult` (`kind`, `passed`, `detail`, optional `score` /
    `metrics`). Model it on `_eval_regex` (pure) or `_eval_json_schema` (parses
-   the final output). If your matcher needs the auxiliary LLM, take
+   the final output). If your matcher needs the evaluation LLM, take
    `aux_call_llm` like `_eval_rubric` does — and read the collusion warning
    below.
 3. **Add the dispatch arm.** `evaluate_expectation(expectation, result,
@@ -489,8 +489,8 @@ built-in kinds (`expected_text`, `regex`, `json_schema`, `predicate`, `rubric`).
 
 **Traps.**
 
-- ⚠️ **`RUBRIC` — and any LLM-backed matcher — consumes the auxiliary callable,
-  which MUST be distinct from the harness callable.** The collusion guard
+- ⚠️ **`RUBRIC` — and any LLM-backed matcher — consumes the evaluation callable,
+  which MUST be distinct from the target callable.** The collusion guard
   (`assert_distinct_callables`) exists so the thing being judged cannot also be
   the judge. If your matcher calls a model, it takes `aux_call_llm` (never the
   harness `call_llm`), in the same way `_eval_rubric` forwards to

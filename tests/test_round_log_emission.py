@@ -157,8 +157,8 @@ class TestRoundLogEmitter:
                 mutations=(),
                 brief=SimpleNamespace(text="", forbidden_ids=frozenset()),
                 loss_summary="",
-                auxiliary_call_llm=_aux,
-                auxiliary_model="test",
+                evaluation_call_llm=_aux,
+                evaluation_model="test",
                 max_proposer_retries=1,
                 workspace_root=tmp_path,
                 generation_root=tmp_path,
@@ -561,7 +561,7 @@ class TestSlateEvidenceReachesTheReader:
 
     #: The REAL shape ``proposer/proposer.py`` raises a transport failure in.
     CREDENTIAL_ERROR = (
-        "auxiliary LLM call raised AuthenticationError: "
+        "evaluation LLM call raised AuthenticationError: "
         "401 Unauthorized — API key expired or revoked"
     )
 

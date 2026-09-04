@@ -226,8 +226,8 @@ def test_gauntlet_mounts_the_chosen_candidate_tree(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=slate_mocks.harness_llm,
-            auxiliary_call_llm=slate_mocks.slate_aux_llm,
+            target_call_llm=slate_mocks.target_llm,
+            evaluation_call_llm=slate_mocks.slate_aux_llm,
             auto_epoch=False,
         )
     )
@@ -301,8 +301,8 @@ def test_field_mounts_each_chosen_candidate_tree(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=slate_mocks.harness_llm,
-            auxiliary_call_llm=slate_mocks.slate_aux_llm,
+            target_call_llm=slate_mocks.target_llm,
+            evaluation_call_llm=slate_mocks.slate_aux_llm,
             auto_epoch=False,
         )
     )

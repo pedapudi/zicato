@@ -31,7 +31,7 @@ See :mod:`zicato.orchestrator` for the loop implementation.
 Usage::
 
     zicato evolve --rounds 4 \\
-        --harness-call-llm my_pkg.llms:harness_call_llm \\
+        --harness-call-llm my_pkg.llms:target_call_llm \\
         --auxiliary-call-llm my_pkg.llms:aux_call_llm
 
 The ``--mode`` flag picks between cache-first and force-fresh
@@ -649,7 +649,7 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
         "\b\n"
         "Auto-epoching:\n"
         "  By default evolve rolls the epoch whenever the evaluation\n"
-        "  contract (board + proposer brief + scoring + inner-harness\n"
+        "  contract (board + proposer brief + scoring + system-under-test\n"
         "  identity) has drifted. Pass --no-auto-epoch to error on drift\n"
         "  instead, or --epoch ID to pin an epoch and skip the check.\n"
     ),
@@ -702,13 +702,13 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
     "--harness-call-llm",
     "harness_dotted",
     required=True,
-    help="Dotted import path of the harness call_llm (e.g. mymodule:harness).",
+    help="Dotted import path of the target call_llm (e.g. mymodule:target).",
 )
 @click.option(
     "--auxiliary-call-llm",
     "auxiliary_dotted",
     required=True,
-    help="Dotted import path of the auxiliary call_llm (e.g. mymodule:aux).",
+    help="Dotted import path of the evaluation call_llm (e.g. mymodule:evaluation).",
 )
 @click.option(
     "--max-consecutive-rejections",
@@ -748,7 +748,7 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
     type=click.FloatRange(min=0, min_open=True),
     help=(
         "Per-call wall-clock budget, in seconds, for every "
-        "auxiliary-LLM (proposer / judge / emulator / analysis) call. "
+        "evaluation-LLM (proposer / judge / emulator / analysis) call. "
         "Shadows the aux.call_timeout_s config knob (default 120)."
     ),
 )
@@ -864,7 +864,7 @@ def evolve_cmd(
     `epoch` by hand — evolve drives them.
 
     By default, contract-hash auto-epoching is ON: when the evaluation
-    contract (board / proposer brief / scoring / inner-harness
+    contract (board / proposer brief / scoring / system-under-test
     identity) has drifted, evolve closes the current epoch and opens a
     fresh one before running. Pass --no-auto-epoch for the strict
     behaviour (error on drift instead of rolling). --epoch skips
@@ -900,8 +900,8 @@ def evolve_cmd(
     # Resolve both required callables before the dry-run exit: a dry run
     # validates the invocation that would execute, including its two
     # process-boundary imports.
-    harness_call_llm = _import_callable(harness_dotted, kind="harness_call_llm")
-    auxiliary_call_llm = _import_callable(auxiliary_dotted, kind="auxiliary_call_llm")
+    target_call_llm = _import_callable(harness_dotted, kind="target_call_llm")
+    evaluation_call_llm = _import_callable(auxiliary_dotted, kind="evaluation_call_llm")
 
     # ``--dry-run`` exits through the same validators as the public loop.
     # Normal execution is gated inside ``evolve_n_rounds`` itself.
@@ -983,8 +983,8 @@ def evolve_cmd(
                 rounds=rounds,
                 workspace_root=workspace_root,
                 epoch_id=epoch,
-                harness_call_llm=harness_call_llm,
-                auxiliary_call_llm=auxiliary_call_llm,
+                target_call_llm=target_call_llm,
+                evaluation_call_llm=evaluation_call_llm,
                 fast_mode=(mode == "fast"),
                 max_consecutive_rejections=max_consecutive_rejections,
                 max_wall_clock_seconds=max_wall_clock_seconds,

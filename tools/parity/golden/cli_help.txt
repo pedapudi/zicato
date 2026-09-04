@@ -75,10 +75,10 @@ Options:
   --epoch TEXT               Epoch to audit (default: the current epoch).
   --runs INTEGER RANGE       How many independent A/A draws of the champion to
                              take.  [default: 5; x>=2]
-  --harness-call-llm TEXT    Dotted import path of the harness call_llm (e.g.
-                             mymodule:harness).  [required]
-  --auxiliary-call-llm TEXT  Dotted import path of the auxiliary call_llm (e.g.
-                             mymodule:aux).  [required]
+  --harness-call-llm TEXT    Dotted import path of the target call_llm (e.g.
+                             mymodule:target).  [required]
+  --auxiliary-call-llm TEXT  Dotted import path of the evaluation call_llm (e.g.
+                             mymodule:evaluation).  [required]
   --help                     Show this message and exit.
 
 ===== zicato board judges --help =====
@@ -109,9 +109,9 @@ Options:
   --transcript FILE          Frozen transcript file to re-judge (e.g. a settled
                              reasoning trace saved from a prior run's events).
                              Default: a synthetic fixture transcript.
-  --auxiliary-call-llm TEXT  Dotted import path of the judge/aux call_llm (e.g.
-                             mymodule:aux). Required with --test-retest — inline
-                             judges are LLM-backed.
+  --auxiliary-call-llm TEXT  Dotted import path of the judge/evaluation call_llm
+                             (e.g. mymodule:evaluation). Required with --test-
+                             retest — inline judges are LLM-backed.
   --help                     Show this message and exit.
 
 ===== zicato board list --help =====
@@ -159,10 +159,10 @@ Options:
                                 runtime.preflight_probe_points]. Probing stops
                                 early once the verdict is settled, so this
                                 rarely costs the full count.  [x>=1]
-  --harness-call-llm TEXT       Dotted import path of the harness call_llm (e.g.
-                                mymodule:harness).  [required]
-  --auxiliary-call-llm TEXT     Dotted import path of the auxiliary call_llm
-                                (e.g. mymodule:aux).  [required]
+  --harness-call-llm TEXT       Dotted import path of the target call_llm (e.g.
+                                mymodule:target).  [required]
+  --auxiliary-call-llm TEXT     Dotted import path of the evaluation call_llm
+                                (e.g. mymodule:evaluation).  [required]
   --help                        Show this message and exit.
 
 ===== zicato board remove --help =====
@@ -230,7 +230,7 @@ Usage: zicato epoch close [OPTIONS] [EPOCH_ID]
 
   Off the happy path — `zicato evolve` closes epochs on its own when the
   contract rolls. When EPOCH_ID is omitted, the current epoch is closed. The
-  analysis pass runs only if an auxiliary LLM has been configured — until then
+  analysis pass runs only if an evaluation LLM has been configured — until then
   this writes a stub analysis.md that the operator can regenerate later.
 
 Options:
@@ -283,7 +283,7 @@ Usage: zicato epoch new [OPTIONS] NAME
   to force an epoch boundary.
 
   If a previous epoch is still open it is auto-closed first; the auto close
-  emits a stub analysis.md (no auxiliary LLM is wired through the CLI yet — see
+  emits a stub analysis.md (no evaluation LLM is wired through the CLI yet — see
   module docstring).
 
   The supplied contract files are both frozen into the epoch directory AND
@@ -436,7 +436,7 @@ Usage: zicato evolve [OPTIONS]
   `propose`, `tournament`, `reindex`, or `epoch` by hand — evolve drives them.
 
   By default, contract-hash auto-epoching is ON: when the evaluation contract
-  (board / proposer brief / scoring / inner-harness identity) has drifted,
+  (board / proposer brief / scoring / system-under-test identity) has drifted,
   evolve closes the current epoch and opens a fresh one before running. Pass
   --no-auto-epoch for the strict behaviour (error on drift instead of rolling).
   --epoch skips auto-epoching entirely and pins an explicit epoch.
@@ -465,10 +465,10 @@ Options:
                                   full = bypass the cache and force a fresh
                                   evaluation of every unit, both sides (noise
                                   re-sampling / debugging).  [default: fast]
-  --harness-call-llm TEXT         Dotted import path of the harness call_llm
-                                  (e.g. mymodule:harness).  [required]
-  --auxiliary-call-llm TEXT       Dotted import path of the auxiliary call_llm
-                                  (e.g. mymodule:aux).  [required]
+  --harness-call-llm TEXT         Dotted import path of the target call_llm
+                                  (e.g. mymodule:target).  [required]
+  --auxiliary-call-llm TEXT       Dotted import path of the evaluation call_llm
+                                  (e.g. mymodule:evaluation).  [required]
   --max-consecutive-rejections INTEGER RANGE
                                   Stop early when this many rounds in a row are
                                   rejected.  [default: 3; x>=1]
@@ -488,7 +488,7 @@ Options:
                                   Unset (the default) reads config.json, then
                                   the built-in default of 4.  [x>=1]
   --aux-call-timeout FLOAT RANGE  Per-call wall-clock budget, in seconds, for
-                                  every auxiliary-LLM (proposer / judge /
+                                  every evaluation-LLM (proposer / judge /
                                   emulator / analysis) call. Shadows the
                                   aux.call_timeout_s config knob (default 120).
                                   [x>0]
@@ -540,7 +540,7 @@ Options:
 
   Auto-epoching:
     By default evolve rolls the epoch whenever the evaluation
-    contract (board + proposer brief + scoring + inner-harness
+    contract (board + proposer brief + scoring + system-under-test
     identity) has drifted. Pass --no-auto-epoch to error on drift
     instead, or --epoch ID to pin an epoch and skip the check.
 
@@ -652,7 +652,7 @@ Options:
 ===== zicato inspect mutations --help =====
 Usage: zicato inspect mutations [OPTIONS]
 
-  Advanced: list the mutable spans in the registered inner harness.
+  Advanced: list the mutable spans in the registered system under test.
 
   Off the happy path — `zicato evolve` enumerates these itself. Use this to
   audit what the proposer is allowed to change.
@@ -918,7 +918,7 @@ Options:
   --epoch TEXT           Epoch to reflect on (default: current).
   --persist / --dry-run  Write the findings record, or derive and print it
                          without touching disk.  [default: persist]
-  --draft-with-llm TEXT  Dotted path to an auxiliary call_llm used to REFINE
+  --draft-with-llm TEXT  Dotted path to an evaluation call_llm used to REFINE
                          each remedy's prose. Optional — the drafted edits are
                          complete without it.
   --model TEXT           Model name passed to --draft-with-llm's callable.
@@ -1097,7 +1097,7 @@ Options:
   --workspace PATH  Path to the zicato workspace root (either the project dir or
                     the .zicato/ dir).  [default: .zicato]
   --epoch TEXT      Epoch id. Defaults to the workspace's current_epoch marker.
-  --no-llm          Skip the auxiliary-LLM prose pass and substitute
+  --no-llm          Skip the evaluation-LLM prose pass and substitute
                     placeholders. The deterministic data sections (figures,
                     tables, scores) are still re-rendered.
   --help            Show this message and exit.

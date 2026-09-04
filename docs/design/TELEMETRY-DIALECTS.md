@@ -3,7 +3,7 @@
 [TELEMETRY.md](TELEMETRY.md) describes ONE producer: a run emits a
 drift-instrumented event stream, zicato captures it verbatim, and the
 post-run reducer folds it into a typed `LossProfile`. That producer is
-powerful but it assumes the inner harness runs under the
+powerful but it assumes the system under test runs under the
 drift-instrumented ecosystem harness. Not every agent does.
 
 This document generalises the PRODUCER without touching anything

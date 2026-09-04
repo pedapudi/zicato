@@ -4,7 +4,7 @@ Every board unit is a fresh interpreter, and resolving a *model spec* role
 calls ``build_adk_model``, which pulls the whole ``google.adk`` import graph
 — measured at 0.73 s / 88 MB / ~1330 modules per worker. The worker used to
 resolve every configured role eagerly at startup, so a unit whose entry has
-no LLM judge (or which never reaches the auxiliary side) paid for ADK
+no LLM judge (or which never reaches the evaluation side) paid for ADK
 anyway.
 
 Two things are pinned here:
@@ -51,10 +51,10 @@ import asyncio
 from zicato.models_config import models_config_from_dict, resolve_text_call_llm
 cfg = models_config_from_dict({
   'engines': {
-    'target': {'call_llm': 'tests._subprocess_worker_support:harness_call_llm'},
-    'evaluation': {'call_llm': 'tests._subprocess_worker_support:auxiliary_call_llm'},
-    'strong': {'call_llm': 'tests._subprocess_worker_support:harness_call_llm'},
-    'small': {'call_llm': 'tests._subprocess_worker_support:auxiliary_call_llm'}},
+    'target': {'call_llm': 'tests._subprocess_worker_support:target_call_llm'},
+    'evaluation': {'call_llm': 'tests._subprocess_worker_support:evaluation_call_llm'},
+    'strong': {'call_llm': 'tests._subprocess_worker_support:target_call_llm'},
+    'small': {'call_llm': 'tests._subprocess_worker_support:evaluation_call_llm'}},
   'roles': {'proposer': 'strong', 'user_emulator': 'small'}})
 async def run():
   proposer = resolve_text_call_llm(cfg.proposer_depth, role='proposer_depth')
@@ -78,7 +78,7 @@ asyncio.run(run())
         },
     )
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == "stub-harness-response stub-aux-response"
+    assert proc.stdout.strip() == "stub-target-response stub-aux-response"
 
 
 # ---------------------------------------------------------------------------
@@ -117,10 +117,10 @@ async def test_model_spec_role_defers_the_adk_build_to_first_call(
 
 def test_dotted_role_is_still_resolved_eagerly_and_unwrapped() -> None:
     """A ``call_llm`` dotted path never touched ADK, so it is not wrapped."""
-    from tests._subprocess_worker_support import harness_call_llm
+    from tests._subprocess_worker_support import target_call_llm
 
-    spec = role_spec_from_dict({"call_llm": "tests._subprocess_worker_support:harness_call_llm"})
-    assert lazy_text_call_llm(spec, role="harness") is harness_call_llm
+    spec = role_spec_from_dict({"call_llm": "tests._subprocess_worker_support:target_call_llm"})
+    assert lazy_text_call_llm(spec, role="harness") is target_call_llm
 
 
 async def test_deferred_resolution_failure_is_registered_and_typed(
@@ -195,11 +195,11 @@ def test_malformed_spec_still_fails_eagerly() -> None:
     debuggable.
     """
     with pytest.raises(ValueError, match="exactly one of call_llm or model"):
-        lazy_text_call_llm(role_spec_from_dict({}), role="auxiliary")
+        lazy_text_call_llm(role_spec_from_dict({}), role="evaluation")
 
 
 def test_each_resolution_returns_a_distinct_callable() -> None:
-    """The harness/auxiliary collusion guard compares identity.
+    """The target/evaluation collusion guard compares identity.
 
     Two roles resolved from the same spec must not collapse into one
     object, or ``assert_distinct_callables`` would reject a legitimate
@@ -209,7 +209,7 @@ def test_each_resolution_returns_a_distinct_callable() -> None:
 
     spec = role_spec_from_dict(_MODEL_SPEC)
     first = lazy_text_call_llm(spec, role="harness")
-    second = lazy_text_call_llm(spec, role="auxiliary")
+    second = lazy_text_call_llm(spec, role="evaluation")
     assert first is not second
     assert_distinct_callables(first, second)
 
@@ -233,19 +233,19 @@ async def test_worker_role_resolution_uses_the_lazy_path(
 
     monkeypatch.setattr(models_config, "_resolve_model_spec_call_llm", _fake_resolve)
 
-    call_llm = _resolve_role_call_llm({"models_role": _MODEL_SPEC}, role="auxiliary")
+    call_llm = _resolve_role_call_llm({"models_role": _MODEL_SPEC}, role="evaluation")
     assert builds == [], "the worker must not build ADK models at startup"
     assert await call_llm("s", "u", "m") == "ok"
-    assert builds == ["auxiliary"]
+    assert builds == ["evaluation"]
 
 
-async def test_inner_model_resolved_after_active_run_and_heartbeat(
+async def test_target_model_resolved_after_active_run_and_heartbeat(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The heavy inner-model build happens AFTER liveness registration.
 
-    ``_resolve_inner_model_from_role`` forces the ``google.adk`` import for
-    an endpoint-shaped harness role (~1 s / 80 MB — RUNTIME.md §5.5.8), and
+    ``_resolve_target_model_from_role`` forces the ``google.adk`` import for
+    an endpoint-shaped target role (~1 s / 80 MB — RUNTIME.md §5.5.8), and
     ``ADKHarnessAdapter.load`` pays that same cost unconditionally moments
     later regardless, so deferring the build past ``.load()`` saves nothing
     on TOTAL worker cost. What it DOES change, and what this test pins: the
@@ -277,9 +277,9 @@ async def test_inner_model_resolved_after_active_run_and_heartbeat(
         def stop(self) -> None:
             pass
 
-    def _fake_resolve_inner_model(spec: object) -> None:
+    def _fake_resolve_target_model(spec: object) -> None:
         del spec
-        order.append("inner_model_resolve")
+        order.append("target_model_resolve")
         return None
 
     class _FakeSession:
@@ -300,7 +300,7 @@ async def test_inner_model_resolved_after_active_run_and_heartbeat(
     # what a fresh ``import`` picks up.
     monkeypatch.setattr(state_mod, "write_active_run", _fake_write_active_run)
     monkeypatch.setattr(heartbeat_mod, "RunHeartbeatBeater", _FakeHeartbeat)
-    monkeypatch.setattr(worker, "_resolve_inner_model_from_role", _fake_resolve_inner_model)
+    monkeypatch.setattr(worker, "_resolve_target_model_from_role", _fake_resolve_target_model)
     monkeypatch.setattr(worker, "build_adapter", lambda spec: _FakeAdapter())
 
     workspace = tmp_path / ".zicato"
@@ -320,8 +320,8 @@ async def test_inner_model_resolved_after_active_run_and_heartbeat(
         "adapter": {"kind": "adk", "entrypoint": "unused:unused"},
         # Endpoint-shaped, so a real (unmocked) resolve would import ADK —
         # the fake above just records the call instead.
-        "harness_role": {"models_role": dict(_MODEL_SPEC)},
-        "auxiliary_role": {"dotted": "tests._subprocess_worker_support:auxiliary_call_llm"},
+        "target_role": {"models_role": dict(_MODEL_SPEC)},
+        "evaluation_role": {"dotted": "tests._subprocess_worker_support:evaluation_call_llm"},
         "run_id": run_id_for_unit("v0", "entry_a"),
         "sink_events_path": str(events_jsonl_path(workspace, "e0", "v0", "entry_a")),
         "loss_path": str(loss_profile_path(workspace, "e0", "v0", "entry_a")),
@@ -334,7 +334,7 @@ async def test_inner_model_resolved_after_active_run_and_heartbeat(
 
     await worker._run(args)
 
-    assert order == ["active_run_write", "heartbeat_start", "inner_model_resolve"], (
+    assert order == ["active_run_write", "heartbeat_start", "target_model_resolve"], (
         "the active_run write and heartbeat start must precede the inner-model "
         f"resolve (the ADK-import trigger), got order={order}"
     )
@@ -382,17 +382,17 @@ def test_worker_import_does_not_pull_adk_or_litellm() -> None:
     )
 
 
-def _write_inner_model_gate_args(
+def _write_target_model_gate_args(
     args_path: Path, *, workspace: Path, generation_snapshot: Path, result_path: Path
 ) -> None:
-    """A worker args file whose harness role is endpoint-shaped but whose
+    """A worker args file whose target role is endpoint-shaped but whose
     adapter kind is ``"import"`` (a :class:`~tests._subprocess_worker_support.
     StubAdapter`, never an ADK adapter).
 
-    Only ``ADKHarnessAdapter.run`` ever reads ``config.inner_model``
+    Only ``ADKHarnessAdapter.run`` ever reads ``config.target_model``
     (``adapters/adk.py``), so a non-``"adk"`` worker must never pay the
     ``google.adk`` import tax to build one — see the adapter-kind gate on
-    ``_resolve_inner_model_from_role`` in ``_tournament_worker._run``.
+    ``_resolve_target_model_from_role`` in ``_tournament_worker._run``.
     """
     from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_id_for_unit
 
@@ -415,14 +415,14 @@ def _write_inner_model_gate_args(
         },
         # Endpoint-shaped: exactly the live-validation shape that forces
         # ``build_adk_model`` to import ``google.adk`` when it IS resolved.
-        "harness_role": {
+        "target_role": {
             "models_role": {
                 "model": "openai/fake-model",
                 "endpoint": "http://127.0.0.1:1/v1",
                 "api_key_env": "ZICATO_TEST_UNSET_KEY_GATE",
             }
         },
-        "auxiliary_role": {"dotted": "tests._subprocess_worker_support:auxiliary_call_llm"},
+        "evaluation_role": {"dotted": "tests._subprocess_worker_support:evaluation_call_llm"},
         "run_id": run_id_for_unit("v0", "entry_a"),
         "sink_events_path": str(sink_path),
         "loss_path": str(loss_path),
@@ -436,15 +436,15 @@ def _write_inner_model_gate_args(
 
 
 @pytest.mark.integration
-def test_non_adk_adapter_never_resolves_inner_model(tmp_path: Path) -> None:
+def test_non_adk_adapter_never_resolves_target_model(tmp_path: Path) -> None:
     """A ``"import"``-kind worker skips ``google.adk`` even with an
-    endpoint-shaped harness role.
+    endpoint-shaped target role.
 
     Runs a REAL end-to-end worker (stub adapter, no goldfive / real LLM)
     in a fresh interpreter and asserts both that it completes cleanly AND
     that ``google.adk`` never lands in ``sys.modules`` — the adapter-kind
-    gate on ``_resolve_inner_model_from_role`` (only the ADK adapter ever
-    reads ``config.inner_model``) is what makes that true; before the gate
+    gate on ``_resolve_target_model_from_role`` (only the ADK adapter ever
+    reads ``config.target_model``) is what makes that true; before the gate
     existed, this exact args shape imported the whole ADK graph for a value
     the stub adapter's session never even looks at.
     """
@@ -454,7 +454,7 @@ def test_non_adk_adapter_never_resolves_inner_model(tmp_path: Path) -> None:
     generation_snapshot.mkdir(parents=True)
     args_path = tmp_path / "args.json"
     result_path = tmp_path / "result.json"
-    _write_inner_model_gate_args(
+    _write_target_model_gate_args(
         args_path,
         workspace=workspace,
         generation_snapshot=generation_snapshot,
@@ -492,7 +492,7 @@ def test_non_adk_adapter_never_resolves_inner_model(tmp_path: Path) -> None:
     leaked = [name for name in leaked_line.split(":") if name]
     assert leaked == [], (
         "a non-adk adapter worker must never import google.adk, even with an "
-        f"endpoint-shaped harness role: eagerly imported {leaked}"
+        f"endpoint-shaped target role: eagerly imported {leaked}"
     )
     assert json.loads(result_path.read_text(encoding="utf-8"))["aborted"] is False
 

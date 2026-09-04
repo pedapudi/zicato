@@ -59,7 +59,7 @@ class ProposerContext:
     Bundles the call-time inputs one proposal needs — the lineage
     needs as keyword arguments — the lineage coordinates, the advisory
     inputs (patterns, mutation manifest, loss summary, prior experiments),
-    the auxiliary-LLM seam, and the bounded-retry / validation knobs. The
+    the evaluation-LLM seam, and the bounded-retry / validation knobs. The
     orchestrator builds one per challenger and hands it to a
     :class:`ProposerAgent`; the agent (not the orchestrator) owns the
     decision of how to turn the context into an

@@ -413,8 +413,8 @@ generations' aggregates and the gate verdict — as a JSON object.
 The default weights in `scoring.json` are a *starting point* rather than
 a final answer. The right weights depend on:
 
-- Which drift kinds the operator cares about most for *this* inner
-  harness.
+- Which drift kinds the operator cares about most for *this* system
+  under test.
 - How costly an abort really is (does it always mean failure, or
   sometimes the agent was on the right track and just slow?).
 - Whether pass-rate or cleanness dominates the operator's notion
@@ -431,7 +431,7 @@ loop has run real epochs**. The recommended workflow:
 4. If the scalar's decisions disagree with the operator's
    intuition, tune `scoring.json`, start a new epoch, repeat.
 
-The first few epochs after registering a new inner harness are
+The first few epochs after registering a new system under test are
 expected to be calibration epochs. The journal makes the disagreement
 visible (a promoted generation whose `core_idea` the operator would
 have rejected → drift weights are off; a rejected generation whose
@@ -831,7 +831,7 @@ def my_drift_reducer(ctx: DriftContext) -> float:
 The composition order at each seam is **built-in → transform → plugin**:
 the plugin sees the post-transform value as its `builtin_*`. Because
 scoring is pure, re-scoring an epoch is reproducible — unlike judges,
-there is no auxiliary callable to pass.
+there is no evaluation callable to pass.
 
 **Fail-open semantics.** A plugin that raises, returns `NaN`/`inf`, or
 fails to resolve must NOT crash the run. Mirroring `evaluate_judges`, the

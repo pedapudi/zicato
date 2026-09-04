@@ -26,11 +26,11 @@ import pytest
 import zicato.orchestrator as orch
 from tests._orchestrator_harness import (
     bootstrap_workspace,
-    harness_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
+    target_call_llm,
 )
 from zicato.runtime.control import (
     CMD_PAUSE_EPOCH,
@@ -532,8 +532,8 @@ def test_pause_blocks_then_resumes_between_rounds(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_aux_call_llm,
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_aux_call_llm,
         )
     )
     # The round ran only after the pause cleared.
@@ -576,8 +576,8 @@ def test_rubric_replacement_rolls_the_epoch(
             workspace_root=workspace,
             epoch_id=None,
             auto_epoch=True,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_aux_call_llm,
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_aux_call_llm,
         )
     )
 

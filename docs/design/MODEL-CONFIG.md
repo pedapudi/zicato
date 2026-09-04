@@ -159,6 +159,6 @@ silent fallbacks.
 
 A flat `models.<role>` shape, mapping a role name straight to a model, is
 rejected with a migration message; no compatibility alias accepts it. The
-separate `runtime.harness_call_llm` and `runtime.auxiliary_call_llm` fields are
+separate `runtime.target_call_llm` and `runtime.evaluation_call_llm` fields are
 the low-level CLI and library callable seam for deterministic harnesses that do
 not configure `models`.

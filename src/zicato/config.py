@@ -166,13 +166,13 @@ class HealthConfig:
 
 @dataclass(frozen=True, slots=True)
 class AuxConfig:
-    """Configuration for auxiliary-LLM calls (proposer / judge / analysis).
+    """Configuration for evaluation-LLM calls (proposer / judge / analysis).
 
     Fields
     ------
     call_timeout_s:
-        Per-call wall-clock budget, in seconds, for every auxiliary-LLM
-        invocation. A hung auxiliary endpoint can wedge a round; each
+        Per-call wall-clock budget, in seconds, for every evaluation-LLM
+        invocation. A hung evaluation endpoint can wedge a round; each
         call site wraps its ``aux_call_llm`` invocation in
         :func:`asyncio.wait_for` against this budget. Operators tune it
         with ``zicato evolve --aux-call-timeout``. A non-positive value
@@ -415,7 +415,7 @@ class EnvVarInfo:
 
 #: The small merited set, one entry per variable (or operator-named
 #: family). Every entry is a process-boundary contract — a value that
-#: must cross between processes (orchestrator ↔ worker ↔ inner harness ↔
+#: must cross between processes (orchestrator ↔ worker ↔ system under test ↔
 #: sibling tools) where an environment variable is the honest mechanism —
 #: never an operator tuning knob. Operator knobs are CLI flags and
 #: ``config.json`` blocks; see the module docstring.
@@ -424,7 +424,7 @@ _MERITED_ENV_VARS: tuple[EnvVarInfo, ...] = (
         name="ZICATO_RUN_SCRATCH_DIR",
         role="harness-contract",
         description=(
-            "Set BY the tournament worker FOR the inner harness: a fresh "
+            "Set BY the tournament worker FOR the system under test: a fresh "
             "per-run scratch directory the harness must route its runtime "
             "output to, so run artifacts never pollute the generation code "
             "snapshot (zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV)."

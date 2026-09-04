@@ -32,8 +32,8 @@ from pathlib import Path
 from tests._runtime_builders import make_generation
 from tests._subprocess_worker_support import (  # noqa: F401 — used by spawned worker
     EmittingThenSleepingAdapter,
-    auxiliary_call_llm,
-    harness_call_llm,
+    evaluation_call_llm,
+    target_call_llm,
 )
 from tests.test_subprocess_workers import (
     _entry,

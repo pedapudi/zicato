@@ -1,7 +1,7 @@
 """Shared snapshot-scope policy — what a generation source tree may contain.
 
 A generation source tree (``docs/design/STORAGE.md`` §3) is meant to be
-**code-only**: the inner-harness modules plus their support code, nothing
+**code-only**: the system-under-test modules plus their support code, nothing
 else. Two distinct mechanisms threaten that invariant and this module is
 the single policy both consult:
 

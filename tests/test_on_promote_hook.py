@@ -31,10 +31,10 @@ import pytest
 
 from tests._orchestrator_harness import (
     bootstrap_workspace,
-    harness_call_llm,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
+    target_call_llm,
 )
 from tests.test_orchestrator_multi_challenger import (
     _bootstrap_swiss_workspace,
@@ -520,8 +520,8 @@ def test_resume_never_re_fires_a_settled_promotion(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
         )
     )
 

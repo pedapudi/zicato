@@ -49,7 +49,7 @@ Consider these operator questions:
 - "Which board entries never differentiate parent from candidate
   — i.e. always score identically on both sides?"
 - "What is the running hypothesis match-rate, round over round?"
-- "How much wall-clock and how many auxiliary LLM calls has this
+- "How much wall-clock and how many evaluation LLM calls has this
   epoch's tournament cost so far?"
 - "Across all epochs, which mutation points correlate with a
   promote?"

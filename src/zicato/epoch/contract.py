@@ -8,7 +8,7 @@ contract:
 3. The scoring — weights + gate thresholds (``scoring.json``).
 4. The Zicato evaluator revision — an explicit revision number for changes
    that alter measurement or tournament-decision semantics.
-5. The registered inner-harness identity — the validated adapter worker
+5. The registered system-under-test identity — the validated adapter worker
    specification, the operator's declared adapter block, the adapter
    implementation outside the mutable surface, and the sorted list of
    mutable source-tree paths.
@@ -17,7 +17,7 @@ contract:
    proposer when none is configured).
 
 A change to any of these makes generations on either side of the change
-incomparable, so the epoch must roll. The inner harness's *source content* is
+incomparable, so the epoch must roll. The system under test's *source content* is
 NOT part of the contract, because that is what zicato mutates within an epoch.
 
 This module reduces the contract components to a single

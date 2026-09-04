@@ -625,8 +625,8 @@ async def _close_field_round(
         round_n=generation_round_number(first_challenger_id) or field_round.round_index,
         analyzer_round=generation_round_number(first_challenger_id),
         mutations=field_round.mutations,
-        auxiliary_call_llm=field_round.auxiliary_call_llm,
-        auxiliary_model=field_round.auxiliary_model,
+        evaluation_call_llm=field_round.evaluation_call_llm,
+        evaluation_model=field_round.evaluation_model,
         meta_loop_emitter=field_round.meta_loop_emitter,
         token_clip=_token_clip_state(field_round.config),
         attributable_regressions=(

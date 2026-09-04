@@ -11,7 +11,7 @@ import pytest
 from zicato.runtime_factory import make_runtime_config
 
 
-async def _stub_harness(system: str, user: str, model: str) -> str:
+async def _stub_target(system: str, user: str, model: str) -> str:
     del system, user, model
     return ""
 
@@ -25,21 +25,21 @@ def test_runtime_config_from_explicit_callables(tmp_path: Path) -> None:
     cfg = make_runtime_config(
         {"runtime": {"instance_id": "smoke"}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.instance_id == "smoke"
     assert cfg.workspace_root == tmp_path
-    assert cfg.harness_call_llm is _stub_harness
-    assert cfg.auxiliary_call_llm is _stub_aux
+    assert cfg.target_call_llm is _stub_target
+    assert cfg.evaluation_call_llm is _stub_aux
 
 
 def test_runtime_config_seed_passes_through(tmp_path: Path) -> None:
     cfg = make_runtime_config(
         {"runtime": {"seed": 1234}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.seed == 1234
 
@@ -49,8 +49,8 @@ def test_runtime_config_scrub_worker_env_defaults_off(tmp_path: Path) -> None:
     cfg = make_runtime_config(
         {"runtime": {}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.scrub_worker_env is False
     assert cfg.worker_env_passthrough == ()
@@ -66,8 +66,8 @@ def test_runtime_config_scrub_worker_env_opt_in(tmp_path: Path) -> None:
             }
         },
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.scrub_worker_env is True
     assert cfg.worker_env_passthrough == ("CUSTOM_A", "CUSTOM_B")
@@ -78,8 +78,8 @@ def test_runtime_config_diversity_tolerance_defaults_off(tmp_path: Path) -> None
     cfg = make_runtime_config(
         {"runtime": {}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.diversity_tolerance is None
 
@@ -89,8 +89,8 @@ def test_runtime_config_diversity_tolerance_opt_in(tmp_path: Path) -> None:
     cfg = make_runtime_config(
         {"runtime": {"diversity_tolerance": 0.5}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.diversity_tolerance == 0.5
 
@@ -101,8 +101,8 @@ def test_runtime_config_diversity_tolerance_out_of_range_raises(tmp_path: Path) 
         make_runtime_config(
             {"runtime": {"diversity_tolerance": 1.5}},
             workspace_root=tmp_path,
-            harness_call_llm=_stub_harness,
-            auxiliary_call_llm=_stub_aux,
+            target_call_llm=_stub_target,
+            evaluation_call_llm=_stub_aux,
         )
 
 
@@ -114,8 +114,8 @@ def test_runtime_config_parallelism_workspace_value_wins_over_default(
     cfg = make_runtime_config(
         {"runtime": {"parallelism": 3}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.parallelism == 3
 
@@ -135,8 +135,8 @@ def test_runtime_config_parallelism_pinned_flag_wins_over_workspace(
     cfg = make_runtime_config(
         {"runtime": {"parallelism": 3}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.parallelism == 7
 
@@ -149,8 +149,8 @@ def test_runtime_config_parallelism_env_var_is_ignored(
     cfg = make_runtime_config(
         {"runtime": {}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.parallelism == 4
 
@@ -160,8 +160,8 @@ def test_runtime_config_parallelism_default(tmp_path: Path) -> None:
     cfg = make_runtime_config(
         {},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.parallelism == 4
 
@@ -175,8 +175,8 @@ def test_host_worker_permits_defaults_to_auto(tmp_path: Path) -> None:
     cfg = make_runtime_config(
         {},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.host_worker_permits is None
 
@@ -186,16 +186,16 @@ def test_host_worker_permits_reads_the_runtime_block(tmp_path: Path) -> None:
     cfg = make_runtime_config(
         {"runtime": {"host_worker_permits": 6}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.host_worker_permits == 6
 
     off = make_runtime_config(
         {"runtime": {"host_worker_permits": 0}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert off.host_worker_permits == 0
 
@@ -210,8 +210,8 @@ def test_worker_permit_directory_and_log_level_read_the_runtime_block(tmp_path: 
             }
         },
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.worker_permit_dir == permit_dir
     assert cfg.log_level == "DEBUG"
@@ -226,8 +226,8 @@ def test_worker_permit_directory_requires_an_absolute_path(
         make_runtime_config(
             {"runtime": {"worker_permit_dir": value}},
             workspace_root=tmp_path,
-            harness_call_llm=_stub_harness,
-            auxiliary_call_llm=_stub_aux,
+            target_call_llm=_stub_target,
+            evaluation_call_llm=_stub_aux,
         )
 
 
@@ -236,8 +236,8 @@ def test_runtime_log_level_rejects_an_unknown_name(tmp_path: Path) -> None:
         make_runtime_config(
             {"runtime": {"log_level": "verbose"}},
             workspace_root=tmp_path,
-            harness_call_llm=_stub_harness,
-            auxiliary_call_llm=_stub_aux,
+            target_call_llm=_stub_target,
+            evaluation_call_llm=_stub_aux,
         )
 
 
@@ -251,16 +251,16 @@ def test_host_worker_permits_reads_a_json_boolean_as_intent(tmp_path: Path) -> N
     on = make_runtime_config(
         {"runtime": {"host_worker_permits": True}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert on.host_worker_permits is None, "true must mean AUTO, never a cap of 1"
 
     off = make_runtime_config(
         {"runtime": {"host_worker_permits": False}},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert off.host_worker_permits == 0
 
@@ -269,8 +269,8 @@ def test_runtime_config_default_instance_id(tmp_path: Path) -> None:
     cfg = make_runtime_config(
         {},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.instance_id == "default"
 
@@ -280,8 +280,8 @@ def test_runtime_config_rejects_shared_callable(tmp_path: Path) -> None:
         make_runtime_config(
             {},
             workspace_root=tmp_path,
-            harness_call_llm=_stub_harness,
-            auxiliary_call_llm=_stub_harness,
+            target_call_llm=_stub_target,
+            evaluation_call_llm=_stub_target,
         )
 
 
@@ -289,34 +289,34 @@ def test_runtime_config_resolves_dotted_paths(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     fake_mod = types.ModuleType("fake_runtime_mod")
-    fake_mod.harness_fn = _stub_harness  # type: ignore[attr-defined]
+    fake_mod.target_fn = _stub_target  # type: ignore[attr-defined]
     fake_mod.aux_fn = _stub_aux  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "fake_runtime_mod", fake_mod)
 
     cfg = make_runtime_config(
         {
             "runtime": {
-                "harness_call_llm": "fake_runtime_mod.harness_fn",
-                "auxiliary_call_llm": "fake_runtime_mod:aux_fn",
+                "target_call_llm": "fake_runtime_mod.target_fn",
+                "evaluation_call_llm": "fake_runtime_mod:aux_fn",
             }
         },
         workspace_root=tmp_path,
     )
-    assert cfg.harness_call_llm is _stub_harness
-    assert cfg.auxiliary_call_llm is _stub_aux
+    assert cfg.target_call_llm is _stub_target
+    assert cfg.evaluation_call_llm is _stub_aux
 
 
 def test_runtime_config_missing_harness_dotted_path_raises(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="harness_call_llm"):
+    with pytest.raises(ValueError, match="target_call_llm"):
         make_runtime_config({}, workspace_root=tmp_path)
 
 
 def test_runtime_config_missing_aux_dotted_path_raises(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="auxiliary_call_llm"):
+    with pytest.raises(ValueError, match="evaluation_call_llm"):
         make_runtime_config(
             {},
             workspace_root=tmp_path,
-            harness_call_llm=_stub_harness,
+            target_call_llm=_stub_target,
         )
 
 
@@ -325,8 +325,8 @@ def test_runtime_config_bad_dotted_path_raises(tmp_path: Path) -> None:
         make_runtime_config(
             {
                 "runtime": {
-                    "harness_call_llm": "nope_module.attr",
-                    "auxiliary_call_llm": "nope_module.attr_other",
+                    "target_call_llm": "nope_module.attr",
+                    "evaluation_call_llm": "nope_module.attr_other",
                 }
             },
             workspace_root=tmp_path,
@@ -344,8 +344,8 @@ def test_runtime_config_non_callable_dotted_path_raises(
         make_runtime_config(
             {
                 "runtime": {
-                    "harness_call_llm": "noncallable_mod.value",
-                    "auxiliary_call_llm": "noncallable_mod.value",
+                    "target_call_llm": "noncallable_mod.value",
+                    "evaluation_call_llm": "noncallable_mod.value",
                 }
             },
             workspace_root=tmp_path,
@@ -360,7 +360,7 @@ def test_runtime_config_non_callable_dotted_path_raises(
 def _install_models_callables(monkeypatch: pytest.MonkeyPatch) -> None:
     """Register three distinct module-level call_llm callables for dotted paths."""
     mod = types.ModuleType("fake_models_mod")
-    mod.harness_fn = _stub_harness  # type: ignore[attr-defined]
+    mod.target_fn = _stub_target  # type: ignore[attr-defined]
     mod.aux_fn = _stub_aux  # type: ignore[attr-defined]
 
     async def _judge(system: str, user: str, model: str) -> str:
@@ -373,8 +373,6 @@ def _install_models_callables(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _models(**specs: dict[str, object]) -> dict[str, object]:
     public = {
-        "harness": "target",
-        "auxiliary": "evaluation",
         "proposer_breadth": "proposer_generate",
         "proposer_depth": "proposer_review",
     }
@@ -382,7 +380,7 @@ def _models(**specs: dict[str, object]) -> dict[str, object]:
     roles = {
         public.get(role, role): public.get(role, role)
         for role in specs
-        if role not in {"harness", "auxiliary"}
+        if role not in {"target", "evaluation"}
     }
     return {"engines": engines, "roles": roles}
 
@@ -390,24 +388,24 @@ def _models(**specs: dict[str, object]) -> dict[str, object]:
 def test_models_block_resolves_harness_and_auxiliary_dotted(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``models.{harness,auxiliary}`` (dotted form) wins over ``runtime.*``."""
+    """``models.{harness,evaluation}`` (dotted form) wins over ``runtime.*``."""
     _install_models_callables(monkeypatch)
     cfg = make_runtime_config(
         {
             # legacy runtime.* present but should be ignored when models.* set.
             "runtime": {
-                "harness_call_llm": "fake_models_mod.judge_fn",
-                "auxiliary_call_llm": "fake_models_mod.judge_fn",
+                "target_call_llm": "fake_models_mod.judge_fn",
+                "evaluation_call_llm": "fake_models_mod.judge_fn",
             },
             "models": _models(
-                harness={"call_llm": "fake_models_mod:harness_fn"},
-                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                target={"call_llm": "fake_models_mod:target_fn"},
+                evaluation={"call_llm": "fake_models_mod:aux_fn"},
             ),
         },
         workspace_root=tmp_path,
     )
-    assert cfg.harness_call_llm is _stub_harness
-    assert cfg.auxiliary_call_llm is _stub_aux
+    assert cfg.target_call_llm is _stub_target
+    assert cfg.evaluation_call_llm is _stub_aux
 
 
 def test_models_block_falls_back_to_runtime_when_role_absent(
@@ -418,17 +416,17 @@ def test_models_block_falls_back_to_runtime_when_role_absent(
     cfg = make_runtime_config(
         {
             "runtime": {
-                "harness_call_llm": "fake_models_mod.harness_fn",
-                "auxiliary_call_llm": "fake_models_mod.aux_fn",
+                "target_call_llm": "fake_models_mod.target_fn",
+                "evaluation_call_llm": "fake_models_mod.aux_fn",
             },
             # empty models block ⇒ both roles fall through to runtime.*
             "models": {"engines": {}, "roles": {}},
         },
         workspace_root=tmp_path,
     )
-    assert cfg.harness_call_llm is _stub_harness
-    assert cfg.auxiliary_call_llm is _stub_aux
-    # No judge role ⇒ judge_call_llm is None and judges use the auxiliary.
+    assert cfg.target_call_llm is _stub_target
+    assert cfg.evaluation_call_llm is _stub_aux
+    # No judge role ⇒ judge_call_llm is None and judges use the evaluation callable.
     assert cfg.judge_call_llm is None
     assert cfg.effective_judge_call_llm() is _stub_aux
 
@@ -439,18 +437,18 @@ def test_explicit_callable_kwarg_beats_models_block(
     """An explicit callable kwarg wins over a configured ``models`` role."""
     _install_models_callables(monkeypatch)
     cfg = make_runtime_config(
-        {"models": _models(harness={"call_llm": "fake_models_mod:harness_fn"})},
+        {"models": _models(target={"call_llm": "fake_models_mod:target_fn"})},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_aux,  # the kwarg wins
-        auxiliary_call_llm=_stub_harness,
+        target_call_llm=_stub_aux,  # the kwarg wins
+        evaluation_call_llm=_stub_target,
     )
-    assert cfg.harness_call_llm is _stub_aux
+    assert cfg.target_call_llm is _stub_aux
 
 
-def test_models_harness_endpoint_spec_builds_inner_model(
+def test_models_target_endpoint_spec_builds_target_model(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A ``models.harness`` *model spec* with an endpoint builds the inner ADK
+    """A ``models.target`` *model spec* with an endpoint builds the inner ADK
     model so the adapter can rebind the target's agents to it (function-calling
     against the configured endpoint), not the text-only shim."""
     pytest.importorskip("litellm")
@@ -461,38 +459,38 @@ def test_models_harness_endpoint_spec_builds_inner_model(
     cfg = make_runtime_config(
         {
             "models": _models(
-                harness={
+                target={
                     "model": "openai/gemma-4-26B-A4B-it-FP8",
                     "endpoint": "http://kossel.lan:8080/v1",
                     "api_key_env": "OPENAI_API_KEY",
                 },
-                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                evaluation={"call_llm": "fake_models_mod:aux_fn"},
             )
         },
         workspace_root=tmp_path,
     )
-    assert isinstance(cfg.inner_model, LiteLlm)
+    assert isinstance(cfg.target_model, LiteLlm)
 
 
-def test_dotted_harness_role_leaves_inner_model_none(
+def test_dotted_target_role_leaves_target_model_none(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A dotted ``call_llm`` harness role configures no inner model — the
+    """A dotted ``call_llm`` target role configures no inner model — the
     adapter falls back to its guarded shim rebind (today's behaviour)."""
     _install_models_callables(monkeypatch)
     cfg = make_runtime_config(
         {
             "models": _models(
-                harness={"call_llm": "fake_models_mod:harness_fn"},
-                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                target={"call_llm": "fake_models_mod:target_fn"},
+                evaluation={"call_llm": "fake_models_mod:aux_fn"},
             )
         },
         workspace_root=tmp_path,
     )
-    assert cfg.inner_model is None
+    assert cfg.target_model is None
 
 
-def test_models_judge_role_resolves_and_overrides_auxiliary(
+def test_models_judge_role_resolves_and_overrides_evaluation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """``models.judge`` resolves to a distinct judge callable; else aux is used."""
@@ -500,30 +498,30 @@ def test_models_judge_role_resolves_and_overrides_auxiliary(
     cfg = make_runtime_config(
         {
             "models": _models(
-                harness={"call_llm": "fake_models_mod:harness_fn"},
-                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                target={"call_llm": "fake_models_mod:target_fn"},
+                evaluation={"call_llm": "fake_models_mod:aux_fn"},
                 judge={"call_llm": "fake_models_mod:judge_fn"},
             )
         },
         workspace_root=tmp_path,
     )
     assert cfg.judge_call_llm is not None
-    # The judge callable is the configured one, NOT the auxiliary.
+    # The judge callable is the configured one, NOT the evaluation callable.
     assert cfg.effective_judge_call_llm() is cfg.judge_call_llm
-    assert cfg.effective_judge_call_llm() is not cfg.auxiliary_call_llm
+    assert cfg.effective_judge_call_llm() is not cfg.evaluation_call_llm
 
 
-def test_models_collusion_guard_fires_when_harness_equals_auxiliary(
+def test_models_collusion_guard_fires_when_harness_equals_evaluation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The collusion guard still rejects harness==auxiliary via the models block."""
+    """The collusion guard still rejects target==evaluation via the models block."""
     _install_models_callables(monkeypatch)
     with pytest.raises(RuntimeError, match="must be distinct"):
         make_runtime_config(
             {
                 "models": _models(
-                    harness={"call_llm": "fake_models_mod:harness_fn"},
-                    auxiliary={"call_llm": "fake_models_mod:harness_fn"},
+                    target={"call_llm": "fake_models_mod:target_fn"},
+                    evaluation={"call_llm": "fake_models_mod:target_fn"},
                 )
             },
             workspace_root=tmp_path,
@@ -552,20 +550,20 @@ def _install_proposer_role_callables(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "fake_proposer_roles_mod", mod)
 
 
-def test_proposer_roles_default_none_and_fall_back_to_auxiliary(tmp_path: Path) -> None:
+def test_proposer_roles_default_none_and_fall_back_to_evaluation(tmp_path: Path) -> None:
     """Absent ``models.proposer_{breadth,depth}`` ⇒ ``None`` and the effective
-    accessors resolve to the SAME auxiliary callable object (byte-identical)."""
+    accessors resolve to the SAME evaluation callable object (byte-identical)."""
     cfg = make_runtime_config(
         {},
         workspace_root=tmp_path,
-        harness_call_llm=_stub_harness,
-        auxiliary_call_llm=_stub_aux,
+        target_call_llm=_stub_target,
+        evaluation_call_llm=_stub_aux,
     )
     assert cfg.proposer_breadth_call_llm is None
     assert cfg.proposer_depth_call_llm is None
     assert cfg.proposer_breadth_model is None
     assert cfg.proposer_depth_model is None
-    # The fall-back is the auxiliary callable — the very object sampling +
+    # The fall-back is the evaluation callable — the very object sampling +
     # critique always used, so an unconfigured ensemble is byte-identical.
     assert cfg.effective_proposer_breadth_call_llm() is _stub_aux
     assert cfg.effective_proposer_depth_call_llm() is _stub_aux
@@ -575,14 +573,14 @@ def test_proposer_roles_resolve_from_models_block(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """``models.proposer_breadth`` / ``proposer_depth`` (dotted form) resolve to
-    their own callables, distinct from the auxiliary surface."""
+    their own callables, distinct from the evaluation surface."""
     _install_models_callables(monkeypatch)
     _install_proposer_role_callables(monkeypatch)
     cfg = make_runtime_config(
         {
             "models": _models(
-                harness={"call_llm": "fake_models_mod:harness_fn"},
-                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                target={"call_llm": "fake_models_mod:target_fn"},
+                evaluation={"call_llm": "fake_models_mod:aux_fn"},
                 proposer_breadth={"call_llm": "fake_proposer_roles_mod:breadth_fn"},
                 proposer_depth={"call_llm": "fake_proposer_roles_mod:depth_fn"},
             )
@@ -593,8 +591,8 @@ def test_proposer_roles_resolve_from_models_block(
     assert cfg.proposer_depth_call_llm is not None
     assert cfg.effective_proposer_breadth_call_llm() is cfg.proposer_breadth_call_llm
     assert cfg.effective_proposer_depth_call_llm() is cfg.proposer_depth_call_llm
-    assert cfg.effective_proposer_breadth_call_llm() is not cfg.auxiliary_call_llm
-    assert cfg.effective_proposer_depth_call_llm() is not cfg.auxiliary_call_llm
+    assert cfg.effective_proposer_breadth_call_llm() is not cfg.evaluation_call_llm
+    assert cfg.effective_proposer_depth_call_llm() is not cfg.evaluation_call_llm
     # A call_llm (dotted) role has NO model name — the model-string thread stays
     # None, so it steers only proposers that read ``ctx.aux_call_llm``.
     assert cfg.proposer_breadth_model is None
@@ -609,15 +607,15 @@ def test_base_proposer_role_routes_text_callable(
     cfg = make_runtime_config(
         {
             "models": _models(
-                harness={"call_llm": "fake_models_mod:harness_fn"},
-                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                target={"call_llm": "fake_models_mod:target_fn"},
+                evaluation={"call_llm": "fake_models_mod:aux_fn"},
                 proposer={"call_llm": "fake_proposer_roles_mod:breadth_fn"},
             )
         },
         workspace_root=tmp_path,
     )
     assert cfg.effective_proposer_call_llm() is cfg.proposer_call_llm
-    assert cfg.proposer_call_llm is not cfg.auxiliary_call_llm
+    assert cfg.proposer_call_llm is not cfg.evaluation_call_llm
     assert cfg.proposer_model is None
 
 
@@ -628,14 +626,14 @@ def test_base_proposer_model_is_available_to_native_and_process_agents(
 
     def resolve(spec: object, *, role: str):  # type: ignore[no-untyped-def]
         del spec
-        return _stub_harness if role == "harness" else _stub_aux
+        return _stub_target if role == "target" else _stub_aux
 
     monkeypatch.setattr("zicato.runtime_factory.resolve_text_call_llm", resolve)
     cfg = make_runtime_config(
         {
             "models": {
                 "engines": {
-                    "target": {"call_llm": "fake_models_mod:harness_fn"},
+                    "target": {"call_llm": "fake_models_mod:target_fn"},
                     "evaluation": {"call_llm": "fake_models_mod:aux_fn"},
                     "strong": {"model": "house-strong"},
                 },
@@ -661,8 +659,8 @@ def test_proposer_roles_model_spec_captures_model_name(
     cfg = make_runtime_config(
         {
             "models": _models(
-                harness={"call_llm": "fake_models_mod:harness_fn"},
-                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                target={"call_llm": "fake_models_mod:target_fn"},
+                evaluation={"call_llm": "fake_models_mod:aux_fn"},
                 proposer_breadth={
                     "model": "openai/breadth-model",
                     "endpoint": "http://kossel.lan:8080/v1",
@@ -690,7 +688,7 @@ def test_proposer_roles_no_collusion_guard_between_breadth_and_depth(
     """Breadth and depth may be the SAME callable — one proposer-side trust
     domain, so the collusion identity-guard does NOT apply between them.
 
-    (Contrast ``test_models_collusion_guard_fires_when_harness_equals_auxiliary``:
+    (Contrast ``test_models_collusion_guard_fires_when_harness_equals_evaluation``:
     that guard is for evaluator-vs-evaluated separation, not proposer roles.)
     """
     _install_models_callables(monkeypatch)
@@ -698,8 +696,8 @@ def test_proposer_roles_no_collusion_guard_between_breadth_and_depth(
     cfg = make_runtime_config(
         {
             "models": _models(
-                harness={"call_llm": "fake_models_mod:harness_fn"},
-                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                target={"call_llm": "fake_models_mod:target_fn"},
+                evaluation={"call_llm": "fake_models_mod:aux_fn"},
                 # deliberately the SAME callable for both proposer roles.
                 proposer_breadth={"call_llm": "fake_proposer_roles_mod:breadth_fn"},
                 proposer_depth={"call_llm": "fake_proposer_roles_mod:breadth_fn"},

@@ -28,11 +28,11 @@ import pytest
 
 from tests._orchestrator_harness import (
     bootstrap_workspace,
-    harness_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
+    target_call_llm,
 )
 from zicato.health.diagnostics import HealthFinding, LoopHealth
 
@@ -448,8 +448,8 @@ def test_evolve_n_rounds_stops_on_consecutive_critical_health(
             rounds=4,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             max_consecutive_rejections=99,  # isolate the health breaker
         )
     )
@@ -488,8 +488,8 @@ def test_evolve_n_rounds_opt_out_of_health_stop(
             rounds=3,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             max_consecutive_rejections=99,
             stop_on_degenerate_health=False,
         )

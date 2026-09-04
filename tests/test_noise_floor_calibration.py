@@ -140,8 +140,8 @@ def _run_rounds(workspace: Path, epoch_id: str, rounds: int = 1) -> list:
             rounds=rounds,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=t0_mocks.harness_llm,
-            auxiliary_call_llm=t0_mocks.aux_llm,
+            target_call_llm=t0_mocks.target_llm,
+            evaluation_call_llm=t0_mocks.aux_llm,
             auto_epoch=False,
             fast_mode=True,
         )
@@ -198,8 +198,8 @@ def test_measure_noise_floor_deterministic_adapter_is_zero(tmp_path: Path) -> No
     config = runtime_factory.make_runtime_config(
         workspace_config,
         workspace_root=workspace,
-        harness_call_llm=t0_mocks.harness_llm,
-        auxiliary_call_llm=t0_mocks.aux_llm,
+        target_call_llm=t0_mocks.target_llm,
+        evaluation_call_llm=t0_mocks.aux_llm,
     )
     champion_id = current_generation(workspace, epoch_id)
     champion = Generation(
@@ -280,7 +280,7 @@ def test_board_audit_cli_measures_and_persists(tmp_path: Path) -> None:
             "--runs",
             "3",
             "--harness-call-llm",
-            "zicato_examples.target_0_convergence.mocks:harness_llm",
+            "zicato_examples.target_0_convergence.mocks:target_llm",
             "--auxiliary-call-llm",
             "zicato_examples.target_0_convergence.mocks:aux_llm",
         ],

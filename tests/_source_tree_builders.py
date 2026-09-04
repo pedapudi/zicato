@@ -1,4 +1,4 @@
-"""Inner-harness source trees for mutation and generation-store tests.
+"""System-under-test source trees for mutation and generation-store tests.
 
 Tests that exercise the mutation surface, a generation store or the
 proposer's grounding tools need a source tree carrying at least one

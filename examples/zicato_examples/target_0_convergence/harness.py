@@ -405,7 +405,7 @@ async def _emit_declared_judge_drifts(
 
     from zicato.judge_runtime import judge_spec_to_goldfive  # noqa: PLC0415
 
-    # Inline judges audit reasoning text via the auxiliary/judge endpoint;
+    # Inline judges audit reasoning text via the evaluation/judge endpoint;
     # python judges are deterministic and ignore it. A missing accessor
     # (an ad-hoc config) degrades to no aux — inline judges then no-signal
     # (they catch their own errors), python judges still fire.

@@ -4,7 +4,7 @@ Historically zicato treated the harmonograf console as an external
 process the operator was responsible for starting; setting
 ``ZICATO_HARMONOGRAF_URL`` (or the ``integration.harmonograf_url``
 workspace-config key) merely attached a live-streaming sink to every
-inner-harness run and surfaced a "watch live" link in the heartbeat.
+system-under-test run and surfaced a "watch live" link in the heartbeat.
 The default behaviour (env unset) was JSONL-only telemetry.
 
 Self-hosting flips the default: when no URL is configured, zicato

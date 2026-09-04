@@ -60,7 +60,7 @@ def record_judge_invocation(judge_name: str) -> None:
     """Count one call of ``judge_name``'s callable.
 
     Called at the point the judge is about to invoke the thing that can
-    fail — the auxiliary LLM for an inline judge, the operator's code for a
+    fail — the evaluation LLM for an inline judge, the operator's code for a
     python judge. An observation point with nothing to judge (an empty
     reasoning trace) is NOT an invocation: counting it would put a
     never-called judge at ``0/N errors`` and read as healthy.

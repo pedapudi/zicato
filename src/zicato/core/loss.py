@@ -173,7 +173,7 @@ class JudgeError:
     outcome a judge can have: the judge's callable RAISED.
 
     Without this record that outcome is indistinguishable from "fired and
-    found nothing". An inline judge whose auxiliary endpoint 404s — a
+    found nothing". An inline judge whose evaluation endpoint 404s — a
     misconfigured judge model, a revoked key, a transient outage — returns
     an empty verdict by hard contract, because a judge must never crash a
     run. goldfive emits no ``JudgementEmitted`` for an empty verdict. So a
@@ -198,7 +198,7 @@ class JudgeError:
         ``ScoringWeights.per_judge_weights`` use.
     invocations:
         How many times this run called the judge's callable (inline: the
-        calls that reached the auxiliary LLM; python: the calls that
+        calls that reached the evaluation LLM; python: the calls that
         reached the operator's code). Observation points with nothing to
         judge — an empty reasoning trace — are not invocations.
     errors:

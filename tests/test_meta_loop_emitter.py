@@ -431,7 +431,7 @@ async def test_a_proposal_episode_emits_proposer_envelopes(tmp_path: Path) -> No
     )
 
     async def _unused(system: str, user: str, model: str) -> str:  # pragma: no cover
-        raise AssertionError("an episode never calls the auxiliary text shim")
+        raise AssertionError("an episode never calls the evaluation text shim")
 
     await agent.propose(
         ProposerContext(

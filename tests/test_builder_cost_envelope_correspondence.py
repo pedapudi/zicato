@@ -58,7 +58,7 @@ def _draft(structure: str, entries: int, **params: Any) -> TournamentDraft:
 
 def _gauntlet_with_evidence_gate() -> TournamentDraft:
     """Every term a bare draft leaves out: the crowning-confirm budget, the
-    auxiliary best-of-N propose calls, the screen panel, the placebo arm."""
+    evaluation best-of-N propose calls, the screen panel, the placebo arm."""
     draft = _draft(
         "gauntlet",
         10,

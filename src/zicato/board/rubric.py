@@ -3,7 +3,7 @@
 The :func:`evaluate_rubric_judge` coroutine implements the runtime side
 of the :attr:`~zicato.core.ExpectationKind.RUBRIC` expectation kind built
 by :meth:`zicato.board.predicates.Rubric.score`. It renders the
-operator's rubric into a system+user prompt pair, calls the auxiliary
+operator's rubric into a system+user prompt pair, calls the evaluation
 LLM, parses the JSON response into a ``score`` / ``dimensions`` /
 ``reasoning`` triple, and reports pass/fail against the operator-set
 threshold.
@@ -114,7 +114,7 @@ async def evaluate_rubric_judge(
     result:
         The run result to grade.
     aux_call_llm:
-        The auxiliary LLM callable. Required — the rubric matcher is an
+        The evaluation LLM callable. Required — the rubric matcher is an
         LLM-as-judge matcher by definition. Passing ``None`` returns a
         failing :class:`ExpectationResult` rather than raising.
 

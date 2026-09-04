@@ -3,7 +3,7 @@
 The comprehensive report is a hybrid artifact: the data-bearing sections
 are templated deterministically from the workspace
 (:mod:`zicato.analyzer.report_sections`); the *interpretive* prose is
-written by the auxiliary LLM. The figures live in the same deterministic
+written by the evaluation LLM. The figures live in the same deterministic
 half as the tables — every figure here is drawn directly from a
 :class:`zicato.analyzer.report_data.EpochReportData` view so the chart
 and the table next to it can never disagree.

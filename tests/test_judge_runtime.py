@@ -7,7 +7,7 @@ Covers:
   kind, the spec's severity, a ``"<criterion>: <reason>"`` detail, and
   ``name == spec.name``);
 * an inline judge stays silent on a non-violating trace / empty trace /
-  a raising auxiliary callable — and, for the raising one, that the
+  a raising evaluation callable — and, for the raising one, that the
   swallowed failure is still counted in the per-judge error register and
   marked on the verdict (issue #121);
 * a **python** custom judge loads from a dotted path and runs, with its
@@ -66,7 +66,7 @@ class _SpecStub:
 
 
 # ---------------------------------------------------------------------------
-# Scripted auxiliary callables (the two-callable rule: judges use aux)
+# Scripted evaluation callables (the two-callable rule: judges use aux)
 # ---------------------------------------------------------------------------
 
 

@@ -81,7 +81,7 @@ pub struct ActiveRun {
     /// OS process-group id of the run's own worker. The worker is spawned in
     /// its own session/process-group (`start_new_session`), so it is the
     /// group leader and `pgid == pid`. Recording it lets the watchdog
-    /// GROUP-kill the worker AND any grandchildren the inner harness spawned
+    /// GROUP-kill the worker AND any grandchildren the system under test spawned
     /// (shells, helper tools) by negating this id, rather than leaking them
     /// when it kills the leader pid alone. `None` for a legacy record (or a
     /// platform without process groups) → the watchdog falls back to the

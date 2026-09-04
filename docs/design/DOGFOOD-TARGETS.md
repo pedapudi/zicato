@@ -142,7 +142,7 @@ synthetic board kinds. Zicato applied to itself covers nesting.
 
 ### 2.1 What it is
 
-The inner harness is **goldfive itself**, and within it the steering
+The system under test is **goldfive itself**, and within it the steering
 layer: the `Steerer` protocol's default implementation, the LLM-judge
 prompts, the intervention ladder thresholds, and the plan-revision
 strategy. The agent under test is some other agent — the presentation
@@ -154,7 +154,7 @@ The setup looks like:
 ```
 zicato
    │
-   └─ inner harness = (presentation agent) wrapped by (goldfive,
+   └─ system under test = (presentation agent) wrapped by (goldfive,
                                                        under
                                                        optimization)
 ```
@@ -358,7 +358,7 @@ All five hold in the shipped design:
    [EMULATOR.md](EMULATOR.md) to keep the emulator from colluding with
    the agent it emulates. The steering target relies on the same
    separation: the goldfive under optimization must not share a model
-   endpoint with zicato's auxiliary work.
+   endpoint with zicato's evaluation work.
 2. **`mutation_points()` over a list of source roots.** Pinned in
    [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §5. A single-tree target
    registers one root; the steering target registers two.
@@ -383,7 +383,7 @@ schema-breaking change. Each was cheap to make upfront.
 
 ### 3.1 What it is
 
-The inner harness is **zicato**, and within it the prompts and heuristics
+The system under test is **zicato**, and within it the prompts and heuristics
 zicato itself runs on: the proposer's system prompt, the analysis-pass
 prompt, the emulator persona template, and the rubric template. The
 system under optimization is the system doing the optimizing. No example
@@ -394,10 +394,9 @@ The setup:
 ```
 outer zicato
    │
-   └─ inner harness = (inner zicato)
-                         │
-                         └─ inner inner harness = (presentation agent
-                                                   = target 1)
+   └─ system under test = inner zicato
+                          │
+                          └─ system under test = presentation agent (target 1)
 ```
 
 The outer zicato optimizes the inner zicato; the inner zicato
@@ -444,7 +443,7 @@ The benchmark runs offline:
 2. The outer zicato's proposer is run against each labeled
    `LossProfile`. The hypothesis it generates is scored against
    the labeled ideal:
-   - `core_idea` similarity (via auxiliary LLM judge).
+   - `core_idea` similarity (via evaluation LLM judge).
    - `modulating` overlap (exact mutation-point id match).
    - `expected_drift_movements` direction match.
    - `risks` quality, judged on whether the listed risks are plausible.
@@ -486,8 +485,8 @@ set, the workspace is keyed under it.
 Recursion guards in the runner are easy to forget unless they are
 provided for in advance. The shipped design provides for three:
 
-- The outer zicato's `harness_call_llm` is the inner zicato's
-  `auxiliary_call_llm` plumbing. Strictly: when the outer zicato's
+- The outer zicato's `target_call_llm` is the inner zicato's
+  `evaluation_call_llm` plumbing. Strictly: when the outer zicato's
   `HarnessAdapter` invokes the inner zicato, the inner zicato gets
   its own two `call_llm` callables, distinct from the outer's, with
   the same hard two-callable check.

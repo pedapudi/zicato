@@ -17,7 +17,7 @@ pillar**, cross-referenced there), [`EVAL-VIEW.md`](EVAL-VIEW.md)
 ## 1. Thesis — the two-loop framing
 
 Zicato already runs one improvement loop: the **evolve loop** improves the
-**candidate** (the inner harness) against a **fixed instrument** (the
+**candidate** (the system under test) against a **fixed instrument** (the
 board + scoring + judges + gate). Board reflection (BOARD-REFLECTION.md)
 measures that instrument's reliability, discrimination, validity, and
 calibration, so that an operator can judge whether to trust how it decided.
@@ -406,10 +406,10 @@ never raw suggestions.
   scaffolding from a mutation point or metric name are pure transforms of
   already-captured data, and they spend no model budget. This is the passive
   tier.
-- **Model-drafted synthesis is auxiliary-metered and needs a live endpoint.**
+- **Model-drafted synthesis is evaluation-metered and needs a live endpoint.**
   Drafting a judge criterion, rewriting a rubric, or drafting a coverage entry
-  from a model spends **`auxiliary_call_llm`** budget — the rubric-grader and
-  emulator channel, never the harness callable. For live use it needs the same
+  from a model spends **`evaluation_call_llm`** budget — the rubric-grader and
+  emulator channel, never the target callable. For live use it needs the same
   operator go-ahead as reflection's adjudication.
 - **The live admission probes need the same go-ahead** — §5. The fixture and
   mock tier is free and covers the whole pipeline.
