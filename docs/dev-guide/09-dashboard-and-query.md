@@ -2532,7 +2532,7 @@ cargo test -p zicato-supervisor                # Rust parity, if applicable
   and `deciding_rule` come from before the readers join them.
 - 11-testing.md §11.9 — the digest / no-op / DOM-node-identity
   discipline as a test contract; §"The parity gates" — MOCK-GOLDEN /
-  REINDEX-DUMP; §"The seven import contracts" — the query-stays-dashboard-free pin.
+  REINDEX-DUMP; §"The import contracts" — the query-stays-dashboard-free pin.
 - 12-bug-casebook.md case 4 (the client champion scan) — the client champion-scan (first vs
   reigning) behind server authority.
 

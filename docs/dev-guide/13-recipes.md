@@ -1025,8 +1025,8 @@ a different class of break.
    uv run mypy src/zicato/
    ```
 
-4. **Import contracts.** The five library/driver contracts (10-builder-cli-
-   library.md §"The five import-linter contracts"):
+4. **Import contracts.** The driver boundary and the two cuts inside the
+   library (10-builder-cli-library.md §"The import-linter contracts"):
 
    ```bash
    uv run lint-imports

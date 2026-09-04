@@ -6,7 +6,7 @@
 > duty, the two oracles (the known-answer convergence proof and the
 > decision-procedure power harness), the subprocess-worker test support,
 > the markers and tiers (`make test` / `test-fast` / `node-test` / `check`),
-> the `tools/parity.sh` gates one by one, the seven import contracts +
+> the `tools/parity.sh` gates one by one, the import contracts +
 > the TID251 bans, the Node behaviour-suite conventions, the
 > generation-store conformance session templates, CI, and the pre-commit
 > checklist — plus the two recipes every contributor eventually needs: write
@@ -1279,35 +1279,38 @@ only reviewable if the re-capture contains ONLY the change under review.
 
 ---
 
-## 11.8 The seven import contracts + the TID251 bans
+## 11.8 The import contracts + the TID251 bans
 
 Two static gates keep the architecture from eroding: the import-linter
-library/driver contracts (`uv run lint-imports`) and the ruff TID251
-banned-api list. Neither is a pytest test — a violation reds the linter, so
-they run in `make check` and CI.
+contracts (`uv run lint-imports`) and the ruff TID251 banned-api list.
+Neither is a pytest test — a violation reds the linter, so they run in
+`make check` and CI.
 
-### 11.8.1 The seven import contracts
+### 11.8.1 The import contracts
 
 zicato is a LIBRARY first — the surface in `zicato/__init__.py` — with three
-DRIVERS on top: `zicato.cli`, `zicato.dashboard`, `zicato.builder`. The
-contracts pin which edges exist:
+DRIVERS on top: `zicato.cli`, `zicato.dashboard`, `zicato.builder`, and the
+terminal console `zicato.tui` as a fourth. The contracts pin which edges
+exist:
 
-| # | Contract | Forbids |
-|---|---|---|
-| 1 | the library must not import the drivers | every lib package (`core`, `epoch`, `evolve`, `orchestrator`, `proposer`, `query`, `runtime`, `selection`, `tournament`, `storage`, …) importing `cli` / `dashboard` / `builder` |
-| 2 | dashboard driver: no import of the cli | `zicato.dashboard` → `zicato.cli` (the `dashboard → builder` mount is the ONE allowed dashboard→driver edge) |
-| 3 | builder driver: no import of the other drivers | `zicato.builder` → `cli` / `dashboard` |
-| 4 | cli driver: no DIRECT import of the builder | `zicato.cli` → `zicato.builder` directly (`allow_indirect_imports = true` — the cli reaches the builder legitimately via `cli → dashboard.server → builder.api`) |
-| 5 | the query layer stays dashboard-free | `zicato.query` → `zicato.dashboard` (the query-layer-is-library-code rule — 09-dashboard-and-query.md §9.1, doctrine `DQ4`) |
-| 6 | tui driver: no import of the other drivers | `zicato.tui` → `cli` / `dashboard` / `builder` (the terminal console speaks HTTP to the served payloads) |
-| 7 | the proposer's patch validator has no path to the board | `zicato.proposer`'s validator reaching the board loader, which is what keeps entry text out of the validator's import closure |
+| Contract | Forbids |
+|---|---|
+| the library must not import the drivers | every lib package (`core`, `epoch`, `evolve`, `orchestrator`, `proposer`, `query`, `runtime`, `selection`, `tournament`, `storage`, …) importing `cli` / `dashboard` / `builder` / `tui` |
+| dashboard driver: no import of the cli | `zicato.dashboard` → `zicato.cli` (the `dashboard → builder` mount is the ONE allowed dashboard→driver edge) |
+| builder driver: no import of the other drivers | `zicato.builder` → `cli` / `dashboard` |
+| cli driver: no DIRECT import of the builder | `zicato.cli` → `zicato.builder` directly (`allow_indirect_imports = true` — the cli reaches the builder legitimately via `cli → dashboard.server → builder.api`) |
+| the query layer stays dashboard-free | `zicato.query` → `zicato.dashboard` (the query-layer-is-library-code rule — 09-dashboard-and-query.md §9.1, doctrine `DQ4`) |
+| tui driver: no import of the other drivers | `zicato.tui` → `cli` / `dashboard` / `builder` (the terminal console speaks HTTP to the served payloads) |
+| the proposer's patch validator has no path to the board | `zicato.proposer`'s validator reaching the board loader, which is what keeps entry text out of the validator's import closure |
+| the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, or the drivers | the 24 packages that model, execute, score and store importing `analyzer` / `check` / `evolve` / `health` / `orchestrator` / `query` / `reflection` / the four drivers (10-builder-cli-library.md §10.11.3 lists the seven library packages held out of the source list because they sit above the cut) |
+| the shared primitives import nothing else in the library | `aux_timeout` / `config` / `import_path` / `integrations` / `logging_stream` / `storage` / `util` importing any other top-level package (the seven may import each other) |
 
 The declared driver→driver edges are exactly two: `cli → dashboard` (the CLI
 launches the server and resolves its static bundle) and `dashboard →
 builder` (server.py mounts the builder's REST routes). Everything else is
-forbidden. Contract 4 is the subtle one — it forbids the cli growing its OWN
-builder dependency while permitting the transitive reach through the two
-declared edges:
+forbidden. The cli-no-direct-import-of-the-builder contract is the subtle one
+— it forbids the cli growing its OWN builder dependency while permitting the
+transitive reach through the two declared edges:
 
 ```
 name = "cli driver: no direct import of the builder (cli -> dashboard is the declared edge)"
