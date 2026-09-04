@@ -158,17 +158,21 @@ def test_journal_outcome_from_dict_keeps_unrecognised_token(token: str) -> None:
     [None, 3, 1.5, ["promoted"], {"a": 1}, b"promoted"],
     ids=["null", "int", "float", "list", "dict", "bytes"],
 )
-def test_journal_outcome_from_dict_non_string_decision_does_not_raise(value: Any) -> None:
-    """A structurally wrong value reads exactly as it did before the coercion.
+def test_journal_outcome_from_dict_non_string_decision_reads_as_rejected(value: Any) -> None:
+    """A structurally wrong value is not a decision token, and never raises.
 
-    The unhashable cases are the ones worth pinning: the enum lookup must
-    surface them as ``ValueError`` (which the fallback catches) and never as
-    an uncaught ``TypeError`` out of a read path that previously could not
-    fail at all.
+    ``recorded_decision_token`` accepts a string and nothing else, so a
+    decision key holding a number, a container or bytes carries no token
+    at all and the record reads back under the same rule as a record
+    naming no decision: REJECTED. The unhashable cases are the ones worth
+    pinning — a value that cannot be looked up in the enum must not
+    surface as an uncaught ``TypeError`` out of a read path that cannot
+    otherwise fail, and must not be carried into a field the dataclass
+    declares as a :class:`TournamentDecision`.
     """
     hydrated = _outcome_from_dict({"tournament_decision": value})
     assert hydrated is not None
-    assert hydrated.tournament_decision == value
+    assert hydrated.tournament_decision is TournamentDecision.REJECTED
 
 
 # ---------------------------------------------------------------------------

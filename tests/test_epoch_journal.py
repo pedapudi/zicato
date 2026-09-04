@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from zicato.core.tournament import TournamentDecision
 from zicato.core.types import (
     DriftMovementActual,
     ExpectedDriftMovement,
@@ -30,6 +31,7 @@ from zicato.epoch import (
     update_experiment_outcome,
     write_experiment,
 )
+from zicato.query.decisions import canonical_decision, experiment_decision
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -408,6 +410,104 @@ def test_read_experiment_refuses_an_inline_patches_body(
 
     with pytest.raises(ExperimentRecordError, match="inline 'patches' array"):
         read_experiment(ws, eid, "v_inline")
+
+
+def _body_with_outcome(eid: str, generation_id: str, outcome: object) -> dict[str, object]:
+    """A minimal stored experiment body carrying one recorded ``outcome``."""
+    return {
+        "id": f"exp_{generation_id}",
+        "epoch_id": eid,
+        "generation_id": generation_id,
+        "parent_generation_id": "v0",
+        "proposed_at": "2026-04-08T12:00:00+00:00",
+        "hypothesis": {
+            "core_idea": "spelling",
+            "modulating": ["x"],
+            "why": "history",
+            "expected_drift_movements": [],
+            "expected_pass_rate_delta": "+0.0",
+            "risks": "",
+        },
+        "patch_ids": [],
+        "outcome": outcome,
+    }
+
+
+def _write_body(ws: Path, eid: str, generation_id: str, body: dict[str, object]) -> None:
+    gdir = generation_dir(ws, eid, generation_id)
+    gdir.mkdir(parents=True)
+    (gdir / "experiment.json").write_text(json.dumps(body))
+
+
+@pytest.mark.parametrize(
+    ("generation_id", "outcome"),
+    [
+        ("v_nested_short_key", {"decision": "promoted"}),
+        ("v_nested_verdict_key", {"verdict": "promoted"}),
+        ("v_bare_string", "promoted"),
+    ],
+)
+def test_typed_record_reads_every_on_disk_decision_spelling(
+    epoch_root: tuple[Path, str],
+    generation_id: str,
+    outcome: object,
+) -> None:
+    """A promotion stays a promotion however the record spells it.
+
+    Three spellings of a promotion reach the typed record: the short
+    ``decision`` key, the older ``verdict`` key, and a bare-string outcome
+    that IS the decision. All three resolve through
+    :func:`zicato.core.tournament.recorded_decision_token`, so the record
+    the tournament reads and the classifier the dashboard serves cannot
+    disagree about the same bytes.
+    """
+    ws, eid = epoch_root
+    _write_body(ws, eid, generation_id, _body_with_outcome(eid, generation_id, outcome))
+
+    loaded = read_experiment(ws, eid, generation_id)
+    assert loaded.outcome is not None
+    assert loaded.outcome.tournament_decision is TournamentDecision.PROMOTED
+    assert experiment_decision({"outcome": outcome}) == "promoted"
+
+
+def test_typed_record_and_served_classifier_agree_on_one_body(
+    epoch_root: tuple[Path, str],
+) -> None:
+    """The two readers resolve one body to one decision.
+
+    The regression this pins: the typed decoder used to read only
+    ``tournament_decision`` and default an absent key to ``rejected``,
+    while the classifier read ``decision`` first — so a body recorded as
+    ``{"outcome": {"decision": "promoted"}}`` was a promotion on the wire
+    and a rejection in the typed record.
+    """
+    ws, eid = epoch_root
+    body = _body_with_outcome(eid, "v_agree", {"decision": "promoted", "ran_at": "2026-04-08"})
+    _write_body(ws, eid, "v_agree", body)
+
+    loaded = read_experiment(ws, eid, "v_agree")
+    assert loaded.outcome is not None
+    assert canonical_decision(experiment_decision(body)) == str(loaded.outcome.tournament_decision)
+
+
+def test_outcome_naming_no_decision_reads_as_rejected(
+    epoch_root: tuple[Path, str],
+) -> None:
+    """An outcome carrying no decision token reads back as REJECTED.
+
+    ``OutcomeRecord.tournament_decision`` is non-optional, so the decoder
+    has no token for "settled, decision unknown" and picks the one that
+    never crowns a generation the tournament did not crown. The stored
+    body still says no decision was recorded, which is why views that
+    must tell the two apart serve the body rather than the typed record.
+    """
+    ws, eid = epoch_root
+    _write_body(ws, eid, "v_silent", _body_with_outcome(eid, "v_silent", {"ran_at": "2026-04-08"}))
+
+    loaded = read_experiment(ws, eid, "v_silent")
+    assert loaded.outcome is not None
+    assert loaded.outcome.tournament_decision is TournamentDecision.REJECTED
+    assert experiment_decision({"outcome": {"ran_at": "2026-04-08"}}) is None
 
 
 def test_update_experiment_outcome_preserves_patches(

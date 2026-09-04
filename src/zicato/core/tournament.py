@@ -40,6 +40,57 @@ class TournamentDecision(StrEnum):
     DEFERRED = "deferred"
 
 
+#: The keys a recorded ``outcome`` object may carry its decision token
+#: under, in the order a reader tries them.
+#:
+#: * ``decision`` — the shortest spelling, and the one a body written from
+#:   a dashboard-shaped payload carries.
+#: * ``tournament_decision`` — the field name
+#:   :class:`~zicato.core.experiment.OutcomeRecord` serialises to, and the
+#:   only one every current writer emits.
+#: * ``verdict`` — a spelling that appears on workspaces recorded before
+#:   the field settled on its current name.
+#:
+#: The order is a precedence, not a preference: a body carrying two of
+#: them resolves to the first in this tuple. No writer emits more than
+#: one, so the order only decides hand-edited and hand-written records.
+OUTCOME_DECISION_KEYS: tuple[str, ...] = ("decision", "tournament_decision", "verdict")
+
+
+def recorded_decision_token(outcome: Any) -> str | None:
+    """The decision token a record's ``outcome`` field carries, or ``None``.
+
+    THE one place that knows how a tournament decision is spelled on
+    disk. Both the typed decoder that rebuilds
+    :class:`~zicato.core.experiment.OutcomeRecord` from a stored body and
+    the classifier the dashboard serves resolve a token through here, so
+    the same bytes cannot yield two different decisions.
+
+    Four shapes carry a token or its absence; anything else carries none:
+
+    * ``None`` — no outcome recorded (the run is in flight, or the
+      generation never raced). Returns ``None``.
+    * a bare string — the outcome IS the decision token.
+    * a mapping carrying one of :data:`OUTCOME_DECISION_KEYS` with a
+      string value — that value, first key in that tuple wins.
+    * a mapping carrying none of them — returns ``None``.
+
+    The token is returned exactly as recorded: unstripped, uncased, and
+    never widened into a verdict the record does not carry. Mapping a
+    token onto the canonical ``promoted`` / ``rejected`` / ``deferred``
+    vocabulary is a separate step, and what a caller does with ``None``
+    is the caller's policy — the two readers differ there deliberately.
+    """
+    if isinstance(outcome, str):
+        return outcome
+    if isinstance(outcome, Mapping):
+        for key in OUTCOME_DECISION_KEYS:
+            value = outcome.get(key)
+            if isinstance(value, str):
+                return value
+    return None
+
+
 class Side(StrEnum):
     """The tournament side a scheduled run belongs to.
 
