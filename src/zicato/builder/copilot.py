@@ -30,7 +30,7 @@ The streaming SSE schema (B2 consumes this)
 
 The REST layer (:func:`zicato.builder.api`) wraps these frames in
 ``text/event-stream`` and the mutations persist in the shared
-:class:`~zicato.builder.draft.DraftStore`, so a subsequent ``GET
+:class:`~zicato.contract_draft.draft.DraftStore`, so a subsequent ``GET
 /builder/draft`` reflects them.
 
 Lazy ADK imports
@@ -55,7 +55,7 @@ from zicato.builder.copilot_tools import (
     BuilderToolContext,
     bind_builder_tool_context,
 )
-from zicato.builder.draft import DraftStore, TournamentDraft
+from zicato.contract_draft.draft import DraftStore, TournamentDraft
 from zicato.core.types import ProposerSkill
 
 #: The clear, single error frame returned when the copilot cannot run —
@@ -160,7 +160,7 @@ def _render_draft_summary(draft: TournamentDraft) -> str:
     operator's per-request message is the run input; this is the static
     backdrop.
     """
-    from zicato.builder import operations as ops
+    from zicato.contract_draft import operations as ops
 
     ts = draft.scoring.tournament_structure
     cost = ops.estimate_cost(draft)

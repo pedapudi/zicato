@@ -249,7 +249,7 @@ def test_apply_entry_suggestion_carries_the_entry_with_provenance(
     assert board_path(ws, epoch_id).read_bytes() == before
 
     # The forked draft carries the new entry with its provenance context.
-    from zicato.builder.draft import DraftStore
+    from zicato.contract_draft.draft import DraftStore
 
     store = DraftStore()
     draft = store.fork(session_id="verify", name="reflect-verify", workspace_root=ws)

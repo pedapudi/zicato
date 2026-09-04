@@ -1302,7 +1302,7 @@ exist:
 | the query layer stays dashboard-free | `zicato.query` → `zicato.dashboard` (the query-layer-is-library-code rule — 09-dashboard-and-query.md §9.1, doctrine `DQ4`) |
 | tui driver: no import of the other drivers | `zicato.tui` → `cli` / `dashboard` / `builder` (the terminal console speaks HTTP to the served payloads) |
 | the proposer's patch validator has no path to the board | `zicato.proposer`'s validator reaching the board loader, which is what keeps entry text out of the validator's import closure |
-| the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, or the drivers | the 24 packages that model, execute, score and store importing `analyzer` / `check` / `evolve` / `health` / `orchestrator` / `query` / `reflection` / the four drivers (10-builder-cli-library.md §10.11.3 lists the seven library packages held out of the source list because they sit above the cut) |
+| the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, the contract draft, or the drivers | the 24 packages that model, execute, score and store importing `analyzer` / `check` / `contract_draft` / `evolve` / `health` / `orchestrator` / `query` / `reflection` / the four drivers (10-builder-cli-library.md §10.11.3 lists the seven library packages held out of the source list because they sit above the cut) |
 | the shared primitives import nothing else in the library | `aux_timeout` / `config` / `import_path` / `integrations` / `logging_stream` / `storage` / `util` importing any other top-level package (the seven may import each other) |
 
 The declared driver→driver edges are exactly two: `cli → dashboard` (the CLI
@@ -1490,7 +1490,7 @@ either side alone.
 
 `tests/test_builder_cost_envelope_correspondence.py` is the worked example. The
 tournament builder's cost estimate and its lint findings belong to
-`zicato.builder.operations`; the console renders whatever the response envelope
+`zicato.contract_draft.operations`; the console renders whatever the response envelope
 carries. The test computes the envelope for a fixed set of drafts, writes it to
 a fixture file, runs `static/test/cost_envelope_readback.mjs` under node to
 render that fixture through the production module (`builder/preview.js`), and

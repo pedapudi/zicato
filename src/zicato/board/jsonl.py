@@ -240,7 +240,7 @@ def board_meta_to_dict(
     a header that is byte-identical to the pre-judge_only format.
 
     Public because the builder's board canonicalizer
-    (:func:`zicato.builder.draft._board_canon`) must emit the SAME header
+    (:func:`zicato.contract_draft.draft._board_canon`) must emit the SAME header
     object :func:`save_board` writes, so the draft diff agrees with the
     on-disk bytes the contract hash sees.
     """

@@ -7,7 +7,7 @@ ADK's own ``Runner``. The fake model scripts two builder tool rounds
 a final summary turn, and the tests assert:
 
 * the SSE stream emits ``tool`` + ``patch`` + ``done`` frames carrying the
-  right :class:`~zicato.builder.operations.DraftPatch`s;
+  right :class:`~zicato.contract_draft.operations.DraftPatch`s;
 * the SAME session draft in the shared :class:`DraftStore` was mutated, and
   the form's ``GET /builder/draft`` reflects the change (one source of
   truth);
@@ -30,7 +30,7 @@ import pytest
 
 from zicato.builder.config import BuilderConfig
 from zicato.builder.copilot import CHAT_DISABLED_MESSAGE, run_copilot
-from zicato.builder.draft import DraftStore
+from zicato.contract_draft.draft import DraftStore
 from zicato.core.types import ScoringWeights
 from zicato.epoch.lifecycle import new_epoch
 from zicato.workspace.config_io import write_workspace_config

@@ -893,6 +893,15 @@ subprocess entry point, the process boundary that isolates one run.
 Everything it needs crosses the wire as JSON plus dotted import paths —
 see the module-level-callable rule (§4).
 
+**`contract_draft/`** — an evaluation contract as an editable draft:
+`draft.py` (`TournamentDraft`, the mutable working copy, and `DraftStore`,
+one draft per session) and `operations.py` (the one place each contract
+edit is implemented — `set_structure`, `set_gate`, `set_screening`, …,
+plus `estimate_cost`, `validate`, `preflight`, `apply`). The builder
+driver serves this package over HTTP and its copilot drives the same
+draft; `reflection/` stages a finding's proposed edit on a draft it never
+seals. Must not import a driver.
+
 ### 3.2 The drivers
 
 **`cli/`** — Click root + auto-discovered subcommands
@@ -911,12 +920,11 @@ and the static JS bundle (`static/js/…`) with its Node behaviour suite
 Render discipline follows digest-gated rendering (§4).
 
 **`builder/`** — the deterministic tournament-builder backend:
-`config.py` (builder.json), `draft.py` (`TournamentDraft`/`DraftStore`),
-`operations.py` (the one place each contract edit is implemented —
-`set_structure`, `set_gate`, `set_screening`, …, plus `estimate_cost`,
-`validate`, `preflight`, `apply`), `api.py` (REST routes the dashboard
-mounts), `copilot_tools.py` (the chat copilot's tool surface). Must not
-import cli or dashboard.
+`config.py` (builder.json), `api.py` (REST routes the dashboard mounts),
+`copilot_tools.py` (the chat copilot's tool surface). The draft it edits
+and the operations that edit it are library code in `contract_draft/`;
+this package holds no second edit path. Must not import cli or
+dashboard.
 
 ### 3.3 Outside `src/`
 

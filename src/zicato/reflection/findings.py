@@ -83,7 +83,7 @@ class Finding:
 
 def _op_function(op_name: str) -> Any:
     """Resolve a builder op by name; raise on an unknown op."""
-    from zicato.builder import operations as ops  # noqa: PLC0415
+    from zicato.contract_draft import operations as ops  # noqa: PLC0415
 
     fn = getattr(ops, op_name, None)
     if fn is None or not callable(fn):
@@ -94,7 +94,7 @@ def _op_function(op_name: str) -> Any:
 def validate_proposed_op(op_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Validate an op payload against the real op signature; return ``{op, args}``.
 
-    Looks the op up in :mod:`zicato.builder.operations` and reflects its
+    Looks the op up in :mod:`zicato.contract_draft.operations` and reflects its
     signature (:func:`inspect.signature`): every key in ``args`` must be a real
     keyword parameter of the op (the leading ``draft`` receiver excluded). An
     unknown key — or an unknown op name — raises :class:`ValueError` at emit

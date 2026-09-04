@@ -1,24 +1,26 @@
-"""The mutable draft-contract state the builder edits.
+"""The mutable draft state for an evaluation contract.
 
 A :class:`TournamentDraft` is the editable working copy of a whole
 evaluation **contract** — the scoring weights (structure + params +
 overfitting/holdout + gate + per-kind/per-judge weights), the board
 (entries with their judges / predicates / rubrics and ``holdout`` tags),
-the proposer brief text, and the proposer dir. Both the form (B2) and the
-copilot (B1b) drive the *same* draft through the operations in
-:mod:`zicato.builder.operations`; the draft is the single editable
-surface, and nothing it does touches the live workspace until
-:func:`zicato.builder.operations.apply` is called with ``confirm=True``.
+the proposer brief text, and the proposer dir. Every edit reaches a draft
+through the operations in :mod:`zicato.contract_draft.operations`: the
+builder's form and its copilot drive the *same* draft, and the reflection
+adjudicator stages a finding's edit on a draft of its own. The draft is
+the single editable surface, and nothing done to it touches the live
+workspace until :func:`zicato.contract_draft.operations.apply` is called
+with ``confirm=True``.
 
 Unlike the frozen contract dataclasses in :mod:`zicato.core.types`, a
 :class:`TournamentDraft` is MUTABLE — operations mutate it in
 place and return a structured patch describing what changed. A
 :class:`DraftStore` keys independent drafts by ``session_id`` so two
-concurrent builder sessions never tread on each other.
+concurrent editing sessions never tread on each other.
 
 The draft can be initialised blank or, via
 :meth:`TournamentDraft.from_workspace`, pre-filled from the CURRENT live
-contract so the builder opens showing exactly what is running.
+contract so an editing session opens showing exactly what is running.
 """
 
 from __future__ import annotations
@@ -67,7 +69,7 @@ class ContractDiff:
     """Which contract components differ between the draft and live.
 
     A component that differs will roll the epoch on
-    :func:`zicato.builder.operations.apply`. The diff is what the UI
+    :func:`zicato.contract_draft.operations.apply`. The diff is what the UI
     renders to warn the operator before they confirm.
 
     Fields
@@ -269,7 +271,7 @@ class TournamentDraft:
 
         Builds the live draft via :meth:`from_workspace` and compares each
         contract component to this draft's. A differing component will roll
-        the epoch on :func:`zicato.builder.operations.apply`.
+        the epoch on :func:`zicato.contract_draft.operations.apply`.
         """
         live = TournamentDraft.from_workspace(workspace_root)
 
@@ -425,7 +427,7 @@ class DraftStore:
     process-local store (drafts have never outlived the dashboard
     process; slots inherit that contract rather than inventing a second
     persistence story). Everything lives until
-    :func:`zicato.builder.operations.apply` writes one to the workspace,
+    :func:`zicato.contract_draft.operations.apply` writes one to the workspace,
     or the process exits.
 
     UNDO HISTORY: :meth:`remember` records a bounded (20) per-session

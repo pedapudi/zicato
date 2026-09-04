@@ -2,11 +2,11 @@
 
 The tournament-builder copilot (B1b) edits the SAME session draft the form
 (B2) edits. It does that by calling the operations in
-:mod:`zicato.builder.operations` — there is exactly one place each edit's
+:mod:`zicato.contract_draft.operations` — there is exactly one place each edit's
 semantics live. This module exposes those operations as ADK tools so the
 copilot's model can drive an edit while it reasons, and after every
 mutation the tool returns a compact JSON summary (the
-:class:`~zicato.builder.operations.DraftPatch` plus the current cost /
+:class:`~zicato.contract_draft.operations.DraftPatch` plus the current cost /
 warnings) so the model sees the effect of its edit immediately.
 
 Why a context var
@@ -23,7 +23,7 @@ draft.
 
 apply is DRY-RUN ONLY here
 --------------------------
-:func:`preview_apply` calls :func:`zicato.builder.operations.apply` with
+:func:`preview_apply` calls :func:`zicato.contract_draft.operations.apply` with
 ``confirm=False`` ALWAYS. The copilot may preview / propose applying, but
 committing (which lets the auto-epoch machinery roll the epoch) stays a
 deliberate UI action via ``POST /builder/apply {confirm:true}``. The
@@ -49,8 +49,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from zicato.builder import operations as ops
-from zicato.builder.draft import DraftStore, TournamentDraft
+from zicato.contract_draft import operations as ops
+from zicato.contract_draft.draft import DraftStore, TournamentDraft
 from zicato.core.types import JudgeMode, JudgeSpec, validate_board_entry
 
 

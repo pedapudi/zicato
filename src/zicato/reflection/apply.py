@@ -1,20 +1,19 @@
-"""``reflect apply`` — carry a finding's proposed edit to a builder draft.
+"""``reflect apply`` — carry a finding's proposed edit to a contract draft.
 
-The finding→builder seam. A reflection finding carries an executable
-``proposed_op`` (a real builder op validated against its signature at emit
+The finding→draft seam. A reflection finding carries an executable
+``proposed_op`` (a real draft op validated against its signature at emit
 time; BOARD-REFLECTION.md verdict 6). :func:`apply_finding_to_draft` loads that
-finding, **forks a builder draft** from the LIVE contract, and applies the op to
+finding, **forks a draft** from the LIVE contract, and applies the op to
 the draft — it NEVER writes the sealed contract. The operator reviews the
 resulting draft diff and seals it through the builder, which is the gated step
 that rolls the epoch. The recommend-only invariant holds end to end: reflection
 diagnoses and stages, the operator (through the builder) decides.
 
-This module lives in :mod:`zicato.reflection` rather than the CLI, because
-the CLI must not import the builder directly (the import-linter ``cli -> dashboard
--> builder`` declared-edge contract), whereas ``zicato.reflection`` is a library
-already permitted the builder edge (the ``findings`` signature validation).
-``zicato inspect reflection apply`` calls in here; the builder dependency stays on the
-reflection side of the boundary.
+This module lives in :mod:`zicato.reflection` rather than the CLI so the
+staging logic sits beside the findings that produce it; ``zicato inspect
+reflection apply`` calls in here. The draft and its operations are library
+code in :mod:`zicato.contract_draft`, so neither this module nor the CLI
+imports the builder driver to reach them.
 """
 
 from __future__ import annotations
@@ -117,13 +116,13 @@ def apply_finding_to_draft(
     (slot name + the applied patch + the draft-vs-live diff). The sealed
     contract is NEVER written here — the operator seals through the builder.
 
-    The op is dispatched by name against :mod:`zicato.builder.operations` with a
+    The op is dispatched by name against :mod:`zicato.contract_draft.operations` with a
     keyword splat; because every finding's ``proposed_op`` was validated against
     the op's real signature at emit time (``findings.validate_proposed_op``),
     the splat cannot pass an argument the op would reject.
     """
-    from zicato.builder import operations as ops  # noqa: PLC0415
-    from zicato.builder.draft import DraftStore  # noqa: PLC0415
+    from zicato.contract_draft import operations as ops  # noqa: PLC0415
+    from zicato.contract_draft.draft import DraftStore  # noqa: PLC0415
 
     finding = find_finding(workspace_root, epoch_id, reflection_id, finding_id)
     proposed = finding.get("proposed_op")
@@ -254,8 +253,8 @@ def apply_suggestion_to_draft(
     (no builder judge-edit op exists — the recorded gap) and raises
     :class:`FindingNotActionableError`. NEVER writes the sealed contract.
     """
-    from zicato.builder import operations as ops  # noqa: PLC0415
-    from zicato.builder.draft import DraftStore  # noqa: PLC0415
+    from zicato.contract_draft import operations as ops  # noqa: PLC0415
+    from zicato.contract_draft.draft import DraftStore  # noqa: PLC0415
 
     suggestion = find_suggestion(workspace_root, epoch_id, reflection_id, suggestion_id)
     proposed = suggestion.get("proposed_op")

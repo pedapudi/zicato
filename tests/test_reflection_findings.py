@@ -4,7 +4,7 @@ Every ``proposed_op`` names a REAL builder op and is validated against that op's
 signature at emit time; the margin finding is exactly a ``set_gate`` payload and
 the pruning finding a ``set_weights`` payload, both of which round-trip through
 :func:`inspect.signature` AND actually apply to a live
-:class:`~zicato.builder.draft.TournamentDraft`. An emitter with an unknown arg
+:class:`~zicato.contract_draft.draft.TournamentDraft`. An emitter with an unknown arg
 raises at emit time. The oracle FN finding NAMES the adjudicated span.
 """
 
@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from zicato.builder import operations as ops
-from zicato.builder.draft import TournamentDraft
+from zicato.contract_draft import operations as ops
+from zicato.contract_draft.draft import TournamentDraft
 from zicato.reflection.adjudicator import VERDICT_FN, VERDICT_FP, JudgeAdjudication
 from zicato.reflection.corpus import FIDELITY_VERBATIM
 from zicato.reflection.findings import Finding, derive_findings, validate_proposed_op

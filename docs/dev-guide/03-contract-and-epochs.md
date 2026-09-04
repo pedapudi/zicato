@@ -1475,7 +1475,7 @@ screen is scaffolded and the process-exemplar channel is not.
    the tournament builder rather than by hand-editing `scoring.json`. Three
    surfaces COMPOSE on the same nested block, so they never clobber each
    other:
-   - the op in `src/zicato/builder/operations.py` (`set_proposer_quality` /
+   - the op in `src/zicato/contract_draft/operations.py` (`set_proposer_quality` /
      `set_screening` are the models — each `dataclasses.replace`s only its keys
      on the nested `proposer_quality` block and returns a `DraftPatch`);
    - the JSON dispatch in `src/zicato/builder/api.py` (the `op ==
@@ -1518,7 +1518,7 @@ screen is scaffolded and the process-exemplar channel is not.
 
 7. **Answer the cost-meter question.** Decide whether your knob changes how many
    board runs a round costs. The builder's `estimate_cost`
-   (`src/zicato/builder/operations.py`) prices the round. A read-side-only knob leaves it untouched, as
+   (`src/zicato/contract_draft/operations.py`) prices the round. A read-side-only knob leaves it untouched, as
    `process_exemplars` does by only adding prompt content. An evaluation-side knob
    MUST add a `CostLine` so the operator sees and prices the extra spend before
    opting in; `screen_entries` adds `proposes × best_of_n × panel` panel runs, and

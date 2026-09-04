@@ -1,9 +1,10 @@
-"""Builder operations — the single source of truth for form + copilot.
+"""Draft operations — the single source of truth for every contract edit.
 
-Every editable change to a :class:`~zicato.builder.draft.TournamentDraft`
-flows through one of the operations here. Both the form's direct edits
-(B2) and the copilot's tool calls (B1b) call the *same* functions, so
-there is exactly one place each mutation's semantics live.
+Every editable change to a :class:`~zicato.contract_draft.draft.TournamentDraft`
+flows through one of the operations here. The builder form's direct edits,
+its copilot's tool calls, and the reflection adjudicator's staged edits all
+call the *same* functions, so there is exactly one place each mutation's
+semantics live.
 
 The write ops (``set_structure`` … ``set_brief``) mutate the draft in
 place and return a structured :class:`DraftPatch` describing what changed
@@ -29,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.board.split import HOLDOUT_TAG, split_board
-from zicato.builder.draft import TournamentDraft
+from zicato.contract_draft.draft import TournamentDraft
 from zicato.core.constraints import require_knob
 from zicato.core.types import (
     VALID_TOURNAMENT_STRUCTURES,
@@ -220,7 +221,7 @@ class ApplyResult:
         will roll the epoch. Always ``False`` for a dry run.
     components_changed:
         Which contract components differ from live (the same set
-        :class:`~zicato.builder.draft.ContractDiff` reports).
+        :class:`~zicato.contract_draft.draft.ContractDiff` reports).
     new_contract_hash:
         The contract hash the draft resolves to. For a dry run this is the
         *predicted* hash (computed over a temp materialization); for a
@@ -1857,9 +1858,9 @@ def compare_drafts(a: TournamentDraft, b: TournamentDraft) -> dict[str, Any]:
 
     The :meth:`TournamentDraft.diff_vs_live` precedent generalized to any
     draft pair, over the SAME canonicalizers the epoch-roll rule uses
-    (:func:`~zicato.builder.draft._scoring_canon` /
-    :func:`~zicato.builder.draft._board_canon` /
-    :func:`~zicato.builder.draft._brief_canon`), so "differs" here agrees
+    (:func:`~zicato.contract_draft.draft._scoring_canon` /
+    :func:`~zicato.contract_draft.draft._board_canon` /
+    :func:`~zicato.contract_draft.draft._brief_canon`), so "differs" here agrees
     with "would roll the epoch". Purely read-side; mutates nothing.
 
     Shape::
@@ -1884,7 +1885,7 @@ def compare_drafts(a: TournamentDraft, b: TournamentDraft) -> dict[str, Any]:
     """
     import json as _json
 
-    from zicato.builder.draft import _board_canon, _brief_canon, _scoring_canon
+    from zicato.contract_draft.draft import _board_canon, _brief_canon, _scoring_canon
 
     changed_components: list[str] = []
 

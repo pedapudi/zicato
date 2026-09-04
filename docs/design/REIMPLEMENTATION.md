@@ -678,7 +678,7 @@ found the same field mirrored across **seven** sites:
    `tests/test_contract_serializer_completeness.py`'s per-field non-default
    value map (`"genealogy": 4`), which the `_all_fields_nondefault` /
    round-trip tests iterate to prove no field is silently dropped.
-4. **The builder op** — `builder/operations.py::set_proposer_quality`
+4. **The builder op** — `contract_draft/operations.py::set_proposer_quality`
    (`genealogy: int | None = None` parameter + its validation/apply block).
 5. **The API dispatch** — `builder/api.py`
    (`genealogy=_opt_int(args, "genealogy")`).
