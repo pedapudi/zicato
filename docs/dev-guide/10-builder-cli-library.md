@@ -32,7 +32,7 @@
 > |----|------|-----------|
 > | L1 | the one-mutation-surface rule | Every editable contract change flows through exactly one function in `zicato/contract_draft/operations.py`. The form, the copilot, and the REST dispatch all call the same op; there is never a second edit path. |
 > | L2 | the full-coverage rule for a new knob | A new contract knob ships only once it has an op (`operations.py`), a dispatch arm (`api.py::_dispatch_op`), a copilot tool (`copilot_tools.py::DEFAULT_BUILDER_TOOLS`), a GUI control or a documented exception, a cost line if it changes the schedule, and a `validate` consideration if it can be unsound. Two tests — **the knob-coverage pins** — machine-pin the wiring: `test_default_builder_tools_registry_covers_every_op` for the op↔dispatch↔copilot triple, and `test_builder_gui_coverage.py` for the GUI control or exception. |
-> | L3 | the honest-cost-meter rule | Every board-run multiplier the runtime will spend gets a `CostLine`; auxiliary LLM calls are labelled and excluded from the board-runs headline. `operations.py::estimate_cost` is the only implementation of the arithmetic; the console renders the served numbers, and a correspondence test pins that what the page shows equals what the estimator computed. |
+> | L3 | the honest-cost-meter rule | Every board-run multiplier the runtime will spend gets a `CostLine`; evaluation LLM calls are labelled and excluded from the board-runs headline. `operations.py::estimate_cost` is the only implementation of the arithmetic; the console renders the served numbers, and a correspondence test pins that what the page shows equals what the estimator computed. |
 > | L4 | the recommend-only rule | The builder never hard-blocks `apply`. Even a `refuse`-severity warning or a `refuse` pre-flight verdict informs the operator; it never gates the write. |
 > | L5 | the builder-never-rolls-the-epoch rule | The builder never rolls the epoch and never starts a live evolve. `apply(confirm=True)` writes the contract source files and lets the auto-epoch machinery roll on the next resolve; the copilot's apply tool is always `confirm=False`. |
 > | L6 | the config-pins-not-environment rule | Flags cross the worker boundary via `config_pins`, never an environment variable. No environment variable is a configuration knob; operator knobs are CLI flags (pinned via `pin_overrides`) and `config.json` blocks. |
@@ -410,7 +410,7 @@ class CostEstimate:
 `estimate_cost` walks the train/holdout split, resolves a **structure-aware**
 default `replicates`, then sums one base-schedule term plus up to five
 honest-meter terms. Each term that fires appends a `CostLine` and (unless it is
-the auxiliary line) adds into `per_round`:
+the evaluation line) adds into `per_round`:
 
 | Term (label) | Formula | Fires when |
 |---|---|---|
@@ -420,7 +420,7 @@ the auxiliary line) adds into `per_round`:
 | base schedule — racing rungs | successive-halving rung sum + final full-board duel (`_racing_cost`) | `racing` |
 | `holdout-confirm runs` | `holdout_size × replicates` | any structure with a non-empty holdout |
 | `candidate-screen runs` | `proposes × best_of_n × panel`, `panel = min(screen_entries, board)` | `screen_entries > 0 and best_of_n > 1` |
-| `best-of-N propose calls` | `proposes × best_of_n` — **auxiliary LLM calls, excluded from the headline** | `best_of_n > 1` |
+| `best-of-N propose calls` | `proposes × best_of_n` — **evaluation LLM calls, excluded from the headline** | `best_of_n > 1` |
 | `crowning-confirm runs (evidence gate)` | `budget × 2 × board` | `promote_confidence_threshold` is set |
 | `placebo-baseline runs (amortized)` | `ceil(replicates × board / random_baseline_every_n)` | `random_baseline_every_n > 0` |
 
@@ -485,11 +485,11 @@ says so in a line they can read *before* they apply. The op docstring names it:
 > headline short, and the operator learns the true cost only from their model
 > bill.
 
-> ⚠️ TRAP — auxiliary LLM calls are NOT board runs. The `best-of-N propose
+> ⚠️ TRAP — evaluation LLM calls are NOT board runs. The `best-of-N propose
 > calls` line is appended to the breakdown but NOT added to `per_round`: those
 > are proposer-side model calls rather than board evaluations. Keep that
 > distinction when you add a term. If your knob spends model calls that are not
-> board sweeps, label the line "auxiliary" and leave it out of the headline sum,
+> board sweeps, label the line "evaluation" and leave it out of the headline sum,
 > exactly as best-of-N does. Conflating the two double-charges the board-runs
 > headline.
 
@@ -1037,7 +1037,7 @@ rule. The worked example: exposing a hypothetical
    per-round board runs, add a `CostLine` in `operations.py::estimate_cost` —
    the meter's only implementation (the honest-cost-meter rule; §10.3.3) — and
    a fixture that reaches it in
-   `tests/test_builder_cost_envelope_correspondence.py`. Label auxiliary
+   `tests/test_builder_cost_envelope_correspondence.py`. Label evaluation
    LLM-call terms and leave them out of the headline sum.
 6. **Add the `validate` consideration if it can be unsound.** A value is
    unsound when it stops the contract from telling a real improvement from
@@ -1294,15 +1294,15 @@ Each entry carries a **boundary-kind role** (NOT a process label):
 
 | Role | Meaning | Members |
 |---|---|---|
-| `harness-contract` | set by zicato for the inner harness — part of the run contract | `ZICATO_RUN_SCRATCH_DIR` |
+| `harness-contract` | set by zicato for the system under test — part of the run contract | `ZICATO_RUN_SCRATCH_DIR` |
 | `internal-handoff` | set and restored by zicato to hand a value across its own processes | `ZICATO_HARMONOGRAF_URL`, `ZICATO_HARMONOGRAF_GRPC` |
 | `secrets-boundary` | Configuration records a variable name while its credential value remains in the process environment | `<models.<role>.api_key_env>`, Goldfive names returned by `RuntimeConfigDocument.secret_env_names`, and `<runtime.worker_env_passthrough>` when used for credentials |
 | `test-toggle` | CI / test switches; never read on an operator path | `ZICATO_SKIP_HOOK_CHECK`, `ZICATO_PARITY_UPDATE` |
 
 The role is a *boundary taxonomy* of five values; which process
 sets/reads a variable is prose in the entry's `description` (e.g.
-`ZICATO_RUN_SCRATCH_DIR` is "Set BY the tournament worker FOR the inner
-harness"). The backing type is `EnvVarInfo(name, role, description)`.
+`ZICATO_RUN_SCRATCH_DIR` is "Set BY the tournament worker FOR the system
+under test"). The backing type is `EnvVarInfo(name, role, description)`.
 
 > ⛔ NEVER add an operator tuning knob to `_MERITED_ENV_VARS`. The set is for
 > process-boundary contracts only. If your feature needs an operator knob, it is

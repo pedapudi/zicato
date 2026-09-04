@@ -1,4 +1,4 @@
-"""Protocol surface for zicato's inner-harness adapters.
+"""Protocol surface for zicato's system-under-test adapters.
 
 Two :func:`~typing.runtime_checkable` Protocols make up the adapter
 contract:
@@ -10,13 +10,13 @@ contract:
   :class:`~zicato.core.RuntimeConfig` and re-used across many
   generations; each ``load`` call builds a fresh
   :class:`RunnableHarness` instance from a generation root.
-* :class:`RunnableHarness` — a loaded inner-harness instance bound to
+* :class:`RunnableHarness` — a loaded system-under-test instance bound to
   one generation. Stateless across runs: the runner constructs a new
   one per generation and discards it once the generation's board has
   been executed.
 
 The two Protocols are small. The runner doesn't care
-*how* the adapter wires its inner harness, only that it can drive
+*how* the adapter wires its system under test, only that it can drive
 ``run(entry, sinks, config)`` and recover a :class:`RunResult`. This
 gives non-ADK frameworks a clean integration surface without forcing
 them through goldfive.
@@ -57,7 +57,7 @@ REQUIRED_ADAPTER_METHODS = ("mutable_subpaths", "load", "mutation_points")
 
 @runtime_checkable
 class RunnableHarness(Protocol):
-    """A loaded inner-harness instance bound to one generation snapshot.
+    """A loaded system-under-test instance bound to one generation snapshot.
 
     Concrete adapters return instances of their own private classes
     from :meth:`HarnessAdapter.load`; the runner only consumes them
@@ -85,16 +85,16 @@ class RunnableHarness(Protocol):
             dispatches on :attr:`BoardEntry.kind` to single-turn /
             scripted multi-turn / emulated multi-turn drivers.
         sinks:
-            goldfive :class:`EventSink` list to forward to the inner
-            harness. The runner constructs and owns these (typically a
+            goldfive :class:`EventSink` list to forward to the system
+            under test. The runner constructs and owns these (typically a
             :class:`JSONLPersistenceSink` writing to the per-run events
             file plus any operator-attached extras); the adapter only
             wires them through.
         config:
-            :class:`RuntimeConfig` carrying the harness LLM callable,
+            :class:`RuntimeConfig` carrying the target LLM callable,
             the seed, and bookkeeping ids. Adapters MUST forward
-            :attr:`RuntimeConfig.harness_call_llm` (and not the
-            ``auxiliary_call_llm``) to the inner harness — the
+            :attr:`RuntimeConfig.target_call_llm` (and not the
+            ``evaluation_call_llm``) to the system under test — the
             two-callable rule is a collusion guard.
 
         Returns
@@ -111,7 +111,7 @@ class RunnableHarness(Protocol):
 
 @runtime_checkable
 class HarnessAdapter(Protocol):
-    """An adapter that knows how to load and enumerate an inner harness.
+    """An adapter that knows how to load and enumerate a system under test.
 
     Attributes
     ----------
@@ -122,7 +122,7 @@ class HarnessAdapter(Protocol):
         executed a given generation. MUST be filesystem-safe; the
         runner uses it unmodified in journal entries.
     run_output_names:
-        Optional set of directory / file *names* the inner harness
+        Optional set of directory / file *names* the system under test
         writes run output under, relative to anywhere in its source
         tree. The generation store excludes these from every
         generation copy (alongside the standing artifact set in
@@ -137,7 +137,7 @@ class HarnessAdapter(Protocol):
     run_output_names: tuple[str, ...]
 
     def mutable_subpaths(self, generation_root: Path) -> list[Path]:
-        """Return the inner harness's mutable sub-trees under ``generation_root``.
+        """Return the system under test's mutable sub-trees under ``generation_root``.
 
         The **mutable surface** is the set of paths the proposer may
         rewrite — the source files carrying ``# zicato:mutable``
@@ -169,8 +169,8 @@ class HarnessAdapter(Protocol):
 
         ``generation_root`` is the path the patch applier emitted for
         this generation — a fully realized source-tree snapshot
-        containing the inner-harness modules with patches applied.
-        Adapters MUST resolve the inner harness's entry point against
+        containing the system-under-test modules with patches applied.
+        Adapters MUST resolve the system under test's entry point against
         this root (e.g. by inserting it at the front of ``sys.path``
         and re-importing the entrypoint module).
 
@@ -185,7 +185,7 @@ class HarnessAdapter(Protocol):
         ...
 
     def mutation_points(self, source_roots: list[Path] | None = None) -> list[MutationPoint]:
-        """Enumerate the inner harness's mutation points.
+        """Enumerate the system under test's mutation points.
 
         Parameters
         ----------

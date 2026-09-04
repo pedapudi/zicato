@@ -11,16 +11,16 @@ exported below.
 The command wires together:
 
 * :func:`zicato.workspace_loader.load_workspace_config` for the workspace
-  config (auxiliary callable dotted path, auxiliary model id).
+  config (evaluation callable dotted path, evaluation model id).
 * :func:`zicato.runtime_factory.make_runtime_config` for the
-  :class:`zicato.core.types.RuntimeConfig` and its ``auxiliary_call_llm``
+  :class:`zicato.core.types.RuntimeConfig` and its ``evaluation_call_llm``
   callable.
 * :func:`zicato.analyzer.insights.analyze_epoch_telemetry` for the
   analysis itself.
 
-The auxiliary callable resolution mirrors the ``zicato proposer propose``
+The evaluation callable resolution mirrors the ``zicato proposer propose``
 command's discipline: we read the workspace config's
-``runtime.auxiliary_call_llm`` (or the top-level ``auxiliary_call_llm``
+``runtime.evaluation_call_llm`` (or the top-level ``evaluation_call_llm``
 key, also accepted) and import the dotted path. A failure to resolve the callable
 surfaces as a ``ClickException`` rather than a stack trace.
 """
@@ -67,36 +67,36 @@ def _resolve_epoch(workspace_dir: Path, override: str | None) -> str:
 
 
 def _resolve_aux_llm(config: WorkspaceConfig) -> Callable[[str, str, str], Awaitable[str]]:
-    """Look up the auxiliary LLM callable from the workspace config.
+    """Look up the evaluation LLM callable from the workspace config.
 
     Mirrors :func:`zicato.cli.commands.propose._resolve_aux_llm`. The
-    config field is ``auxiliary_call_llm`` (a dotted import path) or
-    the nested ``runtime.auxiliary_call_llm``. When absent, we raise a
+    config field is ``evaluation_call_llm`` (a dotted import path) or
+    the nested ``runtime.evaluation_call_llm``. When absent, we raise a
     click error early so the operator doesn't burn time waiting for a
     call that can't happen.
     """
 
-    dotted = config.raw.get("auxiliary_call_llm") or config.runtime.get("auxiliary_call_llm")
+    dotted = config.raw.get("evaluation_call_llm") or config.runtime.get("evaluation_call_llm")
     if not dotted:
         raise click.ClickException(
-            "No auxiliary LLM callable is registered. Wire one into the "
-            "workspace config under 'auxiliary_call_llm' (dotted import path) "
+            "No evaluation LLM callable is registered. Wire one into the "
+            "workspace config under 'evaluation_call_llm' (dotted import path) "
             "before running `zicato inspect telemetry`."
         )
     mod_name, _, attr = str(dotted).rpartition(".")
     if not mod_name:
         raise click.ClickException(
-            f"auxiliary_call_llm config value is not a dotted path: {dotted!r}"
+            f"evaluation_call_llm config value is not a dotted path: {dotted!r}"
         )
     try:
         module = importlib.import_module(mod_name)
     except ImportError as exc:
         raise click.ClickException(
-            f"Could not import {mod_name!r} for auxiliary_call_llm: {exc}"
+            f"Could not import {mod_name!r} for evaluation_call_llm: {exc}"
         ) from exc
     if not hasattr(module, attr):
         raise click.ClickException(
-            f"Module {mod_name!r} has no attribute {attr!r} for auxiliary_call_llm"
+            f"Module {mod_name!r} has no attribute {attr!r} for evaluation_call_llm"
         )
     resolved: Callable[[str, str, str], Awaitable[str]] = getattr(module, attr)
     return resolved
@@ -143,7 +143,7 @@ def analyze_telemetry_cmd(workspace: str, epoch: str | None, round_n: int | None
     config = _load_workspace_config(workspace_dir)
     epoch_id = _resolve_epoch(workspace_dir, epoch)
     aux_call_llm = _resolve_aux_llm(config)
-    model = config.auxiliary_model
+    model = config.evaluation_model
 
     out_path = asyncio.run(
         analyze_epoch_telemetry(

@@ -201,7 +201,7 @@ back to the always-safe single-pid `KillTarget::Leader`.
 **What goes wrong without it:** a recycled pid gets an innocent process
 SIGKILLed; a negated foreign pgid takes down the supervisor or the
 orchestrator itself (`kill(-pgid, …)` signals every member); grandchildren
-(shells and helper tools the inner harness spawned) leak when only the leader
+(shells and helper tools the system under test spawned) leak when only the leader
 dies — the group kill exists to collect them, and its guards exist so it can
 never collect anything else.
 

@@ -464,7 +464,7 @@ def _discard_run_snapshot(checkout: EphemeralCheckout | None) -> None:
 def _callable_dotted_path(fn: Any) -> str:
     """Return a re-importable ``module:qualname`` dotted path for ``fn``.
 
-    The worker subprocess re-imports the harness / auxiliary LLM
+    The worker subprocess re-imports the target / evaluation LLM
     callables from these paths. A callable must therefore be a
     module-level (or class-attribute) object; a closure-local callable
     has ``<locals>`` in its ``__qualname__`` and cannot be re-imported —
@@ -740,7 +740,7 @@ def _config_pins() -> dict[str, dict[str, Any]]:
     pinned process-wide via
     :func:`zicato.config.pin_overrides`. Some of those knobs are consumed
     INSIDE the worker subprocess — the judge/emulator call sites read the
-    auxiliary-call budget — so the pins must cross the process
+    evaluation-call budget — so the pins must cross the process
     boundary. They travel in the args file (this snapshot) and the worker
     re-pins them at startup; no environment variable is involved.
 

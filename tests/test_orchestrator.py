@@ -27,11 +27,11 @@ from tests._contract_pins import deterministic_weights
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     bootstrap_workspace,
-    harness_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
+    target_call_llm,
 )
 from zicato.epoch.lifecycle import new_epoch
 
@@ -335,8 +335,8 @@ def test_evolve_n_rounds_stops_on_consecutive_rejections(
             rounds=8,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             max_consecutive_rejections=3,
         )
     )
@@ -455,8 +455,8 @@ def test_evolve_n_rounds_populates_heartbeat_metadata(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             instance_id="hb-meta",
         )
     )
@@ -490,7 +490,7 @@ def test_evolve_once_regenerates_analysis_report(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    # No auxiliary call is scripted: the per-round refresh re-templates the
+    # No evaluation call is scripted: the per-round refresh re-templates the
     # publication's data-bearing sections from workspace data and spends no
     # tokens, and the proposal is a Foe episode rather than an aux call.
     outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))

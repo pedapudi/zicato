@@ -489,8 +489,8 @@ def test_explicit_epoch_skips_auto_roll(tmp_path: Path) -> None:
                     rounds=1,
                     workspace_root=workspace,
                     epoch_id=first,
-                    harness_call_llm=_aux_llm,
-                    auxiliary_call_llm=_aux_llm,
+                    target_call_llm=_aux_llm,
+                    evaluation_call_llm=_aux_llm,
                 )
             )
         # The failure must NOT be our sentinel — the hook was skipped.

@@ -4,7 +4,7 @@ Coverage:
 
 * The deterministic sections are templated exactly from a fixture
   workspace — numbers come straight from the structured artifacts.
-* The LLM-narrative path with a mocked auxiliary LLM produces a
+* The LLM-narrative path with a mocked evaluation LLM produces a
   complete document; a missing prose block degrades to a placeholder.
 * A report-generation failure is contained — the file is still written
   with placeholder prose, and an internal failure does not propagate
@@ -357,7 +357,7 @@ async def test_generate_report_full_document(epoch_workspace: tuple[Path, str]) 
             "===ABSTRACT===\n"
             "This epoch tightened the agent's system prompt.\n"
             "===INTRODUCTION===\n"
-            "The inner harness is a multi-agent presentation builder.\n"
+            "The system under test is a multi-agent presentation builder.\n"
             "===ANALYSIS===\n"
             "Generation v1 moved the loss as predicted; v2 regressed.\n"
             "===CONCLUSION===\n"

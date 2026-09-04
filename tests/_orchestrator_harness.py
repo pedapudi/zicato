@@ -48,7 +48,7 @@ from zicato.core.types import (
 from zicato.epoch.lifecycle import new_epoch
 
 
-async def harness_call_llm(system: str, user: str, model: str) -> str:
+async def target_call_llm(system: str, user: str, model: str) -> str:
     del system, user, model
     return ""
 
@@ -357,14 +357,14 @@ def install_telemetry_stubs(
 def run_evolve_once(
     workspace: Path,
     epoch_id: str,
-    auxiliary_call_llm: Any,
+    evaluation_call_llm: Any,
     **evolve_kwargs: Any,
 ) -> Any:
     """Run one scripted evolve round and return its outcome.
 
-    Every scripted caller drives the round the same way: the same harness
+    Every scripted caller drives the round the same way: the same target
     callable, the workspace and epoch the bootstrap just produced, and a
-    scripted auxiliary callable that stands in for the proposer. Only the
+    scripted evaluation callable that stands in for the proposer. Only the
     scripted responses differ, so only they are passed.
 
     ``evolve_once`` is imported inside this function rather than at module
@@ -382,8 +382,8 @@ def run_evolve_once(
         evolve_once(
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=auxiliary_call_llm,
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=evaluation_call_llm,
             **evolve_kwargs,
         )
     )

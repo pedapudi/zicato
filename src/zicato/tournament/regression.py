@@ -3,7 +3,7 @@
 The promote gate evaluates a child generation against a parent generation
 using scalar score + pass-rate monotonicity. That signal is necessary
 but not sufficient: a patch can trivially improve drift_loss / pass_rate
-on the board while breaking the inner harness's regression invariants.
+on the board while breaking the system under test's regression invariants.
 The regression gate fixes that hole by running the snapshot's own
 ``pytest`` suite as a subprocess; any failure forces the tournament to
 reject regardless of how strong the scoring signal is.

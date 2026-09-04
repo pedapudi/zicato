@@ -36,11 +36,11 @@ import pytest
 
 from tests._orchestrator_harness import (
     bootstrap_workspace,
-    harness_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
+    target_call_llm,
 )
 from zicato.core.types import DriftCount, LossProfile
 from zicato.orchestrator import DEFERRED_INFRA_DECISION, EvolveRoundOutcome
@@ -349,8 +349,8 @@ def test_loop_backs_off_exponentially_and_reconciles(
             workspace_root=workspace,
             rounds=5,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_permissive_aux,
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_permissive_aux,
             # Three deferrals in a row must NOT trip this breaker — a
             # deferral is evidence about the endpoint, not the stream.
             max_consecutive_rejections=2,
@@ -397,8 +397,8 @@ def test_runtime_factory_threads_the_circuit_knobs() -> None:
             }
         },
         workspace_root=Path("/tmp/ws"),
-        harness_call_llm=_a,
-        auxiliary_call_llm=_b,
+        target_call_llm=_a,
+        evaluation_call_llm=_b,
     )
     assert cfg.infra_abort_round_threshold == 3
     assert cfg.infra_backoff_base_s == 5.0
@@ -407,8 +407,8 @@ def test_runtime_factory_threads_the_circuit_knobs() -> None:
     default_cfg = make_runtime_config(
         {"runtime": {}},
         workspace_root=Path("/tmp/ws"),
-        harness_call_llm=_a,
-        auxiliary_call_llm=_b,
+        target_call_llm=_a,
+        evaluation_call_llm=_b,
     )
     assert default_cfg.infra_abort_round_threshold == 0  # circuit OFF
     assert default_cfg.infra_backoff_base_s == 30.0
@@ -428,16 +428,16 @@ def test_runtime_config_validates_circuit_bounds() -> None:
         RuntimeConfig(
             instance_id="t",
             workspace_root=Path("/tmp/ws"),
-            harness_call_llm=_a,
-            auxiliary_call_llm=_b,
+            target_call_llm=_a,
+            evaluation_call_llm=_b,
             infra_abort_round_threshold=-1,
         )
     with pytest.raises(ValueError, match="infra_backoff"):
         RuntimeConfig(
             instance_id="t",
             workspace_root=Path("/tmp/ws"),
-            harness_call_llm=_a,
-            auxiliary_call_llm=_b,
+            target_call_llm=_a,
+            evaluation_call_llm=_b,
             infra_backoff_base_s=-0.5,
         )
 

@@ -164,7 +164,7 @@ $PY -m zicato.cli epoch new t1_smoke --workspace .zicato \
 $PY -m zicato.cli inspect mutations --workspace .zicato   # lists the example's mutable ids
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 1 --mode full --no-dashboard \
-    --harness-call-llm   zicato_examples.target_1_presentation.mocks:harness_llm \
+    --harness-call-llm   zicato_examples.target_1_presentation.mocks:target_llm \
     --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
 ```
 

@@ -43,7 +43,7 @@ from zicato_examples.target_0_convergence.harness import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-async def _harness_llm(system: str, user: str, model: str) -> str:  # pragma: no cover - unused
+async def _target_llm(system: str, user: str, model: str) -> str:  # pragma: no cover - unused
     """The deterministic harness never calls an LLM; present for construction."""
     return ""
 
@@ -79,8 +79,8 @@ def _config(workspace: Path, judge_llm) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=workspace,
-        harness_call_llm=_harness_llm,
-        auxiliary_call_llm=_aux_llm,
+        target_call_llm=_target_llm,
+        evaluation_call_llm=_aux_llm,
         judge_call_llm=judge_llm,
     )
 

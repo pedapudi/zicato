@@ -7,13 +7,13 @@ clean negative-control agents (CleanAgent), and a tiny ADK
 ``call_llm`` callables, threaded through
 :class:`zicato.core.types.RuntimeConfig`:
 
-* :data:`harness_llm` — handed to ``goldfive.run`` / ``goldfive.wrap``.
+* :data:`target_llm` — handed to ``goldfive.run`` / ``goldfive.wrap``.
   Goldfive's planner, goal-deriver, and reasoning judges all route
   through it. For NORMAL board entries the small ADK
   :data:`zicato_examples.target_2_goldfive_steering.agent_under_test.agent`
   also calls it via the ADK plugin layer.
 
-* :data:`aux_llm` — used by zicato's auxiliary path (the proposer,
+* :data:`aux_llm` — used by zicato's evaluation path (the proposer,
   pattern-summary judge, emulator). The proposer call is what
   produces the structured ``{hypothesis, patches}`` payload that
   drives a round.
@@ -37,7 +37,7 @@ Where to swap a real LLM in
 ---------------------------
 Replace the import path on the command line::
 
-    --harness-call-llm my_project.llms:harness_call_llm
+    --harness-call-llm my_project.llms:target_call_llm
     --auxiliary-call-llm my_project.llms:aux_call_llm
 
 The mocks here have no special status — they live under
@@ -56,8 +56,8 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
-async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
-    """Best-effort canned responses for goldfive's harness-LLM calls.
+async def target_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
+    """Best-effort canned responses for goldfive's target-role LLM calls.
 
     Goldfive routes a number of distinct call shapes through this one
     callable. The dispatch order below mirrors the most-specific
@@ -69,7 +69,7 @@ async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str
     verdict object).
 
     Synthesis: every branch ends with a ``return`` so the contract
-    "every harness call resolves" holds. An unknown call shape falls
+    "every target call resolves" holds. An unknown call shape falls
     through to a tiny string the ADK agent or the planner can usefully
     consume.
 
@@ -173,7 +173,7 @@ async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str
 
 
 # ---------------------------------------------------------------------------
-# Auxiliary LLM (proposer / judge / emulator / analysis)
+# Evaluation LLM (proposer / judge / emulator / analysis)
 # ---------------------------------------------------------------------------
 
 
@@ -305,7 +305,7 @@ def _build_emulator_json() -> str:
 
 
 async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
-    """Auxiliary-LLM mock — proposer first, emulator second, fallback last.
+    """Evaluation-LLM mock — proposer first, emulator second, fallback last.
 
     Three dispatch branches:
 
@@ -317,7 +317,7 @@ async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
       "should_stop" hints. Returns a one-shot terminating envelope.
     * Analysis / judge / fallback — short JSON-ish placeholder.
       Analysis-pass consumers treat the response as commentary, so a
-      stable placeholder is enough to keep the auxiliary path moving.
+      stable placeholder is enough to keep the evaluation path moving.
 
     The ``**_kwargs`` swallow keeps the callable tolerant of forward-
     compatible kwargs.
@@ -351,4 +351,4 @@ async def aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     )
 
 
-__all__ = ["aux_llm", "harness_llm"]
+__all__ = ["aux_llm", "target_llm"]

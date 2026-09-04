@@ -1,8 +1,8 @@
 """Deterministic ``CallLLM`` doubles for tests.
 
 The zicato runtime threads two LLM callables through every flow (see
-:class:`zicato.core.types.RuntimeConfig`): one drives the inner harness,
-one drives the auxiliary path (emulator / proposer / judge / analysis).
+:class:`zicato.core.types.RuntimeConfig`): one drives the system under test,
+one drives the evaluation path (emulator / proposer / judge / analysis).
 The shape is fixed by :data:`zicato.core.types.CallLLM`::
 
     Callable[[str, str, str], Awaitable[str]]
@@ -22,7 +22,7 @@ Three flavors cover the practical needs of zicato's downstream tests:
   to assert ON the prompts a module sends.
 * :class:`ScriptedCallLLM` — dispatch on ``(system_substring,
   user_substring)`` rules. Convenient when one test exercises a flow
-  that mixes emulator and inner-harness calls and the test does not
+  that mixes emulator and system-under-test calls and the test does not
   want to encode the interleave order.
 
 All three keep their wire-level contract intentionally narrow — no

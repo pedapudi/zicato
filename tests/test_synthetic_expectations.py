@@ -36,8 +36,8 @@ def _make_config(tmp_path: Path) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=_noop_call_llm,
-        auxiliary_call_llm=_noop_call_llm_b,
+        target_call_llm=_noop_call_llm,
+        evaluation_call_llm=_noop_call_llm_b,
     )
 
 

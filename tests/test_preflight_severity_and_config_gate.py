@@ -43,11 +43,11 @@ import pytest
 
 from tests._orchestrator_harness import (
     bootstrap_workspace,
-    harness_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
+    target_call_llm,
 )
 from tests.test_evolve_preflight_gate import _prepare, _set_preflight_gate
 from zicato.epoch.preflight import (
@@ -182,8 +182,8 @@ def test_warn_mode_survives_an_all_refuse_preflight_past_the_breaker_threshold(
             rounds=rounds,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             stop_reason_out=stop_reason,
         )
     )
@@ -226,8 +226,8 @@ def test_refuse_mode_still_refuses_at_the_pre_flight(
             rounds=3,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             stop_reason_out=stop_reason,
         )
     )

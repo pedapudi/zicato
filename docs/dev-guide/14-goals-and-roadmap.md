@@ -416,7 +416,7 @@ output, so every candidate scores the same.
 - **Preconditions:**
   - a serving endpoint wired through the `--harness-call-llm` and
     `--auxiliary-call-llm` dotted callables. The convergence example's own
-    harness stays deterministic and only the proposer and auxiliary side goes
+    harness stays deterministic and only the proposer and evaluation side goes
     live, which isolates the proposer as the single changed variable;
   - the workspace bootstrapped as
     `examples/zicato_examples/target_0_convergence/RUN.md` steps 1–4 specify
@@ -430,7 +430,7 @@ output, so every candidate scores the same.
   # …RUN.md steps 2–3 (adapter block, board/scoring/brief publish)…
   zicato inspect mutations --workspace .zicato          # expect: style_rules only
   zicato evolve --workspace .zicato --rounds 3 --mode full \
-      --harness-call-llm  zicato_examples.target_0_convergence.mocks:harness_llm \
+      --harness-call-llm  zicato_examples.target_0_convergence.mocks:target_llm \
       --auxiliary-call-llm <live aux dotted path>
   # report the printed Dashboard: http://127.0.0.1:7892 URL immediately
   zicato epoch close --workspace .zicato
@@ -465,7 +465,7 @@ output, so every candidate scores the same.
   siblings in `examples/zicato_examples/target_1_presentation/agent/agent.py`
   — and those flow into the inner agents' system prompts. A harness that
   discarded the system prompt would leave every one of those patches
-  unobservable. The CI smoke-test mock therefore reads it: `harness_llm` in
+  unobservable. The CI smoke-test mock therefore reads it: `target_llm` in
   `examples/zicato_examples/target_1_presentation/mocks.py` selects a base
   deck from `user`, then branches on `system`, so the researcher instruction
   alone decides whether the response carries a fabricated metric or a cited
@@ -474,7 +474,7 @@ output, so every candidate scores the same.
   Under a live harness the mocks are unused, and the pre-flight is what
   confirms the live setup carries signal (04-evaluation-statistics.md §9).
 - **Preconditions:**
-  1. A live harness endpoint and a live auxiliary endpoint, so instruction
+  1. A live target endpoint and a live evaluation endpoint, so instruction
      content reaches the measured behavior.
   2. `zicato board preflight` returns a verdict of `ok` against that setup.
      A `warn` means the board cannot out-signal its own noise — the
@@ -513,7 +513,7 @@ output, so every candidate scores the same.
 - **What it proves:** the actual magnitude and shape of live evaluation
   noise — the number every default (margin 0.01, replicates 2, evidence
   budget) was chosen in *simulation* against.
-- **Preconditions:** a live harness endpoint for the target being
+- **Preconditions:** a live target endpoint for the target being
   calibrated; a champion generation to self-duel; operator go-ahead (the
   audit costs K full-board runs).
 - **Commands:**
@@ -540,7 +540,7 @@ output, so every candidate scores the same.
 
 - **What it proves:** how much scalar noise each live process judge injects
   (04-evaluation-statistics.md §10) — simulated judges cannot answer this.
-- **Preconditions:** a live auxiliary endpoint; a board that declares
+- **Preconditions:** a live evaluation endpoint; a board that declares
   judges (target_1 does); ideally a settled transcript from a prior live run
   (Item 2) rather than the synthetic fixture; operator go-ahead (cost:
   judges × k calls).

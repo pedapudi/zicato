@@ -12,7 +12,7 @@ not weigh.
 ## 1. Why the mutation surface is operator-annotated
 
 **Alternative considered.** Let the proposer rewrite arbitrary files
-in the inner harness's tree. Maximally flexible; the proposer can
+in the system under test's tree. Maximally flexible; the proposer can
 restructure the harness if it wants to.
 
 **Chosen.** Source files are not editable except where the operator
@@ -27,7 +27,7 @@ weakening the decision above. An unmarked file is immutable whatever its
 type, and the free-form alternative stays rejected for the reasons
 below.
 
-**Why.** An inner harness is high-leverage, low-reversibility
+**Why.** A system under test is high-leverage, low-reversibility
 code. Letting an LLM-driven proposer rewrite arbitrary files is a
 machine for generating subtle breakage. The validator can catch
 syntax errors and import failures, but it cannot catch "the
@@ -128,7 +128,7 @@ collusion in the docs but don't enforce.
 **Chosen.** Two distinct `call_llm` callables required. The check
 (`zicato.core.workspace.assert_distinct_callables`) runs at config
 time and is a HARD ERROR — it raises `RuntimeError` and refuses to
-start the run when `harness_call_llm is auxiliary_call_llm` (identity
+start the run when `target_call_llm is evaluation_call_llm` (identity
 comparison; two distinct wrappers over the same endpoint pass, by
 design). Context construction is sealed (no `**kwargs`). The emulator
 sees only the persona and the user-facing transcript. A post-hoc
@@ -198,7 +198,7 @@ remains.
 
 Adjacent to §4 but worth its own section.
 
-**Alternative considered.** Ship a default `auxiliary_call_llm` that
+**Alternative considered.** Ship a default `evaluation_call_llm` that
 chooses a vendor and model for the operator. "Just works" out of the
 box.
 
@@ -343,7 +343,7 @@ researcher's prompt is in another, the writer's tool descriptions
 are in a third. Forcing all of them into one editable file would
 either:
 
-- Require restructuring the inner harness (every prompt has to be in
+- Require restructuring the system under test (every prompt has to be in
   the master file; the agent's modular structure becomes a façade
   over a single mutable blob). This is invasive and harms the
   agent's own design.
@@ -354,7 +354,7 @@ either:
 The annotated-mutation-points design solves the same
 "bound-the-search-space" problem at the right granularity. The mutation
 surface is what the operator marked, no more and no less. The search
-space is bounded, and the inner harness's modular structure is
+space is bounded, and the system under test's modular structure is
 preserved.
 
 Three adjacent ideas from the single-file framing did transfer:
@@ -374,14 +374,14 @@ an opinion about how multi-agent systems fail. Consuming that taxonomy
 does not make zicato model-specific.
 
 "Model-agnostic" means zicato does not import a vendor SDK and routes
-every LLM call through a caller-supplied `call_llm`. "Framework-agnostic on the inner harness" means zicato
-doesn't assume the inner harness is ADK, LangChain, or anything else
-— it talks to the inner harness through a `HarnessAdapter`.
+every LLM call through a caller-supplied `call_llm`. "Framework-agnostic on the system under test" means zicato
+doesn't assume the system under test is ADK, LangChain, or anything else
+— it talks to the system under test through a `HarnessAdapter`.
 
 The drift taxonomy is **ecosystem-specific**: goldfive ships it and
 zicato consumes it, which is a different thing from being model-specific
-or vendor-specific. An adapter implementer can use any inner harness;
-under the default dialect the inner harness emits goldfive events
+or vendor-specific. An adapter implementer can use any system under test;
+under the default dialect the system under test emits goldfive events
 because the adapter wraps the harness with `goldfive.wrap`. The taxonomy
 is the contract between the adapter and zicato rather than between
 zicato and any particular model.
@@ -425,8 +425,8 @@ worrying about losing history. The journal and analysis are
 markdown files an operator may track in git themselves, and zicato
 itself never commits, pushes, or relies on git.
 
-The cost is disk usage: many full copies of the inner harness's
-tree. For typical inner harnesses (a few dozen Python files plus
+The cost is disk usage: many full copies of the system under test's
+tree. For typical systems under test (a few dozen Python files plus
 prompts), this is on the order of megabytes per generation. The
 benefit is that a snapshot is a filesystem operation rather than a repo
 operation, so zicato never has to reason about merge conflicts, branch
@@ -446,7 +446,7 @@ uncalibrated. The first few epochs are calibration epochs; the
 operator tunes weights based on what they observe. See
 [SCORING.md §4.1](SCORING.md#41-default-weights-and-the-calibration-problem).
 
-**Why.** "Good defaults" depend on which inner harness, which drift
+**Why.** "Good defaults" depend on which system under test, which drift
 kinds matter for the project, and what the operator considers a
 regression. None of these are knowable at the library level.
 

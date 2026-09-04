@@ -2,7 +2,7 @@
 
 The driver in this module runs one ``multi_turn_emulated`` board entry
 end-to-end. It calls a caller-supplied ``run_harness_turn`` closure to
-drive the inner agent and uses :attr:`RuntimeConfig.auxiliary_call_llm`
+drive the inner agent and uses :attr:`RuntimeConfig.evaluation_call_llm`
 to drive the user emulator. The two callables are checked for identity
 inequality at the start of :meth:`EmulatedMultiTurnDriver.drive` via
 :func:`zicato.core.workspace.assert_distinct_callables`; sharing a
@@ -36,10 +36,10 @@ from zicato.emulator.sealed import (
 
 _log = logging.getLogger(__name__)
 
-#: Default model string forwarded to ``auxiliary_call_llm``. Concrete
+#: Default model string forwarded to ``evaluation_call_llm``. Concrete
 #: backends interpret this; zicato never inspects it. The driver
 #: intentionally does not expose a knob for this — operators wire the
-#: model identity inside their ``auxiliary_call_llm`` closure.
+#: model identity inside their ``evaluation_call_llm`` closure.
 _DEFAULT_EMULATOR_MODEL = "zicato-emulator-default"
 
 
@@ -47,10 +47,10 @@ class EmulationCollusionError(RuntimeError):
     """The runtime config's two LLM callables are not distinct.
 
     Raised by :meth:`EmulatedMultiTurnDriver.drive` when
-    ``harness_call_llm`` and ``auxiliary_call_llm`` share identity.
+    ``target_call_llm`` and ``evaluation_call_llm`` share identity.
     The driver refuses to start the run; this is a hard error rather than a
     warning, because shared callables risk collusion between the
-    emulator and the inner harness.
+    emulator and the system under test.
     """
 
 
@@ -93,7 +93,7 @@ class EmulatedMultiTurnDriver:
         ----------
         run_harness_turn:
             Async closure ``(user_msg) -> agent_output`` that runs one
-            inner-harness turn and returns the agent's user-facing
+            system-under-test turn and returns the agent's user-facing
             output for that turn. Caller (the harness adapter) owns
             session state, tool wiring, and goldfive event emission for
             inside-the-harness work.
@@ -103,7 +103,7 @@ class EmulatedMultiTurnDriver:
             :attr:`BoardEntry.user_persona` and
             :attr:`BoardEntry.max_turns`.
         config:
-            The runtime config carrying ``auxiliary_call_llm``. The
+            The runtime config carrying ``evaluation_call_llm``. The
             two-callable invariant is checked at the top of this
             method via :func:`assert_distinct_callables`.
 
@@ -128,7 +128,7 @@ class EmulatedMultiTurnDriver:
         # responsibility and passes this check.
         try:
             assert_distinct_callables(
-                config.harness_call_llm, config.effective_user_emulator_call_llm()
+                config.target_call_llm, config.effective_user_emulator_call_llm()
             )
         except RuntimeError as exc:
             raise EmulationCollusionError(str(exc)) from exc
@@ -195,7 +195,7 @@ class EmulatedMultiTurnDriver:
                 _log.warning("run %s aborted: %s (entry=%s)", run_id, leak, entry.id)
                 break
 
-            # Forward the clean user message to the inner harness.
+            # Forward the clean user message to the system under test.
             agent_output = await run_harness_turn(emulator_output)
             agent_transcript.append(agent_output)
 

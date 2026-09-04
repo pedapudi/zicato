@@ -93,11 +93,11 @@ def _complete_events() -> list[RoundEvent]:
 
 
 #: The REAL emitted shape: `proposer.py`'s call-boundary template
-#: (`f"auxiliary LLM call raised {type(exc).__name__}: {exc}"`) wrapping an
+#: (`f"evaluation LLM call raised {type(exc).__name__}: {exc}"`) wrapping an
 #: SDK credential error. The prefix is load-bearing, not decoration — see
 #: `test_a_content_rejection_is_never_read_as_an_outage`.
 CREDENTIAL_ERROR = (
-    "auxiliary LLM call raised AuthenticationError: "
+    "evaluation LLM call raised AuthenticationError: "
     "401 Unauthorized — API key expired or revoked"
 )
 
@@ -461,8 +461,8 @@ def test_call_boundary_prefixes_match_the_real_emitters(tmp_path: Path) -> None:
     """
     real_templates = (
         # proposer.py — the aux-call boundary, both exception paths.
-        f"auxiliary LLM call raised {ConnectionError.__name__}: connection refused",
-        "auxiliary LLM call timed out after 120.0s",
+        f"evaluation LLM call raised {ConnectionError.__name__}: connection refused",
+        "evaluation LLM call timed out after 120.0s",
         # adk_agent.py — the ADK agent-run boundary.
         "proposer agent run raised PermissionDenied: 403 Forbidden",
     )
@@ -675,7 +675,7 @@ def test_a_reused_round_index_does_not_inherit_a_prior_gate(tmp_path: Path) -> N
 
 #: A CALL-BOUNDARY error whose prose matches no default marker — the
 #: vocabulary MISS the whole floor/anchor argument turns on.
-QUIET_OUTAGE = "auxiliary LLM call raised UpstreamError: upstream said no (code ZX-9)"
+QUIET_OUTAGE = "evaluation LLM call raised UpstreamError: upstream said no (code ZX-9)"
 
 
 def test_infra_marker_vocabulary_is_an_explicit_parameter(tmp_path: Path) -> None:
@@ -1197,7 +1197,7 @@ def test_the_slot_tag_admits_no_model_authored_text(tmp_path: Path) -> None:
     """
     quoting_challenger = (
         "patches failed post-apply validation: agent/agent.py:31 raises "
-        "RuntimeError('auxiliary LLM call raised AuthenticationError: api key')"
+        "RuntimeError('evaluation LLM call raised AuthenticationError: api key')"
     )
     _write(
         tmp_path,

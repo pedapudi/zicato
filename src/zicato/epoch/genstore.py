@@ -3,7 +3,7 @@
 zicato persists five kinds of data (``docs/design/STORAGE.md`` §1). Four
 of them are *records* — key→blob — and go through
 :class:`zicato.storage.StorageBackend`. The fifth, **generation source
-trees**, is not record-shaped: a generation is a whole inner-harness
+trees**, is not record-shaped: a generation is a whole system-under-test
 source tree, and the unit of work is "the generation appears, or it does
 not." This module is the seam for that fifth kind.
 
@@ -27,7 +27,7 @@ Path calculation and materialization
 :meth:`GenerationStore.materialize_snapshot` performs any I/O needed to
 return a usable local tree. The separation matters for git: calculating a
 worktree path must not silently run ``git worktree add``. Tournament workers
-still receive real paths because they load and execute the inner harness from
+still receive real paths because they load and execute the system under test from
 an isolated checkout.
 
 Backends
@@ -140,8 +140,8 @@ class EphemeralCheckout:
     Attributes
     ----------
     working_dir:
-        The isolated per-run source tree the worker mounts as the inner
-        harness's root. Its basename matches the canonical
+        The isolated per-run source tree the worker mounts as the system
+        under test's root. Its basename matches the canonical
         :meth:`GenerationStore.snapshot_path`'s basename so any path the
         agent derives from ``__file__`` looks the same as it would under
         the canonical tree.

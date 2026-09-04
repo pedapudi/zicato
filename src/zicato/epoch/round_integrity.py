@@ -299,8 +299,8 @@ HARD_INFRA_MARKERS: frozenset[str] = frozenset(
 #: emitters. Pinned by ``test_epoch_round_integrity.py`` against the real
 #: templates, which is the check that actually catches a rename.
 CALL_BOUNDARY_PREFIXES: tuple[str, ...] = (
-    "auxiliary llm call raised ",
-    "auxiliary llm call timed out ",
+    "evaluation llm call raised ",
+    "evaluation llm call timed out ",
     "proposer agent run raised ",
 )
 
@@ -309,7 +309,7 @@ CALL_BOUNDARY_PREFIXES: tuple[str, ...] = (
 #:
 #: When every slot of a slate fails, ``proposer/best_of_n.py`` raises one
 #: error aggregating all of them and prefixes each attempt with its slot
-#: (``slot 0: auxiliary LLM call raised ...``) so the operator can tell three
+#: (``slot 0: evaluation LLM call raised ...``) so the operator can tell three
 #: slots failing one way from one slot failing three ways. Testing the anchor
 #: against the prefixed string would silently blind the marker scan on the
 #: round it matters most for — an all-slate credential lapse — so the tag

@@ -26,7 +26,7 @@ and :func:`zicato.tournament.run_fast_mode`: it resolves paths,
 loads the frozen artifacts (board, scoring weights, generations),
 constructs the :class:`RuntimeConfig`, and prints the
 :class:`GateOutcome` as JSON. The shell DOES NOT itself touch
-goldfive or the inner harness — that wiring is owned by the
+goldfive or the system under test — that wiring is owned by the
 :class:`HarnessAdapter` factory the workspace resolves to.
 """
 

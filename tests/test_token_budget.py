@@ -269,8 +269,8 @@ async def test_replicate_slots_stop_on_spent_ledger(monkeypatch: pytest.MonkeyPa
     config = RuntimeConfig(
         instance_id="t",
         workspace_root=Path("/tmp/ws"),
-        harness_call_llm=_a,
-        auxiliary_call_llm=_b,
+        target_call_llm=_a,
+        evaluation_call_llm=_b,
         max_tokens_per_round=500,
         token_ledger=ledger,
     )
@@ -342,8 +342,8 @@ def test_runtime_factory_threads_max_tokens_per_round() -> None:
     cfg = make_runtime_config(
         {"runtime": {"max_tokens_per_round": 250_000}},
         workspace_root=Path("/tmp/ws"),
-        harness_call_llm=_a,
-        auxiliary_call_llm=_b,
+        target_call_llm=_a,
+        evaluation_call_llm=_b,
     )
     assert cfg.max_tokens_per_round == 250_000
     assert cfg.token_ledger is None  # the ledger is minted per round, never from config
@@ -351,8 +351,8 @@ def test_runtime_factory_threads_max_tokens_per_round() -> None:
     default_cfg = make_runtime_config(
         {"runtime": {}},
         workspace_root=Path("/tmp/ws"),
-        harness_call_llm=_a,
-        auxiliary_call_llm=_b,
+        target_call_llm=_a,
+        evaluation_call_llm=_b,
     )
     assert default_cfg.max_tokens_per_round == 0
 
@@ -368,8 +368,8 @@ def test_runtime_config_validates_token_budget_bound() -> None:
         RuntimeConfig(
             instance_id="t",
             workspace_root=Path("/tmp/ws"),
-            harness_call_llm=_a,
-            auxiliary_call_llm=_b,
+            target_call_llm=_a,
+            evaluation_call_llm=_b,
             max_tokens_per_round=-1,
         )
 

@@ -1,7 +1,7 @@
 """ADK :class:`~zicato.adapters.base.HarnessAdapter` for goldfive-wrapped trees.
 
 Drives Google ADK agent trees (``LlmAgent`` and ``BaseAgent`` subclasses)
-through :mod:`goldfive` so the inner harness gets the same goal / plan
+through :mod:`goldfive` so the system under test gets the same goal / plan
 / drift overlay every other zicato target uses. The shape mirrors
 goldfive's own one-line ``goldfive.run`` surface: the adapter takes
 care of *which* agent symbol to import from *which* generation
@@ -121,7 +121,7 @@ adapter assembles that list per board entry through
 built-in judges (minus any the board's ``disable_drift`` suppressed)
 plus the entry's declared :class:`~zicato.core.JudgeSpec` judges, each
 turned into a live goldfive ``Judge``. Inline judges run on zicato's
-*auxiliary* callable (the two-callable rule); python judges bring their
+*evaluation* callable (the two-callable rule); python judges bring their
 own dependencies. When the entry declares no custom judges and the
 board suppresses nothing, the assembled list equals goldfive's default
 set, so the adapter uses the same judges as a plain ``goldfive.run`` call.
@@ -500,7 +500,7 @@ def _unavailable_driver(run_id: str, entry_id: str, reason: str) -> RunResult:
 #   1. ``models_config.build_adk_model``      — the canonical builder: a real
 #      (typically function-calling ``LiteLlm``) ``BaseLlm`` from a configured
 #      ``{model, endpoint, api_key_env}`` spec. PREFERRED. Injected by
-#      :func:`rebind_tree_models_to_adk_model` when ``models.harness`` is set.
+#      :func:`rebind_tree_models_to_adk_model` when ``models.target`` is set.
 #   2. ADK's own ``LLMRegistry`` native resolution — ANY registry-resolvable
 #      string an author hardcoded (``"openai/<model>"`` → ``LiteLlm``, a native
 #      ``"gemini-*"`` / ``"gemma-*"`` id → ``Gemini`` / ``Gemma``) keeps native
@@ -549,7 +549,7 @@ def _build_call_llm_adk_model_class() -> type:
     retrieved" tracebacks. The client is never used for real generation.
 
     The fix is to give each ``LlmAgent`` a real ``BaseLlm`` backed by the
-    harness ``call_llm`` so ADK's ``canonical_model`` returns it directly
+    target ``call_llm`` so ADK's ``canonical_model`` returns it directly
     (it short-circuits on ``isinstance(self.model, BaseLlm)``), never
     touching ``LLMRegistry.new_llm`` / the genai client. This is the inverse
     of goldfive's :func:`goldfive._llm_detect.make_default_adk_call_llm`
@@ -571,7 +571,7 @@ def _build_call_llm_adk_model_class() -> type:
         Implements the single abstract method
         :meth:`generate_content_async` by flattening the ADK
         :class:`LlmRequest` into the ``(system, user)`` text pair the
-        harness ``call_llm`` expects, awaiting it, and yielding a single
+        target ``call_llm`` expects, awaiting it, and yielding a single
         text :class:`LlmResponse`. ``model`` preserves the original
         model-string label purely for observability; the actual generation
         is the call_llm's, which is already model-bound.
@@ -586,7 +586,7 @@ def _build_call_llm_adk_model_class() -> type:
         text-only turns the harness drives.
         """
 
-        # ``call_llm`` is the harness callable; declared as a pydantic
+        # ``call_llm`` is the target callable; declared as a pydantic
         # field (BaseLlm is a pydantic BaseModel) so assignment validates.
         call_llm: Any = None
 
@@ -595,7 +595,7 @@ def _build_call_llm_adk_model_class() -> type:
             llm_request: LlmRequest,
             stream: bool = False,
         ) -> AsyncGenerator[Any, None]:
-            del stream  # the harness call_llm is non-streaming text-in/out
+            del stream  # the target call_llm is non-streaming text-in/out
             # TEXT-ONLY by construction: we read only the system + user TEXT and
             # ignore ``llm_request.config.tools`` (the agent's
             # ``function_declarations``). The reply is a single text part with no
@@ -883,12 +883,12 @@ def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
         if declares_tools:
             raise RuntimeError(
                 f"ADK model binding: agent {name!r} declares tools but has "
-                f"{reason} — the only remaining path is the TEXT-ONLY harness "
+                f"{reason} — the only remaining path is the TEXT-ONLY target "
                 f"call_llm shim, which sends no function_declarations and can "
                 f"return no function_call. Rebinding it would silently reduce "
                 f"this tool-using tree to a single text turn that still scores, "
                 f"gates and promotes. Configure a function-calling model for the "
-                f"inner harness (models.harness — e.g. 'openai/<model>' against "
+                f"system under test (models.target — e.g. 'openai/<model>' against "
                 f"your endpoint with the 'adk' extra, or a native 'gemini-*' id "
                 f"with Google credentials) instead."
             )
@@ -897,11 +897,11 @@ def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
     if rebound:
         log.warning(
             "ADK model binding: %d tool-free agent(s) %s were routed through "
-            "the harness call_llm TEXT-ONLY shim (each had %s). Those agents "
+            "the target call_llm TEXT-ONLY shim (each had %s). Those agents "
             "can no longer make tool/function calls — the shim carries no "
             "function_declarations — so any tool or sub-agent transfer they "
             "would have driven is INERT; they answer in one text turn. "
-            "Configure an inner-harness model (models.harness — e.g. "
+            "Configure a system-under-test model (models.target — e.g. "
             "'openai/<model>' against your endpoint with the 'adk' extra) to "
             "run them on a real function-calling model.",
             len(rebound),
@@ -912,9 +912,9 @@ def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
         log.warning(
             "ADK model binding: %d tool-declaring agent(s) %s were LEFT on "
             "their native google.genai model string rather than routed through "
-            "the text-only harness call_llm shim, which would have stripped "
+            "the text-only target call_llm shim, which would have stripped "
             "their tools. Their turns need Google credentials (or a configured "
-            "models.harness endpoint model); without them ADK's genai client "
+            "models.target endpoint model); without them ADK's genai client "
             "fails loudly per turn.",
             len(kept_native),
             kept_native,
@@ -926,11 +926,11 @@ def rebind_tree_models_to_adk_model(root: Any, model: Any) -> int:
     """Rebind every string-model ``LlmAgent`` in ``root``'s tree to ``model``.
 
     The config-driven counterpart to :func:`rebind_tree_models_to_call_llm`:
-    when the workspace configures an inner agent model (a ``models.harness``
+    when the workspace configures an inner agent model (a ``models.target``
     model spec built into a :class:`BaseLlm` — typically a function-calling
     :class:`LiteLlm` pointed at the live endpoint), the adapter injects that
     object into every string-model agent. The configured model is the source
-    of truth for the inner harness, so it overrides whatever bare model string
+    of truth for the system under test, so it overrides whatever bare model string
     the target hardcoded (e.g. the example target's ``"openai/gpt-4o-mini"``
     default) — unlike the shim path, this keeps native tool/function calling.
 
@@ -1174,8 +1174,8 @@ class ADKRunnableHarness:
         # Bind the loaded tree's string-model agents to a working model BEFORE
         # any goldfive.run dispatch. Two paths, config-driven first:
         #
-        # 1. A configured inner model (config.inner_model — a BaseLlm/LiteLlm
-        #    built from a models.harness spec) is injected into every
+        # 1. A configured inner model (config.target_model — a BaseLlm/LiteLlm
+        #    built from a models.target spec) is injected into every
         #    string-model agent. This is the preferred, idiomatic path: the
         #    agents reach the live endpoint with native tool/function calling
         #    intact, overriding the target's hardcoded default model string.
@@ -1183,7 +1183,7 @@ class ADKRunnableHarness:
         #    TOOL-FREE agent whose bare string is unresolvable, or would build
         #    an unused google.genai client (a "gemma-*"/"gemini-*" id that
         #    floods the log with AttributeError('_async_httpx_client')
-        #    tracebacks on GC), is routed through the harness call_llm. Any
+        #    tracebacks on GC), is routed through the target call_llm. Any
         #    registry-resolvable model is left for ADK so native tool-calling
         #    survives, and a TOOL-DECLARING agent is never shimmed — routing it
         #    through the text-only shim would reduce a tool-calling tree to a
@@ -1193,10 +1193,10 @@ class ADKRunnableHarness:
         #
         # See rebind_tree_models_to_adk_model / rebind_tree_models_to_call_llm /
         # _resolves_to_native_function_calling. Both are idempotent.
-        if getattr(config, "inner_model", None) is not None:
-            rebind_tree_models_to_adk_model(self._agent, config.inner_model)
+        if getattr(config, "target_model", None) is not None:
+            rebind_tree_models_to_adk_model(self._agent, config.target_model)
         else:
-            rebind_tree_models_to_call_llm(self._agent, config.harness_call_llm)
+            rebind_tree_models_to_call_llm(self._agent, config.target_call_llm)
 
         async def _drive() -> RunResult:
             if entry.kind == "single_turn":
@@ -1260,8 +1260,8 @@ class ADKRunnableHarness:
     ) -> RunResult:
         """Drive a single ``goldfive.run`` invocation against the agent.
 
-        Forwards :attr:`RuntimeConfig.harness_call_llm` (not the
-        auxiliary callable — see the two-callable rule on
+        Forwards :attr:`RuntimeConfig.target_call_llm` (not the
+        evaluation callable — see the two-callable rule on
         :class:`RuntimeConfig`) and the entry's input. Returns a
         :class:`RunResult` constructed from the outcome's session's
         ``completed_results`` values.
@@ -1271,7 +1271,7 @@ class ADKRunnableHarness:
         default built-ins minus any the board's ``disable_drift``
         suppressed, plus the entry's declared
         :class:`~zicato.core.JudgeSpec` judges. Inline judges run on the
-        *auxiliary* callable — distinct from the harness callable the
+        *evaluation* callable — distinct from the target callable the
         agent runs on — so a judge cannot trivially collude with the
         tree it grades.
         """
@@ -1295,7 +1295,7 @@ class ADKRunnableHarness:
         # path keeps Goldfive steering enabled.
         async with goldfive_run_context(
             config.goldfive,
-            config.harness_call_llm,
+            config.target_call_llm,
             judge_only=entry_judge_only(entry),
         ) as (
             gf_runtime,
@@ -1377,7 +1377,7 @@ class ADKRunnableHarness:
         agent = self._agent
         async with goldfive_run_context(
             config.goldfive,
-            config.harness_call_llm,
+            config.target_call_llm,
             judge_only=entry_judge_only(entry),
         ) as (
             gf_runtime,
@@ -1451,7 +1451,7 @@ class ADKHarnessAdapter:
 
     name: str = "adk"
 
-    #: Names the inner harness writes run output under, excluded from
+    #: Names the system under test writes run output under, excluded from
     #: every generation copy by :mod:`zicato.epoch.snapshot_scope`.
     #: ``"output"`` is already in the standing artifact set; declaring it
     #: here keeps the adapter contract explicit and lets the directory /

@@ -120,8 +120,8 @@ def _config(workspace: Path, *, adjudicator, judge=None) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="default",
         workspace_root=workspace,
-        harness_call_llm=_h1,
-        auxiliary_call_llm=_h2,
+        target_call_llm=_h1,
+        evaluation_call_llm=_h2,
         adjudicator_call_llm=adjudicator,
         judge_call_llm=judge,
     )
@@ -826,7 +826,7 @@ def test_a_hung_adjudicator_times_out_into_an_ambiguous_verdict(
 ) -> None:
     """A never-answering meta-judge yields ambiguous, not a wedged `reflect run`.
 
-    Both attempts are bounded by the shared auxiliary budget, and the retry is
+    Both attempts are bounded by the shared evaluation budget, and the retry is
     still EXACTLY ONE — a first attempt that hangs gets the same single second
     chance a first attempt that returns garbage gets. Nothing propagates: this
     path's contract is that it never raises, and a TimeoutError escaping it

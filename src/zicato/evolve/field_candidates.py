@@ -183,8 +183,8 @@ async def _settle_field_that_produced_nothing(
                 proposer_retries_exhausted=True,
                 board=field_round.board,
                 round_index=field_round.round_index,
-                auxiliary_call_llm=field_round.auxiliary_call_llm,
-                auxiliary_model=field_round.auxiliary_model,
+                evaluation_call_llm=field_round.evaluation_call_llm,
+                evaluation_model=field_round.evaluation_model,
                 beater=field_round.beater,
                 round_log=field_round.round_log,
             )

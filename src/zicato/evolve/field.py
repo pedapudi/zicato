@@ -36,9 +36,9 @@ def _open_field_round(prepared: generation_phase.PreparedRound) -> FieldRound:
 
     Narration — a rejected round's summary sentence, the round epilogue —
     describes what the round did rather than generating a candidate, so it is
-    auxiliary work.  It therefore runs on the auxiliary callable and the
-    auxiliary model id; the two must name the same endpoint, or a workspace
-    with a dedicated proposer engine would send the auxiliary callable a
+    evaluation work.  It therefore runs on the evaluation callable and the
+    evaluation model id; the two must name the same endpoint, or a workspace
+    with a dedicated proposer engine would send the evaluation callable a
     model id it does not serve.  The proposer callable is picked separately,
     where a candidate is actually proposed
     (:mod:`zicato.evolve.candidate_batch`).
@@ -72,8 +72,8 @@ def _open_field_round(prepared: generation_phase.PreparedRound) -> FieldRound:
         fast_mode=prepared.fast_mode,
         beater=prepared.beater,
         meta_loop_emitter=prepared.meta_loop_emitter,
-        auxiliary_call_llm=prepared.config.auxiliary_call_llm,
-        auxiliary_model=str(prepared.workspace_config.get("auxiliary_model", "")),
+        evaluation_call_llm=prepared.config.evaluation_call_llm,
+        evaluation_model=str(prepared.workspace_config.get("evaluation_model", "")),
         field_size=prepared.strategy.field_size(),
     )
 

@@ -65,8 +65,8 @@ async def evolve_once(
     *,
     workspace_root: Path,
     epoch_id: str | None = None,
-    harness_call_llm: CallLLM,
-    auxiliary_call_llm: CallLLM,
+    target_call_llm: CallLLM,
+    evaluation_call_llm: CallLLM,
     instance_id: str = "default",
     fast_mode: bool = False,
     max_proposer_retries: int = 2,
@@ -239,8 +239,8 @@ async def evolve_once(
     config = runtime_factory.make_runtime_config(
         workspace_config,
         workspace_root=workspace_root,
-        harness_call_llm=harness_call_llm,
-        auxiliary_call_llm=auxiliary_call_llm,
+        target_call_llm=target_call_llm,
+        evaluation_call_llm=evaluation_call_llm,
     )
     # The factory already enforced this but the runner re-checks.
     # We do nothing more here.
@@ -286,7 +286,7 @@ async def evolve_once(
     # strings so the default ADK proposer (which binds ``ctx.model``, not
     # ``ctx.aux_call_llm``) honors a spec-configured role. Absent a
     # ``models.proposer_{breadth,depth}`` block the callables AND model names
-    # are ``None`` and the wrapper falls back to the round's auxiliary callable
+    # are ``None`` and the wrapper falls back to the round's evaluation callable
     # + the context's own model — byte-identical. A models/endpoint change
     # never rolls the epoch.
     from zicato.proposer.best_of_n import wrap_with_proposer_quality  # noqa: PLC0415

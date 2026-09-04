@@ -206,8 +206,8 @@ def test_make_runtime_config_defaults_satisfy_distinct_callables() -> None:
     assert isinstance(rc, RuntimeConfig)
     # The workspace helper raises on identity-equal callables; the
     # factory's defaults are explicitly two DIFFERENT instances.
-    assert rc.harness_call_llm is not rc.auxiliary_call_llm
-    assert_distinct_callables(rc.harness_call_llm, rc.auxiliary_call_llm)
+    assert rc.target_call_llm is not rc.evaluation_call_llm
+    assert_distinct_callables(rc.target_call_llm, rc.evaluation_call_llm)
 
 
 def test_make_runtime_config_caller_supplied_callables_pass_through() -> None:
@@ -217,9 +217,9 @@ def test_make_runtime_config_caller_supplied_callables_pass_through() -> None:
     async def a(s: str, u: str, m: str) -> str:
         return "a"
 
-    rc = make_runtime_config(harness_call_llm=h, auxiliary_call_llm=a)
-    assert rc.harness_call_llm is h
-    assert rc.auxiliary_call_llm is a
+    rc = make_runtime_config(target_call_llm=h, evaluation_call_llm=a)
+    assert rc.target_call_llm is h
+    assert rc.evaluation_call_llm is a
 
 
 # ---------------------------------------------------------------------------

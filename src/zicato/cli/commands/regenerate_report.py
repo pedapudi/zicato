@@ -11,11 +11,11 @@ in an older binary that wrote an empty / placeholder-only report even
 though the data was on disk — see ``epoch_dir``'s outer-vs-inner
 workspace-root normalisation in :mod:`zicato.core.workspace`. The
 backfill walks the right tree and re-templates the deterministic
-sections; the LLM-narrative pass is re-run only when an auxiliary
+sections; the LLM-narrative pass is re-run only when an evaluation
 callable is configured.
 
 The command is thin — it resolves the workspace, picks an epoch, looks
-up the auxiliary callable, and calls
+up the evaluation callable, and calls
 :func:`zicato.analyzer.report.generate_epoch_report`.
 """
 
@@ -72,9 +72,9 @@ def _resolve_epoch(workspace_dir: Path, override: str | None) -> str:
 def _maybe_resolve_aux_llm(
     config: WorkspaceConfig,
 ) -> Callable[[str, str, str], Awaitable[str]] | None:
-    """Best-effort lookup of the auxiliary LLM callable.
+    """Best-effort lookup of the evaluation LLM callable.
 
-    The deterministic sections of the report do not need the auxiliary
+    The deterministic sections of the report do not need the evaluation
     LLM — they are templated from on-disk data. The LLM only writes the
     prose blocks. When no callable is configured, return ``None`` and
     let :func:`generate_epoch_report` substitute placeholder prose; the
@@ -82,7 +82,7 @@ def _maybe_resolve_aux_llm(
     workspace path, which is the point of the backfill.
     """
 
-    dotted = config.raw.get("auxiliary_call_llm") or config.runtime.get("auxiliary_call_llm")
+    dotted = config.raw.get("evaluation_call_llm") or config.runtime.get("evaluation_call_llm")
     if not dotted:
         return None
     mod_name, _, attr = str(dotted).rpartition(".")
@@ -99,7 +99,7 @@ def _maybe_resolve_aux_llm(
 
 
 async def _placeholder_aux(_system: str, _user: str, _model: str) -> str:
-    """A no-op auxiliary callable used when no real one is configured.
+    """A no-op evaluation callable used when no real one is configured.
 
     Returns an empty string so :func:`generate_epoch_report` falls back
     to its placeholder prose blocks. The deterministic data sections are
@@ -132,7 +132,7 @@ async def _placeholder_aux(_system: str, _user: str, _model: str) -> str:
     is_flag=True,
     default=False,
     help=(
-        "Skip the auxiliary-LLM prose pass and substitute placeholders. "
+        "Skip the evaluation-LLM prose pass and substitute placeholders. "
         "The deterministic data sections (figures, tables, scores) are still "
         "re-rendered."
     ),
@@ -165,12 +165,12 @@ def regenerate_report_cmd(workspace: str, epoch: str | None, no_llm: bool) -> No
         aux_call_llm = _placeholder_aux
         if not no_llm:
             click.echo(
-                "warning: no auxiliary LLM configured; substituting placeholder "
+                "warning: no evaluation LLM configured; substituting placeholder "
                 "prose. Pass --no-llm to suppress this warning.",
                 err=True,
             )
 
-    model = config.auxiliary_model
+    model = config.evaluation_model
 
     out_path = asyncio.run(
         generate_epoch_report(

@@ -90,8 +90,8 @@ def test_named_engines_resolve_defaults_and_overrides() -> None:
             "roles": {"proposer": "strong", "user_emulator": "small"},
         }
     )
-    assert cfg.harness.call_llm == "pkg:target"
-    assert cfg.auxiliary.call_llm == "pkg:evaluation"
+    assert cfg.target.call_llm == "pkg:target"
+    assert cfg.evaluation.call_llm == "pkg:evaluation"
     assert cfg.judge.call_llm == "pkg:evaluation"
     assert cfg.proposer_breadth.model == "strong"
     assert cfg.proposer_depth.model == "strong"
@@ -129,8 +129,8 @@ def test_distinct_engine_names_allow_identical_transport_fields() -> None:
             "roles": {},
         }
     )
-    assert cfg.harness.revision == "target-r1"
-    assert cfg.auxiliary.revision == "evaluation-r1"
+    assert cfg.target.revision == "target-r1"
+    assert cfg.evaluation.revision == "evaluation-r1"
 
 
 @pytest.mark.parametrize("role", PUBLIC_MODEL_ROLES[1:])
@@ -276,7 +276,7 @@ def test_resolve_model_spec_builds_text_call_llm_and_reads_secret_at_resolve_tim
     monkeypatch.setitem(sys.modules, "goldfive._llm_detect", detect_mod)
 
     spec = RoleSpec(model="house-x", endpoint="https://e.example", api_key_env=_ENV_NAME)
-    resolved = resolve_text_call_llm(spec, role="auxiliary")
+    resolved = resolve_text_call_llm(spec, role="evaluation")
     assert resolved is _a_call_llm
 
     # The secret was read from os.environ at resolve time and handed to LiteLlm

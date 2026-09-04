@@ -117,7 +117,7 @@ class Workspace:
 
 
 def _unused_callable(system: str, user: str, model: str) -> str:  # pragma: no cover
-    raise AssertionError("a Foe episode never calls the auxiliary text shim")
+    raise AssertionError("a Foe episode never calls the evaluation text shim")
 
 
 def _edit(content: str, path: str = "agent/prompts.py") -> tuple[str, dict[str, Any]]:

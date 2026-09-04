@@ -14,7 +14,7 @@ This module is both.
   :func:`external_proposer_config` reads it off a workspace config and
   :func:`load_external_proposer_class` imports it, through the same
   :func:`zicato.import_path.import_dotted_path` the runtime factory uses
-  for ``harness_call_llm`` / ``auxiliary_call_llm``.
+  for ``target_call_llm`` / ``evaluation_call_llm``.
 * The class answers :meth:`ExternalProposerAgent.contract_identity` with
   its *causal surface* — the things that decide how it reasons — and
   :func:`external_identity_sha256` reduces that to one hex digest that
@@ -26,7 +26,7 @@ What belongs in that identity is the question the seam exists to answer.
 Version strings of the things we did not write (a coding agent's release,
 an adapter package) and content hashes of the things we did (our own
 extension files, edited in place, so they have no version to record). NOT
-the model: a ``models.*`` role — and ``auxiliary_model`` with it — is
+the model: a ``models.*`` role — and ``evaluation_model`` with it — is
 runtime infra that never rolls an epoch, and nothing in the contract hash
 has ever named a model. The model-collusion hazard the external tier
 introduces (an agent quietly falling back to its own configured default)
@@ -95,7 +95,7 @@ class ExternalProposerConfig:
     the same inputs by construction.
 
     ``options`` is NOT hashed wholesale. It carries unrelated runtime keys (the
-    harness/auxiliary dotted paths among them), and a change to those is
+    target/evaluation dotted paths among them), and a change to those is
     infrastructure rather than contract. An implementation folds in only what
     causally steers it — for the pi agent, the knob's *effect* (the resolved
     version of the binary it selects) rather than the knob's spelling.

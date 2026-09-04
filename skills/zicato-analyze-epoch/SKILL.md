@@ -141,7 +141,7 @@ insight without re-running the loop.
 - venv-only (`.venv/bin/zicato`); never `uv sync` (use `uv sync --all-extras`).
 - Do **not** start a live `evolve`/`tournament` to "freshen" an epoch — that
   spends budget. Closing and report regeneration are the read-side tools.
-- Only `analysis.md`'s **prose** sections need the auxiliary LLM; its data
+- Only `analysis.md`'s **prose** sections need the evaluation LLM; its data
   sections and `analysis.html` are deterministic. Prefer `--no-llm` when you
   only need the figures/tables back — without it, `regenerate-report` resolves
   the aux callable from config and spends a call.

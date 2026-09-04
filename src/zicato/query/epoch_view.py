@@ -237,7 +237,7 @@ def _parse_mutations(path: Path) -> list[dict[str, Any]] | None:
 
 
 def _read_harness(paths: WorkspacePaths) -> dict[str, Any] | None:
-    """The registered inner harness, from the WORKSPACE's live ``config.json``.
+    """The registered system under test, from the WORKSPACE's live ``config.json``.
 
     The one live-config read left on an epoch-scoped payload, and it is
     deliberate rather than overlooked (issue #194 §6's sweep). An epoch

@@ -24,7 +24,7 @@ from zicato.epoch.lineage import append_to_lineage
 def runtime_config(tmp_path: Path) -> RuntimeConfig:
     """A RuntimeConfig whose two LLM callables return the empty string.
 
-    The harness and auxiliary callables are separate function objects, not
+    The harness and evaluation callables are separate function objects, not
     one function bound twice: the runner re-checks that the two callables
     are identity-unequal as defense in depth, so a config that reused a
     single callable would fail that check for a reason unrelated to the
@@ -40,8 +40,8 @@ def runtime_config(tmp_path: Path) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=aux_call,
+        target_call_llm=harness_call,
+        evaluation_call_llm=aux_call,
     )
 
 

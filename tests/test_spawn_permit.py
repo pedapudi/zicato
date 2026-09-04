@@ -348,7 +348,7 @@ def test_runner_resolves_the_permit_helpers_on_its_own_namespace() -> None:
 
 def _stub_run_inputs(tmp_path: Path) -> tuple[Path, object, object, object]:
     """A workspace + generation + entry + config for a stub-adapter run."""
-    from tests._subprocess_worker_support import auxiliary_call_llm, harness_call_llm
+    from tests._subprocess_worker_support import evaluation_call_llm, target_call_llm
     from zicato.core import BoardEntry, Generation, RuntimeConfig
 
     workspace = tmp_path / ".zicato"
@@ -366,8 +366,8 @@ def _stub_run_inputs(tmp_path: Path) -> tuple[Path, object, object, object]:
     config = RuntimeConfig(
         instance_id="test",
         workspace_root=workspace,
-        harness_call_llm=harness_call_llm,
-        auxiliary_call_llm=auxiliary_call_llm,
+        target_call_llm=target_call_llm,
+        evaluation_call_llm=evaluation_call_llm,
         supervisor_kill_wait_s=2.0,
         host_worker_permits=1,
     )

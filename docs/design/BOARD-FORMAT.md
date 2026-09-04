@@ -1,6 +1,6 @@
 # Board format
 
-A **board** is the frozen-per-epoch list of tasks the inner harness is
+A **board** is the frozen-per-epoch list of tasks the system under test is
 evaluated against. The board defines the evaluation contract: change
 the board and you have started a new epoch (see
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md)). Generations
@@ -191,7 +191,7 @@ is the run result.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `input` | `string` | yes | The raw user message handed to the inner harness. |
+| `input` | `string` | yes | The raw user message handed to the system under test. |
 
 Example:
 
@@ -444,7 +444,7 @@ always passes and records its score for inspection). The `reads`
 field is an `OutputScope` enum value — `"final_output"` (grade the
 final output) or `"conversation_end"` (grade the whole transcript).
 
-The grader runs through **`auxiliary_call_llm`**, never the harness
+The grader runs through **`evaluation_call_llm`**, never the target
 callable — the model grading the output must not be the model that
 produced it. This is enforced; see [EMULATOR.md](EMULATOR.md).
 
@@ -557,7 +557,7 @@ The budget applies to the WHOLE entry. Specifically:
   whole conversation. The script is replayed on the same run id.
 - **Multi-turn emulated:** wall-clock from the first agent turn's
   invocation start to the terminal event. The emulator's per-turn
-  `auxiliary_call_llm` time is included in the budget — slow
+  `evaluation_call_llm` time is included in the budget — slow
   emulators consume budget that the agent could have used.
 
 When the budget elapses mid-run, the adapter is responsible for:
@@ -609,13 +609,13 @@ them, and `BoardEntry.validate` already enforces their discriminant
 fields:
 
 - `synthetic_adversarial` (unimplemented in the runner) — a known-bad
-  inner harness wired in, where the contract is "the steerer fires the
+  system under test wired in, where the contract is "the steerer fires the
   right drift in time". The entry carries an `adversarial_agent_spec`
   (dotted path to the known-bad agent) and a non-empty
   `required_drift_kinds` list. Pass = the required drift detected;
   fail = drift missed.
-- `synthetic_clean` (unimplemented in the runner) — a known-good inner
-  harness wired in, where the contract is "no spurious drift fires".
+- `synthetic_clean` (unimplemented in the runner) — a known-good system
+  under test wired in, where the contract is "no spurious drift fires".
   Pass = no false-positive drift; fail = drift fired when none was
   warranted.
 
@@ -678,7 +678,7 @@ contract-hash auto-epoching** rather than by a `--force` flag on the
 `board` subcommands:
 
 - `evolve` resolves the evaluation contract (board + proposer brief +
-  scoring + the registered inner-harness identity), hashes it, and
+  scoring + the registered system-under-test identity), hashes it, and
   compares it to the current epoch. When the hash has drifted — for
   instance because you ran `board add` / `board remove`, or hand-edited
   `board.jsonl` — `evolve` **closes the current epoch and opens a fresh

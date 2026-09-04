@@ -18,8 +18,8 @@ Two tiers, cleanly partitioned by the miner's ``suggestion_hint`` (EVAL-SYNTHESI
   Zero LLM budget, the always-on passive tier.
 * **LLM-drafted (aux seam, endpoint-gated)** — coverage entries exercising a
   blind mutation point / unmeasured metric, and new process judges drafted from
-  disagreement / failure clusters. The call goes through the auxiliary callable
-  (:data:`~zicato.core.runtime.CallLLM`), NEVER the harness callable; the
+  disagreement / failure clusters. The call goes through the evaluation callable
+  (:data:`~zicato.core.runtime.CallLLM`), NEVER the target callable; the
   response is tolerant-parsed (the proposer's
   :func:`~zicato.proposer.structured.extract_json_object` idiom) and validated
   against BOARD-FORMAT before it becomes a suggestion. A
@@ -706,7 +706,7 @@ async def _coverage_entry_suggestion(
 ) -> Suggestion | None:
     """Draft a coverage entry via the aux callable (§3 coverage entry, LLM tier).
 
-    Prompts the auxiliary callable (never the harness callable) for a
+    Prompts the evaluation callable (never the target callable) for a
     schema-shaped board entry exercising the blind mutation point / unmeasured
     metric, tolerant-parses the response, and validates it against BOARD-FORMAT.
     Any parse / validation failure drops the suggestion with a logged reason.
@@ -915,7 +915,7 @@ def synthesize_bootstrap_suggestions(
     ``HINT_BOOTSTRAP_RUBRIC``) route to. A signal episode drafts an entry
     MECHANICALLY (the reconstructed input + an honest process binding, §5.2); a
     behavioral episode drafts an entry whose expectation is LLM-drafted behind the
-    aux seam (never the harness callable). Every drafted entry is
+    aux seam (never the target callable). Every drafted entry is
     loader-round-tripped (§5.2) — a draft the loader would reject never ships.
 
     Pure over the episodes and ``traces_by_id`` (the reconstruction pointer): the
@@ -1214,7 +1214,7 @@ async def _bootstrap_behavioral_suggestion(
 
     A clean, substantive conversation has no adverse signal to bind, so its intent
     is pinned by an LLM-drafted ``rubric`` expectation behind the aux callable
-    (never the harness callable). The reconstructed input/persona is mechanical;
+    (never the target callable). The reconstructed input/persona is mechanical;
     only the expectation is drafted. Tolerant-parsed (the 64KiB cap) and
     loader-validated — a parse / validation failure drops the one suggestion.
     """
@@ -1375,9 +1375,9 @@ def synthesize(
        entries / host judges). A missing workspace / board degrades to an empty
        board — the mechanical tier that needs a board entry then simply finds
        none to draft, never a crash.
-    2. Resolve the auxiliary callable ONLY when ``allow_llm`` (the LLM tier), the
-       SAME way reflection's own aux resolution works (``models.auxiliary`` first,
-       then the ``runtime.auxiliary_call_llm`` dotted path). When no aux is
+    2. Resolve the evaluation callable ONLY when ``allow_llm`` (the LLM tier), the
+       SAME way reflection's own aux resolution works (``models.evaluation`` first,
+       then the ``runtime.evaluation_call_llm`` dotted path). When no aux is
        configured the LLM tier is SKIPPED with a logged reason and the mechanical
        tier still runs — the ``--allow-llm`` help says the LLM tier needs the
        configured aux endpoint.
@@ -1402,8 +1402,8 @@ def synthesize(
         aux = _resolve_aux_call_llm(workspace_root)
         if aux is None:
             _LOG.info(
-                "synthesize: --allow-llm requested but no auxiliary model/callable is "
-                "configured (models.auxiliary / runtime.auxiliary_call_llm); the LLM tier "
+                "synthesize: --allow-llm requested but no evaluation model/callable is "
+                "configured (models.evaluation / runtime.evaluation_call_llm); the LLM tier "
                 "is skipped (mechanical tier only)."
             )
 
@@ -1631,10 +1631,10 @@ def _load_epoch_board(workspace_root: Path | None, epoch_id: str | None) -> list
 
 
 def _resolve_aux_call_llm(workspace_root: Path | None) -> CallLLM | None:
-    """Resolve the auxiliary callable the LLM tier drafts through (or ``None``).
+    """Resolve the evaluation callable the LLM tier drafts through (or ``None``).
 
-    Mirrors reflection's own aux resolution: the unified ``models.auxiliary``
-    role first, then the ``runtime.auxiliary_call_llm`` dotted path. Any
+    Mirrors reflection's own aux resolution: the unified ``models.evaluation``
+    role first, then the ``runtime.evaluation_call_llm`` dotted path. Any
     resolution failure (no config, an unimportable path) degrades to ``None`` so
     the LLM tier is skipped with a logged reason — never a crash, never a live
     call the operator did not ask for.
@@ -1652,19 +1652,19 @@ def _resolve_aux_call_llm(workspace_root: Path | None) -> CallLLM | None:
         from zicato.models_config import load_models_config, resolve_text_call_llm  # noqa: PLC0415
 
         models = load_models_config(loaded.raw)
-        if not models.auxiliary.is_empty:
-            return resolve_text_call_llm(models.auxiliary, role="auxiliary")
+        if not models.evaluation.is_empty:
+            return resolve_text_call_llm(models.evaluation, role="evaluation")
     except Exception as exc:  # noqa: BLE001 — an unresolvable aux spec degrades, never crashes
-        _LOG.info("synthesize: models.auxiliary did not resolve (%s); trying the legacy path", exc)
+        _LOG.info("synthesize: models.evaluation did not resolve (%s); trying the legacy path", exc)
 
-    dotted = loaded.runtime.get("auxiliary_call_llm")
+    dotted = loaded.runtime.get("evaluation_call_llm")
     if dotted:
         try:
             from zicato.import_path import import_dotted_path  # noqa: PLC0415
 
-            fn = import_dotted_path(str(dotted), label="runtime.auxiliary_call_llm")
+            fn = import_dotted_path(str(dotted), label="runtime.evaluation_call_llm")
         except Exception as exc:  # noqa: BLE001
-            _LOG.info("synthesize: runtime.auxiliary_call_llm did not import (%s)", exc)
+            _LOG.info("synthesize: runtime.evaluation_call_llm did not import (%s)", exc)
             return None
         if callable(fn):
             return fn  # type: ignore[no-any-return]

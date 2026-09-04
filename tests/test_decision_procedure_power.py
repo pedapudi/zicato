@@ -202,8 +202,8 @@ def _config(workspace: Path, seed: int) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=workspace,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=aux_call,
+        target_call_llm=harness_call,
+        evaluation_call_llm=aux_call,
         seed=seed,
         parallelism=8,
     )
@@ -826,8 +826,8 @@ def _worker_config(workspace: Path, seed: int) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=workspace,
-        harness_call_llm=t0_mocks.harness_llm,
-        auxiliary_call_llm=t0_mocks.aux_llm,
+        target_call_llm=t0_mocks.target_llm,
+        evaluation_call_llm=t0_mocks.aux_llm,
         seed=seed,
         parallelism=4,
         worker_permit_dir=workspace.parent / "worker-permits",

@@ -953,10 +953,10 @@ direction a confirmatory read would then authorize):**
 - **LLM-merge recombination (the `recombine_merge="llm"` setting, arm A4):**
   evaluated **relative to the mechanical-recombination arm** rather than BASE.
   It graduates if `E1(A4) − E1(A3) ≥ floor` with the CI excluding 0 and the one
-  extra auxiliary merge call keeping `CPP(A4) ≤ 1.10·CPP(A3)`. If mechanical
+  extra evaluation merge call keeping `CPP(A4) ≤ 1.10·CPP(A3)`. If mechanical
   recombination does not itself graduate, the LLM-merge arm is moot. **The
   contrast between the two recombination arms is bundled:** `"llm"` merge
-  changes both the merge *method* (one auxiliary merge call rather than
+  changes both the merge *method* (one evaluation merge call rather than
   mechanical concatenation) **and** the candidate-pair eligibility. It reaches
   OVERLAPPING rejected pairs that the mechanical mint's disjointness predicate
   rejects (`proposer/best_of_n.py` §2.6.1). The rule reads the *bundle*.
@@ -983,7 +983,7 @@ direction a confirmatory read would then authorize):**
   primary endpoint does not regress below BASE's lower confidence bound. Its
   designed effect is calibration rather than raw proposal quality (§1 rank 6).
 - **`best_of_n` (BASE against the ABLATION arm):** keep the `best_of_n=3`
-  default if `E1(BASE) − E1(ABLATION) ≥ floor`. Otherwise flag the auxiliary-call
+  default if `E1(BASE) − E1(ABLATION) ≥ floor`. Otherwise flag the evaluation-call
   cost of `best_of_n=3` as **unearned** and revert the recommendation toward
   `1`. **Measured: the ablation was the highest arm in run 2 (+0.0392 against
   BASE), so this test's precondition is unmet and the observed difference points
@@ -1074,7 +1074,7 @@ never against this row.
 
 **Cost-meter semantics (grounded in `contract_draft/operations.py::estimate_cost`).**
 The meter reports **board runs per round** (each = one agent execution on one
-board entry). Auxiliary model calls (`best-of-N propose calls`) are labelled and
+board entry). Evaluation model calls (`best-of-N propose calls`) are labelled and
 **excluded from the board-run headline** but are real spend. The meter is exact
 given the structure, which is why it is the campaign's primary *cost* unit and
 wall-clock is not. Take the **planning** 7-entry `target_1` shape, with
@@ -1156,13 +1156,13 @@ failing item to the coordinator and stop; do not work around it.
    `d` contrast is positive (the arm has headroom to repair). A crippled arm
    scoring *best* is the signature of the entrypoint-loading defect —
    **halt.**
-4. **Auxiliary + harness endpoints configured and responding.**
+4. **Evaluation + target endpoints configured and responding.**
    `zicato board preflight` with the minimum draw count, on the first
    workspace immediately after `epoch new` (§6.3):
    ```bash
    zicato board preflight --workspace .zicato --runs 2 \
-       --harness-call-llm   <operator harness endpoint dotted path> \
-       --auxiliary-call-llm <operator auxiliary endpoint dotted path>
+       --harness-call-llm   <operator target endpoint dotted path> \
+       --auxiliary-call-llm <operator evaluation endpoint dotted path>
    ```
    `board preflight` requires **both** dotted callables (`cli/commands/board.py`
    `preflight_cmd`, both `required=True`) and takes as few as **2** A/A draws
@@ -1261,8 +1261,8 @@ zicato epoch new campaign_A0_k${k} --workspace .zicato \
 
 # ENDPOINT SMOKE-TEST (§6.1 item 4) — run ONCE, on this first workspace.
 zicato board preflight --workspace .zicato --runs 2 \
-    --harness-call-llm   <operator harness endpoint dotted path> \
-    --auxiliary-call-llm <operator auxiliary endpoint dotted path>
+    --harness-call-llm   <operator target endpoint dotted path> \
+    --auxiliary-call-llm <operator evaluation endpoint dotted path>
 
 # With the epoch open, inspect the mutation surface + eyeball the cost
 # meter BEFORE spending (no run yet):
@@ -1270,8 +1270,8 @@ zicato inspect mutations --workspace .zicato
 
 # GATED: only after §6.0 explicit operator go-ahead -----------------------
 zicato evolve --workspace .zicato --rounds 3 \
-    --harness-call-llm   <operator harness endpoint dotted path> \
-    --auxiliary-call-llm <operator auxiliary endpoint dotted path>
+    --harness-call-llm   <operator target endpoint dotted path> \
+    --auxiliary-call-llm <operator evaluation endpoint dotted path>
 # evolve prints:  Dashboard: http://127.0.0.1:7892   (RECORD this exact URL
 # into the run record's dashboard_url; watch the bracket live)
 
@@ -1306,7 +1306,7 @@ beat them. Three constraints, in the order they actually bind:
    the cores and memory of the machine you are on, and re-measure before quoting
    a §5 anchor at a different setting.
 2. **Shared endpoint rate limits (planning — asserted, never measured).** Every
-   arm hits the same operator harness + auxiliary endpoints, so N concurrent
+   arm hits the same operator harness + evaluation endpoints, so N concurrent
    runs multiply the offered load N× against one rate limit. The executed sweeps
    observed **no throttling at 12**, so treat this as a §6.4 watch item against
    your own endpoint's limits rather than as a ceiling.
@@ -1489,8 +1489,8 @@ prior attempt's tokens would vouch for this one.
 **On the hard-infra vocabulary — the PREFIX ANCHOR is the mechanism; the marker
 set is a floor on top of it.** Marker matching is restricted to proposal-error
 strings that begin with a **transport-shaped prefix** — the templates the
-proposer emits when a request failed before a response came back (`auxiliary LLM
-call raised …`, `auxiliary LLM call timed out after …`, `proposer agent run
+proposer emits when a request failed before a response came back (`evaluation LLM
+call raised …`, `evaluation LLM call timed out after …`, `proposer agent run
 raised …`). Every other string in a round's error trail is a *post-response
 content rejection* that quotes text zicato does not control. Four sources
 supply that text: validator findings over the child agent's own source,

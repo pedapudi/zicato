@@ -24,7 +24,7 @@ report the CLI's own argument back to the operator who just typed it.
 
 **Reporting.** Per role, never collapsed. Roles are configured
 separately, fail separately, and have different remedies — a dead judge
-role must never be reported as a dead harness role.
+role must never be reported as a dead target role.
 """
 
 from __future__ import annotations

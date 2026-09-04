@@ -829,8 +829,8 @@ def test_preflight_measures_draft_contract_against_target0(tmp_path) -> None:
                 },
                 "mutable_trees": [str(example_dir / "agent")],
                 "runtime": {
-                    "harness_call_llm": "zicato_examples.target_0_convergence.mocks:harness_llm",
-                    "auxiliary_call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm",
+                    "target_call_llm": "zicato_examples.target_0_convergence.mocks:target_llm",
+                    "evaluation_call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm",
                 },
             }
         ),
@@ -1213,7 +1213,7 @@ def test_set_telemetry_dialect() -> None:
 
 # ---------------------------------------------------------------------------
 # Honest cost meter — the evidence-gate confirm budget, the best-of-N
-# auxiliary line, and the placebo cadence
+# evaluation line, and the placebo cadence
 # ---------------------------------------------------------------------------
 
 
@@ -1252,7 +1252,7 @@ def test_cost_evidence_gate_confirm_budget_is_priced() -> None:
     assert confirm_default.runs == 3 * 2 * 10
 
 
-def test_cost_best_of_n_auxiliary_line_excluded_from_headline() -> None:
+def test_cost_best_of_n_evaluation_line_excluded_from_headline() -> None:
     draft = TournamentDraft()
     draft.entries = _board(10)
     _no_holdout(draft)
@@ -1260,12 +1260,12 @@ def test_cost_best_of_n_auxiliary_line_excluded_from_headline() -> None:
     ops.set_param(draft, "field_size", 1)
     ops.set_param(draft, "replicates", 1)
 
-    # Default best_of_n is 3: the auxiliary line appears (1 × 3 calls)…
+    # Default best_of_n is 3: the evaluation line appears (1 × 3 calls)…
     est = ops.estimate_cost(draft)
     aux = [line for line in est.breakdown if line.label == "best-of-N propose calls"]
     assert len(aux) == 1
     assert aux[0].runs == 1 * 3
-    assert "auxiliary" in aux[0].detail
+    assert "evaluation" in aux[0].detail
     # …but the headline counts only board runs (1 × 1 × 10 = 10).
     assert est.board_runs_per_round == 10
 
@@ -1307,7 +1307,7 @@ def test_cost_placebo_cadence_amortized() -> None:
 def test_cost_all_honest_terms_compose_with_the_screen_line() -> None:
     """The full recommended-scaffold shape: screen + best-of-N + evidence
     gate + placebo all on at once — every line present, and the headline is
-    exactly the sum of the board-run lines (the auxiliary line excluded)."""
+    exactly the sum of the board-run lines (the evaluation line excluded)."""
     draft = TournamentDraft()
     draft.entries = _board(10)
     _no_holdout(draft)

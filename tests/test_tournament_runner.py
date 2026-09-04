@@ -15,7 +15,7 @@ subprocesses.
 
 The two-callable invariant on :class:`RuntimeConfig` is honored by
 constructing two distinct callables (identity-unequal) for
-``harness_call_llm`` and ``auxiliary_call_llm``.
+``target_call_llm`` and ``evaluation_call_llm``.
 """
 
 from __future__ import annotations
@@ -287,7 +287,7 @@ def test_run_tournament_rejects_when_child_regresses_pass_rate(
 
 
 def test_run_tournament_rejects_two_callable_invariant(tmp_path: Path) -> None:
-    """The runner re-checks that harness/auxiliary callables differ."""
+    """The runner re-checks that target/evaluation callables differ."""
     parent_gen = _make_generation(tmp_path, "v0", None)
     child_gen = _make_generation(tmp_path, "v1", "v0")
 
@@ -297,8 +297,8 @@ def test_run_tournament_rejects_two_callable_invariant(tmp_path: Path) -> None:
     config = RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=shared,
-        auxiliary_call_llm=shared,
+        target_call_llm=shared,
+        evaluation_call_llm=shared,
     )
 
     with pytest.raises(RuntimeError):

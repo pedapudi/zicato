@@ -48,7 +48,7 @@ workspace.
 
 The runtime layer is the production-readiness pass. The meta-loop
 described in [ARCHITECTURE.md](ARCHITECTURE.md) is correct against
-inner harnesses that cooperate with cancellation; the runtime layer is
+systems under test that cooperate with cancellation; the runtime layer is
 what makes it correct against the pathological cases — network hangs,
 infinite loops, orchestrator crashes, and out-of-memory kills. For the
 layered defense model that motivates the file shapes below, see
@@ -741,7 +741,7 @@ process id that is already dead is noted in the audit log.
 > `src/zicato/tournament/runner.py`. Each run executes in its own
 > operating-system process, so a per-run wall-clock budget can be
 > hard-enforced by killing the process, which is the only reliable
-> defense against an inner harness that holds the interpreter lock or
+> defense against a system under test that holds the interpreter lock or
 > loops forever (§5.1). The worker is a module entry point taking a
 > single JSON args file (`python -m zicato._tournament_worker
 > <args-file.json>`), and §5.2 describes that shape.
@@ -755,7 +755,7 @@ entry are two workers.
 ### 5.1 Why subprocesses rather than threads or asyncio alone
 
 Python's global interpreter lock means that a CPU-bound loop in the
-inner harness, or a C extension holding the lock, cannot be pre-empted
+system under test, or a C extension holding the lock, cannot be pre-empted
 by `asyncio.wait_for`. The timeout exception fires when the event loop
 next runs, which never happens. The only reliable defense is an
 operating-system process boundary: SIGTERM, then SIGKILL after a grace
@@ -783,7 +783,7 @@ The worker then:
 
 1. Loads the generation's snapshot.
 2. Instantiates the adapter (see §5.4 below).
-3. Wraps `auxiliary_call_llm` in the worker's per-call timeout layer,
+3. Wraps `evaluation_call_llm` in the worker's per-call timeout layer,
    which remains useful as a fast path (see
    [ROBUSTNESS.md](ROBUSTNESS.md) §2.1).
 4. Calls `adapter.run_entry(entry, sinks=[JSONLPersistenceSink(...)])`.
@@ -925,7 +925,7 @@ pgid:
 * the worker is spawned with `start_new_session=True`
   (`runner.py`), so it `setsid`s before `exec` and becomes the leader
   of a fresh session/process group containing itself plus every
-  grandchild the inner harness spawns (shells, helper tools);
+  grandchild the system under test spawns (shells, helper tools);
 * the worker's **first act** is writing
   `active_runs/{run_id}.json` with its own `pid`, its
   `pid_start_time`, and its `pgid` (§2.4);
@@ -1218,10 +1218,10 @@ wall-clock budget, by every worker, concurrently across all of them
 
 **Shipped: the worker does not import `google.adk` for a role it may
 never call.** Resolving every configured model-spec role — harness,
-auxiliary, and judge — eagerly at startup would pull the whole ADK
+evaluation, and judge — eagerly at startup would pull the whole ADK
 graph through `build_adk_model`, costing 0.80 s and 88 MB the first
 time any of them is touched. A unit whose entry has no model judge, or
-which never reaches the auxiliary side, would pay that cost for
+which never reaches the evaluation side, would pay that cost for
 nothing. Model-spec roles instead resolve through
 `models_config.lazy_text_call_llm`, which validates the spec shape
 eagerly, so a malformed `models` block still fails fast at startup
@@ -1245,10 +1245,10 @@ and peak RSS reproduce exactly — 1329 more modules, 44 MB rising to
 121 MB — while the wall time was 2.1 s rather than 0.80 s. The shape of
 the table holds across machines; the seconds column does not.)
 
-**The bound on that saving.** It does not apply to the harness role
+**The bound on that saving.** It does not apply to the target role
 whenever that role's spec sets `endpoint` or `api_key_env`. The next
 line of the worker calls
-`_resolve_inner_model_from_role(args["harness_role"])`, the
+`_resolve_target_model_from_role(args["target_role"])`, the
 inner-model build that lets the target's agents use native function
 calling in place of the text shim, and that call reaches
 `build_adk_model` eagerly. In the endpoint-configured shape, which is
@@ -1256,8 +1256,8 @@ the shape live validation uses, ADK is therefore resident at worker
 startup regardless, and deferring the `call_llm` resolution saves
 nothing on top of that. The saving is real for a
 bare `model`-only spec (where `build_adk_model` returns the model string
-and imports nothing) and for the auxiliary / judge roles on a worker
-whose harness role is a dotted `call_llm`. Deferring the inner model
+and imports nothing) and for the evaluation / judge roles on a worker
+whose target role is a dotted `call_llm`. Deferring the inner model
 too cannot be done by wrapping it, because the adapter rebinds agent
 trees to a model object at setup. The next passage records what
 deferring it can and cannot achieve.
@@ -1281,12 +1281,12 @@ call, which matches the finding earlier in this section that the
 `litellm` import is already lazy).
 Because `ADKHarnessAdapter.load()` calls `import google.adk`
 *unconditionally* for every ADK-adapter run — it needs the agent-tree
-classes to load the entrypoint, whether or not a `harness_role` is
+classes to load the entrypoint, whether or not a `target_role` is
 endpoint-shaped — that roughly one-second import is paid regardless of
-when `inner_model` is resolved.
+when `target_model` is resolved.
 
 A deferred-construction path was designed and not built: a thunk in
-`RuntimeConfig.inner_model`, realised at `ADKHarnessAdapter.run`'s
+`RuntimeConfig.target_model`, realised at `ADKHarnessAdapter.run`'s
 first-use point, immediately before `rebind_tree_models_to_adk_model`.
 The table above already answers the question that path would measure.
 `.load()` unconditionally pays the roughly one-second `google.adk` tax
@@ -1295,30 +1295,30 @@ after that import costs about 2 ms. The thunk's own construction cost
 would therefore round to zero, and so would its effect on total cost.
 Deferring past `.load()` cannot reduce total worker wall-clock time,
 resident memory, or module count for the production shape, which is the
-ADK adapter plus an endpoint-configured harness role. The proposal is
+ADK adapter plus an endpoint-configured target role. The proposal is
 refuted on measurement. Nothing was shipped for it, and no thunk or
 proxy sits in `RuntimeConfig`, where it would be complexity with no
 payoff.
 
 Two smaller changes were worth shipping. First,
-`_tournament_worker._run` resolves `inner_model`, and every other role,
+`_tournament_worker._run` resolves `target_model`, and every other role,
 after it writes the `active_runs` state file and starts the per-run
 heartbeat thread. This is a pure reordering with no behaviour change,
 because nothing between the two call sites reads the resolved config.
 Registering the run first closes the window in which a live worker
 looks unregistered to the supervisor watchdog and the orchestrator's
 staleness check while it pays an unavoidable one-second ADK import.
-`test_inner_model_resolved_after_active_run_and_heartbeat`
+`test_target_model_resolved_after_active_run_and_heartbeat`
 (`tests/test_worker_lazy_roles.py`) pins the order: it sequences three
 mocked calls and asserts that `active_run_write` and `heartbeat_start`
-precede `inner_model_resolve`. Second, `inner_model` resolution is
+precede `target_model_resolve`. Second, `target_model` resolution is
 gated on `args["adapter"]["kind"] == "adk"`. Only `ADKHarnessAdapter.run`
-reads `config.inner_model`, so a non-ADK adapter kind — the `"import"`
+reads `config.target_model`, so a non-ADK adapter kind — the `"import"`
 shape, which the runner does not use but which is allowed — never
 forces an ADK import for a value nothing would consume.
-`test_non_adk_adapter_never_resolves_inner_model` pins that: it runs a
+`test_non_adk_adapter_never_resolves_target_model` pins that: it runs a
 real end-to-end worker with a stub adapter and an endpoint-shaped
-harness role and asserts that `google.adk` never lands in
+target role and asserts that `google.adk` never lands in
 `sys.modules`.
 
 **Deferral must not turn a configuration fault into a silent score.** A

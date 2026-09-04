@@ -11,8 +11,8 @@
 
 # zicato
 
-zicato wraps a file-based system you already have and turns it into the **inner
-harness** of a learning loop. It runs your system against a board of tasks,
+zicato wraps a file-based system you already have and turns it into the **system
+under test** of a learning loop. It runs your system against a board of tasks,
 scores each run against a per-epoch evaluation contract, and rewrites the source
 so the next generation goes less wrong.
 
@@ -36,7 +36,7 @@ zicato is the third member of an ecosystem:
   goldfive stream live and lets operators steer.
 - **zicato** — the meta-loop: same telemetry stream, but consumed across many
   runs. zicato aggregates drift into **loss patterns**, proposes structured
-  edits to the inner harness (agent instructions, tool descriptions, planner
+  edits to the system under test (agent instructions, tool descriptions, planner
   templates, role scopes), runs tournaments, and promotes the patches that
   reduce loss.
 
@@ -46,7 +46,7 @@ zicato is the third member of an ecosystem:
 |---|---|---|
 | Single-turn refine (replan in response to drift) | goldfive | within one run |
 | Operator-driven steering | harmonograf | within one run |
-| **Inner-harness rewrites across runs** | **zicato** | **across generations** |
+| **System-under-test rewrites across runs** | **zicato** | **across generations** |
 
 Model-backed adapters use named `target` and `evaluation` engines; a target is
 adapter-defined and may consume no LLM at all. Advanced judge, emulator,

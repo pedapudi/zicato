@@ -14,8 +14,8 @@ wins — file an erratum, do not guess.
 
 ## 1. What zicato is
 
-zicato wraps a system you already have and turns it into the **inner
-harness** of a learning loop. It runs that harness against a **board** of
+zicato wraps a system you already have and turns it into the **system
+under test** of a learning loop. It runs that harness against a **board** of
 tasks, watches what goes wrong via structured runtime telemetry, and
 rewrites the harness so the next **generation** goes less wrong. The loop
 is evolutionary: propose a small structured edit, run a scored
@@ -35,7 +35,7 @@ the definition.
 
 The one-paragraph version, verbatim from the repo's own agent guide:
 
-> zicato wraps an inner harness in an **evolve loop**: it proposes a
+> zicato wraps a system under test in an **evolve loop**: it proposes a
 > small structured edit to the harness (for the primary agent use case:
 > an agent instruction, a tool description, a planner template, a role
 > scope — in general, any annotated mutation point), runs a scored
@@ -45,7 +45,7 @@ The one-paragraph version, verbatim from the repo's own agent guide:
 > child only when it beats the gate. Rounds group into **generations**;
 > generations group into **epochs**; an epoch is defined by its
 > **evaluation contract** (board + proposer brief + scoring +
-> inner-harness identity + the proposer itself) and by a **goal**. Change
+> system-under-test identity + the proposer itself) and by a **goal**. Change
 > the contract and the next `zicato evolve` auto-rolls a fresh epoch.
 >
 > — `AGENTS.md` §"What zicato is, in one paragraph"
@@ -60,7 +60,7 @@ reasons over.
 |---|---|---|---|
 | Single-turn refine (replan in response to drift) | **goldfive** | within one run | Orchestration scaffolding: goals, plans, per-turn drift analysis, an intervention ladder. Emits the typed `goldfive.v1.Event` stream that names *what went wrong* in a run. |
 | Operator-driven steering | **harmonograf** | within one run | The observability + HCI (Human–Computer Interaction) console: Gantt, graph, trajectory, intervention history. Renders the goldfive stream live; lets operators steer. |
-| **Inner-harness rewrites across runs** | **zicato** | **across generations** | The meta-loop: aggregates drift into **loss patterns** across many runs, proposes structured edits to the inner harness, runs tournaments, promotes the patches that reduce loss. |
+| **System-under-test rewrites across runs** | **zicato** | **across generations** | The meta-loop: aggregates drift into **loss patterns** across many runs, proposes structured edits to the system under test, runs tournaments, promotes the patches that reduce loss. |
 
 The cadence split is the load-bearing distinction. Goldfive handles "this
 run wandered, replan *this run*"; zicato handles "this *kind* of run keeps
@@ -216,8 +216,8 @@ is `EpochConfig` (`src/zicato/core/epoch.py`), persisted as
 `evolve` auto-rolls a fresh epoch (`ensure_epoch_for_contract` in
 `src/zicato/evolve/epoching.py`). Chapter 03 is entirely about this.
 
-**generation** (`v0`, `v1`, …) — one candidate snapshot of the inner
-harness's source tree; houses many board runs. Typed as `Generation`
+**generation** (`v0`, `v1`, …) — one candidate snapshot of the system
+under test's source tree; houses many board runs. Typed as `Generation`
 (`src/zicato/core/epoch.py`): id, epoch, parent, `snapshot_root`,
 `promoted` flag, and `round_index` (the evolve round that *minted* it —
 its birth round; a champion carried into later rounds keeps its birth
@@ -278,7 +278,7 @@ epoch comparable. The contract hash combines seven canonical forms:
 
 The implementation lives in `src/zicato/epoch/contract.py`
 (`ContractInputs`, `compute_contract_hash`, `compute_component_hashes`).
-The inner harness's *source content* is not part of the contract: it is
+The system under test's *source content* is not part of the contract: it is
 what zicato mutates within an epoch.
 
 **board** — the frozen set of evaluation tasks for an epoch, a JSONL
@@ -801,7 +801,7 @@ context construction, the two-callable identity rule, the answer-leak
 heuristic, the `zicato:emulator` audit lane.
 
 **`judge_runtime/`** — turns declarative `JudgeSpec`s into live goldfive
-judges (inline → LLM-as-judge on the auxiliary callable; python → dotted
+judges (inline → LLM-as-judge on the evaluation callable; python → dotted
 import).
 
 **`integrations/`** — lazy bridges to optional runtime capabilities. The
@@ -857,7 +857,7 @@ board/scoring/brief loaders (`load_current_board_with_meta`,
 owner: `workspace/config_io.py`, whose `read_workspace_config` decides where
 the file is, parses it once, and returns a typed `WorkspaceConfig` —
 `.raw` for the factories that consume the whole mapping, typed fields
-(`runtime`, `contract`, `source_roots`, `auxiliary_model`,
+(`runtime`, `contract`, `source_roots`, `evaluation_model`,
 `generation_source_backend`) for the callers that read one key. An absent
 file reads as defaults with `exists` false; a malformed one raises
 `ValueError`; a command that needs an initialized workspace adds
@@ -869,7 +869,7 @@ parses every module under `src/zicato` and fails on a second reader.
 `models_config.py`, `config.py`, `import_path.py`, `aux_timeout.py`** —
 adapter construction from `config.json`, `RuntimeConfig` construction
 (named model engines, inherited roles, `build_adk_model`), dotted-import
-resolution, the auxiliary call timeout wrapper. The common configuration is
+resolution, the evaluation call timeout wrapper. The common configuration is
 two engines: `target` supplies an optional target LLM to a model-capable
 adapter, while `evaluation` serves internal work. The target itself is
 adapter-defined and may consume no model. `judge`, `user_emulator`, `builder`,
@@ -1293,7 +1293,7 @@ block: grep the rendered prompt for every board entry id, following the
 ### G9 — The module-level-callable rule: worker callables are importable
 
 > ✅ **ALWAYS** define anything that crosses into a tournament worker —
-> harness/auxiliary/judge `call_llm` callables, adapter factories,
+> target/evaluation/judge `call_llm` callables, adapter factories,
 > scoring plugins, predicates, python-mode judges — as a module-level (or
 > class-attribute) object importable by dotted path. ⛔ **NEVER** pass a
 > closure-local callable.
@@ -1500,12 +1500,12 @@ Read, in order:
 Mistakes that have cost contributors real time. Each one has a guard in
 the code that exists because the mistake happened.
 
-> ⚠️ **TRAP — the two-callable rule.** `RuntimeConfig.harness_call_llm`
-> and `RuntimeConfig.auxiliary_call_llm` MUST be identity-distinct
-> callables. The harness callable is what the inner harness runs on; the
-> auxiliary callable drives every zicato-internal consumer (emulator,
+> ⚠️ **TRAP — the two-callable rule.** `RuntimeConfig.target_call_llm`
+> and `RuntimeConfig.evaluation_call_llm` MUST be identity-distinct
+> callables. The target callable is what the system under test runs on; the
+> evaluation callable drives every zicato-internal consumer (emulator,
 > proposer, judges, analysis). If they are the same object, the emulator
-> can collude with the inner harness through shared state. The emulator
+> can collude with the system under test through shared state. The emulator
 > therefore raises a hard error on an identity match
 > (`src/zicato/emulator/`), and `assert_distinct_callables`
 > (`src/zicato/core/workspace.py`) is the construction-site check the

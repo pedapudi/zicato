@@ -30,15 +30,15 @@ CallLLM = Callable[[str, str, str], Awaitable[str]]
 async def _regenerate_epoch_report(
     workspace_root: Path,
     epoch_id: str,
-    auxiliary_call_llm: CallLLM,
-    auxiliary_model: str,
+    evaluation_call_llm: CallLLM,
+    evaluation_model: str,
 ) -> None:
     """Refresh the epoch publication's deterministic sections — best-effort.
 
     The event-driven freshness path (``docs/design/PUBLICATION.md``): after
     each settled round the publication's data-bearing sections (masthead,
     methodology, results, validity, proposer analytics, threats) are
-    re-templated from the CURRENT workspace data WITHOUT an auxiliary-LLM
+    re-templated from the CURRENT workspace data WITHOUT an evaluation-LLM
     call — cost discipline. The existing LLM-authored prose is preserved
     verbatim; the full LLM prose render happens at epoch close. Mid-epoch
     the masthead carries the ``LIVING DRAFT — through round N`` stamp.
@@ -47,12 +47,12 @@ async def _regenerate_epoch_report(
     round, so this fires at most once per round. Digest-gated inside — a
     settled round that moved no data rewrites nothing. Strictly
     best-effort: any failure is swallowed and logged at debug level so a
-    wedge here can never abort the round or the loop. ``auxiliary_*`` are
+    wedge here can never abort the round or the loop. ``evaluation_*`` are
     accepted for call-site parity with the LLM-authoring close render (and
     so the full-render path can be swapped in per-epoch if wanted); the
     per-round refresh spends no tokens.
     """
-    del auxiliary_call_llm, auxiliary_model  # no per-round LLM call by design
+    del evaluation_call_llm, evaluation_model  # no per-round LLM call by design
     with best_effort(
         "epoch analysis report regeneration",
         on_error=lambda exc: log.debug("epoch analysis report regeneration skipped: %s", exc),

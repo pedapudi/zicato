@@ -15,7 +15,7 @@ from typing import Literal
 # Mutation surface
 # ---------------------------------------------------------------------------
 
-#: Granularity of a mutable region in the inner-harness source tree.
+#: Granularity of a mutable region in the system-under-test source tree.
 #:
 #: * ``"span"`` — a single annotated span (typically a string literal or
 #:   string-valued statement) immediately preceded by a marker comment.
@@ -39,7 +39,7 @@ MutationKind = Literal["span", "file", "code"]
 
 @dataclass(frozen=True, slots=True)
 class MutationPoint:
-    """An annotated mutable region in an inner-harness source tree.
+    """An annotated mutable region in a system-under-test source tree.
 
     Mutation points are enumerated by a ``HarnessAdapter`` and addressed
     by stable :attr:`id` from :class:`Patch` instances. The id MUST be

@@ -42,7 +42,7 @@ from zicato.core import BoardEntry, LossProfile, RuntimeConfig, ScoringWeights
 # ---------------------------------------------------------------------------
 
 
-async def _harness_call_llm(system: str, user: str, model: str) -> str:
+async def _target_call_llm(system: str, user: str, model: str) -> str:
     del system, user, model
     return ""
 
@@ -66,7 +66,7 @@ def _invoke_evolve(
         evolve_cmd,
         [
             "--harness-call-llm",
-            "tests.test_cli_config_flags:_harness_call_llm",
+            "tests.test_cli_config_flags:_target_call_llm",
             "--auxiliary-call-llm",
             "tests.test_cli_config_flags:_aux_call_llm",
             *flags,
@@ -141,7 +141,7 @@ def test_aux_call_timeout_flag_rejects_non_positive(
         evolve_cmd,
         [
             "--harness-call-llm",
-            "tests.test_cli_config_flags:_harness_call_llm",
+            "tests.test_cli_config_flags:_target_call_llm",
             "--auxiliary-call-llm",
             "tests.test_cli_config_flags:_aux_call_llm",
             "--aux-call-timeout",
@@ -208,13 +208,13 @@ def _entry(entry_id: str = "entry_a", budget_s: int = 60) -> BoardEntry:
 
 
 def _runtime_config(workspace: Path) -> RuntimeConfig:
-    from tests._subprocess_worker_support import auxiliary_call_llm, harness_call_llm
+    from tests._subprocess_worker_support import evaluation_call_llm, target_call_llm
 
     return RuntimeConfig(
         instance_id="test",
         workspace_root=workspace,
-        harness_call_llm=harness_call_llm,
-        auxiliary_call_llm=auxiliary_call_llm,
+        target_call_llm=target_call_llm,
+        evaluation_call_llm=evaluation_call_llm,
     )
 
 
@@ -271,7 +271,7 @@ def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
     """A real worker subprocess re-pins the args-file pins before running.
 
     The probe adapter records the WORKER-side ``load_config()`` view of
-    the auxiliary-call budget consumed inside the worker; it must reflect
+    the evaluation-call budget consumed inside the worker; it must reflect
     the orchestrator's flag pin, with no environment variable involved.
     """
     import os
@@ -306,8 +306,10 @@ def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
                     "kind": "import",
                     "factory": "tests._subprocess_worker_support:make_config_probe_adapter",
                 },
-                "harness_role": {"dotted": "tests._subprocess_worker_support:harness_call_llm"},
-                "auxiliary_role": {"dotted": "tests._subprocess_worker_support:auxiliary_call_llm"},
+                "target_role": {"dotted": "tests._subprocess_worker_support:target_call_llm"},
+                "evaluation_role": {
+                    "dotted": "tests._subprocess_worker_support:evaluation_call_llm"
+                },
                 "run_id": run_id_for_unit(generation.id, entry.id),
                 "sink_events_path": str(sink_path),
                 "loss_path": str(loss_path),

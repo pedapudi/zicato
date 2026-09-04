@@ -138,8 +138,8 @@ def _config(workspace: Path) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="default",
         workspace_root=workspace,
-        harness_call_llm=None,
-        auxiliary_call_llm=None,
+        target_call_llm=None,
+        evaluation_call_llm=None,
     )
 
 

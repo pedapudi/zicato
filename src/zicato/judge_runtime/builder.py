@@ -17,8 +17,8 @@ Two-callable rule
 
 Inline judges are LLM-as-a-judge: they call an LLM to decide whether a
 reasoning trace violates the criterion. The callable they use is
-zicato's *auxiliary* callable (``RuntimeConfig.auxiliary_call_llm``) —
-NOT the harness callable the inner agent runs on. The judge is a
+zicato's *evaluation* callable (``RuntimeConfig.evaluation_call_llm``) —
+NOT the target callable the inner agent runs on. The judge is a
 zicato-internal LLM consumer exactly like the emulator / proposer /
 analyzer, so it shares their endpoint and stays identity-distinct from
 the harness so a judge cannot trivially collude with the agent it
@@ -253,9 +253,9 @@ class _InlineCriterionJudge:
     Conforms to :class:`goldfive.judges.Judge` structurally: a stable
     ``name`` plus an async :meth:`evaluate`. Stateless across calls — the
     only retained state is the criterion, the severity wire string, and
-    the auxiliary callable, all fixed at construction.
+    the evaluation callable, all fixed at construction.
 
-    :meth:`evaluate` calls the auxiliary LLM with the criterion plus
+    :meth:`evaluate` calls the evaluation LLM with the criterion plus
     ``ctx.reasoning_text`` and asks whether the reasoning so far violates
     the criterion. On a violation it returns a drift-flavoured
     :class:`~goldfive.judges.JudgeVerdict`:
@@ -267,10 +267,10 @@ class _InlineCriterionJudge:
     * ``detail`` = ``"<criterion>: <one-line reason>"``
 
     On no violation — or an empty reasoning trace, or any error from the
-    auxiliary callable — it returns an empty-default verdict so the
+    evaluation callable — it returns an empty-default verdict so the
     steerer emits no :class:`JudgementEmitted` for that observation
     point (no signal == no event). The steerer additionally bounds
-    :meth:`evaluate` with its own 30s timeout, so a hung auxiliary
+    :meth:`evaluate` with its own 30s timeout, so a hung evaluation
     endpoint degrades to "no signal" rather than wedging the run.
 
     ``io_sink`` (optional, a
@@ -316,7 +316,7 @@ class _InlineCriterionJudge:
         record_judge_invocation(self.name)
         try:
             # ``model=""`` matches zicato's CallLLM contract: the
-            # concrete auxiliary callable resolves its own model. The
+            # concrete evaluation callable resolves its own model. The
             # inline judge never pins a model — routing is the
             # callable's job.
             response = await self._aux_call_llm(system, user, "")
@@ -632,11 +632,11 @@ def judge_spec_to_goldfive(
           (instantiated with no arguments), or a bare ``evaluate``
           callable. Returns a wrapper with ``name == spec.name``.
     aux_call_llm:
-        zicato's auxiliary LLM callable
-        (``RuntimeConfig.auxiliary_call_llm``) — ``(system, user, model)
+        zicato's evaluation LLM callable
+        (``RuntimeConfig.evaluation_call_llm``) — ``(system, user, model)
         -> str``. Used only by inline judges; ignored for python judges
         (their code brings its own dependencies). The two-callable rule
-        means this is NOT the harness callable.
+        means this is NOT the target callable.
     io_sink:
         Optional :class:`zicato.judge_runtime.io_capture.JudgeIOSink`.
         INLINE judges emit each evaluate call's verbatim I/O through it

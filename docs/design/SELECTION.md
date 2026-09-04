@@ -37,7 +37,7 @@ them.
 
 ## 1. The problem selection solves
 
-zicato is a meta-loop. The inner harness — a system you already have,
+zicato is a meta-loop. The system under test — a system you already have,
 typically but not necessarily a multi-agent one — is the thing under
 optimization. zicato runs it over a
 **board** of tasks, reduces the runtime telemetry to a scalar **loss**

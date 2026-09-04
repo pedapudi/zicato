@@ -84,7 +84,7 @@ def test_rubric_timeout_returns_rubric_timeout_detail() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _harness_callable(system: str, user: str, model: str) -> str:
+async def _target_callable(system: str, user: str, model: str) -> str:
     del system, user, model
     return ""
 
@@ -116,8 +116,8 @@ def test_emulator_timeout_aborts_with_emulator_timeout() -> None:
     config = RuntimeConfig(
         instance_id="t",
         workspace_root=Path("/tmp"),
-        harness_call_llm=_harness_callable,
-        auxiliary_call_llm=_hung_aux,
+        target_call_llm=_target_callable,
+        evaluation_call_llm=_hung_aux,
     )
 
     driver = EmulatedMultiTurnDriver()

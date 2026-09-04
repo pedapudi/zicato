@@ -96,7 +96,7 @@ ev.evolve_cmd.main(
         "--workspace", str(workspace),
         "--epoch", epoch_id,
         "--rounds", "1",
-        "--harness-call-llm", "llm_stubs:harness_call_llm",
+        "--harness-call-llm", "llm_stubs:target_call_llm",
         "--auxiliary-call-llm", "llm_stubs:aux_call_llm",
     ],
     standalone_mode=True,
@@ -104,7 +104,7 @@ ev.evolve_cmd.main(
 """
 
 _LLM_STUBS = """
-async def harness_call_llm(system, user, model):
+async def target_call_llm(system, user, model):
     return ""
 
 

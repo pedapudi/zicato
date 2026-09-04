@@ -78,8 +78,8 @@ RECORDED_RUNTIME_KNOBS: tuple[str, ...] = (
 #: the config silently.
 UNRECORDED_RUNTIME_FIELDS: Mapping[str, str] = {
     "workspace_root": "the path the run was invoked against, not a tuned knob",
-    "harness_call_llm": "a resolved callable; the dotted path is a models-block setting",
-    "auxiliary_call_llm": "a resolved callable; the dotted path is a models-block setting",
+    "target_call_llm": "a resolved callable; the dotted path is a models-block setting",
+    "evaluation_call_llm": "a resolved callable; the dotted path is a models-block setting",
     "judge_call_llm": "a resolved callable, set by the models block",
     "adjudicator_call_llm": "a resolved callable, set by the models block",
     "user_emulator_call_llm": "a resolved callable, set by the models block",
@@ -89,7 +89,7 @@ UNRECORDED_RUNTIME_FIELDS: Mapping[str, str] = {
     "proposer_breadth_model": "a model name, set by the models block",
     "proposer_depth_model": "a model name, set by the models block",
     "proposer_model": "a model name, set by the models block",
-    "inner_model": "a live model object built from the models block",
+    "target_model": "a live model object built from the models block",
     "token_ledger": "a per-round tally minted at run time, not configuration",
     "judge_io_sink": "a live sink object the worker binds, not configuration",
     "goldfive": "contract settings recorded in the epoch's scoring.json",

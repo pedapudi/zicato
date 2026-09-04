@@ -1,7 +1,7 @@
 # Telemetry
 
 zicato consumes telemetry, it does not produce a new wire format. Every
-run of the inner harness emits a `goldfive.v1.Event` stream that
+run of the system under test emits a `goldfive.v1.Event` stream that
 zicato captures verbatim through goldfive's own
 `JSONLPersistenceSink`, then reduces post-run into a typed
 `LossProfile`. The JSONL file is the canonical record; the
@@ -69,7 +69,7 @@ For every run (one entry, one generation), zicato:
    adapter's equivalent):
 
    ```python
-   await goldfive.run(inner_harness, board_entry.input, sinks=sinks)
+   await goldfive.run(system_under_test, board_entry.input, sinks=sinks)
    ```
 
 3. Awaits the terminal event (`RunCompleted` or `RunAborted`).
@@ -118,7 +118,7 @@ single console shows every timeline:
   index's `runs` table keys on. The parent and child generations each
   produce their own run, hence their own session, for the same entry.
 - **The meta-loop session.** The orchestrator's own goldfive
-  events — the proposer's auxiliary LLM call and the in-process
+  events — the proposer's evaluation LLM call and the in-process
   process-judge calls (e.g. the decision-telemetry analyzer's insight
   call) — are conceptually a distinct session from any board run.
   They are bucketed under one stable id per evolve invocation,
@@ -456,7 +456,7 @@ zicato-level computations rather than new goldfive drift kinds.
 ### 4.1 Turn boundaries
 
 The reducer identifies turn boundaries by looking for the agent's
-top-level `AgentInvocationStarted` events on the inner-harness lane.
+top-level `AgentInvocationStarted` events on the system-under-test lane.
 Each pair `(AgentInvocationStarted, AgentInvocationCompleted)` brackets
 one agent turn; events emitted between them are bucketed to that turn.
 
@@ -495,7 +495,7 @@ The emulator lane is **not** a new wire format. It uses goldfive's
 existing `GoldfiveLLMCallStart` / `GoldfiveLLMCallEnd` proto messages.
 The convention is that the lane name is the discriminator: anything
 emitted on `zicato:emulator` is the emulator's work, anything emitted
-on the inner-harness lane is the agent's work.
+on the system-under-test lane is the agent's work.
 
 The audit-trail span shape is specified in
 [EMULATOR.md](EMULATOR.md).
@@ -549,10 +549,10 @@ epoch they accumulate.
 
 The JSONL file is the canonical record. Given the same:
 
-- Inner harness source (a generation snapshot)
+- System under test source (a generation snapshot)
 - Board entry
-- `harness_call_llm` callable behaviour
-- `auxiliary_call_llm` callable behaviour (for multi-turn emulated)
+- `target_call_llm` callable behaviour
+- `evaluation_call_llm` callable behaviour (for multi-turn emulated)
 
 … two runs *should* produce similar JSONL. They won't be byte-equal —
 LLM calls are usually non-deterministic — but the drift counts should

@@ -252,8 +252,8 @@ def _run_one_round(workspace: Path, epoch_id: str) -> list:
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=t0_mocks.harness_llm,
-            auxiliary_call_llm=t0_mocks.aux_llm,
+            target_call_llm=t0_mocks.target_llm,
+            evaluation_call_llm=t0_mocks.aux_llm,
             auto_epoch=False,
             fast_mode=True,
         )

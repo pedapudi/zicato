@@ -26,7 +26,7 @@ Only the mechanical recombination slot can realise the union: the
 scripted proposer knows only the two single fixes. Round 3's last
 best-of-N slot mints the union (patches A + B, disjoint), the selection
 short-circuit chooses it (``selection_mode="recombined"``), and the
-unchanged gate promotes it — with EXACTLY n−1 auxiliary propose calls in
+unchanged gate promotes it — with EXACTLY n−1 evaluation propose calls in
 the minting round (cost-neutrality: the mint REPLACES the slot's call).
 
 The STALL CONTROL runs the identical script with ``recombine`` OFF: the
@@ -92,7 +92,7 @@ PROMOTE_MARGIN = 1.5
 DEDUP_MARGIN = 3.0
 
 #: The OC contract's slate width. The mint replaces the LAST slot, so the
-#: minting round spends exactly ``BEST_OF_N - 1`` auxiliary propose calls.
+#: minting round spends exactly ``BEST_OF_N - 1`` evaluation propose calls.
 BEST_OF_N = 2
 
 
@@ -169,8 +169,8 @@ def _run_rounds(
             rounds=rounds,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=t0_mocks.harness_llm,
-            auxiliary_call_llm=t0_mocks.aux_llm,
+            target_call_llm=t0_mocks.target_llm,
+            evaluation_call_llm=t0_mocks.aux_llm,
             auto_epoch=False,
             max_consecutive_rejections=max_consecutive_rejections,
         )

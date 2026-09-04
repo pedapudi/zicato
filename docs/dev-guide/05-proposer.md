@@ -259,7 +259,7 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `brief_text` | `str` | orchestrator: `load_brief(brief.md).text` | `instruction_sections` → the episode's `70-brief` section (spliced verbatim) | IDENTITY-FREE (operator-authored) |
 | `current_loss_summary` | `str` | orchestrator: `_render_loss_summary(TRAIN losses)` — one line: `drift_loss_mean=… over N runs, pass_rate=…` | user prompt `## Current loss summary` | AGGREGATED (board-wide means only; train-only) |
 | `aux_call_llm` | `(system, user, model) -> Awaitable[str]` | orchestrator from `RuntimeConfig` | the best-of-N **critic** and the LLM recombination merge. NEVER the proposal episode | MACHINERY |
-| `model` | `str = ""` | orchestrator: `workspace_config["auxiliary_model"]` | forwarded to `aux_call_llm`; the collusion smell-test. NOT the episode's model, which the `proposer` block names | MACHINERY |
+| `model` | `str = ""` | orchestrator: `workspace_config["evaluation_model"]` | forwarded to `aux_call_llm`; the collusion smell-test. NOT the episode's model, which the `proposer` block names | MACHINERY |
 | `max_retries` | `int = 2` | orchestrator (`max_proposer_retries`) | the episode's `verify_retries`: how many turns of verifier findings it gets before ending blocked | MACHINERY |
 | `forbidden_ids` | `tuple[str, ...] = ()` | orchestrator: `brief.forbidden_ids` (parsed from `# Forbidden edits` bullets) | `enforce_forbidden` after the episode; re-checked post-propose by `check_patch_manifest_and_forbidden` | IDENTITY-FREE |
 | `workspace_root` | `Path \| None = None` | orchestrator | the host tools' context root; where the episode log and the input capture land; `None` ⇒ the capture is a no-op | MACHINERY |
@@ -482,7 +482,7 @@ should crash an evolve loop; if one does, that is the bug.
 | `multi-challenger field: proposer could not produce a valid challenger for …; the field runs without it` (WARNING) | one field slot exhausted its budget; the strategy resolves over a narrower field; the dashboard shows the slot `rejected` with full `attempt_reasons` | `_propose_and_apply_challenger` |
 | `candidate screen failed (…); selecting unscreened` (DEBUG) | the guarded screen degrade — runner raised or returned a malformed result; selection proceeded byte-identically to an unscreened round | §5.6.2 clause 3 |
 | `screen-informed revise produced no replacement (…); degrading to critic-over-all` (DEBUG) | the `"unavailable"` revise outcome; nothing to restore — the failed revise wrote only its own scratch tree | §5.6.4 |
-| `proposer agent model '…' equals the auxiliary model string; …` (WARNING) | the collusion smell test — advisory, operator responsibility | §5.1 |
+| `proposer agent model '…' equals the evaluation model string; …` (WARNING) | the collusion smell test — advisory, operator responsibility | §5.1 |
 | `prior_experiments_for_epoch skipped for …` / `mutation_point_track_record skipped …` (DEBUG) | best-effort index reads degraded; the prompt omits the section / manifest renders unannotated | §5.10.1 |
 | `process-exemplar extraction skipped: …` (DEBUG) | the opt-in exemplar channel failed best-effort; prompt renders without the section | §5.8.3 |
 
@@ -1432,7 +1432,7 @@ unchanged. The `tests/test_recombination_known_answer.py` starved-heuristic
 test documents the failing alternative (heuristic-selection ⇒ the union never
 wins).
 
-**Cost-neutral.** The mint REPLACES the slot's auxiliary propose call — a
+**Cost-neutral.** The mint REPLACES the slot's evaluation propose call — a
 recombining round spends `best_of_n − 1` propose calls, NEVER more. The cost
 meter is untouched; `estimate_cost`'s best-of-N line carries one sentence
 noting this upper-bound (`src/zicato/contract_draft/operations.py`), and no `CostLine`
@@ -1465,7 +1465,7 @@ filter), so this closes the holdout-leak and preserves context-is-the-envelope.
 **Merge modes — `mechanical` (default) vs `llm`.**
 `proposer_quality.recombine_merge` chooses HOW the slot composes the union
 (design: PROPOSER.md §2.6.1; omit-at-default, `"llm"` rolls). `"mechanical"` is
-everything above. `"llm"` instead issues ONE auxiliary merge call — the DEPTH
+everything above. `"llm"` instead issues ONE evaluation merge call — the DEPTH
 refinement role (`BestOfNProposerAgent._depth_call_llm`, exactly as the
 self-critique call), so it SUBSTITUTES the slot's own sample call (cost:
 `best_of_n` calls, the same as a recombine-off round, rather than `n−1`). The merge prompt

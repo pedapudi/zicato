@@ -14,8 +14,8 @@ import pytest
 
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
-    harness_call_llm,
     make_aux_responder,
+    target_call_llm,
 )
 from zicato.core.types import (
     BoardEntry,
@@ -204,8 +204,8 @@ def test_evolve_n_rounds_writes_heartbeat_and_releases_lock(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             instance_id="hb-test",
         )
     )
@@ -251,8 +251,8 @@ def test_evolve_n_rounds_advances_progress_seq_and_marks_terminal(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             instance_id="seq-test",
         )
     )
@@ -283,8 +283,8 @@ def test_evolve_n_rounds_advances_progress_seq_and_marks_terminal(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             instance_id="seq-test",
         )
     )
@@ -331,8 +331,8 @@ def test_evolve_n_rounds_refuses_when_workspace_locked(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=epoch_id,
-                harness_call_llm=harness_call_llm,
-                auxiliary_call_llm=make_aux_responder([]),
+                target_call_llm=target_call_llm,
+                evaluation_call_llm=make_aux_responder([]),
                 instance_id="hb-test",
             )
         )

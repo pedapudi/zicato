@@ -27,8 +27,8 @@ Submodules
   :class:`~zicato.core.ExpectationKind` matchers, returning a uniform
   :class:`~zicato.core.ExpectationResult`.
 * :mod:`zicato.board.scripted` — driver that walks a
-  ``multi_turn_scripted`` entry's scripted user turns against an inner
-  harness and accumulates a :class:`~zicato.core.RunResult`.
+  ``multi_turn_scripted`` entry's scripted user turns against an system
+  under test and accumulates a :class:`~zicato.core.RunResult`.
 * :mod:`zicato.board.builder` — programmatic :class:`Board` + :class:`Entry`
   builder API for assembling boards in Python.
 * :mod:`zicato.board.predicates` — :class:`Predicate` / :class:`Rubric`

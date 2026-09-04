@@ -14,7 +14,7 @@ this file.
 
 zicato is a **meta-harness** for any system whose behaviour you can
 measure. It takes a system you have already built, declares part of its
-source tree mutable, and turns it into the *inner harness* of a learning
+source tree mutable, and turns it into the *system under test* of a learning
 loop.
 
 Multi-agent systems are the founding and primary use case — a coordinator
@@ -51,16 +51,16 @@ integration. The other end of the range is goldfive itself: a library,
 mutated with the adapter driver outside every mutable tree (see
 [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)).
 
-Across many runs of that inner harness, zicato:
+Across many runs of that system under test, zicato:
 
 1. Captures structured runtime telemetry (the `goldfive.v1.Event`
-   stream the inner harness emits).
+   stream the system under test emits).
 2. Reduces that telemetry to a typed **loss profile** per run.
 3. Aggregates loss profiles across runs into **patterns** — recurring
    shapes of failure (e.g. "the research specialist keeps hallucinating
    sources when the question is short", "the coordinator delegates to
    the writer before the researcher has reported").
-4. Proposes typed **patches** to the inner harness's annotated mutation
+4. Proposes typed **patches** to the system under test's annotated mutation
    surface (specialist instructions, coordinator routing strings, tool
    descriptions, planner templates, judge prompts — never free-form
    source edits).
@@ -98,8 +98,8 @@ property rots.
 
 The extra buys three things:
 
-* the ADK adapter path, where `zicato.adapters.adk` wraps the inner
-  harness in `goldfive.wrap`;
+* the ADK adapter path, where `zicato.adapters.adk` wraps the system
+  under test in `goldfive.wrap`;
 * the in-run process judges — a board's `judges` are handed to goldfive
   as additional judges, and without the extra they are inert;
 * the default `goldfive` telemetry dialect, the only dialect that yields
@@ -162,11 +162,11 @@ The three libraries have non-overlapping cadences:
 |---|---|---|
 | goldfive | within one run | the live plan (refine on drift, intervene at Level 0-5) |
 | harmonograf | within one run | the operator's view (steer, pause, cancel; annotate) |
-| **zicato** | **across generations** | **the inner harness's source** (rewrite annotated spans, run tournaments) |
+| **zicato** | **across generations** | **the system under test's source** (rewrite annotated spans, run tournaments) |
 
 Keeping zicato a separate library keeps the cadence clean. goldfive
 must never reach across runs; harmonograf must never reach into the
-inner harness's source. zicato is the only thing that does either.
+system under test's source. zicato is the only thing that does either.
 
 ### What zicato is *not*
 
@@ -176,7 +176,7 @@ inner harness's source. zicato is the only thing that does either.
 - Not an LLM client. It calls models only through a caller-supplied
   `call_llm(system: str, user: str, model: str) -> str` callable. The
   core never imports a vendor SDK.
-- Not framework-coupled. The inner harness can be anything that exposes
+- Not framework-coupled. The system under test can be anything that exposes
   a `HarnessAdapter`. Google ADK is the only adapter implemented in the
   tree (`zicato/adapters/adk.py`); any other harness is registered
   through the generic `adapter.kind = "import"` shape, which resolves a
@@ -186,7 +186,7 @@ inner harness's source. zicato is the only thing that does either.
   between runs.
 - Not a single-file editor. The mutation surface is annotated and
   granular — a string span, a bracketed region, or at most a whole file
-  marked mutable. zicato never rewrites the inner harness's tree at
+  marked mutable. zicato never rewrites the system under test's tree at
   large, and an unmarked file is immutable whatever its type.
 
 ## 2. The meta-loop, end to end
@@ -213,7 +213,7 @@ inner harness's source. zicato is the only thing that does either.
    │                       zicato meta-loop                  │               │
    │                       (orchestrator)                    │               │
    │   ┌──────────────┐    ┌───────────────────────────────┐ │               │
-   │   │  Board       │    │  Inner harness (HarnessAdapter)│ │               │
+   │   │  Board       │    │  System under test (HarnessAdapter)│ │               │
    │   │ (.jsonl,     │    │                                │ │               │
    │   │  frozen      │    │   any system under test        │ │               │
    │   │  per epoch)  │    │   exposing:                    │ │               │
@@ -248,7 +248,7 @@ inner harness's source. zicato is the only thing that does either.
    │                        ▼                                        │
    │              ┌────────────────────┐                             │
    │              │  Patch proposer    │  reads patterns + brief     │
-   │              │  (auxiliary LLM)   │  emits Experiment           │
+   │              │  (evaluation LLM)   │  emits Experiment           │
    │              │                    │   = hypothesis + patches    │
    │              └─────────┬──────────┘                             │
    │                        │                                        │
@@ -300,7 +300,7 @@ zicato runs while a single run is in flight.
 
 | Property | goldfive | harmonograf | zicato |
 |---|---|---|---|
-| Acts on | live plan / live agent invocation | live UI + control channel | inner-harness source code |
+| Acts on | live plan / live agent invocation | live UI + control channel | system-under-test source code |
 | Unit of work | one turn | one operator action | one **round** (parent vs candidate over a board) |
 | Per-run? | yes, every turn | yes, every annotation | no — between runs only |
 | Cross-run? | no | no (per-session views aside) | yes; aggregating across runs is its purpose |
@@ -324,7 +324,7 @@ topic-specific documents that each section links.
 
 **Responsibility.** The narrow protocol that decouples zicato from any
 specific harness framework. The adapter implementer is the
-inner-harness author; zicato treats the adapter as the only handle on
+system-under-test author; zicato treats the adapter as the only handle on
 the system under test.
 
 **Consumes.** A registration. For example, `zicato epoch register --adk
@@ -336,9 +336,9 @@ annotations.
 **Produces.** Two pieces of behaviour:
 
 - `async run_entry(entry: BoardEntry, *, sinks: list[EventSink]) -> RunResult`
-  — exercises the inner harness against one board entry, with the
+  — exercises the system under test against one board entry, with the
   caller-supplied sinks attached. The adapter is responsible for
-  wrapping the inner harness in `goldfive.wrap` (or
+  wrapping the system under test in `goldfive.wrap` (or
   `harmonograf_client.observe(goldfive.wrap(...))` when the operator
   wants harmonograf live), driving the entry's input (single-turn) or
   conversation (multi-turn scripted / emulated), and returning a typed
@@ -359,7 +359,7 @@ annotations.
   terminal event (`RunCompleted` or `RunAborted`) per entry. The
   zicato runner relies on this to bound the JSONL file per entry.
 - The adapter MUST exhaust the entry's `wall_clock_budget_seconds` on
-  itself — if the inner harness runs over budget, the adapter aborts
+  itself — if the system under test runs over budget, the adapter aborts
   the inner work and emits `RunAborted(reason="wall_clock_budget")`.
 - The adapter MAY attach additional sinks for its own use (logging,
   in-process accumulators) but MUST NOT modify the sinks zicato
@@ -439,8 +439,8 @@ the polling latency and the second bookkeeping store. See
 
 ### 4.2 Board
 
-**Responsibility.** The frozen-per-epoch list of tasks the inner
-harness is evaluated against. One JSONL file at
+**Responsibility.** The frozen-per-epoch list of tasks the system
+under test is evaluated against. One JSONL file at
 `.zicato/epochs/{epoch}/board.jsonl`. One entry per line.
 
 **Consumes.** Operator authoring (`zicato board add ...`,
@@ -467,9 +467,9 @@ documented in [BOARD-FORMAT.md](BOARD-FORMAT.md) and
 `adapter.run_entry(entry, sinks=[the_sink, ...])`, awaits the terminal
 event, and closes the sink.
 
-**Consumes.** A `Generation` snapshot of the inner-harness source, a
+**Consumes.** A `Generation` snapshot of the system-under-test source, a
 `BoardEntry`, the two configured `call_llm` callables
-(`harness_call_llm` and `auxiliary_call_llm` — see §4.10).
+(`target_call_llm` and `evaluation_call_llm` — see §4.10).
 
 **Produces.** A path to the just-written `events.jsonl`. Nothing more —
 the runner stays minimal, and loss computation happens in a
@@ -487,7 +487,7 @@ separate reducer step.
 
 ### 4.4 Telemetry capture (no zicato-specific sink)
 
-**Responsibility.** Persist the inner harness's `goldfive.v1.Event`
+**Responsibility.** Persist the system under test's `goldfive.v1.Event`
 stream verbatim. This is goldfive's job; zicato uses goldfive's
 `JSONLPersistenceSink` as-is. There is no zicato-specific EventSink
 primitive — the JSONL file is the wire-canonical record.
@@ -571,7 +571,7 @@ Pattern kinds intentionally lift goldfive's drift taxonomy as features
 
 #### 4.6.1 Pluggable judges: the goldfive integration
 
-A board entry evaluates the inner harness along two facets (see
+A board entry evaluates the system under test along two facets (see
 [BOARD-FORMAT.md](BOARD-FORMAT.md) and
 [BOARD-AUTHORING.md](BOARD-AUTHORING.md)):
 
@@ -597,7 +597,7 @@ set per board entry without forking goldfive's detector code:
   for prose. The callable lives in the project's source.
 
 zicato hands the entry's `judges` to goldfive as additional judges
-when it wraps the inner harness for a run; goldfive evaluates them
+when it wraps the system under test for a run; goldfive evaluates them
 alongside its built-ins.
 
 goldfive dispatches custom judges at *reasoning* observation points,
@@ -683,8 +683,8 @@ hypothesis plus the patches that test it.
   build on known wins, turning the memoryless hill-climb into a search
   that remembers what it already tried. Advisory context, scoped to
   the current contract; see [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
-- The `auxiliary_call_llm` (distinct by identity or model from
-  `harness_call_llm` — see §4.10).
+- The `evaluation_call_llm` (distinct by identity or model from
+  `target_call_llm` — see §4.10).
 
 **Produces.** An `Experiment`:
 
@@ -775,9 +775,9 @@ The full scalar, weights, and gate are in [SCORING.md](SCORING.md).
 
 zicato is configured with **two** distinct `call_llm` callables:
 
-- `harness_call_llm` — used by the inner harness only (passed through
+- `target_call_llm` — used by the system under test only (passed through
   `goldfive.wrap`'s `call_llm=` parameter; reaches the agent code).
-- `auxiliary_call_llm` — used by everything zicato itself runs:
+- `evaluation_call_llm` — used by everything zicato itself runs:
   the patch proposer, the analysis pass, the multi-turn user emulator,
   and the LLM grader behind any `rubric`-kind outcome check.
 
@@ -889,7 +889,7 @@ analyzable, without the operator hand-writing the prose.
 
 **Per-epoch close:**
 
-- `analysis.md` is generated by an `auxiliary_call_llm` pass over the
+- `analysis.md` is generated by an `evaluation_call_llm` pass over the
   full journal: headline movements, which hypotheses held, which did
   not, what surface is still open, recommended focus for the next
   epoch.
@@ -923,7 +923,7 @@ automatically.
 
 | Subcommand | What it does |
 |---|---|
-| `zicato epoch register --adk path:agent --mutable-tree <path>` | Register an inner harness via an adapter. |
+| `zicato epoch register --adk path:agent --mutable-tree <path>` | Register a system under test via an adapter. |
 | `zicato board add/list/remove` | Edit the current epoch's board by hand. |
 | `zicato inspect mutations` | Audit the current mutation surface — every span, every file marker. |
 | `zicato proposer propose` | Run the proposer; emit one `Experiment`. |
@@ -1072,7 +1072,7 @@ its gate-view match what the parent would have computed in-process.
 ## 6. Storage layout
 
 zicato keeps everything under a per-project workspace, by default
-`.zicato/` next to the inner harness's source root. A deployment
+`.zicato/` next to the system under test's source root. A deployment
 that runs several zicato instances at once — one zicato evolving a
 nested zicato, for instance — keys each workspace by an `instance_id`
 configured at runtime, so workspaces never cross-talk.
@@ -1087,7 +1087,7 @@ configured at runtime, so workspaces never cross-talk.
       scoring.json                 # weights + tournament thresholds
       generations/
         v0/
-          snapshot/                # inner-harness source at this generation
+          snapshot/                # system-under-test source at this generation
           experiment.json          # absent for v0 (the baseline)
           runs/
             {entry_id}/

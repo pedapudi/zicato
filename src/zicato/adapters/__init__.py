@@ -1,7 +1,7 @@
-"""zicato.adapters — pluggable inner-harness adapters.
+"""zicato.adapters — pluggable system-under-test adapters.
 
 A :class:`HarnessAdapter` abstracts "how do we run one generation of the
-inner harness against one :class:`~zicato.core.BoardEntry`?" so non-ADK
+system under test against one :class:`~zicato.core.BoardEntry`?" so non-ADK
 runtimes (langchain, plain callables, future frameworks) can plug into
 the same runner / tournament / journal infrastructure without
 touching shared modules.

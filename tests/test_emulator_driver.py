@@ -1,6 +1,6 @@
 """End-to-end tests for :class:`EmulatedMultiTurnDriver`.
 
-These tests exercise the driver with stubbed ``auxiliary_call_llm`` and
+These tests exercise the driver with stubbed ``evaluation_call_llm`` and
 ``run_harness_turn`` callables — no real LLMs. The goal is to pin:
 
 * The two-callable check fires on shared identity.
@@ -80,16 +80,16 @@ def _make_canned_harness(
     return harness
 
 
-async def _unused_harness_llm(system: str, user: str, model: str) -> str:
-    raise AssertionError("harness_call_llm should not be invoked by the driver")
+async def _unused_target_llm(system: str, user: str, model: str) -> str:
+    raise AssertionError("target_call_llm should not be invoked by the driver")
 
 
 def _config(aux: Callable[[str, str, str], Awaitable[str]]) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=Path("/tmp/zicato-test"),
-        harness_call_llm=_unused_harness_llm,
-        auxiliary_call_llm=aux,
+        target_call_llm=_unused_target_llm,
+        evaluation_call_llm=aux,
     )
 
 
@@ -103,8 +103,8 @@ async def test_drive_raises_on_shared_callable() -> None:
     config = RuntimeConfig(
         instance_id="test",
         workspace_root=Path("/tmp/zicato-test"),
-        harness_call_llm=shared,  # type: ignore[arg-type]
-        auxiliary_call_llm=shared,
+        target_call_llm=shared,  # type: ignore[arg-type]
+        evaluation_call_llm=shared,
     )
     driver = EmulatedMultiTurnDriver()
     with pytest.raises(EmulationCollusionError):
@@ -152,8 +152,8 @@ async def test_drive_uses_dedicated_user_emulator_callable() -> None:
     config = RuntimeConfig(
         instance_id="test",
         workspace_root=Path("/tmp/zicato-test"),
-        harness_call_llm=_unused_harness_llm,
-        auxiliary_call_llm=evaluation,
+        target_call_llm=_unused_target_llm,
+        evaluation_call_llm=evaluation,
         user_emulator_call_llm=emulator,
     )
     result = await EmulatedMultiTurnDriver().drive(

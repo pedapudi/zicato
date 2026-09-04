@@ -248,8 +248,8 @@ def _config_seq(tmp_path: Path) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=aux_call,
+        target_call_llm=harness_call,
+        evaluation_call_llm=aux_call,
         parallelism=1,
     )
 
@@ -388,8 +388,8 @@ def _config_par(tmp_path: Path, parallelism: int) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=aux_call,
+        target_call_llm=harness_call,
+        evaluation_call_llm=aux_call,
         parallelism=parallelism,
     )
 

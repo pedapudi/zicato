@@ -370,11 +370,11 @@ workspace rather than scripting turns:
 | `refuse` | reports a block instead of proposing at all |
 | `contents` | writes an exact literal body per candidate (or per `<candidate>#<slot>`), which is what the known-answer harnesses script |
 
-> ⚠️ TRAP — a proposal is an EPISODE rather than an auxiliary call. A test that
+> ⚠️ TRAP — a proposal is an EPISODE rather than an evaluation call. A test that
 > counts proposer spend counts episodes in the workspace's own durable
 > capture (`read_proposer_inputs`, filtered to `ROLE_PROPOSAL`), never
 > calls into a mock; a test that asserts on what the model saw reads the
-> `user` of that same record, never a patched renderer. The auxiliary
+> `user` of that same record, never a patched renderer. The evaluation
 > callable still serves the critique, the recombination merge and the
 > analyzer, so `make_aux_responder([])` is the ordinary spelling for a
 > round that needs none of those.

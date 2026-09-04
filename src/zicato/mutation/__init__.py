@@ -1,4 +1,4 @@
-"""zicato.mutation — annotation-driven mutation surface for inner harnesses.
+"""zicato.mutation — annotation-driven mutation surface for systems under test.
 
 The mutation package implements the operator-facing contract described in
 ``docs/design/MUTATION-SURFACE.md``. A source tree is annotated with

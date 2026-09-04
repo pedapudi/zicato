@@ -8,7 +8,7 @@ Design rules encoded here:
 
 * **Pure queries.** Functions open the index, run SQL, and project rows
   into frozen, JSON-serialisable dataclasses. They never mutate the db
-  and never run an inner-harness pass.
+  and never run a system-under-test pass.
 * **Partial-data tolerance.** A generation may have no resolved outcome,
   a run may be missing its ``loss_profiles`` row, an experiment row may
   carry a ``NULL`` ``outcome_json``. Every function degrades gracefully:

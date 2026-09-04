@@ -31,11 +31,11 @@ import pytest
 
 from tests._orchestrator_harness import (
     bootstrap_workspace,
-    harness_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
+    target_call_llm,
 )
 from zicato.core import DriftCount, ExpectationResult, LossProfile, MetricCount, ScoringWeights
 from zicato.epoch.pareto import (
@@ -1247,8 +1247,8 @@ def test_a_promotion_retires_a_newly_dominated_member_end_to_end(
             rounds=2,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             max_consecutive_rejections=3,
         )
     )

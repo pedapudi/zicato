@@ -64,14 +64,14 @@ def _config(*, parallelism: int, token_ledger: RoundTokenLedger | None = None) -
     async def _harness(system: str, user: str, model: str) -> str:
         return ""
 
-    async def _auxiliary(system: str, user: str, model: str) -> str:
+    async def _evaluation(system: str, user: str, model: str) -> str:
         return ""
 
     return RuntimeConfig(
         instance_id="t",
         workspace_root=Path("/nonexistent"),
-        harness_call_llm=_harness,
-        auxiliary_call_llm=_auxiliary,
+        target_call_llm=_harness,
+        evaluation_call_llm=_evaluation,
         parallelism=parallelism,
         token_ledger=token_ledger,
     )

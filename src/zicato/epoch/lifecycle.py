@@ -453,7 +453,7 @@ def new_epoch(
     ``contract`` is the workspace's live contract as
     :func:`zicato.epoch.contract.resolve_contract_inputs` resolved it.
     Pass it and the epoch freezes EVERY registered component — the
-    inner-harness identity, the proposer dir, the external proposer, the
+    system-under-test identity, the proposer dir, the external proposer, the
     proposer's static checks — with its three file paths re-pointed at
     the copies frozen above, so the stored hash is exactly the hash the
     orchestrator recomputes from the live contract on the next
@@ -675,7 +675,7 @@ def _write_stub_analysis(workspace_root: Path, epoch_id: str, out_path: Path) ->
         journal_content = jpath.read_text() if jpath.exists() else "(no journal entries)"
         out_path.write_text(
             f"# Epoch analysis: {epoch_id}\n\n"
-            "_No auxiliary LLM was supplied at close; this is a stub. "
+            "_No evaluation LLM was supplied at close; this is a stub. "
             "Re-run `zicato epoch close` with an `aux_call_llm` configured "
             "to regenerate._\n\n"
             "## Journal snapshot\n\n"
@@ -710,7 +710,7 @@ def close_epoch(
     # leave a placeholder so callers see a non-empty file — the analysis
     # pass is rerunnable. Either path also writes the sibling
     # ``analysis.html`` so the HTML report stays available when
-    # operators close an epoch without an auxiliary LLM (e.g. the smoke
+    # operators close an epoch without an evaluation LLM (e.g. the smoke
     # test).
     if aux_call_llm is not None:
         from zicato.epoch import analysis as _analysis

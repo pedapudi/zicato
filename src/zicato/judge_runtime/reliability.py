@@ -20,7 +20,7 @@ The ``aux_call_llm`` parameter is **the endpoint seam**: it is zicato's
 standard ``CallLLM`` callable ``(system, user, model) -> str``, exactly
 what :meth:`zicato.core.RuntimeConfig.effective_judge_call_llm` returns.
 Tests script it (a deterministic or flip-flopping double); a REAL
-auxiliary endpoint slots in unchanged later (endpoint-gated — this
+evaluation endpoint slots in unchanged later (endpoint-gated — this
 module never chooses or contacts an endpoint itself).
 
 Disagreement is scored pairwise (:func:`pairwise_disagreement`): the
@@ -193,7 +193,7 @@ async def test_retest(
         judge's own.
     aux_call_llm:
         The judge endpoint callable, zicato's ``CallLLM`` shape. Scripted
-        in tests; a real auxiliary endpoint
+        in tests; a real evaluation endpoint
         (:meth:`RuntimeConfig.effective_judge_call_llm`) slots in
         unchanged.
     k:

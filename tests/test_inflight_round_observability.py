@@ -43,10 +43,10 @@ import pytest
 # Reuse the fully-mocked harness from the gauntlet orchestrator tests.
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
-    harness_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
     run_evolve_once,
+    target_call_llm,
 )
 from zicato.core.types import ScoringWeights, TournamentStructure
 from zicato.epoch.lifecycle import new_epoch
@@ -240,8 +240,8 @@ def test_birth_round_index_stamped_per_round_end_to_end(
             rounds=2,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_infinite_proposer_responder(),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_infinite_proposer_responder(),
             auto_epoch=False,
         )
     )
@@ -348,8 +348,8 @@ def test_inflight_round_visible_in_every_store_before_settle(
             rounds=2,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=_infinite_proposer_responder(),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=_infinite_proposer_responder(),
             auto_epoch=False,
         )
     )

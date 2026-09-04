@@ -1,6 +1,6 @@
 """At-epoch-close analysis pass.
 
-Generates ``analysis.md`` for an epoch by handing the auxiliary LLM:
+Generates ``analysis.md`` for an epoch by handing the evaluation LLM:
 
 * the running ``journal.md``,
 * every ``experiment.json`` written under the epoch's ``generations/``,
@@ -49,7 +49,7 @@ from zicato.epoch.journal import experiment_body, read_epoch_experiments
 from zicato.epoch.lineage import load_lineage
 from zicato.workspace import ScalarStep, WorkspaceLayout, cumulative_scalars, generation_ids
 
-# A goldfive-compatible auxiliary call_llm.
+# A goldfive-compatible evaluation call_llm.
 _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
 
 REQUIRED_SECTIONS: tuple[str, ...] = (
@@ -1064,8 +1064,8 @@ async def generate_analysis(
     """Run the analysis pass and write ``analysis.md``.
 
     Returns the path to the written file. The caller is responsible for
-    arranging that ``aux_call_llm`` is the AUXILIARY callable (not the
-    inner-harness one) — see :class:`RuntimeConfig` and
+    arranging that ``aux_call_llm`` is the EVALUATION callable (not the
+    target one) — see :class:`RuntimeConfig` and
     :func:`assert_distinct_callables` for the collusion guard.
 
     The function is async because the LLM call is. Callers in synchronous

@@ -247,8 +247,8 @@ class BoardEntry:
     """One entry in an evaluation board.
 
     A board is a JSONL file of :class:`BoardEntry` rows; an entry is a
-    single executable evaluation under some generation of the inner
-    harness. Entries are kind-discriminated: the same dataclass carries
+    single executable evaluation under some generation of the system
+    under test. Entries are kind-discriminated: the same dataclass carries
     every kind's discriminant fields as optional attributes, and
     :meth:`validate` (or the free function :func:`validate_board_entry`
     when parsing from JSON) enforces that the right combination is set

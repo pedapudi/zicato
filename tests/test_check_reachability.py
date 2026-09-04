@@ -71,16 +71,16 @@ def _probe(models: ModelsConfig, build, **kwargs) -> tuple[reachability.RoleProb
 
 
 def test_a_role_that_answers_with_a_string_is_reachable() -> None:
-    probes = _probe(ModelsConfig(harness=_KEYED), _answering())
-    assert [(p.role, p.ok, p.engine) for p in probes] == [("harness", True, "keyed-model")]
+    probes = _probe(ModelsConfig(target=_KEYED), _answering())
+    assert [(p.role, p.ok, p.engine) for p in probes] == [("target", True, "keyed-model")]
     assert probes[0].error == ""
 
 
 def test_a_rejected_credential_fails_only_its_own_role() -> None:
     """The point of per-role reporting: one dead role names itself."""
-    models = ModelsConfig(harness=_KEYED, judge=_KEYLESS)
+    models = ModelsConfig(target=_KEYED, judge=_KEYLESS)
     probes = _probe(models, _per_role(judge=PermissionError("401 invalid api key")))
-    assert {p.role: p.ok for p in probes} == {"harness": True, "judge": False}
+    assert {p.role: p.ok for p in probes} == {"target": True, "judge": False}
     judge = next(p for p in probes if p.role == "judge")
     assert judge.error == "PermissionError: 401 invalid api key"
     assert reachability.unreachable_roles(probes) == (judge,)
@@ -88,15 +88,15 @@ def test_a_rejected_credential_fails_only_its_own_role() -> None:
 
 def test_only_the_first_line_of_a_long_endpoint_error_is_reported() -> None:
     probes = _probe(
-        ModelsConfig(harness=_KEYED),
-        _per_role(harness=ValueError("model not found\nrequest-id: 7\ntrace: ...")),
+        ModelsConfig(target=_KEYED),
+        _per_role(target=ValueError("model not found\nrequest-id: 7\ntrace: ...")),
     )
     assert probes[0].error == "ValueError: model not found"
 
 
 def test_a_role_that_answers_with_something_other_than_a_string_fails() -> None:
     """``CallLLM`` promises a ``str``; a role that breaks it breaks scoring."""
-    probes = _probe(ModelsConfig(harness=_KEYED), _answering(reply={"content": "ok"}))
+    probes = _probe(ModelsConfig(target=_KEYED), _answering(reply={"content": "ok"}))
     assert probes[0].ok is False
     assert probes[0].error == "returned dict, expected a str"
 
@@ -114,7 +114,7 @@ def test_a_role_that_never_answers_is_bounded() -> None:
 
         return call_llm
 
-    probes = _probe(ModelsConfig(harness=_KEYED), build, timeout_s=0.05)
+    probes = _probe(ModelsConfig(target=_KEYED), build, timeout_s=0.05)
     assert probes[0].ok is False
     assert probes[0].error == "no answer within 0.05s"
 
@@ -123,7 +123,7 @@ def test_a_role_whose_callable_cannot_even_be_built_fails() -> None:
     def build(spec: RoleSpec, *, role: str):
         raise ValueError(f"models.{role}: nothing to build from {spec.model!r}")
 
-    probes = _probe(ModelsConfig(harness=_KEYED), build)
+    probes = _probe(ModelsConfig(target=_KEYED), build)
     assert probes[0].ok is False
     assert "nothing to build" in probes[0].error
 
@@ -133,8 +133,8 @@ def test_a_role_whose_callable_cannot_even_be_built_fails() -> None:
 
 def test_an_unconfigured_role_is_skipped() -> None:
     """It falls back to the callable the CLI resolved and reports itself."""
-    probes = _probe(ModelsConfig(harness=_KEYED), _answering())
-    assert [p.role for p in probes] == ["harness"]
+    probes = _probe(ModelsConfig(target=_KEYED), _answering())
+    assert [p.role for p in probes] == ["target"]
 
 
 def test_no_configured_role_probes_nothing_and_says_so() -> None:
@@ -161,9 +161,9 @@ def test_a_role_with_no_credential_variable_is_probed_like_a_keyed_one() -> None
         seen.append((role, spec.api_key_env))
         return _answering()(spec, role=role)
 
-    probes = _probe(ModelsConfig(harness=_KEYED, judge=_KEYLESS), build)
-    assert seen == [("harness", "A_KEY_ENV"), ("judge", None)]
-    assert [(p.role, p.ok) for p in probes] == [("harness", True), ("judge", True)]
+    probes = _probe(ModelsConfig(target=_KEYED, judge=_KEYLESS), build)
+    assert seen == [("target", "A_KEY_ENV"), ("judge", None)]
+    assert [(p.role, p.ok) for p in probes] == [("target", True), ("judge", True)]
 
 
 def test_the_probe_builds_a_role_the_way_a_worker_does() -> None:
@@ -187,17 +187,17 @@ def test_the_probe_builds_a_role_the_way_a_worker_does() -> None:
 
 
 def test_the_report_names_every_role_and_ends_on_a_verdict() -> None:
-    models = ModelsConfig(harness=_KEYED, judge=_KEYLESS)
+    models = ModelsConfig(target=_KEYED, judge=_KEYLESS)
     rendered = reachability.render_reachability(
         _probe(models, _per_role(judge=PermissionError("401 invalid api key")))
     )
-    assert "[ok] harness (keyed-model)" in rendered
+    assert "[ok] target (keyed-model)" in rendered
     assert "[FAILED] judge (keyless-model): PermissionError: 401 invalid api key" in rendered
     assert rendered.rstrip().endswith("1 of 2 configured roles did not answer: judge")
 
 
 def test_the_report_says_so_when_every_role_answered() -> None:
-    rendered = reachability.render_reachability(_probe(ModelsConfig(harness=_KEYED), _answering()))
+    rendered = reachability.render_reachability(_probe(ModelsConfig(target=_KEYED), _answering()))
     assert rendered.rstrip().endswith("All 1 configured roles answered.")
 
 
@@ -231,12 +231,12 @@ def _stub_probes(monkeypatch, *probes: reachability.RoleProbe) -> None:
 def test_dry_run_reports_every_configured_role(tmp_path: Path, monkeypatch) -> None:
     _stub_probes(
         monkeypatch,
-        reachability.RoleProbe("harness", "keyed-model", True),
+        reachability.RoleProbe("target", "keyed-model", True),
         reachability.RoleProbe("judge", "keyless-model", True),
     )
     result = _evolve(_clean_workspace(tmp_path), "--dry-run")
     assert result.exit_code == 0
-    assert "[ok] harness (keyed-model)" in result.output
+    assert "[ok] target (keyed-model)" in result.output
     assert "[ok] judge (keyless-model)" in result.output
     assert "No board entry ran." in result.output
 
@@ -244,7 +244,7 @@ def test_dry_run_reports_every_configured_role(tmp_path: Path, monkeypatch) -> N
 def test_a_role_that_does_not_answer_fails_the_dry_run(tmp_path: Path, monkeypatch) -> None:
     _stub_probes(
         monkeypatch,
-        reachability.RoleProbe("harness", "keyed-model", True),
+        reachability.RoleProbe("target", "keyed-model", True),
         reachability.RoleProbe("judge", "keyless-model", False, "PermissionError: 401"),
     )
     result = _evolve(_clean_workspace(tmp_path), "--dry-run")

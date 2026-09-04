@@ -47,14 +47,14 @@ def _config(workspace: Path) -> RuntimeConfig:
     async def harness_call(system: str, user: str, model: str) -> str:
         return ""
 
-    async def auxiliary_call(system: str, user: str, model: str) -> str:
+    async def evaluation_call(system: str, user: str, model: str) -> str:
         return ""
 
     return RuntimeConfig(
         instance_id="test",
         workspace_root=workspace,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=auxiliary_call,
+        target_call_llm=harness_call,
+        evaluation_call_llm=evaluation_call,
     )
 
 

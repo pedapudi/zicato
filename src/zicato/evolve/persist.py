@@ -117,8 +117,8 @@ async def _round_epilogue(
     round_n: int,
     analyzer_round: int | None,
     mutations: list[Any],
-    auxiliary_call_llm: CallLLM,
-    auxiliary_model: str,
+    evaluation_call_llm: CallLLM,
+    evaluation_model: str,
     meta_loop_emitter: Any,
     run_analyzer: bool = True,
     token_clip: tuple[int, int] | None = None,
@@ -183,8 +183,8 @@ async def _round_epilogue(
             await analyze_epoch_telemetry(
                 workspace_root,
                 epoch_id,
-                auxiliary_call_llm,
-                model=auxiliary_model,
+                evaluation_call_llm,
+                model=evaluation_model,
                 round_n=analyzer_round,
                 # Ground the insight prompt in the agent's REAL mutation
                 # surface so the LLM's "Suggested next mutations" section
@@ -193,7 +193,7 @@ async def _round_epilogue(
                 meta_loop_emitter=meta_loop_emitter,
             )
 
-    await _regenerate_epoch_report(workspace_root, epoch_id, auxiliary_call_llm, auxiliary_model)
+    await _regenerate_epoch_report(workspace_root, epoch_id, evaluation_call_llm, evaluation_model)
     return health_summary, health_critical
 
 
@@ -208,8 +208,8 @@ async def _persist_rejected_round(
     proposer_retries_exhausted: bool,
     board: list[Any],
     round_index: int,
-    auxiliary_call_llm: CallLLM,
-    auxiliary_model: str,
+    evaluation_call_llm: CallLLM,
+    evaluation_model: str,
     beater: HeartbeatBeater | None,
     round_log: _RoundLogEmitter | None = None,
 ) -> EvolveRoundOutcome:
@@ -277,8 +277,8 @@ async def _persist_rejected_round(
         round_n=generation_round_number(next_id) or round_index,
         analyzer_round=None,
         mutations=[],
-        auxiliary_call_llm=auxiliary_call_llm,
-        auxiliary_model=auxiliary_model,
+        evaluation_call_llm=evaluation_call_llm,
+        evaluation_model=evaluation_model,
         meta_loop_emitter=None,
         run_analyzer=False,
     )

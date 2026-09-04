@@ -26,7 +26,7 @@ from zicato.config import describe_env_vars
 _ROLE_HEADINGS: tuple[tuple[str, str], ...] = (
     (
         "harness-contract",
-        "set by zicato for the inner harness — part of the run contract",
+        "set by zicato for the system under test — part of the run contract",
     ),
     (
         "internal-handoff",

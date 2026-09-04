@@ -21,14 +21,14 @@ from pathlib import Path
 from typing import Any
 
 
-async def harness_call_llm(system: str, user: str, model: str) -> str:
+async def target_call_llm(system: str, user: str, model: str) -> str:
     """Stub harness-side LLM callable. Never actually invoked by the stub."""
     del system, user, model
-    return "stub-harness-response"
+    return "stub-target-response"
 
 
-async def auxiliary_call_llm(system: str, user: str, model: str) -> str:
-    """Stub auxiliary LLM callable, distinct from :func:`harness_call_llm`."""
+async def evaluation_call_llm(system: str, user: str, model: str) -> str:
+    """Stub evaluation LLM callable, distinct from :func:`target_call_llm`."""
     del system, user, model
     return "stub-aux-response"
 
@@ -352,7 +352,7 @@ def artifact_inventory_is_visible(result: Any) -> bool:
 class _ConfigProbeSession:
     """A session that records the WORKER process's resolved typed config.
 
-    Writes the worker-side ``load_config()`` view of the auxiliary-call
+    Writes the worker-side ``load_config()`` view of the evaluation-call
     budget to ``config_probe.json`` next to the events file. The
     config-pins threading test reads it back to prove a value pinned in
     the ORCHESTRATOR process (a CLI flag) crossed the subprocess

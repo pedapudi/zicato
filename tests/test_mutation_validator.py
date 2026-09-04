@@ -556,7 +556,7 @@ def test_validate_patches_is_side_effect_free(tmp_path: Path) -> None:
 
 @pytest.fixture
 def workspace_with_harness(tmp_path: Path) -> Path:
-    """Materialise a tiny inner-harness tree and a workspace pointing at it."""
+    """Materialise a tiny system-under-test tree and a workspace pointing at it."""
 
     harness = tmp_path / "harness"
     _write(

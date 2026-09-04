@@ -7,7 +7,7 @@ The analyzer's job for one epoch:
 2. Aggregate the five decision-telemetry event types into a
    :class:`zicato.analyzer.aggregator.DecisionEventSummary`.
 3. Render the system + user prompts.
-4. Call the auxiliary LLM with a bounded per-call timeout
+4. Call the evaluation LLM with a bounded per-call timeout
    (:func:`zicato.aux_timeout.aux_call_timeout_s`).
 5. Persist the LLM's markdown response as
    ``.zicato/epochs/{epoch}/insights/round_{N}.md`` (or
@@ -117,7 +117,7 @@ def _error_insight_body(epoch_id: str, err: str) -> str:
 
     return (
         f"# Decision telemetry insights — epoch {epoch_id}\n\n"
-        f"_(auxiliary LLM call failed: {err}; no insights generated for "
+        f"_(evaluation LLM call failed: {err}; no insights generated for "
         "this round)_\n"
     )
 
@@ -140,7 +140,7 @@ async def analyze_epoch_telemetry(
     epoch_id:
         The epoch whose accumulated telemetry should be analyzed.
     aux_call_llm:
-        The auxiliary LLM callable (see
+        The evaluation LLM callable (see
         :class:`zicato.core.types.RuntimeConfig`). Wrapped in
         :func:`asyncio.wait_for` against
         :func:`zicato.aux_timeout.aux_call_timeout_s`.

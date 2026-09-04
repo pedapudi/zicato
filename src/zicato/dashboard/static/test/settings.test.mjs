@@ -409,7 +409,7 @@ test('settings: the Models section shows the api_key_env NAME + set/unset flag, 
   await settings.render(host, ctx, { section: 'models' });
   await tick();
   const body = firstClass(host, 'dn-set-body');
-  // auxiliary arrived as a model spec with a SET env var; builder as UNSET.
+  // evaluation arrived as a model spec with a SET env var; builder as UNSET.
   // The NAME is surfaced in the (editable) api_key_env input value.
   const keyInputs = byClass(body, 'dn-set-input').filter((i) => (i.getAttribute('name') || '').endsWith('-api_key_env'));
   const keyVals = keyInputs.map((i) => i.getAttribute('value'));

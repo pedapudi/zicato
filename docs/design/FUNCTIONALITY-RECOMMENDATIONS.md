@@ -188,7 +188,7 @@ So the division is between the enclosure and its contents. Rust owns the worker
 budget and deadline, heartbeat staleness, and inter-process framing. Python owns
 the *run*: importing and driving the candidate harness, the judges, and the
 reducer. A Rust `RustHarnessAdapter` becomes worth building only if zicato ever
-evolves a *Rust* inner harness, and the `RunnableHarness` Protocol is already
+evolves a *Rust* system under test, and the `RunnableHarness` Protocol is already
 the seam for adding one adapter at a time rather than rewriting the whole
 worker. Every dogfood target is Python, so that case does not arise.
 

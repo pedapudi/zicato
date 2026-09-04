@@ -1,4 +1,4 @@
-"""Copy + patch the inner-harness source tree.
+"""Copy + patch the system-under-test source tree.
 
 The applier never mutates ``source_root`` — it always materialises a fresh
 copy at ``target_root`` first, then resolves every :class:`Patch` against

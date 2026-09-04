@@ -321,8 +321,8 @@ def make_generation(**overrides: Any) -> Generation:
 
 
 def make_runtime_config(
-    harness_call_llm: Callable[[str, str, str], Awaitable[str]] | None = None,
-    auxiliary_call_llm: Callable[[str, str, str], Awaitable[str]] | None = None,
+    target_call_llm: Callable[[str, str, str], Awaitable[str]] | None = None,
+    evaluation_call_llm: Callable[[str, str, str], Awaitable[str]] | None = None,
     **overrides: Any,
 ) -> RuntimeConfig:
     """Build a :class:`RuntimeConfig` with two distinct mock callables by default.
@@ -334,16 +334,16 @@ def make_runtime_config(
     factory does not enforce the invariant itself — that is the
     workspace helper's job — but the defaults are wired to pass it.
     """
-    if harness_call_llm is None:
-        harness_call_llm = CannedCallLLM(["harness-response"], model="mock-harness")
-    if auxiliary_call_llm is None:
-        auxiliary_call_llm = CannedCallLLM(["aux-response"], model="mock-aux")
+    if target_call_llm is None:
+        target_call_llm = CannedCallLLM(["target-response"], model="mock-target")
+    if evaluation_call_llm is None:
+        evaluation_call_llm = CannedCallLLM(["aux-response"], model="mock-aux")
 
     kwargs: dict[str, Any] = {
         "instance_id": "default",
         "workspace_root": Path("/tmp/zicato/test/workspace"),
-        "harness_call_llm": harness_call_llm,
-        "auxiliary_call_llm": auxiliary_call_llm,
+        "target_call_llm": target_call_llm,
+        "evaluation_call_llm": evaluation_call_llm,
     }
     kwargs.update(overrides)
     return RuntimeConfig(**kwargs)

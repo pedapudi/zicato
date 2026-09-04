@@ -36,7 +36,7 @@ Hybrid generation, for correctness:
   view; the deterministic sections drop ``<!-- FIGURE:NAME -->``
   markers and the HTML renderer substitutes the SVG at render time.
 * The prose sections (Abstract, Introduction, the Analysis
-  interpretation, Conclusion) are written by ONE bounded auxiliary-LLM
+  interpretation, Conclusion) are written by ONE bounded evaluation-LLM
   call, given the structured data and the deterministic sections as
   context (:mod:`zicato.analyzer.report_prompts`).
 
@@ -86,11 +86,11 @@ from zicato.core.workspace import analysis_path
 
 log = logging.getLogger("zicato.analyzer.report")
 
-# A goldfive-compatible auxiliary call_llm: (system, user, model) -> str.
+# A goldfive-compatible evaluation call_llm: (system, user, model) -> str.
 _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
 
 # Placeholder prose used when the LLM omits a block or the call fails.
-_MISSING_PROSE = "_(prose section unavailable — the auxiliary LLM did not return it this round.)_"
+_MISSING_PROSE = "_(prose section unavailable — the evaluation LLM did not return it this round.)_"
 
 
 # Explicit HTML-comment fences bracket each LLM-authored prose block in an
@@ -130,7 +130,7 @@ def _is_prose_fence_line(stripped: str) -> bool:
 
 
 def _placeholder_blocks() -> dict[str, str]:
-    """Prose blocks substituted when the auxiliary LLM call fails entirely."""
+    """Prose blocks substituted when the evaluation LLM call fails entirely."""
     return {label: _MISSING_PROSE for label in PROSE_BLOCK_LABELS}
 
 
@@ -1316,7 +1316,7 @@ def restamp_masthead(report_md: str, data: EpochReportData) -> str:
     """Splice a freshly-rendered masthead over a report's title block.
 
     The masthead (status / goal / generation counts) is fully data-derived,
-    so it can be regenerated without the auxiliary LLM. The title block runs
+    so it can be regenerated without the evaluation LLM. The title block runs
     from the top of the document to the first level-2 heading (the Abstract);
     everything from that heading on — the LLM narrative — is preserved
     verbatim. A no-op (returns the input unchanged) on any document that is
@@ -1461,7 +1461,7 @@ def regenerate_epoch_report_deterministic(workspace_root: Path, epoch_id: str) -
     every data-bearing section (masthead, methodology, results, validity,
     proposer analytics, threats) from the CURRENT workspace data, while
     preserving the existing LLM-authored prose verbatim. Cost discipline —
-    no auxiliary-LLM call is made; the full LLM prose render happens at
+    no evaluation-LLM call is made; the full LLM prose render happens at
     epoch close. Mid-epoch the masthead carries the ``LIVING DRAFT`` stamp
     (data-derived: dropped once the epoch is marked closed).
 
@@ -1546,11 +1546,11 @@ async def generate_epoch_report(
     """Regenerate the comprehensive epoch analysis report.
 
     Gathers the structured workspace data, renders the deterministic
-    sections, asks the auxiliary LLM for the four prose sections in one
+    sections, asks the evaluation LLM for the four prose sections in one
     bounded call, assembles the full document, and writes both
     ``analysis.md`` and ``analysis.html`` under the epoch directory.
 
-    The pass is **best-effort**. The auxiliary-LLM call is wrapped in
+    The pass is **best-effort**. The evaluation-LLM call is wrapped in
     :func:`asyncio.wait_for` against :func:`aux_call_timeout_s`; a
     timeout or any LLM error substitutes placeholder prose and the
     deterministic sections still ship. The file is therefore *always*
@@ -1567,8 +1567,8 @@ async def generate_epoch_report(
     epoch_id:
         The epoch whose report should be regenerated.
     aux_call_llm:
-        The AUXILIARY LLM callable (see :class:`RuntimeConfig` and the
-        collusion guard) — never the inner-harness callable.
+        The EVALUATION LLM callable (see :class:`RuntimeConfig` and the
+        collusion guard) — never the target callable.
     model:
         Optional model identifier forwarded verbatim to *aux_call_llm*.
 
@@ -1589,20 +1589,20 @@ async def generate_epoch_report(
         prose = parse_prose_blocks(response)
         if not prose:
             log.debug(
-                "epoch report: auxiliary LLM returned no parseable prose blocks; "
+                "epoch report: evaluation LLM returned no parseable prose blocks; "
                 "substituting placeholders"
             )
             prose = _placeholder_blocks()
     except TimeoutError:
         log.warning(
-            "epoch report: auxiliary LLM timed out after %.1fs; "
+            "epoch report: evaluation LLM timed out after %.1fs; "
             "writing report with placeholder prose",
             aux_call_timeout_s(),
         )
         prose = _placeholder_blocks()
     except Exception as exc:  # noqa: BLE001 — opaque LLM errors are common
         log.warning(
-            "epoch report: auxiliary LLM call failed (%s: %s); "
+            "epoch report: evaluation LLM call failed (%s: %s); "
             "writing report with placeholder prose",
             type(exc).__name__,
             exc,

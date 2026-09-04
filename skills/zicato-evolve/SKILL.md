@@ -26,7 +26,7 @@ instead:
 
 - Run the test suite (`.venv/bin/pytest`) and any CI checks.
 - Run the **deterministic mock target** end-to-end (see
-  `skills/zicato-bootstrap`, step 4 — the `mocks:harness_llm` / `mocks:aux_llm`
+  `skills/zicato-bootstrap`, step 4 — the `mocks:target_llm` / `mocks:aux_llm`
   callables). This exercises the full path with zero budget.
 
 Only after the user says go do you run with live engines. Prefer named engines

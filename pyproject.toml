@@ -354,7 +354,7 @@ pythonpath = ["."]
 #    drive a session.
 # 4. The shared primitives — the storage backend, the process
 #    configuration, the utilities, the import-path resolver, the
-#    auxiliary-timeout helper, the log stream and the integration
+#    evaluation-timeout helper, the log stream and the integration
 #    bridges — import nothing else in the library.
 #
 # Nothing here is an ordering. Contracts 3 and 4 declare two cuts; the

@@ -4,7 +4,7 @@ Every emulator turn produces an :class:`EmulatorTurnAudit` that is
 emitted on a ``zicato:emulator`` goldfive-shaped lane (if a sink is
 wired) and otherwise kept in memory by the driver. Operators replay
 these in harmonograf to see exactly what the emulator saw and produced
-on each turn — the same observability posture the inner harness gets.
+on each turn — the same observability posture the system under test gets.
 
 Audits do NOT carry the full transcript or the full emulator output;
 just sizes, a short preview, and a persona-hash fingerprint. The reducer

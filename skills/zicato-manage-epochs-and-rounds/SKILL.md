@@ -280,10 +280,10 @@ hand, or to reclaim disk. Confirmed via `--help`, which is always canonical
   files are both frozen into `epochs/{id}/` AND published as the workspace's
   *live* contract (so a later `evolve` resolves the same contract and continues
   this epoch rather than spuriously rolling). Auto-closes a still-open previous
-  epoch first (stub `analysis.md` — no auxiliary LLM is wired through the CLI
+  epoch first (stub `analysis.md` — no evaluation LLM is wired through the CLI
   yet). When stdin is a TTY and `--goal` is omitted you are prompted for one.
 - **`close [EPOCH_ID]`** — mark closed and (best-effort) write `analysis.md`
-  (current epoch when omitted). The analysis pass runs only when an auxiliary
+  (current epoch when omitted). The analysis pass runs only when an evaluation
   LLM is configured; otherwise a stub is written for later regeneration. A
   closed epoch is frozen — read-only. See `skills/zicato-analyze-epoch`.
 - **`switch EPOCH_ID`** — re-point the `current_epoch` marker (target must

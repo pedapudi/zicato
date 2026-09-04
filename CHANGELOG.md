@@ -862,7 +862,7 @@ canonical pinned deterministic contract).
 
 ### Proposer
 - The **tool-using ADK agent is now the DEFAULT proposer** (in
-  `builtin_default` mode, bound to the auxiliary model and the read-only
+  `builtin_default` mode, bound to the evaluation model and the read-only
   proposer tool registry). The skill-composed proposer is now the explicit
   opt-in (a configured `proposers/<name>/` dir). The proposer is contract
   input #5: configuring a proposer dir — or editing one of its skills —
@@ -1145,7 +1145,7 @@ dedicated LLM analyzer.
   `aggregate_decision_events` parse goldfive's new decision events
   (`SteeringDecisionMade`, `LadderTransitionDecided`,
   `DetectorDispatchOrdered`, `PolicyApplied`, `RetryBudgetSpent`).
-- `analyze_epoch_telemetry` calls the auxiliary LLM with a structured
+- `analyze_epoch_telemetry` calls the evaluation LLM with a structured
   prompt and writes
   `epochs/{epoch}/insights/round_{N}.md` with sections:
   Headline observations, Suspected over-intervention, Suspected
@@ -1218,7 +1218,7 @@ break in patch releases until v0.2.
 - Workspace lock with PID-aware stale-pid stealing.
 - Heartbeat beater task lifecycle wired into `evolve_n_rounds`.
 - Per-call `aux_call_llm` timeouts (`ZICATO_AUX_CALL_TIMEOUT`, default
-  120s) at every auxiliary call site (proposer, judge, emulator,
+  120s) at every evaluation call site (proposer, judge, emulator,
   analysis).
 - Progressive `analysis.html` regeneration after each generation (in
   addition to the final LLM-driven `analysis.md` at epoch close).

@@ -44,12 +44,12 @@ The deterministic guarantees are concentrated in the supervisor and the Python s
 
 **Thesis (one sentence).** zicato is a self-improving *meta-harness* for any system you can measure — agent systems being the primary use case: it wraps a system you already built, runs it against a fixed board of tasks, watches what goes wrong via structured runtime telemetry, and rewrites the system so the next generation goes less wrong.
 
-**What it actually does.** zicato treats your existing multi-agent system — any shape at all — as the **inner harness** of a learning loop and improves it *between* runs rather than during them.
+**What it actually does.** zicato treats your existing multi-agent system — any shape at all — as the **system under test** of a learning loop and improves it *between* runs rather than during them.
 
 README.md:14-27
 ```
-zicato wraps a file-based system you already have and turns it into the **inner
-harness** of a learning loop. It runs your system against a board of tasks,
+zicato wraps a file-based system you already have and turns it into the **system
+under test** of a learning loop. It runs your system against a board of tasks,
 scores each run against a per-epoch evaluation contract, and rewrites the source
 so the next generation goes less wrong.
 
@@ -76,24 +76,24 @@ this run", zicato handles "this kind of run keeps wandering the same way,
 rewrite the harness".
 ```
 
-Concretely, the three own non-overlapping layers: single-turn replan-on-drift is goldfive's job (within one run); operator steering is harmonograf's (within one run); **inner-harness rewrites across runs** are zicato's (across generations). `docs/design/ARCHITECTURE.md:56-67` states the invariant bluntly: "goldfive must never reach across runs; harmonograf must never reach into the agent's source. zicato is the only thing that does either."
+Concretely, the three own non-overlapping layers: single-turn replan-on-drift is goldfive's job (within one run); operator steering is harmonograf's (within one run); **system-under-test rewrites across runs** are zicato's (across generations). `docs/design/ARCHITECTURE.md:56-67` states the invariant bluntly: "goldfive must never reach across runs; harmonograf must never reach into the agent's source. zicato is the only thing that does either."
 
 ### The learning loop: board -> drift telemetry -> loss patterns -> structured edits -> tournament -> promote
 
-The loop is a numbered pipeline. A frozen board of tasks drives runs of the inner harness; each run's goldfive event stream is reduced to a typed per-run **loss profile**; loss profiles aggregate across runs into **patterns** (recurring failure shapes); patterns drive typed **patches** to an annotated mutation surface; a **tournament** compares parent vs. candidate on the frozen board; and a candidate is promoted only if it wins by a margin without regressing pass-rate.
+The loop is a numbered pipeline. A frozen board of tasks drives runs of the system under test; each run's goldfive event stream is reduced to a typed per-run **loss profile**; loss profiles aggregate across runs into **patterns** (recurring failure shapes); patterns drive typed **patches** to an annotated mutation surface; a **tournament** compares parent vs. candidate on the frozen board; and a candidate is promoted only if it wins by a margin without regressing pass-rate.
 
 docs/design/ARCHITECTURE.md:21-37
 ```
-Across many runs of that inner harness, zicato:
+Across many runs of that system under test, zicato:
 
 1. Captures structured runtime telemetry (the `goldfive.v1.Event`
-   stream the inner harness emits).
+   stream the system under test emits).
 2. Reduces that telemetry to a typed **loss profile** per run.
 3. Aggregates loss profiles across runs into **patterns** — recurring
    shapes of failure (e.g. "the research specialist keeps hallucinating
    sources when the question is short", "the coordinator delegates to
    the writer before the researcher has reported").
-4. Proposes typed **patches** to the inner harness's annotated mutation
+4. Proposes typed **patches** to the system under test's annotated mutation
    surface (specialist instructions, coordinator routing strings, tool
    descriptions, planner templates, judge prompts — never free-form
    source edits).
@@ -109,7 +109,7 @@ Two design commitments make this loop legible rather than a black-box optimizer.
 
 zicato is intentionally agnostic at three seams so it never couples to a vendor, a framework, or a storage mechanism:
 
-- **Model-agnostic `call_llm`.** Every LLM call — proposer, analysis, emulator, LLM-graded rubrics — routes through a single narrow caller-supplied callable; the core imports no vendor SDK. The runtime carries *two* such callables (harness vs. auxiliary), and they must be distinct as a collusion guard.
+- **Model-agnostic `call_llm`.** Every LLM call — proposer, analysis, emulator, LLM-graded rubrics — routes through a single narrow caller-supplied callable; the core imports no vendor SDK. The runtime carries *two* such callables (harness vs. evaluation), and they must be distinct as a collusion guard.
 
 src/zicato/core/runtime.py:19-26
 ```
@@ -123,7 +123,7 @@ src/zicato/core/runtime.py:19-26
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 ```
 
-- **Framework-agnostic `HarnessAdapter`.** The inner harness is a black box behind a small `runtime_checkable` Protocol pair — `RunnableHarness.run(entry, sinks, config)` plus adapter `load()` / `mutation_points()` / `mutable_subpaths()` (`src/zicato/adapters/base.py:40-146`). Google ADK is the first concrete adapter; plain-callable and LangChain are planned. The runner "doesn't care" what shape the agent is (`src/zicato/adapters/base.py:18`).
+- **Framework-agnostic `HarnessAdapter`.** The system under test is a black box behind a small `runtime_checkable` Protocol pair — `RunnableHarness.run(entry, sinks, config)` plus adapter `load()` / `mutation_points()` / `mutable_subpaths()` (`src/zicato/adapters/base.py:40-146`). Google ADK is the first concrete adapter; plain-callable and LangChain are planned. The runner "doesn't care" what shape the agent is (`src/zicato/adapters/base.py:18`).
 
 - **Pluggable record storage.** Record persistence goes through a `StorageBackend` ABC — a keyed, atomic JSON/JSONL store — so tests can substitute an in-memory backend and future record stores can be added without changing domain readers, while files stay canonical in production (`src/zicato/storage/base.py:1-10`). Generation source trees use the separate `GenerationStore` protocol. The derived SQLite analytical index is explicitly *not* a backend — it is a rebuildable read side, kept separate so store-of-record and index evolve independently (`src/zicato/storage/base.py:31-35`).
 
@@ -205,8 +205,8 @@ The proposer is invoked through a resolved `ProposerAgent` and a `ProposerContex
                     mutations=tuple(mutations),
                     brief_text=brief.text,
                     current_loss_summary=loss_summary,
-                    aux_call_llm=auxiliary_call_llm,
-                    model=str(workspace_config.get("auxiliary_model", "")),
+                    aux_call_llm=evaluation_call_llm,
+                    model=str(workspace_config.get("evaluation_model", "")),
                     max_retries=max_proposer_retries,
                     forbidden_ids=brief.forbidden_ids,
                     workspace_root=workspace_root,
@@ -902,7 +902,7 @@ SANCTIONED_TOOLS: tuple[str, ...] = (
 )
 ```
 
-`read` and `grep` reach the *parent* snapshot; `edit` reaches the disposable copy and nothing else, because Foe compiles the two grants into a kernel ruleset every process of the episode inherits. A writing tool over the snapshot would corrupt the tree the round is about to patch and break the applier's content-hash guard, so no tool has one. The two host tools are answered by zicato: `mutation_usage` delegates to the read-only registry (so the containment guard and the match cap apply unchanged), and `validate_patches` projects the copy and lints it. The per-round context both host tools answer about is bound through a `contextvars.ContextVar` around each call, so concurrent challengers never leak context into one another. The episode runs on its *own* model; because it is not the auxiliary callable, the hard `is`-identity collusion guard does not apply, so a soft warning is logged when the two model strings trivially match.
+`read` and `grep` reach the *parent* snapshot; `edit` reaches the disposable copy and nothing else, because Foe compiles the two grants into a kernel ruleset every process of the episode inherits. A writing tool over the snapshot would corrupt the tree the round is about to patch and break the applier's content-hash guard, so no tool has one. The two host tools are answered by zicato: `mutation_usage` delegates to the read-only registry (so the containment guard and the match cap apply unchanged), and `validate_patches` projects the copy and lints it. The per-round context both host tools answer about is bound through a `contextvars.ContextVar` around each call, so concurrent challengers never leak context into one another. The episode runs on its *own* model; because it is not the evaluation callable, the hard `is`-identity collusion guard does not apply, so a soft warning is logged when the two model strings trivially match.
 
 ### Generation: a best-of-N slate with a self-critique pass
 

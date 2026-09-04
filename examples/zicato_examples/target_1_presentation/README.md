@@ -48,7 +48,7 @@ files carry `per_judge_weights` for the declared inline judges
 `audience_appropriate`), so a firing process judge moves the scalar.
 Three facts make a researcher-instruction mutation visible in the score:
 
-- `mocks.harness_llm` reads the mutated instruction, and only the
+- `mocks.target_llm` reads the mutated instruction, and only the
   researcher's output carries the fabricated-versus-cited marker, so a
   researcher-only mutation is the sole lever over it.
 - `mocks.aux_llm` answers the inline-judge runtime's `VIOLATION`/`OK`

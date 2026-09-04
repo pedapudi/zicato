@@ -3,7 +3,7 @@
 The emulator's system prompt forbids producing structured answer-shape
 content. This module is the second line of defense — a small regex-based
 checker that scans every emulator turn before it is forwarded to the
-inner harness. If any pattern fires, the driver aborts the run with
+system under test. If any pattern fires, the driver aborts the run with
 ``abort_reason='emulator_leak_detected'``.
 
 The patterns target genuine answer-shape content (JSON structures,

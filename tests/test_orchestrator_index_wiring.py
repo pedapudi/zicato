@@ -23,11 +23,11 @@ import pytest
 
 from tests._orchestrator_harness import (
     bootstrap_workspace,
-    harness_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
+    target_call_llm,
 )
 
 # ---------------------------------------------------------------------------
@@ -230,8 +230,8 @@ def test_evolve_n_rounds_builds_and_heals_the_index_at_start(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=epoch_id,
-                harness_call_llm=harness_call_llm,
-                auxiliary_call_llm=make_aux_responder([]),
+                target_call_llm=target_call_llm,
+                evaluation_call_llm=make_aux_responder([]),
                 instance_id="preflight-test",
             )
         )
@@ -281,8 +281,8 @@ def test_evolve_n_rounds_heals_a_diverged_index_before_the_first_round(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=epoch_id,
-                harness_call_llm=harness_call_llm,
-                auxiliary_call_llm=make_aux_responder([]),
+                target_call_llm=target_call_llm,
+                evaluation_call_llm=make_aux_responder([]),
                 instance_id="heal-test",
             )
         )
@@ -327,8 +327,8 @@ def test_the_index_preflight_never_aborts_a_run(
             rounds=1,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=harness_call_llm,
-            auxiliary_call_llm=make_aux_responder([]),
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=make_aux_responder([]),
             instance_id="boom-test",
         )
     )
@@ -358,8 +358,8 @@ def test_round_settlement_populates_lineage_derived_columns(
                 rounds=1,
                 workspace_root=workspace,
                 epoch_id=epoch_id,
-                harness_call_llm=harness_call_llm,
-                auxiliary_call_llm=make_aux_responder([]),
+                target_call_llm=target_call_llm,
+                evaluation_call_llm=make_aux_responder([]),
                 instance_id=instance_id,
             )
         )

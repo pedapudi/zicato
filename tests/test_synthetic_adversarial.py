@@ -43,20 +43,20 @@ class _StubCleanAgent:
 # ---------------------------------------------------------------------------
 
 
-async def _harness_call_llm(system: str, user: str, model: str) -> str:
+async def _target_call_llm(system: str, user: str, model: str) -> str:
     return "harness response"
 
 
-async def _auxiliary_call_llm(system: str, user: str, model: str) -> str:
-    return "auxiliary response"
+async def _evaluation_call_llm(system: str, user: str, model: str) -> str:
+    return "evaluation response"
 
 
 def _make_config(tmp_path: Path) -> RuntimeConfig:
     return RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        harness_call_llm=_harness_call_llm,
-        auxiliary_call_llm=_auxiliary_call_llm,
+        target_call_llm=_target_call_llm,
+        evaluation_call_llm=_evaluation_call_llm,
     )
 
 
@@ -240,7 +240,7 @@ async def test_run_adversarial_entry_drives_agent_through_wrap(
     call = fake_goldfive["wrap_calls"][0]
     assert isinstance(call["agent"], _LocalLoopingAgent)
     assert call["sinks"] == ["sink_a", "sink_b"]
-    assert call["call_llm"] is _harness_call_llm
+    assert call["call_llm"] is _target_call_llm
     assert result.entry_id == "syn_adv_1"
     assert result.final_output == "final answer"
     assert result.transcript == ("final answer",)

@@ -80,7 +80,7 @@ digest-gated swaps, and transient overlays never inside the gated render.
    preview** (`builder/preview.js` `previewNodes`) fed the current epoch as a
    draft-shaped contract, rendered **read-only**. The **Models** section
    generalised the former read-only "Builder assistant" read-out into an
-   editable per-role config (harness · auxiliary · builder · judge) over the
+   editable per-role config (harness · evaluation · builder · judge) over the
    secret-safe `GET/POST /settings/models` (only the `api_key_env` NAME + a
    set/unset flag ever shown — never a secret).
 

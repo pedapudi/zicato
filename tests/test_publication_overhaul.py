@@ -267,7 +267,7 @@ def test_deterministic_refresh_preserves_prose_and_is_digest_noop(tmp_path: Path
 def test_parse_prose_from_markdown_skips_placeholders(tmp_path: Path) -> None:
     md = (
         "# T\n\n## Abstract\n\nreal abstract\n\n"
-        "## Introduction\n\n_(prose section unavailable — the auxiliary LLM "
+        "## Introduction\n\n_(prose section unavailable — the evaluation LLM "
         "did not return it this round.)_\n\n"
         "## Methodology\n\nnot prose\n\n"
         "## Conclusion & Next Directions\n\nreal conclusion\n\n---\n\nfooter\n"
@@ -418,7 +418,7 @@ def test_epoch_close_clears_living_draft_and_preserves_prose(tmp_path: Path) -> 
     assert "LIVING DRAFT" in draft
     assert "Durable abstract prose." in draft
 
-    # Explicit close with NO auxiliary LLM — the `zicato epoch close` path.
+    # Explicit close with NO evaluation LLM — the `zicato epoch close` path.
     lifecycle.close_epoch(ws, epoch_id=epoch, aux_call_llm=None)
 
     closed = md_path.read_text(encoding="utf-8")

@@ -43,8 +43,8 @@ sixteen entrants pair off and a winner emerges.
 
 ### 1.1 King of the hill
 
-At the start of an epoch, the champion is `v0` — the inner
-harness as registered, the baseline. Then, round after round:
+At the start of an epoch, the champion is `v0` — the system
+under test as registered, the baseline. Then, round after round:
 
 1. The proposer studies the patterns and proposes an
    `Experiment` — a hypothesis plus the patches that test it

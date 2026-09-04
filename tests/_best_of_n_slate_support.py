@@ -1,7 +1,7 @@
 """Module-level scripted best-of-N slate proposers for the e2e tests.
 
 The best-of-N tree-integrity e2e tests drive REAL evolve rounds (subprocess
-tournament workers) with ``proposer_quality.best_of_n = 3``, so the auxiliary
+tournament workers) with ``proposer_quality.best_of_n = 3``, so the evaluation
 callable must be a real, importable, module-level object: the tournament
 runner serialises each role callable as a re-importable dotted path for the
 worker subprocess, and a closure-local callable is rejected at spawn time
@@ -12,11 +12,11 @@ documents).
 "strict reviewer selecting") with candidate index ``0`` — the
 FIRST-sampled slate slot, so the chosen candidate is never the
 last-validated one, which is the exact tree/selection-mismatch coordinate
-under test. Every other auxiliary site gets a short acknowledgement.
+under test. Every other evaluation site gets a short acknowledgement.
 
 What each slate slot PROPOSES is scripted separately, as the policy that
 slot writes (:data:`GAUNTLET_POLICIES`, :data:`FIELD_POLICIES`), because
-a proposal is an episode rather than an auxiliary call.
+a proposal is an episode rather than an evaluation call.
 
 Slate design (target_0 planted-defect arithmetic — see
 ``tests/test_convergence_known_answer.py::_expected_scalar``): within every
@@ -32,7 +32,7 @@ from __future__ import annotations
 from typing import Any
 
 #: A stable fragment of the best-of-N critic's system prompt, the one
-#: auxiliary call site this module answers with anything but "ok".
+#: evaluation call site this module answers with anything but "ok".
 _CRITIC_FINGERPRINT = "strict reviewer selecting"
 
 
@@ -72,7 +72,7 @@ FIELD_POLICIES: dict[str, dict[str, str]] = {
 
 
 def _dispatch(system: str) -> str:
-    """The canned response for one auxiliary call site.
+    """The canned response for one evaluation call site.
 
     The scripted critic ALWAYS picks candidate index 0 — the first-sampled
     slot — so the selection never lands on the last-validated candidate,
@@ -83,7 +83,7 @@ def _dispatch(system: str) -> str:
     return "ok"
 
 
-async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
+async def target_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
     """Harness-role placeholder (the deterministic adapter never calls it).
 
     Exists because the runtime requires two distinct role callables and the
@@ -94,7 +94,7 @@ async def harness_llm(system: str, user: str, model: str, **_kwargs: Any) -> str
 
 
 async def slate_aux_llm(system: str, user: str, model: str, **_kwargs: Any) -> str:
-    """The scripted slate critic, plus every other auxiliary call site."""
+    """The scripted slate critic, plus every other evaluation call site."""
     del user, model
     return _dispatch(system)
 
@@ -105,6 +105,6 @@ __all__ = [
     "GAUNTLET_CHOSEN_CONTENT",
     "GAUNTLET_POLICIES",
     "LAST_SLOT_CONTENT",
-    "harness_llm",
+    "target_llm",
     "slate_aux_llm",
 ]

@@ -170,7 +170,7 @@ class Generation:
         Absolute path to the source-tree snapshot for this generation.
         The patch applier produced this by copying the parent's snapshot
         and applying the experiment's patches; the runner mounts it as
-        the inner harness's source root for the duration of the run.
+        the system under test's source root for the duration of the run.
     created_at:
         ISO-8601 UTC creation timestamp.
     promoted:

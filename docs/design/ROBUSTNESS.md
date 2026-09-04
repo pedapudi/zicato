@@ -7,7 +7,7 @@ different class of failure, and they stack because no single layer
 covers all of them.
 
 The meta-loop described in [ARCHITECTURE.md](ARCHITECTURE.md) is
-correct against inner harnesses that cooperate with cancellation. The
+correct against systems under test that cooperate with cancellation. The
 layers below extend that correctness to harnesses that do not.
 
 ## 1. The six layers
@@ -32,7 +32,7 @@ the level of the whole loop. Atomic writes and resume markers cover
 on-disk durability.
 
 > **What this amounts to.** The timeouts and structured cancellation
-> make zicato robust against inner harnesses that cooperate with
+> make zicato robust against systems under test that cooperate with
 > cancellation. The subprocess worker boundary isolates each run in its
 > own operating-system process, so an uncooperative harness — a C
 > extension that holds the interpreter lock, a `while True: pass` — is
@@ -89,7 +89,7 @@ async def aux_call_llm_with_budget(
 ) -> str:
     try:
         return await asyncio.wait_for(
-            auxiliary_call_llm(system=system, user=user, model=model),
+            evaluation_call_llm(system=system, user=user, model=model),
             timeout=budget_s,
         )
     except asyncio.TimeoutError as e:
@@ -208,7 +208,7 @@ truncated event stream.
 structured cancellation only runs once a timeout has fired.
 
 Timeouts and structured cancellation together form the cooperative
-floor. They are correct against inner harnesses that honour
+floor. They are correct against systems under test that honour
 cancellation, which is the contract zicato can credibly demand from
 operators. A harness that ignores cancellation — an agent that
 accidentally ships a `while True: pass` — needs the subprocess worker
@@ -334,8 +334,8 @@ is built.
 | Agent code exhausts memory in the worker | no | yes (worker exits with signal, orchestrator reaps) |
 | Agent code segfaults | no | yes (worker exits; orchestrator finalises as crashed) |
 
-The worker boundary is the floor on pathology. Whatever the inner
-harness does, the worker dies and the round continues. The
+The worker boundary is the floor on pathology. Whatever the system
+under test does, the worker dies and the round continues. The
 `events.jsonl` file may be left partial, which is acceptable: the loss
 reducer treats a partial run as an aborted run, scores it worst-case,
 and the tournament continues.
@@ -388,7 +388,7 @@ watchdog catches that the inner layers do not.
 
 | Pathology | Caught by the timeouts and cancellation? | Caught by the worker boundary? | Caught by the watchdog? |
 |---|---|---|---|
-| Worker hangs in the inner harness | no | yes (worker SIGKILL) | yes (supervisor escalates if orchestrator is slow to notice) |
+| Worker hangs in the system under test | no | yes (worker SIGKILL) | yes (supervisor escalates if orchestrator is slow to notice) |
 | Orchestrator wedges (zicato bug in `evolve_round`) | no | no | yes (supervisor surfaces "stalled" status to operator; operator decides to restart) |
 | Both orchestrator and a worker wedge at once | no | depends on the orchestrator | yes (supervisor escalates the worker directly; orchestrator status flagged) |
 | Supervisor itself wedges | no | no | no. The supervisor is the smallest surface in the system: Rust, and no model calls. If it wedges, the dashboard is a separate process that still reads the state files directly, so the operator sees the state. |
@@ -502,7 +502,7 @@ Operator sees:  ZicatoAuxLLMTimeout exception in the round; the
                where in the round we were. Run continues.
 ```
 
-### 3.2 Inner harness has `while True: pass`
+### 3.2 System under test has `while True: pass`
 
 ```
 Symptom:    A specialist's tool implementation has an infinite loop.
@@ -648,7 +648,7 @@ Operator sees: evolve exits cleanly; journal shows K consecutive
 ### 3.9 Model endpoint returns malformed JSON
 
 ```
-Symptom:    The proposer's `auxiliary_call_llm` returns text that is
+Symptom:    The proposer's `evaluation_call_llm` returns text that is
             not valid JSON for the hypothesis schema.
 Pathway:    Schema validator rejects; proposer is re-prompted with
             an error message; second violation exits with code 4.
@@ -683,9 +683,9 @@ The shipped build contains:
 - Timeout budgets at three granularities: per board entry
   (`wall_clock_budget_seconds`), per whole invocation
   (`evolve --max-wall-clock-seconds`, enforced both between rounds and
-  within a round), and per auxiliary LLM call. The per-call budget,
+  within a round), and per evaluation LLM call. The per-call budget,
   tunable with `evolve --aux-call-timeout`, covers the proposer,
-  emulator, and judge `auxiliary_call_llm` sites and is
+  emulator, and judge `evaluation_call_llm` sites and is
   threaded through those call sites by
   `src/zicato/aux_timeout.py`, which the proposer
   (`src/zicato/proposer/proposer.py`), the emulator
@@ -699,7 +699,7 @@ The shipped build contains:
   `src/zicato/tournament/runner.py`) over an ephemeral copy of the
   generation snapshot, under a hard per-run wall-clock budget. This is
   the load-bearing layer (§2.3): it is what lets the watchdog hard-kill
-  an uncooperative inner harness, such as a loop holding the interpreter
+  an uncooperative system under test, such as a loop holding the interpreter
   lock, at a per-run boundary instead of taking down the whole
   orchestrator.
 - The consecutive-reject early stop
@@ -723,7 +723,7 @@ Two things are not in the build:
   same-drift-kinds detection — beyond the consecutive-reject counter and
   the degenerate-health stop (§2.5).
 
-All six layers are in the build. An uncooperative inner harness is
+All six layers are in the build. An uncooperative system under test is
 hard-killed at the per-run worker boundary, a harness that honours
 `CancelledError` is covered cooperatively by the timeouts and structured
 cancellation first, and a mid-tournament kill is reconciled on the next
@@ -751,10 +751,10 @@ journal rather than applied silently. The protocol adds no defense
 layer; it records the operator's actions and applies them at safe
 points.
 
-## 5. The auxiliary model-call timeout
+## 5. The evaluation model-call timeout
 
-The zicato auxiliary call sites — proposer, judge, emulator, and
-analysis pass — each wrap `auxiliary_call_llm` in `asyncio.wait_for`
+The zicato evaluation call sites — proposer, judge, emulator, and
+analysis pass — each wrap `evaluation_call_llm` in `asyncio.wait_for`
 against the budget `src/zicato/aux_timeout.py` exposes, so a hanging
 model endpoint cannot wedge a round before the worker boundary takes
 over. The budget is `AuxConfig.call_timeout_s`, tunable with
@@ -777,13 +777,13 @@ async def emulator_turn(...) -> str:
     return await aux_call_llm_with_budget(
         system=EMULATOR_SYSTEM_PROMPT,
         user=render_emulator_context(persona, transcript),
-        model=auxiliary_model,
+        model=evaluation_model,
         budget_s=60.0,   # tighter; emulator turns should be quick
     )
 ```
 
 These wrappers add a timeout to sites that would otherwise rely on the
-inner-harness adapter to enforce its own. The importers are
+system-under-test adapter to enforce its own. The importers are
 `src/zicato/proposer/proposer.py`, `src/zicato/emulator/emulator.py`,
 `src/zicato/board/rubric.py`, `src/zicato/epoch/analysis.py`,
 `src/zicato/analyzer/report.py`, `src/zicato/analyzer/insights.py`,
@@ -791,7 +791,7 @@ inner-harness adapter to enforce its own. The importers are
 `src/zicato/reflection/adjudicator.py`.
 
 The wrappers are not a substitute for the worker boundary. They give a
-well-behaved auxiliary client a graceful timeout on the cheap path,
+well-behaved evaluation client a graceful timeout on the cheap path,
 before signal escalation begins.
 
 ## 6. Loop health: a toothless evaluation is a failure mode
@@ -872,7 +872,7 @@ without proportional value.
   and exposing it on a local network is the operator's choice. There is
   no transport encryption and no authentication.
 - **Resource accounting.** zicato does not apply control-group limits
-  to the workers. An adversarial inner harness can fork-bomb the
+  to the workers. An adversarial system under test can fork-bomb the
   machine: the worker boundary catches the worker process but not its
   children. Hardening this means spawning workers in a process group
   and killing the whole group rather than only the group leader.

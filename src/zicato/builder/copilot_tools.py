@@ -400,7 +400,7 @@ def set_proposer_quality(
 
     ``best_of_n`` is how many candidate experiments each propose-step
     samples before selection (1 = the historical single sample, no
-    critique; must be >= 1); ``critique_enabled`` toggles the auxiliary
+    critique; must be >= 1); ``critique_enabled`` toggles the evaluation
     self-critique selection pass (inert at best_of_n 1);
     ``process_exemplars`` opts the proposer into up to that many REDACTED
     drift-anchored event windows per round (0 = off, the default; it
@@ -411,7 +411,7 @@ def set_proposer_quality(
     when True the last best-of-N slot mints the patch union of two
     rejected complementary challengers instead of sampling the LLM —
     REQUIRES best_of_n > 1 to have effect, and is cost-neutral (the mint
-    REPLACES that slot's auxiliary propose call, never adds one).
+    REPLACES that slot's evaluation propose call, never adds one).
     Flipping it rolls the epoch. ``recombine_merge`` (``"mechanical"``
     default | ``"llm"``) chooses HOW the slot composes the union:
     ``"mechanical"`` mints the disjoint patch concatenation with no LLM

@@ -46,8 +46,8 @@ from tests._subprocess_worker_support import (
     SleepingAdapter,
     SnapshotWritingAdapter,
     StubAdapter,
-    auxiliary_call_llm,
-    harness_call_llm,
+    evaluation_call_llm,
+    target_call_llm,
 )
 from zicato.core import (
     BoardEntry,
@@ -128,8 +128,8 @@ def _config(workspace: Path, *, supervisor_kill_wait_s: float = 20.0) -> Runtime
     return RuntimeConfig(
         instance_id="test",
         workspace_root=workspace,
-        harness_call_llm=harness_call_llm,
-        auxiliary_call_llm=auxiliary_call_llm,
+        target_call_llm=target_call_llm,
+        evaluation_call_llm=evaluation_call_llm,
         supervisor_kill_wait_s=supervisor_kill_wait_s,
         worker_permit_dir=workspace.parent / "worker-permits",
     )
@@ -218,8 +218,8 @@ def _write_args_file(
             "input": entry.input,
         },
         "adapter": {"kind": "import", "factory": adapter_factory},
-        "harness_role": {"dotted": "tests._subprocess_worker_support:harness_call_llm"},
-        "auxiliary_role": {"dotted": "tests._subprocess_worker_support:auxiliary_call_llm"},
+        "target_role": {"dotted": "tests._subprocess_worker_support:target_call_llm"},
+        "evaluation_role": {"dotted": "tests._subprocess_worker_support:evaluation_call_llm"},
         "run_id": run_id_for_unit(generation.id, entry.id),
         "sink_events_path": str(sink_path),
         "loss_path": str(loss_path),

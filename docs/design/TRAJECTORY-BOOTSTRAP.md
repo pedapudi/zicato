@@ -322,7 +322,7 @@ episode honestly:
 | **completes-under-budget** | A `predicate`-kind expectation is honest here: a dotted-path callable over `RunResult` in a small `zicato.reflection.bootstrap_predicates` library, which the entry references by path (bodies are never serialised, BOARD-FORMAT.md §3.1). The callable is more than a bare `not run_result.aborted`, because an abort is the candidate's failure only when it is not an infrastructure or harness abort. So `not_aborted` gates on `is_infra_abort_cause`, the same distinction screening and preflight draw: a parent-kill, worker-crash or unreadable-result abort returns `True`, since none of those is the candidate's fault, while a wall-clock-budget abort returns `False`. This predicate is a second surface signal rather than the sole guard, because an over-budget re-run is already scored worst-case by the entry's own `wall_clock_budget_seconds` ceiling (BOARD-FORMAT.md §1.2). Deferring to `is_infra_abort_cause` also stops it double-penalising a transient harness blip that the worst-case budget path correctly does not cache. |
 
 - **Behavioral episodes** → an **LLM-drafted** `rubric` or `predicate` behind
-  the **aux seam** (`CallLLM`, never the harness callable — EVAL-SYNTHESIS.md
+  the **aux seam** (`CallLLM`, never the target callable — EVAL-SYNTHESIS.md
   §7), tolerant-parsed and loader-validated the way
   `synthesis._coverage_entry_suggestion` already does (`synthesis.py:620`). A
   parse/validation failure drops that one suggestion with a logged reason.

@@ -133,7 +133,7 @@ def _install_clock_advancing_evolve_once(
     monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
 
-async def _harness_call_llm(system: str, user: str, model: str) -> str:
+async def _target_call_llm(system: str, user: str, model: str) -> str:
     return "harness-output"
 
 
@@ -166,8 +166,8 @@ def test_tiny_budget_stops_loop_early(monkeypatch: pytest.MonkeyPatch, tmp_path:
             rounds=8,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_aux_call_llm,
+            target_call_llm=_target_call_llm,
+            evaluation_call_llm=_aux_call_llm,
             max_wall_clock_seconds=1,
             stop_reason_out=stop_reason,
         )
@@ -204,8 +204,8 @@ def test_between_rounds_budget_stop(monkeypatch: pytest.MonkeyPatch, tmp_path: P
             rounds=8,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_aux_call_llm,
+            target_call_llm=_target_call_llm,
+            evaluation_call_llm=_aux_call_llm,
             max_wall_clock_seconds=10,
             stop_reason_out=stop_reason,
         )
@@ -238,8 +238,8 @@ def test_unbounded_budget_runs_all_rounds(monkeypatch: pytest.MonkeyPatch, tmp_p
             rounds=4,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_aux_call_llm,
+            target_call_llm=_target_call_llm,
+            evaluation_call_llm=_aux_call_llm,
             max_wall_clock_seconds=None,
             stop_reason_out=stop_reason,
         )
@@ -259,8 +259,8 @@ def test_default_is_unbounded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
             rounds=3,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_aux_call_llm,
+            target_call_llm=_target_call_llm,
+            evaluation_call_llm=_aux_call_llm,
         )
     )
     assert len(outcomes) == 3
@@ -291,8 +291,8 @@ def test_round_exceeding_remaining_budget_is_recorded_aborted(
             rounds=5,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_aux_call_llm,
+            target_call_llm=_target_call_llm,
+            evaluation_call_llm=_aux_call_llm,
             max_wall_clock_seconds=1,
             stop_reason_out=stop_reason,
         )
@@ -333,8 +333,8 @@ def test_per_entry_budget_still_applies_independently(
             rounds=2,
             workspace_root=workspace,
             epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_aux_call_llm,
+            target_call_llm=_target_call_llm,
+            evaluation_call_llm=_aux_call_llm,
             max_wall_clock_seconds=300,
         )
     )
@@ -365,7 +365,7 @@ def test_cli_passes_max_wall_clock_seconds_flag(
         evolve_cmd,
         [
             "--harness-call-llm",
-            "tests.test_evolve_budget:_harness_call_llm",
+            "tests.test_evolve_budget:_target_call_llm",
             "--auxiliary-call-llm",
             "tests.test_evolve_budget:_aux_call_llm",
             "--max-wall-clock-seconds",
@@ -392,7 +392,7 @@ def test_cli_max_wall_clock_seconds_defaults_to_none(
         evolve_cmd,
         [
             "--harness-call-llm",
-            "tests.test_evolve_budget:_harness_call_llm",
+            "tests.test_evolve_budget:_target_call_llm",
             "--auxiliary-call-llm",
             "tests.test_evolve_budget:_aux_call_llm",
         ],
@@ -423,7 +423,7 @@ def test_cli_max_wall_clock_seconds_env_var_is_ignored(
         evolve_cmd,
         [
             "--harness-call-llm",
-            "tests.test_evolve_budget:_harness_call_llm",
+            "tests.test_evolve_budget:_target_call_llm",
             "--auxiliary-call-llm",
             "tests.test_evolve_budget:_aux_call_llm",
         ],
@@ -455,7 +455,7 @@ def test_cli_summary_reports_budget_stop(
         evolve_cmd,
         [
             "--harness-call-llm",
-            "tests.test_evolve_budget:_harness_call_llm",
+            "tests.test_evolve_budget:_target_call_llm",
             "--auxiliary-call-llm",
             "tests.test_evolve_budget:_aux_call_llm",
             "--rounds",
@@ -495,7 +495,7 @@ def test_cli_summary_reports_mid_round_abort(
         evolve_cmd,
         [
             "--harness-call-llm",
-            "tests.test_evolve_budget:_harness_call_llm",
+            "tests.test_evolve_budget:_target_call_llm",
             "--auxiliary-call-llm",
             "tests.test_evolve_budget:_aux_call_llm",
             "--rounds",

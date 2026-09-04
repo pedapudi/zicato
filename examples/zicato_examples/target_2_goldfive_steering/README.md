@@ -1,6 +1,6 @@
 # Optimizing goldfive's steering layer
 
-Here the inner harness is **goldfive itself**, and the mutable surface
+Here the system under test is **goldfive itself**, and the mutable surface
 lives inside goldfive's source tree. The proposer edits goldfive's judge
 prompts, its refine-prompt template, and its intervention-ladder
 threshold knobs. The resulting child generation runs against a board of

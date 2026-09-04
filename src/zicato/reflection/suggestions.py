@@ -207,7 +207,7 @@ class SynthesizeSeam(Protocol):
 
     The synthesiser loads the epoch board (to pin regressions / perturb dead
     entries / host judges) from ``workspace_root`` + ``epoch_id``, and resolves
-    the auxiliary callable for the LLM tier only when ``allow_llm``.
+    the evaluation callable for the LLM tier only when ``allow_llm``.
 
     ``imported_traces`` (TRAJECTORY-BOOTSTRAP.md §7) carries the foreign-trace
     reconstructions the bootstrap tier drafts entries from; it defaults to empty

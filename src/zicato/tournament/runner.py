@@ -504,11 +504,11 @@ async def _run_single(
                 "scratch_dir": str(scratch_dir),
                 "entry": entry_dict,
                 "adapter": adapter_spec,
-                "harness_role": _role_worker_spec(
-                    "harness", models=_models, fallback_callable=config.harness_call_llm
+                "target_role": _role_worker_spec(
+                    "target", models=_models, fallback_callable=config.target_call_llm
                 ),
-                "auxiliary_role": _role_worker_spec(
-                    "auxiliary", models=_models, fallback_callable=config.auxiliary_call_llm
+                "evaluation_role": _role_worker_spec(
+                    "evaluation", models=_models, fallback_callable=config.evaluation_call_llm
                 ),
                 "judge_role": _role_worker_spec(
                     "judge",
@@ -537,7 +537,7 @@ async def _run_single(
                 # --aux-call-timeout, pinned
                 # via zicato.config.pin_overrides). The worker re-pins
                 # them at startup so a flag whose knob is consumed
-                # INSIDE the worker (the judge/emulator auxiliary-call
+                # INSIDE the worker (the judge/emulator evaluation-call
                 # budget) crosses the
                 # process boundary without an environment variable.
                 "config_pins": _config_pins(),
@@ -583,7 +583,7 @@ async def _run_single(
         # --- 3. Spawn the worker subprocess. --- ``start_new_session=True``
         # runs the worker in its OWN session and process-group (it calls
         # ``setsid`` before ``exec``), so the worker leads a group containing
-        # itself plus any grandchildren the inner harness spawns (shells,
+        # itself plus any grandchildren the system under test spawns (shells,
         # helper tools). The worker records that group's id (``pgid``) on its
         # ActiveRun record, letting the supervisor GROUP-kill the whole tree by
         # negating the pgid rather than leaking grandchildren when it kills the
@@ -996,7 +996,7 @@ async def run_tournament(
     # through to the runner.
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
-    assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
+    assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
 
     # Thread the board-level disable_drift onto each entry's context so
     # the adapter (running in a subprocess worker) can suppress the named
@@ -1263,7 +1263,7 @@ async def run_fast_mode(
     """
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
-    assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
+    assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
 
     # The champion side stays ONE frozen cached aggregate no matter how high
     # ``replicates`` goes, so replicating here buys a replicated challenger
@@ -1543,7 +1543,7 @@ async def run_matchup(
     """
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
-    assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
+    assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
 
     board = _stamp_disable_drift(board, disable_drift)
     # Stamp the board-level judge_only flag onto each entry's

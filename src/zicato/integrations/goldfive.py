@@ -98,7 +98,7 @@ def build_runtime_config(config: Mapping[str, object] | None) -> Any:
 @asynccontextmanager
 async def run_context(
     config: Mapping[str, object] | None,
-    harness_call_llm: Any,
+    target_call_llm: Any,
     *,
     judge_only: bool,
 ) -> AsyncGenerator[tuple[Any, dict[str, Any]], None]:
@@ -116,7 +116,7 @@ async def run_context(
             )
         judge_call_llm, judge_model = built
     try:
-        kwargs: dict[str, Any] = {"call_llm": harness_call_llm}
+        kwargs: dict[str, Any] = {"call_llm": target_call_llm}
         if judge_only:
             kwargs["judge_only"] = True
         if judge_call_llm is not None:

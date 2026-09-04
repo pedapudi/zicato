@@ -293,50 +293,50 @@ def _resolve_agent(
 
 
 # ---------------------------------------------------------------------------
-# Auxiliary LLM resolution
+# Evaluation LLM resolution
 # ---------------------------------------------------------------------------
 
 
 async def _missing_aux_llm(_system: str, _user: str, _model: str) -> str:
     """Fallback callable that fails loudly when no aux LLM is wired in.
 
-    The CLI tries to import a registered auxiliary callable from the
+    The CLI tries to import a registered evaluation callable from the
     workspace; if none is set, this stub is used so the failure surfaces
     at proposer call time with a clear message rather than at import
     time.
     """
 
     raise RuntimeError(
-        "No auxiliary LLM callable is registered. Wire one into the "
-        "workspace config under 'auxiliary_call_llm' (dotted import path)."
+        "No evaluation LLM callable is registered. Wire one into the "
+        "workspace config under 'evaluation_call_llm' (dotted import path)."
     )
 
 
 def _resolve_aux_llm(config: WorkspaceConfig) -> Any:
-    """Look up the auxiliary LLM callable from the workspace config.
+    """Look up the evaluation LLM callable from the workspace config.
 
-    The config field ``"auxiliary_call_llm"`` is a dotted import path
+    The config field ``"evaluation_call_llm"`` is a dotted import path
     (e.g. ``"my_pkg.llms.aux_call_llm"``). If absent, the missing-stub
     is returned so the command can still parse args and report state.
     """
 
-    dotted = config.raw.get("auxiliary_call_llm")
+    dotted = config.raw.get("evaluation_call_llm")
     if not dotted:
         return _missing_aux_llm
     mod_name, _, attr = dotted.rpartition(".")
     if not mod_name:
         raise click.ClickException(
-            f"auxiliary_call_llm config value is not a dotted path: {dotted!r}"
+            f"evaluation_call_llm config value is not a dotted path: {dotted!r}"
         )
     try:
         module = importlib.import_module(mod_name)
     except ImportError as exc:
         raise click.ClickException(
-            f"Could not import {mod_name!r} for auxiliary_call_llm: {exc}"
+            f"Could not import {mod_name!r} for evaluation_call_llm: {exc}"
         ) from exc
     if not hasattr(module, attr):
         raise click.ClickException(
-            f"Module {mod_name!r} has no attribute {attr!r} for auxiliary_call_llm"
+            f"Module {mod_name!r} has no attribute {attr!r} for evaluation_call_llm"
         )
     return getattr(module, attr)
 
@@ -418,7 +418,7 @@ def propose_cmd(
     patterns = _load_patterns(workspace_dir, epoch_id, parent_gen, patterns_from)
     loss_summary = _load_loss_summary(workspace_dir, epoch_id, parent_gen)
     aux_call_llm = _resolve_aux_llm(config)
-    model = config.auxiliary_model
+    model = config.evaluation_model
 
     # Custom judges declared on the board / per_judge_weights are valid
     # ``drift:<judge_name>`` metric targets in a hypothesis. Best-effort:

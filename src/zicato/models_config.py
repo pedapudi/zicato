@@ -14,8 +14,8 @@ from zicato.core.types import CallLLM
 log = logging.getLogger("zicato.models_config")
 
 MODEL_ROLES: tuple[str, ...] = (
-    "harness",
-    "auxiliary",
+    "target",
+    "evaluation",
     "builder",
     "judge",
     "adjudicator",
@@ -36,7 +36,6 @@ PUBLIC_MODEL_ROLES: tuple[str, ...] = (
     "proposer_review",
 )
 
-_PUBLIC_TO_INTERNAL = {"target": "harness", "evaluation": "auxiliary"}
 _DEFAULT_ENGINE = {
     "target": "target",
     "evaluation": "evaluation",
@@ -132,8 +131,8 @@ def role_spec_from_dict(raw: Any) -> RoleSpec:
 class ModelsConfig:
     """Resolved role specs plus their named-engine source."""
 
-    harness: RoleSpec = RoleSpec()
-    auxiliary: RoleSpec = RoleSpec()
+    target: RoleSpec = RoleSpec()
+    evaluation: RoleSpec = RoleSpec()
     builder: RoleSpec = RoleSpec()
     judge: RoleSpec = RoleSpec()
     adjudicator: RoleSpec = RoleSpec()
@@ -261,8 +260,8 @@ def models_config_from_dict(raw: Any) -> ModelsConfig:
                 )
 
         return ModelsConfig(
-            harness=target,
-            auxiliary=selected("evaluation"),
+            target=target,
+            evaluation=selected("evaluation"),
             builder=selected("builder"),
             judge=selected("judge"),
             adjudicator=selected("adjudicator"),

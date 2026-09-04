@@ -1,4 +1,4 @@
-"""End-to-end mock-harness test for the target_1_presentation example
+"""End-to-end mock-target test for the target_1_presentation example
 run under the NON-GAUNTLET ``racing`` tournament structure.
 
 This is the runnable counterpart to the example's gauntlet smoke recipe

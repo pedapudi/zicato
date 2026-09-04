@@ -395,7 +395,7 @@ class ProposerQualityConfig:
         silently yields nothing.
     critique_enabled:
         When ``True`` (default) and ``best_of_n > 1``, a single cheap
-        auxiliary-LLM self-critique pass scores the sampled candidates
+        evaluation-LLM self-critique pass scores the sampled candidates
         against a quality bar (grounded in a tool call? targets a real
         failure mode? minimal diff?) and selects the best. When ``False``,
         best-of-N still samples ``best_of_n`` candidates but the selection
@@ -473,7 +473,7 @@ class ProposerQualityConfig:
         complementary fixes a parsimony-biased selector would each discount.
         INERT unless ``best_of_n > 1`` (a single-sample proposer
         has no slate slot to mint into) — and cost-neutral: the mint
-        REPLACES the slot's auxiliary propose call, never adds one.
+        REPLACES the slot's evaluation propose call, never adds one.
         ``False`` (default) is OFF — no pair is ever built and the propose
         path is byte-identical. Omitted from the contract canonical form at
         its ``False`` default so existing epochs never roll retroactively;
@@ -538,7 +538,7 @@ class ProposerQualityConfig:
         picked a pair (``docs/design/PROPOSER.md`` §2.6.1). ``"mechanical"``
         (default) MINTS the concatenation of the two disjoint patch sets with
         NO LLM call — REQUIRES a disjoint pair (the applier is last-wins on a
-        duplicate target). ``"llm"`` instead issues ONE auxiliary merge call
+        duplicate target). ``"llm"`` instead issues ONE evaluation merge call
         (the depth refinement role) whose response flows through the normal
         proposal parse/validate path, and RELAXES the disjointness predicate
         for pair SELECTION so two REJECTED fixes that OVERLAP on a mutation

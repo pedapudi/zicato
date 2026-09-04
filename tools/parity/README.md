@@ -43,7 +43,7 @@ REINDEX-DUMP and MOCK-GOLDEN share one deterministic source: the racing
 mock evolve driven by `lib/mock_evolve_capture.py`. It runs the *real*
 example contract (board + `scoring.racing.json` + annotated `agent/` tree +
 the example's `mocks.aux_llm` proposer) through `evolve_once` under the
-racing structure with the inner harness + loss reducer mocked — exactly the
+racing structure with the system under test + loss reducer mocked — exactly the
 fidelity `tests/test_example_target_1_racing.py` runs at. No live LLM, no
 network, no committed binary fixture to drift.
 

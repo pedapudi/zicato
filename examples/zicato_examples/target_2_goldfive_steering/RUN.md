@@ -1,7 +1,7 @@
 # target_2_goldfive_steering — end-to-end run
 
 This document walks the operator through standing up a `zicato evolve`
-loop where the **inner harness is goldfive itself**. The proposer emits
+loop where the **system under test is goldfive itself**. The proposer emits
 patches against goldfive's own prompt + threshold surface; the runner
 mounts a fresh goldfive snapshot per generation; the tournament scores
 the snapshots against an adversarial board.
@@ -44,7 +44,7 @@ name, and 31 mutations (the prompts + threshold knobs declared in
 Pick a scratch directory. The smoke test uses `/tmp/zicato-smoke-t2/`.
 Because `zicato-examples` is installed (`make install`), the mock
 module is importable by its
-`zicato_examples.target_2_goldfive_steering.mocks:harness_llm` dotted
+`zicato_examples.target_2_goldfive_steering.mocks:target_llm` dotted
 path with no symlink:
 
 ```
@@ -151,7 +151,7 @@ Two rounds against the seeded baseline:
 python -m zicato.cli evolve --workspace .zicato \
     --rounds 2 \
     --mode full \
-    --harness-call-llm zicato_examples.target_2_goldfive_steering.mocks:harness_llm \
+    --harness-call-llm zicato_examples.target_2_goldfive_steering.mocks:target_llm \
     --auxiliary-call-llm zicato_examples.target_2_goldfive_steering.mocks:aux_llm
 ```
 
@@ -164,7 +164,7 @@ What happens, step by step:
    points. The native marker pass finds nothing (goldfive carries no
    `# zicato:mutable` comments); the manifest bridge finds the 31
    manifest-declared points.
-3. **Propose**: the auxiliary mock returns a structured `{hypothesis,
+3. **Propose**: the evaluation mock returns a structured `{hypothesis,
    patches}` payload targeting one of the preferred-edits mutation
    ids (`refine_system_prompt` for v1, `reasoning_judge_system_prompt`
    for v2).
@@ -262,7 +262,7 @@ This writes:
 The mocks cover the wiring contract. Running against real models means
 replacing two callables.
 
-1. **harness_llm**: route goldfive's planner, goal-deriver, and
+1. **target_llm**: route goldfive's planner, goal-deriver, and
    reasoning-judge calls to a real model instead of returning canned
    JSON. Goldfive's planner then produces a task graph of five to twenty
    tasks rather than a single-task plan, and the reasoning judge issues
@@ -297,7 +297,7 @@ replacing two callables.
   goldfive.
 * **The adversarial detectors are only partly exercised.** Goldfive's
   embedding-based detectors (OFF_TOPIC, LOOPING_REASONING) need a real
-  embedding model, which the mock `harness_llm` does not supply. The
+  embedding model, which the mock `target_llm` does not supply. The
   RefusingAgent and HallucinatingAgent runs trip goldfive's rule-based
   detectors and do fire drift events. The LoopingAgent, WanderingAgent
   and RunawayDelegationAgent produce reasoning and tool-call patterns

@@ -30,7 +30,7 @@ EPOCH_NAME = "one-renderer"
 
 
 async def _unused_aux(system: str, user: str, model: str) -> str:  # pragma: no cover
-    raise AssertionError("the deterministic refresh must not call the auxiliary LLM")
+    raise AssertionError("the deterministic refresh must not call the evaluation LLM")
 
 
 async def _stub_aux(system: str, user: str, model: str) -> str:
@@ -161,7 +161,7 @@ def test_at_close_document_carries_the_report_figures(epoch: tuple[Path, str]) -
     assert "<!-- FIGURE:" not in served
 
 
-def test_close_without_an_auxiliary_llm_serves_the_renderers_output(
+def test_close_without_an_evaluation_llm_serves_the_renderers_output(
     epoch: tuple[Path, str],
 ) -> None:
     """The no-LLM close path writes a stub report and renders it the same way."""

@@ -2,7 +2,7 @@
 
 Every kind dispatches through :func:`evaluate_expectation` and returns a
 uniform :class:`~zicato.core.ExpectationResult`. The dispatcher is async
-because the ``RUBRIC`` kind needs the auxiliary LLM callable, and the
+because the ``RUBRIC`` kind needs the evaluation LLM callable, and the
 ``PREDICATE`` kind tolerates async predicates by design so projects can
 write predicates that hit their own backends.
 
@@ -45,7 +45,7 @@ Matcher dispatch — keyed on the :class:`~zicato.core.ExpectationKind` enum
     rubric document produced by
     :meth:`zicato.board.predicates.Rubric.score`. Delegates to
     :func:`zicato.board.rubric.evaluate_rubric_judge`. The matcher never
-    sees the harness callable — collusion-proofing happens because the
+    sees the target callable — collusion-proofing happens because the
     aux callable is distinct (enforced by the workspace helper).
 
 Returned :class:`ExpectationResult.detail` carries enough information
@@ -296,8 +296,8 @@ async def evaluate_expectation(
         the transcript to pass in :attr:`RunResult.final_output`.
     aux_call_llm:
         Required for :attr:`~zicato.core.ExpectationKind.RUBRIC`
-        expectations; ignored for the rest. Must be the auxiliary
-        callable from :class:`~zicato.core.RuntimeConfig` (the harness
+        expectations; ignored for the rest. Must be the evaluation
+        callable from :class:`~zicato.core.RuntimeConfig` (the target
         callable would invite collusion — the workspace helper enforces
         distinctness).
 

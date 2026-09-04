@@ -32,11 +32,11 @@ from zicato.runtime.state import Heartbeat, read_heartbeat
 from zicato.runtime_factory import make_runtime_config
 
 
-def _harness_call_llm(*_args: object, **_kwargs: object) -> str:
+def _target_call_llm(*_args: object, **_kwargs: object) -> str:
     return ""
 
 
-def _auxiliary_call_llm(*_args: object, **_kwargs: object) -> str:
+def _evaluation_call_llm(*_args: object, **_kwargs: object) -> str:
     return ""
 
 
@@ -44,14 +44,14 @@ def _config(tmp_path: Path, runtime_block: dict[str, object]) -> RuntimeConfig:
     """Build the RuntimeConfig a run with this ``runtime`` block would use.
 
     The two callables are distinct because the factory refuses a shared one
-    (a harness that is also its own auxiliary can collude on an emulated
+    (a harness that is also its own evaluation can collude on an emulated
     entry).
     """
     return make_runtime_config(
         {"runtime": runtime_block},
         workspace_root=tmp_path,
-        harness_call_llm=_harness_call_llm,
-        auxiliary_call_llm=_auxiliary_call_llm,
+        target_call_llm=_target_call_llm,
+        evaluation_call_llm=_evaluation_call_llm,
     )
 
 

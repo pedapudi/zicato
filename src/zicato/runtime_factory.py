@@ -85,8 +85,8 @@ def make_runtime_config(
     workspace_config: Mapping[str, Any],
     *,
     workspace_root: Path | None = None,
-    harness_call_llm: CallLLM | None = None,
-    auxiliary_call_llm: CallLLM | None = None,
+    target_call_llm: CallLLM | None = None,
+    evaluation_call_llm: CallLLM | None = None,
 ) -> RuntimeConfig:
     """Assemble a :class:`RuntimeConfig` from workspace config + optional overrides.
 
@@ -99,15 +99,15 @@ def make_runtime_config(
         * ``runtime.instance_id`` (string; defaults to ``"default"``).
         * ``runtime.workspace_root`` (path; overridden by the explicit
           ``workspace_root`` kwarg when supplied).
-        * ``runtime.harness_call_llm`` (dotted path; only consulted
+        * ``runtime.target_call_llm`` (dotted path; only consulted
           when the kwarg is ``None``).
-        * ``runtime.auxiliary_call_llm`` (dotted path; same rule).
+        * ``runtime.evaluation_call_llm`` (dotted path; same rule).
         * ``runtime.seed`` (int or null).
     workspace_root:
         Optional override for the workspace root path. When ``None``
         we fall back to ``config['runtime']['workspace_root']`` and then
         to ``.zicato`` (relative to the operator's cwd).
-    harness_call_llm, auxiliary_call_llm:
+    target_call_llm, evaluation_call_llm:
         Optional pre-resolved callables. Each one bypasses the config's
         dotted-path lookup when supplied.
 
@@ -138,40 +138,40 @@ def make_runtime_config(
         resolved_root = Path(str(raw_root))
 
     # The unified ``models`` block (runtime infra, NOT part of the contract)
-    # is the first source for harness / auxiliary / judge — but an explicit
+    # is the first source for target / evaluation / judge — but an explicit
     # callable kwarg still wins, and an unconfigured role falls through to
     # the ``runtime.*`` dotted paths, which a workspace may configure
     # instead.
     models = load_models_config(workspace_config)
 
-    harness = harness_call_llm
-    if harness is None and not models.harness.is_empty:
-        harness = resolve_text_call_llm(models.harness, role="harness")
-    if harness is None:
-        dotted = runtime_dict.get("harness_call_llm")
+    target = target_call_llm
+    if target is None and not models.target.is_empty:
+        target = resolve_text_call_llm(models.target, role="target")
+    if target is None:
+        dotted = runtime_dict.get("target_call_llm")
         if not dotted:
             raise ValueError(
-                "workspace_config['runtime']['harness_call_llm'] is required "
-                "when no harness_call_llm callable is passed explicitly "
-                "and no models.harness role is configured"
+                "workspace_config['runtime']['target_call_llm'] is required "
+                "when no target_call_llm callable is passed explicitly "
+                "and no models.target role is configured"
             )
-        harness = _import_callable(str(dotted), kind="harness_call_llm")
+        target = _import_callable(str(dotted), kind="target_call_llm")
 
-    aux = auxiliary_call_llm
-    if aux is None and not models.auxiliary.is_empty:
-        aux = resolve_text_call_llm(models.auxiliary, role="auxiliary")
+    aux = evaluation_call_llm
+    if aux is None and not models.evaluation.is_empty:
+        aux = resolve_text_call_llm(models.evaluation, role="evaluation")
     if aux is None:
-        dotted = runtime_dict.get("auxiliary_call_llm")
+        dotted = runtime_dict.get("evaluation_call_llm")
         if not dotted:
             raise ValueError(
-                "workspace_config['runtime']['auxiliary_call_llm'] is required "
-                "when no auxiliary_call_llm callable is passed explicitly "
-                "and no models.auxiliary role is configured"
+                "workspace_config['runtime']['evaluation_call_llm'] is required "
+                "when no evaluation_call_llm callable is passed explicitly "
+                "and no models.evaluation role is configured"
             )
-        aux = _import_callable(str(dotted), kind="auxiliary_call_llm")
+        aux = _import_callable(str(dotted), kind="evaluation_call_llm")
 
     # Judges use ``models.judge`` when present; absent, ``judge_call_llm``
-    # stays ``None`` and judges fall back to the auxiliary callable via
+    # stays ``None`` and judges fall back to the evaluation callable via
     # ``RuntimeConfig.effective_judge_call_llm`` (the default behavior).
     judge: CallLLM | None = None
     if not models.judge.is_empty:
@@ -192,7 +192,7 @@ def make_runtime_config(
     # Ensemble proposer roles: ``models.proposer_breadth`` steers the
     # best-of-N SLATE SAMPLING and ``models.proposer_depth`` the CRITIQUE +
     # REVISE passes. Both absent (the common case) ⇒ ``None``, and the
-    # best-of-N wrapper then runs every pass on the auxiliary callable.
+    # best-of-N wrapper then runs every pass on the evaluation callable.
     # No distinctness guard binds them to each other or to any
     # other role: both are proposer-side, one trust domain (the guard is for
     # evaluator-vs-evaluated separation). Like every ``models`` role, a change
@@ -328,32 +328,32 @@ def make_runtime_config(
         )
     preflight_probe_mutation_ids = tuple(str(mid) for mid in probe_ids_raw)
 
-    # Inner ADK agent model: when ``models.harness`` is a *model spec* (a
+    # Inner ADK agent model: when ``models.target`` is a *model spec* (a
     # model string, optionally + endpoint/api_key_env), build the ADK model
     # object so the adapter can rebind the target's agents to it with native
     # tool/function calling intact (the config-driven alternative to a bare
-    # string + the text-only shim). A dotted ``call_llm`` harness role, or an
-    # endpoint-less spec that yields a bare string, leaves ``inner_model``
+    # string + the text-only shim). A dotted ``call_llm`` target role, or an
+    # endpoint-less spec that yields a bare string, leaves ``target_model``
     # None, and the adapter then uses its guarded shim rebind.
-    inner_model: Any = None
-    if not models.harness.is_empty and models.harness.model:
+    target_model: Any = None
+    if not models.target.is_empty and models.target.model:
         from zicato.models_config import build_adk_model  # noqa: PLC0415
 
         try:
-            built = build_adk_model(models.harness, role="harness")
+            built = build_adk_model(models.target, role="target")
         except ValueError:
             built = None  # ADK/litellm unavailable — fall back to the shim path.
         if built is not None and not isinstance(built, str):
-            inner_model = built
+            target_model = built
 
     # Defense in depth — also re-checked by the runner.
-    assert_distinct_callables(harness, aux)
+    assert_distinct_callables(target, aux)
 
     return RuntimeConfig(
         instance_id=instance_id,
         workspace_root=resolved_root,
-        harness_call_llm=harness,
-        auxiliary_call_llm=aux,
+        target_call_llm=target,
+        evaluation_call_llm=aux,
         seed=seed,
         parallelism=parallelism,
         propose_parallelism=propose_parallelism,
@@ -369,7 +369,7 @@ def make_runtime_config(
         scrub_worker_env=scrub_worker_env,
         worker_env_passthrough=worker_env_passthrough,
         diversity_tolerance=diversity_tolerance,
-        inner_model=inner_model,
+        target_model=target_model,
         infra_abort_round_threshold=infra_abort_round_threshold,
         infra_backoff_base_s=infra_backoff_base_s,
         infra_backoff_cap_s=infra_backoff_cap_s,

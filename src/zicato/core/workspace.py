@@ -455,29 +455,30 @@ def scoring_path(workspace_root: Path, epoch_id: str) -> Path:
 
 
 def assert_distinct_callables(
-    harness_call_llm: Callable[..., Any],
-    auxiliary_call_llm: Callable[..., Any],
+    target_call_llm: Callable[..., Any],
+    evaluation_call_llm: Callable[..., Any],
 ) -> None:
     """Enforce that the two LLM callables on :class:`RuntimeConfig` differ.
 
-    The emulator, judge, and analysis pass run on the ``auxiliary_call_llm``
-    side; the inner harness runs on the ``harness_call_llm`` side. If the two
-    sides share a callable, the emulator and the inner harness execute through
-    the same process state and risk colluding (the inner harness can perceive
+    The emulator, judge, and analysis pass run on the ``evaluation_call_llm``
+    side; the system under test runs on the ``target_call_llm`` side. If the two
+    sides share a callable, the emulator and the system under test execute through
+    the same process state and risk colluding (the system under test can perceive
     the emulator's prompts, the emulator can leak the expected output through
     shared state, etc.). The collusion risk is high enough that we refuse to
     start the run when the two callables are identity-equal.
 
     The ensemble proposer ROLE callables (breadth / depth) are guard-exempt:
     they are proposer-side, one trust domain, and may freely be the same
-    callable as each other or as the auxiliary. The emulator↔harness collusion
-    risk this guard defends rides the auxiliary surface, which stays guarded;
+    callable as each other or as the evaluation callable. The collusion risk
+    this guard defends — emulator against system under test — rides the
+    evaluation surface, which stays guarded;
     the proposer roles cannot carry it.
 
     Raises
     ------
     RuntimeError
-        If ``harness_call_llm is auxiliary_call_llm``.
+        If ``target_call_llm is evaluation_call_llm``.
 
     Notes
     -----
@@ -486,9 +487,9 @@ def assert_distinct_callables(
     check; that is the operator's responsibility. The point here is to
     catch the trivial mistake of passing the same callable twice.
     """
-    if harness_call_llm is auxiliary_call_llm:
+    if target_call_llm is evaluation_call_llm:
         raise RuntimeError(
-            "harness_call_llm and auxiliary_call_llm must be distinct callables; "
+            "target_call_llm and evaluation_call_llm must be distinct callables; "
             "shared callables risk collusion in multi-turn emulated entries"
         )
 

@@ -22,7 +22,7 @@ classifiers = [
     "Private :: Do Not Upload",
 ]
 # The example targets exercise the full orchestrator path, which pulls
-# in goldfive (inner harness) and the ADK SDK (agent tree). Depending
+# in goldfive (system under test) and the ADK SDK (agent tree). Depending
 # on zicato itself keeps a single source of truth for those extras.
 dependencies = [
     "zicato[adk]",

@@ -189,7 +189,7 @@ async def test_each_slate_slot_lands_its_own_record(tmp_path: Path) -> None:
 
 
 async def _unused_callable(*_a: Any, **_k: Any) -> str:  # pragma: no cover - never invoked
-    raise AssertionError("the auxiliary callable must never be invoked on the ADK path")
+    raise AssertionError("the evaluation callable must never be invoked on the ADK path")
 
 
 # ---------------------------------------------------------------------------

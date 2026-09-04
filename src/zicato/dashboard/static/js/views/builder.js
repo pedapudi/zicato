@@ -1563,14 +1563,14 @@ function proposerSection(d) {
     briefEditor(d),
     controlRow('Best-of-N slate', {
       title: 'best_of_n', def: '3',
-      body: 'How many candidate experiments each propose-step samples before the critique pass picks one. 1 is the historical single sample (no critique). Each extra sample is an auxiliary propose call, priced on the cost meter; the screen (Field & noise) then tries the slate out.',
+      body: 'How many candidate experiments each propose-step samples before the critique pass picks one. 1 is the historical single sample (no critique). Each extra sample is an evaluation propose call, priced on the cost meter; the screen (Field & noise) then tries the slate out.',
     }, numInput(pq.best_of_n != null ? pq.best_of_n : 3,
       { min: '1', step: '1', 'aria-label': 'Best of N' },
       (n) => runOp('set_proposer_quality', { best_of_n: n }), { int: true })),
     controlRow('Self-critique', {
       title: 'critique_enabled', def: 'on',
-      body: 'A single cheap auxiliary-LLM pass scores the sampled slate against a quality bar (grounded? targets a real failure mode? minimal diff?) and selects the best. Off, selection falls back to the deterministic smallest-relevant-diff heuristic — no extra LLM call. Inert at best_of_n 1.',
-    }, checkInput(pq.critique_enabled !== false, 'Critique enabled', 'auxiliary self-critique selects from the slate',
+      body: 'A single cheap evaluation-LLM pass scores the sampled slate against a quality bar (grounded? targets a real failure mode? minimal diff?) and selects the best. Off, selection falls back to the deterministic smallest-relevant-diff heuristic — no extra LLM call. Inert at best_of_n 1.',
+    }, checkInput(pq.critique_enabled !== false, 'Critique enabled', 'evaluation self-critique selects from the slate',
       (on) => runOp('set_proposer_quality', { critique_enabled: on }))),
     controlRow('Process exemplars', {
       title: 'process_exemplars', def: '0 (off)',

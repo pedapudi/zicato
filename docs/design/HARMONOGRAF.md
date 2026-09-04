@@ -70,7 +70,7 @@ enables the live view; see [`INSTALL-PROFILES.md`](INSTALL-PROFILES.md).
 Harmonograf keys every view by a **session id** (`[a-zA-Z0-9_-]{1,128}`).
 Two distinct kinds of session exist in a zicato workspace:
 
-### 2a. Board-run session (one per inner-harness run)
+### 2a. Board-run session (one per system-under-test run)
 
 When a board entry runs, the worker calls `goldfive.run(agent, input,
 sinks=[jsonl, harmonograf])`. goldfive mints a fresh per-run

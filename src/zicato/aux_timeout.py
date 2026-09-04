@@ -1,6 +1,6 @@
-"""Shared per-call budget for auxiliary-LLM calls.
+"""Shared per-call budget for evaluation-LLM calls.
 
-The auxiliary LLM is the proposer/judge/emulator/analysis backend — a
+The evaluation LLM is the proposer/judge/emulator/analysis backend — a
 hung endpoint there can wedge a round. Each call site wraps its
 ``aux_call_llm`` invocation in :func:`asyncio.wait_for` against the
 budget exposed by :func:`aux_call_timeout_s`.
@@ -23,14 +23,14 @@ from __future__ import annotations
 
 from zicato.config import AuxConfig, load_config
 
-#: Default per-call auxiliary-LLM budget in seconds. Mirrors
+#: Default per-call evaluation-LLM budget in seconds. Mirrors
 #: :attr:`zicato.config.AuxConfig.call_timeout_s`'s default; kept as a
 #: module constant for the call sites and tests that import it by name.
 DEFAULT_AUX_CALL_TIMEOUT_S: float = AuxConfig().call_timeout_s
 
 
 def aux_call_timeout_s(config: AuxConfig | None = None) -> float:
-    """Return the per-call auxiliary-LLM budget in seconds.
+    """Return the per-call evaluation-LLM budget in seconds.
 
     Parameters
     ----------

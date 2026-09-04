@@ -13,7 +13,7 @@ scalar is computable by hand. The target is scripted at every seam:
 * ``predicates.py`` — one defensive pass/fail predicate per board entry.
 * ``mocks.py`` — the scripted proposer (``aux_llm``) whose per-round
   patches drive the loop to a known floor, plus the never-invoked
-  ``harness_llm`` placeholder.
+  ``target_llm`` placeholder.
 * ``board.jsonl`` / ``scoring.json`` / ``scoring.effective.json`` — the
   frozen contract, with the ``runtime:`` coefficient at 0 so the floor is an exact
   float.

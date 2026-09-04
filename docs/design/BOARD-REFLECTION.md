@@ -484,7 +484,7 @@ labelled. Preview fidelity can rank suspects; it cannot ground a verdict.
 
 **Collusion analysis.** `RunResult`'s docstring excludes internal agent
 reasoning, stating that it is "intentionally not exposed here so the emulator
-and the judge cannot trivially collude with the inner harness". That exclusion
+and the judge cannot trivially collude with the system under test". That exclusion
 guards the **during-run** channel: what a live emulator or judge can see of the
 run it is inside. Persisting the artifacts into the run directory after the run
 does not reopen that channel. The file is written after the run's judgements
