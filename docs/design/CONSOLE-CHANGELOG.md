@@ -1,7 +1,7 @@
 # The console — round-by-round changelog
 
-> **Status.** This file is the round-by-round changelog of the shipped
-> console. For the visual design language it settled on — the colour-role
+> **Status: a historical record.** This file is the round-by-round changelog
+> of the shipped console, and keeps its chronology on purpose. For the visual design language it settled on — the colour-role
 > system, typography, the mark grammar, and render discipline — read
 > [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md), which is the
 > source of truth for the present state.
@@ -48,9 +48,9 @@ Default colour theme: **monokai**. Default typeface theme: **Technical**
 **100 %**. Miller columns (R) are back-burnered and not pursued here.
 
 The console is self-contained under `js/`, `css/console.css`, and the entry
-point `app_T.js`; it reuses the shared `js/core/*` data spine and imports from
+point `console.js`; it reuses the shared `js/core/*` data spine and imports from
 no other entry's directory, so everything it took from P, S and Q is ported
-in. It is the interface the dashboard serves: `index.html` boots `app_T.js`,
+in. It is the interface the dashboard serves: `index.html` boots `console.js`,
 and exactly one interface loads at a time.
 
 ## Decision-loop wave (current default — meta-loop ledger · settings drawer · racing hero · builder view)
@@ -181,7 +181,7 @@ Two scoped changes, CSS/JS-only:
    content it shows a positioned, **token-styled** card (`--v2-panel` bg,
    `--v2-ink` text, `--v2-rule` border, the mono face, subtle shadow/radius) on
    `mouseenter`/`focus` and hides on `mouseleave`/`blur`/`Escape`. It is mounted
-   INSIDE `#variant-root` so it inherits the live per-theme tokens (correct
+   INSIDE `#console-root` so it inherits the live per-theme tokens (correct
    across all 16 themes, light + dark), is positioned with viewport flip/clamp so
    it never clips, honours `prefers-reduced-motion`, and is keyboard-accessible
    (focusable target + `role="tooltip"` linked via `aria-describedby`). Crucially
@@ -239,7 +239,7 @@ Three operator-requested changes, all in CSS and JavaScript only:
    (`.dt-rail-handle`, `role="separator"`) resizes the tree side-panel: a pointer
    drag sets the width live, arrow keys nudge ±16 (Home/End jump to the bounds).
    The width drives the `--dt-rail` grid column on the app root, is **persisted to
-   localStorage** (`zicato.T.rail`) and **restored on load** (digest-gated / no
+   localStorage** (`zicato.console.rail`) and **restored on load** (digest-gated / no
    flash), clamped to a sensible min/max (`RAIL_MIN`–`RAIL_MAX`, default 288 px);
    the detail pane's `1fr` column reflows. This is **page-chrome sizing** —
    distinct from the page-scale pill, which zooms the whole page.
@@ -398,7 +398,7 @@ detail host holds the destination view.
    containers are not recreated and scroll position is preserved. The transcript
    pane re-renders only when the selection or transcript content actually changes.
    This mirrors `compare.js`'s per-side hosts (each side's digest gate fires
-   independently). See the `board view (live)` tests in `test/variant_t_*.test.mjs`.
+   independently). See the `board view (live)` tests under `test/`.
 6. **Trellis vs heatmap de-dup** — heatmap stays at the epoch overview
    (`views/epoch.js`); the trellis lives in the Boards view (`views/boards.js`).
    Never both on one page.
@@ -597,7 +597,7 @@ and the **match-ups** header. The SVG marks follow T's fit-to-width discipline
 (`width:100%` + viewBox, no pan/zoom, token-themed across all thirteen swatches,
 scaling with the page-scale pill). Since the live workspace is gauntlet-only,
 the non-gauntlet renderers are driven + tested with **mock structure payloads**
-(`test/variant_t_*.test.mjs`) and degrade gracefully (an honest empty state, no
+(the console suite under `test/`) and degrade gracefully (an honest empty state, no
 throw) when the structure payload is absent.
 
 ### Surfacing the LIVE tournament during a run
@@ -675,7 +675,7 @@ digest so it stays live-updating + flash-free on the same SSE/poll cadence.
   improve · regress · accent) + name. Keyboard-accessible: Enter/Space/ArrowDown open;
   ArrowUp/ArrowDown move the active option; Enter/Space select; Esc closes; a
   click outside closes. Choosing a theme sets `[data-t-theme]` on the variant
-  root (CSS-only re-skin), persists (`zicato.T.theme`), and updates the trigger.
+  root (CSS-only re-skin), persists (`zicato.console.theme`), and updates the trigger.
   The heatmap ramp + every mark derive from the active theme tokens.
 
   The thirteen themes (monokai stays default): the three originals — **monokai**,
@@ -710,9 +710,9 @@ digest so it stays live-updating + flash-free on the same SSE/poll cadence.
   typeset literary voice) · **Technical** (default; Open Sans body + JetBrains
   Mono for data / labels / code) · **Display** (Space Grotesk geometric body +
   Archivo Narrow condensed headings & big numerals — a punchy headline voice),
-  swapped via `[data-t-type]`, persisted (`zicato.T.typeface`). The old redundant
+  swapped via `[data-t-type]`, persisted (`zicato.console.typeface`). The old redundant
   **Sans** option is dropped (the `sans` id normalises to Technical). Google
-  Fonts loaded in `app_T.js` with `display=swap` and system fallbacks — the only
+  Fonts loaded in `console.js` with `display=swap` and system fallbacks — the only
   external dep.
 - **Density — removed; COZY baked in.** There is no density picker. The **cozy**
   `--dt-*` spacing tokens (`--dt-rail`, `--dt-pad-x/-y`, `--dt-section-gap`,
@@ -736,8 +736,8 @@ inside a `.dt-scale-pill`, beside the colour + typeface pickers) with a small
 
 - **Mechanism.** `shell.applyScale(n, root)` (mirrors `applyTheme`) normalises
   `n` (clamp to range + snap to the 5 % grid), then applies it **page-wide** by
-  setting **`zoom`** on the Variant-T app **ROOT**
-  (`#variant-root[data-variant="T"]`) — e.g. 130 % → `root.style.zoom = 1.3`. It
+  setting **`zoom`** on the console's app **ROOT** (`#console-root`) — e.g.
+  130 % → `root.style.zoom = 1.3`. It
   also stamps the raw ratio as `--dt-page-scale` and records `data-t-scale="130"`
   on the root, and updates the slider + the % readout. `zoom` **reflows** (it is
   not a CSS transform), so the page re-wraps at the scaled size and never clips.
@@ -749,7 +749,7 @@ inside a `.dt-scale-pill`, beside the colour + typeface pickers) with a small
   only, and there is **no** per-pane zoom control. In the side-by-side compare view
   the two panes scale together with the rest of the page.
 - **Persistence.** `readScale` / `persistScale` use their own key
-  (`zicato.T.scale`); the value is restored and re-applied on every mount, and is
+  (`zicato.console.scale`); the value is restored and re-applied on every mount, and is
   untouched by colour/typeface changes (orthogonal axes).
 
 ## Fluid, resolution-responsive layout (round 9)
@@ -849,15 +849,15 @@ heatmap; Tufte sankey with label ≠ value; side-by-side diff with real strings.
 
 ## Tests
 
-> **Note (test-suite reorg).** The former `test/variant_t.test.mjs` monolith
+> **Note (test-suite reorg).** The former single-file console test monolith
 > (grown to 10,828 lines / 374 tests) was split MECHANICALLY — assertions
-> verbatim, count unchanged — by dominant view into ten `test/variant_t_*.test.mjs`
+> verbatim, count unchanged — by dominant view into ten files under `test/`
 > files, with the shared preamble hoisted to `test/fixtures.mjs`. The
 > file-and-count references below are HISTORICAL; the current map lives in
 > `docs/dev-guide/11-testing.md` §11.9.4. `run-all.mjs` globs `*.test.mjs`, so
 > grep for the assertion rather than trusting a filename here.
 
-`test/variant_t_*.test.mjs` (the split suite) covers, carried forward: the tree renders
+The split console suite under `test/` covers, carried forward: the tree renders
 Environment → Epoch → {Generations, Boards, Mutation surface, Publication};
 multi-generation nav; the candidate-page promote gate; the patch-node click →
 per-candidate diff with real strings; v0 showing ≥2 match-ups; the board view
@@ -1008,7 +1008,7 @@ to `animation: none` / `transition: none` (instant, no motion). Every animation 
 GPU-friendly (`transform` / `opacity` / `width`) and never causes layout thrash or
 re-introduces the digest flashing.
 
-**Tests** (`test/variant_t_*.test.mjs`, mocking live state/SSE payloads):
+**Tests** (the console suite under `test/`, mocking live state/SSE payloads):
 **(a)** an active-tournament (racing, running) renders the live hero + funnel and
 the ticker lists events; **(b)** a phase/active-runs update mutates the live
 surfaces *without* a full repaint — the phase/progress/ticker-list nodes keep

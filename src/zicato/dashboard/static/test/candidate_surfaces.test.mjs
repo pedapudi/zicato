@@ -1,4 +1,4 @@
-// test/variant_t_candidate.test.mjs — console unit tests for the candidate
+// test/candidate_surfaces.test.mjs — console unit tests for the candidate
 // surfaces: router and tree navigation, the candidate dossier (promote gate,
 // provenance, radar), side-by-side compare and diff, the board transcript, the
 // live transcript, the pickers and wordmark, and the render-once discipline.
@@ -1257,8 +1257,11 @@ test('typeface migration: an option id from the retired scheme resolves to the f
   for (const [old, id] of Object.entries(retired)) {
     assertEqual(ui.normaliseType(old), id, 'a stored "' + old + '" resolves to ' + id);
   }
-  // the migration runs on the persisted read path too, not just on a passed value.
-  window.localStorage.setItem('zicato.T.typeface', 'D14');
+  // the migration runs on the persisted read path too, not just on a passed
+  // value. The key is the current spelling, so this case turns on the stored id
+  // alone; retiring the key spelling is a separate migration, pinned in
+  // settings.test.mjs.
+  window.localStorage.setItem('zicato.console.typeface', 'D14');
   assertEqual(ui.readType(), 'barlow-condensed', 'a preference already persisted under a retired id reads back as its face');
   const root = document.createElement('div');
   shell.applyTypeface('E8', root);

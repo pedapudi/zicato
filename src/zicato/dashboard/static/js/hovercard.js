@@ -8,7 +8,7 @@
 // `mouseenter`/`focus` and hidden on `mouseleave`/`blur`/`Escape`.
 //
 // Design notes that matter:
-//   * THEME-AWARE: the card is mounted INSIDE the variant root (#variant-root)
+//   * THEME-AWARE: the card is mounted INSIDE the console root (#console-root)
 //     so it inherits the per-theme `--v2-*` custom properties — it reads
 //     correctly across all 16 themes (light and dark) with no hardcoded hex.
 //     Its look is entirely in css/console.css (`.dn-hovercard`).
@@ -37,12 +37,12 @@ function canMeasure(node) {
   return node && typeof node.getBoundingClientRect === 'function';
 }
 
-// The mount point: the nearest ancestor that IS the variant root (so the card
+// The mount point: the nearest ancestor that IS the console root (so the card
 // inherits the live per-theme tokens), else document.body as a safe fallback.
 function mountFor(target) {
   let n = target;
   while (n) {
-    if (n.id === 'variant-root') return n;
+    if (n.id === 'console-root') return n;
     n = n.parentNode;
   }
   return (typeof document !== 'undefined' && document.body) || null;

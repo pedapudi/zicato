@@ -265,7 +265,7 @@ test('settings: the Settings typeface picker still APPLIES + PERSISTS (the sole 
 
 // The old accent-tinted, pulsing "light-up rail card" research-preview banner is
 // GONE from the Settings surface. The product-status mark is now a QUIET pill
-// pinned NEXT TO the wordmark in the top bar (asserted in the variant_t_* suite),
+// pinned NEXT TO the wordmark in the top bar (asserted in shell.test.mjs),
 // NOT a card that leads Settings — so the Settings host must carry no `dn-respreview`
 // banner and must lead directly with the section grid.
 test('settings: the old research-preview light-up card is gone from Settings', async () => {
@@ -523,8 +523,45 @@ test('ui: font-size model — normalise + read/persist round-trip + scale values
     assertEqual(ui.readFontSize(), size, 'readFontSize round-trips ' + size);
   }
   // a bogus persisted value normalises back to small on read.
-  globalThis.window.localStorage.setItem('zicato.T.fontsize', 'huge');
+  globalThis.window.localStorage.setItem('zicato.console.fontsize', 'huge');
   assertEqual(ui.readFontSize(), 'small', 'a bogus stored size reads small');
+});
+
+// The console's preference keys were renamed from `zicato.T.<name>` to
+// `zicato.console.<name>`. A browser used before the rename still holds the
+// viewer's choices under the old spelling, so every preference must read back
+// from it — and a write must land on the current key alone, so the value moves
+// across the first time it is set.
+//
+// Every value below is one the preference accepts today, so each assertion
+// turns on the key spelling alone. What a stored VALUE may say is a separate
+// question each preference answers for itself: the typeface's retired option
+// ids are pinned in candidate_surfaces.test.mjs.
+test('prefs: a value stored under the retired key spelling is still read, and a write moves it', async () => {
+  const ui = await import('../js/ui.js');
+  const builder = await import('../js/builder/model.js');
+  const store = globalThis.window.localStorage;
+  store.clear();
+  store.setItem('zicato.T.theme', 'dracula');
+  store.setItem('zicato.T.typeface', 'literata');
+  store.setItem('zicato.T.scale', '120');
+  store.setItem('zicato.T.fontsize', 'large');
+  store.setItem('zicato.T.rail', '360');
+  store.setItem('zicato.T.builder.chatWidth', '420');
+  store.setItem('zicato.T.builder.chatCollapsed', '1');
+  assertEqual(ui.readColor(), 'dracula', 'the retired theme key is read');
+  assertEqual(ui.readType(), 'literata', 'the retired typeface key is read');
+  assertEqual(ui.readScale(), 120, 'the retired scale key is read');
+  assertEqual(ui.readFontSize(), 'large', 'the retired text-size key is read');
+  assertEqual(ui.readRail(), 360, 'the retired rail-width key is read');
+  assertEqual(builder.readChatWidth(), 420, 'the retired builder chat-width key is read');
+  assertEqual(builder.readChatCollapsed(), true, 'the retired builder collapse key is read');
+  // the current key wins once written, and the retired one is left untouched.
+  ui.persistColor('zenburn');
+  assertEqual(store.getItem('zicato.console.theme'), 'zenburn', 'a write lands on the current key');
+  assertEqual(store.getItem('zicato.T.theme'), 'dracula', 'a write does not touch the retired key');
+  assertEqual(ui.readColor(), 'zenburn', 'the current key shadows the retired one');
+  store.clear();
 });
 
 test('shell: applyFontSize stamps --dt-font-scale + data-t-fontsize per size + persists', async () => {

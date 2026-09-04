@@ -339,7 +339,7 @@ def client(workspace: Path, tmp_path: Path) -> TestClient:
     static = tmp_path / "static"
     static.mkdir()
     (static / "index.html").write_text("<!doctype html><title>zicato</title>", encoding="utf-8")
-    (static / "app_T.js").write_text("// app", encoding="utf-8")
+    (static / "console.js").write_text("// app", encoding="utf-8")
     with TestClient(create_app(workspace, static, read_only=True)) as c:
         yield c
 

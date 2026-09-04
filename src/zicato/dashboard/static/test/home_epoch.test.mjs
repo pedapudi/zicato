@@ -1,4 +1,4 @@
-// test/variant_t_home_epoch.test.mjs — the epoch view's round timeline (the
+// test/home_epoch.test.mjs — the epoch view's round timeline (the
 // slim reel), the compact match cards on the generations page, and the density
 // baseline.
 //
@@ -372,7 +372,7 @@ test('density removed: no picker, no density APIs; cozy is the permanent baselin
   const css = readCss();
   assert(!/\[data-t-density="compact"\]/.test(css), 'no compact density selector in the CSS');
   assert(!/\[data-t-density="roomy"\]/.test(css), 'no roomy density selector in the CSS');
-  assert(/#variant-root\[data-variant="T"\]\s*\{[^}]*--dt-rail:\s*288px/.test(css.replace(/\n/g, ' ')),
+  assert(/#console-root\s*\{[^}]*--dt-rail:\s*288px/.test(css.replace(/\n/g, ' ')),
     'the cozy --dt-rail (288px) is the unconditional baseline on the root');
 });
 

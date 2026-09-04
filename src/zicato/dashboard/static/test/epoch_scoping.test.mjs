@@ -1,4 +1,4 @@
-// test/variant_t_epoch_scoping.test.mjs — console unit tests: drill-down views
+// test/epoch_scoping.test.mjs — console unit tests: drill-down views
 // scoped to the viewed epoch, pending (unscored) candidates, fleet cards, and
 // cross-epoch tree/gens gating.
 //
@@ -854,7 +854,7 @@ test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live pr
 test('typeface options: each of the 12 ids has a CSS rule whose font-role tokens match its faces', () => {
   const css = readCss();
   function typeBlock(id) {
-    const m = css.match(new RegExp('#variant-root\\[data-variant="T"\\]\\[data-t-type="' + id + '"\\]\\s*\\{([^}]*)\\}'));
+    const m = css.match(new RegExp('#console-root\\[data-t-type="' + id + '"\\]\\s*\\{([^}]*)\\}'));
     assert(m, 'the ' + id + ' typeface block exists');
     return m[1];
   }
@@ -897,8 +897,8 @@ test('typeface options: each of the 12 ids has a CSS rule whose font-role tokens
     assertEqual(primary(opt.data), expect[id].data, id + ' JS model data matches');
   }
   // the DEFAULT block (no data-t-type) lands on the Google Sans Mono voice.
-  const baseM = css.match(/#variant-root\[data-variant="T"\]\s*\{([^}]*--v2-sans[^}]*)\}/);
-  assert(baseM, 'the base [data-variant="T"] token block declares the default font roles');
+  const baseM = css.match(/#console-root\s*\{([^}]*--v2-sans[^}]*)\}/);
+  assert(baseM, 'the base #console-root token block declares the default font roles');
   assert(/Google Sans Mono/.test(baseM[1]), 'the default (no data-t-type) voice is Google Sans Mono');
 });
 
@@ -906,7 +906,7 @@ test('typeface options: each of the 12 ids has a CSS rule whose font-role tokens
 // typeface — so its dot stays centred regardless of the selected typeface.
 test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the swappable --v2-mono token', async () => {
   const css = readCss();
-  const baseM = css.match(/#variant-root\[data-variant="T"\]\s*\{([^}]*)\}/);
+  const baseM = css.match(/#console-root\s*\{([^}]*)\}/);
   assert(baseM, 'the base token block exists');
   const base = baseM[1];
   const brand = (base.match(/--v2-brand-mono\s*:\s*([^;]+);/) || [])[1];
@@ -914,7 +914,7 @@ test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the swappa
   assert(/monospace\s*$/.test(brand.trim()), 'the brand mono stack ends in the generic monospace keyword');
   // it is NOT declared inside any per-OPTION block, so it never swaps with the UI.
   for (const id of ui.TYPE_OPTIONS.map((o) => o.id)) {
-    const m = css.match(new RegExp('#variant-root\\[data-variant="T"\\]\\[data-t-type="' + id + '"\\]\\s*\\{([^}]*)\\}'));
+    const m = css.match(new RegExp('#console-root\\[data-t-type="' + id + '"\\]\\s*\\{([^}]*)\\}'));
     assert(m && !/--v2-brand-mono/.test(m[1]), 'the ' + id + ' typeface block does NOT re-declare the brand mono (it stays fixed)');
   }
   // the wordmark <text> pins to the fixed brand mono (not the swappable mono).
@@ -928,7 +928,7 @@ test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the swappa
 //     HOSTED woff2 declared via @font-face in the scoped CSS (JetBrains Mono
 //     still backs the fixed brand mono) — those never touch a CDN.
 //   * The typeface picker's finalized 12 faces load from the Google-Fonts loader
-//     in app_T.js (preconnect + a single css2 request, display=swap). Every
+//     in console.js (preconnect + a single css2 request, display=swap). Every
 //     family the 12 options reference must be in that request.
 test('fonts: the two self-hosted monos stay woff2; the 12 finalized faces load via the Google-Fonts loader (preconnect + display=swap)', async () => {
   const css = readCss();
@@ -945,7 +945,7 @@ test('fonts: the two self-hosted monos stay woff2; the 12 finalized faces load v
   for (const f of faces) assert(!/url\(\s*['"]?https?:/.test(f), 'a face src is a LOCAL url (no http/https CDN)');
 
   const fs = await import('node:fs');
-  const appJs = fs.readFileSync(new URL('../app_T.js', import.meta.url), 'utf8');
+  const appJs = fs.readFileSync(new URL('../console.js', import.meta.url), 'utf8');
   // EVERY family the 12 finalized options reference loads from the Google-Fonts
   // request; the self-hosted monos must NOT be in it.
   const loaded = [...appJs.matchAll(/family=([A-Za-z0-9+]+)/g)].map((m) => m[1].replace(/\+/g, ' '));
@@ -957,18 +957,18 @@ test('fonts: the two self-hosted monos stay woff2; the 12 finalized faces load v
     'Bricolage Grotesque',
   ];
   for (const fam of NEEDED) {
-    assert(loaded.includes(fam), 'app_T.js loads the ' + fam + ' family (display=swap)');
+    assert(loaded.includes(fam), 'console.js loads the ' + fam + ' family (display=swap)');
   }
   assert(!loaded.includes('JetBrains Mono'), 'JetBrains Mono is self-hosted, NOT requested from the CDN');
   assert(!loaded.includes('iA Writer Mono'), 'iA Writer Mono is self-hosted, NOT requested from the CDN');
   assert(/display=swap/.test(appJs), 'CDN fonts are requested with display=swap');
   // a preconnect to the Google-Fonts origins is set up before the stylesheet.
-  assert(/rel\s*=\s*['"]preconnect['"]/.test(appJs), 'app_T.js preconnects to the font origins');
-  assert(/fonts\.gstatic\.com/.test(appJs), 'app_T.js preconnects to the gstatic woff2 host');
+  assert(/rel\s*=\s*['"]preconnect['"]/.test(appJs), 'console.js preconnects to the font origins');
+  assert(/fonts\.gstatic\.com/.test(appJs), 'console.js preconnects to the gstatic woff2 host');
 
   // the self-hosted woff2 files actually ship on disk under static/fonts/.
   const path = await import('node:path');
-  const fontsDir = path.dirname(new URL('../app_T.js', import.meta.url).pathname) + '/fonts';
+  const fontsDir = path.dirname(new URL('../console.js', import.meta.url).pathname) + '/fonts';
   for (const f of ['JetBrainsMono-Regular.woff2', 'iAWriterMonoS-Regular.woff2']) {
     assert(fs.existsSync(fontsDir + '/' + f) && fs.statSync(fontsDir + '/' + f).size > 0, 'ships ' + f);
   }

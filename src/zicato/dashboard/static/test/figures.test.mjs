@@ -1,4 +1,4 @@
-// test/variant_t_figures.test.mjs — the console's figures: the evolve-rounds
+// test/figures.test.mjs — the console's figures: the evolve-rounds
 // model and spine timeline, the data-graphics that carry no chartjunk, the
 // responsive structure-builder layer, and continuous per-entry scoring.
 //

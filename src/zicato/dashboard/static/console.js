@@ -1,4 +1,4 @@
-// app_T.js — the console's entry point.
+// console.js — the console's entry point.
 //
 // The layout is dense and data-ink-maximal: a persistent collapsible nested
 // tree (Environment → Epoch → {Generations | Boards | Mutation surface |
@@ -7,13 +7,13 @@
 // renders the destination into the MAIN detail pane. It defaults to the Monokai
 // colour theme and the Google Sans Mono typeface pairing. index.html loads this
 // entry, which:
-//   1. injects the variant's scoped stylesheet (self-contained), which itself
+//   1. injects the console's scoped stylesheet (self-contained), which itself
 //      @font-faces the SELF-HOSTED monospace woff2 (iA Writer Mono + JetBrains
 //      Mono) the default Technical mode uses,
 //   2. injects the Google Fonts link for the NON-self-hosted families that
 //      Editorial (serif) and Display (geometric/condensed) read (fonts only,
 //      with system fallbacks + font-display: swap),
-//   3. paints the dashboard into #variant-root,
+//   3. paints the dashboard into #console-root,
 //   4. reuses the shared data layer (core/{api,sse,state}) untouched.
 //
 // Everything visual lives under js/** + css/**.
@@ -21,17 +21,17 @@
 import { mountShell } from './js/shell.js';
 
 function ensureRoot() {
-  let root = document.getElementById('variant-root');
+  let root = document.getElementById('console-root');
   if (!root) {
     root = document.createElement('div');
-    root.id = 'variant-root';
+    root.id = 'console-root';
     document.body.appendChild(root);
   }
   return root;
 }
 
 function ensureStylesheet() {
-  const id = 'console4-T-stylesheet';
+  const id = 'console-stylesheet';
   if (document.getElementById(id)) return;
   const link = document.createElement('link');
   link.id = id;
@@ -57,17 +57,17 @@ function ensureStylesheet() {
 //                   Barlow Condensed, Bricolage Grotesque
 //     (Open Sans is loaded as the display-family fallback the stylesheet names.)
 function ensureFonts() {
-  const id = 'console4-T-fonts';
+  const id = 'console-fonts';
   if (document.getElementById(id)) return;
   // preconnect to the Google-Fonts origins (CSS + the woff2 host) to cut the
   // connection-setup latency before the stylesheet request lands.
   const pre1 = document.createElement('link');
-  pre1.id = 'console4-T-fonts-pre1';
+  pre1.id = 'console-fonts-preconnect-css';
   pre1.rel = 'preconnect';
   pre1.href = 'https://fonts.googleapis.com';
   document.head.appendChild(pre1);
   const pre2 = document.createElement('link');
-  pre2.id = 'console4-T-fonts-pre2';
+  pre2.id = 'console-fonts-preconnect-files';
   pre2.rel = 'preconnect';
   pre2.href = 'https://fonts.gstatic.com';
   pre2.crossOrigin = 'anonymous';
@@ -104,7 +104,7 @@ export function boot() {
   mountShell(ensureRoot());
 }
 
-if (typeof document !== 'undefined' && !globalThis.__CONSOLE_T_NO_AUTOBOOT__) {
+if (typeof document !== 'undefined' && !globalThis.__CONSOLE_NO_AUTOBOOT__) {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot);
   } else {

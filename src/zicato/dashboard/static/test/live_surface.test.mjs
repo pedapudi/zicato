@@ -1,4 +1,4 @@
-// test/variant_t_live.test.mjs — the console's live surface:
+// test/live_surface.test.mjs — the console's live surface:
 // live-status for any structure, structure-aware polish, the progressive
 // live racing/swiss/elim models, projected standings, and the racing-ladder
 // reconstruction from per-challenger match records.

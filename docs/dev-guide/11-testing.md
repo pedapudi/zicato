@@ -1463,14 +1463,14 @@ with the shared preamble (the `FIXTURE` map plus the `freshHb` /
 
 | file | covers |
 |---|---|
-| `variant_t_shell.test.mjs` | the chrome — tree / crumbs / status pill / containment |
-| `variant_t_structure.test.mjs` | the tournament-structure figures + standings |
-| `variant_t_candidate.test.mjs` | the candidate dossier |
-| `variant_t_epoch_scoping.test.mjs` | cross-epoch scoping (the fleet + per-epoch reads) |
-| `variant_t_figures.test.mjs` | the figure grammar (heatmaps / bars / radars) |
-| `variant_t_home_epoch.test.mjs` | home + epoch views |
-| `variant_t_lifecycle_dag.test.mjs` | the mutation surface + lifecycle DAG |
-| `variant_t_live.test.mjs` / `variant_t_live_hero.test.mjs` / `variant_t_live_waves.test.mjs` | the SSE-driven live hero / ticker / funnel transitions |
+| `shell.test.mjs` | the chrome — tree / crumbs / status pill / containment |
+| `tournament_structures.test.mjs` | the tournament-structure figures + standings |
+| `candidate_surfaces.test.mjs` | the candidate dossier |
+| `epoch_scoping.test.mjs` | cross-epoch scoping (the fleet + per-epoch reads) |
+| `figures.test.mjs` | the figure grammar (heatmaps / bars / radars) |
+| `home_epoch.test.mjs` | home + epoch views |
+| `lifecycle_dag.test.mjs` | the mutation surface + lifecycle DAG |
+| `live_surface.test.mjs` / `live_hero.test.mjs` / `live_waves.test.mjs` | the SSE-driven live hero / ticker / funnel transitions |
 
 `digest_opts.test.mjs` pins the `digestOpts` rules directly — functions are
 dropped, key order is irrelevant, a non-integer number rounds to three

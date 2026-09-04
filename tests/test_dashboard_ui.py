@@ -5,8 +5,8 @@ assert structural invariants the dashboard service relies on:
 
 * No external resource references (no ``http`` URLs, no remote scripts,
   no remote stylesheets, no Google Fonts).
-* The Variant-T mount point + the entry bootstrap are present so
-  ``app_T.js`` can find them.
+* The console mount point + the entry bootstrap are present so
+  ``console.js`` can find them.
 * The total bundle size sits under the envelope (uncompressed total of
   HTML + CSS + JS + icon sprite).
 * The dark-mode media query exists in the CSS.
@@ -49,14 +49,14 @@ def _js_bundle_files() -> list[Path]:
     """Every JS file in the shipped bundle.
 
     The dashboard frontend is a modular ES-module app: the thin entry
-    point ``app_T.js`` (Variant T, the sole shipping UI) plus the modules
-    under ``static/js/`` (the core spine and the Variant-T view modules).
+    point ``console.js`` (the sole shipping UI) plus the modules under
+    ``static/js/`` (the core spine and the console's view modules).
     The structural tests assert properties of the *bundle* — they
-    concatenate every JS file rather than reading ``app_T.js`` alone, so
+    concatenate every JS file rather than reading ``console.js`` alone, so
     the assertions hold regardless of which module a given symbol lives
     in.
     """
-    files = [STATIC_DIR / "app_T.js"]
+    files = [STATIC_DIR / "console.js"]
     js_dir = STATIC_DIR / "js"
     if js_dir.is_dir():
         # Deterministic order; the test bundle is order-insensitive but a
@@ -67,7 +67,7 @@ def _js_bundle_files() -> list[Path]:
 
 @pytest.fixture(scope="module")
 def app_js() -> str:
-    """The concatenated JS bundle — Variant T's entry plus js/ modules."""
+    """The concatenated JS bundle — the console entry plus js/ modules."""
     return "\n".join(p.read_text(encoding="utf-8") for p in _js_bundle_files())
 
 
@@ -112,7 +112,7 @@ def _served_text_files() -> list[Path]:
     hand-listing fixtures per file. A prior version of this test summed
     four hand-picked fixtures (``index.html`` + ``style.css`` + the JS
     bundle + ``icons.svg``) and silently missed ``css/console.css`` —
-    loaded at runtime by ``app_T.js`` via a dynamic ``<link>`` — because
+    loaded at runtime by ``console.js`` via a dynamic ``<link>`` — because
     nothing forced the fixture list to track what's actually on disk.
     Walking the tree closes that gap structurally: a new text asset
     dropped anywhere under ``static/`` (outside the excluded
@@ -147,7 +147,7 @@ def test_js_bundle_walk_finds_the_modules() -> None:
     """
     files = _js_bundle_files()
     assert len(files) > 20, f"the JS bundle walk found only {len(files)} files"
-    assert (STATIC_DIR / "app_T.js") in files
+    assert (STATIC_DIR / "console.js") in files
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ def test_js_has_no_external_fetch(app_js: str) -> None:
     * The W3C SVG namespace literal (``http://www.w3.org/2000/svg``) is
       the XML-namespace URI required by ``createElementNS``.
     * The Google Fonts stylesheet (``https://fonts.googleapis.com/css2``)
-      is the single external dependency the Variant-T brief permits —
+      is the single external dependency the console's design brief permits —
       fonts only, injected with ``display=swap`` and system fallbacks, so
       a slow font never blocks paint. No application data crosses it.
     * The two Google-Fonts ``<link rel="preconnect">`` origins
@@ -229,7 +229,7 @@ def test_js_has_no_external_fetch(app_js: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Expected DOM structure — the Variant-T mount
+# Expected DOM structure — the console mount
 # ---------------------------------------------------------------------------
 
 
@@ -265,11 +265,11 @@ class _SectionCollector(HTMLParser):
             self._in_nav = False
 
 
-# Variant T (the sole shipping UI) paints its entire shell at runtime
+# The console (the sole shipping UI) paints its entire shell at runtime
 # into a single host element. The static page only has to provide that
-# mount point + the skip link; everything else is rendered by app_T.js.
+# mount point + the skip link; everything else is rendered by console.js.
 REQUIRED_IDS = {
-    "variant-root",
+    "console-root",
 }
 
 
@@ -282,17 +282,17 @@ def test_required_element_ids_present(index_html: str) -> None:
 
 def test_index_loads_local_css_and_js(index_html: str) -> None:
     assert 'href="style.css"' in index_html, "style.css <link> missing"
-    # Variant T is the only UI. The bootstrap loads its entry point as a
-    # local ES module; there is no ?ui branching or fallback shell.
-    assert "'app_T.js'" in index_html, "Variant-T entry app_T.js missing from the bootstrap"
+    # The console is the only UI. The bootstrap loads its entry point as
+    # a local ES module; there is no ?ui branching or fallback shell.
+    assert "'console.js'" in index_html, "console entry console.js missing from the bootstrap"
     assert "'module'" in index_html, "the entry must load as an ES module"
 
 
-def test_variant_t_mount_present(index_html: str) -> None:
-    """The single Variant-T host element is wired into the page."""
+def test_console_mount_present(index_html: str) -> None:
+    """The single console host element is wired into the page."""
     p = _SectionCollector()
     p.feed(index_html)
-    assert "variant-root" in p.all_ids, "missing #variant-root mount for Variant T"
+    assert "console-root" in p.all_ids, "missing the #console-root console mount"
 
 
 # ---------------------------------------------------------------------------
@@ -345,19 +345,19 @@ def test_bundle_under_size_envelope() -> None:
     files = _served_text_files()
     sizes = {str(p.relative_to(STATIC_DIR)): len(p.read_text(encoding="utf-8")) for p in files}
     total = sum(sizes.values())
-    # The dashboard converged on Variant T (Console IV). The retired v1
-    # (phase0 shell) and v2 (Notebook/Bench) UIs — and the bake-off field
-    # A–W before them — were removed from `main` and archived at the git
-    # tags `dashboard-v1-v2-archive-2026-06-02` and
+    # The dashboard converged on a single console. The retired v1 (phase0
+    # shell) and v2 (Notebook/Bench) UIs — and the bake-off field before
+    # them — were removed from `main` and archived at the git tags
+    # `dashboard-v1-v2-archive-2026-06-02` and
     # `dashboard-bakeoff-2026-06-01` respectively, so the served bundle
-    # dropped sharply to Variant T alone. The Variant-T feature set has since
-    # grown (per-structure epoch overviews, live trackers, the swiss/elim
+    # dropped sharply to the console alone. The console's feature set has
+    # since grown (per-structure epoch overviews, live trackers, the swiss/elim
     # standings-bump + mini-bracket visualizations). Integration wave 8 adds the
     # match-grouped live "what's running" block, the tree live-activity pulse,
     # and the elim generations-across-rounds flow (a new svg renderer + its CSS),
     # which push the served total just past the prior 640 KB line; the envelope
-    # is raised to 680 KB to leave headroom for continued Variant-T iteration.
-    # The Console-IV de-chartjunk wave then turns the boxed widgets into
+    # is raised to 680 KB to leave headroom for continued console iteration.
+    # The de-chartjunk wave then turns the boxed widgets into
     # data-graphics: it ADDS three in-language SVG renderers (the gauntlet
     # `duelFlow`, the loss-floor `waterfall`, the champion `reignGantt`) + their
     # CSS and enhances `elimFlow` into a bracket-as-flow with match convergences —
@@ -441,7 +441,7 @@ def test_bundle_under_size_envelope() -> None:
     # The FEATURE-WAVE INTEGRATION then lands every dashboard surface on one
     # branch at once: the double-elim demotion line-routing (#34) and the
     # in-flight LIVE-badge / status-chip round timeline (#31) both grew the
-    # shared svg.js + Variant-T view modules, and their union sits ~1.7 KB above
+    # shared svg.js + console view modules, and their union sits ~1.7 KB above
     # the prior 1.092 MB line (no shared widget was duplicated — both renderers
     # coexist; the frontend suite asserts both behaviours). The envelope is
     # raised to 1.10 MB to cover the combined surface with headroom.
@@ -765,7 +765,7 @@ def test_bundle_under_size_envelope() -> None:
     #
     # HONEST REBASE: this test's own accounting had drifted from what the
     # server actually serves. Two gaps: (1) ``css/console.css`` — loaded at
-    # runtime by ``app_T.js`` via a dynamic ``<link>``, and by far the
+    # runtime by ``console.js`` via a dynamic ``<link>``, and by far the
     # largest single stylesheet (~277 KB) — was never in the summed fixture
     # set; (2) ``js/CONTRACTS.md`` and the top-level ``README.md`` are
     # hand-written text the static route serves like any other file and
@@ -861,7 +861,7 @@ def test_bundle_under_size_envelope() -> None:
 
 
 def test_each_file_is_non_empty() -> None:
-    for name in ("index.html", "style.css", "app_T.js", "icons.svg"):
+    for name in ("index.html", "style.css", "console.js", "icons.svg"):
         path = STATIC_DIR / name
         assert path.exists(), f"missing required file {name}"
         assert path.stat().st_size > 0, f"empty file {name}"
@@ -878,8 +878,8 @@ def test_skip_link_present(index_html: str) -> None:
 
 
 def test_skip_link_targets_main_content(index_html: str) -> None:
-    # Variant T paints its own landmark roles (banner / main /
-    # contentinfo) at runtime into ``#variant-root``; the static page
+    # The console paints its own landmark roles (banner / main /
+    # contentinfo) at runtime into ``#console-root``; the static page
     # only needs to provide the skip-link target the shell renders.
     assert 'href="#main-content"' in index_html
 

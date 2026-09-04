@@ -1,4 +1,4 @@
-// test/variant_t_lifecycle_dag.test.mjs — console unit tests covering
+// test/lifecycle_dag.test.mjs — console unit tests covering
 // mutation-surface click semantics, the lifecycle DAG (board column,
 // normalized layout, expandable runs, per-board loss), the survival funnel,
 // the hovercard, rail sizing, and the up button.

@@ -10,9 +10,9 @@ The frontend is split into disjoint modules:
 
 ```
 static/
-  index.html            — page shell hosting `#variant-root`
+  index.html            — page shell hosting `#console-root`
   css/console.css       — every design token and every SVG mark class
-  app_T.js              — ES-module entry point
+  console.js            — ES-module entry point
   js/
     core/               — the data/render spine
       dom.js            — el, svgEl, clearChildren, patch helpers
@@ -21,6 +21,7 @@ static/
       sse.js            — EventSource wiring + delta dispatch
       bus.js            — a small publish/subscribe event bus
       harmonograf.js    — harmonograf URL builders
+      prefs.js          — the persisted per-viewer preference store
       admission_viz.js  — the suggestion-admission figures
     router.js           — hash routing + deep links
     shell.js            — chrome, sidebar-to-detail host, page-scale pill

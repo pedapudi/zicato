@@ -57,7 +57,7 @@ rather than a consumer report. Five principles:
 ### 2.1 The role contract
 
 Every theme is a CSS custom-property set scoped under
-`#variant-root[data-variant="T"][data-t-theme="<id>"]`, swapped by the
+`#console-root[data-t-theme="<id>"]`, swapped by the
 `[data-t-theme]` attribute. There is **no hardcoded hex in the marks** — every
 figure reads its colour from the active theme's tokens. The contract is a small
 set of semantic roles whose meaning is **fixed across all sixteen themes**:
@@ -206,7 +206,7 @@ labels, axis text, code) — plus `--n-font-head` (headings) and `--n-font-paper
 (publication body). From `console4.css` L432–L476:
 
 ```css
-#variant-root[data-variant="T"] {
+#console-root {
   --n-font-base:       "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --n-font-mono-real:  "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
   --n-font-prose-mono: "iA Writer Mono", "iA Writer Mono S", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -242,7 +242,7 @@ The picker re-points the four exposed tokens per mode:
   `font-display: swap` (`console4.css` L39–L58). **The default mode never touches
   a CDN**: a blocked network never affects the page.
 - **Editorial's serif + Display's families load from Google Fonts** — the only
-  external dependency — injected in `app_T.js` `ensureFonts()` with
+  external dependency — injected in `console.js` `ensureFonts()` with
   `display=swap`: `Open Sans`, `Source Serif 4` (optical-size axis `8..60`),
   `Space Grotesk`, `Archivo Narrow`. Every stack lists a system fallback so a
   slow/blocked font never breaks layout.
@@ -326,7 +326,7 @@ Sticky, blurred, hairline-bottomed (`console4.css` L1274; assembled in
    (candidate → generations → epoch → environment) rather than browser-back. Disabled
    state `.dt-back-off`.
 2. **`.dt-brand`** — the inline-SVG mark (`.dt-brand-mark`) + the inline-SVG
-   wordmark (`.dt-brand-name`, `zıcato`) + a `.dt-brand-variant` tag reading
+   wordmark (`.dt-brand-name`, `zıcato`) + a `.dt-brand-tag` tag reading
    `console`.
 3. **`.dt-crumbs`** — breadcrumb trail (mono, faint), `.dt-crumb` links +
    `.dt-crumb-sep`.
@@ -350,7 +350,7 @@ The sole sizing control: a native range input (`.dt-scale-range`,
 ≈70 %–150 % in 5 % steps, default 100 %) + a `%` readout + a `⟲` reset button.
 It applies page-wide via `zoom` on the app root (`shell.applyScale`), which
 **reflows** (not a transform) so the page re-wraps at the scaled size and never
-clips. Persisted under `zicato.T.scale`. The slider thumb is `--v2-accent` with a
+clips. Persisted under `zicato.console.scale`. The slider thumb is `--v2-accent` with a
 `--v2-paper` ring; focus ring `2px --v2-accent`.
 
 ### 4.5 The status pill (`.dt-status`)
@@ -544,7 +544,7 @@ match, dots sit relative to a reference rule, the spine is the one accent line.
 ### 5.6 The hovercard (hover-for-detail)
 
 Hover-for-detail is first-class. `hovercard.js` mounts a **singleton** card
-*inside* `#variant-root`, so it inherits the live per-theme tokens
+*inside* `#console-root`, so it inherits the live per-theme tokens
 (`--v2-panel` bg, `--v2-ink` text, `--v2-rule` border, mono face). Every mark
 calls `hov(node, tip)`. Crucially it is a **transient overlay outside the
 digest-gated render** (§7) — show/hide only toggles `.dn-hovercard-on`, so it can
@@ -557,7 +557,7 @@ viewport-flipped/clamped, keyboard-accessible (`role="tooltip"` via
 
 ## 6. Components
 
-All scoped under `#variant-root[data-variant="T"]`; all token-only.
+All scoped under `#console-root`; all token-only.
 
 ### 6.1 Buttons & links
 
@@ -675,8 +675,8 @@ docked frame collapses to a normal scrolling single column.
   page-scale pill. One shared instance is used identically by the top bar and
   Settings → Appearance.
 
-The theme + typeface persist to `localStorage` (`zicato.T.theme`,
-`zicato.T.typeface`; the size as `zicato.T.fontsize`) and drive the same
+The theme + typeface persist to `localStorage` (`zicato.console.theme`,
+`zicato.console.typeface`; the size as `zicato.console.fontsize`) and drive the same
 `applyTheme` / `applyTypeface` / `applyFontSize` the Settings → Appearance
 section uses — one source of truth, synced across every live picker.
 
