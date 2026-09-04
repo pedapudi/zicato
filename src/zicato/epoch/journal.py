@@ -57,6 +57,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
+from zicato.core.tournament import recorded_decision_token
 from zicato.core.types import (
     DriftMovementActual,
     ExpectedDriftMovement,
@@ -379,9 +380,17 @@ def _as_decision(value: Any) -> Any:
         return value
 
 
-def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
-    if d is None:
+def _outcome_from_dict(recorded: Any) -> OutcomeRecord | None:
+    """Rebuild the typed outcome from a stored ``outcome`` field.
+
+    ``None`` in, ``None`` out: a generation with no recorded outcome has
+    no typed record either. A bare-string outcome names the decision and
+    nothing else, so every other field takes its default; any other
+    outcome is a mapping of outcome fields.
+    """
+    if recorded is None:
         return None
+    d: dict[str, Any] = {} if isinstance(recorded, str) else recorded
     movements = tuple(
         DriftMovementActual(
             kind=str(m["kind"]),
@@ -414,6 +423,7 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         )
         for m in d.get("match_record", [])
     )
+    decision_token = recorded_decision_token(recorded)
     raw_rank = d.get("final_rank")
     raw_elim = d.get("eliminated_in_round")
     return OutcomeRecord(
@@ -422,7 +432,21 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         pass_rate_delta=float(d.get("pass_rate_delta", 0.0)),
         drift_loss_delta=float(d.get("drift_loss_delta", 0.0)),
         scalar_score_delta=float(d.get("scalar_score_delta", 0.0)),
-        tournament_decision=_as_decision(d.get("tournament_decision", "rejected")),
+        # One reader of the on-disk spellings, shared with the classifier
+        # the dashboard serves, so the same bytes cannot resolve to two
+        # different decisions.
+        #
+        # A record naming no decision at all reads back as REJECTED.
+        # ``OutcomeRecord.tournament_decision`` is declared non-optional,
+        # so the type has no way to say "settled, decision unknown" and
+        # this decoder must pick one of the three. Rejection is the safe
+        # pick — it never crowns a generation the tournament did not
+        # crown. It is also lossy: readers that must tell an undecided
+        # experiment from a rejected one take the stored body instead.
+        # Issue #446 measures what making the field optional would cost.
+        tournament_decision=_as_decision(
+            TournamentDecision.REJECTED if decision_token is None else decision_token
+        ),
         rejection_reason=str(d.get("rejection_reason", "")),
         metric_movements=metric_movements,
         structure=str(d.get("structure", "gauntlet")),

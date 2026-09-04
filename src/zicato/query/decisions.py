@@ -4,7 +4,10 @@ Every payload that names a tournament decision funnels through here so the
 server ships ONE canonical vocabulary and the frontend never re-classifies:
 
 * :data:`PROMOTED_DECISIONS` / :func:`experiment_decision` — the token set
-  and the reader that the lineage view classifies promotions with.
+  and the reader that the lineage view classifies promotions with. The
+  on-disk spellings the reader accepts belong to
+  :func:`zicato.core.tournament.recorded_decision_token`, which the typed
+  record's decoder resolves through as well.
 * :func:`canonical_decision` — maps any recorded token onto the canonical
   ``promoted`` / ``rejected`` / ``deferred`` wire vocabulary
   (:class:`zicato.core.tournament.TournamentDecision`); an unrecognised
@@ -17,6 +20,8 @@ server ships ONE canonical vocabulary and the frontend never re-classifies:
 from __future__ import annotations
 
 from typing import Any
+
+from zicato.core.tournament import recorded_decision_token
 
 #: Recorded tokens that count as a promotion. The canonical wire token is
 #: ``"promoted"`` (``TournamentDecision.PROMOTED``); the rest are spellings
@@ -33,21 +38,13 @@ DEFERRED_DECISIONS = frozenset({"deferred", "defer"})
 def experiment_decision(exp: dict[str, Any]) -> str | None:
     """The raw decision token recorded on one experiment, or ``None``.
 
-    Reads the ``outcome`` field: a bare string outcome IS the decision; a
-    dict outcome carries it under ``decision`` / ``tournament_decision`` /
-    ``verdict``. ``None`` when no decision was recorded (in-flight).
+    Resolves the ``outcome`` field through
+    :func:`~zicato.core.tournament.recorded_decision_token`, which owns
+    the on-disk spellings. ``None`` when no decision was recorded
+    (in-flight): this reader serves what was recorded, so an undecided
+    experiment must not be served as a rejection.
     """
-    outcome = exp.get("outcome")
-    if outcome is None:
-        return None
-    if isinstance(outcome, str):
-        return outcome
-    if isinstance(outcome, dict):
-        for key in ("decision", "tournament_decision", "verdict"):
-            val = outcome.get(key)
-            if isinstance(val, str):
-                return val
-    return None
+    return recorded_decision_token(exp.get("outcome"))
 
 
 def canonical_decision(raw: str | None) -> str | None:
