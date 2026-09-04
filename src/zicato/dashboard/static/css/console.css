@@ -411,23 +411,23 @@
   --v2-cell-empty: #371129;
 }
 
-/* ===================  the typeface OPTIONS (12 finalized faces)  ===================
+/* ===================  the typeface OPTIONS (12 faces)  ===================
  *
- * The typeface picker is a GROUPED POPOVER offering the operator's finalized
- * TWELVE faces — FOUR per mode across THREE modes (Technical · Editorial ·
- * Display). Each option keys on a `[data-t-type]` id (e.g. `T7`) the picker
- * stamps on the root; the matching rule below swaps the FOUR font-role tokens
- * the dashboard reads:
+ * The typeface picker is a GROUPED POPOVER offering TWELVE faces — FOUR per
+ * mode across THREE modes (Technical · Editorial · Display). Each option keys
+ * on a `[data-t-type]` id naming its heading face (e.g. `google-sans-mono`)
+ * that the picker stamps on the root; the matching rule below swaps the FOUR
+ * font-role tokens the dashboard reads:
  *   head  → --n-font-head   (headings / big numerals)
  *   prose → --v2-sans + --n-font-paper   (body / publication voice)
  *   data/code → --v2-mono   (data / labels / code)
- * The exact font-stack strings are lifted BYTE-FOR-BYTE from the typeface study
- * (FONT_STACKS in compose.html / index.html), so the dashboard matches it.
+ * The font-stack strings match the ones in the typeface study under
+ * docs/design/typeface-study/, so the dashboard renders what the study showed.
  * Every family lists a system fallback so a slow / blocked font never breaks
  * layout; the Google-Fonts families load in app_T.js (display=swap). The two
- * self-hosted monos (iA Writer Mono + JetBrains Mono, @font-face above) are
- * untouched — only the brand mono still pins to JetBrains Mono. DEFAULT: T7
- * (Google Sans Mono), the first Technical option.
+ * self-hosted monos (iA Writer Mono + JetBrains Mono, @font-face above) serve
+ * roles outside this picker, and the brand mono pins to JetBrains Mono.
+ * DEFAULT: Google Sans Mono, the first Technical option.
  */
 #variant-root[data-variant="T"] {
   --n-font-base: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -443,8 +443,8 @@
    * matter which option is selected (the brand never reflows with the UI). */
   --v2-brand-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 
-  /* DEFAULT (T7 · Google Sans Mono): all four roles = Google Sans Mono (Noto
-   * Sans Mono fallback). Applied unconditionally so a missing data-t-type still
+  /* DEFAULT (Google Sans Mono): all four roles = Google Sans Mono (Noto Sans
+   * Mono fallback). Applied unconditionally so a missing data-t-type still
    * lands on the default voice. */
   --v2-sans: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
   --v2-mono: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
@@ -453,29 +453,29 @@
 }
 
 /* ----- Technical group ----- */
-/* T7 · Google Sans Mono — all four = Google Sans Mono (Noto Sans Mono fallback). */
-#variant-root[data-variant="T"][data-t-type="T7"] {
+/* Google Sans Mono — all four = Google Sans Mono (Noto Sans Mono fallback). */
+#variant-root[data-variant="T"][data-t-type="google-sans-mono"] {
   --v2-sans: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
   --v2-mono: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
   --n-font-head: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
   --n-font-paper: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
 }
-/* T9 · Source Sans 3 + Source Code Pro — head/prose = Source Sans 3, data/code = Source Code Pro. */
-#variant-root[data-variant="T"][data-t-type="T9"] {
+/* Source Sans 3 + Source Code Pro — head/prose = Source Sans 3, data/code = Source Code Pro. */
+#variant-root[data-variant="T"][data-t-type="source-sans-3"] {
   --v2-sans: 'Source Sans 3', system-ui, sans-serif;
   --v2-mono: 'Source Code Pro', ui-monospace, monospace;
   --n-font-head: 'Source Sans 3', system-ui, sans-serif;
   --n-font-paper: 'Source Sans 3', system-ui, sans-serif;
 }
-/* T12 · Inconsolata — all four = Inconsolata. */
-#variant-root[data-variant="T"][data-t-type="T12"] {
+/* Inconsolata — all four = Inconsolata. */
+#variant-root[data-variant="T"][data-t-type="inconsolata"] {
   --v2-sans: 'Inconsolata', ui-monospace, monospace;
   --v2-mono: 'Inconsolata', ui-monospace, monospace;
   --n-font-head: 'Inconsolata', ui-monospace, monospace;
   --n-font-paper: 'Inconsolata', ui-monospace, monospace;
 }
-/* T14 · Ubuntu + Ubuntu Mono — head/prose = Ubuntu, data/code = Ubuntu Mono. */
-#variant-root[data-variant="T"][data-t-type="T14"] {
+/* Ubuntu + Ubuntu Mono — head/prose = Ubuntu, data/code = Ubuntu Mono. */
+#variant-root[data-variant="T"][data-t-type="ubuntu"] {
   --v2-sans: 'Ubuntu', system-ui, sans-serif;
   --v2-mono: 'Ubuntu Mono', ui-monospace, monospace;
   --n-font-head: 'Ubuntu', system-ui, sans-serif;
@@ -483,29 +483,29 @@
 }
 
 /* ----- Editorial group ----- */
-/* E5 · Fraunces — all four = Fraunces. */
-#variant-root[data-variant="T"][data-t-type="E5"] {
+/* Fraunces — all four = Fraunces. */
+#variant-root[data-variant="T"][data-t-type="fraunces"] {
   --v2-sans: 'Fraunces', Georgia, serif;
   --v2-mono: 'Fraunces', Georgia, serif;
   --n-font-head: 'Fraunces', Georgia, serif;
   --n-font-paper: 'Fraunces', Georgia, serif;
 }
-/* E7 · Bitter — all four = Bitter. */
-#variant-root[data-variant="T"][data-t-type="E7"] {
+/* Bitter — all four = Bitter. */
+#variant-root[data-variant="T"][data-t-type="bitter"] {
   --v2-sans: 'Bitter', Georgia, serif;
   --v2-mono: 'Bitter', Georgia, serif;
   --n-font-head: 'Bitter', Georgia, serif;
   --n-font-paper: 'Bitter', Georgia, serif;
 }
-/* E8 · Literata — all four = Literata. */
-#variant-root[data-variant="T"][data-t-type="E8"] {
+/* Literata — all four = Literata. */
+#variant-root[data-variant="T"][data-t-type="literata"] {
   --v2-sans: 'Literata', Georgia, serif;
   --v2-mono: 'Literata', Georgia, serif;
   --n-font-head: 'Literata', Georgia, serif;
   --n-font-paper: 'Literata', Georgia, serif;
 }
-/* E15 · Domine — all four = Domine. */
-#variant-root[data-variant="T"][data-t-type="E15"] {
+/* Domine — all four = Domine. */
+#variant-root[data-variant="T"][data-t-type="domine"] {
   --v2-sans: 'Domine', Georgia, serif;
   --v2-mono: 'Domine', Georgia, serif;
   --n-font-head: 'Domine', Georgia, serif;
@@ -513,29 +513,29 @@
 }
 
 /* ----- Display group ----- */
-/* D2 · Archivo Narrow + Space Grotesk — head = Archivo Narrow, prose/data/code = Space Grotesk. */
-#variant-root[data-variant="T"][data-t-type="D2"] {
+/* Archivo Narrow + Space Grotesk — head = Archivo Narrow, prose/data/code = Space Grotesk. */
+#variant-root[data-variant="T"][data-t-type="archivo-narrow"] {
   --v2-sans: 'Space Grotesk', system-ui, sans-serif;
   --v2-mono: 'Space Grotesk', system-ui, sans-serif;
   --n-font-head: 'Archivo Narrow', 'Space Grotesk', system-ui, sans-serif;
   --n-font-paper: 'Space Grotesk', system-ui, sans-serif;
 }
-/* D12 · Hanken Grotesk — all four = Hanken Grotesk. */
-#variant-root[data-variant="T"][data-t-type="D12"] {
+/* Hanken Grotesk — all four = Hanken Grotesk. */
+#variant-root[data-variant="T"][data-t-type="hanken-grotesk"] {
   --v2-sans: 'Hanken Grotesk', system-ui, sans-serif;
   --v2-mono: 'Hanken Grotesk', system-ui, sans-serif;
   --n-font-head: 'Hanken Grotesk', system-ui, sans-serif;
   --n-font-paper: 'Hanken Grotesk', system-ui, sans-serif;
 }
-/* D14 · Barlow Condensed + Space Grotesk — head = Barlow Condensed, rest = Space Grotesk. */
-#variant-root[data-variant="T"][data-t-type="D14"] {
+/* Barlow Condensed + Space Grotesk — head = Barlow Condensed, rest = Space Grotesk. */
+#variant-root[data-variant="T"][data-t-type="barlow-condensed"] {
   --v2-sans: 'Space Grotesk', system-ui, sans-serif;
   --v2-mono: 'Space Grotesk', system-ui, sans-serif;
   --n-font-head: 'Barlow Condensed', 'Archivo Narrow', system-ui, sans-serif;
   --n-font-paper: 'Space Grotesk', system-ui, sans-serif;
 }
-/* D5 · Bricolage Grotesque — all four = Bricolage Grotesque. */
-#variant-root[data-variant="T"][data-t-type="D5"] {
+/* Bricolage Grotesque — all four = Bricolage Grotesque. */
+#variant-root[data-variant="T"][data-t-type="bricolage-grotesque"] {
   --v2-sans: 'Bricolage Grotesque', system-ui, sans-serif;
   --v2-mono: 'Bricolage Grotesque', system-ui, sans-serif;
   --n-font-head: 'Bricolage Grotesque', system-ui, sans-serif;

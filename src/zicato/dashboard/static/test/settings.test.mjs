@@ -222,8 +222,7 @@ test('settings: editing appearance updates the SAME store the top-bar reads (rou
   const ui = await import('../js/ui.js');
   // a value set the "top-bar way" (persistType) is reflected by the settings
   // picker's initial selected option — one source of truth, both directions.
-  // (persistType normalises a finalized id; here we use an explicit one.)
-  ui.persistType('E8');
+  ui.persistType('literata');
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'appearance' });
   await tick();
@@ -231,10 +230,10 @@ test('settings: editing appearance updates the SAME store the top-bar reads (rou
   const tf = firstClass(body, 'dt-tf');
   assert(tf, 'the typeface grouped popover renders in Appearance');
   const onOpt = byClass(tf, 'dt-tf-option').find((o) => o.getAttribute('aria-selected') === 'true');
-  assert(onOpt && onOpt.getAttribute('data-type') === 'E8', 'the popover reflects the shared typeface store (E8 selected)');
-  // a stored MODE id migrates to that group's default pairing on read.
+  assert(onOpt && onOpt.getAttribute('data-type') === 'literata', 'the popover reflects the shared typeface store');
+  // a stored MODE id migrates to that group's first face on read.
   ui.persistType('display');
-  assertEqual(ui.readType(), 'D2', 'a stored legacy "display" migrates to D2 on read');
+  assertEqual(ui.readType(), 'archivo-narrow', 'a stored "display" migrates to the first Display face on read');
 });
 
 // The typeface picker now lives ONLY in Settings (removed from the top bar).
@@ -253,11 +252,11 @@ test('settings: the Settings typeface picker still APPLIES + PERSISTS (the sole 
   const body = firstClass(host, 'dn-set-body');
   const tf = firstClass(body, 'dt-tf');
   assert(tf, 'the typeface grouped popover renders in Settings → Appearance');
-  // pick the T12 option — it must apply via the shared store and persist.
-  const t12 = byClass(tf, 'dt-tf-option').find((o) => o.getAttribute('data-type') === 'T12');
-  assert(t12, 'the popover has the T12 option');
-  t12.dispatchEvent(makeEvent('click'));
-  assertEqual(ui.readType(), 'T12', 'choosing T12 in Settings persisted via the shared typeface store');
+  // pick the Inconsolata option — it must apply via the shared store and persist.
+  const inconsolata = byClass(tf, 'dt-tf-option').find((o) => o.getAttribute('data-type') === 'inconsolata');
+  assert(inconsolata, 'the popover has the Inconsolata option');
+  inconsolata.dispatchEvent(makeEvent('click'));
+  assertEqual(ui.readType(), 'inconsolata', 'choosing Inconsolata in Settings persisted via the shared typeface store');
   // and the closed trigger now reflects the chosen face (the live picker synced).
   const trigger = firstClass(tf, 'dt-cd-trigger');
   assert(trigger, 'the typeface popover has a closed trigger');

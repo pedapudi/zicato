@@ -41,6 +41,12 @@ The composer/study seeds these as the operator's pre-liked finalists
 > **T4 = Roboto + Roboto Mono** is called out in the study as a notable
 > technical contender (see the iterations below).
 
+The positional labels above index this study's candidate grid and mean nothing
+outside it. The dashboard identifies each option by the face it sets headings
+in — `google-sans-mono`, `fraunces`, `archivo-narrow` and so on — matching the
+form its colour-theme ids use; the table above is the bridge from a label in
+this record to the face the dashboard names.
+
 ## The picker study (the control itself)
 
 Below the card matrix, the page prototypes the **typeface-picker control** — what
