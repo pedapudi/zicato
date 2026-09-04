@@ -41,7 +41,7 @@ from zicato.proposer.skills import resolve_proposer_spec
 def _workspace(tmp_path: Path, **proposer: object) -> dict[str, object]:
     block: dict[str, object] = {
         "binary": str(fake_foe_binary(tmp_path / "bin")),
-        "model": {"provider": "exec", "model": "scripted"},
+        "model": {"provider": "fixture", "model": "scripted"},
     }
     block.update(proposer)
     return {"proposer": block}
@@ -224,6 +224,41 @@ def test_the_working_copy_is_readable_and_leads_the_read_roots(tmp_path: Path) -
     assert grants["read"][0] == str(write_root), "the working copy must lead grants.read"
     assert str(read_root) in grants["read"], "the snapshot stays readable"
     assert grants["write"] == [str(write_root)]
+
+
+def test_model_connection_options_reach_foe_unchanged(tmp_path: Path) -> None:
+    """The endpoint implementation belongs to Foe rather than Zicato."""
+    options = {
+        "credentials_file": str(tmp_path / "cloud.json"),
+        "project": "example-project",
+        "location": "example-region",
+        "base_url": "https://model.internal",
+    }
+    config = load_foe_proposer_config(
+        _workspace(
+            tmp_path,
+            model={
+                "provider": "cloud-fixture",
+                "model": "proposer-model",
+                "options": options,
+            },
+        ),
+        tmp_path,
+    )
+    contract = build_contract(
+        config,
+        instructions={"10-charter": "improve it"},
+        host_tools=_tools(tmp_path),
+        read_root=tmp_path / "read",
+        write_root=tmp_path / "write",
+        verify_retries=2,
+    )
+
+    assert contract.to_dict()["model"] == {
+        "provider": "cloud-fixture",
+        "model": "proposer-model",
+        **options,
+    }
 
 
 def test_the_mutation_manifest_addresses_the_working_copy(tmp_path: Path) -> None:

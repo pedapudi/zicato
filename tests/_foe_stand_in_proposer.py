@@ -1,11 +1,10 @@
 """A model stand-in that proposes: it edits the copy and returns a hypothesis.
 
 The suites that drive the evolve loop are about the tournament, the
-lineage and the gate, not about how a candidate was invented. They still
-need a real proposal episode, because the proposer is now a Foe episode
-and a round that cannot open one is a round that cannot run. This module
-is the ``exec``-provider transport that turns those episodes into
-proposals without a model, a credential or a network.
+lineage and the gate, rather than how a candidate was invented. They still
+need a real proposal episode because a round that cannot open one cannot
+run. This module supplies the mechanical model fixture that turns those
+episodes into proposals without a credential, a network, or a model service.
 
 What it does is what the charter asks of a proposer, mechanically: it
 enumerates the mutation points of the working copy the task names, picks
@@ -20,17 +19,14 @@ tree), distinct per candidate (a field of challengers does not collapse
 into one diversity soft-reject), and bounded across rounds (a tag replaces
 a tag rather than accumulating).
 
-:mod:`tests._foe_transport` is the sibling of this module: it replays a
-*written* script, and is what a test that pins one specific episode
-uses. This one writes its own script from the tree in front of it, and is
-what a suite that only needs candidates uses.
+The scripted fixture replays written turns. This fixture derives its turn
+from the tree in front of it and serves suites that only need candidates.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -201,7 +197,7 @@ def steering(request: dict[str, Any]) -> dict[str, Any]:
 
     A workspace steers the stand-in through its ``proposer.model.options``
     (see :func:`tests._foe_support.stand_in_proposer_block`), which the
-    runtime forwards to the transport as the request's ``options``. Five
+    stand-in runtime reads as the request's ``options``. Five
     keys are read:
 
     * ``idea`` fixes the core idea every candidate states, which is how a
@@ -302,17 +298,3 @@ def turn_for(request: dict[str, Any]) -> dict[str, Any]:
             call("return", {"value": hypothesis_for(point_id, tag, idea, predict)}),
         ],
     }
-
-
-def main() -> int:
-    from tests._foe_transport import chunks_for
-
-    request = json.loads(sys.stdin.readline() or "{}")
-    for chunk in chunks_for(turn_for(request)):
-        sys.stdout.write(json.dumps({"chunk": chunk}) + "\n")
-    sys.stdout.flush()
-    return 0
-
-
-if __name__ == "__main__":  # pragma: no cover - invoked as a launcher
-    sys.exit(main())

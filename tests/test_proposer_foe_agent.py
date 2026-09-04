@@ -26,7 +26,7 @@ from tests._foe_support import (
     offered_tools,
     request_texts,
     return_turn,
-    scripted_transport,
+    scripted_model,
 )
 from tests._source_tree_builders import mutable_tree
 from zicato.core.types import MutationPoint, ProposerSpec
@@ -71,16 +71,11 @@ class Workspace:
         self.snapshot = tmp_path / "snapshot"
         self.tree = mutable_tree(self.snapshot, instr=_INSTR)
         self.binary = fake_foe_binary(tmp_path / "bin", **binary)
-        transport = scripted_transport(tmp_path / "bin", turns)
         self.config = {
             "proposer": {
                 "binary": str(self.binary),
                 "budget": {"model_calls": 6, "seconds": 60},
-                "model": {
-                    "provider": "exec",
-                    "model": "scripted",
-                    "options": {"exec": str(transport)},
-                },
+                "model": scripted_model(tmp_path / "bin", turns),
             }
         }
 
@@ -200,7 +195,7 @@ def test_a_spent_budget_reaches_the_round_as_exhaustion(tmp_path: Path) -> None:
     assert raised.value.limit == "model_calls"
 
 
-def test_a_transport_failure_reaches_the_round_as_a_failure(tmp_path: Path) -> None:
+def test_a_model_failure_reaches_the_round_as_a_failure(tmp_path: Path) -> None:
     workspace = Workspace(tmp_path, [error_turn("the provider refused the request")])
     with pytest.raises(ProposerError) as raised:
         asyncio.run(workspace.agent().propose(workspace.context()))

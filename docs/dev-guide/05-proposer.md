@@ -99,7 +99,7 @@ Two things decide it, and they live in different files.
 
 A workspace's `config.json` says **how it proposes**: the typed `proposer`
 block (`src/zicato/proposer/foe_config.py`) names the Foe binary its
-episodes run, the budget they run under, the model Foe's transport calls,
+episodes run, the budget they run under, the model Foe's client calls,
 and the viewer policy. An epoch's `proposers/<name>/` directory says
 **how the proposer is steered**: `skills/*.md`, whose bodies are hashed
 into the contract. The directory holds nothing executable.
@@ -112,7 +112,7 @@ agent:
 
 | Condition | Agent returned | Model |
 |---|---|---|
-| a declared `proposer` block | `FoeProposerAgent(spec=…, config=…)` — one Foe episode per candidate | the `proposer.model` block's, called by Foe's own transport |
+| a declared `proposer` block | `FoeProposerAgent(spec=…, config=…)` — one Foe episode per candidate | the `proposer.model` block's, called by Foe's own model client |
 | `runtime.proposer_agent` names a class | that class, constructed `(spec=…, config=…)` | the operator's business |
 | neither | **`ValueError`** naming the block to write | — |
 

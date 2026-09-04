@@ -1,4 +1,4 @@
-"""A deterministic stand-in for the ``foe`` binary, driven by a script.
+"""A deterministic stand-in for the ``foe`` binary, driven by model fixtures.
 
 Zicato's proposer runs as a Foe episode. Every test that exercises that
 path needs a binary that speaks the host protocol
@@ -16,12 +16,11 @@ package issue:
     fake-foe view DIR --serve                      print a URL and wait
     fake-foe view DIR                              write the static page
 
-What the episode does is decided by the *scripted transport* the
-document's ``model`` block names under the ``exec`` provider, which
-``foe/docs/models.md`` specifies: an executable that reads one request
-object on standard input and writes ``model/chunk`` lines. The stand-in
-implements that provider alone, so a test writes the model's turns and
-this file writes everything around them.
+What the episode does is decided by the document's root ``model`` block.
+The stand-in supports a scripted fixture and a mechanical fixture. Both run
+inside this process, matching the production rule that a root model belongs to
+the runtime. A test writes the model's turns and this file writes everything
+around them.
 
 Four built-in tools are implemented against the document's ``grants``,
 because the proposer's edit loop needs them to really move bytes:
@@ -44,7 +43,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -62,6 +60,45 @@ _BUILTIN_SCHEMAS: dict[str, dict[str, Any]] = {
     name: {"name": name, "description": f"built-in {name}", "parameters": {"type": "object"}}
     for name in ("read", "grep", "edit", "bash", "block", "spawn", "wait", "steer")
 }
+
+
+def _chunks_for(turn: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert one deterministic model turn to runtime chunks."""
+    if "error" in turn:
+        return [
+            {
+                "kind": "error",
+                "message": str(turn["error"]),
+                "retryable": bool(turn.get("retryable", False)),
+            }
+        ]
+    out: list[dict[str, Any]] = []
+    if turn.get("text"):
+        out.append({"kind": "text", "delta": str(turn["text"])})
+    for index, call in enumerate(turn.get("calls") or []):
+        call_id = f"tc_{index}"
+        out.append({"kind": "tool_call_start", "id": call_id, "name": str(call["name"])})
+        out.append(
+            {
+                "kind": "tool_call_delta",
+                "id": call_id,
+                "delta": json.dumps(call.get("args") or {}),
+            }
+        )
+        out.append({"kind": "tool_call_end", "id": call_id})
+    out.append(
+        {
+            "kind": "done",
+            "stop": "end",
+            "usage": {"input": 0, "output": 0, "cache_read": 0},
+        }
+    )
+    return out
+
+
+def _turn_index(request: dict[str, Any]) -> int:
+    """How many requests this episode has already completed."""
+    return sum(1 for message in request.get("messages") or [] if message.get("role") == "assistant")
 
 
 class Cancelled(Exception):
@@ -377,22 +414,22 @@ class Episode:
         messages: list[dict[str, Any]],
         max_output: int | None,
     ) -> list[dict[str, Any]]:
-        """One request's chunks, from the `exec` transport or the host."""
+        """One request's chunks, from the root model fixture or the host."""
         if self.model is None:
             return list(self._host_chunks(request_id))
         model = self.model
-        if model.get("provider") != "exec":
+        if model.get("provider") != "fixture":
             named = model.get("provider")
             return [
                 {
                     "kind": "error",
                     "message": (
-                        "model.provider: this stand-in implements exec alone, " f"not {named!r}"
+                        "model.provider: this stand-in implements fixture alone, " f"not {named!r}"
                     ),
                     "retryable": False,
                 }
             ]
-        fixed = ("provider", "model", "max_output_tokens", "exec")
+        fixed = ("provider", "model", "max_output_tokens")
         request = {
             "type": "model/request",
             "request_id": request_id,
@@ -403,25 +440,33 @@ class Episode:
             "max_output_tokens": max_output,
             "options": {k: v for k, v in model.items() if k not in fixed},
         }
-        completed = subprocess.run(
-            [model["exec"], model["model"]],
-            input=json.dumps(request) + "\n",
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if completed.returncode != 0:
+        if model.get("model") == "mechanical":
+            from tests._foe_stand_in_proposer import turn_for
+
+            turn = turn_for(request)
+        elif model.get("model") == "scripted":
+            script_file = request["options"].get("script_file")
+            if not isinstance(script_file, str):
+                return [
+                    {
+                        "kind": "error",
+                        "message": "model.script_file: the scripted fixture requires a path",
+                        "retryable": False,
+                    }
+                ]
+            turns = json.loads(Path(script_file).read_text(encoding="utf-8"))
+            if not turns:
+                turns = [{"text": "the script is empty", "calls": []}]
+            turn = turns[min(_turn_index(request), len(turns) - 1)]
+        else:
             return [
                 {
                     "kind": "error",
-                    "message": (
-                        f"model.exec: {model['exec']} exited with code "
-                        f"{completed.returncode}: {completed.stderr.strip()}"
-                    ),
+                    "message": f"model.model: unknown stand-in fixture {model.get('model')!r}",
                     "retryable": False,
                 }
             ]
-        return [json.loads(line)["chunk"] for line in completed.stdout.splitlines() if line.strip()]
+        return _chunks_for(turn)
 
     def _host_chunks(self, request_id: str) -> Any:
         while True:
@@ -461,7 +506,7 @@ class Episode:
                 return text, calls, chunk["stop"], chunk["usage"], None
             elif kind == "error":
                 return text, [], "end", _NO_USAGE, chunk["message"]
-        return text, [], "end", _NO_USAGE, "model transport ended without a done or error chunk"
+        return text, [], "end", _NO_USAGE, "model response ended without a done or error chunk"
 
     def _execute(
         self, step: int, calls: list[dict[str, Any]]

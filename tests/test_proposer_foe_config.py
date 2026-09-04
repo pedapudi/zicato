@@ -61,17 +61,23 @@ def test_an_omitted_seconds_key_keeps_the_deadline_and_a_null_removes_it() -> No
     assert unbounded.budget.seconds is None
 
 
-def test_a_credential_travels_as_a_file_named_in_the_model_options() -> None:
+def test_managed_cloud_connection_options_pass_through_unchanged() -> None:
+    options = {
+        "credentials_file": "/home/me/.config/cloud.json",
+        "project": "example-project",
+        "location": "example-region",
+        "base_url": "https://model.internal",
+    }
     config = load_foe_proposer_config(
         _config(
             model={
-                "provider": "example",
+                "provider": "cloud-fixture",
                 "model": "example-model",
-                "options": {"api_key_file": "/home/me/.config/foe/key.json"},
+                "options": options,
             }
         )
     )
-    assert config.model.options == {"api_key_file": "/home/me/.config/foe/key.json"}
+    assert config.model.options == options
 
 
 def test_a_workspace_with_no_proposer_block_is_refused() -> None:

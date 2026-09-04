@@ -38,10 +38,16 @@ workspace says so in one typed `proposer` block of its `config.json`:
   "binary": "/usr/local/bin/foe",
   "budget": {"model_calls": 12, "seconds": 900},
   "model": {"provider": "<provider>", "model": "<model id>",
-            "options": {"api_key_file": "/abs/path/to/credential.json"}},
+            "options": {}},
   "viewer": "off"
 }
 ```
+
+The model block selects an endpoint through Foe's built-in model client.
+Provider-specific options are flat strings and pass through unchanged. A
+compatible HTTP endpoint can name its base URL and an optional key file. A
+managed-cloud endpoint can name its credentials file, project, and location.
+The options can be empty when Foe's stored login credential supplies them.
 
 `zicato init` writes that block already filled in except for `binary`, which
 is left as `/path/to/foe`. Foe searches no path for a binary — an episode's
@@ -129,9 +135,9 @@ proposer scored on the same model it is mutating-and-judging risks collusion.
 zicato emits a soft WARNING on a discoverable match but does not hard-gate
 it; do not rely on the warning.
 
-Its credential is a FILE the runtime reads, named under the model block's
-`options`. zicato defines no environment variable of its own for it and
-forwards no credential.
+Foe resolves the endpoint and any credential from the model block and its
+stored login state. Zicato preserves provider-specific options without reading
+or forwarding a credential. It defines no credential environment variable.
 
 ## The `proposer_quality` knobs (how it proposes, independent of the tier)
 
@@ -205,12 +211,10 @@ identities, prompts, holdout data and raw outcomes stay outside it.
 ### Engine form is a capability choice
 
 The proposal episode's model is named in the workspace's own `proposer`
-block — its provider, its model id, and the credential FILE the runtime
-reads — because that is what the runtime's transport calls. A `models.*`
-role cannot replace it, and a `call_llm`-form engine cannot: an imported
-text callable is text-in / text-out and cannot express the tool calls an
-episode makes. Zicato rejects an incompatible override rather than
-pretending the conversion is possible. See
+block. Its provider, model id, and options select the runtime's built-in model
+client. A `models.*` role cannot replace it, and a `call_llm`-form engine
+cannot express the tool calls an episode makes. Zicato rejects an incompatible
+override. See
 [`MODEL-CONFIG.md`](../../docs/design/MODEL-CONFIG.md).
 
 ## The failure-mode feedback channel (what every proposer reads)

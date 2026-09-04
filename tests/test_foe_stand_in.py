@@ -23,7 +23,7 @@ from tests._foe_support import (
     fake_foe_binary,
     read_episode_log,
     return_turn,
-    scripted_transport,
+    scripted_model,
     text_turn,
 )
 
@@ -39,7 +39,7 @@ def _contract(tmp_path: Path, **overrides: object) -> foe.ExecutionContract:
         "tools": ["read", "edit", "block"],
         "grants": foe.Grants(read=[read_root], write=[write_root]),
         "budget": foe.Budget(model_calls=4),
-        "model": foe.Model(provider="exec", model="scripted", options={}),
+        "model": foe.Model(provider="fixture", model="scripted", options={}),
     }
     fields.update(overrides)
     return foe.ExecutionContract(**fields)  # type: ignore[arg-type]
@@ -48,8 +48,7 @@ def _contract(tmp_path: Path, **overrides: object) -> foe.ExecutionContract:
 def _run(
     contract: foe.ExecutionContract, tmp_path: Path, turns: list[dict[str, object]]
 ) -> foe.Outcome:
-    transport = scripted_transport(tmp_path / "bin", turns)
-    contract.model = foe.Model(provider="exec", model="scripted", options={"exec": str(transport)})
+    contract.model = foe.Model(**scripted_model(tmp_path / "bin", turns))
     return asyncio.run(
         contract.run(
             task="propose something",
@@ -77,7 +76,7 @@ def test_a_spent_model_call_budget_ends_the_episode_exhausted(tmp_path: Path) ->
     assert outcome == foe.Exhausted("model_calls")
 
 
-def test_a_transport_error_ends_the_episode_failed(tmp_path: Path) -> None:
+def test_a_model_error_ends_the_episode_failed(tmp_path: Path) -> None:
     outcome = _run(_contract(tmp_path), tmp_path, [error_turn("the provider is down")])
     assert isinstance(outcome, foe.Failed)
     assert "the provider is down" in outcome.error
@@ -85,8 +84,7 @@ def test_a_transport_error_ends_the_episode_failed(tmp_path: Path) -> None:
 
 def test_a_binary_that_dies_before_episode_end_is_a_failed_outcome(tmp_path: Path) -> None:
     contract = _contract(tmp_path)
-    transport = scripted_transport(tmp_path / "bin", [text_turn("never reached")])
-    contract.model = foe.Model(provider="exec", model="scripted", options={"exec": str(transport)})
+    contract.model = foe.Model(**scripted_model(tmp_path / "bin", [text_turn("never reached")]))
     outcome = asyncio.run(
         contract.run(
             task="propose something",
@@ -167,8 +165,7 @@ def test_the_fingerprint_excludes_the_model_and_the_grant_paths(tmp_path: Path) 
 
 def test_a_binary_stating_another_log_format_version_is_refused(tmp_path: Path) -> None:
     contract = _contract(tmp_path)
-    transport = scripted_transport(tmp_path / "bin", [text_turn("unreachable")])
-    contract.model = foe.Model(provider="exec", model="scripted", options={"exec": str(transport)})
+    contract.model = foe.Model(**scripted_model(tmp_path / "bin", [text_turn("unreachable")]))
     with pytest.raises(foe.CompatibilityError, match="log format"):
         asyncio.run(
             contract.run(

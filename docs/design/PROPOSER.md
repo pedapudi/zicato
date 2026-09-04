@@ -61,7 +61,7 @@ epoch (§4).
 
 A workspace says how it proposes in one place: the typed `proposer` block
 of its `config.json`. That block names the Foe binary its episodes run,
-the budget they run under, the model Foe's transport calls, and when a
+the budget they run under, the model Foe's client calls, and when a
 finished episode's trajectory is served for an operator to read. §2.9
 specifies it.
 
@@ -576,8 +576,9 @@ A workspace declares its proposer in one block of its `config.json`:
 "proposer": {
   "binary": "/usr/local/bin/foe",
   "budget": {"model_calls": 12, "seconds": 900},
-  "model": {"provider": "example", "model": "example-model",
-            "options": {"api_key_file": "/home/me/.config/foe/key.json"}},
+  "model": {"provider": "<managed-cloud provider>", "model": "<model id>",
+            "options": {"credentials_file": "/home/me/.config/cloud.json",
+                        "project": "example-project", "location": "example-region"}},
   "viewer": "off"
 }
 ```
@@ -585,13 +586,14 @@ A workspace declares its proposer in one block of its `config.json`:
 Four decisions and no fifth. The **binary** is named by absolute path,
 because the episode's grants are absolute and a relative path would mean
 different things to the loop and to a worker. The **budget** bounds the
-episode in Foe's own dimensions. The **model** block is what Foe's
-built-in transport calls; a credential is always a file Foe reads, per
-Foe's `docs/models.md`, and zicato defines no environment variable of its
-own and forwards no credential. The **viewer** decides when a finished
-episode's trajectory is served for an operator to read. The instructions
-are not here: they are the epoch's proposer brief and its skills, which
-the contract already hashes.
+episode in Foe's own dimensions. The **model** block selects the endpoint
+Foe's built-in model client calls. Its provider-specific options pass through
+unchanged. They can name a compatible HTTP endpoint, managed-cloud connection
+fields, or a credential file. Foe may also use the credential recorded by its
+login command. Zicato reads and forwards no credential. The **viewer** decides
+when a finished episode's trajectory is served for an operator to read. The
+instructions are the epoch's proposer brief and skills, which the contract
+already hashes.
 
 Validation is strict and refuses by name. A workspace still carrying a
 retired proposer runtime's configuration — a binary key for the removed
@@ -957,9 +959,9 @@ contract impossible. That is the whole reason the proposer is an episode.
 Running it as a Foe episode has three consequences worth stating.
 
 - **The episode owns its model, and no epoch hashes it.** The `proposer`
-  block's `model` is what Foe's built-in transport calls, and its
-  credential is a file Foe reads rather than an environment variable
-  zicato invents. Model selection is runtime infrastructure: the contract
+  block's `model` selects Foe's built-in model client and passes its options
+  through unchanged. Foe resolves the endpoint and any credential. Model
+  selection is runtime infrastructure: the contract
   hash names no model, here or anywhere. A proposer scored on the same
   model it is mutating-and-judging risks collusion, which stays a
   documented operator responsibility — when both model strings are

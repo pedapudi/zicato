@@ -39,7 +39,7 @@ dependencies = [
     # workspace configures must be built from the same commit, which
     # `FoeProposerAgent` asserts through the package's own compatibility
     # check. Bump the rev here and in [tool.uv.sources] together.
-    "foe @ git+https://github.com/pedapudi/foe.git@63ba2c61486eaa45c935e720b693209db0670ef5#subdirectory=python",
+    "foe @ git+https://github.com/pedapudi/foe.git@84a97b9603383fb38aec8dd4d6b9e88df0ed2a36#subdirectory=python",
 ]
 
 [project.optional-dependencies]
@@ -664,4 +664,4 @@ harmonograf-server = { git = "https://github.com/pedapudi/harmonograf.git", subd
 # git source pins a rev AND a subdirectory. The rev matches the direct
 # reference in [project.dependencies]; bump both together, and rebuild the
 # `foe` binary a workspace configures from the same commit.
-foe = { git = "https://github.com/pedapudi/foe.git", subdirectory = "python", rev = "63ba2c61486eaa45c935e720b693209db0670ef5" }
+foe = { git = "https://github.com/pedapudi/foe.git", subdirectory = "python", rev = "84a97b9603383fb38aec8dd4d6b9e88df0ed2a36" }
