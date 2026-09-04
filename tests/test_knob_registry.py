@@ -41,8 +41,9 @@ import pytest
 
 import zicato.dashboard as _dashboard_pkg
 from zicato.builder import api as builder_api
-from zicato.builder import copilot_tools, operations
-from zicato.builder.draft import TournamentDraft
+from zicato.builder import copilot_tools
+from zicato.contract_draft import operations
+from zicato.contract_draft.draft import TournamentDraft
 from zicato.core.constraints import knob_constraint
 from zicato.core.scoring_config import (
     ContractKnob,

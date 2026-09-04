@@ -713,8 +713,8 @@ def test_the_episode_task_carries_the_context_s_process_exemplars() -> None:
 
 
 def test_builder_set_proposer_quality_gains_the_knob() -> None:
-    from zicato.builder.draft import TournamentDraft
-    from zicato.builder.operations import set_proposer_quality
+    from zicato.contract_draft.draft import TournamentDraft
+    from zicato.contract_draft.operations import set_proposer_quality
 
     draft = TournamentDraft()
     patch = set_proposer_quality(draft, process_exemplars=2)

@@ -2,7 +2,7 @@
 // and print what the browser would show.
 //
 // Driven by tests/test_builder_cost_envelope_correspondence.py, which computes
-// every envelope with zicato.builder.operations (the sole owner of the cost
+// every envelope with zicato.contract_draft.operations (the sole owner of the cost
 // arithmetic and the lint rules), writes them to a JSON file, and runs:
 //
 //     node test/cost_envelope_readback.mjs <fixtures.json>

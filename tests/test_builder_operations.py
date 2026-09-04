@@ -6,8 +6,8 @@ import pytest
 from goldfive import DriftSeverity
 
 from zicato.board.split import HOLDOUT_TAG
-from zicato.builder import operations as ops
-from zicato.builder.draft import TournamentDraft
+from zicato.contract_draft import operations as ops
+from zicato.contract_draft.draft import TournamentDraft
 from zicato.core.types import (
     BoardEntry,
     JudgeMode,
@@ -1381,7 +1381,7 @@ def _slot_workspace(tmp_path) -> object:
 def test_draftstore_fork_switch_roundtrip(tmp_path) -> None:
     import pytest
 
-    from zicato.builder.draft import DraftStore
+    from zicato.contract_draft.draft import DraftStore
 
     ws = _slot_workspace(tmp_path)
     store = DraftStore()
@@ -1418,7 +1418,7 @@ def test_draftstore_fork_switch_roundtrip(tmp_path) -> None:
 
 
 def test_draftstore_fork_board_edits_do_not_leak(tmp_path) -> None:
-    from zicato.builder.draft import DraftStore
+    from zicato.contract_draft.draft import DraftStore
 
     ws = _slot_workspace(tmp_path)
     store = DraftStore()
@@ -1662,7 +1662,7 @@ def test_validate_clean_board_fires_no_authoring_codes() -> None:
 
 
 def test_draftstore_remember_dedups_and_pop_undo_restores(tmp_path) -> None:
-    from zicato.builder.draft import DraftStore
+    from zicato.contract_draft.draft import DraftStore
 
     _seed_min_workspace(tmp_path)
     ws = tmp_path / ".zicato"
@@ -1697,7 +1697,7 @@ def test_draftstore_remember_dedups_and_pop_undo_restores(tmp_path) -> None:
 
 
 def test_draftstore_history_is_bounded_to_twenty(tmp_path) -> None:
-    from zicato.builder.draft import DraftStore
+    from zicato.contract_draft.draft import DraftStore
 
     _seed_min_workspace(tmp_path)
     ws = tmp_path / ".zicato"
@@ -1726,7 +1726,7 @@ def test_draftstore_history_is_bounded_to_twenty(tmp_path) -> None:
 def test_draftstore_undo_restores_in_place_keeps_slot_binding(tmp_path) -> None:
     """The restore is IN PLACE: a session bound to a named slot stays bound,
     and the slot itself sees the restored state."""
-    from zicato.builder.draft import DraftStore
+    from zicato.contract_draft.draft import DraftStore
 
     _seed_min_workspace(tmp_path)
     ws = tmp_path / ".zicato"

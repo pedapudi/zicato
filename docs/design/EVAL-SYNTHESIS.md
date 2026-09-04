@@ -368,11 +368,11 @@ known-answer test with zero live spend.
   and applies a finding's `proposed_op` (verified: `apply_finding_to_draft`).
   Two operation families carry the suggestions:
   - **Edit operations** — `set_gate` and `set_weights` (findings), and, for a
-    new judge or a rubric revision, `add_judge` (`builder/operations.py`,
+    new judge or a rubric revision, `add_judge` (`contract_draft/operations.py`,
     `add_judge(draft, entry_id, judge: JudgeSpec)`), through which a judge
     suggestion applies.
   - **New-entry operations** — `add_board_entry(draft, entry: BoardEntry)`
-    (`builder/operations.py`, mirroring `add_judge`'s validate-then-replace
+    (`contract_draft/operations.py`, mirroring `add_judge`'s validate-then-replace
     shape), through which regression, coverage and harder-variant suggestions
     apply at the same draft-fork seam. The suggestion's `proposed_op` is
     `validate_proposed_op`-checked against that operation's signature at emit

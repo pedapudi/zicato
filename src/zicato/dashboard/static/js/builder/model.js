@@ -9,7 +9,7 @@
 //
 // The cost estimate and the validation findings are not computed here. Both
 // come from the server envelope (`/builder/op` and `/builder/draft`), whose
-// numbers `zicato.builder.operations` owns; the browser only renders them.
+// numbers `zicato.contract_draft.operations` owns; the browser only renders them.
 
 import { svgEl } from '../core/dom.js';
 
@@ -123,7 +123,7 @@ export function paramSpecsFor(structure) {
         // (removeAtZero) so an unset override hashes byte-identically to a
         // contract that predates it, and the rung-0 slice falls back to
         // ceil(board_fraction × board). The cost estimator and the validator
-        // in zicato/builder/operations.py already read this key; this spec
+        // in zicato/contract_draft/operations.py already read this key; this spec
         // only surfaces the control.
         key: 'rung0_board_size', label: 'Rung-0 board size (override)', def: 0,
         min: 0, step: 1, int: true, removeAtZero: true,

@@ -704,7 +704,7 @@ duel-level standard error.
 |---|---|---|
 | E2 | **Promotion count / rate** = promoted / challengers | `tournament/detail.py::optimization_trajectory(db_path, epoch_id)` → `Trajectory.promotion_rate` |
 | E3 | **cost_per_promotion** (wall-clock) = total_runtime_ms / promoted | `tournament/detail.py::tournament_cost` → `cost_per_promotion_ms` |
-| E4 | **Board-runs cost** (a priori, deterministic) | `builder/operations.py::estimate_cost` → `board_runs_per_round`; the campaign's *primary cost unit* (§5) because it is exact given the structure, unlike wall-clock |
+| E4 | **Board-runs cost** (a priori, deterministic) | `contract_draft/operations.py::estimate_cost` → `board_runs_per_round`; the campaign's *primary cost unit* (§5) because it is exact given the structure, unlike wall-clock |
 | E5 | **Gate margin vs derived floor** per promotion | `RoundRecord` fold: `GateEvaluated` (`champion_scalar`, `challenger_scalar`, `margin_required`) vs the derived floor; the `margin_below_noise_floor` health finding (dev-guide §4) is the guardrail |
 | E6 | **Hypothesis-calibration fraction** (predicted Δ vs measured Δ) | `tournament/detail.py::hypothesis_ledger` / `/api/hypothesis-accuracy`; `proposer/calibration.py`; PUBLICATION §6 |
 | E7 | **BT / Elo ratings** ± SE at crowning | the `elo` / `elo_games` columns (ANALYTICAL-INDEX schema **v10**) and `elo_se` (schema **v12**); `selection/rating.py`, PUBLICATION §4 |
@@ -1072,7 +1072,7 @@ that.
 rather than a reconciliation target**; §6.1 reconciles against the cost meter,
 never against this row.
 
-**Cost-meter semantics (grounded in `builder/operations.py::estimate_cost`).**
+**Cost-meter semantics (grounded in `contract_draft/operations.py::estimate_cost`).**
 The meter reports **board runs per round** (each = one agent execution on one
 board entry). Auxiliary model calls (`best-of-N propose calls`) are labelled and
 **excluded from the board-run headline** but are real spend. The meter is exact
@@ -1189,7 +1189,7 @@ failing item to the coordinator and stop; do not work around it.
 6. **The §6.2 deterministic dry-run is green.** PASS iff the dry-run converges
    (v0 3.6 → v3 1.2) and `epoch close` emits `analysis.md`.
 7. **Cost-meter reconciliation.** Run the cost meter
-   (`builder/operations.py::estimate_cost`) on each arm's `scoring.json` and
+   (`contract_draft/operations.py::estimate_cost`) on each arm's `scoring.json` and
    confirm it reads the **§5 numbers** for the chosen board shape (on the
    7-entry `target_1` shape: **14** board-runs/round for the non-screen arms,
    **20** for the screen arms). PASS iff the meter reads them exactly. **A
@@ -1394,7 +1394,7 @@ field from the shipped surface below — no ad-hoc file walks:
 | `duels` | one per `GateEvaluated` in the epoch's round logs (`epoch/round_log.py`) |
 | **`cell_mean_d`** | **mean over the cell's duels of `champion_scalar − challenger_scalar` off `GateEvaluated` (§3.1) — the PRIMARY endpoint** |
 | `promotions` | `tournament/detail.optimization_trajectory(db_path, epoch_id)` → `Trajectory.promoted_count` |
-| `board_runs` | `builder/operations.estimate_cost.board_runs_per_round` × `rounds_completed` — deterministic given the structure (the board-runs cost, §5) |
+| `board_runs` | `contract_draft/operations.estimate_cost.board_runs_per_round` × `rounds_completed` — deterministic given the structure (the board-runs cost, §5) |
 | `wall_clock_s` | `tournament/detail.tournament_cost` → `total_runtime_ms`, **milliseconds** — divide by 1000, since the wire field is named in seconds (this is the wall-clock cost endpoint, which already reads the `_ms` name) |
 | `calibration_fraction` | `proposer/calibration.sample_calibration.calibration_fraction` / `tournament/detail.proposer_calibration_rate` |
 | `holdout_confirms`, `holdout_rejects` | RoundLog fold — `HoldoutReleased` events |
@@ -1729,7 +1729,7 @@ that PAUSES the campaign if specificity fails, before any treatment arm is read.
 | Topic | Source |
 |---|---|
 | The knob defaults + validation + omit-at-default | `src/zicato/core/scoring_config.py` (`ProposerQualityConfig`, `recommended_scaffold_weights`) |
-| Cost-meter semantics (board runs, aux calls, screen/recombine terms) | `src/zicato/builder/operations.py::estimate_cost` |
+| Cost-meter semantics (board runs, aux calls, screen/recombine terms) | `src/zicato/contract_draft/operations.py::estimate_cost` |
 | The round event log + the `d` endpoint's source events | `src/zicato/epoch/round_log.py` (`GateEvaluated`, `HarnessLoaded`) |
 | **Round-completeness verification (§6.6)** | `src/zicato/epoch/round_integrity.py`, `zicato epoch rounds` |
 | Breadth/depth role wiring (why roles are runtime rather than contract) | `src/zicato/proposer/best_of_n.py`, `src/zicato/models_config.py` |

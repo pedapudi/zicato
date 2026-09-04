@@ -1,7 +1,7 @@
 """REST surface for the tournament builder, wired into the dashboard.
 
-Four thin handlers over the operations in :mod:`zicato.builder.operations`
-and the draft state in :mod:`zicato.builder.draft`:
+Four thin handlers over the operations in :mod:`zicato.contract_draft.operations`
+and the draft state in :mod:`zicato.contract_draft.draft`:
 
 * ``GET  /builder/config`` — the public builder config + ``chat_enabled``.
 * ``GET  /builder/draft?session=ID`` — the draft snapshot (init from the
@@ -11,7 +11,7 @@ and the draft state in :mod:`zicato.builder.draft`:
   the form's direct edits and the copilot's tools both call — one source
   of truth.
 * ``POST /builder/apply`` ``{session, confirm}`` — write the draft (or
-  preview it) and return the :class:`~zicato.builder.operations.ApplyResult`.
+  preview it) and return the :class:`~zicato.contract_draft.operations.ApplyResult`.
 
 The handlers are dispatched by op name to the operation functions, with
 typed args (``BoardEntry`` / ``JudgeSpec``) reconstructed from their JSON
@@ -29,10 +29,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from zicato.builder import operations as ops
 from zicato.builder.config import load_builder_config
 from zicato.builder.copilot import builder_chat_enabled
-from zicato.builder.draft import DraftStore, TournamentDraft
+from zicato.contract_draft import operations as ops
+from zicato.contract_draft.draft import DraftStore, TournamentDraft
 from zicato.core.types import (
     JudgeMode,
     JudgeSpec,
@@ -356,7 +356,7 @@ def make_builder_endpoints(
 ) -> dict[str, Callable[[Request], Awaitable[Response]]]:
     """Build the builder REST handlers bound to a workspace + draft store.
 
-    The handlers are thin over :mod:`zicato.builder.operations`. ``store``
+    The handlers are thin over :mod:`zicato.contract_draft.operations`. ``store``
     lets a caller (or a test) inject a pre-seeded :class:`DraftStore`;
     omitted, a fresh process-local store is created so each app gets its
     own. ``read_only`` mirrors the dashboard's flag — the POST ops and

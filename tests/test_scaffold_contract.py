@@ -94,7 +94,7 @@ def test_init_never_clobbers_an_existing_scoring_json(tmp_path: Path) -> None:
 
 
 def test_builder_blank_draft_opens_on_the_recommended_contract(tmp_path: Path) -> None:
-    from zicato.builder.draft import TournamentDraft
+    from zicato.contract_draft.draft import TournamentDraft
 
     workspace = tmp_path / ".zicato"
     workspace.mkdir()

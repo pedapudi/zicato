@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from zicato.builder import operations as ops
-from zicato.builder.draft import DraftStore, TournamentDraft
+from zicato.contract_draft import operations as ops
+from zicato.contract_draft.draft import DraftStore, TournamentDraft
 from zicato.core.types import BoardEntry, ScoringWeights
 from zicato.epoch.contract import compute_contract_hash, resolve_contract_inputs
 from zicato.epoch.lifecycle import current_epoch_id, load_epoch, new_epoch

@@ -1,8 +1,8 @@
 """The browser shows exactly the cost and lint findings Python computed.
 
 The tournament builder's cost estimate and its recommend-only lint findings
-have one owner: :func:`zicato.builder.operations.estimate_cost` and
-:func:`zicato.builder.operations.validate`. Both endpoints the console calls
+have one owner: :func:`zicato.contract_draft.operations.estimate_cost` and
+:func:`zicato.contract_draft.operations.validate`. Both endpoints the console calls
 (``POST /builder/op`` after every edit, ``GET /builder/draft`` for the
 read-only contract summary in Settings) carry their results in the response
 envelope, and the browser renders that envelope without recomputing any of it.
@@ -28,8 +28,8 @@ import pytest
 
 import zicato.dashboard as _dashboard_pkg
 from zicato.board.split import split_board
-from zicato.builder import operations as ops
-from zicato.builder.draft import TournamentDraft
+from zicato.contract_draft import operations as ops
+from zicato.contract_draft.draft import TournamentDraft
 from zicato.core.types import BoardEntry
 
 STATIC_DIR = Path(_dashboard_pkg.__file__).resolve().parent / "static"

@@ -1,7 +1,10 @@
 # The tournament builder — one component, three entry points
 
-> **Status.** Built and in the tree. The deterministic backend lives at
-> `zicato/builder/{config,draft,operations,api,copilot,copilot_tools}.py`;
+> **Status.** Built and in the tree. The draft it edits and the operations
+> that edit it are library code at
+> `zicato/contract_draft/{draft,operations}.py`; the deterministic backend
+> that serves them lives at
+> `zicato/builder/{config,api,copilot,copilot_tools}.py`;
 > the frontend is a self-contained console view
 > (`dashboard/static/js/views/builder.js` plus `dashboard/static/js/builder/`);
 > the launch surfaces are the dashboard's first-class `#/builder` view, a
@@ -177,7 +180,7 @@ Every authoring choice is annotated with its downstream cost before commit:
   flat 1, so the meter matches the schedule a structure actually runs and does
   not under-report its cost. See
   [`TOURNAMENT-STRUCTURES.md §3`](TOURNAMENT-STRUCTURES.md#3-the-five-concrete-strategies).
-  The estimate has one owner, `zicato.builder.operations.estimate_cost`; the
+  The estimate has one owner, `zicato.contract_draft.operations.estimate_cost`; the
   console renders the numbers the response envelope carries and computes none
   of them.
 * **Contract impact.** The impact pill states whether applying the current

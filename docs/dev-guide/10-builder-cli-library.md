@@ -30,7 +30,7 @@
 >
 > | ID | Name | Invariant |
 > |----|------|-----------|
-> | L1 | the one-mutation-surface rule | Every editable contract change flows through exactly one function in `zicato/builder/operations.py`. The form, the copilot, and the REST dispatch all call the same op; there is never a second edit path. |
+> | L1 | the one-mutation-surface rule | Every editable contract change flows through exactly one function in `zicato/contract_draft/operations.py`. The form, the copilot, and the REST dispatch all call the same op; there is never a second edit path. |
 > | L2 | the full-coverage rule for a new knob | A new contract knob ships only once it has an op (`operations.py`), a dispatch arm (`api.py::_dispatch_op`), a copilot tool (`copilot_tools.py::DEFAULT_BUILDER_TOOLS`), a GUI control or a documented exception, a cost line if it changes the schedule, and a `validate` consideration if it can be unsound. Two tests — **the knob-coverage pins** — machine-pin the wiring: `test_default_builder_tools_registry_covers_every_op` for the op↔dispatch↔copilot triple, and `test_builder_gui_coverage.py` for the GUI control or exception. |
 > | L3 | the honest-cost-meter rule | Every board-run multiplier the runtime will spend gets a `CostLine`; auxiliary LLM calls are labelled and excluded from the board-runs headline. `operations.py::estimate_cost` is the only implementation of the arithmetic; the console renders the served numbers, and a correspondence test pins that what the page shows equals what the estimator computed. |
 > | L4 | the recommend-only rule | The builder never hard-blocks `apply`. Even a `refuse`-severity warning or a `refuse` pre-flight verdict informs the operator; it never gates the write. |
@@ -61,7 +61,7 @@ consume it and each other along two — and only two — declared edges:
 |---|---|---|---|
 | CLI | `src/zicato/cli/` | `zicato = "zicato.cli:main"` (`pyproject.toml` `[project.scripts]`) | the `zicato` executable; an auto-discovered `click` group |
 | Dashboard | `src/zicato/dashboard/` | `zicato dashboard` / auto-launched by `evolve` | the Starlette HTTP server + SSE stream (08/09) |
-| Builder | `src/zicato/builder/` | mounted by the dashboard at `/builder/*` + `zicato dashboard --view builder` | the deterministic contract-editing backend |
+| Builder | `src/zicato/builder/` | mounted by the dashboard at `/builder/*` + `zicato dashboard --view builder` | the deterministic backend serving the contract draft (`src/zicato/contract_draft/`, library code) |
 
 The two allowed driver→driver edges are `cli → dashboard` (the CLI launches the
 server and resolves its static bundle) and `dashboard → builder` (`server.py`
@@ -71,8 +71,8 @@ forbidden** — §10.11 is the enforcement.
 | File | What lives there | Size |
 |---|---|---|
 | `src/zicato/builder/config.py` | `BuilderConfig` / `load_builder_config` — builder skills and theme | ~60 lines |
-| `src/zicato/builder/draft.py` | `TournamentDraft` (the mutable editable contract), `DraftStore` (sessions + named slots), `ContractDiff` | ~450 lines |
-| `src/zicato/builder/operations.py` | **THE mutation surface** — every `set_*` op, `estimate_cost`, `validate`, `compare_drafts`, `preflight`, `apply`, and their result dataclasses | ~1,600 lines |
+| `src/zicato/contract_draft/draft.py` | `TournamentDraft` (the mutable editable contract), `DraftStore` (sessions + named slots), `ContractDiff` | ~450 lines |
+| `src/zicato/contract_draft/operations.py` | **THE mutation surface** — every `set_*` op, `estimate_cost`, `validate`, `compare_drafts`, `preflight`, `apply`, and their result dataclasses | ~1,600 lines |
 | `src/zicato/builder/api.py` | `_dispatch_op` + the Starlette routes (`builder_routes`) | ~490 lines |
 | `src/zicato/builder/copilot.py` / `copilot_tools.py` | the chat copilot + its tool registry `DEFAULT_BUILDER_TOOLS` | ~470 lines |
 | `src/zicato/dashboard/static/js/views/builder.js` | the form GUI: rail sections, per-section controls, the Review pane | ~950 lines |
@@ -96,13 +96,14 @@ data layer** (the copilot is a thin driver on top) and through one shared
 mutation surface. The module docstring states the doctrine:
 
 ```python
-# src/zicato/builder/operations.py (module docstring, head)
-"""Builder operations — the single source of truth for form + copilot.
+# src/zicato/contract_draft/operations.py (module docstring, head)
+"""Draft operations — the single source of truth for every contract edit.
 
-Every editable change to a :class:`~zicato.builder.draft.TournamentDraft`
-flows through one of the operations here. Both the form's direct edits
-(B2) and the copilot's tool calls (B1b) call the *same* functions, so
-there is exactly one place each mutation's semantics live.
+Every editable change to a :class:`~zicato.contract_draft.draft.TournamentDraft`
+flows through one of the operations here. The builder form's direct edits,
+its copilot's tool calls, and the reflection adjudicator's staged edits all
+call the *same* functions, so there is exactly one place each mutation's
+semantics live.
 """
 ```
 
@@ -151,12 +152,12 @@ There are three layers, top to bottom, and each is a driver of the one below it:
 frozen dataclasses. The design note is explicit about why:
 
 ```python
-# src/zicato/builder/draft.py (TournamentDraft docstring, excerpt)
+# src/zicato/contract_draft/draft.py (TournamentDraft docstring, excerpt)
 Unlike the frozen contract dataclasses in :mod:`zicato.core.types`, a
-:class:`TournamentDraft` is deliberately MUTABLE — operations mutate it in
+:class:`TournamentDraft` is MUTABLE — operations mutate it in
 place and return a structured patch describing what changed. A
 :class:`DraftStore` keys independent drafts by ``session_id`` so two
-concurrent builder sessions never tread on each other.
+concurrent editing sessions never tread on each other.
 ```
 
 `scoring` is itself a frozen `ScoringWeights`; every `set_*` op **replaces** it
@@ -388,7 +389,7 @@ it prices a contract's **board-runs-per-round** before the operator commits, so
 an authoring choice is annotated with its downstream cost. The result shapes:
 
 ```python
-# src/zicato/builder/operations.py
+# src/zicato/contract_draft/operations.py
 @dataclass(frozen=True, slots=True)
 class CostLine:
     label: str
@@ -427,7 +428,7 @@ The default `replicates` is read from the selection layer rather than
 hard-coded — the comment carries the reason:
 
 ```python
-# src/zicato/builder/operations.py — estimate_cost
+# src/zicato/contract_draft/operations.py — estimate_cost
     # ``replicates`` defaults to the STRUCTURE's own default (swiss / elim
     # default to 2 — replication, not bracket shape, is their noise lever),
     # NOT a flat 1. The default is read from the selection layer's
@@ -445,7 +446,7 @@ defer→replicate loop may spend a FRESH board sweep for BOTH crowning contestan
 per replicate, so `budget × 2 × board`:
 
 ```python
-# src/zicato/builder/operations.py — estimate_cost
+# src/zicato/contract_draft/operations.py — estimate_cost
     if read_promote_confidence_threshold(params) is not None:
         budget = read_replicate_budget(params)
         confirm_runs = budget * 2 * board_size
@@ -550,7 +551,7 @@ preflight` takes — an A/A noise-floor calibration and a degradation-signal pro
 tree, adapter, and runtime `call_llm`. Its result is `PreflightResult`:
 
 ```python
-# src/zicato/builder/operations.py
+# src/zicato/contract_draft/operations.py
 @dataclass(frozen=True, slots=True)
 class PreflightResult:
     available: bool
@@ -565,7 +566,7 @@ returns `available=False` with a `reason` naming exactly what is missing —
 never an exception for a workspace that simply is not ready:
 
 ```python
-# src/zicato/builder/operations.py — preflight (one of several degrade arms)
+# src/zicato/contract_draft/operations.py — preflight (one of several degrade arms)
     epoch_id = current_epoch_id(workspace_root)
     if not epoch_id:
         return PreflightResult(
@@ -615,7 +616,7 @@ list[Warning]` returns a list of advisory warnings — **never a blocking verdic
 a `severity`:
 
 ```python
-# src/zicato/builder/operations.py
+# src/zicato/contract_draft/operations.py
 @dataclass(frozen=True, slots=True)
 class Warning:
     code: str        # stable symbolic code the UI keys on
@@ -664,7 +665,7 @@ measured A/A noise floor. If a floor is known (passed in from a just-run
 AND `promote_margin <= floor`, it fires `margin_below_noise_floor` at `refuse`:
 
 ```python
-# src/zicato/builder/operations.py — validate (the margin-vs-floor arm)
+# src/zicato/contract_draft/operations.py — validate (the margin-vs-floor arm)
         gate_on = read_promote_confidence_threshold(params) is not None
         margin = draft.scoring.promote_margin
         if not gate_on and margin <= floor:
@@ -738,7 +739,7 @@ contract; it does not drive epochs. It reuses the existing write paths, so one
 mechanism rolls the epoch and the builder owns no second one:
 
 ```python
-# src/zicato/builder/operations.py — apply (confirm branch)
+# src/zicato/contract_draft/operations.py — apply (confirm branch)
     _write_contract(draft, workspace_root)
     # Recompute the hash from the now-written live contract so the result
     # reflects exactly what the next resolve will see.
@@ -796,7 +797,7 @@ is a real copy because the draft's frozen `scoring` and wholesale-replaced
 entries make a shallow list copy safe:
 
 ```python
-# src/zicato/builder/draft.py — _copy_draft
+# src/zicato/contract_draft/draft.py — _copy_draft
 def _copy_draft(draft: TournamentDraft) -> TournamentDraft:
     """A safe working copy of ``draft`` for a named slot.
 
@@ -1073,7 +1074,8 @@ rule. The worked example: exposing a hypothetical
    uv run pytest tests/test_epoch_contract.py \
        tests/test_contract_serializer_completeness.py -q   # omit-at-default + roll
    make node-test        # the console behaviour suite
-   uv run ruff check src/zicato/builder/ && uv run mypy src/zicato/builder/
+   uv run ruff check src/zicato/contract_draft/ src/zicato/builder/ \
+       && uv run mypy src/zicato/contract_draft/ src/zicato/builder/
    ```
    If you skipped step 3, `test_default_builder_tools_registry_covers_every_op`
    reds — the copilot cannot reach your knob. If you skipped step 4,
@@ -1136,7 +1138,7 @@ and the advanced/debugging commands — instead of one flat list.
 | `health.py` | `health` | — |
 | `mutations.py` | `mutations` | — |
 | `propose.py` | `propose` | — |
-| `reflect.py` | `reflect` (group) | `run`, `report`, `apply` — board reflection (`docs/design/BOARD-REFLECTION.md`); `apply` reaches the builder via `zicato.reflection.apply` (a library edge) rather than a direct `cli → builder` import |
+| `reflect.py` | `reflect` (group) | `run`, `report`, `apply` — board reflection (`docs/design/BOARD-REFLECTION.md`); `apply` stages the edit through `zicato.reflection.apply`, which reaches the draft and its operations in the library package `zicato.contract_draft` rather than through the builder driver |
 | `register.py` | `register` | — |
 | `tournament.py` | `tournament` | — |
 | `reindex.py` | `reindex`, `reindex-generations`, `repair-tournament-fk` | — |
@@ -1451,7 +1453,7 @@ The driver boundary:
 
 | Name | Forbids |
 |---|---|
-| the library must not import the drivers (cli / dashboard / builder) | any of the 34 listed library packages → `zicato.cli` / `zicato.dashboard` / `zicato.builder` / `zicato.tui` |
+| the library must not import the drivers (cli / dashboard / builder) | any of the 36 listed library packages → `zicato.cli` / `zicato.dashboard` / `zicato.builder` / `zicato.tui` |
 | tui driver: no import of the other drivers (it speaks HTTP, not Python) | `zicato.tui` → `zicato.cli` / `zicato.dashboard` / `zicato.builder` |
 | dashboard driver: no import of the cli | `zicato.dashboard` → `zicato.cli` |
 | builder driver: no import of the other drivers | `zicato.builder` → `zicato.cli` / `zicato.dashboard` |
@@ -1463,7 +1465,7 @@ The cuts inside the library:
 | Name | Forbids |
 |---|---|
 | the proposer's patch validator has no path to the board | `zicato.proposer.validate` → the board, the judge runtime, the emulator, the adapters, the adapter factory, the tournament worker |
-| the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, or the drivers | any of the 24 listed modelling and execution packages → `zicato.analyzer` / `zicato.check` / `zicato.evolve` / `zicato.health` / `zicato.orchestrator` / `zicato.query` / `zicato.reflection` / the four drivers |
+| the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, the contract draft, or the drivers | any of the 24 listed modelling and execution packages → `zicato.analyzer` / `zicato.check` / `zicato.contract_draft` / `zicato.evolve` / `zicato.health` / `zicato.orchestrator` / `zicato.query` / `zicato.reflection` / the four drivers |
 | the shared primitives import nothing else in the library | `zicato.aux_timeout` / `zicato.config` / `zicato.import_path` / `zicato.integrations` / `zicato.logging_stream` / `zicato.storage` / `zicato.util` → every other top-level package |
 
 The library-must-not-import-the-drivers contract lists every library package
@@ -1483,8 +1485,9 @@ The modelling-and-execution contract declares a cut, not an ordering. Its
 source list is the code that defines the data model, runs harnesses, scores
 entries and reads and writes the workspace; its forbidden list is the code
 that decides a round, renders reports, diagnoses a workspace, serves reads,
-adjudicates the evaluation contract, or drives a session. Seven library
-packages are deliberately outside the source list because each imports
+adjudicates the evaluation contract, edits a contract as a draft, or drives a
+session. Seven library packages are deliberately outside the source list
+because each imports
 something in the forbidden set: `epoch` and `proposer` import the report
 renderer, `index` and `runtime` import `evolve.settlement_recovery`, and
 `tournament`, `workspace_loader` and `_tournament_worker` reach the renderer

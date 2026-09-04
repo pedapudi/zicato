@@ -350,7 +350,8 @@ pythonpath = ["."]
 # 3. One cut runs through the library itself: the packages that model,
 #    execute, score and store import nothing in the packages that decide
 #    a round, render reports, diagnose a workspace, serve reads,
-#    adjudicate the evaluation contract, or drive a session.
+#    adjudicate the evaluation contract, edit a contract as a draft, or
+#    drive a session.
 # 4. The shared primitives — the storage backend, the process
 #    configuration, the utilities, the import-path resolver, the
 #    auxiliary-timeout helper, the log stream and the integration
@@ -376,6 +377,7 @@ source_modules = [
     "zicato.board",
     "zicato.check",
     "zicato.config",
+    "zicato.contract_draft",
     "zicato.core",
     "zicato.emulator",
     "zicato.epoch",
@@ -390,6 +392,7 @@ source_modules = [
     "zicato.patterns",
     "zicato.proposer",
     "zicato.query",
+    "zicato.reflection",
     "zicato.runtime",
     "zicato.runtime_factory",
     "zicato.scoring",
@@ -495,7 +498,8 @@ forbidden_modules = ["zicato.dashboard"]
 # forbidden list is the code that decides a round (evolve, orchestrator,
 # check), renders reports (analyzer), diagnoses a workspace (health),
 # serves reads (query), adjudicates the evaluation contract (reflection),
-# and drives a session (cli, dashboard, builder, tui).
+# edits a contract as a draft (contract_draft), and drives a session
+# (cli, dashboard, builder, tui).
 #
 # Seven library packages are deliberately absent from the source list,
 # because each imports something in the forbidden set: epoch and proposer
@@ -511,7 +515,7 @@ forbidden_modules = ["zicato.dashboard"]
 # would be the contract working: a factory that assembles a runtime has
 # no reason to reach the round loop.
 [[tool.importlinter.contracts]]
-name = "the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, or the drivers"
+name = "the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, the contract draft, or the drivers"
 type = "forbidden"
 source_modules = [
     "zicato.adapter_factory",
@@ -542,6 +546,7 @@ source_modules = [
 forbidden_modules = [
     "zicato.analyzer",
     "zicato.check",
+    "zicato.contract_draft",
     "zicato.evolve",
     "zicato.health",
     "zicato.orchestrator",
@@ -580,6 +585,7 @@ forbidden_modules = [
     "zicato.builder",
     "zicato.check",
     "zicato.cli",
+    "zicato.contract_draft",
     "zicato.core",
     "zicato.dashboard",
     "zicato.emulator",

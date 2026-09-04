@@ -41,10 +41,10 @@ from __future__ import annotations
 import json
 
 # The adjudicator protocol markers + JSON verdict shape, inlined so these test
-# doubles carry NO import edge into :mod:`zicato.reflection` (which reaches
-# :mod:`zicato.builder` to apply its findings — a forbidden edge for anything
-# the library import-linter contract covers, and ``zicato.testing`` is
-# covered). They mirror the constants of the same names in
+# doubles carry NO import edge into :mod:`zicato.reflection`. ``zicato.testing``
+# is a source module of the modelling-and-execution import contract, whose
+# forbidden list names :mod:`zicato.reflection`; a real import here would red
+# it. They mirror the constants of the same names in
 # :mod:`zicato.reflection.adjudicator`; a consistency test in
 # ``tests/test_reflection_adjudicator.py`` pins them equal so neither can drift.
 OBSERVED_FIRED = "fired"
