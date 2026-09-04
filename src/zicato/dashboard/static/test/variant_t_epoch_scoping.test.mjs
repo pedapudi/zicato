@@ -844,14 +844,14 @@ test('gens (cross-epoch): the ACTIVE epoch’s Match-ups still shows the live pr
   coreState.state.activeTournament = null;
 });
 
-// ---- typeface OPTIONS: the operator's finalized 12 faces (4 per mode) -----
+// ---- typeface OPTIONS: the 12 faces (4 per mode) --------------------------
 //
-// Each finalized id (T7 / T9 / … / D5) has a per-id CSS rule that swaps the four
-// font-role tokens (--v2-sans / --v2-mono / --n-font-head / --n-font-paper) to
-// the option's stacks, lifted byte-for-byte from the study. We assert each id's
-// block exists AND that its head/prose/data faces match the study mapping. The
-// JS model (ui.TYPE_OPTIONS) is the source of truth; the CSS must agree with it.
-test('typeface options: each of the 12 finalized ids has a CSS rule whose font-role tokens match the study stacks', () => {
+// Each option id has a per-id CSS rule that swaps the four font-role tokens
+// (--v2-sans / --v2-mono / --n-font-head / --n-font-paper) to the option's
+// stacks. We assert each id's block exists AND that its head/prose/data faces
+// are the faces the id names. The JS model (ui.TYPE_OPTIONS) is the source of
+// truth; the CSS must agree with it.
+test('typeface options: each of the 12 ids has a CSS rule whose font-role tokens match its faces', () => {
   const css = readCss();
   function typeBlock(id) {
     const m = css.match(new RegExp('#variant-root\\[data-variant="T"\\]\\[data-t-type="' + id + '"\\]\\s*\\{([^}]*)\\}'));
@@ -867,20 +867,20 @@ test('typeface options: each of the 12 finalized ids has a CSS rule whose font-r
     const m = String(stack || '').match(/'([^']+)'/);
     return m ? m[1] : null;
   }
-  // EXPECTED head/prose/data primaries per the study mapping.
+  // EXPECTED head/prose/data primaries per option id.
   const expect = {
-    T7:  { head: 'Google Sans Mono', prose: 'Google Sans Mono', data: 'Google Sans Mono' },
-    T9:  { head: 'Source Sans 3',    prose: 'Source Sans 3',    data: 'Source Code Pro' },
-    T12: { head: 'Inconsolata',      prose: 'Inconsolata',      data: 'Inconsolata' },
-    T14: { head: 'Ubuntu',           prose: 'Ubuntu',           data: 'Ubuntu Mono' },
-    E5:  { head: 'Fraunces',         prose: 'Fraunces',         data: 'Fraunces' },
-    E7:  { head: 'Bitter',           prose: 'Bitter',           data: 'Bitter' },
-    E8:  { head: 'Literata',         prose: 'Literata',         data: 'Literata' },
-    E15: { head: 'Domine',           prose: 'Domine',           data: 'Domine' },
-    D2:  { head: 'Archivo Narrow',   prose: 'Space Grotesk',    data: 'Space Grotesk' },
-    D12: { head: 'Hanken Grotesk',   prose: 'Hanken Grotesk',   data: 'Hanken Grotesk' },
-    D14: { head: 'Barlow Condensed', prose: 'Space Grotesk',    data: 'Space Grotesk' },
-    D5:  { head: 'Bricolage Grotesque', prose: 'Bricolage Grotesque', data: 'Bricolage Grotesque' },
+    'google-sans-mono':    { head: 'Google Sans Mono', prose: 'Google Sans Mono', data: 'Google Sans Mono' },
+    'source-sans-3':       { head: 'Source Sans 3',    prose: 'Source Sans 3',    data: 'Source Code Pro' },
+    inconsolata:           { head: 'Inconsolata',      prose: 'Inconsolata',      data: 'Inconsolata' },
+    ubuntu:                { head: 'Ubuntu',           prose: 'Ubuntu',           data: 'Ubuntu Mono' },
+    fraunces:              { head: 'Fraunces',         prose: 'Fraunces',         data: 'Fraunces' },
+    bitter:                { head: 'Bitter',           prose: 'Bitter',           data: 'Bitter' },
+    literata:              { head: 'Literata',         prose: 'Literata',         data: 'Literata' },
+    domine:                { head: 'Domine',           prose: 'Domine',           data: 'Domine' },
+    'archivo-narrow':      { head: 'Archivo Narrow',   prose: 'Space Grotesk',    data: 'Space Grotesk' },
+    'hanken-grotesk':      { head: 'Hanken Grotesk',   prose: 'Hanken Grotesk',   data: 'Hanken Grotesk' },
+    'barlow-condensed':    { head: 'Barlow Condensed', prose: 'Space Grotesk',    data: 'Space Grotesk' },
+    'bricolage-grotesque': { head: 'Bricolage Grotesque', prose: 'Bricolage Grotesque', data: 'Bricolage Grotesque' },
   };
   for (const id of Object.keys(expect)) {
     const b = typeBlock(id);
@@ -896,10 +896,10 @@ test('typeface options: each of the 12 finalized ids has a CSS rule whose font-r
     assertEqual(primary(opt.prose), expect[id].prose, id + ' JS model prose matches');
     assertEqual(primary(opt.data), expect[id].data, id + ' JS model data matches');
   }
-  // the DEFAULT block (no data-t-type) lands on the T7 voice (Google Sans Mono).
+  // the DEFAULT block (no data-t-type) lands on the Google Sans Mono voice.
   const baseM = css.match(/#variant-root\[data-variant="T"\]\s*\{([^}]*--v2-sans[^}]*)\}/);
   assert(baseM, 'the base [data-variant="T"] token block declares the default font roles');
-  assert(/Google Sans Mono/.test(baseM[1]), 'the default (no data-t-type) voice is Google Sans Mono (T7)');
+  assert(/Google Sans Mono/.test(baseM[1]), 'the default (no data-t-type) voice is Google Sans Mono');
 });
 
 // the brand wordmark pins to a FIXED brand mono, INDEPENDENT of the user's
@@ -913,7 +913,7 @@ test('brand mono: --v2-brand-mono is a FIXED monospace, distinct from the swappa
   assert(brand, 'the base block declares a fixed --v2-brand-mono token');
   assert(/monospace\s*$/.test(brand.trim()), 'the brand mono stack ends in the generic monospace keyword');
   // it is NOT declared inside any per-OPTION block, so it never swaps with the UI.
-  for (const id of ['T7', 'T9', 'T12', 'T14', 'E5', 'E7', 'E8', 'E15', 'D2', 'D12', 'D14', 'D5']) {
+  for (const id of ui.TYPE_OPTIONS.map((o) => o.id)) {
     const m = css.match(new RegExp('#variant-root\\[data-variant="T"\\]\\[data-t-type="' + id + '"\\]\\s*\\{([^}]*)\\}'));
     assert(m && !/--v2-brand-mono/.test(m[1]), 'the ' + id + ' typeface block does NOT re-declare the brand mono (it stays fixed)');
   }

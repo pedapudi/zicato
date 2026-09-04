@@ -7,9 +7,9 @@
     "production_logic": 110276
   },
   "limits": {
-    "total": 464954,
-    "production": 202843,
-    "production_logic": 112985,
+    "total": 464991,
+    "production": 202854,
+    "production_logic": 112990,
     "note": "Final measured limits; see docs/design/LINE-BUDGET.md."
   }
 }

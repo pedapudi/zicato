@@ -1190,52 +1190,79 @@ test('back button: navigates UP and renders the destination into the MAIN detail
 
 // ---- pickers + digest no-op ----------------------------------------
 
-test('pickers: typeface (T7 default, 12 finalized faces / 4 per mode) + colour (monokai default) switch + persist', () => {
+test('pickers: typeface (Google Sans Mono default, 12 faces / 4 per mode) + colour (monokai default) switch + persist', () => {
   freshState();
   const root = document.createElement('div');
   assertEqual(ui.DEFAULT_COLOR, 'monokai', 'monokai is the default colour theme');
-  // The DEFAULT typeface is now T7 · Google Sans Mono (the first Technical face).
-  assertEqual(ui.DEFAULT_TYPE, 'T7', 'T7 (Google Sans Mono) is the default typeface');
-  // TWELVE finalized options — FOUR per mode across THREE modes.
+  // The DEFAULT typeface is Google Sans Mono, the first Technical face.
+  assertEqual(ui.DEFAULT_TYPE, 'google-sans-mono', 'Google Sans Mono is the default typeface');
+  // TWELVE options — FOUR per mode across THREE modes.
   assertEqual(ui.TYPE_OPTIONS.length, 12, 'exactly 12 typeface options');
   assertDeep(ui.TYPE_MODE_ORDER, ['technical', 'editorial', 'display'], 'three mode groups in order');
   for (const mode of ui.TYPE_MODE_ORDER) {
     assertEqual(ui.TYPE_OPTIONS.filter((o) => o.mode === mode).length, 4, 'four options in the ' + mode + ' group');
   }
-  // the exact id roster lifted from the study.
+  // every id names the face it selects, in the kebab-case form the colour
+  // themes use.
   const typeIds = ui.TYPE_OPTIONS.map((o) => o.id);
   assertDeep(typeIds,
-    ['T7', 'T9', 'T12', 'T14', 'E5', 'E7', 'E8', 'E15', 'D2', 'D12', 'D14', 'D5'],
-    'the 12 ids match the operator\'s finalized picks');
+    ['google-sans-mono', 'source-sans-3', 'inconsolata', 'ubuntu',
+     'fraunces', 'bitter', 'literata', 'domine',
+     'archivo-narrow', 'hanken-grotesk', 'barlow-condensed', 'bricolage-grotesque'],
+    'the 12 ids name their faces');
+  for (const o of ui.TYPE_OPTIONS) {
+    assert(/^[a-z0-9]+(-[a-z0-9]+)*$/.test(o.id), o.id + ' is kebab-case, like the colour-theme ids');
+    assert(!/^[A-Z]\d+ · /.test(o.label), o.id + ' label carries the face names alone, no positional prefix');
+  }
   // every option carries the four font-role stacks.
   for (const o of ui.TYPE_OPTIONS) {
     for (const role of ['head', 'prose', 'data', 'code']) {
       assert(typeof o[role] === 'string' && o[role].length > 0, o.id + ' has a ' + role + ' font stack');
     }
   }
-  // TYPE_THEMES keeps the back-compat [id, label] shape over the 12 options.
+  // TYPE_THEMES exposes the options in [id, label] shape.
   assertEqual(ui.TYPE_THEMES.length, 12, 'TYPE_THEMES exposes all 12 as [id,label] pairs');
-  assertEqual(ui.TYPE_THEMES[0][0], 'T7', 'TYPE_THEMES first id is the default T7');
+  assertEqual(ui.TYPE_THEMES[0][0], 'google-sans-mono', 'TYPE_THEMES first id is the default');
 
   const colorIds = ui.COLOR_THEMES.map((t) => t[0]);
   assert(['monokai', 'solarized-dark', 'solarized-light'].every((c) => colorIds.includes(c)), 'the three original colour themes are kept');
   shell.applyTheme('solarized-dark', root);
   assertEqual(root.getAttribute('data-t-theme'), 'solarized-dark', 'colour applied to the T root');
   assertEqual(ui.readColor(), 'solarized-dark', 'colour persisted');
-  // apply a finalized option id — it stamps data-t-type="<id>" and persists.
-  shell.applyTypeface('E5', root);
-  assertEqual(root.getAttribute('data-t-type'), 'E5', 'typeface option applied to the T root');
-  assertEqual(ui.readType(), 'E5', 'typeface persisted');
+  // apply an option id — it stamps data-t-type="<id>" and persists.
+  shell.applyTypeface('fraunces', root);
+  assertEqual(root.getAttribute('data-t-type'), 'fraunces', 'typeface option applied to the T root');
+  assertEqual(ui.readType(), 'fraunces', 'typeface persisted');
   assertEqual(ui.normaliseColor('nonsense'), 'monokai', 'unknown colour → monokai');
-  assertEqual(ui.normaliseType('nonsense'), 'T7', 'unknown typeface → T7 default');
-  // MIGRATION ON READ: a stored mode id from an earlier scheme resolves to a
-  // typeface id in the same family.
-  assertEqual(ui.normaliseType('technical'), 'T7', 'legacy "technical" migrates to T7');
-  assertEqual(ui.normaliseType('editorial'), 'E5', 'legacy "editorial" migrates to E5');
-  assertEqual(ui.normaliseType('display'), 'D2', 'legacy "display" migrates to D2');
-  assertEqual(ui.normaliseType('sans'), 'T7', 'the long-dropped Sans id falls back to T7');
+  assertEqual(ui.normaliseType('nonsense'), 'google-sans-mono', 'unknown typeface → the default');
+  // MIGRATION ON READ: a stored mode id resolves to a face in that group.
+  assertEqual(ui.normaliseType('technical'), 'google-sans-mono', 'a stored "technical" migrates to the first Technical face');
+  assertEqual(ui.normaliseType('editorial'), 'fraunces', 'a stored "editorial" migrates to the first Editorial face');
+  assertEqual(ui.normaliseType('display'), 'archivo-narrow', 'a stored "display" migrates to the first Display face');
+  assertEqual(ui.normaliseType('sans'), 'google-sans-mono', 'the long-dropped Sans id falls back to the default');
   // typeOption resolves to the full option object (real faces).
-  assertEqual(ui.typeOption('T7').label, 'T7 · Google Sans Mono', 'typeOption resolves the option object');
+  assertEqual(ui.typeOption('google-sans-mono').label, 'Google Sans Mono', 'typeOption resolves the option object');
+});
+
+// MIGRATION ON READ for the opaque ids the options carried before they were
+// named after their faces: a preference persisted under one lands on the same
+// faces it selected then, so an operator's stored choice survives the rename.
+test('typeface migration: an option id from the retired scheme resolves to the face it selected', () => {
+  freshState();
+  const retired = {
+    T7: 'google-sans-mono', T9: 'source-sans-3', T12: 'inconsolata', T14: 'ubuntu',
+    E5: 'fraunces', E7: 'bitter', E8: 'literata', E15: 'domine',
+    D2: 'archivo-narrow', D12: 'hanken-grotesk', D14: 'barlow-condensed', D5: 'bricolage-grotesque',
+  };
+  for (const [old, id] of Object.entries(retired)) {
+    assertEqual(ui.normaliseType(old), id, 'a stored "' + old + '" resolves to ' + id);
+  }
+  // the migration runs on the persisted read path too, not just on a passed value.
+  window.localStorage.setItem('zicato.T.typeface', 'D14');
+  assertEqual(ui.readType(), 'barlow-condensed', 'a preference already persisted under a retired id reads back as its face');
+  const root = document.createElement('div');
+  shell.applyTypeface('E8', root);
+  assertEqual(root.getAttribute('data-t-type'), 'literata', 'applying a retired id stamps the named id on the root');
 });
 
 // ---- the brand wordmark: dotless ı + the accent dot CENTRED on its stem ----
@@ -1345,8 +1372,8 @@ test('top bar: NO typeface picker and NO scale pill (both → Settings only); co
 
   // applyTypeface still applies live (the shared store path is intact even with
   // no top-bar dropdown) — stamps data-t-type on the root.
-  shell.applyTypeface('T9', root);
-  assertEqual(root.getAttribute('data-t-type'), 'T9', 'applyTypeface("T9") still stamps data-t-type="T9" on the root');
+  shell.applyTypeface('source-sans-3', root);
+  assertEqual(root.getAttribute('data-t-type'), 'source-sans-3', 'applyTypeface stamps the chosen id as data-t-type on the root');
 
   // the wordmark dot stays centred on the FIXED brand mono — switching the UI
   // typeface (the swappable --v2-mono) must NOT move the geometrically-pinned dot.

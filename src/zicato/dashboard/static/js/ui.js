@@ -176,26 +176,27 @@ export function normaliseColor(t) { return COLOR_IDS.includes(t) ? t : DEFAULT_C
 export function readColor() { return readPref(COLOR_KEY, normaliseColor); }
 export function persistColor(t) { return persistPref(COLOR_KEY, normaliseColor, t); }
 
-// ---- typeface OPTIONS (the operator's finalized 12 faces) -----------
+// ---- typeface OPTIONS (12 faces) ------------------------------------
 //
-// The typeface picker is a GROUPED POPOVER offering the operator's finalized
-// TWELVE faces — FOUR per mode across THREE modes (Technical · Editorial ·
-// Display) — lifted byte-for-byte from the typeface study (FONT_STACKS /
-// TYPEFACE_MODES in compose.html, OPTIONS in index.html). Each option carries
-// its id (the `[data-t-type]` value the stylesheet keys on), its mode group,
-// a human label, and the FOUR font-role stacks the dashboard tokens map to:
+// The typeface picker is a GROUPED POPOVER offering TWELVE faces — FOUR per
+// mode across THREE modes (Technical · Editorial · Display). Each option
+// carries its id (the `[data-t-type]` value the stylesheet keys on), its mode
+// group, a human label, and the FOUR font-role stacks the dashboard tokens map
+// to:
 //   head  → --n-font-head   (headings / big numerals)
 //   prose → --v2-sans + --n-font-paper   (body / publication voice)
 //   data  → --v2-mono       (data / labels / code)
-//   code  → (currently folded into --v2-mono; kept for parity with the study)
+//   code  → --v2-mono as well; the role stays separate so a stylesheet can
+//            split code from data without reshaping an option
 //
-// Selecting an option stamps `data-t-type="<id>"` on the root (e.g. `T7`) and
-// the per-id CSS rule in console.css swaps the four font-role vars to the
-// matching stacks. The micro-preview in each row renders in that option's REAL
-// faces, so the popover reads as a true type specimen.
+// Selecting an option stamps `data-t-type="<id>"` on the root and the per-id
+// CSS rule in console.css swaps the four font-role vars to the matching
+// stacks. The micro-preview in each row renders in that option's REAL faces,
+// so the popover reads as a true type specimen.
 //
-// The exact stacks below MIRROR the study's FONT_STACKS so the dashboard
-// matches it byte-for-byte. Self-hosted JetBrains/iA faces are untouched; the
+// The stacks below match the ones in the typeface study under
+// docs/design/typeface-study/, so the dashboard renders what the study showed.
+// The self-hosted JetBrains/iA faces serve roles outside this picker; the
 // Google-Fonts families these reference are loaded by app_T.js's ensureFonts().
 const TF = {
   GSMONO: "'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace",
@@ -217,48 +218,58 @@ const TF = {
 
 // The mode groups, in display order. Each option: {id, mode, label, head,
 // prose, data, code}. FOUR options per mode = TWELVE total.
+//
+// An option's id is the kebab-case name of the face it sets headings in — the
+// face the option is chosen for, and the one thing that separates it from the
+// other eleven. Where an option pairs that face with a body or code face from
+// another family, the pairing is spelled out in the label, not the id.
 export const TYPE_MODE_ORDER = ['technical', 'editorial', 'display'];
 export const TYPE_MODE_LABEL = { technical: 'Technical', editorial: 'Editorial', display: 'Display' };
 
 export const TYPE_OPTIONS = [
   // Technical
-  { id: 'T7',  mode: 'technical', label: 'T7 · Google Sans Mono',                head: TF.GSMONO, prose: TF.GSMONO, data: TF.GSMONO, code: TF.GSMONO },
-  { id: 'T9',  mode: 'technical', label: 'T9 · Source Sans 3 + Source Code Pro', head: TF.SRCS,   prose: TF.SRCS,   data: TF.SRCC,   code: TF.SRCC  },
-  { id: 'T12', mode: 'technical', label: 'T12 · Inconsolata',                    head: TF.INCON,  prose: TF.INCON,  data: TF.INCON,  code: TF.INCON },
-  { id: 'T14', mode: 'technical', label: 'T14 · Ubuntu + Ubuntu Mono',          head: TF.UBUNTU, prose: TF.UBUNTU, data: TF.UBUM,   code: TF.UBUM  },
+  { id: 'google-sans-mono',    mode: 'technical', label: 'Google Sans Mono',                head: TF.GSMONO, prose: TF.GSMONO, data: TF.GSMONO, code: TF.GSMONO },
+  { id: 'source-sans-3',       mode: 'technical', label: 'Source Sans 3 + Source Code Pro', head: TF.SRCS,   prose: TF.SRCS,   data: TF.SRCC,   code: TF.SRCC  },
+  { id: 'inconsolata',         mode: 'technical', label: 'Inconsolata',                     head: TF.INCON,  prose: TF.INCON,  data: TF.INCON,  code: TF.INCON },
+  { id: 'ubuntu',              mode: 'technical', label: 'Ubuntu + Ubuntu Mono',            head: TF.UBUNTU, prose: TF.UBUNTU, data: TF.UBUM,   code: TF.UBUM  },
   // Editorial
-  { id: 'E5',  mode: 'editorial', label: 'E5 · Fraunces',                        head: TF.FRAUN,  prose: TF.FRAUN,  data: TF.FRAUN,  code: TF.FRAUN  },
-  { id: 'E7',  mode: 'editorial', label: 'E7 · Bitter',                          head: TF.BITTER, prose: TF.BITTER, data: TF.BITTER, code: TF.BITTER },
-  { id: 'E8',  mode: 'editorial', label: 'E8 · Literata',                        head: TF.LITER,  prose: TF.LITER,  data: TF.LITER,  code: TF.LITER  },
-  { id: 'E15', mode: 'editorial', label: 'E15 · Domine',                         head: TF.DOMINE, prose: TF.DOMINE, data: TF.DOMINE, code: TF.DOMINE },
+  { id: 'fraunces',            mode: 'editorial', label: 'Fraunces',                        head: TF.FRAUN,  prose: TF.FRAUN,  data: TF.FRAUN,  code: TF.FRAUN  },
+  { id: 'bitter',              mode: 'editorial', label: 'Bitter',                          head: TF.BITTER, prose: TF.BITTER, data: TF.BITTER, code: TF.BITTER },
+  { id: 'literata',            mode: 'editorial', label: 'Literata',                        head: TF.LITER,  prose: TF.LITER,  data: TF.LITER,  code: TF.LITER  },
+  { id: 'domine',              mode: 'editorial', label: 'Domine',                          head: TF.DOMINE, prose: TF.DOMINE, data: TF.DOMINE, code: TF.DOMINE },
   // Display
-  { id: 'D2',  mode: 'display',   label: 'D2 · Archivo Narrow + Space Grotesk',  head: TF.AN,     prose: TF.SG,     data: TF.SG,     code: TF.SG     },
-  { id: 'D12', mode: 'display',   label: 'D12 · Hanken Grotesk',                 head: TF.HANKEN, prose: TF.HANKEN, data: TF.HANKEN, code: TF.HANKEN },
-  { id: 'D14', mode: 'display',   label: 'D14 · Barlow Condensed + Space Grotesk', head: TF.BARLOWC, prose: TF.SG,  data: TF.SG,     code: TF.SG     },
-  { id: 'D5',  mode: 'display',   label: 'D5 · Bricolage Grotesque',             head: TF.BRICO,  prose: TF.BRICO,  data: TF.BRICO,  code: TF.BRICO },
+  { id: 'archivo-narrow',      mode: 'display',   label: 'Archivo Narrow + Space Grotesk',  head: TF.AN,     prose: TF.SG,     data: TF.SG,     code: TF.SG     },
+  { id: 'hanken-grotesk',      mode: 'display',   label: 'Hanken Grotesk',                  head: TF.HANKEN, prose: TF.HANKEN, data: TF.HANKEN, code: TF.HANKEN },
+  { id: 'barlow-condensed',    mode: 'display',   label: 'Barlow Condensed + Space Grotesk', head: TF.BARLOWC, prose: TF.SG,   data: TF.SG,     code: TF.SG     },
+  { id: 'bricolage-grotesque', mode: 'display',   label: 'Bricolage Grotesque',             head: TF.BRICO,  prose: TF.BRICO,  data: TF.BRICO,  code: TF.BRICO },
 ];
 
 const TYPE_IDS = TYPE_OPTIONS.map((o) => o.id);
 const TYPE_BY_ID = new Map(TYPE_OPTIONS.map((o) => [o.id, o]));
 
-// BACK-COMPAT shape: `[id, label]` pairs (the prior TYPE_THEMES contract) so
-// existing call sites — shell.js's `TYPEFACES = TYPE_THEMES.map(t => t[0])` and
-// any consumer expecting the tuple form — keep working against the 12 options.
+// The options as `[id, label]` pairs, the shape shell.js's `TYPEFACES` and any
+// other tuple consumer reads.
 export const TYPE_THEMES = TYPE_OPTIONS.map((o) => [o.id, o.label]);
 
-// The DEFAULT is T7 · Google Sans Mono (first Technical). FLAGGED in the report
-// so the operator can change it.
-export const DEFAULT_TYPE = 'T7';
+// The DEFAULT is Google Sans Mono, the first Technical option.
+export const DEFAULT_TYPE = 'google-sans-mono';
 const TYPE_KEY = 'zicato.T.typeface';
 
-// The three MODE ids (technical / editorial / display) are not themselves
-// typeface ids. A value stored under one of them migrates to that group's
-// default pairing, so it keeps a coherent voice instead of snapping back to
-// the global default.
-const LEGACY_TYPE_MAP = { technical: 'T7', editorial: 'E5', display: 'D2' };
+// Values that are not option ids but must still resolve to a face, so a
+// preference persisted under one keeps the voice it selected. Two kinds live
+// here: the three MODE ids (technical / editorial / display), which name a
+// group rather than a face and resolve to that group's first option; and the
+// opaque ids the options carried before they were named after their faces.
+// This map exists to retire both — nothing else may spell them.
+const LEGACY_TYPE_MAP = {
+  technical: 'google-sans-mono', editorial: 'fraunces', display: 'archivo-narrow',
+  T7: 'google-sans-mono', T9: 'source-sans-3', T12: 'inconsolata', T14: 'ubuntu',
+  E5: 'fraunces', E7: 'bitter', E8: 'literata', E15: 'domine',
+  D2: 'archivo-narrow', D12: 'hanken-grotesk', D14: 'barlow-condensed', D5: 'bricolage-grotesque',
+};
 
-// Normalise any stored or passed value to a known option id. An unknown value
-// yields the default; a mode id yields that group's pairing.
+// Normalise any stored or passed value to a known option id. A value the
+// legacy map names yields the face it selected; anything else yields the default.
 export function normaliseType(t) {
   if (TYPE_IDS.includes(t)) return t;
   if (t && LEGACY_TYPE_MAP[t]) return LEGACY_TYPE_MAP[t];

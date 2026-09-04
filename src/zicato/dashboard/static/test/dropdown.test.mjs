@@ -41,8 +41,8 @@ const activeIndex = (options) => options.findIndex((o) => cls(o).includes('dt-cd
 const PICKERS = [
   { name: 'swatch', attr: 'data-theme', initial: 'monokai', other: 'dracula',
     build: (onChoose) => buildSwatchDropdown('monokai', onChoose) },
-  { name: 'typeface', attr: 'data-type', initial: 'T7', other: 'E5',
-    build: (onChoose) => buildTypefaceDropdown('T7', onChoose) },
+  { name: 'typeface', attr: 'data-type', initial: 'google-sans-mono', other: 'fraunces',
+    build: (onChoose) => buildTypefaceDropdown('google-sans-mono', onChoose) },
 ];
 
 for (const p of PICKERS) {
@@ -124,20 +124,20 @@ test('a colour choice reaches every mounted swatch picker', () => {
 });
 
 test('a typeface choice reaches every mounted picker, and a mode id migrates', () => {
-  const a = buildTypefaceDropdown('T7', () => {});
-  const b = buildTypefaceDropdown('T7', () => {});
-  syncTypefaceDropdowns('D2');
-  assertEqual(selected(a, 'data-type').join(','), 'D2', 'the first picker follows the fan-out');
-  assertEqual(selected(b, 'data-type').join(','), 'D2', 'so does the second');
+  const a = buildTypefaceDropdown('google-sans-mono', () => {});
+  const b = buildTypefaceDropdown('google-sans-mono', () => {});
+  syncTypefaceDropdowns('archivo-narrow');
+  assertEqual(selected(a, 'data-type').join(','), 'archivo-narrow', 'the first picker follows the fan-out');
+  assertEqual(selected(b, 'data-type').join(','), 'archivo-narrow', 'so does the second');
   // A stored MODE id is not itself an option id; it migrates to that group's
-  // pairing rather than snapping back to the global default.
+  // first face rather than snapping back to the global default.
   syncTypefaceDropdowns('editorial');
-  assertEqual(selected(b, 'data-type').join(','), 'E5', 'a mode id resolves to its group pairing');
+  assertEqual(selected(b, 'data-type').join(','), 'fraunces', 'a mode id resolves to its group\'s first face');
 });
 
 test('the text-size segment in the typeface popover chooses and syncs', () => {
   let size = null;
-  const picker = buildTypefaceDropdown('T7', () => {}, { size: 'small', onSizeChoose: (id) => { size = id; } });
+  const picker = buildTypefaceDropdown('google-sans-mono', () => {}, { size: 'small', onSizeChoose: (id) => { size = id; } });
   const segs = picker.node.querySelectorAll('[data-fontsize]');
   assertEqual(segs.length, 3, 'three size segments');
   assertEqual(segs.filter((s) => s.getAttribute('aria-checked') === 'true').map((s) => s.getAttribute('data-fontsize')).join(','),
