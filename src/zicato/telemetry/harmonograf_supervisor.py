@@ -69,7 +69,15 @@ def _close_rejected_idle_coroutines() -> None:
     server task group is closing. Newer runtimes close it; mirror that behavior
     here until the minimum runtime advances.
     """
-    from hypercorn.asyncio.worker_context import AsyncioSingleTask  # noqa: PLC0415
+    try:
+        from hypercorn.asyncio.worker_context import AsyncioSingleTask  # noqa: PLC0415
+    except ImportError:
+        # Best-effort by definition: this is a WORKAROUND for one hypercorn
+        # edge case on an older runtime, not a requirement of the server it
+        # patches. Raising here propagates into the caller's ImportError
+        # guard and disables live telemetry wholesale -- turning "the patch
+        # does not apply" into "the feature is unavailable".
+        return
 
     if getattr(AsyncioSingleTask.restart, "_zicato_safe", False):
         return

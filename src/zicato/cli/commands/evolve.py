@@ -162,23 +162,30 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
     # <repo>/src/zicato/cli/commands/evolve.py; the Cargo workspace
     # builds every crate into <repo>/target/release/. Four parents from
     # this file reach src/zicato/, a fifth reaches the repo root.
-    here = Path(__file__).resolve()
-    repo_root = here.parents[4]
-    dev_checkout = repo_root / "target" / "release" / "zicato-supervisor"
+    # Bounded: this resolver's whole contract is to return None when nothing
+    # resolves, so an IndexError out of the walk is not a way for it to fail.
+    # An installed layout that is shallower than the source checkout -- or a
+    # module staged behind a symlink -- has fewer than five parents.
+    parents = Path(__file__).resolve().parents
+    dev_checkout = (
+        parents[4] / "target" / "release" / "zicato-supervisor" if len(parents) > 4 else None
+    )
 
     def _usable(path: Path) -> bool:
         return path.exists() and os.access(path, os.X_OK)
 
     bundled_ok = _usable(bundled)
-    dev_ok = _usable(dev_checkout)
+    dev_usable = dev_checkout if dev_checkout is not None and _usable(dev_checkout) else None
 
     # 2. Prefer the dev-checkout release build over the bundled copy
     #    when it exists and is at least as new — in a source checkout the
     #    bundled ``_bin`` binary is easily stale. An installed wheel has
-    #    no ``target/release`` (``dev_ok`` is False) and so falls through
+    #    no ``target/release`` (``dev_usable`` is None) and so falls through
     #    to the bundled binary unchanged.
-    if dev_ok and (not bundled_ok or dev_checkout.stat().st_mtime >= bundled.stat().st_mtime):
-        return dev_checkout
+    if dev_usable is not None and (
+        not bundled_ok or dev_usable.stat().st_mtime >= bundled.stat().st_mtime
+    ):
+        return dev_usable
     if bundled_ok:
         return bundled
 
@@ -191,8 +198,8 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
     #    when the bundled copy was present but unusable; in practice it
     #    catches a bare checkout that built the crate but never ran the
     #    wheel build hook.
-    if dev_ok:
-        return dev_checkout
+    if dev_usable is not None:
+        return dev_usable
 
     return None
 
@@ -240,7 +247,7 @@ async def _maybe_spawn_supervisor(
             "--no-dashboard",
             start_new_session=True,
         )
-    except (OSError, FileNotFoundError) as exc:
+    except (OSError, TypeError, ValueError) as exc:
         click.echo(
             f"warning: failed to spawn zicato-supervisor ({exc}); watchdog disabled",
             err=True,
@@ -342,10 +349,13 @@ async def _maybe_spawn_dashboard(
         pass
     except OSError:
         pass
-    argv = _dashboard_spawn_argv(workspace_root, _DASHBOARD_HOST, port)
     try:
+        # Building the argv can itself fail, so it belongs INSIDE the guard:
+        # this function's contract is that a dashboard which cannot start
+        # degrades to a warning, never to an aborted run.
+        argv = _dashboard_spawn_argv(workspace_root, _DASHBOARD_HOST, port)
         proc = await asyncio.create_subprocess_exec(*argv, start_new_session=True)
-    except (OSError, FileNotFoundError) as exc:
+    except (OSError, TypeError, ValueError) as exc:
         click.echo(
             f"warning: failed to spawn the dashboard service ({exc}); dashboard disabled",
             err=True,

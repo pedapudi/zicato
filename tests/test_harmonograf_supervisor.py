@@ -97,6 +97,19 @@ def test_missing_live_telemetry_names_install_profile(
     assert "install zicato[observability]" in caplog.text
 
 
+def test_a_missing_hypercorn_skips_the_patch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without hypercorn the patch does not apply, and live telemetry stands.
+
+    This is a workaround for one hypercorn edge case on an older runtime, not a
+    requirement of the server it patches. An unguarded import raises into the
+    caller's ``ImportError`` guard, which turns "the patch does not apply here"
+    into "live telemetry is unavailable" and disables the feature wholesale.
+    """
+    monkeypatch.setitem(sys.modules, "hypercorn.asyncio.worker_context", None)
+
+    supervisor._close_rejected_idle_coroutines()
+
+
 def test_rejected_idle_coroutine_is_closed() -> None:
     """A closing HTTP task group must not leak the coroutine it rejects."""
     from hypercorn.asyncio.worker_context import AsyncioSingleTask
