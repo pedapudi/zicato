@@ -38,7 +38,7 @@ STATIC_DIR = Path(str(_dashboard_pkg.__file__)).parent / "static"
 #: WHOLE tree rather than the two directories today's pins happen to scan
 #: (``js/`` and ``test/``): the guard should not need updating each time a
 #: pin widens, and a file the pins skip today is one they may scan
-#: tomorrow. This picks up the top-level ``app_T.js`` / ``index.html`` and
+#: tomorrow. This picks up the top-level ``console.js`` / ``index.html`` and
 #: the ``css/`` stylesheets as well.
 _SCANNED_SUFFIXES = (".js", ".mjs", ".css", ".html")
 
@@ -68,7 +68,7 @@ def test_the_scan_finds_files_to_check() -> None:
         "board.js",
         "builder.test.mjs",
         "console.css",
-        "app_T.js",
+        "console.js",
     } <= names
 
 

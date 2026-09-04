@@ -7,9 +7,8 @@ description: Open and read zicato's live "Console" dashboard during (or after) a
 
 The dashboard is zicato's **decision-centric console**: its one job is to make
 the promote/reject decision over a champion-vs-challenger tournament legible
-**while it is still in flight**. The shipping UI is **Console** (the
-converged winner of the dashboard bake-off, internally "variant T"); it is the
-sole front end. The primary surfaces are fit-to-width SVG figures — funnels,
+**while it is still in flight**. The shipping UI is **Console**, the converged winner of the
+dashboard bake-off and the sole front end. The primary surfaces are fit-to-width SVG figures — funnels,
 ladders, brackets, dot-plots, heatmaps — built on a fixed visual grammar (the
 same mark means the same thing everywhere). See
 [../../docs/design/CONSOLE-DESIGN-LANGUAGE.md](../../docs/design/CONSOLE-DESIGN-LANGUAGE.md)

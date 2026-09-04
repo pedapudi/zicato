@@ -1,7 +1,6 @@
-// test/fixtures.mjs — shared fixtures and helpers for the variant_t_*.test.mjs
-// suite: the module handles, the
-// FIXTURE map + fetch installers, and every helper/fixture that more than
-// one split file references. Each test file calls installDom() BEFORE
+// test/fixtures.mjs — shared fixtures and helpers for the console's behaviour
+// suite: the module handles, the FIXTURE map + fetch installers, and every
+// helper/fixture that more than one test file references. Each test file calls installDom() BEFORE
 // dynamically importing this module, so the js/ module imports below only
 // ever evaluate against an installed DOM (same order as the monolith).
 

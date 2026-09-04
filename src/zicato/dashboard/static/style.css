@@ -1,9 +1,9 @@
 /* zicato dashboard — the document shell.
  *
- * The console (Variant T) paints the entire UI into `#variant-root` and loads
- * its own stylesheet, `css/console.css`, whose every rule is scoped under
- * `#variant-root[data-variant="T"]`. This sheet holds only what lives OUTSIDE
- * that scope, which is four things:
+ * The console paints the entire UI into `#console-root` and loads its own
+ * stylesheet, `css/console.css`, whose every rule is scoped under
+ * `#console-root`. This sheet holds only what lives OUTSIDE that scope, which
+ * is four things:
  *
  *   1. The page ground — the colour tokens, the box-sizing reset, and the
  *      `html, body` paint the console renders on top of.

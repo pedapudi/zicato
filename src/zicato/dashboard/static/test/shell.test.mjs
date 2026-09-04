@@ -1,4 +1,4 @@
-// test/variant_t_shell.test.mjs — the console's shell: visual elements fit
+// test/shell.test.mjs — the console's shell: visual elements fit
 // their panes, the page-wide scale control, the themes and swatch dropdown,
 // and the fluid layout.
 //

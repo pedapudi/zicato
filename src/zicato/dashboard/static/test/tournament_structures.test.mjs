@@ -1,4 +1,5 @@
-// test/variant_t_structure.test.mjs — the configurable tournament structure: bracket / standings / racing renderers
+// test/tournament_structures.test.mjs — the configurable tournament structure:
+// bracket / standings / racing renderers
 // over mock structure payloads, the universal radar, and the non-gauntlet
 // epoch overview.
 //

@@ -16,14 +16,14 @@
 This document is the source of truth for the **Console** dashboard interface —
 the layout that won the dashboard bake-off and is the sole shipping front end.
 It states in one place the design language that
-[variant-T.md](variant-T.md) records round by round and that
+[CONSOLE-CHANGELOG.md](CONSOLE-CHANGELOG.md) records round by round and that
 [DASHBOARD-VARIANTS.md](DASHBOARD-VARIANTS.md) catalogues across the
 bake-off field.
 
 Everything here is derived from the live code: the modules under
 `src/zicato/dashboard/static/js/` and the stylesheet
 `src/zicato/dashboard/static/css/console.css`. Where this document and the code
-disagree, **the code is authoritative**. [variant-T.md](variant-T.md) and
+disagree, **the code is authoritative**. [CONSOLE-CHANGELOG.md](CONSOLE-CHANGELOG.md) and
 [DASHBOARD-VARIANTS.md](DASHBOARD-VARIANTS.md) are historical records; this is
 the present-tense reference.
 
@@ -49,14 +49,14 @@ it is still in flight**. The aesthetic stance that follows from that job:
   coherent terminal-and-tournament voice. See §8 for the lineage of these
   choices.
 
-Console is self-contained: the entry `app_T.js`, the modules under `js/`, and
+Console is self-contained: the entry `console.js`, the modules under `js/`, and
 the stylesheet `css/console.css`, with the data spine in `js/core/*`. Exactly
 one UI loads at a time.
 
 ## 2. The six-colour ROLE system
 
 Every theme is a set of CSS custom properties scoped under
-`#variant-root[data-variant="T"][data-t-theme="<id>"]`, swapped by the
+`#console-root[data-t-theme="<id>"]`, swapped by the
 `[data-t-theme]` attribute. There is **no hardcoded hex in the marks** — every
 figure reads its colour from the active theme's tokens, so a theme swap is a
 pure CSS re-skin with no re-render.
@@ -177,7 +177,7 @@ exposes two tokens the marks read: **`--v2-sans`** (body) and **`--v2-mono`**
 `--n-font-paper` (the publication body). An editorial face routes *everything* —
 including the mono token — to its serif, so data and prose share one face; a
 display face gives the body a geometric grotesque and the headings a condensed
-display face. Google Fonts is loaded in `app_T.js` with `display=swap` and
+display face. Google Fonts is loaded in `console.js` with `display=swap` and
 system fallbacks — the only external dependency.
 
 (There is no separate sans typeface: Technical already carries a sans body, and
@@ -261,7 +261,7 @@ Four further conventions hold within this grammar:
 ### 4.3 The hovercard
 
 Hover-for-detail is a first-class, intentional choice. `hovercard.js` mounts a
-**singleton** card *inside* `#variant-root`, so it inherits the live per-theme
+**singleton** card *inside* `#console-root`, so it inherits the live per-theme
 tokens (`--v2-panel` background, `--v2-ink` text, `--v2-rule` border, the mono
 face) and reads correctly across all sixteen themes. It is positioned with
 viewport flip/clamp so it never clips, honours `prefers-reduced-motion`, and is
@@ -308,7 +308,7 @@ no per-row tags. See BOARD-REFLECTION.md §"UI — the Instrument lens" and dev-
   page-wide via `zoom` on the app root (`shell.applyScale`), which **reflows**
   the page rather than transforming it, so the page re-wraps at the scaled size
   and never clips.
-  Persisted under `zicato.T.scale`, orthogonal to colour/typeface.
+  Persisted under `zicato.console.scale`, orthogonal to colour/typeface.
 - **Fluid, resolution-responsive layout.** The detail pane fills the available
   viewport width; only a generous, non-centred `max-width` guards prose
   line-length on ultra-wide displays. The side-by-side compare grid
@@ -322,7 +322,7 @@ no per-row tags. See BOARD-REFLECTION.md §"UI — the Instrument lens" and dev-
   `#/e/<epoch>/gen/<gen>`, …); the **`#/` path is the tree path**, so a cold
   deep-link hydrates both the open branches and the detail. The rail is a
   resizable left side-panel (a draggable `.dt-rail-handle`, persisted under
-  `zicato.T.rail`), distinct from the page-scale pill.
+  `zicato.console.rail`), distinct from the page-scale pill.
 - **The "up" control.** A top-left **`↑ up`** control navigates *up the
   selection hierarchy* (the parent route): candidate → generations → epoch →
   environment, a compare split collapsing to the bare candidate first. It

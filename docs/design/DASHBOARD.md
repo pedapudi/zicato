@@ -26,7 +26,7 @@ server-sent-events surface.
 > **Scope.** The front end that ships, named the console, is documented
 > in [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md), the
 > visual source of truth for its shell, views, and figure grammar, and in
-> [variant-T.md](variant-T.md), the round-by-round record of the design
+> [CONSOLE-CHANGELOG.md](CONSOLE-CHANGELOG.md), the round-by-round record of the design
 > bake-off that produced it. The console navigates by a data-model tree
 > sidebar plus a champion-spine round timeline. The lineage ribbon of
 > §4.1 is a navigation proposal the console did not adopt; read §4.1 as
@@ -604,7 +604,7 @@ net progress across contracts, which part of the contract moved at each
 reset, and whether spending more generations buys a lower floor. The
 same `/api/workspace` read serves the ledger as a `ledger` array beside
 `epochs`; see
-[variant-T.md](variant-T.md#decision-loop-wave-current-default--meta-loop-ledger--settings-drawer--racing-hero--builder-view).
+[CONSOLE-CHANGELOG.md](CONSOLE-CHANGELOG.md#decision-loop-wave-current-default--meta-loop-ledger--settings-drawer--racing-hero--builder-view).
 
 ### 4.4 The epoch level
 

@@ -462,7 +462,7 @@ function brandWordmark() {
 
 // THE RESEARCH-PREVIEW PILL — a quiet product-status tag pinned NEXT TO the
 // "zıcato console" wordmark in the top bar. It echoes the wordmark's own
-// register (the .dt-brand-variant "console" tag): small, faint, monospace,
+// register (the .dt-brand-tag "console" tag): small, faint, monospace,
 // uppercase tracking, theme-adaptive (the muted ink-faint token + currentColor).
 // The label is STACKED on two lines ("research" / "preview") so it reads as a
 // compact corner tag beside the wordmark rather than a wide strip. It is purely
@@ -490,7 +490,6 @@ export function mountShell(root) {
   // Reset the settings-overlay state on a fresh mount.
   _settingsOpen = false;
   _underlyingRoute = { view: 'home', params: {}, cmp: null };
-  root.setAttribute('data-variant', 'T');
   root.setAttribute('data-t-theme', readColor());
   root.setAttribute('data-t-type', readType());
   root.setAttribute('data-t-scale', String(readScale()));
@@ -572,7 +571,7 @@ export function mountShell(root) {
     el('div', { class: 'dt-brand' }, [
       brandMark(),
       brandWordmark(),
-      el('span', { class: 'dt-brand-variant', text: 'console' }),
+      el('span', { class: 'dt-brand-tag', text: 'console' }),
       researchPreviewPill(),
     ]),
     _crumbHost,
@@ -1275,7 +1274,7 @@ async function dispatchSettingsOverlay(route) {
       clearChildren(_viewHost);
       _viewHost.appendChild(el('p', { class: 'dt-empty', text: 'This view hit an error: ' + ((err && err.message) || err) }));
       // eslint-disable-next-line no-console
-      console.error('variant-T render error', err);
+      console.error('console render error', err);
     }
   }
 
@@ -1294,7 +1293,7 @@ async function dispatchSettingsOverlay(route) {
     clearChildren(_settingsPanelHost);
     _settingsPanelHost.appendChild(el('p', { class: 'dt-empty', text: 'Settings hit an error: ' + ((err && err.message) || err) }));
     // eslint-disable-next-line no-console
-    console.error('variant-T settings render error', err);
+    console.error('console settings render error', err);
   }
 }
 
@@ -1351,7 +1350,7 @@ async function dispatch() {
     clearChildren(_viewHost);
     _viewHost.appendChild(el('p', { class: 'dt-empty', text: 'This view hit an error: ' + ((err && err.message) || err) }));
     // eslint-disable-next-line no-console
-    console.error('variant-T render error', err);
+    console.error('console render error', err);
   }
 }
 

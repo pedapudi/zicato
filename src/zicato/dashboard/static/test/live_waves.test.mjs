@@ -1,4 +1,4 @@
-// test/variant_t_live_waves.test.mjs — console unit tests for the live run
+// test/live_waves.test.mjs — console unit tests for the live run
 // surfaces: the live-run controls, live tournament truthfulness, the
 // match-grouped block, the tree pulse, and elim generations across rounds.
 //

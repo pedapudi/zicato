@@ -2559,6 +2559,6 @@ Where to add (and what will catch) a regression, by concern:
 | controls: read-only 403, two-step confirm, paused readback | node `loop_controls.test.mjs`, `override_taxonomy.test.mjs`, `tests/test_dashboard_gate_endpoint.py` |
 | `_current_champion` reigning-spine (the client champion-scan regression, two-promotion lineage) | `tests/test_dashboard_decision_surface.py::test_current_champion_is_the_spine_end` (+ the seed fallback beside it) |
 | which member of a promoted SET is the head — `gate.gen`, the round-timeline spine, and `current_champion` on a BRANCHING lineage | `tests/test_dashboard_promoted_head.py` |
-| the tree crown per epoch (the same client champion-scan defect across epochs, multi-epoch fixture) | node `variant_t_epoch_scoping.test.mjs` |
+| the tree crown per epoch (the same client champion-scan defect across epochs, multi-epoch fixture) | node `epoch_scoping.test.mjs` |
 | the whole Node behaviour suite (digest / no-op / mock parity) | `src/zicato/dashboard/static/test/run-all.mjs` via `make node-test` |
 | the query layer stays dashboard-free | `uv run lint-imports` (the import-linter contract) |

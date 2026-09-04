@@ -1,12 +1,13 @@
-// js/ui.js — shared chrome helpers for the Console III variant.
+// js/ui.js — shared chrome helpers for the console.
 //
-// Self-contained for Variant P (ported from N's helpers). Small, pure builders every view composes:
+// Small, pure builders every view composes:
 // the digest-gated content swap (the no-flash guarantee), section headers,
 // verdict pills, a GFM-capable tiny-markdown renderer (TABLES render — fix #3),
 // honest empty / loading states, and the colour + typeface theme tables. No
 // data fetching, no state mutation.
 
 import { el, clearChildren } from './core/dom.js';
+import { readPrefRaw, writePrefRaw } from './core/prefs.js';
 import { attachHovercard } from './hovercard.js';
 import { href } from './router.js';
 import { isNum, fmt, fmtSigned, fmtPercent } from './svg.js';
@@ -96,28 +97,26 @@ export function gatedSwap(host, digest, build) {
 // ---- persisted appearance preferences -------------------------------
 //
 // Five operator preferences — colour theme, typeface, page scale, text size,
-// rail width — are each a single value in localStorage under its own key,
-// read on boot and written on change. These two helpers are the whole storage
-// seam. Every access is wrapped: a browser in private mode (or with site data
-// blocked) THROWS on getItem/setItem, and an appearance preference is never
-// worth aborting a boot over, so a throw degrades to the normalised default.
+// rail width — are each a single stored value read on boot and written on
+// change. core/prefs.js owns the key namespace and the guarded storage access
+// (including the throw a private-mode browser raises); these two helpers add
+// the normalisation, because an appearance preference is never worth aborting
+// a boot over and a stored value is whatever a previous version wrote.
 //
 // `normalise` is the preference's own total function — it maps anything,
-// including the null a never-written key returns, onto a legal value. `absent`
-// is what to normalise INSTEAD of null when the key is unset; the numeric
-// preferences need it because their normalisers clamp a null to the range
-// floor rather than to the intended default.
-function readPref(key, normalise, absent = null) {
-  let stored = null;
-  try { stored = window.localStorage.getItem(key); } catch (e) { /* private mode */ }
-  return normalise(stored == null ? absent : stored);
+// including the null an unset key returns, onto a legal value. `absent` is what
+// to normalise INSTEAD of null when the key is unset; the numeric preferences
+// need it because their normalisers clamp a null to the range floor rather than
+// to the intended default.
+function readPref(name, normalise, absent = null) {
+  return normalise(readPrefRaw(name, absent));
 }
 
 // Normalise, store, and hand back the stored value — so a caller can apply
 // exactly what was persisted rather than what it passed in.
-function persistPref(key, normalise, value) {
+function persistPref(name, normalise, value) {
   const next = normalise(value);
-  try { window.localStorage.setItem(key, String(next)); } catch (e) { /* ignore */ }
+  writePrefRaw(name, next);
   return next;
 }
 
@@ -170,11 +169,11 @@ export const COLOR_THEMES = [
 ];
 const COLOR_IDS = COLOR_THEMES.map((t) => t[0]);
 export const DEFAULT_COLOR = 'monokai';
-const COLOR_KEY = 'zicato.T.theme';
+const COLOR_PREF = 'theme';
 
 export function normaliseColor(t) { return COLOR_IDS.includes(t) ? t : DEFAULT_COLOR; }
-export function readColor() { return readPref(COLOR_KEY, normaliseColor); }
-export function persistColor(t) { return persistPref(COLOR_KEY, normaliseColor, t); }
+export function readColor() { return readPref(COLOR_PREF, normaliseColor); }
+export function persistColor(t) { return persistPref(COLOR_PREF, normaliseColor, t); }
 
 // ---- typeface OPTIONS (12 faces) ------------------------------------
 //
@@ -197,7 +196,7 @@ export function persistColor(t) { return persistPref(COLOR_KEY, normaliseColor, 
 // The stacks below match the ones in the typeface study under
 // docs/design/typeface-study/, so the dashboard renders what the study showed.
 // The self-hosted JetBrains/iA faces serve roles outside this picker; the
-// Google-Fonts families these reference are loaded by app_T.js's ensureFonts().
+// Google-Fonts families these reference are loaded by console.js's ensureFonts().
 const TF = {
   GSMONO: "'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace",
   SRCS: "'Source Sans 3', system-ui, sans-serif",
@@ -253,7 +252,7 @@ export const TYPE_THEMES = TYPE_OPTIONS.map((o) => [o.id, o.label]);
 
 // The DEFAULT is Google Sans Mono, the first Technical option.
 export const DEFAULT_TYPE = 'google-sans-mono';
-const TYPE_KEY = 'zicato.T.typeface';
+const TYPE_PREF = 'typeface';
 
 // Values that are not option ids but must still resolve to a face, so a
 // preference persisted under one keeps the voice it selected. Two kinds live
@@ -278,14 +277,14 @@ export function normaliseType(t) {
 // Resolve a value to its full option object (real font stacks). Useful for the
 // picker's micro-previews and for any caller that wants the resolved faces.
 export function typeOption(t) { return TYPE_BY_ID.get(normaliseType(t)) || TYPE_BY_ID.get(DEFAULT_TYPE); }
-export function readType() { return readPref(TYPE_KEY, normaliseType); }
-export function persistType(t) { return persistPref(TYPE_KEY, normaliseType, t); }
+export function readType() { return readPref(TYPE_PREF, normaliseType); }
+export function persistType(t) { return persistPref(TYPE_PREF, normaliseType, t); }
 
 // ---- density: REMOVED — COZY is the permanent baseline --------------
 //
 // The density picker (compact / cozy / roomy) is gone. Cozy — the calm,
 // mid-air rhythm — is now baked in as the ONE permanent spacing baseline: the
-// `--dt-*` spacing tokens live unconditionally on the variant root in
+// `--dt-*` spacing tokens live unconditionally on the console root in
 // console.css (no `[data-t-density]` selector), and the SIZE tokens below are
 // fixed at the cozy values. The page-scale pill is the sizing control now.
 //
@@ -306,15 +305,15 @@ export const SCALE_MIN = 70;
 export const SCALE_MAX = 150;
 export const SCALE_STEP = 5;
 export const DEFAULT_SCALE = 100;
-const SCALE_KEY = 'zicato.T.scale';
+const SCALE_PREF = 'scale';
 
 // Clamp to the range AND snap to the step grid, so a restored / typed value is
 // always a legal stop. Total — a non-numeric value falls back to the default.
 export function normaliseScale(v) {
   return clampToStop(v, { def: DEFAULT_SCALE, min: SCALE_MIN, max: SCALE_MAX, step: SCALE_STEP });
 }
-export function readScale() { return readPref(SCALE_KEY, normaliseScale, DEFAULT_SCALE); }
-export function persistScale(v) { return persistPref(SCALE_KEY, normaliseScale, v); }
+export function readScale() { return readPref(SCALE_PREF, normaliseScale, DEFAULT_SCALE); }
+export function persistScale(v) { return persistPref(SCALE_PREF, normaliseScale, v); }
 
 // ---- GLOBAL TEXT FONT-SIZE (the S/M/L control in the typeface picker) ----
 //
@@ -340,7 +339,7 @@ export const FONTSIZE_OPTIONS = [
 const FONTSIZE_IDS = FONTSIZE_OPTIONS.map((o) => o.id);
 const FONTSIZE_BY_ID = new Map(FONTSIZE_OPTIONS.map((o) => [o.id, o]));
 export const DEFAULT_FONTSIZE = 'small';
-const FONTSIZE_KEY = 'zicato.T.fontsize';
+const FONTSIZE_PREF = 'fontsize';
 
 // Normalise any stored / passed value to a known size id. Unknown ⇒ small.
 export function normaliseFontSize(v) {
@@ -352,8 +351,8 @@ export function fontSizeScale(v) {
   const o = FONTSIZE_BY_ID.get(normaliseFontSize(v));
   return o ? o.scale : 1;
 }
-export function readFontSize() { return readPref(FONTSIZE_KEY, normaliseFontSize); }
-export function persistFontSize(v) { return persistPref(FONTSIZE_KEY, normaliseFontSize, v); }
+export function readFontSize() { return readPref(FONTSIZE_PREF, normaliseFontSize); }
+export function persistFontSize(v) { return persistPref(FONTSIZE_PREF, normaliseFontSize, v); }
 
 // ---- LEFT SIDE-PANEL (rail) WIDTH (the draggable rail handle) -------
 //
@@ -367,13 +366,13 @@ export function persistFontSize(v) { return persistPref(FONTSIZE_KEY, normaliseF
 export const RAIL_MIN = 200;
 export const RAIL_MAX = 520;
 export const DEFAULT_RAIL = 288;
-const RAIL_KEY = 'zicato.T.rail';
+const RAIL_PREF = 'rail';
 
 export function normaliseRail(v) {
   return clampToStop(v, { def: DEFAULT_RAIL, min: RAIL_MIN, max: RAIL_MAX, step: 1 });
 }
-export function readRail() { return readPref(RAIL_KEY, normaliseRail, DEFAULT_RAIL); }
-export function persistRail(v) { return persistPref(RAIL_KEY, normaliseRail, v); }
+export function readRail() { return readPref(RAIL_PREF, normaliseRail, DEFAULT_RAIL); }
+export function persistRail(v) { return persistPref(RAIL_PREF, normaliseRail, v); }
 
 // THE PAGE-SCALE FACTOR a coordinate must be divided by to convert a viewport
 // (CSS-px) pointer position into the LAYOUT space that `--dt-rail` lives in.

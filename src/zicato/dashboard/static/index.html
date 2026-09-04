@@ -14,11 +14,10 @@
   <link rel="icon" type="image/png" sizes="16x16" href="brand/favicon-16.png" />
   <link rel="icon" type="image/x-icon" href="brand/favicon.ico" />
   <link rel="apple-touch-icon" sizes="180x180" href="brand/apple-touch-icon-180.png" />
-  <!-- Variant T (Console IV) is the sole shipping UI. It mounts into
-       `#variant-root` and loads its own scoped stylesheet
-       (css/console.css) from app_T.js, so no global design-
-       language sheets are needed here. The retired v1 (phase0 shell) and
-       v2 (Notebook/Bench) UIs are preserved at the git tag
+  <!-- The console is the sole shipping UI. It mounts into `#console-root`
+       and loads its own scoped stylesheet (css/console.css) from console.js,
+       so no global design-language sheets are needed here. The retired v1
+       (phase0 shell) and v2 (Notebook/Bench) UIs are preserved at the git tag
        `dashboard-v1-v2-archive-2026-06-02`; see
        docs/design/DASHBOARD-VARIANTS.md. -->
   <link rel="stylesheet" href="style.css" />
@@ -26,19 +25,18 @@
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
 
-  <!-- ============ VARIANT ROOT — Variant T (the sole UI) ===============
-       app_T.js paints the entire dashboard into this single host and
+  <!-- ============ CONSOLE ROOT ========================================
+       console.js paints the entire dashboard into this single host and
        injects its own scoped CSS. -->
-  <div id="variant-root" class="variant-root"></div>
+  <div id="console-root"></div>
 
   <!-- ============ BOOTSTRAP ===========================================
-       Variant T is the only UI. Loaded unconditionally; `?ui=T` and no
-       param both resolve to Variant T. -->
+       The console is the only UI, so its entry loads unconditionally. -->
   <script>
-    (function selectDashboardEntry() {
+    (function loadConsoleEntry() {
       var e = document.createElement('script');
       e.type = 'module';
-      e.src = 'app_T.js';
+      e.src = 'console.js';
       document.body.appendChild(e);
     })();
   </script>

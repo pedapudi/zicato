@@ -18,6 +18,11 @@
 > layer (`js/core/{api,sse,state,dom,format,bus}.js`) and the real `/api/*`
 > endpoints. Nothing here is invented data; every mark binds to a field one
 > of those endpoints actually serves.
+>
+> Names appear here as they were during the bake-off. The variant-selection
+> layer that `?ui=<LETTER>` and `#variant-root` belong to has since been
+> removed: the surviving console mounts into `#console-root` from `console.js`
+> and stores its preferences under `zicato.console.*`.
 
 ## Retirement record
 

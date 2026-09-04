@@ -368,7 +368,7 @@ def static_dir(tmp_path: Path) -> Path:
     d = tmp_path / "static"
     d.mkdir()
     (d / "index.html").write_text("<!doctype html><title>zicato</title>", encoding="utf-8")
-    (d / "app_T.js").write_text("// app", encoding="utf-8")
+    (d / "console.js").write_text("// app", encoding="utf-8")
     return d
 
 
@@ -2437,14 +2437,14 @@ def test_static_root(client: TestClient) -> None:
 
 
 def test_static_asset_root_relative(client: TestClient) -> None:
-    # index.html references app_T.js at the document root.
-    r = client.get("/app_T.js")
+    # index.html references console.js at the document root.
+    r = client.get("/console.js")
     assert r.status_code == 200
     assert "// app" in r.text
 
 
 def test_static_asset_under_static_prefix(client: TestClient) -> None:
-    r = client.get("/static/app_T.js")
+    r = client.get("/static/console.js")
     assert r.status_code == 200
 
 
@@ -2484,10 +2484,10 @@ def test_static_serves_a_symlink_staged_bundle(workspace: Path, tmp_path: Path) 
     origin = tmp_path / "origin"
     origin.mkdir()
     (origin / "index.html").write_text("<!doctype html><title>staged</title>", encoding="utf-8")
-    (origin / "app_T.js").write_text("// staged app", encoding="utf-8")
+    (origin / "console.js").write_text("// staged app", encoding="utf-8")
     staged = tmp_path / "staged"
     staged.mkdir()
-    for name in ("index.html", "app_T.js"):
+    for name in ("index.html", "console.js"):
         os.symlink(origin / name, staged / name)
 
     app = create_app(workspace, staged, read_only=True)
@@ -2495,13 +2495,13 @@ def test_static_serves_a_symlink_staged_bundle(workspace: Path, tmp_path: Path) 
         root = c.get("/")
         assert root.status_code == 200
         assert "staged" in root.text
-        assert c.get("/static/app_T.js").status_code == 200
+        assert c.get("/static/console.js").status_code == 200
 
 
 def test_static_asset_carries_etag_validator(client: TestClient) -> None:
     # A served asset keeps `no-cache` but now carries an ETag/Last-Modified
     # validator so the browser can revalidate cheaply instead of re-downloading.
-    r = client.get("/static/app_T.js")
+    r = client.get("/static/console.js")
     assert r.status_code == 200
     assert r.headers["cache-control"] == "no-cache"
     assert r.headers.get("etag")
@@ -2509,29 +2509,29 @@ def test_static_asset_carries_etag_validator(client: TestClient) -> None:
 
 
 def test_static_revalidation_returns_304(client: TestClient) -> None:
-    first = client.get("/static/app_T.js")
+    first = client.get("/static/console.js")
     etag = first.headers["etag"]
-    second = client.get("/static/app_T.js", headers={"If-None-Match": etag})
+    second = client.get("/static/console.js", headers={"If-None-Match": etag})
     assert second.status_code == 304
     assert second.content == b""  # a 304 carries no body — no re-download
     assert second.headers["etag"] == etag
 
 
 def test_static_mismatched_etag_returns_fresh_200(client: TestClient) -> None:
-    r = client.get("/static/app_T.js", headers={"If-None-Match": '"deadbeef-1"'})
+    r = client.get("/static/console.js", headers={"If-None-Match": '"deadbeef-1"'})
     assert r.status_code == 200
     assert "// app" in r.text
 
 
 def test_static_etag_changes_when_file_edited(client: TestClient, static_dir: Path) -> None:
-    before = client.get("/static/app_T.js").headers["etag"]
+    before = client.get("/static/console.js").headers["etag"]
     # An edit (changed size) must change the ETag so the browser refetches.
-    (static_dir / "app_T.js").write_text("// app — edited longer", encoding="utf-8")
-    after = client.get("/static/app_T.js")
+    (static_dir / "console.js").write_text("// app — edited longer", encoding="utf-8")
+    after = client.get("/static/console.js")
     assert after.status_code == 200
     assert after.headers["etag"] != before
     # The stale ETag no longer matches → a fresh 200, not a 304.
-    assert client.get("/static/app_T.js", headers={"If-None-Match": before}).status_code == 200
+    assert client.get("/static/console.js", headers={"If-None-Match": before}).status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -3884,23 +3884,23 @@ def test_api_contract_diff_endpoint_rejects_unsafe_id(client: TestClient) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Variant T (Console IV) — the sole shipping UI: static shell structure
+# The console — the sole shipping UI: static shell structure
 # ---------------------------------------------------------------------------
 
 
-def test_variant_t_mount_present_in_index_html() -> None:
-    """The served ``index.html`` mounts Variant T and nothing else.
+def test_console_mount_present_in_index_html() -> None:
+    """The served ``index.html`` mounts the console and nothing else.
 
-    Variant T paints its entire shell at runtime into ``#variant-root``;
-    the static page only carries that host + the ``app_T.js`` bootstrap.
+    The console paints its entire shell at runtime into ``#console-root``;
+    the static page only carries that host + the ``console.js`` bootstrap.
     The retired v1 (phase0) and v2 (Notebook/Bench) shells must be gone.
     """
     import zicato.dashboard as _dashboard_pkg
 
     index_path = Path(_dashboard_pkg.__file__).resolve().parent / "static" / "index.html"
     html = index_path.read_text(encoding="utf-8")
-    assert 'id="variant-root"' in html, "Variant-T mount #variant-root must be present"
-    assert "'app_T.js'" in html, "Variant-T entry app_T.js must be loaded by the bootstrap"
+    assert 'id="console-root"' in html, "the #console-root mount must be present"
+    assert "'console.js'" in html, "the console.js entry must be loaded by the bootstrap"
     # The retired shells and their fallback bootstrap must be gone.
     assert "phase0-shell" not in html, "retired v1 phase0 shell must not be in index.html"
     assert "v2-root" not in html, "retired v2 root must not be in index.html"

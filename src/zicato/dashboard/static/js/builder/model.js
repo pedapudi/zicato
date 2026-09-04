@@ -12,21 +12,20 @@
 // numbers `zicato.contract_draft.operations` owns; the browser only renders them.
 
 import { svgEl } from '../core/dom.js';
+import { readPrefRaw, writePrefRaw } from '../core/prefs.js';
 
 export const CHAT_MIN = 240;
 export const CHAT_MAX = 560;
-const CHAT_W_KEY = 'zicato.T.builder.chatWidth';
-const CHAT_C_KEY = 'zicato.T.builder.chatCollapsed';
+const CHAT_W_PREF = 'builder.chatWidth';
+const CHAT_C_PREF = 'builder.chatCollapsed';
 const DEFAULT_CHAT_W = 340;
 
 export function readChatWidth() {
-  let v = null;
-  try { v = window.localStorage.getItem(CHAT_W_KEY); } catch (e) { /* ignore */ }
-  return clampWidth(v == null ? DEFAULT_CHAT_W : Number(v));
+  return clampWidth(Number(readPrefRaw(CHAT_W_PREF, DEFAULT_CHAT_W)));
 }
 export function persistChatWidth(w) {
   const n = clampWidth(w);
-  try { window.localStorage.setItem(CHAT_W_KEY, String(n)); } catch (e) { /* ignore */ }
+  writePrefRaw(CHAT_W_PREF, n);
   return n;
 }
 export function clampWidth(w) {
@@ -35,12 +34,10 @@ export function clampWidth(w) {
   return Math.max(CHAT_MIN, Math.min(CHAT_MAX, Math.round(n)));
 }
 export function readChatCollapsed() {
-  let v = null;
-  try { v = window.localStorage.getItem(CHAT_C_KEY); } catch (e) { /* ignore */ }
-  return v === '1';
+  return readPrefRaw(CHAT_C_PREF) === '1';
 }
 export function persistChatCollapsed(c) {
-  try { window.localStorage.setItem(CHAT_C_KEY, c ? '1' : '0'); } catch (e) { /* ignore */ }
+  writePrefRaw(CHAT_C_PREF, c ? '1' : '0');
   return !!c;
 }
 

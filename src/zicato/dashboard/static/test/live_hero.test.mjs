@@ -1,4 +1,4 @@
-// test/variant_t_live_hero.test.mjs — the console's live hero:
+// test/live_hero.test.mjs — the console's live hero:
 // the SSE-driven live-run display (funnel/ladder transitions, activity
 // ticker, live hero) and the cross-epoch leakage fixes.
 //

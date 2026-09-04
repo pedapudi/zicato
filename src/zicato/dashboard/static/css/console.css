@@ -1,17 +1,18 @@
-/* console.css — "Console IV: dense observatory, Monokai default".
+/* console.css — the console's scoped stylesheet: a dense observatory,
+ * Monokai by default.
  *
- * Variant T is the converged default dashboard: a dense, data-ink-maximal skin
+ * The console is the dashboard's sole front end: a dense, data-ink-maximal skin
  * for power users. SIXTEEN switchable colour themes — monokai (default),
  * solarized-dark, solarized-light, plus thirteen Gogh palettes (google-light,
  * google-dark, lunaria-light, lunaria-eclipse, belafonte-day, belafonte-night,
  * paper, zenburn, selenized-black, relaxed, espresso, dracula, ubuntu) — each a
  * CSS custom-property set mapping to the `--v2-*` token names the marks read,
- * swapped via [data-t-theme] on the variant root and chosen from a swatch
+ * swapped via [data-t-theme] on the console root and chosen from a swatch
  * DROPDOWN. The semantic mapping (improve / regress / caution) holds across all
  * sixteen and every mark reads with sufficient contrast in each.
  *
- * EVERYTHING is scoped under #variant-root[data-variant="T"] so it cannot leak
- * into other variants or the shared shell. Marks use `dn-*`; the lifecycle
+ * EVERYTHING is scoped under #console-root so it cannot leak into the
+ * shared document shell. Marks use `dn-*`; the lifecycle
  * DAG uses `ezn-*`; the chrome uses `dn-*`. Native CSS nesting keeps the sheet
  * scoped without a build step.
  *
@@ -28,7 +29,7 @@
  * this stylesheet at css/). NO network dependency for the default
  * mode: the files ship in the bundle directory, so a blocked CDN never affects
  * the page. (Editorial's serif + Display's geometric/condensed families load
- * from the font CDN — see the Google-Fonts loader in app_T.js.)
+ * from the font CDN — see the Google-Fonts loader in console.js.)
  *
  *   iA Writer Mono — PROSE: a warm, humanist mono that reads like text.
  *   JetBrains Mono — CODE: crisp, grid-y, the canonical coding mono.
@@ -60,8 +61,8 @@
 /* ===================  the three theme token sets  =================== */
 
 /* Monokai (DEFAULT for J) — warm dark, classic editor palette. */
-#variant-root[data-variant="T"],
-#variant-root[data-variant="T"][data-t-theme="monokai"] {
+#console-root,
+#console-root[data-t-theme="monokai"] {
   --v2-paper:      #1e1f1c;
   --v2-panel:      #272822;
   --v2-ink:        #f8f8f2;
@@ -81,7 +82,7 @@
 }
 
 /* Solarized Dark. */
-#variant-root[data-variant="T"][data-t-theme="solarized-dark"] {
+#console-root[data-t-theme="solarized-dark"] {
   --v2-paper:      #04222B;
   --v2-panel:      #0A2D38;
   --v2-ink:        #93A1A1;
@@ -101,7 +102,7 @@
 }
 
 /* Solarized Light. */
-#variant-root[data-variant="T"][data-t-theme="solarized-light"] {
+#console-root[data-t-theme="solarized-light"] {
   --v2-paper:      #FDF6E3;
   --v2-panel:      #FBF1D6;
   --v2-ink:        #586E75;
@@ -137,7 +138,7 @@
  * accent off the palette's blue (its cyan is a low-contrast neutral). */
 
 /* Gogh: Google Light. */
-#variant-root[data-variant="T"][data-t-theme="google-light"] {
+#console-root[data-t-theme="google-light"] {
   --v2-paper:      #FFFFFF;
   --v2-panel:      #F4F4F4;
   --v2-ink:        #474A4E;
@@ -156,7 +157,7 @@
 }
 
 /* Gogh: Google Dark. */
-#variant-root[data-variant="T"][data-t-theme="google-dark"] {
+#console-root[data-t-theme="google-dark"] {
   --v2-paper:      #202124;
   --v2-panel:      #2C2D30;
   --v2-ink:        #FFFFFF;
@@ -175,7 +176,7 @@
 }
 
 /* Gogh: Lunaria Light. */
-#variant-root[data-variant="T"][data-t-theme="lunaria-light"] {
+#console-root[data-t-theme="lunaria-light"] {
   --v2-paper:      #EBE4E1;
   --v2-panel:      #E2DCD9;
   --v2-ink:        #363434;
@@ -194,7 +195,7 @@
 }
 
 /* Gogh: Lunaria Eclipse. */
-#variant-root[data-variant="T"][data-t-theme="lunaria-eclipse"] {
+#console-root[data-t-theme="lunaria-eclipse"] {
   --v2-paper:      #323F46;
   --v2-panel:      #3B484F;
   --v2-ink:        #DFE2ED;
@@ -213,7 +214,7 @@
 }
 
 /* Gogh: Belafonte Day (light). */
-#variant-root[data-variant="T"][data-t-theme="belafonte-day"] {
+#console-root[data-t-theme="belafonte-day"] {
   --v2-paper:      #D5CCBA;
   --v2-panel:      #CCC3B2;
   --v2-ink:        #34292D;
@@ -232,7 +233,7 @@
 }
 
 /* Gogh: Belafonte Night (dark). */
-#variant-root[data-variant="T"][data-t-theme="belafonte-night"] {
+#console-root[data-t-theme="belafonte-night"] {
   --v2-paper:      #20111B;
   --v2-panel:      #271821;
   --v2-ink:        #D5CCBA;
@@ -265,7 +266,7 @@
  *            stay separable. */
 
 /* Gogh: Paper (light). */
-#variant-root[data-variant="T"][data-t-theme="paper"] {
+#console-root[data-t-theme="paper"] {
   --v2-paper:      #F2EEDE;
   --v2-panel:      #E6E2D3;
   --v2-ink:        #1A1A1A;
@@ -284,7 +285,7 @@
 }
 
 /* Gogh: Zenburn (dark). */
-#variant-root[data-variant="T"][data-t-theme="zenburn"] {
+#console-root[data-t-theme="zenburn"] {
   --v2-paper:      #3A3A3A;
   --v2-panel:      #424241;
   --v2-ink:        #DCDCCC;
@@ -303,7 +304,7 @@
 }
 
 /* Gogh: Selenized Black (dark). */
-#variant-root[data-variant="T"][data-t-theme="selenized-black"] {
+#console-root[data-t-theme="selenized-black"] {
   --v2-paper:      #181818;
   --v2-panel:      #202020;
   --v2-ink:        #DEDEDE;
@@ -322,7 +323,7 @@
 }
 
 /* Gogh: Relaxed (dark). */
-#variant-root[data-variant="T"][data-t-theme="relaxed"] {
+#console-root[data-t-theme="relaxed"] {
   --v2-paper:      #353A44;
   --v2-panel:      #3D424B;
   --v2-ink:        #F7F7F7;
@@ -355,7 +356,7 @@
  *            and improve marks read crisply on the signature aubergine ground. */
 
 /* Gogh: Espresso (dark). */
-#variant-root[data-variant="T"][data-t-theme="espresso"] {
+#console-root[data-t-theme="espresso"] {
   --v2-paper:      #323232;
   --v2-panel:      #3A3A3A;
   --v2-ink:        #FFFFFF;
@@ -374,7 +375,7 @@
 }
 
 /* Gogh: Dracula (dark). */
-#variant-root[data-variant="T"][data-t-theme="dracula"] {
+#console-root[data-t-theme="dracula"] {
   --v2-paper:      #282A36;
   --v2-panel:      #343746;
   --v2-ink:        #F8F8F2;
@@ -393,7 +394,7 @@
 }
 
 /* Gogh: Ubuntu (dark — the classic aubergine terminal). */
-#variant-root[data-variant="T"][data-t-theme="ubuntu"] {
+#console-root[data-t-theme="ubuntu"] {
   --v2-paper:      #300A24;
   --v2-panel:      #3D1530;
   --v2-ink:        #EEEEEC;
@@ -424,12 +425,12 @@
  * The font-stack strings match the ones in the typeface study under
  * docs/design/typeface-study/, so the dashboard renders what the study showed.
  * Every family lists a system fallback so a slow / blocked font never breaks
- * layout; the Google-Fonts families load in app_T.js (display=swap). The two
+ * layout; the Google-Fonts families load in console.js (display=swap). The two
  * self-hosted monos (iA Writer Mono + JetBrains Mono, @font-face above) serve
  * roles outside this picker, and the brand mono pins to JetBrains Mono.
  * DEFAULT: Google Sans Mono, the first Technical option.
  */
-#variant-root[data-variant="T"] {
+#console-root {
   --n-font-base: "Open Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --n-font-mono-real: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
   /* prose/humanist mono — warm, reads like text. */
@@ -454,28 +455,28 @@
 
 /* ----- Technical group ----- */
 /* Google Sans Mono — all four = Google Sans Mono (Noto Sans Mono fallback). */
-#variant-root[data-variant="T"][data-t-type="google-sans-mono"] {
+#console-root[data-t-type="google-sans-mono"] {
   --v2-sans: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
   --v2-mono: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
   --n-font-head: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
   --n-font-paper: 'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace;
 }
 /* Source Sans 3 + Source Code Pro — head/prose = Source Sans 3, data/code = Source Code Pro. */
-#variant-root[data-variant="T"][data-t-type="source-sans-3"] {
+#console-root[data-t-type="source-sans-3"] {
   --v2-sans: 'Source Sans 3', system-ui, sans-serif;
   --v2-mono: 'Source Code Pro', ui-monospace, monospace;
   --n-font-head: 'Source Sans 3', system-ui, sans-serif;
   --n-font-paper: 'Source Sans 3', system-ui, sans-serif;
 }
 /* Inconsolata — all four = Inconsolata. */
-#variant-root[data-variant="T"][data-t-type="inconsolata"] {
+#console-root[data-t-type="inconsolata"] {
   --v2-sans: 'Inconsolata', ui-monospace, monospace;
   --v2-mono: 'Inconsolata', ui-monospace, monospace;
   --n-font-head: 'Inconsolata', ui-monospace, monospace;
   --n-font-paper: 'Inconsolata', ui-monospace, monospace;
 }
 /* Ubuntu + Ubuntu Mono — head/prose = Ubuntu, data/code = Ubuntu Mono. */
-#variant-root[data-variant="T"][data-t-type="ubuntu"] {
+#console-root[data-t-type="ubuntu"] {
   --v2-sans: 'Ubuntu', system-ui, sans-serif;
   --v2-mono: 'Ubuntu Mono', ui-monospace, monospace;
   --n-font-head: 'Ubuntu', system-ui, sans-serif;
@@ -484,28 +485,28 @@
 
 /* ----- Editorial group ----- */
 /* Fraunces — all four = Fraunces. */
-#variant-root[data-variant="T"][data-t-type="fraunces"] {
+#console-root[data-t-type="fraunces"] {
   --v2-sans: 'Fraunces', Georgia, serif;
   --v2-mono: 'Fraunces', Georgia, serif;
   --n-font-head: 'Fraunces', Georgia, serif;
   --n-font-paper: 'Fraunces', Georgia, serif;
 }
 /* Bitter — all four = Bitter. */
-#variant-root[data-variant="T"][data-t-type="bitter"] {
+#console-root[data-t-type="bitter"] {
   --v2-sans: 'Bitter', Georgia, serif;
   --v2-mono: 'Bitter', Georgia, serif;
   --n-font-head: 'Bitter', Georgia, serif;
   --n-font-paper: 'Bitter', Georgia, serif;
 }
 /* Literata — all four = Literata. */
-#variant-root[data-variant="T"][data-t-type="literata"] {
+#console-root[data-t-type="literata"] {
   --v2-sans: 'Literata', Georgia, serif;
   --v2-mono: 'Literata', Georgia, serif;
   --n-font-head: 'Literata', Georgia, serif;
   --n-font-paper: 'Literata', Georgia, serif;
 }
 /* Domine — all four = Domine. */
-#variant-root[data-variant="T"][data-t-type="domine"] {
+#console-root[data-t-type="domine"] {
   --v2-sans: 'Domine', Georgia, serif;
   --v2-mono: 'Domine', Georgia, serif;
   --n-font-head: 'Domine', Georgia, serif;
@@ -514,28 +515,28 @@
 
 /* ----- Display group ----- */
 /* Archivo Narrow + Space Grotesk — head = Archivo Narrow, prose/data/code = Space Grotesk. */
-#variant-root[data-variant="T"][data-t-type="archivo-narrow"] {
+#console-root[data-t-type="archivo-narrow"] {
   --v2-sans: 'Space Grotesk', system-ui, sans-serif;
   --v2-mono: 'Space Grotesk', system-ui, sans-serif;
   --n-font-head: 'Archivo Narrow', 'Space Grotesk', system-ui, sans-serif;
   --n-font-paper: 'Space Grotesk', system-ui, sans-serif;
 }
 /* Hanken Grotesk — all four = Hanken Grotesk. */
-#variant-root[data-variant="T"][data-t-type="hanken-grotesk"] {
+#console-root[data-t-type="hanken-grotesk"] {
   --v2-sans: 'Hanken Grotesk', system-ui, sans-serif;
   --v2-mono: 'Hanken Grotesk', system-ui, sans-serif;
   --n-font-head: 'Hanken Grotesk', system-ui, sans-serif;
   --n-font-paper: 'Hanken Grotesk', system-ui, sans-serif;
 }
 /* Barlow Condensed + Space Grotesk — head = Barlow Condensed, rest = Space Grotesk. */
-#variant-root[data-variant="T"][data-t-type="barlow-condensed"] {
+#console-root[data-t-type="barlow-condensed"] {
   --v2-sans: 'Space Grotesk', system-ui, sans-serif;
   --v2-mono: 'Space Grotesk', system-ui, sans-serif;
   --n-font-head: 'Barlow Condensed', 'Archivo Narrow', system-ui, sans-serif;
   --n-font-paper: 'Space Grotesk', system-ui, sans-serif;
 }
 /* Bricolage Grotesque — all four = Bricolage Grotesque. */
-#variant-root[data-variant="T"][data-t-type="bricolage-grotesque"] {
+#console-root[data-t-type="bricolage-grotesque"] {
   --v2-sans: 'Bricolage Grotesque', system-ui, sans-serif;
   --v2-mono: 'Bricolage Grotesque', system-ui, sans-serif;
   --n-font-head: 'Bricolage Grotesque', system-ui, sans-serif;
@@ -547,11 +548,11 @@
  * The density picker (compact / cozy / roomy) is GONE — cozy is now the ONE
  * permanent spacing rhythm. These `--dt-*` tokens (the body rail, detail
  * padding, section gaps, panel padding, card min-widths, the reel's vertical
- * scale, a global font-size scale) are baked unconditionally onto the variant
+ * scale, a global font-size scale) are baked unconditionally onto the console
  * root: every layout that breathes reads them, always at the cozy values. The
  * page-scale pill (`zoom` on the root) is the sizing control now.
  */
-#variant-root[data-variant="T"] {
+#console-root {
   --dt-rail: 288px;
   --dt-pad-x: 56px;
   --dt-pad-y: 40px;
@@ -574,7 +575,7 @@
   --dt-font-scale: 1;
 }
 
-#variant-root[data-variant="T"] {
+#console-root {
   font-family: var(--v2-sans);
   /* base text size — 13.5px at small (1.0) preserves the prior 13.52px look. */
   font-size: calc(13.5px * var(--dt-font-scale, 1));
@@ -599,7 +600,7 @@
   }
   .dn-brand { display: inline-flex; align-items: baseline; gap: 6px; }
   .dn-brand-name { font-weight: 700; font-size: calc(14px * var(--dt-font-scale, 1)); letter-spacing: 0.02em; color: var(--v2-ink); }
-  .dn-brand-variant { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: 0.16em;
+  .dn-brand-tag { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: 0.16em;
     text-transform: uppercase; color: var(--v2-accent); }
 
   .dn-crumbs { display: inline-flex; align-items: center; gap: 3px; font-family: var(--v2-mono);
@@ -1677,7 +1678,7 @@
   .ezn-dag-info:hover .ezn-dag-info-mark,
   .ezn-dag-info:focus .ezn-dag-info-mark { fill: var(--v2-accent); }
   /* ── the styled, theme-aware HOVERCARD (replaces native <title> tooltips) ──
-   * A transient OVERLAY mounted inside the variant root, so it inherits the
+   * A transient OVERLAY mounted inside the console root, so it inherits the
    * per-theme tokens and reads correctly across all 16 themes (light + dark).
    * Position is fixed (set inline by hovercard.js, flipped/clamped to the
    * viewport). Hidden by default; shown via the .dn-hovercard-on class. It is
@@ -1719,7 +1720,7 @@
 
   /* ── the RESEARCH-PREVIEW pill — a QUIET product-status tag pinned NEXT TO
    * the "zıcato console" wordmark in the top bar. It echoes the wordmark's own
-   * register (the sibling .dt-brand-variant "console" tag): small, FAINT,
+   * register (the sibling .dt-brand-tag "console" tag): small, FAINT,
    * monospace, uppercase tracking, theme-adaptive (the muted ink-faint token).
    * The label is STACKED on two lines ("research" / "preview") so it reads as a
    * compact corner tag beside the wordmark — a quiet status mark, not a loud
@@ -1887,12 +1888,12 @@
 }
 
 @media (max-width: 820px) {
-  #variant-root[data-variant="T"] .dn-topbar { flex-wrap: wrap; gap: 8px; }
-  #variant-root[data-variant="T"] .dn-pslope-grid { grid-template-columns: 1fr; }
-  #variant-root[data-variant="T"] .dn-paper { padding: 22px 18px 32px; }
-  #variant-root[data-variant="T"] .dn-mut-combined { grid-template-columns: 1fr; }
-  #variant-root[data-variant="T"] .dn-scores-combined { grid-template-columns: 1fr; }
-  #variant-root[data-variant="T"] .dn-rule { grid-template-columns: 14px 1fr; row-gap: 2px; }
+  #console-root .dn-topbar { flex-wrap: wrap; gap: 8px; }
+  #console-root .dn-pslope-grid { grid-template-columns: 1fr; }
+  #console-root .dn-paper { padding: 22px 18px 32px; }
+  #console-root .dn-mut-combined { grid-template-columns: 1fr; }
+  #console-root .dn-scores-combined { grid-template-columns: 1fr; }
+  #console-root .dn-rule { grid-template-columns: 14px 1fr; row-gap: 2px; }
 }
 
 /* ===================================================================
@@ -1913,7 +1914,7 @@
  * subtle pulse (suppressed under prefers-reduced-motion). Every token below
  * is DERIVED from the already-themed --v2-* variables via color-mix, so the
  * projected treatment adapts to every theme with NO hardcoded colours. */
-#variant-root[data-variant="T"] {
+#console-root {
   --v2-projected:        var(--v2-caution);                                   /* the projected tone — caution/amber, "not yet committed" */
   --v2-projected-soft:   color-mix(in srgb, var(--v2-caution) 14%, transparent);
   --v2-projected-line:   color-mix(in srgb, var(--v2-caution) 55%, transparent);
@@ -1926,20 +1927,20 @@
  * plucked-note dot). Default green on light grounds; brightened on the dark
  * themes for contrast. The stroke itself is `currentColor` (theme ink), so it
  * flips dark/light on its own — only the accent needs a per-theme value. */
-#variant-root[data-variant="T"] { --zicato-accent: #2FA46A; }
-#variant-root[data-variant="T"][data-t-theme="monokai"],
-#variant-root[data-variant="T"][data-t-theme="solarized-dark"],
-#variant-root[data-variant="T"][data-t-theme="google-dark"],
-#variant-root[data-variant="T"][data-t-theme="lunaria-eclipse"],
-#variant-root[data-variant="T"][data-t-theme="belafonte-night"],
-#variant-root[data-variant="T"][data-t-theme="zenburn"],
-#variant-root[data-variant="T"][data-t-theme="selenized-black"],
-#variant-root[data-variant="T"][data-t-theme="relaxed"],
-#variant-root[data-variant="T"][data-t-theme="espresso"],
-#variant-root[data-variant="T"][data-t-theme="dracula"],
-#variant-root[data-variant="T"][data-t-theme="ubuntu"] { --zicato-accent: #3FB87A; }
+#console-root { --zicato-accent: #2FA46A; }
+#console-root[data-t-theme="monokai"],
+#console-root[data-t-theme="solarized-dark"],
+#console-root[data-t-theme="google-dark"],
+#console-root[data-t-theme="lunaria-eclipse"],
+#console-root[data-t-theme="belafonte-night"],
+#console-root[data-t-theme="zenburn"],
+#console-root[data-t-theme="selenized-black"],
+#console-root[data-t-theme="relaxed"],
+#console-root[data-t-theme="espresso"],
+#console-root[data-t-theme="dracula"],
+#console-root[data-t-theme="ubuntu"] { --zicato-accent: #3FB87A; }
 
-#variant-root[data-variant="T"] {
+#console-root {
   /* ---- compact top bar (chrome lives above the body split) ---- */
   .dt-topbar {
     position: sticky; top: 0; z-index: 6;
@@ -2011,7 +2012,7 @@
    * the wordmark, "console", "research preview" and the breadcrumb all align.
    * Tunable single value — nudge if it reads high/low. */
   .dt-brand-name { height: 16px; width: auto; display: block; flex: none; color: var(--v2-ink); align-self: center; overflow: visible; transform: translateY(-1.5px); }
-  .dt-brand-variant { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: 0.16em;
+  .dt-brand-tag { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); letter-spacing: 0.16em;
     text-transform: uppercase; color: var(--v2-accent); }
 
   .dt-crumbs { display: inline-flex; align-items: center; gap: 4px; font-family: var(--v2-mono);
@@ -4306,7 +4307,7 @@
  * budget ground tints --v2-caution via fill-opacity (there is no *-soft caution
  * token, and the rule forbids inventing one). The sole new LAYOUT class is
  * .dn-strip (the .dn-mtx precedent). */
-#variant-root[data-variant="T"] {
+#console-root {
   /* the strip figure — fit-to-width, aspect-locked (svg.js applyResponsive) */
   .dn-strip { display: block; width: 100%; }
   /* Responsive but SENSIBLY SIZED (the house rule at the top of the figure

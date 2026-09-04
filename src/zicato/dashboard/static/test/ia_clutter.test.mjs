@@ -9,7 +9,7 @@
 //   5. a figure caption never stacks — the overflow rides a "?" hovercard;
 //   6. the top bar carries no page-scale control (it lives in Settings).
 //
-// (6) is asserted in variant_t_shell.test.mjs / variant_t_candidate.test.mjs
+// (6) is asserted in shell.test.mjs / candidate_surfaces.test.mjs
 // where the rest of the top-bar + scale contract already lives.
 
 import { installDom, test, run, assert, assertEqual, assertDeep } from './harness.mjs';

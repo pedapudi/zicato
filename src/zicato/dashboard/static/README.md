@@ -5,7 +5,7 @@ Python dashboard service (`zicato.dashboard.server`) serves these files
 off disk from `/` and `/static/...`.
 
 No build step. No framework. No external network (the sole exception is
-Google Fonts, loaded by `app_T.js` with `display=swap` and system
+Google Fonts, loaded by `console.js` with `display=swap` and system
 fallbacks). Everything else in this directory must remain self-contained
 — no CDN, no remote scripts.
 
@@ -15,14 +15,14 @@ in `docs/design/CONSOLE-DESIGN-LANGUAGE.md`. It lives under `js/**` plus
 
 ## Files
 
-The frontend is a modular ES-module app: a thin entry point (`app_T.js`)
+The frontend is a modular ES-module app: a thin entry point (`console.js`)
 plus the shared core spine (`js/core/**`) and the console modules
 (`js/**`). The full contracts every core module codes against are pinned
 in `js/CONTRACTS.md`.
 
-- `index.html` — single-page shell hosting `#variant-root`. Loads
-  `css/console.css` and `app_T.js` (as a module).
-- `app_T.js` — the entry point. Loads Google Fonts, imports the core
+- `index.html` — single-page shell hosting `#console-root`. Loads
+  `css/console.css` and `console.js` (as a module).
+- `console.js` — the entry point. Loads Google Fonts, imports the core
   spine and the console shell, wires the event bus (state mutation or
   route change triggers a render), and bootstraps.
 - `js/core/` — the data and render spine. `state.js` (the single
@@ -88,7 +88,7 @@ per-section endpoints, and it does NOT poll on a tight timer.
 
 ```
 GET  /                              — index.html
-GET  /static/{path}                 — console.css, app_T.js, icons.svg, ...
+GET  /static/{path}                 — console.css, console.js, icons.svg, ...
 GET  /api/environment                — the consolidated environment read:
                                        epoch contract, live + past
                                        tournaments, generation lineage,
@@ -131,7 +131,7 @@ serves design iteration and the structural test in
 ## Size envelope
 
 The structural test in `tests/test_dashboard_ui.py` holds the total
-bundle (`index.html`, `css/console.css`, `app_T.js`, the `js/**`
+bundle (`index.html`, `css/console.css`, `console.js`, the `js/**`
 modules and `icons.svg`) under an uncompressed size ceiling. The bundle
 is served from localhost and costs no network time; the ceiling exists
 only to keep it from growing without bound.
