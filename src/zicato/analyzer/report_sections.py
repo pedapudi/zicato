@@ -99,6 +99,18 @@ def render_title_block(data: EpochReportData) -> str:
     )
     if data.deferred:
         meta_bits.append(f"**Deferred**: {data.deferred}")
+    # A generation whose record could not be read is in none of the counts
+    # above and in none of the tables below. Saying so on the masthead is
+    # what stops the report reading as a complete account of a shorter
+    # epoch than the one that ran.
+    if data.unreadable_generations:
+        unreadable = len(data.unreadable_generations)
+        meta_bits.append(
+            f"**Unreadable records**: {unreadable} generation "
+            f"{'record' if unreadable == 1 else 'records'} could not be read "
+            "and are excluded from every count and table below "
+            f"({'; '.join(data.unreadable_generations)})"
+        )
     if data.contract_hash:
         meta_bits.append(f"**Contract hash**: `{data.contract_hash[:12]}`")
     if data.created_at:

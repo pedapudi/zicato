@@ -4,11 +4,14 @@ Two jobs live here. The first is enumeration: :func:`generation_ids`,
 :func:`run_entry_ids` and :func:`round_indices` answer "which generation /
 run / round records does this epoch hold", and they are the ONLY place in
 the tree that asks. The second is the leaf reads the enumerations feed —
-board, experiment, generation score, telemetry, loss — each routed through
+board, generation score, telemetry, loss — each routed through
 :class:`~zicato.workspace.layout.WorkspaceLayout` so the filename joins live
-in one place. Each reader returns the *raw* canonical structure (the parsed
-JSON dict / list, or the parsed JSONL line dicts for the board) and leaves
-view-specific shaping to the caller.
+in one place. A record whose shape has an owning codec is not read here:
+``experiment.json`` is decoded by :mod:`zicato.epoch.journal`, which the
+enumerations below still supply the generation ids to. Each reader here
+returns the *raw* canonical structure (the parsed JSON dict / list, or the
+parsed JSONL line dicts for the board) and leaves view-specific shaping to
+the caller.
 
 Enumeration goes over the storage seam
 (:meth:`~zicato.storage.StorageBackend.list_namespaces`) rather than a bare
@@ -145,34 +148,6 @@ def read_board(layout: WorkspaceLayout, epoch_id: str) -> list[dict[str, Any]] |
             continue
         lines.append(obj)
     return lines
-
-
-def read_experiment(
-    layout: WorkspaceLayout, epoch_id: str, generation_id: str
-) -> dict[str, Any] | None:
-    """One generation's ``experiment.json`` as a dict, or ``None``.
-
-    Best-effort: a missing / malformed / non-object file yields ``None``.
-    """
-    exp = _read_json_value(layout.experiment(epoch_id, generation_id))
-    return exp if isinstance(exp, dict) else None
-
-
-def read_experiments(layout: WorkspaceLayout, epoch_id: str) -> list[tuple[str, dict[str, Any]]]:
-    """Every generation's raw ``experiment.json`` for one epoch, in order.
-
-    Enumerates the epoch's generation records (:func:`generation_ids`, so
-    numeric-aware order) and yields ``(generation_id, experiment_dict)`` for
-    each generation that has a readable ``experiment.json``. Generations
-    without one are skipped. The raw experiment dict is returned untouched —
-    callers add per-view shaping (patches, generation_id stamping, etc.).
-    """
-    out: list[tuple[str, dict[str, Any]]] = []
-    for generation_id in generation_ids(layout, epoch_id):
-        exp = read_experiment(layout, epoch_id, generation_id)
-        if exp is not None:
-            out.append((generation_id, exp))
-    return out
 
 
 def read_gen_score(layout: WorkspaceLayout, epoch_id: str, generation_id: str) -> dict[str, Any]:

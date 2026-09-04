@@ -2,19 +2,19 @@
 
 ``OutcomeRecord.tournament_decision`` is declared :class:`TournamentDecision`
 (a :class:`~enum.StrEnum`). Every in-process construction site passes a real
-member; the two read paths that rebuild the record from an untyped mapping
+member; the read path that rebuilds the record from an untyped mapping
 historically passed the raw wire token straight through, so a record loaded
 from disk differed in runtime type from an identical one built in memory --
 invisible to ``==`` / ``str()`` / ``json.dumps`` but fatal to ``isinstance``,
 ``match`` on members, and ``.name``.
 
-These tests pin three things per read path:
+``experiment.json`` has one decoder, in :mod:`zicato.epoch.journal`, so
+there is one read path to pin:
 
 * the hydrated field IS a :class:`TournamentDecision` member,
 * a hydrated record compares equal to the in-process construction, and
-* the pre-existing handling of an UNRECOGNISED token is unchanged (the two
-  paths differ here, deliberately: ``analysis`` drops the whole outcome,
-  ``journal`` keeps whatever the token was).
+* an UNRECOGNISED token is kept verbatim rather than raising or being
+  rewritten to a verdict the record does not carry.
 """
 
 from __future__ import annotations
@@ -36,8 +36,6 @@ from zicato.core.types import (
     MetricMovementActual,
     OutcomeRecord,
 )
-from zicato.core.workspace import experiment_json_path
-from zicato.epoch.analysis import _hydrate_experiment, _hydrate_outcome
 from zicato.epoch.journal import (
     _outcome_from_dict,
     outcome_from_dict,
@@ -108,67 +106,6 @@ def _experiment(outcome: OutcomeRecord | None) -> Experiment:
         patches=(),
         outcome=outcome,
     )
-
-
-# ---------------------------------------------------------------------------
-# analysis._hydrate_outcome
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("token", ALL_TOKENS)
-def test_analysis_hydrate_outcome_yields_enum_member(token: str) -> None:
-    hydrated = _hydrate_outcome(_wire(_record(TournamentDecision(token))))
-    assert hydrated is not None
-    assert isinstance(hydrated.tournament_decision, TournamentDecision)
-    # The StrEnum still equals its wire token -- coercion changes the runtime
-    # type, never the comparison every consumer already relies on.
-    assert hydrated.tournament_decision == token
-
-
-@pytest.mark.parametrize("token", ALL_TOKENS)
-def test_analysis_hydrated_outcome_equals_in_process(token: str) -> None:
-    in_process = _record(TournamentDecision(token))
-    hydrated = _hydrate_outcome(_wire(in_process))
-    assert hydrated == in_process
-    assert hydrated is not None
-    assert hydrated.tournament_decision is in_process.tournament_decision
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        {"tournament_decision": "bogus"},
-        {"tournament_decision": "deferred_infra"},
-        {"tournament_decision": ""},
-        {"tournament_decision": None},
-        {},
-    ],
-    ids=["bogus", "deferred_infra", "empty", "null", "absent"],
-)
-def test_analysis_hydrate_outcome_unrecognised_token_still_drops_outcome(
-    payload: dict[str, Any],
-) -> None:
-    """The narrowing guard's behaviour is unchanged by the coercion."""
-    assert _hydrate_outcome(payload) is None
-
-
-def test_analysis_hydrate_outcome_none_input() -> None:
-    assert _hydrate_outcome(None) is None
-
-
-def test_analysis_hydrate_experiment_disk_round_trip(epoch_root: tuple[Path, str]) -> None:
-    """The full on-disk path: written by the journal, read by the analyser."""
-    ws, eid = epoch_root
-    in_process = _record(TournamentDecision.DEFERRED)
-    write_experiment(ws, eid, "v1", _experiment(in_process))
-
-    body = json.loads(experiment_json_path(ws, eid, "v1").read_text())
-    hydrated = _hydrate_experiment(body)
-
-    assert hydrated is not None
-    assert hydrated.outcome is not None
-    assert isinstance(hydrated.outcome.tournament_decision, TournamentDecision)
-    assert hydrated.outcome.tournament_decision == in_process.tournament_decision
 
 
 # ---------------------------------------------------------------------------

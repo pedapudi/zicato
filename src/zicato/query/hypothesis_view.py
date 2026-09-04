@@ -19,24 +19,26 @@ Two surfaces:
   over the lineage order, with rolling aggregates. Explicitly
   DIAGNOSTIC: it surfaces calibration drift, it never feeds the gate.
 
-Both are best-effort: a missing / malformed ``experiment.json`` degrades
-to an empty scorecard / empty trend rather than raising, matching every
-other reader in this package.
+Both read the record through its one decoder in
+:mod:`zicato.epoch.journal` and degrade at this boundary rather than
+raising, matching every other reader in this package: a generation with
+no ``experiment.json`` contributes nothing, and one whose record is
+present and will not parse contributes a named reason instead.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from zicato.epoch._storage import RecordError
+from zicato.epoch.journal import read_epoch_experiment_bodies, read_experiment_body
 from zicato.query.decisions import experiment_decision as _experiment_decision
 from zicato.query.paths import (
     WorkspacePaths,
     _natural_key,
-    _read_json_value,
     _resolve_epoch_id,
     layout_of,
 )
-from zicato.workspace import read_experiments
 
 # Plateau band: a realised movement whose magnitude is within this of zero
 # is read as "neutral" / flat when deriving the OBSERVED direction. Mirrors
@@ -298,8 +300,11 @@ def build_hypothesis_accuracy(
     ``unpredicted`` claims are realised movements the proposer did NOT claim;
     they are surfaced for context but never counted in ``score``.
 
-    Best-effort: a missing / malformed ``experiment.json`` degrades to an
-    empty scorecard (HTTP 200), never a 500.
+    A generation with no ``experiment.json`` degrades to an empty scorecard
+    (HTTP 200), never a 500. A record that IS there and does not parse
+    degrades to the same empty scorecard carrying an ``unreadable`` reason,
+    so an operator can tell "nothing proposed yet" from "the record is
+    broken".
     """
     empty: dict[str, Any] = {
         "epoch_id": epoch_id,
@@ -308,9 +313,13 @@ def build_hypothesis_accuracy(
         "score": {"hits": 0, "total": 0, "fraction": None, "brier": None},
         "pass_rate": {"predicted": "", "observed": None},
     }
-    exp_path = layout_of(paths).experiment(epoch_id, generation_id)
-    experiment = _read_json_value(exp_path)
-    if not isinstance(experiment, dict):
+    try:
+        experiment = read_experiment_body(layout_of(paths).root, epoch_id, generation_id)
+    except RecordError as exc:
+        # CONDITIONAL key: only a record that is present and unparseable
+        # carries it, so an absent record's payload is unchanged.
+        return {**empty, "unreadable": str(exc)}
+    if experiment is None:
         return empty
     card = _scorecard_from_experiment(experiment)
     return {
@@ -389,7 +398,8 @@ def build_calibration_trend(paths: WorkspacePaths, epoch_id: str | None = None) 
     layout = layout_of(paths)
     points: list[dict[str, Any]] = []
     scored_fractions: list[float] = []
-    for generation_id, experiment in read_experiments(layout, resolved):
+    records, _unreadable = read_epoch_experiment_bodies(layout.root, resolved)
+    for generation_id, experiment in records:
         card = _scorecard_from_experiment(experiment)
         total = card["score"]["total"]
         fraction = card["score"]["fraction"]

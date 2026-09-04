@@ -300,12 +300,12 @@ dangling reference to a missing patch file, which IS harmful.
 write helper round-trips back to the same tuple of dataclasses on
 read.
 
-**The two accepted read shapes.** The read helper accepts either an
-`experiment.json` carrying `patch_ids` with a sibling `patches/`
-directory, or one carrying an inline `patches: [{...}, ...]` array.
-Some workspaces hold the inline shape on disk. Every write uses the
-per-patch layout and stamps `format_version: 1` (see STORAGE.md §8);
-there is no converter between the two, because the reader handles both.
+**The one accepted read shape.** The read helper accepts exactly one
+`experiment.json`: a body carrying `patch_ids` with a sibling
+`patches/` directory. Every write uses that layout and stamps
+`format_version: 1` (see STORAGE.md §8). A body carrying an inline
+`patches: [{...}, ...]` array is refused by name rather than read as an
+experiment with no patches.
 
 The patch is referenced by mutation id rather than by file path. The
 applier resolves the id to a location and rewrites it. See

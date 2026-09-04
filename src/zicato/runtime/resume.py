@@ -75,6 +75,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from zicato.epoch._storage import RecordError
 from zicato.runtime.paths import (
     active_runs_dir,
     active_tournament_log_path,
@@ -566,7 +567,7 @@ def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
     experiment: Experiment | None
     try:
         experiment = read_experiment(workspace_root, epoch_id, latest)
-    except (FileNotFoundError, KeyError, ValueError, OSError) as exc:
+    except (FileNotFoundError, KeyError, RecordError, ValueError, OSError) as exc:
         # No experiment.json (or it is unreadable / a dangling patch
         # reference). Either way we cannot reconstruct what the proposer
         # intended — discard and re-propose fresh (RUNTIME.md §4.2 last

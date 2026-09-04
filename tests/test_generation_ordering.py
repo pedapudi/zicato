@@ -44,9 +44,9 @@ def test_ordering_primitives_agree_on_round_number_order() -> None:
     assert generation_round_number("named") is None
 
 
-def test_epoch_analysis_collects_experiments_in_round_number_order(tmp_path: Path) -> None:
-    """The at-epoch-close analysis pass reads experiment.json in lineage order."""
-    from zicato.epoch.analysis import _collect_experiments
+def test_epoch_experiments_are_read_in_round_number_order(tmp_path: Path) -> None:
+    """The shared epoch-wide record walk reads experiment.json in lineage order."""
+    from zicato.epoch.journal import read_epoch_experiments
 
     workspace = tmp_path / ".zicato"
     gens_root = _make_generations(workspace, "e0")
@@ -55,7 +55,9 @@ def test_epoch_analysis_collects_experiments_in_round_number_order(tmp_path: Pat
             json.dumps({"generation_id": gen_id}), encoding="utf-8"
         )
 
-    assert [d["generation_id"] for d in _collect_experiments(workspace, "e0")] == ELEVEN
+    experiments, unreadable = read_epoch_experiments(workspace, "e0")
+    assert unreadable == []
+    assert [gid for gid, _experiment in experiments] == ELEVEN
 
 
 def test_dashboard_views_list_generations_in_round_number_order(tmp_path: Path) -> None:

@@ -32,25 +32,20 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import Any
 
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.types import (
-    DriftMovementActual,
     Experiment,
     Generation,
-    HypothesisSpec,
-    MetricMovementActual,
-    OutcomeRecord,
-    TournamentDecision,
 )
 from zicato.core.workspace import (
     analysis_path,
     epoch_dir,
     journal_path,
 )
+from zicato.epoch.journal import experiment_body, read_epoch_experiments
 from zicato.epoch.lineage import load_lineage
 from zicato.workspace import ScalarStep, WorkspaceLayout, cumulative_scalars, generation_ids
 
@@ -128,29 +123,6 @@ def _slice(text: str, limit: int) -> str:
     return text[:limit] + "\n\n... [truncated for analysis pass]"
 
 
-def _collect_experiments(workspace_root: Path, epoch_id: str) -> list[dict[str, Any]]:
-    """Read every ``experiment.json`` under the epoch's ``generations/``.
-
-    Returns dicts in lineage order: generation ids sort by their round
-    number, so ``v2`` precedes ``v10``. Files that fail to parse are skipped
-    silently — they predate the experiment schema we want to summarise.
-    """
-    layout = WorkspaceLayout.from_root(workspace_root)
-    out: list[dict[str, Any]] = []
-    for generation_id in generation_ids(layout, epoch_id):
-        path = layout.experiment(epoch_id, generation_id)
-        if not path.exists():
-            continue
-        try:
-            d = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(d, dict):
-            d.setdefault("generation_id", generation_id)
-            out.append(d)
-    return out
-
-
 def _collect_patterns_snapshot(workspace_root: Path, epoch_id: str) -> str:
     """Aggregate ``patterns/round_*.json`` files into a single text blob.
 
@@ -170,19 +142,26 @@ def _collect_patterns_snapshot(workspace_root: Path, epoch_id: str) -> str:
     return "\n\n".join(parts)
 
 
-def _format_experiment(d: dict[str, Any]) -> str:
-    """Compact one experiment dict down to its journal-relevant fields."""
-    keep: dict[str, Any] = {}
-    for k in (
-        "id",
-        "generation_id",
-        "parent_generation_id",
-        "proposed_at",
-        "hypothesis",
-        "outcome",
-    ):
-        if k in d:
-            keep[k] = d[k]
+def _format_experiment(experiment: Experiment) -> str:
+    """Compact one experiment down to its journal-relevant fields.
+
+    The prompt slice is a projection, so it is built from the typed record
+    through the record's own encoder rather than by re-opening the file —
+    the same bytes the writer put on disk, minus the fields the narrative
+    has no use for.
+    """
+    body = experiment_body(experiment)
+    keep = {
+        k: body[k]
+        for k in (
+            "id",
+            "generation_id",
+            "parent_generation_id",
+            "proposed_at",
+            "hypothesis",
+            "outcome",
+        )
+    }
     return _slice(json.dumps(keep, indent=2, sort_keys=True), _MAX_EXPERIMENT_CHARS)
 
 
@@ -848,112 +827,8 @@ def _render_non_drift_metric_table(
 
 
 # ---------------------------------------------------------------------------
-# Hydration of on-disk artifacts into typed dataclasses
+# Typed view of the epoch's records
 # ---------------------------------------------------------------------------
-
-
-def _hydrate_outcome(d: Mapping[str, Any] | None) -> OutcomeRecord | None:
-    if d is None or not isinstance(d, Mapping):
-        return None
-    movements: list[DriftMovementActual] = []
-    for m in d.get("drift_movements", ()) or ():
-        if not isinstance(m, Mapping):
-            continue
-        try:
-            movements.append(
-                DriftMovementActual(
-                    kind=str(m["kind"]),
-                    from_rate=float(m.get("from_rate", 0.0)),
-                    to_rate=float(m.get("to_rate", 0.0)),
-                    hypothesis_match=bool(m.get("hypothesis_match", False)),
-                    note=str(m.get("note", "")),
-                )
-            )
-        except (KeyError, TypeError, ValueError):
-            continue
-    metric_movements: list[MetricMovementActual] = []
-    for m in d.get("metric_movements", ()) or ():
-        if not isinstance(m, Mapping):
-            continue
-        try:
-            metric_movements.append(
-                MetricMovementActual(
-                    metric_name=str(m["metric_name"]),
-                    from_value=float(m.get("from_value", 0.0)),
-                    to_value=float(m.get("to_value", 0.0)),
-                    hypothesis_match=bool(m.get("hypothesis_match", False)),
-                    note=str(m.get("note", "")),
-                )
-            )
-        except (KeyError, TypeError, ValueError):
-            continue
-    decision = d.get("tournament_decision")
-    if decision not in ("promoted", "rejected", "deferred"):
-        # An outcome dict without a recognisable decision is treated as
-        # "no outcome" so we don't fabricate a state machine entry.
-        return None
-    # The guard above has narrowed the raw wire token to the three members,
-    # so the coercion cannot raise. It is what makes the record's runtime
-    # type match the type the dataclass declares — a hydrated record is
-    # otherwise indistinguishable from an in-process one under ``==`` but
-    # not under ``isinstance`` / ``match`` / ``.name``.
-    decision = TournamentDecision(decision)
-    try:
-        return OutcomeRecord(
-            ran_at=str(d.get("ran_at", "")),
-            drift_movements=tuple(movements),
-            pass_rate_delta=float(d.get("pass_rate_delta", 0.0)),
-            drift_loss_delta=float(d.get("drift_loss_delta", 0.0)),
-            scalar_score_delta=float(d.get("scalar_score_delta", 0.0)),
-            tournament_decision=decision,
-            rejection_reason=str(d.get("rejection_reason", "")),
-            metric_movements=tuple(metric_movements),
-        )
-    except (TypeError, ValueError):
-        return None
-
-
-def _hydrate_hypothesis(d: Mapping[str, Any] | None) -> HypothesisSpec | None:
-    if d is None or not isinstance(d, Mapping):
-        return None
-    try:
-        return HypothesisSpec(
-            core_idea=str(d.get("core_idea", "")),
-            modulating=tuple(str(x) for x in d.get("modulating", ())),
-            why=str(d.get("why", "")),
-            expected_drift_movements=(),
-            expected_pass_rate_delta=str(d.get("expected_pass_rate_delta", "")),
-            risks=str(d.get("risks", "")),
-        )
-    except (TypeError, ValueError):
-        return None
-
-
-def _hydrate_experiment(d: Mapping[str, Any]) -> Experiment | None:
-    """Best-effort reconstruction of an :class:`Experiment` from its JSON dict.
-
-    The on-disk schema is evolving (the v0 dict format predates a few
-    optional fields), so we hydrate only the subset of fields the
-    rendering primitives need and fall back to ``None`` for anything
-    structurally invalid. Patches are intentionally left empty —
-    rendering only consults the hypothesis + outcome.
-    """
-    hypothesis = _hydrate_hypothesis(d.get("hypothesis"))
-    if hypothesis is None:
-        return None
-    try:
-        return Experiment(
-            id=str(d.get("id", "")),
-            epoch_id=str(d.get("epoch_id", "")),
-            generation_id=str(d.get("generation_id", "")),
-            parent_generation_id=str(d.get("parent_generation_id", "")),
-            proposed_at=str(d.get("proposed_at", "")),
-            hypothesis=hypothesis,
-            patches=(),
-            outcome=_hydrate_outcome(d.get("outcome")),
-        )
-    except (TypeError, ValueError):
-        return None
 
 
 def _hydrate_generations(
@@ -1011,36 +886,48 @@ def _hydrate_generations(
     return fallback_out
 
 
-def _hydrate_typed_view(
+def _generations_for(
     workspace_root: Path,
     epoch_id: str,
-    experiment_dicts: Sequence[Mapping[str, Any]],
-) -> tuple[list[Generation], list[Experiment]]:
-    """Build typed lists of generations + experiments for the renderers.
+    experiments: Sequence[Experiment],
+) -> list[Generation]:
+    """The :class:`Generation` list the renderers pair with ``experiments``.
 
-    Returns a possibly-empty pair when nothing can be hydrated. The
-    renderer functions tolerate an empty input pair and emit graceful
-    placeholders, so callers do not need to special-case the result.
+    Returns a possibly-empty list. The renderer functions tolerate an empty
+    input and emit graceful placeholders, so callers do not need to
+    special-case the result.
     """
-    typed_exps: list[Experiment] = []
-    for d in experiment_dicts:
-        exp = _hydrate_experiment(d)
-        if exp is not None:
-            typed_exps.append(exp)
-
     # Lineage may not list v0 explicitly if the lifecycle helpers were
     # bypassed; derive a parent-chain fallback from the experiment ids
     # plus any parent ids they reference.
-    parents = {e.parent_generation_id for e in typed_exps if e.parent_generation_id}
-    children = {e.generation_id for e in typed_exps}
+    parents = {e.parent_generation_id for e in experiments if e.parent_generation_id}
+    children = {e.generation_id for e in experiments}
     fallback_ids = sorted(parents | children)
-    typed_gens = _hydrate_generations(workspace_root, epoch_id, fallback_ids)
-    return typed_gens, typed_exps
+    return _hydrate_generations(workspace_root, epoch_id, fallback_ids)
 
 
 # ---------------------------------------------------------------------------
 # Metadata header
 # ---------------------------------------------------------------------------
+
+
+def _render_unreadable_note(reasons: Sequence[str]) -> str:
+    """Render the reasons the epoch's unreadable records were left out.
+
+    A generation whose ``experiment.json`` does not parse is missing from
+    every table and diagram below, and a reader who is not told that reads
+    the epoch as one generation shorter than it was. The note says which
+    record and why, so the omission is visible in the document itself
+    rather than only in a log line nobody kept.
+    """
+    lines = [
+        f"> **{len(reasons)} generation record"
+        f"{'' if len(reasons) == 1 else 's'} could not be read** and "
+        "are absent from the tables and diagrams below:",
+        ">",
+    ]
+    lines.extend(f"> * {reason}" for reason in reasons)
+    return "\n".join(lines)
 
 
 def _render_metadata_header(
@@ -1103,7 +990,7 @@ def _render_metadata_header(
 def _compose_user_prompt(
     epoch_id: str,
     journal_text: str,
-    experiments: list[dict[str, Any]],
+    experiments: Sequence[Experiment],
     patterns_text: str,
     tournament_outcomes_md: str,
 ) -> str:
@@ -1204,12 +1091,15 @@ async def generate_analysis(
     if jpath.exists():
         journal_text = jpath.read_text()
 
-    experiments = _collect_experiments(workspace_root, epoch_id)
+    records, unreadable = read_epoch_experiments(workspace_root, epoch_id)
+    experiments = [experiment for _generation_id, experiment in records]
     patterns_text = _collect_patterns_snapshot(workspace_root, epoch_id)
 
-    typed_gens, typed_exps = _hydrate_typed_view(workspace_root, epoch_id, experiments)
-    tournament_outcomes_md = render_tournament_outcomes_section(typed_gens, typed_exps)
-    metadata_md = _render_metadata_header(epoch_id, typed_gens, typed_exps)
+    typed_gens = _generations_for(workspace_root, epoch_id, experiments)
+    tournament_outcomes_md = render_tournament_outcomes_section(typed_gens, experiments)
+    metadata_md = _render_metadata_header(epoch_id, typed_gens, experiments)
+    if unreadable:
+        metadata_md = metadata_md.rstrip() + "\n\n" + _render_unreadable_note(unreadable)
 
     user_prompt = _compose_user_prompt(
         epoch_id=epoch_id,

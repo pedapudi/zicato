@@ -945,7 +945,11 @@ def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> No
     patches_dir = gen_dir / "patches"
     patches_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write a patch file for v1.
+    # Write a patch file for v1, and reference it from the record the way
+    # ``write_experiment`` does: the served patch set is the one the
+    # experiment names through ``patch_ids``, so a file the record does not
+    # reference — an orphan left by a crash between the two write phases —
+    # is not served as part of the generation.
     _write_json(
         patches_dir / "p_abc.json",
         {
@@ -954,6 +958,15 @@ def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> No
             "op": "replace",
             "rationale": "tighten planner prompt",
             "new_content": "new-content-here",
+        },
+    )
+    _write_json(
+        gen_dir / "experiment.json",
+        {
+            "parent_generation_id": "v0",
+            "proposed_at": "2026-05-16T04:25:00Z",
+            "outcome": {"decision": "rejected"},
+            "patch_ids": ["p_abc"],
         },
     )
     # Write journal and analysis markdown.

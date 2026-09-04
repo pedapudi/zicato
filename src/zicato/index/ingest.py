@@ -70,6 +70,7 @@ from typing import Any
 
 from zicato.core.types import Experiment, LossProfile
 from zicato.core.workspace import loss_profile_path
+from zicato.epoch._storage import RecordError
 from zicato.index.schema import (
     SCHEMA_VERSION,
     Table,
@@ -156,7 +157,7 @@ def _tournament_id_for_run(
 
     try:
         experiment = read_experiment(workspace_root, epoch_id, generation_id)
-    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, RecordError):
         return None
     parent = experiment.parent_generation_id
     if not parent:
@@ -933,7 +934,7 @@ def _ingest_experiment_into(
 
     try:
         experiment = read_experiment(workspace_root, epoch_id, generation_id)
-    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, RecordError):
         return False
     _upsert_experiment(conn, experiment)
     _upsert_tournament(conn, experiment)
@@ -2571,7 +2572,7 @@ def backfill_tournament_fk(
                 scanned += 1
                 try:
                     experiment = read_experiment(workspace_root, epoch_id, gid)
-                except (FileNotFoundError, json.JSONDecodeError, KeyError):
+                except (FileNotFoundError, json.JSONDecodeError, KeyError, RecordError):
                     continue
                 parent = experiment.parent_generation_id
                 if not parent:

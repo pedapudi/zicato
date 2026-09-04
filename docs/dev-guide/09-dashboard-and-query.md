@@ -639,8 +639,8 @@ Two behaviours matter when composing a view on top of them. A record
 directory with no readable leaf file is still enumerated, because the
 directory is what makes the record exist — so a generation from an
 interrupted round appears in `generation_ids` and drops out of
-`read_experiments`, which is what lets a view distinguish "in flight" from
-"never proposed". And an epoch or generation id that could not be a legal
+`epoch/journal.py`'s `read_epoch_experiments`, which is what lets a view
+distinguish "in flight" from "never proposed". And an epoch or generation id that could not be a legal
 storage key enumerates nothing rather than resolving to a path outside the
 workspace, which is a third line of defence behind the two below.
 

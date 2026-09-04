@@ -626,10 +626,11 @@ workspace-format break, made on purpose:
 - The index (§5.3) is derived and disposable, so there is nothing to
   migrate.
 
-There is no migration utility for the inline `patches: [...]` array
-form of `experiment.json`. The `read_experiment` reader accepts both
-on-disk shapes transparently, so no operator needs one. Canonical JSON
-records — `experiment.json`, the epoch `config.json`, and
+`experiment.json` parses exactly one way: a body carrying
+`patch_ids: [...]` with a sibling `patches/{patch_id}.json` for each
+id. A body that instead inlines a `patches: [...]` array is refused by
+name, because reading it under the current rules would silently yield
+an experiment with no patches at all. Canonical JSON records — `experiment.json`, the epoch `config.json`, and
 `lineage.json` — carry an explicit `format_version: 1` stamp at write.
 A reader treats an absent stamp as version 1, so a record written
 without one still loads, and refuses a newer incompatible version with

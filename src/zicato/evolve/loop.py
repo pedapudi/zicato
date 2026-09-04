@@ -186,17 +186,15 @@ def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
     """
     if not epoch_id:
         return 0
-    from zicato.workspace import WorkspaceLayout, read_experiments  # noqa: PLC0415
+    from zicato.epoch.journal import read_epoch_experiments  # noqa: PLC0415
 
     best = -1
     try:
-        layout = WorkspaceLayout.from_root(workspace_root)
-        for _gid, exp in read_experiments(layout, epoch_id):
-            if not exp.get("parent_generation_id"):
+        records, _unreadable = read_epoch_experiments(workspace_root, epoch_id)
+        for _generation_id, experiment in records:
+            if not experiment.parent_generation_id:
                 continue  # the seed is carried rather than minted, so it is no round
-            ri = exp.get("round_index")
-            if isinstance(ri, int) and ri > best:
-                best = ri
+            best = max(best, experiment.round_index)
     except Exception:  # noqa: BLE001 — a missing / locked workspace ⇒ base 0
         return 0
     return best + 1

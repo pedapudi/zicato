@@ -15,7 +15,7 @@ order things the query layer does not:
 
 * **Eleven generations, ``v0`` through ``v10``.** Numeric-aware ordering puts
   ``v2`` before ``v10``; plain lexical ordering inverts them. Readers disagree
-  today — :func:`zicato.workspace.reads.read_experiments` and the ``zicato
+  today — :func:`zicato.epoch.journal.read_epoch_experiments` and the ``zicato
   health`` command sort numerically, while the index's generation walk sorts
   lexically — and the snapshot records which reader does which, so a
   consolidation onto one reader layer has to state, for each order, whether
@@ -1007,6 +1007,7 @@ def to_jsonable(value: Any) -> Any:
 def _capture_workspace_reads(ws: Path, snap: dict[str, Any]) -> None:
     """The typed canonical-read layer: enumeration, ordering and leaf reads."""
     from zicato import workspace as wsp
+    from zicato.epoch import journal
 
     layout = wsp.WorkspaceLayout.from_root(ws)
     snap["zicato.workspace.list_epoch_ids"] = wsp.list_epoch_ids(layout)
@@ -1016,9 +1017,15 @@ def _capture_workspace_reads(ws: Path, snap: dict[str, Any]) -> None:
             layout, epoch_id
         )
         snap[f"zicato.workspace.read_board::{epoch_id}"] = wsp.read_board(layout, epoch_id)
-        snap[f"zicato.workspace.read_experiments::{epoch_id}"] = wsp.read_experiments(
-            layout, epoch_id
-        )
+        # The epoch-wide generation-record walk. It returns two lists — the
+        # records it decoded and one named reason per record that is present
+        # and will not parse — and both are pinned, so a decoder that starts
+        # rejecting a record it used to accept shows up as a record leaving
+        # the first label and a reason arriving in the second rather than as
+        # a silently shorter epoch.
+        records, unreadable = journal.read_epoch_experiments(ws, epoch_id)
+        snap[f"zicato.epoch.journal.read_epoch_experiments::{epoch_id}"] = records
+        snap[f"zicato.epoch.journal.read_epoch_experiments.unreadable::{epoch_id}"] = unreadable
         # The three record enumerations every other reader in the tree now
         # calls. Pinning them here means one golden fixes the order the
         # whole read surface presents generations, board-entry runs and
@@ -1031,8 +1038,8 @@ def _capture_workspace_reads(ws: Path, snap: dict[str, Any]) -> None:
             )
     epoch_id = RICH_EPOCH_ID
     for generation_id in ("v0", "v2", "v10"):
-        snap[f"zicato.workspace.read_experiment::{generation_id}"] = wsp.read_experiment(
-            layout, epoch_id, generation_id
+        snap[f"zicato.epoch.journal.read_experiment::{generation_id}"] = journal.read_experiment(
+            ws, epoch_id, generation_id
         )
         snap[f"zicato.workspace.read_gen_score::{generation_id}"] = wsp.read_gen_score(
             layout, epoch_id, generation_id
@@ -1334,7 +1341,7 @@ def capture_reader_snapshot(ws: Path) -> dict[str, Any]:
 #: "the values changed".
 ORDER_ENFORCED: dict[str, str | int | None] = {
     # Numeric-aware generation order: v2 before v10.
-    "zicato.workspace.read_experiments::e2": 0,
+    "zicato.epoch.journal.read_epoch_experiments::e2": 0,
     "zicato.workspace.generation_ids::e2": None,
     "zicato.cli.health.generation_ids::e2": None,
     # Numeric-aware board-entry order: t2 before t10.

@@ -83,6 +83,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from zicato.epoch._storage import RecordError
 from zicato.epoch.round_log import (
     CandidateScreened,
     GateEvaluated,
@@ -454,7 +455,7 @@ def _mutation_sites(
         for generation_id in record.generation_ids:
             try:
                 experiment = read_experiment(workspace_root, epoch_id, generation_id)
-            except (OSError, ValueError, KeyError, FileNotFoundError):
+            except (OSError, RecordError, ValueError, KeyError, FileNotFoundError):
                 continue
             for mutation_id in {p.mutation_id for p in experiment.patches}:
                 proposed[mutation_id] = proposed.get(mutation_id, 0) + 1

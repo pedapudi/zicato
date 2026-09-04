@@ -34,8 +34,11 @@ from zicato.epoch.genstore import (
     default_generation_store,
 )
 from zicato.epoch.journal import (
+    ExperimentRecordError,
     append_journal_entry,
+    experiment_body,
     read_experiment,
+    read_experiment_if_present,
     read_journal,
     update_experiment_outcome,
     write_experiment,
@@ -76,7 +79,10 @@ __all__ = [
     "append_journal_entry",
     "read_journal",
     "write_experiment",
+    "ExperimentRecordError",
+    "experiment_body",
     "read_experiment",
+    "read_experiment_if_present",
     "update_experiment_outcome",
     # analysis
     "REQUIRED_SECTIONS",

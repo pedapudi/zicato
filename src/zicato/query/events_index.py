@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.workspace import replicate_index_from_run_id
+from zicato.epoch._storage import RecordError
+from zicato.epoch.journal import read_experiment_body
 from zicato.query._sqlite import open_index_ro_or_none
 from zicato.query.decisions import (
     experiment_decision,
@@ -34,7 +36,6 @@ from zicato.workspace import (
     generation_ids,
     is_events_file,
     iter_epochs,
-    read_experiment,
     run_entry_ids,
 )
 
@@ -673,6 +674,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
             best_scalar: float | None = None
             best_gen_id: str | None = None
             promoted_count = 0
+            unreadable_generations: list[str] = []
             if conn is not None:
                 for gid in gen_ids:
                     scalar, _entries = _mean_drift_loss_per_generation(conn, epoch_id, gid)
@@ -685,8 +687,17 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
                 # disk) rather than the index, so this is robust to an absent
                 # or stale ``promotions`` table.
                 for gid in gen_ids:
-                    exp = read_experiment(layout, epoch_id, gid)
-                    if isinstance(exp, dict):
+                    try:
+                        exp = read_experiment_body(layout.root, epoch_id, gid)
+                    except RecordError as exc:
+                        # A record that will not parse states nothing about
+                        # promotion, so it counts as neither promoted nor not
+                        # — which leaves ``promoted_count`` understated by an
+                        # unknown amount. The row carries the reason so the
+                        # count is read as incomplete rather than as a fact.
+                        unreadable_generations.append(str(exc))
+                        continue
+                    if exp is not None:
                         outcome = exp.get("outcome")
                         if isinstance(outcome, dict):
                             if promoted_tristate(experiment_decision(exp)) is True:
@@ -711,7 +722,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
                 except sqlite3.Error:
                     parent_epoch_id = None
 
-            row = {
+            row: dict[str, Any] = {
                 "epoch_id": epoch_id,
                 "goal": goal,
                 "best_scalar": best_scalar,
@@ -721,6 +732,11 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
                 "closed": closed,
                 "parent_epoch_id": parent_epoch_id,
             }
+            # CONDITIONAL key: present only when a generation record in this
+            # epoch would not parse, so a workspace whose records are intact
+            # keeps its prior payload byte for byte.
+            if unreadable_generations:
+                row["unreadable_generations"] = unreadable_generations
             rows.append(row)
             sparkline.append({"epoch_id": epoch_id, "scalar": best_scalar})
 
