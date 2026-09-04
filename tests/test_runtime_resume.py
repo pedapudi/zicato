@@ -23,6 +23,7 @@ and the unit cache hits the done units" path is covered in
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -177,7 +178,12 @@ def _configure_directory_store(workspace: Path) -> None:
 
 
 def _seed_git_store(workspace: Path, source: Path) -> None:
-    """Create tagged v0/v1 source commits for a Git-backed resume test."""
+    """Tag v0 and v1 source commits with no canonical record for either.
+
+    This is the state a round reaches the instant ``derive_generation``
+    returns: the child is committed, tagged, and checked out, and nothing
+    under ``epochs/{epoch}/generations/`` names it yet.
+    """
     from zicato.epoch.git_genstore import GitGenerationStore
 
     (workspace / "config.json").write_text(
@@ -336,6 +342,124 @@ def test_git_backed_no_progress_discard_prunes_source_and_round_log(tmp_path: Pa
     assert not (workspace / "epochs" / EPOCH / "rounds" / "0").exists()
     envelope = RoundLog(workspace, EPOCH, 0).append(RoundOpened(contract_hash="hash"))
     assert envelope.seq == 1
+
+
+# ---------------------------------------------------------------------------
+# Source derived before any canonical record exists.
+#
+# ``derive_generation`` commits and tags the child before the round writes its
+# pending lineage node and its ``experiment.json``. ``_seed_git_store`` leaves
+# exactly that state: ``epoch/alpha/v1`` is tagged and its worktree is checked
+# out while ``epochs/alpha/generations/`` holds nothing at all.
+# ---------------------------------------------------------------------------
+
+
+def _repo_git(workspace: Path, *args: str) -> str:
+    """Return the stdout of one ``git`` command run in the generation repo."""
+    return subprocess.run(
+        ["git", *args],
+        cwd=workspace / "repo",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def test_git_source_with_no_canonical_record_is_discarded(tmp_path: Path) -> None:
+    """An interrupted derivation leaves no tag, no worktree, and no branch head."""
+    from zicato.epoch.git_genstore import GitGenerationStore
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    _seed_git_store(workspace, tmp_path / "source")
+    store = GitGenerationStore(workspace)
+    baseline_commit = _repo_git(workspace, "rev-parse", f"epoch/{EPOCH}/v0")
+    assert store.has_generation(EPOCH, "v1")
+    assert store.snapshot_path(EPOCH, "v1").is_dir()
+
+    plan = prepare_resume(workspace, EPOCH)
+
+    assert plan.classification == "clean"
+    assert store.list_generations(EPOCH) == ["v0"]
+    assert not store.snapshot_path(EPOCH, "v1").exists()
+    assert _repo_git(workspace, "rev-parse", f"epoch/{EPOCH}") == baseline_commit
+
+
+def test_the_discarded_identifier_is_reusable_by_a_later_round(tmp_path: Path) -> None:
+    """The next round derives the same id from the baseline rather than from residue."""
+    from zicato.epoch.git_genstore import GitGenerationStore
+    from zicato.epoch.journal import write_seed_experiment
+    from zicato.evolve.generation_phase import next_generation_id
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    _seed_git_store(workspace, tmp_path / "source")
+    write_seed_experiment(workspace, EPOCH, "v0")
+    store = GitGenerationStore(workspace)
+    baseline_commit = _repo_git(workspace, "rev-parse", f"epoch/{EPOCH}/v0")
+
+    prepare_resume(workspace, EPOCH)
+
+    assert next_generation_id(workspace, EPOCH) == "v1"
+    assert not store.has_generation(EPOCH, "v1")
+    worktree = store.derive_generation(EPOCH, "v0", "v1", ())
+    assert (worktree / "source" / "agent.py").read_text(encoding="utf-8") == 'GREETING = "hi"\n'
+    assert _repo_git(workspace, "rev-parse", f"epoch/{EPOCH}/v1^") == baseline_commit
+
+
+def test_unrecorded_source_cleanup_is_idempotent(tmp_path: Path) -> None:
+    """A second startup finds nothing to reconcile and leaves the baseline."""
+    from zicato.epoch.git_genstore import GitGenerationStore
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    _seed_git_store(workspace, tmp_path / "source")
+    store = GitGenerationStore(workspace)
+    prepare_resume(workspace, EPOCH)
+
+    plan = prepare_resume(workspace, EPOCH)
+
+    assert plan.classification == "clean"
+    assert store.list_generations(EPOCH) == ["v0"]
+    assert store.materialize_snapshot(EPOCH, "v0").is_dir()
+
+
+def test_a_recorded_git_generation_keeps_its_source(tmp_path: Path) -> None:
+    """A generation with a canonical record is never reconciled away."""
+    from zicato.epoch.git_genstore import GitGenerationStore
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    _seed_git_store(workspace, tmp_path / "source")
+    _write_experiment(workspace, "v1", with_outcome=True)
+    store = GitGenerationStore(workspace)
+
+    plan = prepare_resume(workspace, EPOCH)
+
+    assert plan.classification == "clean"
+    assert store.list_generations(EPOCH) == ["v0", "v1"]
+    assert store.snapshot_path(EPOCH, "v1").is_dir()
+    assert _gen_dir(workspace, "v1").is_dir()
+
+
+def test_directory_source_is_always_recorded(tmp_path: Path) -> None:
+    """The directory backend cannot hold source outside a generation record."""
+    from zicato.epoch.genstore import DirectoryGenerationStore
+    from zicato.runtime.resume import _discard_unrecorded_source
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    _seed_v0(workspace)
+    store = DirectoryGenerationStore(workspace)
+    store.derive_generation(EPOCH, "v0", "v1", ())
+
+    assert _discard_unrecorded_source(workspace, EPOCH, store) == ()
+    assert store.has_generation(EPOCH, "v1")
+    # The record directory the snapshot lives under is what the existing
+    # single-challenger classification discards it through instead, leaving
+    # the coordinates the Git backend is left with for the same interruption.
+    assert prepare_resume(workspace, EPOCH).classification == "discard_partial_proposal"
+    assert store.list_generations(EPOCH) == ["v0"]
 
 
 # ---------------------------------------------------------------------------
