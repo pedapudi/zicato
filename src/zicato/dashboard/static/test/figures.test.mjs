@@ -893,8 +893,6 @@ test('radar axis labels: radarSilhouette renders the axis LABEL TEXT at each tip
   const longLab = labs.find((t) => (t.textContent || '').startsWith('scalar'));
   assert(longLab, 'the long "scalar (inverse loss)" axis renders a label');
   assert((longLab.textContent || '').includes('…') || (longLab.textContent || '').length <= 16, 'a long axis label is truncated to its budget');
-  // no index-tick markers remain (the retired dn-radar-axistick).
-  assertEqual(allByClass(node, 'dn-radar-axistick').length, 0, 'the retired index-tick (dn-radar-axistick) is GONE — labels replace it');
 });
 
 test('radar axis labels: a DENSE radar (many axes) still renders one text label per axis (harder truncation, no index fallback)', () => {

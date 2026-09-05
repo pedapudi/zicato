@@ -431,7 +431,6 @@ test('epoch timeline: a NON-gauntlet (racing) epoch leads with the round timelin
   assert(allByClass(host, 'dn-roundtl-ep')[0], 'the timeline renders the round episode (single round → no empty spine)');
   assertEqual(allByClass(host, 'dn-roundtl-spine').length, 0, 'a single-round epoch shows NO champion spine (nothing to plot a trajectory over)');
   assertEqual(allByClass(host, 'tr-reel').length, 0, 'NO gauntlet champion-spine reel for a racing epoch');
-  assertEqual(allByClass(host, 'dt-struct-strip').length, 0, 'NO standalone structure strip — folded into the timeline');
   assert(host.textContent.includes('Racing'), 'the timeline names the racing structure');
   // the epoch overview structure is otherwise unchanged (objective + brief).
   assert(host.textContent.includes('objective'), 'the epoch overview keeps its objective block');

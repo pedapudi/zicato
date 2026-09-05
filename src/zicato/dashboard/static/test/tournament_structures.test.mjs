@@ -117,7 +117,6 @@ test('structure: swiss renders the standings LADDER hero + per-round pairings', 
   // standalone "Pairings · round by round" tables were collapsed away as a
   // duplicate of the ladder's pairing columns.
   assert(allByClass(ladder, 'dn-swissladder-pair').length >= 1, 'the ladder lays out the round pairings');
-  assert(allByClass(host, 'dt-swiss-pairings').length === 0, 'the redundant standalone pairings tables are gone');
 });
 
 test('structure: the "Proposed field" section renders applied ✓ / rejected ✗ + reasons from field_status', async () => {

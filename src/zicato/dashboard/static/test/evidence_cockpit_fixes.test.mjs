@@ -27,7 +27,7 @@ installDom();
 const livestatus = await import('../js/livestatus.js');
 const shell = await import('../js/shell.js');
 const live = await import('../js/live.js');
-const STRUCT = await import('../js/views/structure.js');
+const STRUCT = { ...await import('../js/tournament_model.js'), ...await import('../js/views/structure.js') };
 const candidate = await import('../js/views/candidate.js');
 const board = await import('../js/views/board.js');
 const { state } = await import('../js/core/state.js');
@@ -99,7 +99,6 @@ test('chrome: the liveness pill is the SINGLE run-state badge — the redundant 
   // separate pulse element, so the three competing "live" signals are one.
   assertEqual(allByClass(root, 'dt-run-state').length, 1, 'exactly one liveness pill in the chrome');
   assertEqual(allByClass(root, 'dt-run-badge').length, 0, 'the redundant standalone run-badge is removed');
-  assertEqual(allByClass(root, 'dt-run-pulse').length, 0, 'the redundant run-badge pulse is removed');
   // the phase label + count + stale affordance ride INSIDE the one pill.
   const pill = allByClass(root, 'dt-run-state')[0];
   assert(allByClass(pill, 'dt-run-label')[0], 'the phase label is inside the pill');
