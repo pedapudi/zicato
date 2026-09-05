@@ -507,6 +507,76 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
     )
 
 
+def _resolve_replicates_in_effect(
+    workspace_root: Path,
+    epoch_id: str,
+    tournament_spec: Any,
+    *,
+    log_once: bool,
+) -> Any:
+    """Resolve the epoch's replicate count from the contract, the floor, or the default.
+
+    Reads the epoch's persisted floor and margin through the same reader the
+    margin warning uses and hands them to
+    :func:`zicato.selection.replicates.resolve_replicates`. With ``log_once``
+    (round 0 of an invocation) it states the outcome: a count the floor
+    derived is logged at INFO with the effect it resolves; a pinned count
+    whose detectable effect exceeds the margin is logged at WARNING, or at
+    INFO when the evidence gate is on and promotions replicate to CI
+    separation anyway; a margin the cap cannot resolve is logged at WARNING
+    with the default that stands. Returns the
+    :class:`~zicato.selection.replicates.ReplicateSetting`.
+    """
+    from zicato.health.inputs import epoch_noise_floor_inputs  # noqa: PLC0415
+    from zicato.selection.replicates import (  # noqa: PLC0415
+        SOURCE_CONTRACT,
+        SOURCE_NOISE_FLOOR,
+        resolve_replicates,
+    )
+
+    floor, margin, gate_on = epoch_noise_floor_inputs(workspace_root, epoch_id)
+    setting = resolve_replicates(tournament_spec, floor=floor, promote_margin=margin)
+    if not log_once:
+        return setting
+    if setting.source == SOURCE_NOISE_FLOOR:
+        log.info(
+            "replicates in effect for epoch %s: %d, derived from the measured noise "
+            "floor (delta_std %.6g resolves promote_margin %.6g at a minimum "
+            "detectable effect of %.6g; the contract pins none)",
+            epoch_id,
+            setting.replicates,
+            setting.delta_std,
+            setting.promote_margin,
+            setting.detectable_effect,
+        )
+    elif setting.note is not None:
+        log.warning(
+            "replicates in effect for epoch %s: %d (%s); %s",
+            epoch_id,
+            setting.replicates,
+            setting.source,
+            setting.note,
+        )
+    elif setting.source == SOURCE_CONTRACT and setting.under_powered:
+        emit = log.info if gate_on else log.warning
+        emit(
+            "the contract pins replicates=%d for epoch %s; at the measured noise "
+            "floor (delta_std %.6g) that count resolves differences of %.6g or "
+            "more, above promote_margin %.6g, so a duel decided by the margin "
+            "alone is under-powered%s. Raise replicates, unpin it so the floor "
+            "sizes it, or raise promote_margin.",
+            setting.replicates,
+            epoch_id,
+            setting.delta_std,
+            setting.detectable_effect,
+            setting.promote_margin,
+            " (the evidence gate is on, so promotions still replicate to CI " "separation)"
+            if gate_on
+            else "",
+        )
+    return setting
+
+
 def _workspace_health_config(workspace_root: Path) -> Any:
     """Resolve the detector thresholds from the workspace ``config.json``.
 

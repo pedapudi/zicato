@@ -46,7 +46,9 @@ function mdeModel(m) {
   return {
     floorMeasured: o.floor_measured === true,
     floor: num(o.floor),
+    floorStatistic: str(o.floor_statistic),
     replicates: intOf(o.replicates) != null ? o.replicates : 0,
+    replicatesSource: str(o.replicates_source),
     usable: o.usable === true,
     formulaN: intOf(o.formula_n),
     df: intOf(o.df),
@@ -140,8 +142,8 @@ export function evalHealthDigest(model) {
   const f4 = (v) => (svg.isNum(v) ? v.toFixed(4) : null);
   return JSON.stringify({
     found: m.found,
-    mde: [mde.floorMeasured, f4(mde.floor), mde.replicates, mde.usable, mde.formulaN,
-      f4(mde.mde), f4(mde.mdeRelaxed), mde.note],
+    mde: [mde.floorMeasured, f4(mde.floor), mde.floorStatistic, mde.replicates,
+      mde.replicatesSource, mde.usable, mde.formulaN, f4(mde.mde), f4(mde.mdeRelaxed), mde.note],
     noisiest: arr(m.noisiest).map((r) => [r.entryId, f4(r.flipRate), r.slice]),
     dead: arr(m.dead).map((r) => [r.entryId, r.pairs, r.slice]),
     insufficient: arr(m.insufficient).map((r) => [r.entryId, r.pairs, r.slice]),
@@ -189,7 +191,16 @@ function sliceTag(slice) {
 }
 
 // 1 — THE STRIP: the measured floor + the live MDE ladder (§4.3). Mono + quiet;
-//     it prints the formula, the floor, and the n — never a bare number.
+//     it prints the formula, the floor, the n and where the n came from — never
+//     a bare number.
+function replicatesLabel(mde) {
+  return mde.replicatesSource ? `replicates (n) · ${mde.replicatesSource}` : 'replicates (n)';
+}
+
+function floorLabel(mde) {
+  return mde.floorStatistic ? `noise floor · ${mde.floorStatistic}` : 'noise floor';
+}
+
 function mdeStrip(mde) {
   const wrap = el('div', { class: 'dn-eh-strip' });
   if (!mde.usable) {
@@ -200,14 +211,15 @@ function mdeStrip(mde) {
         text: mde.note || 'floor unmeasured' }),
     ]));
     if (svg.isNum(mde.floor)) {
+      const source = mde.replicatesSource ? ` (${mde.replicatesSource})` : '';
       wrap.appendChild(el('div', { class: 'dn-eh-mono dn-faint',
-        text: `floor ${svg.fmt(mde.floor, 4)} · n=${mde.replicates}` }));
+        text: `floor ${svg.fmt(mde.floor, 4)} · n=${mde.replicates}${source}` }));
     }
     return wrap;
   }
   const strip = el('div', { class: 'dn-eh-stats' }, [
-    stat(svg.fmt(mde.floor, 4), 'noise floor'),
-    stat(String(mde.formulaN), 'replicates (n)'),
+    stat(svg.fmt(mde.floor, 4), floorLabel(mde)),
+    stat(String(mde.formulaN), replicatesLabel(mde)),
     stat(svg.fmt(mde.mde, 4), `MDE · α ${svg.fmt(mde.alpha, 2)}`),
     stat(svg.fmt(mde.mdeRelaxed, 4), `MDE · α ${svg.fmt(mde.alphaRelaxed, 2)}`),
   ]);

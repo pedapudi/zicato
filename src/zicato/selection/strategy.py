@@ -76,7 +76,10 @@ class Matchup:
         structures (replication rather than bracket shape is the noise lever);
         ``1`` is the historical single-run path a deterministic contract
         pins explicitly (racing also pins ``1`` — its replication is
-        intrinsic to the escalating board slices).
+        intrinsic to the escalating board slices). When the contract pins
+        none and the epoch carries a measured noise floor,
+        :func:`zicato.selection.make_strategy` injects the count sized from
+        the floor (:mod:`zicato.selection.replicates`).
     stage_index:
         The bracket round / Swiss round / racing rung this matchup belongs
         to — the WITHIN-tournament stage, a different axis from a generation's

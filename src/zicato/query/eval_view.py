@@ -26,10 +26,10 @@ I/O and are unit-tested against known answers.
 from __future__ import annotations
 
 import json
-import math
 import statistics
 from typing import Any
 
+from zicato.core.types import TournamentStructure
 from zicato.query.paths import (
     WorkspacePaths,
     _read_json_value,
@@ -38,16 +38,16 @@ from zicato.query.paths import (
     layout_of,
 )
 from zicato.query.replicate_scores import cell_replicate_draws
+from zicato.selection.replicates import ReplicateSetting, resolve_replicates
+from zicato.tournament.detectable_effect import (
+    MDE_ALPHA,
+    MDE_ALPHA_RELAXED,
+    MDE_FORMULA,
+    MDE_POWER,
+    minimum_detectable_effect,
+    students_t_upper_quantile,
+)
 from zicato.workspace import read_board_entries, read_loss, run_entry_ids
-
-# The live MDE ladder's operating characteristics (EVAL-VIEW.md §4.3, pinned to
-# CAMPAIGN.md §3): the two-sample form at α=.05 / power .80 (with a relaxed α=.10
-# rung), sd ≈ the measured A/A floor. At n=6, df=10 this reproduces the doc's
-# ≈1.79·floor (α=.05) and ≈1.55·floor (α=.10) — the numbers CAMPAIGN.md §3 pins.
-_MDE_ALPHA = 0.05
-_MDE_ALPHA_RELAXED = 0.10
-_MDE_POWER = 0.80
-_MDE_FORMULA = "MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd ≈ floor,  df = 2·(n−1)"
 
 # The minimum-comparisons honesty threshold for the DEAD-eval finding
 # (EVAL-VIEW.md §5): an entry needs at least this many both-sides
@@ -147,137 +147,58 @@ def discrimination(pairs: list[tuple[Any, bool | None]]) -> tuple[float | None, 
 
 
 # ---------------------------------------------------------------------------
-# The live MDE ladder (pure — no I/O, unit-tested against the CAMPAIGN.md numbers)
+# The live detectable-effect ladder (pure; the formula lives with the floor)
 # ---------------------------------------------------------------------------
 
 
-def _betacf(a: float, b: float, x: float) -> float:
-    """Continued-fraction expansion of the incomplete beta (Lentz's method).
+def mde_ladder(
+    floor: float | None,
+    replicates: int,
+    *,
+    floor_statistic: str | None = None,
+    replicates_source: str | None = None,
+) -> dict[str, Any]:
+    """The detectable-effect ladder at the epoch's floor and replicate count.
 
-    The Numerical-Recipes ``betacf`` — used by :func:`_reg_incomplete_beta` in
-    the region where the fraction converges quickly. Pure standard-library math.
-    """
-    max_iter = 200
-    eps = 3.0e-16
-    fpmin = 1.0e-300
-    qab = a + b
-    qap = a + 1.0
-    qam = a - 1.0
-    c = 1.0
-    d = 1.0 - qab * x / qap
-    if abs(d) < fpmin:
-        d = fpmin
-    d = 1.0 / d
-    h = d
-    for m in range(1, max_iter + 1):
-        m2 = 2 * m
-        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
-        d = 1.0 + aa * d
-        if abs(d) < fpmin:
-            d = fpmin
-        c = 1.0 + aa / c
-        if abs(c) < fpmin:
-            c = fpmin
-        d = 1.0 / d
-        h *= d * c
-        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
-        d = 1.0 + aa * d
-        if abs(d) < fpmin:
-            d = fpmin
-        c = 1.0 + aa / c
-        if abs(c) < fpmin:
-            c = fpmin
-        d = 1.0 / d
-        delta = d * c
-        h *= delta
-        if abs(delta - 1.0) < eps:
-            break
-    return h
-
-
-def _reg_incomplete_beta(a: float, b: float, x: float) -> float:
-    """The regularized incomplete beta ``I_x(a, b)`` (Numerical Recipes ``betai``)."""
-    if x <= 0.0:
-        return 0.0
-    if x >= 1.0:
-        return 1.0
-    lbt = (
-        math.lgamma(a + b)
-        - math.lgamma(a)
-        - math.lgamma(b)
-        + a * math.log(x)
-        + b * math.log(1.0 - x)
-    )
-    bt = math.exp(lbt)
-    if x < (a + 1.0) / (a + b + 2.0):
-        return bt * _betacf(a, b, x) / a
-    return 1.0 - bt * _betacf(b, a, 1.0 - x) / b
-
-
-def students_t_upper_quantile(upper_tail: float, df: int) -> float:
-    """The Student-t value ``t`` with ``P(T > t) = upper_tail`` for ``df`` (df ≥ 1).
-
-    Inverts the two-tailed survival ``P(|T| > t) = I_{df/(df+t²)}(df/2, 1/2)`` by
-    bisection — pure standard-library math (no SciPy runtime dependency). Exact to
-    machine precision against the standard t-tables; unit-tested against them.
-    """
-    p2 = 2.0 * upper_tail
-    lo, hi = 0.0, 1.0e7
-    for _ in range(160):
-        mid = (lo + hi) / 2.0
-        # Survival is monotone decreasing in t; walk toward the target tail mass.
-        if _reg_incomplete_beta(df / 2.0, 0.5, df / (df + mid * mid)) > p2:
-            lo = mid
-        else:
-            hi = mid
-    return (lo + hi) / 2.0
-
-
-def mde_ladder(floor: float | None, replicates: int) -> dict[str, Any]:
-    """The two-sample MDE at the epoch's floor + replicate count (EVAL-VIEW.md §4.3).
-
-    ``MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n)`` with ``sd ≈ floor`` and
-    ``n = replicates`` (``df = 2·(n−1)``), served with EVERY input so the view
-    states the formula honestly — never a bare number (§4). Degrades honestly:
-    an unmeasured floor ⇒ ``floor_measured: False`` + a "floor unmeasured" note;
-    ``n < 2`` ⇒ an "insufficient replication" note (the two-sample form needs two
-    per arm) — NEVER a fabricated bound.
+    :func:`zicato.tournament.detectable_effect.minimum_detectable_effect` at
+    ``sd = floor`` and ``n = replicates``, served with every input so the view
+    states the formula rather than a bare number (EVAL-VIEW.md §4).
+    ``floor_statistic`` names the floor field ``floor`` came from
+    (``delta_std``, or ``max_abs_delta`` for a record that carries no
+    ``delta_std``); ``replicates_source`` names the tier that set the count
+    (:data:`zicato.selection.replicates.REPLICATE_SOURCE_TIERS`). Degrades
+    without fabricating: an unmeasured floor reads ``floor_measured: False``
+    with a note, and ``n < 2`` reads an insufficient-replication note, since
+    the two-sample form needs two observations per arm.
     """
     n = int(replicates) if isinstance(replicates, int) and not isinstance(replicates, bool) else 0
     n = max(0, n)
     block: dict[str, Any] = {
         "floor_measured": floor is not None,
         "floor": floor,
+        "floor_statistic": floor_statistic if floor is not None else None,
         "replicates": n,
+        "replicates_source": replicates_source,
         "usable": False,
         "formula_n": None,
         "df": None,
         "mde": None,
         "mde_relaxed": None,
-        "alpha": _MDE_ALPHA,
-        "alpha_relaxed": _MDE_ALPHA_RELAXED,
-        "power": _MDE_POWER,
-        "formula": _MDE_FORMULA,
+        "alpha": MDE_ALPHA,
+        "alpha_relaxed": MDE_ALPHA_RELAXED,
+        "power": MDE_POWER,
+        "formula": MDE_FORMULA,
         "note": None,
     }
     if floor is None:
         block["note"] = "floor unmeasured — run the A/A calibration to measure the noise floor"
         return block
-    if n < 2:
+    effect = minimum_detectable_effect(floor, n)
+    relaxed = minimum_detectable_effect(floor, n, alpha=MDE_ALPHA_RELAXED)
+    if effect is None or relaxed is None:
         block["note"] = f"n={n}: the two-sample MDE needs at least 2 replicates per arm"
         return block
-    df = 2 * (n - 1)
-    t_alpha = students_t_upper_quantile(_MDE_ALPHA / 2.0, df)
-    t_alpha_relaxed = students_t_upper_quantile(_MDE_ALPHA_RELAXED / 2.0, df)
-    t_beta = students_t_upper_quantile(1.0 - _MDE_POWER, df)
-    root = math.sqrt(2.0 / n)
-    block.update(
-        usable=True,
-        formula_n=n,
-        df=df,
-        mde=(t_alpha + t_beta) * floor * root,
-        mde_relaxed=(t_alpha_relaxed + t_beta) * floor * root,
-    )
+    block.update(usable=True, formula_n=n, df=2 * (n - 1), mde=effect, mde_relaxed=relaxed)
     return block
 
 
@@ -388,9 +309,8 @@ def _calibration(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
     ``False`` when no ``noise_floor`` was persisted — the caller then reports
     flip rate unmeasured rather than fabricating a zero.
     """
-    cfg = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "config.json")
-    floor = cfg.get("noise_floor") if isinstance(cfg, dict) else None
-    if not isinstance(floor, dict):
+    floor = _floor_record(paths, epoch_id)
+    if floor is None:
         return {"measured": False, "generation_id": None, "runs": 0, "max_abs_delta": None}
     gen = floor.get("generation_id")
     runs = floor.get("runs")
@@ -400,6 +320,13 @@ def _calibration(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
         "runs": int(runs) if isinstance(runs, int) and not isinstance(runs, bool) else 0,
         "max_abs_delta": coerce_float(floor.get("max_abs_delta")),
     }
+
+
+def _floor_record(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any] | None:
+    """The epoch's persisted ``noise_floor`` record as written, or ``None``."""
+    cfg = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "config.json")
+    floor = cfg.get("noise_floor") if isinstance(cfg, dict) else None
+    return floor if isinstance(floor, dict) else None
 
 
 def _per_entry_flip_rates(
@@ -1111,21 +1038,31 @@ def build_eval_dossier(
 # ---------------------------------------------------------------------------
 
 
-def _realised_replicates(paths: WorkspacePaths, epoch_id: str) -> int:
-    """The epoch's per-arm replicate count — the frozen tournament ``replicates``.
+def _replicates_in_effect(
+    paths: WorkspacePaths, epoch_id: str, floor: dict[str, Any] | None
+) -> ReplicateSetting:
+    """The replicate count the epoch runs, resolved the way the loop resolves it.
 
-    The MDE ladder's ``n`` (EVAL-VIEW.md §4.3): read off the frozen
-    ``scoring.json`` tournament block (``params.replicates``); the contract
-    default of ``1`` when absent / malformed (a single sample per arm — the
-    ladder then honest-empties with an "insufficient replication" note).
+    Reads the frozen ``scoring.json`` tournament block and ``promote_margin``
+    and hands them, with the persisted floor, to
+    :func:`zicato.selection.replicates.resolve_replicates`: a pinned
+    ``params.replicates``, else the count the floor sizes against the margin,
+    else the structure's default. A malformed block reads as the default
+    gauntlet with no params.
     """
     scoring = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "scoring.json")
     raw = scoring.get("tournament") if isinstance(scoring, dict) else None
+    structure = raw.get("structure") if isinstance(raw, dict) else None
     params = raw.get("params") if isinstance(raw, dict) else None
-    rep = params.get("replicates") if isinstance(params, dict) else None
-    if isinstance(rep, int) and not isinstance(rep, bool) and rep > 0:
-        return rep
-    return 1
+    try:
+        spec = TournamentStructure(
+            structure=structure if isinstance(structure, str) else "gauntlet",
+            params=dict(params) if isinstance(params, dict) else {},
+        )
+    except ValueError:
+        spec = TournamentStructure(structure="gauntlet", params={})
+    margin = coerce_float(scoring.get("promote_margin")) if isinstance(scoring, dict) else None
+    return resolve_replicates(spec, floor=floor, promote_margin=margin)
 
 
 def _instrument_by_entry(
@@ -1294,6 +1231,33 @@ def _empty_health(epoch_id: str | None) -> dict[str, Any]:
     }
 
 
+def _ladder_for_epoch(
+    paths: WorkspacePaths, epoch_id: str, calibration: dict[str, Any]
+) -> dict[str, Any]:
+    """The ladder over the floor's ``delta_std`` and the replicates in effect.
+
+    ``delta_std`` is the draw-count-stable floor statistic, the one the loop
+    sizes replicates against; a record that carries none falls back to the
+    range ``max_abs_delta`` and the ladder names the fallback.
+    """
+    record = _floor_record(paths, epoch_id)
+    setting = _replicates_in_effect(paths, epoch_id, record)
+    floor: float | None
+    if setting.delta_std is not None:
+        floor, statistic = setting.delta_std, "delta_std"
+    else:
+        floor, statistic = calibration["max_abs_delta"], "max_abs_delta"
+    block = mde_ladder(
+        floor,
+        setting.replicates,
+        floor_statistic=statistic,
+        replicates_source=setting.source,
+    )
+    if setting.note is not None and block["note"] is None:
+        block["note"] = setting.note
+    return block
+
+
 def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
     """The instrument-quality panel for one epoch (EVAL-VIEW.md §5).
 
@@ -1384,7 +1348,7 @@ def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
     return {
         "epoch_id": resolved,
         "found": True,
-        "mde": mde_ladder(calibration["max_abs_delta"], _realised_replicates(paths, resolved)),
+        "mde": _ladder_for_epoch(paths, resolved, calibration),
         "noisiest": noisiest,
         "dead": dead,
         "insufficient": insufficient,

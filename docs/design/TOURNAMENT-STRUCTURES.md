@@ -259,7 +259,11 @@ structure added to the registry cannot fork those views again.
 > duel decided by one paired run is decided by one noise draw. `racing`
 > pins `1` because it replicates intrinsically through escalating board
 > slices. A deterministic contract pins `"replicates": 1` so a duel is a
-> single run.
+> single run. When the contract pins no `replicates` and the epoch carries
+> a measured noise floor, the count in effect is sized from the floor
+> against `promote_margin` and never falls below the default
+> (`src/zicato/selection/replicates.py`;
+> [SELECTION.md §9.1](SELECTION.md#91-the-measured-noise-floor-sizes-the-replicate-count-and-the-racing-cuts)).
 >
 > Each strategy declares its own `_default_replicates` ClassVar, and the
 > registry derives `STRUCTURE_DEFAULT_REPLICATES` (and
@@ -400,6 +404,14 @@ single-replicate dueling bandit (`SELECTION.md §6.3`).
   (escalating board slices = escalating sample), which is why this is the
   one bracket-shaped structure `SELECTION.md` endorses for zicato's
   regime.
+- **rung resolution**: with a measured noise floor on the epoch
+  (`params["noise_floor_delta_std"]`, which `make_strategy` injects), a rung
+  cuts only what its sample resolves. A candidate whose gap to the cut line
+  is below the minimum detectable effect at the rung's entries × replicates
+  advances with the survivors, and the next rung's larger slice resolves
+  it; a rung that cuts nobody still advances. Without a floor the cut is by
+  rank alone
+  ([SELECTION.md §9.1](SELECTION.md#91-the-measured-noise-floor-sizes-the-replicate-count-and-the-racing-cuts)).
 - **grind guard (opt-in wall-clock budgets)**: two optional params cap a
   duel's total board-unit wall-clock. `matchup_budget_seconds` caps **every**
   duel; `final_rung_budget_seconds` overrides it for the final, full-board

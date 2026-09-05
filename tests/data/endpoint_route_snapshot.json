@@ -1476,7 +1476,9 @@
       "mde": {
         "floor_measured": false,
         "floor": null,
-        "replicates": 1,
+        "floor_statistic": null,
+        "replicates": 2,
+        "replicates_source": "structure default",
         "usable": false,
         "formula_n": null,
         "df": null,
@@ -1485,7 +1487,7 @@
         "alpha": 0.05,
         "alpha_relaxed": 0.1,
         "power": 0.8,
-        "formula": "MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd ≈ floor,  df = 2·(n−1)",
+        "formula": "MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd = the floor's delta_std,  df = 2·(n−1)",
         "note": "floor unmeasured — run the A/A calibration to measure the noise floor"
       },
       "noisiest": [],
@@ -1526,7 +1528,9 @@
       "mde": {
         "floor_measured": false,
         "floor": null,
+        "floor_statistic": null,
         "replicates": 0,
+        "replicates_source": null,
         "usable": false,
         "formula_n": null,
         "df": null,
@@ -1535,7 +1539,7 @@
         "alpha": 0.05,
         "alpha_relaxed": 0.1,
         "power": 0.8,
-        "formula": "MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd ≈ floor,  df = 2·(n−1)",
+        "formula": "MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd = the floor's delta_std,  df = 2·(n−1)",
         "note": "floor unmeasured — run the A/A calibration to measure the noise floor"
       },
       "noisiest": [],

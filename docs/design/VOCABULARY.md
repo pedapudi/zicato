@@ -285,12 +285,16 @@ the consecutive-rejection stop. See
 The smallest scalar difference the board can be expected to tell apart
 from noise, given the measured [noise floor](#noise-floor) and the number
 of replicates. The two-sample form is
-`(t_{α/2} + t_β) · floor · √(2/n)` with `n` replicates per side. The
-console serves it with every input beside it, and reports "floor
-unmeasured" or "insufficient replication" rather than a number when an
-input is missing. A promote margin below the detectable effect decides
-on variance. Also called the *minimum detectable effect*. See
-[EVAL-VIEW.md §2.5](EVAL-VIEW.md#25-the-noise-floor-and-the-inputs-to-the-detectable-effect-ladder).
+`(t_{α/2} + t_β) · delta_std · √(2/n)` with `n` replicates per side, where
+`delta_std` is the floor's draw-count-stable statistic. The console serves
+it with every input beside it, and reports "floor unmeasured" or
+"insufficient replication" rather than a number when an input is missing.
+A promote margin below the detectable effect decides on variance, so when
+the contract pins no replicate count the run sizes the count from this
+formula until the effect is within the margin. Also called the *minimum
+detectable effect*. See
+[EVAL-VIEW.md §2.5](EVAL-VIEW.md#25-the-noise-floor-and-the-inputs-to-the-detectable-effect-ladder)
+and [SELECTION.md §9.1](SELECTION.md#91-the-measured-noise-floor-sizes-the-replicate-count-and-the-racing-cuts).
 
 ## Discrimination
 
@@ -826,7 +830,9 @@ slice (`board_fraction` or `rung0_board_size` of the board). After each
 [rung](#rung) the worst `1 − 1/eta` of the field by scalar is cut, and
 the survivors re-duel on a larger slice. The last survivor meets the
 champion at the champion gate on the full board. Elimination within a
-rung is by rank rather than by the promotion gate. The scaffold `zicato
+rung is by rank rather than by the promotion gate; with a measured
+[noise floor](#noise-floor) on the epoch, a candidate whose gap to the cut
+line is below what the rung's sample resolves advances instead. The scaffold `zicato
 init` writes selects racing with a field of four. See
 [TOURNAMENT-STRUCTURES.md §3.5](TOURNAMENT-STRUCTURES.md#35-racing-the-endorsed-bracket-shaped-option).
 
@@ -869,7 +875,11 @@ entry, at a distinct replicate index. Outputs and model-backed judges
 vary between runs, so a single run is one sample; averaging paired
 replicates before the gate is what separates a real difference from
 that variation. The `replicates` param defaults to 2 for the gauntlet,
-the elimination brackets, and Swiss, and to 1 for racing. Replicate
+the elimination brackets, and Swiss, and to 1 for racing; when the
+contract pins none and the epoch carries a measured
+[noise floor](#noise-floor), the count in effect is the smallest one whose
+[detectable effect](#detectable-effect) is within the promote margin, never
+below the default (`src/zicato/selection/replicates.py`). Replicate
 indices are partitioned by purpose so no two purposes share a cache
 slot: tournament duels from 0, noise-floor calibration from 1000, the
 preflight from 2000, screening from 3000, the evidence gate from 4000,
