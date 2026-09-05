@@ -50,7 +50,7 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 471,301 | +62,640 |
+| Total | 408,661 | 472,000 | +63,339 |
 | Production | 197,702 | 204,924 | +7,222 |
 | Production logic | 110,276 | 113,954 | +3,678 |
 
@@ -62,6 +62,75 @@ provenance record of 408,547 total and 197,588 production for the same
 reference is that measurement taken while the exclusion list also named that
 file. The raw count of 425,755 retained in `.line-budget.json` includes
 lockfiles and excluded paths and is not an enforced metric.
+
+## Production logic by subsystem
+
+The three counts are also taken per subsystem, where a subsystem is a package
+directly under `src/zicato/`, a crate, an integration, or a top-level path, and
+a subsystem's three numbers partition the repository-wide ones: the production
+logic column below sums to the enforced logic count. Prose share is the share
+of a subsystem's production lines that do not execute (blank lines, comments,
+and docstrings), `1 - logic / production`. CSS and HTML hold no logic counter,
+so every line of the console's stylesheet counts as executable here as in the
+enforced measurement.
+
+The table lists every subsystem holding production files in descending order
+of production logic and states the working tree of the commit that wrote it.
+`python tools/line_budget.py --write-summary` rewrites it from a fresh
+measurement, and `--check-ledger` fails when the table differs from the tree it
+runs in, so a change to production code lands with the table it produces.
+`--report` prints the same table for every subsystem, and `--history` prints the
+production-logic series per subsystem along a branch's first-parent commits.
+
+| Subsystem | Total | Production | Production logic | Prose share |
+|---|---:|---:|---:|---:|
+| src/zicato/dashboard | 73,780 | 39,951 | 27,640 | 30.8% |
+| src/zicato/query | 18,672 | 18,672 | 11,159 | 40.2% |
+| src/zicato/evolve | 12,662 | 12,662 | 7,533 | 40.5% |
+| src/zicato/reflection | 9,779 | 9,779 | 6,159 | 37.0% |
+| src/zicato/epoch | 12,287 | 12,287 | 5,704 | 53.6% |
+| crates/supervisor | 14,561 | 12,130 | 5,498 | 54.7% |
+| src/zicato/tournament | 10,793 | 10,793 | 5,498 | 49.1% |
+| src/zicato/proposer | 11,053 | 11,053 | 5,491 | 50.3% |
+| src/zicato/cli | 8,192 | 8,192 | 5,178 | 36.8% |
+| src/zicato/analyzer | 7,635 | 7,635 | 4,781 | 37.4% |
+| src/zicato/selection | 5,271 | 5,271 | 2,837 | 46.2% |
+| src/zicato/index | 5,513 | 5,513 | 2,773 | 49.7% |
+| src/zicato/tui | 3,839 | 3,839 | 2,535 | 34.0% |
+| src/zicato/telemetry | 4,684 | 4,684 | 2,236 | 52.3% |
+| src/zicato/runtime | 5,080 | 5,080 | 2,183 | 57.0% |
+| src/zicato/core | 6,274 | 6,274 | 1,970 | 68.6% |
+| src/zicato/contract_draft | 2,928 | 2,928 | 1,684 | 42.5% |
+| src/zicato/health | 2,268 | 2,268 | 1,226 | 45.9% |
+| src/zicato/builder | 2,165 | 2,165 | 1,222 | 43.6% |
+| src/zicato/mutation | 2,607 | 2,607 | 1,135 | 56.5% |
+| src/zicato/board | 2,346 | 2,346 | 1,044 | 55.5% |
+| src/zicato/check | 1,566 | 1,566 | 956 | 39.0% |
+| src/zicato/adapters | 2,168 | 2,168 | 793 | 63.4% |
+| src/zicato/testing | 1,447 | 1,447 | 760 | 47.5% |
+| src/zicato/judge_runtime | 1,749 | 1,749 | 740 | 57.7% |
+| src/zicato/_tournament_worker.py | 1,262 | 1,262 | 633 | 49.8% |
+| src/zicato/workspace | 1,614 | 1,614 | 629 | 61.0% |
+| src/zicato/synthetic | 1,139 | 1,139 | 544 | 52.2% |
+| src/zicato/scoring | 1,388 | 1,388 | 464 | 66.6% |
+| src/zicato/patterns | 804 | 804 | 417 | 48.1% |
+| src/zicato/models_config.py | 447 | 447 | 356 | 20.4% |
+| src/zicato/emulator | 675 | 675 | 306 | 54.7% |
+| src/zicato/example_workspace | 658 | 658 | 301 | 54.3% |
+| src/zicato/storage | 931 | 931 | 289 | 69.0% |
+| src/zicato/config.py | 679 | 679 | 225 | 66.9% |
+| src/zicato/logging_stream.py | 445 | 445 | 215 | 51.7% |
+| src/zicato/runtime_factory.py | 421 | 421 | 210 | 50.1% |
+| src/zicato/workspace_loader.py | 362 | 362 | 143 | 60.5% |
+| src/zicato/integrations | 143 | 143 | 100 | 30.1% |
+| src/zicato/reasoning.py | 112 | 112 | 83 | 25.9% |
+| src/zicato/adapter_factory.py | 218 | 218 | 73 | 66.5% |
+| src/zicato/import_path.py | 155 | 155 | 60 | 61.3% |
+| hatch_build.py | 97 | 97 | 54 | 44.3% |
+| src/zicato/util | 173 | 173 | 50 | 71.1% |
+| src/zicato/__init__.py | 74 | 74 | 48 | 35.1% |
+| src/zicato/orchestrator.py | 14 | 14 | 11 | 21.4% |
+| src/zicato/aux_timeout.py | 54 | 54 | 8 | 85.2% |
 
 ## Ratchet policy
 
@@ -311,3 +380,4 @@ dropped rows named.
 | Three tournament structures behind an experimental opt-in (total) | 470,789 | +512 | 471,301 | Issue #394's namespace begins: `single_elim`, `double_elim` and `swiss` resolve only under the contract's `experimental.tournament_structures` flag, the first member of the `experimental` block. Tests carry 234 of the rise. `tests/test_selection_experimental_structures.py` is 277 lines, 191 of them the single-elimination, double-elimination and Swiss cases moved out of `tests/test_selection_strategies.py`, which falls by the same 191; the rest pin the refusal without the opt-in, the resolution with it, and that the registry's experimental tokens equal the core set. `tests/test_epoch_contract.py` gains 24 for the pair stating that the block at its default keeps the hash and a raised flag moves it; `tests/test_knob_registry.py` 23 for the scaffold pin, the omit-set entry and the container exemption; `tests/test_cli_help.py` 20 for the option's two refusals; `src/zicato/dashboard/static/test/builder.test.mjs` 18 for the Experimental section's toggle and the gated card group; `tests/data/workspace_reader_parity_snapshot.json` 12 where the serialized scoring of four fixture epochs gains the block; `tests/_contract_pins.py` 11 for the helper that opts a test contract in; and thirteen other test files 40 between them for the opt-in at each contract construction site. Outside tests, the three example contracts gain 3 each, the CLI help golden 5 where the option's help grows, and the capture harness 5. Production carries the remaining 259, accounted for below. |
 | Three tournament structures behind an experimental opt-in (production) | 204,665 | +259 | 204,924 | Issue #394: `core/scoring_config.py` gains 61 for the `ExperimentalConfig` dataclass, its docstring, the `experimental` field and the load-time refusal of an experimental structure without the flag; `contract_draft/operations.py` 34 for `set_experimental`; `core/tournament.py` 28 for the experimental token set, the key and the one refusal message every surface renders; `cli/commands/evolve.py` 27 for the option's validating callback and its longer help; `selection/registry.py` 26 for the second registry, the gated resolution and the `experimental_structures` parameter, whose keyword-only marker it shares with the replicate parameters the noise-floor sizing added; `builder/copilot_tools.py` 22 for the `set_experimental` tool and the reworded `set_structure` description; `dashboard/static/js/views/builder.js` 21 for the gated card group and the Experimental section; `dashboard/static/js/builder/model.js` 15 for the split structure lists and the predicate; `selection/experimental/__init__.py` 12 of package docstring; `builder/api.py` 4 for the dispatch arm; `runtime/resume.py` 3, `core/types.py` 2 and `selection/__init__.py` 2 for the export and the threaded flag; `evolve/round_entry.py` and `cli/commands/tournament.py` 1 each for the flag passed to `make_strategy`. The three moved strategy modules change no line. |
 | Three tournament structures behind an experimental opt-in (production logic) | 113,824 | +130 | 113,954 | Issue #394: the executable growth is 24 lines in `core/scoring_config.py` (the dataclass, the field, the import and the refusal), 23 in `contract_draft/operations.py` (`set_experimental`), 18 in `cli/commands/evolve.py` (the callback and the option's help string), 18 in `dashboard/static/js/views/builder.js`, 10 in `selection/registry.py`, 9 each in `builder/copilot_tools.py` and `core/tournament.py`, 6 in `dashboard/static/js/builder/model.js`, 4 in `builder/api.py`, 3 in `runtime/resume.py`, 2 each in `core/types.py` and `selection/__init__.py`, and 1 each in `evolve/round_entry.py` and `cli/commands/tournament.py`. Nothing executable is removed. |
+| Production logic per subsystem and over time (total) | 471,301 | +699 | 472,000 | `tools/line_budget.py` adds 336: the partition of the three measurements by subsystem with each subsystem's prose share, the `--report` table, the per-subsystem table in this document that `--write-summary` writes and `--check-ledger` verifies, and the `--history` walk over first-parent commits through a content-addressed cache. `tests/test_line_budget.py` adds 352: hand counts of one small file per language in a subsystem of its own, the identity that the subsystems sum to the repository-wide counts, the table checks, and the history walk's caching and its refusal of a commit off the first-parent chain. The CI job writes the `--report` table into the job summary (8 lines) and `.gitignore` names the history cache (3). No production file changes, so the production and production-logic counts hold. |

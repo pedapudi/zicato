@@ -19,6 +19,9 @@ env/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+# The line-budget history cache (tools/line_budget.py --history): per-blob and
+# per-commit counts that are content-addressed and rebuilt on demand.
+.cache/
 .coverage
 htmlcov/
 
