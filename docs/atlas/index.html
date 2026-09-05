@@ -1,0 +1,2810 @@
+<title>Zicato Atlas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link id="basefonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Mono:wght@400;500;600&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=Source+Code+Pro:wght@400;500;600&display=swap">
+
+<style>
+/* ==================================================================
+   Zicato Atlas — the Console shell, carried over.
+
+   Colour is the six-role contract: paper / panel / ink / good / bad /
+   accent, each meaning the same thing in every theme. `good` and `bad`
+   report what happened to a candidate rather than what role it holds, so
+   a challenger takes `bad` only when it regressed. `accent` is reserved
+   for structure and interaction. No drawing carries a literal colour;
+   each reads the active theme's tokens, so switching theme repaints
+   without redrawing.
+
+   Typography is a separate axis: [data-t-type] routes families into
+   --v2-sans and --v2-mono. There are no --v2-serif or --v2-display
+   tokens; an editorial face routes everything, mono included, to its
+   serif.
+   ================================================================== */
+
+/* Base palette: solarized light, the complete role contract. */
+:root {
+  --v2-paper:      #FDF6E3;
+  --v2-panel:      #FBF1D6;
+  --v2-ink:        #586E75;
+  --v2-ink-soft:   #657B83;
+  --v2-ink-faint:  #93A1A1;
+  --v2-rule:       #E7DCBE;
+  --v2-rule-soft:  #F0E7CC;
+  --v2-good:       #6B9B0B;
+  --v2-good-soft:  #E3ECCB;
+  --v2-bad:        #DC322F;
+  --v2-bad-soft:   #F6DDD3;
+  --v2-caution:    #B58900;
+  --v2-accent:     #268BD2;
+  --v2-flat:       #93A1A1;
+  --v2-cell-empty: #F2E9CE;
+  --v2-ink-strong: #0f2a30;
+
+  --v2-sans: "Source Sans 3", system-ui, sans-serif;
+  --v2-mono: "Source Code Pro", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --n-font-head: var(--v2-sans);
+  --measure: 68ch;
+
+  --fs: 16px;
+  --rail: 16.5rem;
+}
+
+/* An unstamped document under a dark OS, and the explicit dark toggle,
+   both take monokai — the Console default. A picked theme writes its own
+   tokens inline on :root and wins over both. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --v2-paper: #1e1f1c; --v2-panel: #272822;
+    --v2-ink: #f8f8f2; --v2-ink-soft: #c9cabf; --v2-ink-faint: #8f908a;
+    --v2-rule: #3a3b34; --v2-rule-soft: #2f302a;
+    --v2-good: #a6e22e; --v2-good-soft: #2c361a;
+    --v2-bad: #f92672;  --v2-bad-soft: #3a1622;
+    --v2-caution: #e6db74; --v2-accent: #66d9ef;
+    --v2-flat: #75715e; --v2-cell-empty: #23241f;
+    --v2-ink-strong: #ffffff;
+  }
+}
+:root[data-theme="dark"] {
+  --v2-paper: #1e1f1c; --v2-panel: #272822;
+  --v2-ink: #f8f8f2; --v2-ink-soft: #c9cabf; --v2-ink-faint: #8f908a;
+  --v2-rule: #3a3b34; --v2-rule-soft: #2f302a;
+  --v2-good: #a6e22e; --v2-good-soft: #2c361a;
+  --v2-bad: #f92672;  --v2-bad-soft: #3a1622;
+  --v2-caution: #e6db74; --v2-accent: #66d9ef;
+  --v2-flat: #75715e; --v2-cell-empty: #23241f;
+  --v2-ink-strong: #ffffff;
+}
+
+
+/* Stage hues: a categorical encoding for which part of the loop a concept
+   belongs to. Assigned in fixed order and never cycled. Separate from the
+   console's six semantic roles, which stay reserved for direction. Good and
+   bad still mean improvement and regression rather than identity. Both sets pass
+   the lightness, chroma, colour-vision-separation and contrast checks. */
+:root {
+  --s0: #1F6FD0; --s1: #C2410C; --s2: #0E8A6A; --s3: #9333A8; --s4: #B08900;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --s0: #4E86D4; --s1: #CE6F42; --s2: #2F9E77; --s3: #9E68BE; --s4: #AE8A28;
+  }
+}
+:root[data-theme="dark"], :root[data-t-theme="monokai"], :root[data-t-theme="solarized-dark"] {
+  --s0: #4E86D4; --s1: #CE6F42; --s2: #2F9E77; --s3: #9E68BE; --s4: #AE8A28;
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--v2-paper); }
+
+body {
+  margin: 0;
+  background: var(--v2-paper);
+  color: var(--v2-ink);
+  font-family: var(--v2-sans);
+  font-size: var(--fs);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ============================================ shell */
+.shell { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); min-height: 100vh; }
+
+/* ============================================ top bar */
+.topbar {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap;
+  padding: 0.6rem 1.4rem;
+  border-bottom: 1px solid var(--v2-rule);
+  background: var(--v2-panel);
+  position: relative; z-index: 30;
+}
+
+.brand { display: flex; align-items: center; gap: 0.55rem; }
+.brand svg.mark { height: 22px; width: auto; color: var(--v2-ink-strong); display: block; }
+
+/* the register tag beside the wordmark */
+.dt-brand-variant {
+  font: 9.5px/1.25 var(--v2-mono);
+  text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--v2-ink-faint); align-self: center; user-select: none;
+}
+
+/* research preview: stacked two lines, hairline divider off the wordmark —
+   a faint rule rather than a coloured rail. */
+.dt-respreview {
+  display: inline-flex; flex-direction: column; justify-content: center;
+  align-self: center; pointer-events: none;
+  font: 9.5px/1.25 var(--v2-mono);
+  text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--v2-ink-faint);
+  border-left: 1px solid var(--v2-rule);
+  padding-left: 7px; margin-left: 1px;
+  user-select: none;
+}
+.dt-respreview-line { white-space: nowrap; display: block; }
+
+.topbar .spacer { flex: 1 1 auto; }
+.chrome { display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap; }
+
+/* ---- shared trigger button register ---- */
+.dt-trigger {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  background: var(--v2-paper); color: var(--v2-ink-soft);
+  border: 1px solid var(--v2-rule); border-radius: 3px;
+  padding: 0.25rem 0.5rem; cursor: pointer;
+  font-family: var(--v2-mono); font-size: 0.72rem;
+  letter-spacing: 0.07em; text-transform: uppercase;
+}
+.dt-trigger:hover { color: var(--v2-ink-strong); border-color: var(--v2-ink-faint); }
+.dt-trigger:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }
+.dt-trigger .caret { font-size: 0.6rem; color: var(--v2-ink-faint); }
+
+/* the 6-swatch preview strip: ground · surface · ink · improve · regress · accent */
+.swatchstrip { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 2px; overflow: hidden; }
+.swatchstrip i { display: block; width: 9px; height: 13px; }
+
+/* ---- popovers ---- */
+.pop {
+  position: absolute; top: calc(100% + 6px); right: 0;
+  background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 3px;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.22);
+  padding: 0.35rem; z-index: 50;
+  max-height: 70vh; overflow-y: auto; min-width: 15rem;
+}
+.popwrap { position: relative; }
+.pop[hidden] { display: none !important; }
+.pop ul { list-style: none; margin: 0; padding: 0; }
+.pop .opt {
+  display: flex; align-items: center; gap: 0.55rem; width: 100%;
+  background: none; border: none; cursor: pointer; text-align: left;
+  padding: 0.32rem 0.45rem; border-radius: 2px;
+  color: var(--v2-ink-soft); font-family: var(--v2-sans); font-size: 0.86rem;
+}
+.pop .opt:hover { background: var(--v2-rule-soft); color: var(--v2-ink-strong); }
+.pop .opt:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: -2px; }
+/* the sanctioned selected state: the NAME renders in the accent */
+.pop .opt[aria-selected="true"] { color: var(--v2-accent); font-weight: 600; }
+.pop .grouphead {
+  font-family: var(--v2-mono); font-size: 0.66rem; letter-spacing: 0.11em;
+  text-transform: uppercase; color: var(--v2-ink-faint);
+  padding: 0.5rem 0.45rem 0.2rem;
+}
+.pop .specimen { font-size: 0.95rem; }
+.pop .deflabel { font-family: var(--v2-mono); font-size: 0.62rem; color: var(--v2-ink-faint); letter-spacing: 0.08em; }
+
+/* size segmented control inside the typeface popover */
+.sizerow { display: flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.45rem 0.25rem; border-top: 1px solid var(--v2-rule); margin-top: 0.35rem; }
+.sizerow .lbl { font-family: var(--v2-mono); font-size: 0.66rem; letter-spacing: 0.11em; text-transform: uppercase; color: var(--v2-ink-faint); }
+.sizerow button {
+  background: none; border: none; cursor: pointer; padding: 0.1rem 0.3rem;
+  font-family: var(--v2-mono); font-size: 0.78rem; color: var(--v2-ink-soft);
+}
+.sizerow button[aria-pressed="true"] { color: var(--v2-accent); font-weight: 600; }
+
+/* ---- scale pill ---- */
+.dt-scale-pill {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  border: 1px solid var(--v2-rule); border-radius: 999px;
+  padding: 0.15rem 0.6rem; background: var(--v2-paper);
+}
+.dt-scale-pill .lbl { font-family: var(--v2-mono); font-size: 0.66rem; letter-spacing: 0.09em; text-transform: uppercase; color: var(--v2-ink-faint); }
+.dt-scale-range { width: 5.5rem; accent-color: var(--v2-accent); }
+.dt-scale-pill output { font-family: var(--v2-mono); font-size: 0.72rem; color: var(--v2-ink-soft); font-variant-numeric: tabular-nums; min-width: 2.6rem; text-align: right; }
+.dt-scale-reset { background: none; border: none; cursor: pointer; color: var(--v2-ink-faint); font-size: 0.85rem; padding: 0 0.1rem; }
+.dt-scale-reset:hover { color: var(--v2-ink-strong); }
+
+/* ============================================ tree rail — navigation lives in the shell */
+.rail {
+  border-right: 1px solid var(--v2-rule);
+  padding: 1.2rem 0.9rem 3rem 1.2rem;
+  background: var(--v2-paper);
+}
+.rail nav { position: sticky; top: 1.1rem; display: flex; flex-direction: column; gap: 1.1rem; }
+.branch > .bname {
+  font-family: var(--v2-mono); font-size: 0.68rem; letter-spacing: 0.11em;
+  text-transform: uppercase; color: var(--v2-ink-faint);
+  display: block; margin-bottom: 0.35rem;
+}
+.branch ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.05rem; }
+.branch a { display: block; padding: 0.14rem 0; color: var(--v2-ink-soft); text-decoration: none; font-size: 0.93rem; }
+.branch a:hover { color: var(--v2-ink-strong); }
+.branch a[aria-current="true"] { color: var(--v2-accent); font-weight: 600; }
+
+/* ============================================ detail pane */
+.detail { padding: 2.6rem 3rem 6rem; max-width: 96rem; }
+figure.fig, .tablewrap, pre, .cmds, .clocks, .gate, .stepper { max-width: 62rem; }
+section { margin-bottom: 4.2rem; scroll-margin-top: 1.2rem; }
+h1, h2, h3 { color: var(--v2-ink-strong); text-wrap: balance; font-family: var(--n-font-head); }
+h1 { font-size: 2.7rem; line-height: 1.08; margin: 0 0 0.9rem; font-weight: 700; letter-spacing: -0.022em; }
+h2 { font-size: 1.72rem; line-height: 1.18; margin: 0 0 0.5rem; font-weight: 700; letter-spacing: -0.014em; }
+h3 { font-size: 1.13rem; margin: 2.1rem 0 0.45rem; font-weight: 700; letter-spacing: -0.005em; }
+p { margin: 0.85rem 0; max-width: var(--measure); line-height: 1.62; }
+.lede {
+  font-size: 1.24rem; line-height: 1.5; color: var(--v2-ink-soft);
+  max-width: 60ch; font-weight: 400; margin-bottom: 1.4rem;
+}
+.lede strong { color: var(--v2-ink-strong); font-weight: 600; }
+.subhead { color: var(--v2-ink-faint); font-size: 1rem; max-width: 56ch; margin: 0 0 2.2rem; }
+.dim { color: var(--v2-ink-faint); font-size: 0.86em; }
+.eyebrow {
+  font-family: var(--v2-mono); font-size: 0.68rem; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--v2-ink-faint); margin-bottom: 0.7rem;
+}
+code, .mono { font-family: var(--v2-mono); font-size: 0.88em; }
+code { background: var(--v2-rule-soft); padding: 0.1em 0.34em; border-radius: 2px; }
+a { color: var(--v2-accent); }
+.caption { color: var(--v2-ink-faint); font-size: 0.9rem; line-height: 1.55; margin-top: 0.8rem; max-width: var(--measure); }
+hr.rule { border: none; border-top: 1px solid var(--v2-rule); margin: 0 0 3.4rem; opacity: 0.65; }
+
+/* ============================================ tables */
+.tablewrap { overflow-x: auto; margin: 1rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.96rem; }
+th, td { text-align: left; padding: 0.72rem 1.1rem 0.72rem 0; border-bottom: 1px solid var(--v2-rule); vertical-align: top; line-height: 1.5; }
+th {
+  font-family: var(--v2-mono); font-weight: 500; font-size: 0.7rem;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--v2-ink-faint);
+  border-bottom-color: var(--v2-ink-faint);
+}
+tbody tr:last-child td { border-bottom: none; }
+
+/* ============================================ nested clocks */
+.clocks { display: flex; flex-direction: column; margin: 1.3rem 0 0.4rem; }
+.clock { border: 1px solid var(--v2-rule); border-bottom: none; padding: 0.8rem 1rem; background: var(--v2-panel); }
+.clock:last-child { border-bottom: 1px solid var(--v2-rule); }
+.clock:nth-child(2) { margin-left: 1.6rem; }
+.clock:nth-child(3) { margin-left: 3.2rem; }
+.clock:nth-child(4) { margin-left: 4.8rem; }
+.clock .cname { font-family: var(--v2-mono); font-weight: 600; font-size: 0.94rem; color: var(--v2-ink-strong); }
+.clock .cwhat { color: var(--v2-ink-soft); font-size: 0.9rem; margin-top: 0.12rem; }
+.clock .cunit { color: var(--v2-ink-faint); font-size: 0.8rem; font-family: var(--v2-mono); margin-top: 0.15rem; }
+
+/* ============================================ figures
+   Fit-to-width: a viewBox plus width:100%, no fixed pixel width and no
+   pan or zoom. Every shape takes an explicit fill from a theme token, so
+   a figure repaints with the theme and is legible on either ground. */
+figure.fig { margin: 1.9rem 0 0.6rem; }
+figure.fig svg { width: 100%; height: auto; display: block; overflow: visible; }
+figure.fig figcaption { color: var(--v2-ink-faint); font-size: 0.85rem; margin-top: 0.5rem; max-width: 64ch; }
+.fig .flabel { font-family: var(--v2-mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--v2-ink-faint); }
+.fig .fname { font-family: var(--v2-sans); font-size: 12px; font-weight: 600; fill: var(--v2-ink); }
+.fig .fnote { font-family: var(--v2-sans); font-size: 11px; fill: var(--v2-ink-soft); }
+.fig .fdata { font-family: var(--v2-mono); font-size: 10.5px; fill: var(--v2-ink-soft); }
+.fig .fbox { fill: var(--v2-panel); stroke: var(--v2-rule); stroke-width: 1; }
+.fig .fbox-q { fill: var(--v2-paper); stroke: var(--v2-ink-faint); stroke-width: 1; }
+.fig .fline { stroke: var(--v2-rule); stroke-width: 1.1; fill: none; }
+.fig .farrow { stroke: var(--v2-ink-faint); stroke-width: 1.2; fill: none; }
+.fig .fhead { fill: var(--v2-ink-faint); }
+.fig .s-good { stroke: var(--v2-good); }
+.fig .s-bad { stroke: var(--v2-bad); }
+.fig .s-accent { stroke: var(--v2-accent); }
+.fig .f-good { fill: var(--v2-good); }
+.fig .f-bad { fill: var(--v2-bad); }
+.fig .f-accent { fill: var(--v2-accent); }
+.fig .f-flat { fill: var(--v2-flat); }
+.fig .fill-good { fill: var(--v2-good-soft); stroke: var(--v2-good); stroke-width: 1; }
+.fig .fill-bad { fill: var(--v2-bad-soft); stroke: var(--v2-bad); stroke-width: 1; }
+.fig .fill-empty { fill: var(--v2-cell-empty); stroke: var(--v2-rule); stroke-width: 1; }
+.fig .dashed { stroke-dasharray: 3 3; }
+.fig .hm0 { fill: var(--v2-cell-empty); stroke: var(--v2-rule); stroke-width: 1; }
+.fig .hm1 { fill: color-mix(in srgb, var(--v2-accent) 26%, var(--v2-paper)); stroke: var(--v2-rule); stroke-width: 1; }
+.fig .hm2 { fill: color-mix(in srgb, var(--v2-accent) 55%, var(--v2-paper)); stroke: var(--v2-rule); stroke-width: 1; }
+.fig .hm3 { fill: color-mix(in srgb, var(--v2-caution) 62%, var(--v2-paper)); stroke: var(--v2-rule); stroke-width: 1; }
+.fig .hm4 { fill: color-mix(in srgb, var(--v2-bad) 62%, var(--v2-paper)); stroke: var(--v2-rule); stroke-width: 1; }
+.fig .hm5 { fill: color-mix(in srgb, var(--v2-bad) 88%, var(--v2-paper)); stroke: var(--v2-rule); stroke-width: 1; }
+
+/* ============================================ concept map */
+.mapsection {
+  background: var(--v2-panel);
+  border: 1px solid var(--v2-rule);
+  border-radius: 6px;
+  padding: 2rem 1.4rem 1.6rem;
+  margin: 0 -0.8rem 4.2rem;
+  max-width: none;
+}
+.mapsection h2 { font-size: 2rem; }
+.mapsection > p { max-width: 62ch; }
+.mapsection .mapscroll { margin: 0 -0.6rem; }
+
+.mapcontrols { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin: 1.1rem 0 0.7rem; }
+.mapcontrols .lbl { font-family: var(--v2-mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--v2-ink-faint); }
+.mapcontrols button { background: none; border: none; padding: 0.1rem 0; cursor: pointer; font-family: var(--v2-sans); font-size: 0.89rem; color: var(--v2-ink-soft); }
+.mapcontrols button:hover { color: var(--v2-ink-strong); }
+.mapcontrols button[aria-pressed="true"] { color: var(--v2-accent); font-weight: 600; }
+
+.mapsearch {
+  font: inherit; font-size: 0.88rem; color: var(--v2-ink);
+  background: var(--v2-paper); border: 1px solid var(--v2-rule);
+  border-radius: 3px; padding: 0.2rem 0.5rem; width: 12rem;
+}
+.mapsearch:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; border-color: var(--v2-accent); }
+.mapsearch::placeholder { color: var(--v2-ink-faint); }
+.maphint { font-size: 0.82rem; color: var(--v2-ink-faint); }
+.maphint b { color: var(--v2-accent); font-weight: 600; }
+.tourbar { align-items: center; margin-top: 1.4rem; }
+#tourstart {
+  font-family: var(--v2-sans); font-size: 0.94rem; text-transform: none;
+  letter-spacing: 0; padding: 0.42rem 0.9rem; font-weight: 600;
+  color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent);
+}
+#tourstart:hover { color: var(--v2-paper); opacity: 0.88; }
+.tournav {
+  background: none; border: none; cursor: pointer; padding: 0.15rem 0;
+  font-family: var(--v2-sans); font-size: 0.88rem; color: var(--v2-accent);
+}
+.tournav:hover { text-decoration: underline; }
+.tournav[disabled] { color: var(--v2-ink-faint); cursor: default; text-decoration: none; }
+.tourstep {
+  font-family: var(--v2-mono); font-size: 0.74rem; color: var(--v2-ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+/* No left rail — the design language rejects one. The lead line earns its
+   emphasis from weight and measure instead. */
+.ndwhy { color: var(--v2-ink); font-size: 1rem; font-weight: 600; margin: 0.4rem 0 0; max-width: 52ch; }
+#conceptmap g.node:not(.core) .nodebox { stroke-dasharray: 2 2; }
+
+/* fit-to-width: viewBox + width 100%, no pan/zoom */
+.mapscroll { overflow-x: auto; }
+#conceptmap { width: 100%; height: auto; display: block; min-width: 44rem; }
+#conceptmap .laneband { opacity: 0.1; }
+#conceptmap .loophead { fill: var(--v2-ink-faint); opacity: 0.7; }
+#conceptmap .lanename {
+  font-family: var(--v2-mono); font-size: 11.5px; letter-spacing: 0.12em;
+  text-transform: uppercase; fill: var(--v2-ink-faint);
+}
+#conceptmap .loopback { fill: none; stroke: var(--v2-ink-faint); stroke-width: 1.4; stroke-dasharray: 5 4; opacity: 0.7; }
+#conceptmap .loopnote { font-family: var(--v2-mono); font-size: 10px; fill: var(--v2-ink-faint); }
+
+/* the chip is the click target, 24px tall rather than a 5px dot */
+#conceptmap g.node { cursor: pointer; }
+#conceptmap g.node:focus { outline: none; }
+#conceptmap .chipbg { fill: var(--v2-paper); }
+#conceptmap .chip { fill-opacity: 0.16; stroke-width: 1.2; stroke-opacity: 0.6; }
+#conceptmap g.node.core .chip { fill-opacity: 0.2; stroke-opacity: 0.9; }
+#conceptmap .nodelabel {
+  font-family: var(--v2-sans); font-size: 13.5px; fill: var(--v2-ink);
+  pointer-events: none; font-weight: 500;
+}
+#conceptmap g.node.core .nodelabel { font-weight: 600; }
+#conceptmap g.node:hover .chip { fill-opacity: 0.34; stroke-opacity: 1; }
+#conceptmap g.node:focus-visible .chip { stroke: var(--v2-accent); stroke-width: 2.4; stroke-opacity: 1; }
+#conceptmap g.node.selected .chip { fill-opacity: 0.5; stroke: var(--v2-accent); stroke-width: 2.2; stroke-opacity: 1; }
+#conceptmap g.node.selected .nodelabel { fill: var(--v2-ink-strong); font-weight: 700; }
+#conceptmap g.node.neighbor .chip { stroke-opacity: 1; stroke-width: 1.8; }
+#conceptmap g.node.neighbor .nodelabel { fill: var(--v2-ink-strong); }
+#conceptmap g.node.dim { opacity: 0.22; }
+#conceptmap g.node.down .chip { stroke: var(--v2-good); stroke-width: 1.8; stroke-opacity: 1; }
+
+#conceptmap .link { fill: none; stroke-width: 1.6; }
+#conceptmap .link.out { stroke: var(--v2-accent); }
+#conceptmap .link.in { stroke: var(--v2-ink-faint); stroke-dasharray: 3 3; }
+#conceptmap .link.faint { stroke: var(--v2-good); opacity: 0.32; stroke-width: 1.2; }
+@media (prefers-reduced-motion: no-preference) {
+  #conceptmap g.node, #conceptmap .link { transition: opacity 150ms ease; }
+}
+
+/* legend: identity is never colour alone — every part is named beside its swatch */
+.maplegend { display: flex; flex-wrap: wrap; gap: 0.15rem 1.1rem; margin: 0.7rem 0 0; }
+.maplegend button {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  background: none; border: none; padding: 0.2rem 0; cursor: pointer;
+  font-family: var(--v2-sans); font-size: 0.86rem; color: var(--v2-ink-soft);
+}
+.maplegend button:hover { color: var(--v2-ink-strong); }
+.maplegend button[aria-pressed="true"] { color: var(--v2-accent); font-weight: 600; }
+.maplegend .sw { width: 11px; height: 11px; border-radius: 2px; flex: none; }
+
+.nodedetail { margin-top: 1.1rem; border-top: 1px solid var(--v2-rule); padding-top: 1rem; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 1.4rem 2.2rem; }
+.nodedetail h3 { margin: 0 0 0.1rem; font-size: 1.12rem; color: var(--v2-accent); }
+.nodedetail .where { font-family: var(--v2-mono); font-size: 0.7rem; color: var(--v2-ink-faint); letter-spacing: 0.09em; text-transform: uppercase; margin: 0; }
+.nodedetail p { margin: 0.5rem 0 0; }
+.rellist { list-style: none; margin: 0.2rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.26rem; }
+.rellist li { font-size: 0.91rem; color: var(--v2-ink-soft); }
+.rellist .verb { font-family: var(--v2-mono); font-size: 0.78rem; color: var(--v2-ink-faint); }
+.rellist button { background: none; border: none; padding: 0; cursor: pointer; font: inherit; color: var(--v2-accent); text-align: left; }
+.rellist button:hover { text-decoration: underline; }
+
+/* hovercard: a singleton transient overlay outside the render path */
+#hovercard {
+  position: fixed; z-index: 60; max-width: 21rem;
+  background: var(--v2-panel); color: var(--v2-ink);
+  border: 1px solid var(--v2-rule); border-radius: 3px;
+  padding: 0.5rem 0.65rem; font-size: 0.85rem; line-height: 1.45;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.2); pointer-events: none;
+}
+#hovercard .hc-name { font-weight: 600; color: var(--v2-ink-strong); }
+
+/* ============================================ round stepper */
+.stepper { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 0 2rem; margin-top: 1.1rem; }
+.steplist { list-style: none; margin: 0; padding: 0; border-right: 1px solid var(--v2-rule); }
+.steplist button {
+  display: flex; gap: 0.6rem; align-items: baseline; width: 100%;
+  background: none; border: none; cursor: pointer; text-align: left;
+  padding: 0.4rem 1rem 0.4rem 0; font-family: var(--v2-sans); font-size: 0.94rem; color: var(--v2-ink-soft);
+}
+.steplist button:hover { color: var(--v2-ink-strong); }
+.steplist button[aria-selected="true"] { color: var(--v2-accent); font-weight: 600; }
+.steplist .ord { font-family: var(--v2-mono); font-size: 0.76rem; color: var(--v2-ink-faint); font-variant-numeric: tabular-nums; }
+.steplist button[aria-selected="true"] .ord { color: var(--v2-accent); }
+.steppane h3 { margin-top: 0; }
+.steppane .writes { margin-top: 0.85rem; }
+.steppane .writes .lbl { font-family: var(--v2-mono); font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--v2-ink-faint); }
+.steppane .writes .path { font-family: var(--v2-mono); font-size: 0.85rem; color: var(--v2-ink); overflow-wrap: anywhere; }
+
+/* ============================================ glyph rows */
+.gate { margin: 1.1rem 0; }
+.gaterow { display: grid; grid-template-columns: 1.4rem minmax(0, 1fr); gap: 0.7rem; padding: 0.65rem 0; border-bottom: 1px solid var(--v2-rule); }
+.gaterow:last-of-type { border-bottom: none; }
+.gaterow .glyph { font-family: var(--v2-mono); font-size: 1rem; text-align: center; }
+.gaterow .gname { font-weight: 600; color: var(--v2-ink-strong); }
+.gaterow .gwhat { color: var(--v2-ink-soft); font-size: 0.92rem; }
+.g-good { color: var(--v2-good); }
+.g-bad { color: var(--v2-bad); }
+.g-accent { color: var(--v2-accent); }
+.g-flat { color: var(--v2-flat); }
+.g-caution { color: var(--v2-caution); }
+
+/* ============================================ code */
+pre {
+  background: var(--v2-panel); border: 1px solid var(--v2-rule);
+  padding: 1.1rem 1.3rem; overflow-x: auto; margin: 1.4rem 0; border-radius: 4px;
+  font-family: var(--v2-mono); font-size: 0.86rem; line-height: 1.75; color: var(--v2-ink);
+}
+pre .cm { color: var(--v2-ink-faint); }
+pre .hi { color: var(--v2-accent); }
+
+.cmds { display: flex; flex-direction: column; margin: 0.9rem 0; }
+.cmd { display: grid; grid-template-columns: minmax(8rem, 12rem) minmax(0, 1fr); gap: 1.1rem; padding: 0.55rem 0; border-bottom: 1px solid var(--v2-rule); }
+.cmd:last-child { border-bottom: none; }
+.cmd .name { font-family: var(--v2-mono); font-size: 0.88rem; color: var(--v2-ink-strong); font-weight: 500; }
+.cmd .what { color: var(--v2-ink-soft); font-size: 0.92rem; }
+
+/* ============================================ responsive */
+@media (max-width: 62rem) {
+  .shell { grid-template-columns: 1fr; }
+  .rail { border-right: none; border-bottom: 1px solid var(--v2-rule); padding-bottom: 1.1rem; }
+  .rail nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 1.3rem; }
+  .detail { padding: 1.4rem 1.1rem 4rem; }
+  .nodedetail { grid-template-columns: 1fr; }
+  .stepper { grid-template-columns: 1fr; }
+  .steplist { border-right: none; border-bottom: 1px solid var(--v2-rule); padding-bottom: 0.5rem; margin-bottom: 1rem; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="shell" id="approot">
+
+  <header class="topbar">
+    <span class="brand">
+      <svg class="mark" viewBox="71 35 229 82" role="img" aria-label="zicato">
+        <g fill="none" stroke="currentColor" stroke-width="5.0" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M94,52.5 L93.9,52.7 L93.7,52.9 L93.6,53.1 L93.5,53.4 L93.5,53.7 L93.4,54 L93.4,54.3 L93.5,54.6 L93.6,55 L93.7,55.3 L93.9,55.6 L94.1,55.9 L94.4,56.2 L94.7,56.5 L95.1,56.7 L95.4,56.9 L95.9,57.1 L96.3,57.2 L96.8,57.2 L97.3,57.2 L97.9,57.2 L98.4,57 L98.9,56.8 L99.4,56.5 L99.9,56.2 L100.4,55.8 L100.9,55.3 L101.2,54.7 L101.6,54.1 L101.8,53.4 L102,52.6 L102.1,51.9 L102.1,51 L102,50.2 L101.8,49.3 L101.5,48.5 L101.1,47.6 L100.5,46.8 L99.9,46 L99.1,45.3 L98.2,44.7 L97.2,44.1 L96.1,43.7 L94.9,43.4 L93.6,43.2 L92.3,43.2 L91,43.3 L89.6,43.6 L88.2,44.1 L86.8,44.8 L85.5,45.6 L84.2,46.7 L83,47.9 L82,49.3 L81.1,50.9 L80.3,52.7 L79.8,54.6 L79.5,56.6 L79.4,58.7 L79.5,60.9 L80,63.2 L80.7,65.4 L81.8,67.6 L83.1,69.8 L84.8,71.9 L86.7,73.8 L89,75.5 L91.5,77 L94.3,78.3 L97.3,79.2 L100.6,79.8 L104,80 L150,80 L170,102 L190,80 Q206,56 222,80 Q236,102 250,80 Q261,68 272,80 L292,80"/>
+          <path d="M292,66 L292,94"/>
+        </g>
+        <circle cx="170" cy="102" r="5.5" fill="var(--v2-accent)"></circle>
+      </svg>
+      <span class="dt-brand-variant">atlas</span>
+      <span class="dt-respreview" role="note" aria-label="research preview">
+        <span class="dt-respreview-line">research</span>
+        <span class="dt-respreview-line">preview</span>
+      </span>
+    </span>
+
+    <span class="spacer"></span>
+
+    <div class="chrome">
+      <!-- colour: a swatch dropdown, sixteen themes, each a 6-swatch preview -->
+      <div class="popwrap">
+        <button type="button" class="dt-trigger" id="cd-trigger" aria-haspopup="listbox" aria-expanded="false">
+          <span class="swatchstrip" id="cd-strip" aria-hidden="true"></span>
+          <span id="cd-name">auto</span>
+          <span class="caret">▾</span>
+        </button>
+        <div class="pop" id="cd-list" role="listbox" aria-label="Colour theme" hidden></div>
+      </div>
+
+      <!-- typeface: a grouped popover, twelve faces across three modes -->
+      <div class="popwrap">
+        <button type="button" class="dt-trigger" id="tf-trigger" aria-haspopup="listbox" aria-expanded="false">
+          <span id="tf-name">Source Sans 3</span>
+          <span class="caret">▾</span>
+        </button>
+        <div class="pop" id="tf-list" role="listbox" aria-label="Typeface" hidden></div>
+      </div>
+
+      <!-- page scale: the sole sizing control -->
+      <div class="dt-scale-pill">
+        <span class="lbl">scale</span>
+        <input class="dt-scale-range" id="scale" type="range" min="70" max="150" step="5" value="100" aria-label="Page scale">
+        <output id="scaleout" for="scale">100%</output>
+        <button type="button" class="dt-scale-reset" id="scalereset" aria-label="Reset scale to 100%">⟲</button>
+      </div>
+    </div>
+  </header>
+
+  <aside class="rail">
+    <nav id="rail" aria-label="Atlas contents">
+      <div class="branch">
+        <span class="bname">Start</span>
+        <ul>
+          <li><a href="#what">What zicato does</a></li>
+          <li><a href="#map">The concept map</a></li>
+          <li><a href="#requires">What your system must provide</a></li>
+          <li><a href="#clocks">Run, round, epoch, lineage</a></li>
+        </ul>
+      </div>
+      <div class="branch">
+        <span class="bname">Mechanism</span>
+        <ul>
+          <li><a href="#round">One round, step by step</a></li>
+          <li><a href="#gate">How promotion is decided</a></li>
+          <li><a href="#holdout">The hidden holdout</a></li>
+        </ul>
+      </div>
+      <div class="branch">
+        <span class="bname">Using it</span>
+        <ul>
+          <li><a href="#start">Getting started</a></li>
+          <li><a href="#commands">The command surface</a></li>
+          <li><a href="#workspace">What it writes to disk</a></li>
+        </ul>
+      </div>
+      <div class="branch">
+        <span class="bname">Discipline</span>
+        <ul>
+          <li><a href="#invariants">Constraints the loop enforces</a></li>
+          <li><a href="#language">Reading the console</a></li>
+          <li><a href="#figures">What each figure answers</a></li>
+        </ul>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="detail">
+
+    <section id="what">
+      <p class="eyebrow">Orientation</p>
+      <h1>Zicato Atlas</h1>
+      <p class="lede">
+        Zicato takes a <strong>system under test</strong> — source you already have — and
+        proposes changes to it. It runs that system against a board of tasks, scores every run
+        against an evaluation contract, and keeps a change only when the evidence says the system
+        got better.
+      </p>
+      <p class="subhead">
+        Eighty-eight concepts, ten drawings and a guided walk through the loop. Start with the
+        map below.
+      </p>
+
+      <p>
+        The contract asks for three things, and anything that supplies them can be the subject:
+        an <strong>adapter</strong> the runner can reconstruct, one or more <strong>mutable
+        trees</strong> of source the proposer may edit, and a <strong>board</strong> of tasks
+        carrying typed expectations. Multi-agent systems are the founding use case, but nothing
+        in the loop is agent-specific — a library, a prompt set, or a rule engine fits the same
+        shape.
+      </p>
+
+    </section>
+
+    <hr class="rule">
+
+    <section id="map" class="mapsection">
+      <p class="eyebrow">The atlas proper</p>
+      <h2>The concept map</h2>
+      <p class="lede" style="font-size:1.1rem">
+        Zicato is a loop, so the map is drawn as one: five parts of a round, each in its own
+        colour, with every concept on a spoke inside the part it belongs to.
+      </p>
+      <p>
+        Eighty-eight concepts and one hundred and forty-four relationships. If zicato is new to
+        you, take the walk — twenty-eight steps through the loop in the order it moves, each
+        saying why that concept is there rather than only what it is.
+      </p>
+
+      <div class="mapcontrols tourbar">
+        <button type="button" class="dt-trigger" id="tourstart">Walk the loop</button>
+        <button type="button" class="tournav" id="tourprev" hidden>&#8592; back</button>
+        <span class="tourstep" id="tourstep" hidden></span>
+        <button type="button" class="tournav" id="tournext" hidden>next &#8594;</button>
+        <button type="button" class="tournav" id="tourend" hidden>leave the walk</button>
+      </div>
+      <div class="mapcontrols" data-viewbar>
+        <span class="lbl">show</span>
+        <button type="button" data-view="core" aria-pressed="true">the core loop</button>
+        <button type="button" data-view="all" aria-pressed="false">everything</button>
+        <label class="lbl" for="mapsearch">find</label>
+        <input class="mapsearch" id="mapsearch" type="search" placeholder="a term, or a word in one"
+               autocomplete="off" spellcheck="false">
+        <span class="lbl">follow</span>
+        <button type="button" id="tracebtn" aria-pressed="false">everything downstream</button>
+        <span class="maphint" id="maphint"></span>
+      </div>
+
+      <div class="mapscroll">
+        <svg id="conceptmap" role="img" aria-label="Concept map of zicato's vocabulary as a pipeline from contract to decision"></svg>
+      </div>
+
+      <div class="maplegend" id="maplegend" role="group" aria-label="Filter by stage"></div>
+
+      <div class="nodedetail">
+        <div>
+          <p class="where" id="nd-where">Contract</p>
+          <h3 id="nd-name">Epoch</h3>
+          <p id="nd-why" class="ndwhy" hidden></p>
+          <p id="nd-def"></p>
+        </div>
+        <div>
+          <p class="where">Connections</p>
+          <ul class="rellist" id="nd-rels"></ul>
+        </div>
+      </div>
+      <p class="caption">
+        The map opens on thirty-three concepts: the twenty-eight the walk covers plus five they
+        lean on. Switch to everything for the remaining fifty-five, which refine rather than
+        extend. Select a concept to pin it and draw its relationships — outward arcs for what it
+        feeds, inward dashed ones for what feeds it. Click a colour in the key to isolate one part
+        of the round, search the definitions as well as the names, follow everything downstream to
+        see how far a change reaches, or step through with the arrow keys. A selected concept is
+        addressable, so a link can point straight at it.
+      </p>
+      <p class="caption">
+        Every concept here was read out of the module that implements it rather than out of a
+        glossary. Colour carries which part of the round a concept belongs to and nothing else:
+        the improvement and regression colours stay reserved for direction, as they are everywhere
+        in the console, and every concept is labelled so colour is never the only thing telling
+        two apart. The map covers the path a change travels and the instruments that watch it,
+        leaving out the surfaces built over that path.
+      </p>
+    </section>
+    <hr class="rule">
+
+    <section id="requires">
+      <p class="eyebrow">Orientation</p>
+      <h2>What your system must provide</h2>
+      <p>
+        An adapter, one or more mutable trees of source, and a board of tasks. A system that
+        supplies those three can be the subject, whatever it is built from.
+      </p>
+
+      <figure class="fig">
+        <svg viewBox="0 0 760 240" role="img" aria-label="Three inputs — an adapter, one or more mutable trees, and a board — feed the loop, which returns a rewritten version of the same source.">
+          <text class="flabel" x="0" y="12">what the evaluation contract requires</text>
+
+          <rect class="fbox" x="0" y="24" width="230" height="58" rx="2"></rect>
+          <text class="fname" x="12" y="44">an adapter</text>
+          <text class="fnote" x="12" y="60">runs one task, and lists</text>
+          <text class="fnote" x="12" y="74">what may be rewritten</text>
+
+          <rect class="fbox" x="0" y="94" width="230" height="58" rx="2"></rect>
+          <text class="fname" x="12" y="114">one or more mutable trees</text>
+          <text class="fnote" x="12" y="130">the source the proposer</text>
+          <text class="fnote" x="12" y="144">is allowed to edit</text>
+
+          <rect class="fbox" x="0" y="164" width="230" height="58" rx="2"></rect>
+          <text class="fname" x="12" y="184">a board of tasks</text>
+          <text class="fnote" x="12" y="200">each carrying what counts</text>
+          <text class="fnote" x="12" y="214">as doing it right</text>
+
+          <path class="farrow" d="M 230 53 C 262 53 262 123 288 123"></path>
+          <path class="farrow" d="M 230 123 L 288 123"></path>
+          <path class="farrow" d="M 230 193 C 262 193 262 123 288 123"></path>
+          <polygon class="fhead" points="294,123 286,119 286,127"></polygon>
+
+          <rect class="fbox" x="294" y="84" width="184" height="78" rx="2" stroke="var(--v2-accent)"></rect>
+          <text class="fname f-accent" x="306" y="108">the loop</text>
+          <text class="fnote" x="306" y="126">run · measure · propose ·</text>
+          <text class="fnote" x="306" y="142">apply · compare · promote</text>
+
+          <path class="farrow s-good" d="M 478 123 L 528 123"></path>
+          <polygon class="f-good" points="534,123 526,119 526,127"></polygon>
+
+          <rect class="fill-good" x="534" y="100" width="226" height="46" rx="2"></rect>
+          <text class="fname" x="546" y="120">a rewritten version of it</text>
+          <text class="fnote" x="546" y="136">with evidence for each change</text>
+
+        </svg>
+        <figcaption>
+          Nothing here is specific to agents: a library, a prompt set, or a rule engine meets the
+          same three requirements. The adapter is the only part that knows what your system is.
+          Everything downstream of it works on tasks, scores, and annotated spans of text, which
+          is why the loop can be pointed at something with no model in it anywhere.
+        </figcaption>
+      </figure>
+
+      <h3>Where the evidence comes from</h3>
+      <p>Each epoch declares where its evidence comes from. There are three settings.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Setting</th><th>What it reads</th><th>What you get</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><span class="mono">goldfive</span><br><span class="dim">the default</span></td>
+              <td>An event stream naming what went wrong during a run.</td>
+              <td>Drift counts and plan revisions, on top of the board's expectations.</td>
+            </tr>
+            <tr>
+              <td><span class="mono">adk_events</span></td>
+              <td>The agent framework's own events, from a system that never runs under goldfive.</td>
+              <td>What the framework reports, plus the board's expectations.</td>
+            </tr>
+            <tr>
+              <td><span class="mono">transcript</span></td>
+              <td>The transcript alone.</td>
+              <td>The board's expectations and any in-run judges. The drift term is structurally zero, and a drift-related setting goes inert with a warning rather than a failure.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="caption">
+        The event stream comes from goldfive, an optional dependency. The base install carries the
+        loop and its own telemetry without it, and a test pins that boundary by importing zicato
+        under an interpreter that cannot import goldfive.
+      </p>
+
+      <h3>Two consoles, two questions</h3>
+      <p>
+        Zicato ships its own console, and it answers which candidate won and why: the tournament,
+        the scores, the verdicts, the lineage. Harmonograf answers a different question about the
+        same runs — what one run actually did, step by step, drawn as a Gantt chart with
+        lifelines. Both are read-only views over recorded evidence.
+      </p>
+
+    </section>
+
+    <hr class="rule">
+
+    <section id="clocks">
+      <p class="eyebrow">Orientation</p>
+      <h2>Run, round, epoch, lineage</h2>
+      <p>
+        These four words all name some quantity of the loop running, which is why they get
+        swapped for one another. Each one contains the one below it, and each is compared in its
+        own unit: a run against other runs of the same task, a generation against the champion, an
+        epoch against nothing outside itself.
+      </p>
+      <div class="clocks">
+        <div class="clock">
+          <div class="cname">Lineage</div>
+          <div class="cwhat">The cross-epoch graph of every generation ever promoted, and which generation in the previous epoch it descends from.</div>
+          <div class="cunit">one file · lineage.json</div>
+        </div>
+        <div class="clock">
+          <div class="cname">Epoch</div>
+          <div class="cwhat">The unit of evaluation contract. The board, the brief's forbidden list, and the scoring weights are frozen for its duration, which is what makes the generations inside it directly comparable. Comparison across epochs is fuzzy by design.</div>
+          <div class="cunit">many rounds · pattern aggregates reset at the boundary</div>
+        </div>
+        <div class="clock">
+          <div class="cname">Round</div>
+          <div class="cwhat">One turn of the loop: run, analyze, propose, apply, run the candidate, hold the tournament, journal. A round either advances the generation counter or rejects the proposal and leaves the parent standing.</div>
+          <div class="cunit">many runs · one experiment</div>
+        </div>
+        <div class="clock">
+          <div class="cname">Run</div>
+          <div class="cwhat">One execution of the system under test against one board entry, captured as one event stream. The reducer turns it into one loss profile.</div>
+          <div class="cunit">one entry × one generation</div>
+        </div>
+      </div>
+      <p class="caption">
+        A round contains many runs — one per board entry per generation — so run and round are
+        never interchangeable. A generation is a version of the source; a snapshot is the
+        directory holding that source; a run is one execution of it.
+      </p>
+    </section>
+
+
+    <hr class="rule">
+
+    <section id="round">
+      <p class="eyebrow">Mechanism</p>
+      <h2>One round, step by step</h2>
+      <p>
+        A round is the smallest complete turn of the loop. It starts with a parent generation standing as champion and
+        ends either with a new champion or with the parent still standing and a recorded reason
+        why the challenger failed.
+      </p>
+
+      <figure class="fig">
+        <svg viewBox="0 0 760 210" role="img" aria-label="Seven phases of a round in sequence, with both outcomes returning to the start of the next round.">
+          <text class="flabel" x="0" y="12">one round</text>
+          <rect class="fbox" x="0" y="24" width="94" height="52" rx="2"></rect>
+          <text class="fdata" x="8" y="40">1</text>
+          <text class="fname" x="8" y="56">run the</text>
+          <text class="fname" x="8" y="69">champion</text>
+          <path class="farrow" d="M 94 50 L 102 50"></path>
+          <polygon class="fhead" points="108,50 100,46 100,54"></polygon>
+          <rect class="fbox" x="108" y="24" width="94" height="52" rx="2"></rect>
+          <text class="fdata" x="116" y="40">2</text>
+          <text class="fname" x="116" y="56">reduce</text>
+          <text class="fname" x="116" y="69">to loss</text>
+          <path class="farrow" d="M 202 50 L 210 50"></path>
+          <polygon class="fhead" points="216,50 208,46 208,54"></polygon>
+          <rect class="fbox" x="216" y="24" width="94" height="52" rx="2"></rect>
+          <text class="fdata" x="224" y="40">3</text>
+          <text class="fname" x="224" y="56">detect</text>
+          <text class="fname" x="224" y="69">patterns</text>
+          <path class="farrow" d="M 310 50 L 318 50"></path>
+          <polygon class="fhead" points="324,50 316,46 316,54"></polygon>
+          <rect class="fbox" x="324" y="24" width="94" height="52" rx="2"></rect>
+          <text class="fdata" x="332" y="40">4</text>
+          <text class="fname" x="332" y="56">propose</text>
+          <path class="farrow" d="M 418 50 L 426 50"></path>
+          <polygon class="fhead" points="432,50 424,46 424,54"></polygon>
+          <rect class="fbox" x="432" y="24" width="94" height="52" rx="2"></rect>
+          <text class="fdata" x="440" y="40">5</text>
+          <text class="fname" x="440" y="56">apply and</text>
+          <text class="fname" x="440" y="69">validate</text>
+          <path class="farrow" d="M 526 50 L 534 50"></path>
+          <polygon class="fhead" points="540,50 532,46 532,54"></polygon>
+          <rect class="fbox" x="540" y="24" width="94" height="52" rx="2"></rect>
+          <text class="fdata" x="548" y="40">6</text>
+          <text class="fname" x="548" y="56">hold the</text>
+          <text class="fname" x="548" y="69">tournament</text>
+          <path class="farrow" d="M 634 50 L 642 50"></path>
+          <polygon class="fhead" points="648,50 640,46 640,54"></polygon>
+          <rect class="fbox" x="648" y="24" width="94" height="52" rx="2"></rect>
+          <text class="fdata" x="656" y="40">7</text>
+          <text class="fname" x="656" y="56">gate, then</text>
+          <text class="fname" x="656" y="69">record</text>
+
+          <path class="farrow s-good" d="M 700 76 L 700 108 L 380 108"></path>
+          <text class="fname f-good" x="392" y="104">promoted</text>
+          <text class="fnote" x="392" y="118">the challenger takes the crown; the counter advances</text>
+
+          <path class="farrow s-bad" d="M 690 76 L 690 150 L 380 150"></path>
+          <text class="fname f-bad" x="392" y="146">rejected</text>
+          <text class="fnote" x="392" y="160">the parent keeps the crown; the reason is recorded</text>
+
+          <path class="farrow dashed" d="M 380 108 L 60 108 L 60 186 L 20 186 L 20 82"></path>
+          <path class="farrow dashed" d="M 380 150 L 60 150"></path>
+          <polygon class="fhead" points="20,76 16,84 24,84"></polygon>
+          <text class="fnote" x="72" y="182">either way the next round starts here</text>
+        </svg>
+        <figcaption>
+          Both outcomes lead to another round. A rejection is not a stall: the experiment and its
+          recorded reason enter the memory the proposer reads, so the next proposal starts from
+          knowing that this idea was tried and how it failed.
+        </figcaption>
+      </figure>
+
+      <div class="stepper">
+        <ul class="steplist" id="steplist" role="tablist" aria-label="Round phases"></ul>
+        <div class="steppane" id="steppane" role="tabpanel"></div>
+      </div>
+
+      <figure class="fig">
+        <svg viewBox="0 0 760 200" role="img" aria-label="Across six rounds the champion changes twice; rejected challengers end their own lane and leave the incumbent standing.">
+          <text class="flabel" x="0" y="12">six rounds of one epoch</text>
+
+          <line class="fline" x1="86" y1="26" x2="86" y2="164"></line>
+          <line class="fline" x1="196" y1="26" x2="196" y2="164"></line>
+          <line class="fline" x1="306" y1="26" x2="306" y2="164"></line>
+          <line class="fline" x1="416" y1="26" x2="416" y2="164"></line>
+          <line class="fline" x1="526" y1="26" x2="526" y2="164"></line>
+          <line class="fline" x1="636" y1="26" x2="636" y2="164"></line>
+          <text class="fdata" x="92" y="24">r1</text>
+          <text class="fdata" x="202" y="24">r2</text>
+          <text class="fdata" x="312" y="24">r3</text>
+          <text class="fdata" x="422" y="24">r4</text>
+          <text class="fdata" x="532" y="24">r5</text>
+          <text class="fdata" x="642" y="24">r6</text>
+
+          <text class="fdata" x="0" y="56">v0</text>
+          <line class="fline s-accent" x1="26" y1="52" x2="306" y2="52" stroke-width="2.5"></line>
+          <text class="f-accent fdata" x="290" y="46">♛</text>
+          <text class="fdata f-flat" x="312" y="56">♔ displaced</text>
+
+          <text class="fdata" x="0" y="86">v1</text>
+          <line class="fline s-bad" x1="86" y1="82" x2="180" y2="82"></line>
+          <text class="fdata f-bad" x="186" y="86">✕ rejected — regressed a passing entry</text>
+
+          <text class="fdata" x="0" y="116">v2</text>
+          <line class="fline s-good" x1="196" y1="112" x2="306" y2="112"></line>
+          <text class="fdata f-good" x="292" y="106">↑</text>
+          <line class="fline s-accent" x1="306" y1="112" x2="636" y2="112" stroke-width="2.5"></line>
+          <text class="f-accent fdata" x="620" y="106">♛</text>
+          <text class="fnote" x="642" y="116">still champion</text>
+
+          <text class="fdata" x="0" y="146">v3</text>
+          <line class="fline s-bad" x1="416" y1="142" x2="510" y2="142"></line>
+          <text class="fdata f-bad" x="516" y="146">✕ rejected — inside the margin</text>
+
+        </svg>
+        <figcaption>
+          A thick accent line is the reigning champion, and a challenger's lane ends where the gate
+          cut it. Two of the four challengers here were cut, which is the ordinary case, and the
+          generation counter advances only on a promotion — so a long epoch holds many more rounds
+          than generations.
+        </figcaption>
+      </figure>
+    </section>
+
+    <hr class="rule">
+
+    <section id="gate">
+      <p class="eyebrow">Mechanism</p>
+      <h2>How promotion is decided</h2>
+      <p>
+        The training-slice gate decides whether a challenger is eligible to replace the
+        champion. It applies its rules in order and returns a provisional promotion only if none
+        of them fires. A separate hidden-holdout confirmation can then revise that provisional
+        result before the round settles.
+      </p>
+      <div class="gate">
+        <div class="gaterow">
+          <span class="glyph g-accent">→</span>
+          <span><span class="gname">Margin on the scalar score</span><span class="gwhat"> — the challenger must beat the champion by the configured promote margin. A tie fails this rule, and so does a win too small to distinguish from noise, which is what the margin is sized against.</span></span>
+        </div>
+        <div class="gaterow">
+          <span class="glyph g-accent">→</span>
+          <span><span class="gname">Strict monotonicity on pass rate</span><span class="gwhat"> — the challenger must not regress any board entry the champion already passed. An average that improves while a previously-passing entry breaks is a regression, and the gate refuses it.</span></span>
+        </div>
+        <div class="gaterow">
+          <span class="glyph g-caution">→</span>
+          <span><span class="gname">Holdout confirmation, when a holdout is available</span><span class="gwhat"> — a challenger that won on the training slice confirms when it does not meaningfully regress on entries withheld from the process that chose it. A released non-confirmation rejects the challenger; an absent holdout leaves the training verdict unchanged.</span></span>
+        </div>
+      </div>
+
+      <figure class="fig">
+        <svg viewBox="0 0 760 226" role="img" aria-label="A challenger passes three checks in order — margin, no regression, and holdout confirmation — and any failure sends it to rejected.">
+          <text class="flabel" x="0" y="12">the gate, in order</text>
+
+          <rect class="fbox" x="0" y="46" width="104" height="40" rx="2"></rect>
+          <text class="fname" x="10" y="63">challenger</text>
+          <text class="fdata" x="10" y="78">scored</text>
+
+          <path class="farrow" d="M 104 66 L 130 66"></path>
+          <polygon class="fhead" points="136,66 128,62 128,70"></polygon>
+
+          <rect class="fbox-q" x="136" y="42" width="150" height="48" rx="2"></rect>
+          <text class="fname" x="146" y="60">beats the champion</text>
+          <text class="fname" x="146" y="74">by the margin?</text>
+
+          <path class="farrow" d="M 286 66 L 316 66"></path>
+          <polygon class="fhead" points="322,66 314,62 314,70"></polygon>
+
+          <rect class="fbox-q" x="318" y="42" width="164" height="48" rx="2"></rect>
+          <text class="fname" x="332" y="60">regresses nothing</text>
+          <text class="fname" x="332" y="74">the champion passed?</text>
+
+          <path class="farrow" d="M 482 66 L 502 66"></path>
+          <polygon class="fhead" points="508,66 500,62 500,70"></polygon>
+
+          <rect class="fbox-q" x="508" y="42" width="150" height="48" rx="2"></rect>
+          <text class="fname" x="518" y="60">holds up on the</text>
+          <text class="fname" x="518" y="74">hidden slice?</text>
+
+          <path class="farrow s-good" d="M 658 66 L 672 66"></path>
+          <polygon class="f-good" points="678,66 670,62 670,70"></polygon>
+          <rect class="fill-good" x="678" y="50" width="72" height="32" rx="2"></rect>
+          <text class="fname f-good" x="686" y="70">promoted</text>
+
+          <path class="farrow s-bad" d="M 211 90 L 211 168"></path>
+          <path class="farrow s-bad" d="M 397 90 L 397 168"></path>
+          <path class="farrow s-bad" d="M 583 90 L 583 168"></path>
+          <text class="fdata f-bad" x="216" y="112">no</text>
+          <text class="fdata f-bad" x="402" y="112">no</text>
+          <text class="fdata f-bad" x="588" y="112">not confirmed</text>
+
+          <line class="fline s-bad" x1="180" y1="168" x2="620" y2="168"></line>
+          <path class="farrow s-bad" d="M 180 168 L 140 168"></path>
+          <polygon class="f-bad" points="134,168 142,164 142,172"></polygon>
+          <rect class="fill-bad" x="58" y="152" width="76" height="32" rx="2"></rect>
+          <text class="fname f-bad" x="66" y="172">rejected</text>
+
+        </svg>
+        <figcaption>
+          The order matters. A challenger that improves the average while breaking an entry the
+          champion already passed fails at the second check and never reaches the hidden slice, so
+          holdout budget is spent only on candidates that already earned a provisional promotion.
+          An absent holdout leaves the training verdict standing, and every rejection carries the
+          rule that fired and the entries involved — which is the text the journal keeps.
+        </figcaption>
+      </figure>
+      <p class="caption">
+        The gate reports a reason on every rejection, naming the rule that fired and the entries
+        involved, and that reason is what the journal and the experiment record carry forward.
+      </p>
+    </section>
+
+    <hr class="rule">
+
+    <section id="holdout">
+      <p class="eyebrow">Mechanism</p>
+      <h2>The hidden holdout, and why it is rationed</h2>
+      <p>
+        Repeated optimization overfits a fixed board even when every score is measured
+        correctly. Each proposed edit depends on results from earlier edits, so the board
+        gradually becomes training data for the improvement loop itself. Zicato limits that
+        feedback with a hidden slice.
+      </p>
+      <p>
+        Tournament selection and the ordinary gate use the training slice. When a challenger
+        would become champion, zicato compares champion and challenger on the holdout.
+        Confirmation does not require a second improvement — it checks that the training
+        improvement generalizes.
+      </p>
+
+
+      <figure class="fig">
+        <svg viewBox="0 0 760 216" role="img" aria-label="The board splits into a training slice that drives selection and a smaller hidden slice used only to confirm a promotion.">
+          <text class="flabel" x="0" y="12">the board, split once per epoch</text>
+          <rect class="fbox" x="0" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fbox" x="26" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fbox" x="52" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fbox" x="78" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fbox" x="104" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fbox" x="130" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fbox" x="156" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fbox" x="182" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fbox" x="208" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fbox" x="234" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fill-empty" x="260" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fill-empty" x="286" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fill-empty" x="312" y="24" width="20" height="20" rx="2"></rect>
+          <rect class="fill-empty" x="338" y="24" width="20" height="20" rx="2"></rect>
+          <text class="fdata" x="0" y="60">training slice — ten entries</text>
+          <text class="fdata f-accent" x="260" y="60">hidden — four</text>
+
+          <path class="farrow" d="M 60 68 L 60 96"></path>
+          <polygon class="fhead" points="60,102 56,94 64,94"></polygon>
+          <rect class="fbox" x="0" y="102" width="248" height="56" rx="2"></rect>
+          <text class="fname" x="10" y="122">selection and the ordinary gate</text>
+          <text class="fnote" x="10" y="138">every tournament comparison, every</text>
+          <text class="fnote" x="10" y="151">margin and regression check</text>
+
+          <path class="farrow s-accent" d="M 300 68 L 300 96"></path>
+          <polygon class="f-accent" points="300,102 296,94 304,94"></polygon>
+          <rect class="fbox" x="250" y="102" width="240" height="56" rx="2"></rect>
+          <text class="fname" x="260" y="122">confirmation, once per crowning</text>
+          <text class="fnote" x="260" y="138">consulted only when a challenger</text>
+          <text class="fnote" x="260" y="151">would take the crown</text>
+
+          <path class="farrow s-accent dashed" d="M 490 130 L 520 130"></path>
+          <polygon class="f-accent" points="526,130 518,126 518,134"></polygon>
+          <rect class="fbox" x="526" y="102" width="234" height="56" rx="2"></rect>
+          <text class="fname" x="536" y="122">the Ladder charges one query</text>
+          <text class="fnote" x="536" y="138">and releases it only if the</text>
+          <text class="fnote" x="536" y="151">training gain clears a threshold</text>
+
+        </svg>
+        <figcaption>
+          Splitting the board is what keeps a long optimization honest. The proposer reads neither
+          the hidden entries nor their per-entry results, so a proposal cannot be aimed at the
+          slice that judges it. An improvement found on the training slice then has to survive a
+          comparison on entries that had no influence on choosing the challenger.
+        </figcaption>
+      </figure>
+
+      <h3>What one query means</h3>
+      <p>
+        Each final comparison against the hidden slice is one <strong>adaptive holdout
+        query</strong>. The word comes from statistics: the optimization process asks the hidden
+        data one question about a candidate that earlier results chose. One comparison is one
+        query even when it runs several board entries and makes several model or tool calls.
+        Model calls, tokens, wall-clock limits, and database operations are accounted
+        separately.
+      </p>
+
+      <h3>The Ladder governor</h3>
+      <p>
+        The Ladder limits what repeated queries reveal. It releases a new confirmation only when
+        the training improvement clears its threshold, and charges every consultation against an
+        epoch-level query budget. A withheld result still consumes one query, because the hidden
+        data was inspected either way. Once the budget is exhausted, no further holdout result
+        affects the decision and the training verdict stands.
+      </p>
+      <p class="caption">
+        The default budget is an operational limit rather than a universal statistical
+        calibration: board size, noise, feedback visibility, and reuse across epochs all still
+        determine how much confidence a holdout supports. The proposer never receives raw
+        holdout entries or per-entry holdout results.
+      </p>
+    </section>
+
+    <hr class="rule">
+
+    <section id="start">
+      <p class="eyebrow">Using it</p>
+      <h2>Getting started</h2>
+      <p>Most workflows need <code>init</code> once and then <code>evolve</code>. Everything else is inspection.</p>
+
+<pre><span class="cm"># 1. Scaffold a workspace next to the source you want improved.</span>
+<span class="hi">zicato init</span>
+
+<span class="cm"># 2. Describe the tasks. One JSON object per line; frozen once the epoch opens.</span>
+$EDITOR .zicato/epochs/&lt;epoch&gt;/board.jsonl
+
+<span class="cm"># 3. Steer the proposer. Re-read from disk at the start of every round.</span>
+$EDITOR .zicato/epochs/&lt;epoch&gt;/brief.md
+
+<span class="cm"># 4. Run the loop. It resolves the contract, opens an epoch on any change,</span>
+<span class="cm">#    and spawns a watchdog plus the console on http://127.0.0.1:7892.</span>
+<span class="hi">zicato evolve</span>
+
+<span class="cm"># 5. Read what happened — in the browser, in the terminal, or on disk.</span>
+<span class="hi">zicato tui</span>
+cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
+
+      <p>
+        Before trusting a long run, ask whether the loop can see anything at all.
+        <code>zicato health</code> reports whether the evaluation has real optimization signal. A
+        board that every generation passes completely, or fails completely, teaches the proposer
+        nothing, and a loop can run for days in that state while still producing rounds and journal entries.
+      </p>
+      <p class="caption">
+        The worked example that needs no model anywhere is
+        <code>examples/zicato_examples/target_0_convergence</code>: a deterministic policy
+        adapter whose mutable surface is a single module-level string constant. Every phase of the
+        loop runs against it in continuous integration.
+      </p>
+    </section>
+
+    <hr class="rule">
+
+    <section id="commands">
+      <p class="eyebrow">Using it</p>
+      <h2>The command surface</h2>
+      <h3>Primary</h3>
+      <div class="cmds">
+        <div class="cmd"><span class="name">zicato init</span><span class="what">Scaffold a fresh workspace. Once per project.</span></div>
+        <div class="cmd"><span class="name">zicato evolve</span><span class="what">Resolve the contract, auto-open an epoch on any change, and run the loop.</span></div>
+        <div class="cmd"><span class="name">zicato dashboard</span><span class="what">Serve the console for an existing workspace. <code>evolve</code> already spawns it.</span></div>
+        <div class="cmd"><span class="name">zicato tui</span><span class="what">Review a workspace in the terminal — the console's peer surface, rendering the same served payloads.</span></div>
+        <div class="cmd"><span class="name">zicato health</span><span class="what">Report whether the loop has real optimization signal.</span></div>
+      </div>
+      <h3>Namespaces</h3>
+      <div class="cmds">
+        <div class="cmd"><span class="name">board</span><span class="what">Inspect and hand-edit a per-epoch board.</span></div>
+        <div class="cmd"><span class="name">epoch</span><span class="what">Inspect and force epochs. <code>evolve</code> opens them for you.</span></div>
+        <div class="cmd"><span class="name">proposer</span><span class="what">Score, diagnose, and improve the proposer itself.</span></div>
+        <div class="cmd"><span class="name">tournament</span><span class="what">Run isolated tournament operations.</span></div>
+        <div class="cmd"><span class="name">inspect</span><span class="what">Inspect workspace state and derived analysis, including the mutation-surface audit.</span></div>
+        <div class="cmd"><span class="name">repair</span><span class="what">Rebuild derived and legacy workspace data, such as the analytical index.</span></div>
+      </div>
+      <p class="caption">
+        Two tournament modes exist and they are not interchangeable. Full mode re-runs every
+        entry against both generations; fast mode is cache-first and reuses the parent's recorded
+        results. The standalone <code>tournament</code> command defaults to full;
+        <code>evolve</code> defaults to fast.
+      </p>
+    </section>
+
+    <hr class="rule">
+
+    <section id="workspace">
+      <p class="eyebrow">Using it</p>
+      <h2>What it writes to disk</h2>
+      <p>
+        Every canonical artifact is a human-readable file, because the filesystem is the
+        operator's primary interface. A workspace is meant to be read with
+        <code>ls</code> and <code>cat</code>.
+      </p>
+
+<pre>.zicato/
+  config.json                    <span class="cm"># adapter, call_llm wiring, instance id</span>
+  epochs/
+    {epoch_id}/
+      board.jsonl                <span class="cm"># frozen for this epoch</span>
+      brief.md                   <span class="cm"># operator-edited; read fresh each round</span>
+      scoring.json               <span class="cm"># weights + tournament thresholds</span>
+      generations/
+        v0/                      <span class="cm"># the baseline</span>
+          snapshot/              <span class="cm"># full source at this generation</span>
+          runs/{entry_id}/
+            events.jsonl         <span class="cm"># one file per run</span>
+            loss.json            <span class="cm"># reducer output</span>
+          gen_score.json
+        v1/
+          snapshot/
+          experiment.json        <span class="cm"># hypothesis + patch ids + outcome</span>
+          patches/{patch_id}.json
+          runs/...
+      current_generation         <span class="cm"># marker: the promoted head</span>
+      patterns/round_{NNN}.json
+      loop_health/round_{NNN}.json
+      journal.md                 <span class="cm"># running narrative</span>
+      analysis.md                <span class="cm"># written at epoch close</span>
+  <span class="hi">index.db</span>                       <span class="cm"># derived SQLite projection; rebuilt from the files above</span>
+  lineage.json                   <span class="cm"># cross-epoch generation graph</span></pre>
+
+      <p>
+        A snapshot is a full copy rather than a reference, so copying or deleting one affects no
+        other generation. The one non-text file is the analytical index, and it holds no fact
+        that is not also on disk — <code>zicato repair index</code> reconstructs it in full. The
+        filesystem stays the source of truth; the index is a sidecar that makes cross-run queries
+        fast without walking every file.
+      </p>
+    </section>
+
+    <hr class="rule">
+
+    <section id="invariants">
+      <p class="eyebrow">Discipline</p>
+      <h2>Constraints the loop enforces</h2>
+      <p>
+        Each of these is enforced somewhere in the system, and each exists because the
+        alternative silently corrupts a result rather than failing loudly.
+      </p>
+
+      <h3>The two model callables must differ</h3>
+      <p>
+        The system under test reaches a model through the <strong>target</strong> role.
+        Everything zicato itself runs — the proposer, the analysis pass, the multi-turn user
+        emulator, and model-graded expectations — goes through the <strong>evaluation</strong>
+        role instead. The two must differ by callable identity or by an explicit model override,
+        and zicato refuses to start when they are the same. A user emulator sharing a model with
+        the agent it is interviewing can collude with it, and the resulting score measures
+        nothing. A system under test may use no model at all, in which case only the evaluation
+        role is filled.
+      </p>
+
+      <h3>The board is frozen for the epoch</h3>
+      <p>
+        Editing the board mid-epoch changes the evaluation contract, which is what makes
+        generations inside the epoch comparable. Such an edit requires explicit acknowledgment,
+        and a contract change opens a new epoch rather than silently invalidating the
+        comparisons already recorded. Changing the proposer or its skills rolls the epoch too,
+        because it changes how candidates are generated.
+      </p>
+
+      <h3>Every experiment states a hypothesis first</h3>
+      <p>
+        The proposer's output carries a mandatory structured hypothesis written
+        <em>before</em> the run: the core idea, which mutation points it modulates, the pattern
+        observation motivating it, the drift movements it expects, a pass-rate band, and its
+        risks. A schema-invalid response is rejected and the proposer is re-prompted with the
+        error. Without a prior hypothesis, a journal degenerates into “what changed, what
+        scored”, and nothing can be learned from a rejection.
+      </p>
+
+      <h3>Only annotated spans may be rewritten</h3>
+      <p>
+        The proposer cannot edit arbitrary source. It may only rewrite locations marked as
+        mutation points, addressed by stable id. The applier resolves each patch's id to its
+        location, rewrites the span, and validates that the tree still parses and imports; a
+        patch failing any validator is rejected, and the applier never silently repairs
+        anything.
+      </p>
+
+      <figure class="fig">
+        <svg viewBox="0 0 760 262" role="img" aria-label="A patch names a marked span by its id and the applier rewrites only that span; a patch aimed at unmarked source is refused.">
+          <text class="flabel" x="0" y="12">the source the proposer may touch</text>
+
+          <rect class="fbox" x="0" y="24" width="230" height="150" rx="2"></rect>
+          <text class="fdata" x="10" y="42">agent/agent.py</text>
+          <line class="fline" x1="0" y1="52" x2="230" y2="52"></line>
+
+          <rect class="fill-empty" x="10" y="62" width="210" height="22" rx="2"></rect>
+          <text class="fdata" x="18" y="77">imports, wiring</text>
+
+          <rect class="fbox" x="10" y="90" width="210" height="46" rx="2" stroke="var(--v2-accent)"></rect>
+          <text class="fdata f-accent" x="18" y="106"># zicato:mutable id="tone"</text>
+          <text class="fdata" x="18" y="122">SYSTEM = "Answer briefly."</text>
+
+          <rect class="fill-empty" x="10" y="142" width="210" height="22" rx="2"></rect>
+          <text class="fdata" x="18" y="157">the rest of the module</text>
+
+          <path class="farrow s-accent" d="M 230 113 L 268 113"></path>
+          <polygon class="f-accent" points="274,113 266,109 266,117"></polygon>
+
+          <rect class="fbox" x="274" y="76" width="196" height="74" rx="2"></rect>
+          <text class="fdata" x="284" y="94">patch</text>
+          <line class="fline" x1="274" y1="102" x2="470" y2="102"></line>
+          <text class="fdata f-accent" x="284" y="120">mutation_point_id: "tone"</text>
+          <text class="fdata" x="284" y="138">new_text: "Answer briefly…"</text>
+
+          <path class="farrow" d="M 470 113 L 508 113"></path>
+          <polygon class="fhead" points="514,113 506,109 506,117"></polygon>
+
+          <rect class="fbox" x="514" y="24" width="230" height="150" rx="2"></rect>
+          <text class="fdata" x="524" y="42">v2/snapshot/agent/agent.py</text>
+          <line class="fline" x1="514" y1="52" x2="744" y2="52"></line>
+          <rect class="fill-empty" x="524" y="62" width="210" height="22" rx="2"></rect>
+          <text class="fdata" x="532" y="77">unchanged</text>
+          <rect class="fill-good" x="524" y="90" width="210" height="46" rx="2"></rect>
+          <text class="fdata f-accent" x="532" y="106"># zicato:mutable id="tone"</text>
+          <text class="fdata" x="532" y="122">SYSTEM = "Answer briefly…"</text>
+          <rect class="fill-empty" x="524" y="142" width="210" height="22" rx="2"></rect>
+          <text class="fdata" x="532" y="157">unchanged</text>
+
+          <path class="farrow s-bad" d="M 118 174 L 118 210"></path>
+          <text class="fdata f-bad" x="126" y="200">a patch aimed at an unmarked region resolves to no mutation point and is refused</text>
+        </svg>
+        <figcaption>
+          The applier also re-checks the result: a rewrite that leaves the tree unable to parse or
+          import is rejected, and nothing is repaired on its behalf. Addressing an edit by a stable
+          id rather than by line number is what lets a patch survive an unrelated change elsewhere
+          in the file, and what makes the rewritable locations auditable ahead of time.
+        </figcaption>
+      </figure>
+    </section>
+
+    <hr class="rule">
+
+    <section id="language">
+      <p class="eyebrow">Discipline</p>
+      <h2>Reading the console</h2>
+      <p>
+        A colour in the console reports what happened to a candidate rather than what role it
+        holds. Green marks an improvement and red marks a regression, so a challenger shows red
+        only when it actually scored worse; being the challenger is never enough on its own. A
+        candidate nothing has scored yet stays neutral.
+      </p>
+      <div class="gate">
+        <div class="gaterow"><span class="glyph g-good">↑</span><span><span class="gname">Survives</span><span class="gwhat"> — this competitor continues to the next rung or round.</span></span></div>
+        <div class="gaterow"><span class="glyph g-bad">✕</span><span><span class="gname">Cut</span><span class="gwhat"> — this competitor's lane terminates here.</span></span></div>
+        <div class="gaterow"><span class="glyph g-flat">○</span><span><span class="gname">Pending</span><span class="gwhat"> — still racing and undecided. It holds the neutral colour until the gate settles.</span></span></div>
+        <div class="gaterow"><span class="glyph g-accent">♛</span><span><span class="gname">Current champion</span><span class="gwhat"> — the crowned survivor of the gate.</span></span></div>
+        <div class="gaterow"><span class="glyph g-flat">♔</span><span><span class="gname">Former champion</span><span class="gwhat"> — a displaced incumbent, or a round-leader before the gate has decided.</span></span></div>
+        <div class="gaterow"><span class="glyph g-flat">◌</span><span><span class="gname">Unscored</span><span class="gwhat"> — a generation with no parent and no resolved outcome. It gets its own label rather than a verdict it never received.</span></span></div>
+      </div>
+      <p>
+        On a plot of differences the zero line is the champion's own score, so a point below the
+        line is a lower loss and therefore an improvement. Six colour roles carry the same meaning
+        in all sixteen themes: the ground, the surface a panel sits on, the ink, improvement,
+        regression, and one accent reserved for structure. Because every drawing reads those six
+        rather than a fixed colour, switching theme repaints the page without redrawing anything.
+      </p>
+      <p class="caption">
+        Deeper treatments live in the repository under <code>docs/design/</code>: start with
+        <code>ARCHITECTURE.md</code>, then <code>VOCABULARY.md</code> for terms,
+        <code>SCORING.md</code> for the gate, <code>OVERFITTING.md</code> for the holdout,
+        <code>MUTATION-SURFACE.md</code> for what the proposer may touch, and
+        <code>CONSOLE-DESIGN-LANGUAGE.md</code> for the visual grammar this page borrows.
+      </p>
+    </section>
+
+    <hr class="rule">
+
+    <section id="figures">
+      <p class="eyebrow">Discipline</p>
+      <h2>What each figure answers</h2>
+      <p>
+        The console draws a small set of figures, and each exists to answer one question. They
+        share the marks and colour roles described above, so learning to read one carries over to
+        the rest. Three reading conventions do most of the work, and the drawings below show
+        them.
+      </p>
+
+      <h3>Did this round improve on the champion?</h3>
+      <p>
+        Under the gauntlet structure the round is drawn as lanes measured against a horizontal
+        line at the champion's own score. The line is zero difference, and vertical distance from
+        it is the size of the change.
+      </p>
+
+      <figure class="fig">
+        <svg viewBox="0 0 760 196" role="img" aria-label="Three challenger lanes measured against a horizontal line at the champion's score: one below it improved, one above regressed, one is still running.">
+          <text class="flabel" x="0" y="12">how one round measures against the champion</text>
+          <text class="fnote" x="620" y="46">higher loss</text>
+          <text class="fnote" x="620" y="150">lower loss</text>
+          <path class="farrow" d="M 656 60 L 656 40"></path>
+          <polygon class="fhead" points="656,34 652,42 660,42"></polygon>
+          <path class="farrow" d="M 656 118 L 656 138"></path>
+          <polygon class="fhead" points="656,144 652,136 660,136"></polygon>
+
+          <line class="fline s-accent" x1="60" y1="98" x2="600" y2="98" stroke-width="2"></line>
+          <text class="fdata f-accent" x="0" y="102">♛ v2</text>
+          <text class="fdata f-accent" x="604" y="94">Δ = 0</text>
+
+          <line class="fline" x1="150" y1="66" x2="150" y2="98"></line>
+          <circle class="f-good" cx="150" cy="66" r="5"></circle>
+          <text class="fdata" x="128" y="56">v3</text>
+          <text class="fdata f-good" x="162" y="70">↑ −0.04</text>
+
+          <line class="fline" x1="320" y1="98" x2="320" y2="132"></line>
+          <circle class="f-bad" cx="320" cy="132" r="5"></circle>
+          <text class="fdata" x="298" y="150">v4</text>
+          <text class="fdata f-bad" x="332" y="136">✕ +0.03</text>
+
+          <circle class="f-flat" cx="480" cy="98" r="5"></circle>
+          <text class="fdata" x="458" y="88">v5</text>
+          <text class="fdata f-flat" x="492" y="102">○ still running</text>
+
+        </svg>
+        <figcaption>
+          A dot below the line is a lower loss and an improvement, and its colour follows that
+          direction — a challenger that regressed carries the regression colour, and one still
+          racing stays neutral. The same reference line appears wherever a value is compared
+          against the champion, including the per-entry dot plot.
+        </figcaption>
+      </figure>
+
+      <p>
+        Each structure replaces this figure with one shaped like its own competition, and the
+        choice carries a trade-off the repository is explicit about.
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Structure</th><th>How it narrows the field</th><th>What that costs</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Gauntlet</strong><br><span class="mono">the default</span></td>
+              <td>Each challenger meets the champion directly. Drawn as lanes against the champion's own score.</td>
+              <td>Runs one comparison at a time. Its close correspondence to elitist iterated racing, the mature algorithm for this problem, is why it is the default.</td>
+            </tr>
+            <tr>
+              <td><strong>Racing ladder</strong></td>
+              <td>A small budget to everyone, cut the weakest fraction, repeat. Drawn as a funnel narrowing stage by stage.</td>
+              <td>Concentrates budget on what looks promising. A candidate cut at an early rung is gone even if it lost to variance.</td>
+            </tr>
+            <tr>
+              <td><strong>Swiss</strong></td>
+              <td>Everyone plays every round, paired against contestants on similar scores. Drawn as accumulating Copeland points, with a bump chart of rank where lines cross as the lead changes hands.</td>
+              <td>Ranks a whole field rather than only finding a winner, and pays for it by running every contestant in every round.</td>
+            </tr>
+            <tr>
+              <td><strong>Elimination</strong><br><span class="mono">single or double</span></td>
+              <td>Pair, cut the losers, repeat. Drawn as rounds in columns with lanes converging at each match; double elimination adds a second band where losers re-converge.</td>
+              <td>Defends the budget rather than the result. The repository's own analysis calls this the wrong primitive here.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        That last verdict is worth stating plainly, because the console will draw a bracket for
+        you if you ask. Brackets were built to triage a large field of cheap candidates, and
+        zicato has a small field of expensive, noisy ones where a wrong crowning corrupts the
+        champion that every later round builds on. The evaluation needed to separate two
+        candidates grows as their scores get closer and as the measurement gets noisier, and in
+        that regime the answer is fewer candidates with more evaluation each. That is
+        replication rather than halving, which is what the gauntlet does.
+      </p>
+
+      <h3>Is the epoch as a whole getting better?</h3>
+      <p>
+        One figure answers this directly: a descent with one downward step per round, each step
+        sized by the improvement that round's promotion delivered. A round that promoted nothing
+        is flat.
+      </p>
+
+      <figure class="fig">
+        <svg viewBox="0 0 760 190" role="img" aria-label="A descending staircase of six rounds; two rounds are flat because nothing was promoted, and the running floor is annotated at each step.">
+          <text class="flabel" x="0" y="12">loss floor across six rounds</text>
+
+          <line class="fline dashed" x1="0" y1="150" x2="760" y2="150"></line>
+
+          <line class="fline s-accent" x1="20" y1="40" x2="130" y2="40" stroke-width="2.5"></line>
+          <text class="fdata" x="20" y="32">0.412</text>
+          <line class="fline s-good" x1="130" y1="40" x2="130" y2="66"></line>
+          <line class="fline s-accent" x1="130" y1="66" x2="250" y2="66" stroke-width="2.5"></line>
+          <text class="fdata f-good" x="136" y="58">−0.021</text>
+          <text class="fdata" x="200" y="60">0.391</text>
+
+          <line class="fline s-accent" x1="250" y1="66" x2="370" y2="66" stroke-width="2.5"></line>
+          <text class="fdata f-flat" x="270" y="60">held</text>
+
+          <line class="fline s-good" x1="370" y1="66" x2="370" y2="104"></line>
+          <line class="fline s-accent" x1="370" y1="104" x2="490" y2="104" stroke-width="2.5"></line>
+          <text class="fdata f-good" x="376" y="94">−0.033</text>
+          <text class="fdata" x="440" y="98">0.358</text>
+
+          <line class="fline s-accent" x1="490" y1="104" x2="610" y2="104" stroke-width="2.5"></line>
+          <text class="fdata f-flat" x="514" y="98">held</text>
+
+          <line class="fline s-good" x1="610" y1="104" x2="610" y2="126"></line>
+          <line class="fline s-accent" x1="610" y1="126" x2="740" y2="126" stroke-width="2.5"></line>
+          <text class="fdata f-good" x="616" y="118">−0.014</text>
+          <text class="fdata" x="686" y="120">0.344</text>
+
+          <text class="fdata" x="20" y="166">r1</text>
+          <text class="fdata" x="140" y="166">r2</text>
+          <text class="fdata" x="260" y="166">r3</text>
+          <text class="fdata" x="380" y="166">r4</text>
+          <text class="fdata" x="500" y="166">r5</text>
+          <text class="fdata" x="620" y="166">r6</text>
+          <text class="fnote" x="0" y="186">The accent line is the floor the epoch has held. Hovering a step names the mutation that produced it.</text>
+        </svg>
+        <figcaption>
+          Half of these six rounds moved the floor and half left it where it was, which is the
+          ordinary shape of a working epoch. A descent that stays flat for many rounds together is
+          the signal to check whether the board still separates one candidate from another.
+        </figcaption>
+      </figure>
+
+      <p>
+        Beneath the descent, a timeline lays the same rounds along one horizontal line, a node per
+        round carrying the champion that entered it and that champion's loss. Each round
+        expands into the challengers it minted, a compact picture of how they competed, and the
+        gate's verdict. On the home view a cross-epoch ledger repeats the idea one level up. It draws a
+        staircase of the best score each evaluation contract held, with band width following the
+        generations spent inside that contract. A strip beneath it names which part of the
+        contract changed at each reset: the board, the brief, the scoring, the evaluator
+        revision, the adapter, the mutable trees, the structure, or the proposer. A change of tournament structure draws a dashed boundary there, because
+        floors on either side of it are measuring different competitions.
+      </p>
+
+      <h3>Where exactly did this candidate gain and lose?</h3>
+      <p>
+        A single number says a challenger is better. It cannot say what it traded to get there.
+        The radar answers that: one axis per thing the gate weighs — the scalar, the pass rate,
+        and each named judge's drift — with the challenger drawn as a filled shape against the
+        champion as a dashed one, and outer meaning better on every axis.
+      </p>
+
+      <figure class="fig">
+        <svg viewBox="-28 0 788 316" role="img" aria-label="A five-axis radar comparing a challenger against the champion; the challenger is wider on three axes and pulls in on one.">
+          <text class="flabel" x="0" y="12">challenger against champion, outer is better</text>
+          <polygon points="190.0,142.0 214.7,160.0 205.3,189.0 174.7,189.0 165.3,160.0" fill="none" class="fline"></polygon>
+          <polygon points="190.0,116.0 239.5,151.9 220.6,210.1 159.4,210.1 140.5,151.9" fill="none" class="fline"></polygon>
+          <polygon points="190.0,90.0 264.2,143.9 235.8,231.1 144.2,231.1 115.8,143.9" fill="none" class="fline"></polygon>
+          <polygon points="190.0,64.0 288.9,135.9 251.1,252.1 128.9,252.1 91.1,135.9" fill="none" class="fline"></polygon>
+          <line class="fline" x1="190" y1="168" x2="190.0" y2="64.0"></line>
+          <text class="fdata" x="190.0" y="44.1" text-anchor="middle">scalar</text>
+          <line class="fline" x1="190" y1="168" x2="288.9" y2="135.9"></line>
+          <text class="fdata" x="310.7" y="131.8" text-anchor="start">pass rate</text>
+          <line class="fline" x1="190" y1="168" x2="251.1" y2="252.1"></line>
+          <text class="fdata" x="264.6" y="273.6" text-anchor="start">tool drift</text>
+          <line class="fline" x1="190" y1="168" x2="128.9" y2="252.1"></line>
+          <text class="fdata" x="115.4" y="273.6" text-anchor="end">plan drift</text>
+          <line class="fline" x1="190" y1="168" x2="91.1" y2="135.9"></line>
+          <text class="fdata" x="69.3" y="131.8" text-anchor="end">memory drift</text>
+          <polygon points="190.0,103.5 259.2,145.5 230.3,223.5 154.5,216.8 129.7,148.4" fill="none" stroke="var(--v2-ink-faint)" stroke-width="1.4" stroke-dasharray="4 3"></polygon>
+          <polygon points="190.0,78.6 267.1,142.9 215.7,203.3 144.8,230.3 121.8,145.8" fill="var(--v2-accent)" fill-opacity="0.18" stroke="var(--v2-accent)" stroke-width="1.8"></polygon>
+          <circle class="f-good" cx="190.0" cy="78.6" r="4"></circle>
+          <circle class="f-good" cx="267.1" cy="142.9" r="4"></circle>
+          <circle class="f-bad" cx="215.7" cy="203.3" r="4"></circle>
+          <circle class="f-good" cx="144.8" cy="230.3" r="4"></circle>
+          <circle class="f-good" cx="121.8" cy="145.8" r="4"></circle>
+          <text class="fname f-accent" x="380" y="60">the challenger</text>
+          <text class="fnote" x="380" y="76">filled, solid outline</text>
+          <text class="fname" x="380" y="104" fill="var(--v2-ink-faint)">the champion</text>
+          <text class="fnote" x="380" y="120">dashed outline, no fill</text>
+
+          <text class="fnote" x="380" y="152">Four axes push outward and one pulls in: this</text>
+          <text class="fnote" x="380" y="168">challenger buys its scalar partly with tool drift.</text>
+          <text class="fnote" x="380" y="184">A vertex takes the improvement colour where it</text>
+          <text class="fnote" x="380" y="200">beats the champion and the regression colour</text>
+          <text class="fnote" x="380" y="216">where it gives ground, so the shape of the trade</text>
+          <text class="fnote" x="380" y="232">reads before any number does.</text>
+          <text class="fnote" x="380" y="260">A candidate still running draws dashed and amber,</text>
+          <text class="fnote" x="380" y="276">and resolves to this solid form once it settles.</text>
+        </svg>
+        <figcaption>
+          This is the figure that turns a promotion into an argument. Two challengers can carry
+          the same scalar and different shapes, and the shape is what tells you whether the gain
+          will survive a board that weights those judges differently.
+        </figcaption>
+      </figure>
+
+      <h3>Which board entries moved?</h3>
+      <p>
+        A single score can improve while individual tasks get worse, so three figures open the
+        aggregate back up.
+      </p>
+
+      <figure class="fig">
+        <svg viewBox="0 0 760 210" role="img" aria-label="A grid of six board entries against five generations, each cell shaded by its drift loss, showing one entry that stays warm throughout.">
+          <text class="flabel" x="0" y="12">drift loss per entry, per generation</text>
+          <text class="fdata" x="0" y="45">checkout_flow</text>
+          <rect class="hm3" x="140" y="30" width="40" height="20" rx="1"></rect>
+          <rect class="hm2" x="186" y="30" width="40" height="20" rx="1"></rect>
+          <rect class="hm2" x="232" y="30" width="40" height="20" rx="1"></rect>
+          <rect class="hm1" x="278" y="30" width="40" height="20" rx="1"></rect>
+          <rect class="hm1" x="324" y="30" width="40" height="20" rx="1"></rect>
+          <text class="fdata" x="0" y="71">refund_path</text>
+          <rect class="hm4" x="140" y="56" width="40" height="20" rx="1"></rect>
+          <rect class="hm4" x="186" y="56" width="40" height="20" rx="1"></rect>
+          <rect class="hm5" x="232" y="56" width="40" height="20" rx="1"></rect>
+          <rect class="hm4" x="278" y="56" width="40" height="20" rx="1"></rect>
+          <rect class="hm4" x="324" y="56" width="40" height="20" rx="1"></rect>
+          <text class="fdata" x="0" y="97">multi_turn_a</text>
+          <rect class="hm2" x="140" y="82" width="40" height="20" rx="1"></rect>
+          <rect class="hm2" x="186" y="82" width="40" height="20" rx="1"></rect>
+          <rect class="hm1" x="232" y="82" width="40" height="20" rx="1"></rect>
+          <rect class="hm1" x="278" y="82" width="40" height="20" rx="1"></rect>
+          <rect class="hm0" x="324" y="82" width="40" height="20" rx="1"></rect>
+          <text class="fdata" x="0" y="123">schema_strict</text>
+          <rect class="hm1" x="140" y="108" width="40" height="20" rx="1"></rect>
+          <rect class="hm1" x="186" y="108" width="40" height="20" rx="1"></rect>
+          <rect class="hm1" x="232" y="108" width="40" height="20" rx="1"></rect>
+          <rect class="hm0" x="278" y="108" width="40" height="20" rx="1"></rect>
+          <rect class="hm0" x="324" y="108" width="40" height="20" rx="1"></rect>
+          <text class="fdata" x="0" y="149">long_context</text>
+          <rect class="hm5" x="140" y="134" width="40" height="20" rx="1"></rect>
+          <rect class="hm4" x="186" y="134" width="40" height="20" rx="1"></rect>
+          <rect class="hm3" x="232" y="134" width="40" height="20" rx="1"></rect>
+          <rect class="hm3" x="278" y="134" width="40" height="20" rx="1"></rect>
+          <rect class="hm2" x="324" y="134" width="40" height="20" rx="1"></rect>
+          <text class="fdata" x="0" y="175">tool_retry</text>
+          <rect class="hm2" x="140" y="160" width="40" height="20" rx="1"></rect>
+          <rect class="hm1" x="186" y="160" width="40" height="20" rx="1"></rect>
+          <rect class="hm1" x="232" y="160" width="40" height="20" rx="1"></rect>
+          <rect class="hm1" x="278" y="160" width="40" height="20" rx="1"></rect>
+          <rect class="hm1" x="324" y="160" width="40" height="20" rx="1"></rect>
+          <text class="fdata" x="140" y="200">v0</text>
+          <text class="fdata" x="186" y="200">v1</text>
+          <text class="fdata" x="232" y="200">v2</text>
+          <text class="fdata" x="278" y="200">v3</text>
+          <text class="fdata" x="324" y="200">v4</text>
+
+          <text class="fnote" x="400" y="44">Cool cells are a low drift loss, warm cells</text>
+          <text class="fnote" x="400" y="60">a high one.</text>
+          <text class="fnote" x="400" y="84">Reading down a column gives one generation</text>
+          <text class="fnote" x="400" y="100">across every board entry; reading across a row</text>
+          <text class="fnote" x="400" y="116">follows one task as the source changes.</text>
+          <text class="fnote" x="400" y="146">Here the refund path stays warm through every</text>
+          <text class="fnote" x="400" y="162">generation, so the epoch improved around a task</text>
+          <text class="fnote" x="400" y="178">it has never actually fixed.</text>
+        </svg>
+        <figcaption>
+          The ramp is mixed from the active theme's tokens at drawing time, so it stays legible on
+          a light ground and a dark one without a second palette.
+        </figcaption>
+      </figure>
+
+      <p>
+        Beside the grid, a dot plot gives one row per entry, with its value against the same
+        reference line and an outcome glyph at the right edge. A slopegraph then draws one line
+        per entry running from the champion's value to the challenger's, coloured by whether that
+        entry improved, regressed, or stayed level. The slopegraph is what exposes a raised average that hides a
+        broken task: several lines fall while one climbs.
+      </p>
+
+      <h3>Why did this candidate win or lose?</h3>
+      <p>
+        Two figures trace a single candidate end to end. A lifecycle summary follows it from its
+        parent, through the patch that made it, the fan of board entries it ran, the sum of those
+        results, the gate, and the verdict it terminated in. A causal flow tells the same story
+        with widths, carrying patch into per-entry drift into the gate, so the entries that
+        decided the verdict are the widest bands. Alongside them, a bar per named judge attributes
+        the weighted loss to each one, which is how a failure of process is told apart from a
+        failure of output.
+      </p>
+
+      <h3>Is the instrument itself trustworthy?</h3>
+      <p>
+        Three figures watch the loop rather than the candidates. A calibration trend plots each
+        generation's predicted outcome against its settled one, so a proposer that is
+        consistently overconfident shows as a drift in the running agreement rather than as a
+        hunch. A diversity matrix grids the field against itself, shading how far each pair of
+        challengers overlaps in the mutation points they touch and marking the most overlapping
+        pair. A trajectory strip lays the epoch's edits along their path through the mutation
+        surface, so a loop circling the same few points looks different from one making ground.
+      </p>
+
+      <h3>What is happening right now?</h3>
+      <p>
+        While a round runs, the console draws the field forming and moving. A scalar track shows
+        each contestant's position against the champion's line as results land, with projections
+        in a dashed amber treatment so an estimate never reads as a settled fact. Beside it a
+        proposing tracker lists each challenger as it is minted and whether its patches applied,
+        and a field bar chart gives the gauntlet's contestants as lengths against the champion.
+        All three converge: once the round settles, the live figure and the completed figure
+        render identically. That is a deliberate property, and it is what lets an operator trust
+        a figure they were watching while it moved.
+      </p>
+
+      <h3>The small marks</h3>
+      <p>
+        Inside dense tables the same grammar shrinks rather than changing. A sparkline carries a
+        trend in one cell. A spark bar strip carries a loss profile with a verdict triangle. A
+        row of proportional glyphs carries the pass, fail and timeout counts for a cell. A
+        side-by-side diff puts the champion's text against the challenger's for the span a patch
+        rewrote. Status glyphs render inside a fixed square overlay, so a stretched cell never
+        shears a checkmark into an oval.
+      </p>
+
+      <h3>Who has held the crown, and for how long?</h3>
+      <p>
+        A reign ribbon gives each champion one bar spanning the rounds it held, drawing the
+        current champion in the accent with the solid crown and former champions in dimmed ink
+        with the hollow crown. A lineage figure puts the unbroken line of champions on its own
+        lane and branches rejected challengers into a lower one, so the search itself becomes
+        visible: a long champion line with many short branches is a loop making steady progress
+        against many rejected ideas.
+      </p>
+
+      <p class="caption">
+        Every figure scales to the width of its pane through a viewBox, with no panning and no
+        zooming, and an inherently wide table scrolls inside its own box so the page itself never
+        moves sideways. Hovering any mark opens a detail card that reads from the same theme
+        tokens as the figure under it.
+      </p>
+    </section>
+
+  </main>
+</div>
+
+<div id="hovercard" hidden></div>
+
+<script>
+(function () {
+  "use strict";
+
+  var root = document.documentElement;
+
+  /* ============================================ preferences (per-viewer only) */
+  function readPref(key, fallback) {
+    try { var v = window.localStorage.getItem(key); return v === null ? fallback : v; }
+    catch (e) { return fallback; }
+  }
+  function writePref(key, value) {
+    try { window.localStorage.setItem(key, value); } catch (e) { /* private mode */ }
+  }
+
+  /* ============================================ colour themes
+     The six-role tuple: ground · surface · ink · improve · regress · accent.
+     Secondary tokens derive from those by the documented mapping, so a theme
+     is one row of data rather than a block of hand-written CSS. */
+  var COLOR_THEMES = [
+    ["monokai", "monokai", ["#1e1f1c", "#272822", "#f8f8f2", "#a6e22e", "#f92672", "#66d9ef"]],
+    ["solarized-dark", "solarized dark", ["#04222B", "#0A2D38", "#93A1A1", "#8BB80E", "#E0483C", "#2AA198"]],
+    ["solarized-light", "solarized light", ["#FDF6E3", "#FBF1D6", "#586E75", "#6B9B0B", "#DC322F", "#268BD2"]],
+    ["google-light", "google light", ["#FFFFFF", "#F4F4F4", "#474A4E", "#34A853", "#EA4335", "#1B9CB8"]],
+    ["google-dark", "google dark", ["#202124", "#2C2D30", "#FFFFFF", "#34A853", "#EA4335", "#24C1E0"]],
+    ["lunaria-light", "lunaria light", ["#EBE4E1", "#E2DCD9", "#363434", "#497D46", "#783C1F", "#3778A9"]],
+    ["lunaria-eclipse", "lunaria eclipse", ["#323F46", "#3B484F", "#DFE2ED", "#BEDBC1", "#BA9088", "#C8429F"]],
+    ["belafonte-day", "belafonte day", ["#D5CCBA", "#CCC3B2", "#34292D", "#6e6a4e", "#BE100E", "#426A79"]],
+    ["belafonte-night", "belafonte night", ["#20111B", "#271821", "#D5CCBA", "#a6a07a", "#d6403e", "#6F8E97"]],
+    ["paper", "paper", ["#F2EEDE", "#E6E2D3", "#1A1A1A", "#216609", "#CC3E28", "#1E6FCC"]],
+    ["zenburn", "zenburn", ["#3A3A3A", "#424241", "#DCDCCC", "#8FB28F", "#CC9393", "#8CD0D3"]],
+    ["selenized-black", "selenized black", ["#181818", "#202020", "#DEDEDE", "#83C746", "#FF5E56", "#56D8C9"]],
+    ["relaxed", "relaxed", ["#353A44", "#3D424B", "#F7F7F7", "#A0AC77", "#BC5653", "#7EAAC7"]],
+    ["espresso", "espresso", ["#323232", "#3A3A3A", "#FFFFFF", "#A5C261", "#D25252", "#6C99BB"]],
+    ["dracula", "dracula", ["#282A36", "#343746", "#F8F8F2", "#50FA7B", "#FF5555", "#BD93F9"]],
+    ["ubuntu", "ubuntu", ["#300A24", "#3D1530", "#EEEEEC", "#8AE234", "#CC0000", "#34E2E2"]]
+  ];
+  var THEME_BY_ID = {};
+  COLOR_THEMES.forEach(function (t) { THEME_BY_ID[t[0]] = t; });
+
+  function hexToRgb(h) {
+    var s = h.replace("#", "");
+    if (s.length === 3) s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2];
+    return [parseInt(s.slice(0, 2), 16), parseInt(s.slice(2, 4), 16), parseInt(s.slice(4, 6), 16)];
+  }
+  function mix(a, b, t) {
+    var A = hexToRgb(a), B = hexToRgb(b);
+    var out = [0, 1, 2].map(function (i) { return Math.round(A[i] + (B[i] - A[i]) * t); });
+    return "rgb(" + out[0] + "," + out[1] + "," + out[2] + ")";
+  }
+  function luminance(h) {
+    var c = hexToRgb(h);
+    return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+  }
+
+  function applyTheme(id) {
+    var st = root.style;
+    var props = ["--v2-paper", "--v2-panel", "--v2-ink", "--v2-ink-soft", "--v2-ink-faint",
+      "--v2-rule", "--v2-rule-soft", "--v2-good", "--v2-good-soft", "--v2-bad",
+      "--v2-bad-soft", "--v2-caution", "--v2-accent", "--v2-flat", "--v2-cell-empty",
+      "--v2-ink-strong"];
+    if (id === "auto") { props.forEach(function (p) { st.removeProperty(p); }); return; }
+    var t = THEME_BY_ID[id];
+    if (!t) return;
+    var paper = t[2][0], panel = t[2][1], ink = t[2][2], good = t[2][3], bad = t[2][4], accent = t[2][5];
+    var dark = luminance(paper) < 0.45;
+    st.setProperty("--v2-paper", paper);
+    st.setProperty("--v2-panel", panel);
+    st.setProperty("--v2-ink", ink);
+    st.setProperty("--v2-ink-soft", mix(ink, paper, 0.22));
+    st.setProperty("--v2-ink-faint", mix(ink, paper, 0.48));
+    st.setProperty("--v2-rule", mix(paper, ink, 0.18));
+    st.setProperty("--v2-rule-soft", mix(paper, ink, 0.09));
+    st.setProperty("--v2-good", good);
+    st.setProperty("--v2-good-soft", mix(paper, good, 0.18));
+    st.setProperty("--v2-bad", bad);
+    st.setProperty("--v2-bad-soft", mix(paper, bad, 0.18));
+    st.setProperty("--v2-caution", mix(good, bad, 0.5));
+    st.setProperty("--v2-accent", accent);
+    st.setProperty("--v2-flat", mix(ink, paper, 0.55));
+    st.setProperty("--v2-cell-empty", mix(paper, ink, 0.07));
+    st.setProperty("--v2-ink-strong", dark ? mix(ink, "#ffffff", 0.35) : mix(ink, "#000000", 0.45));
+  }
+
+  /* swatch strip: ground · surface · ink · improve · regress · accent */
+  function stripInto(host, tuple) {
+    host.innerHTML = "";
+    tuple.forEach(function (c) {
+      var i = document.createElement("i");
+      i.style.background = c;
+      host.appendChild(i);
+    });
+  }
+
+  var cdTrigger = document.getElementById("cd-trigger");
+  var cdList = document.getElementById("cd-list");
+  var cdStrip = document.getElementById("cd-strip");
+  var cdName = document.getElementById("cd-name");
+  var currentTheme = readPref("zicato.T.theme", "auto");
+
+  function autoTuple() {
+    var darkOS = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return THEME_BY_ID[darkOS ? "monokai" : "solarized-light"][2];
+  }
+
+  function paintThemeTrigger() {
+    if (currentTheme === "auto") { stripInto(cdStrip, autoTuple()); cdName.textContent = "auto"; }
+    else { stripInto(cdStrip, THEME_BY_ID[currentTheme][2]); cdName.textContent = THEME_BY_ID[currentTheme][1]; }
+  }
+
+  function buildThemeList() {
+    var ul = document.createElement("ul");
+    var rows = [["auto", "auto — follow the viewer", null]].concat(COLOR_THEMES.map(function (t) { return [t[0], t[1], t[2]]; }));
+    rows.forEach(function (r) {
+      var li = document.createElement("li");
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "opt";
+      b.setAttribute("role", "option");
+      b.setAttribute("aria-selected", String(r[0] === currentTheme));
+      b.setAttribute("data-theme-id", r[0]);
+      var strip = document.createElement("span");
+      strip.className = "swatchstrip";
+      stripInto(strip, r[2] || autoTuple());
+      var nm = document.createElement("span");
+      nm.textContent = r[1];
+      b.appendChild(strip);
+      b.appendChild(nm);
+      if (r[0] === "monokai") {
+        var d = document.createElement("span");
+        d.className = "deflabel";
+        d.textContent = "console default";
+        b.appendChild(d);
+      }
+      b.addEventListener("click", function () {
+        currentTheme = r[0];
+        writePref("zicato.T.theme", currentTheme);
+        applyTheme(currentTheme);
+        paintThemeTrigger();
+        Array.prototype.forEach.call(cdList.querySelectorAll(".opt"), function (o) {
+          o.setAttribute("aria-selected", String(o.getAttribute("data-theme-id") === currentTheme));
+        });
+        closePops();
+        layoutMap();
+      });
+      li.appendChild(b);
+      ul.appendChild(li);
+    });
+    cdList.innerHTML = "";
+    cdList.appendChild(ul);
+  }
+
+  /* ============================================ typefaces
+     Twelve faces across three modes. [data-t-type] routes families into
+     --v2-sans and --v2-mono; an editorial face routes mono to its serif too. */
+  var TF = {
+    GSMONO: "'Google Sans Mono', 'Noto Sans Mono', ui-monospace, monospace",
+    SRCS: "'Source Sans 3', system-ui, sans-serif",
+    SRCC: "'Source Code Pro', ui-monospace, monospace",
+    INCON: "'Inconsolata', ui-monospace, monospace",
+    UBUNTU: "'Ubuntu', system-ui, sans-serif",
+    UBUM: "'Ubuntu Mono', ui-monospace, monospace",
+    FRAUN: "'Fraunces', Georgia, serif",
+    BITTER: "'Bitter', Georgia, serif",
+    LITER: "'Literata', Georgia, serif",
+    DOMINE: "'Domine', Georgia, serif",
+    AN: "'Archivo Narrow', 'Space Grotesk', system-ui, sans-serif",
+    SG: "'Space Grotesk', system-ui, sans-serif",
+    HANKEN: "'Hanken Grotesk', system-ui, sans-serif",
+    BARLOWC: "'Barlow Condensed', 'Archivo Narrow', system-ui, sans-serif",
+    BRICO: "'Bricolage Grotesque', system-ui, sans-serif"
+  };
+  var GF = {
+    GSMONO: "Noto+Sans+Mono:wght@400;500;600",
+    SRCS: "Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400",
+    SRCC: "Source+Code+Pro:wght@400;500;600",
+    INCON: "Inconsolata:wght@400;500;600",
+    UBUNTU: "Ubuntu:wght@400;500;700",
+    UBUM: "Ubuntu+Mono:wght@400;700",
+    FRAUN: "Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700",
+    BITTER: "Bitter:wght@400;600;700",
+    LITER: "Literata:opsz,wght@7..72,400;7..72,600;7..72,700",
+    DOMINE: "Domine:wght@400;600;700",
+    AN: "Archivo+Narrow:wght@400;600;700",
+    SG: "Space+Grotesk:wght@400;500;700",
+    HANKEN: "Hanken+Grotesk:wght@400;600;700",
+    BARLOWC: "Barlow+Condensed:wght@400;600;700",
+    BRICO: "Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700"
+  };
+  var TYPE_OPTIONS = [
+    { id: "google-sans-mono", short: "Google Sans Mono", mode: "technical", label: "Google Sans Mono", head: "GSMONO", prose: "GSMONO", code: "GSMONO" },
+    { id: "source-sans-3", short: "Source Sans 3", mode: "technical", label: "Source Sans 3 + Source Code Pro", head: "SRCS", prose: "SRCS", code: "SRCC" },
+    { id: "inconsolata", short: "Inconsolata", mode: "technical", label: "Inconsolata", head: "INCON", prose: "INCON", code: "INCON" },
+    { id: "ubuntu", short: "Ubuntu", mode: "technical", label: "Ubuntu + Ubuntu Mono", head: "UBUNTU", prose: "UBUNTU", code: "UBUM" },
+    { id: "fraunces", short: "Fraunces", mode: "editorial", label: "Fraunces", head: "FRAUN", prose: "FRAUN", code: "FRAUN" },
+    { id: "bitter", short: "Bitter", mode: "editorial", label: "Bitter", head: "BITTER", prose: "BITTER", code: "BITTER" },
+    { id: "literata", short: "Literata", mode: "editorial", label: "Literata", head: "LITER", prose: "LITER", code: "LITER" },
+    { id: "domine", short: "Domine", mode: "editorial", label: "Domine", head: "DOMINE", prose: "DOMINE", code: "DOMINE" },
+    { id: "archivo-narrow", short: "Archivo Narrow", mode: "display", label: "Archivo Narrow + Space Grotesk", head: "AN", prose: "SG", code: "SG" },
+    { id: "hanken-grotesk", short: "Hanken Grotesk", mode: "display", label: "Hanken Grotesk", head: "HANKEN", prose: "HANKEN", code: "HANKEN" },
+    { id: "barlow-condensed", short: "Barlow Condensed", mode: "display", label: "Barlow Condensed + Space Grotesk", head: "BARLOWC", prose: "SG", code: "SG" },
+    { id: "bricolage-grotesque", short: "Bricolage", mode: "display", label: "Bricolage Grotesque", head: "BRICO", prose: "BRICO", code: "BRICO" }
+  ];
+  var MODE_ORDER = ["technical", "editorial", "display"];
+  var MODE_LABEL = { technical: "Technical", editorial: "Editorial", display: "Display" };
+  var TYPE_BY_ID = {};
+  TYPE_OPTIONS.forEach(function (o) { TYPE_BY_ID[o.id] = o; });
+
+  var loadedFonts = {};
+  function ensureFonts(opt) {
+    [opt.head, opt.prose, opt.code].forEach(function (k) {
+      if (loadedFonts[k] || !GF[k]) return;
+      loadedFonts[k] = true;
+      var l = document.createElement("link");
+      l.rel = "stylesheet";
+      l.href = "https://fonts.googleapis.com/css2?family=" + GF[k] + "&display=swap";
+      document.head.appendChild(l);
+    });
+  }
+
+  /* A value persisted under one of the old opaque ids still resolves to the
+     typeface it selected. This map exists to retire those ids. */
+  var LEGACY_TYPE_IDS = {
+    "T7": "google-sans-mono",
+    "T9": "source-sans-3",
+    "T12": "inconsolata",
+    "T14": "ubuntu",
+    "E5": "fraunces",
+    "E7": "bitter",
+    "E8": "literata",
+    "E15": "domine",
+    "D2": "archivo-narrow",
+    "D12": "hanken-grotesk",
+    "D14": "barlow-condensed",
+    "D5": "bricolage-grotesque",
+    technical: "google-sans-mono", editorial: "fraunces", display: "archivo-narrow"
+  };
+
+  var currentType = readPref("zicato.T.typeface", "source-sans-3");
+  if (!TYPE_BY_ID[currentType]) currentType = LEGACY_TYPE_IDS[currentType] || "source-sans-3";
+
+  function applyType(id) {
+    var o = TYPE_BY_ID[id];
+    if (!o) return;
+    ensureFonts(o);
+    root.style.setProperty("--v2-sans", TF[o.prose]);
+    root.style.setProperty("--v2-mono", TF[o.code]);
+    root.style.setProperty("--n-font-head", TF[o.head]);
+    document.getElementById("tf-name").textContent = o.short;
+    /* Chip widths are measured in the live face. A webfont that is still
+       loading measures as its fallback, so re-lay out when it lands. */
+    if (document.fonts && document.fonts.ready && typeof layoutMap === "function") {
+      document.fonts.ready.then(function () { layoutMap(); });
+    }
+  }
+
+  var tfList = document.getElementById("tf-list");
+  function buildTypeList() {
+    tfList.innerHTML = "";
+    MODE_ORDER.forEach(function (mode) {
+      var h = document.createElement("div");
+      h.className = "grouphead";
+      h.textContent = MODE_LABEL[mode];
+      tfList.appendChild(h);
+      var ul = document.createElement("ul");
+      TYPE_OPTIONS.filter(function (o) { return o.mode === mode; }).forEach(function (o) {
+        var li = document.createElement("li");
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "opt";
+        b.setAttribute("role", "option");
+        b.setAttribute("data-type-id", o.id);
+        b.setAttribute("aria-selected", String(o.id === currentType));
+        /* a true micro-specimen: the row renders in its own faces */
+        var spec = document.createElement("span");
+        spec.className = "specimen";
+        spec.style.fontFamily = TF[o.prose];
+        spec.textContent = o.label;
+        b.appendChild(spec);
+        b.addEventListener("mouseenter", function () { ensureFonts(o); });
+        b.addEventListener("click", function () {
+          currentType = o.id;
+          writePref("zicato.T.typeface", currentType);
+          applyType(currentType);
+          Array.prototype.forEach.call(tfList.querySelectorAll(".opt"), function (x) {
+            x.setAttribute("aria-selected", String(x.getAttribute("data-type-id") === currentType));
+          });
+          closePops();
+          layoutMap();
+        });
+        li.appendChild(b);
+        ul.appendChild(li);
+      });
+      tfList.appendChild(ul);
+    });
+
+    /* S / M / L, orthogonal to the page-scale pill */
+    var row = document.createElement("div");
+    row.className = "sizerow";
+    var lbl = document.createElement("span");
+    lbl.className = "lbl";
+    lbl.textContent = "size";
+    row.appendChild(lbl);
+    [["S", "15px"], ["M", "16px"], ["L", "17.5px"]].forEach(function (pair) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = pair[0];
+      b.setAttribute("data-size", pair[1]);
+      b.setAttribute("aria-pressed", String(pair[1] === currentSize));
+      b.addEventListener("click", function () {
+        currentSize = pair[1];
+        writePref("zicato.T.fontsize", currentSize);
+        root.style.setProperty("--fs", currentSize);
+        Array.prototype.forEach.call(row.querySelectorAll("button"), function (x) {
+          x.setAttribute("aria-pressed", String(x.getAttribute("data-size") === currentSize));
+        });
+        layoutMap();
+      });
+      row.appendChild(b);
+    });
+    tfList.appendChild(row);
+  }
+
+  var currentSize = readPref("zicato.T.fontsize", "16px");
+  root.style.setProperty("--fs", currentSize);
+
+  /* ============================================ popover plumbing */
+  function closePops() {
+    [["cd-trigger", "cd-list"], ["tf-trigger", "tf-list"]].forEach(function (p) {
+      document.getElementById(p[1]).hidden = true;
+      document.getElementById(p[0]).setAttribute("aria-expanded", "false");
+    });
+  }
+  function wirePop(trigId, listId) {
+    var trig = document.getElementById(trigId), list = document.getElementById(listId);
+    trig.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      var open = !list.hidden;
+      closePops();
+      if (!open) { list.hidden = false; trig.setAttribute("aria-expanded", "true"); }
+    });
+    list.addEventListener("click", function (ev) { ev.stopPropagation(); });
+  }
+  wirePop("cd-trigger", "cd-list");
+  wirePop("tf-trigger", "tf-list");
+  document.addEventListener("click", closePops);
+  document.addEventListener("keydown", function (ev) { if (ev.key === "Escape") closePops(); });
+
+  /* ============================================ page scale
+     Applied with `zoom` so the page REFLOWS at the scaled size rather than
+     being transformed, which is what keeps it from clipping. */
+  var approot = document.getElementById("approot");
+  var scale = document.getElementById("scale");
+  var scaleOut = document.getElementById("scaleout");
+  var currentScale = readPref("zicato.T.scale", "100");
+
+  function applyScale(v) {
+    approot.style.zoom = String(Number(v) / 100);
+    scaleOut.textContent = v + "%";
+    scale.value = v;
+  }
+  scale.addEventListener("input", function () {
+    currentScale = scale.value;
+    writePref("zicato.T.scale", currentScale);
+    applyScale(currentScale);
+  });
+  document.getElementById("scalereset").addEventListener("click", function () {
+    currentScale = "100";
+    writePref("zicato.T.scale", currentScale);
+    applyScale(currentScale);
+  });
+
+  /* ============================================ concept data */
+  var STAGES = ["Contract", "Execution", "Measurement", "Proposal", "Decision"];
+
+  var NODES = [
+    { id: "epoch", col: 0, name: "Epoch", def: "The unit of evaluation contract. Within an epoch the board, the brief's forbidden list, and the scoring weights are frozen, which is what makes the generations inside it directly comparable. Pattern aggregates reset at the boundary, and cross-epoch comparison is fuzzy by design." },
+    { id: "board", col: 0, name: "Board", def: "The frozen-per-epoch list of tasks the system under test is evaluated against, one JSON object per line. Three entry kinds sit behind an open-ended discriminator, so a fourth kind drops in without a schema break." },
+    { id: "entry", col: 0, name: "Board entry", def: "One task. Carries an id, a kind, a wall-clock budget, an optional weight and tags, and two evaluation facets: expectations that check the outcome, and judges that watch the process. Single-turn entries carry an input, scripted entries carry turns, emulated entries carry a user persona." },
+    { id: "expectation", col: 0, name: "Expectation", def: "An outcome check, run after the fact on the run's output or transcript. Five kinds: a Python predicate, an exact string, a regular expression, a JSON schema, and a model-graded rubric. The reducer combines the list into one pass or fail; an empty list means the entry is scored on drift alone." },
+    { id: "judge", col: 0, name: "Judge", def: "A process check that watches the reasoning stream while the run happens, as distinct from an expectation that inspects the finished output. A violation emits a drift event identified by the judge's name." },
+    { id: "brief", col: 0, name: "Proposer brief", def: "The operator-edited document that steers the proposer for the epoch — focus areas, style guidance, and a mechanically enforced list of mutation points that are off limits. Re-read from disk into the prompt at the start of every round." },
+    { id: "weights", col: 0, name: "Scoring weights", def: "The per-epoch weights and tournament thresholds that turn measured features into one comparable number, including the margin a challenger must clear to be promoted." },
+
+    { id: "contract", col: 0, name: "Evaluation contract", def: "Everything that decides what a score means: the board, the brief's forbidden list, the scoring weights, the declared adapter, and the proposer. An epoch is one contract held still. Changing any part of it opens a new epoch, because scores measured under two contracts are not comparable." },
+    { id: "persona", col: 0, name: "Persona", def: "What drives the simulated user in a multi-turn emulated entry: a goal, behavioural constraints, and the condition that ends the conversation. The emulator sees the persona and the user-facing transcript, and nothing else." },
+    { id: "structure", col: 0, name: "Tournament structure", def: "The shape of competition the epoch declares: a gauntlet where each challenger meets the champion directly, single or double elimination, Swiss pairing, or a racing ladder that halves the field at each rung. Four of the five differ only in how they narrow a field to one finalist, and then end identically." },
+    { id: "split", col: 0, name: "Board split", def: "The division of the board into a training slice, which every selection and gate decision reads, and a hidden slice reserved for confirming a crowning. The split is drawn once per epoch, and the proposer sees neither the hidden entries nor their results." },
+    { id: "reflection", col: 0, name: "Board reflection", def: "Treating the contract itself as an instrument and every promotion as a measurement it took. The loop trusts board, scoring, judges and gate as an oracle; this asks whether that oracle is noisy, invalid, or too insensitive to see a real difference, and reports findings rather than changing anything on its own." },
+    { id: "workspace", col: 0, name: "Workspace", def: "The directory holding everything zicato has recorded for one project: the configuration, every epoch, the lineage, and the derived index. Where each artifact lives is declared in one place, so a reader and a writer cannot disagree about a path." },
+    { id: "prespend", col: 0, name: "Pre-spend check", def: "What the loop can prove about a workspace before it spends a round: that the adapter loads, that the declared roles are reachable, that the board parses, that the mutation points resolve. A wiring mistake caught here costs seconds instead of a full evaluation." },
+    { id: "gauntlet", col: 0, name: "Gauntlet", def: "The default structure: each challenger meets the standing champion directly, and the champion is preserved unless a challenger beats it outright. Laid beside the mature algorithm for this problem — elitist iterated racing — the correspondence is near-total, which is why it is the default rather than a placeholder." },
+    { id: "bracket", col: 0, name: "Elimination bracket", def: "Single or double elimination: pair the field, cut the losers, repeat. Its design defends the budget rather than the result, so a candidate cut in an early round is gone even when it lost to variance. The repository's own analysis calls this the wrong primitive for zicato and says why." },
+    { id: "swiss", col: 0, name: "Swiss pairing", def: "Every contestant plays every round, accumulating a point per win and a half per draw, with pairings drawn between contestants on similar scores. It ranks a whole field rather than only finding a winner, at the cost of running every contestant in every round." },
+    { id: "racing", col: 0, name: "Racing ladder", def: "Give every candidate a small budget, cut the weakest fraction, give the survivors more, and repeat. Resources concentrate on what looks promising. It suits triage of a large cheap field, and it shares the bracket's weakness: an early cut is permanent." },
+    { id: "adapter", col: 1, name: "Adapter", def: "The protocol implementation that decouples zicato from any specific framework. Zicato talks to the adapter; the adapter wraps the system under test. It answers two questions of interest: run this entry, and list the source locations that may be rewritten." },
+    { id: "harness", col: 1, name: "System under test", def: "The system zicato evaluates and proposes changes to, treated as a black box behind the adapter. It may be a multi-agent system of any shape, and it may equally be a library, a prompt set, or a rule engine. It need not involve a language model at all, which is what the name is chosen to keep visible." },
+    { id: "mutation", col: 1, name: "Mutation point", def: "An annotated source location the proposer is allowed to rewrite, marked by a comment carrying a stable id. Two kinds: a span within a file, or a whole file. Everything outside these markers is off limits." },
+    { id: "runner", col: 1, name: "Runner", def: "The component that executes one board entry against one generation, wrapping the harness so everything it does is recorded as a stream of typed events." },
+    { id: "run", col: 1, name: "Run", def: "One execution of the system under test against one board entry, captured as one event-stream file. A run terminates as completed or aborted, and the reducer then writes its loss profile alongside." },
+
+    { id: "emulator", col: 1, name: "Emulator", def: "Plays the user across the turns of an emulated entry, working from the persona and the transcript so far. Its every turn is recorded on a separate audit lane, so an operator can replay exactly what the simulated user said and why a conversation ended." },
+    { id: "harnesscall", col: 1, name: "Target model", def: "The model role the system under test runs on, reached through a callable the caller supplies. It exists only when the system uses a model; a deterministic system leaves this role empty and the loop runs unchanged." },
+    { id: "auxcall", col: 1, name: "Evaluation model", def: "The model role everything zicato itself runs uses: the proposer, the analysis pass, the emulator, and model-graded expectations. It must differ from the target role by identity or by an explicit model override, and zicato refuses to start when the two are the same." },
+    { id: "replicate", col: 1, name: "Replicate", def: "One of several runs of the same generation against the same entry. Evaluations vary between runs because outputs and model-backed judges vary, so a single run is a sample rather than a measurement. Replicating a comparison is how a real difference is told apart from that variation." },
+    { id: "watchdog", col: 1, name: "Watchdog supervisor", def: "A separate process that reads the loop's heartbeat and the list of active runs, and escalates from a polite stop to a forced kill when one stops reporting. Board units also run in subprocesses under a host-wide permit, so two loops on one machine cannot together spawn more workers than the machine can carry." },
+    { id: "boardunit", col: 1, name: "Board unit", def: "The atomic quantum of evaluation: one generation, one board entry, one replicate index. Under a fixed contract its result cannot change, so it is evaluated at most once and reused by every pairing, round and structure that needs it. This is what makes a cache-first comparison sound rather than a shortcut." },
+    { id: "sealed", col: 1, name: "Sealed context", def: "The limited view the emulator is given: the persona and the user-facing transcript, and nothing else. Sealing it is what stops the simulated user from seeing the answer it is supposed to be eliciting, which would otherwise turn a hard task into an easy one." },
+    { id: "reliability", col: 1, name: "Judge reliability", def: "How self-consistent a judge is when asked the same thing twice. A judge that disagrees with itself adds variance to every score it touches, and knowing which judge does that is what separates a noisy instrument from a real regression." },
+    { id: "retention", col: 1, name: "Snapshot retention", def: "Pruning the source trees of old generations while keeping every record. A tree is a full copy and the largest thing on disk; the record of what happened is small and is what later reads depend on, so the two age differently." },
+    { id: "events", col: 2, name: "Event stream", def: "The typed record of what happened during one run, written one JSON object per line by the telemetry sink. It is the raw material every downstream measurement derives from." },
+    { id: "reducer", col: 2, name: "Reducer", def: "The function that walks one run's event stream and produces one loss profile. A function rather than a live sink, because derivation wants to see all of a run's events at once — which also makes it testable against fixture streams in isolation." },
+    { id: "loss", col: 2, name: "Loss profile", def: "The reducer's typed output for one run: identity, drift features, multi-turn features, runtime features, the derived drift loss and pass or fail, and the weighted contribution of each named judge. This is the contract every other component reads from." },
+    { id: "drift", col: 2, name: "Drift loss", def: "A weighted scalar per run: a sum across drift counts by kind and severity, plan revisions, task failure ratio, runtime over budget, and abort. Available without any ground-truth expectation, which is what lets a board score a task that has no single right answer." },
+    { id: "pattern", col: 2, name: "Pattern", def: "A typed aggregation across every loss profile so far in the epoch — drift concentrated in one kind, a tag slice regressing, multi-turn memory failing, a surface nothing has moved. Reset at epoch boundaries, because the contract changed. This is what the proposer reads." },
+
+    { id: "index", col: 2, name: "Analytical index", def: "A SQLite projection of the files on disk, rebuilt from them on demand. It exists so cross-run questions are one query rather than a walk over every generation. It holds no fact that is not also in a file, so deleting it costs only the time to rebuild." },
+    { id: "health", col: 2, name: "Loop health", def: "Detectors that ask whether the evaluation still separates one candidate from another. A board every generation passes completely, or fails completely, produces rounds and journal entries while teaching the proposer nothing, and this is what reports that state." },
+    { id: "noise", col: 2, name: "Noise floor", def: "What a difference of zero actually looks like, measured by evaluating one generation several times and reading the spread of the results. A promote margin set below this floor promotes and rejects on variation, so the floor is what tells an operator whether a margin means anything." },
+    { id: "roundlog", col: 2, name: "Round log", def: "The per-round record of what the loop actually did: the proposal attempts made, the validator errors they hit, the screen's verdict on each candidate, the gate's numbers, and the terminal decision. It is written for its own sake, and several later readings depend on it existing." },
+    { id: "scorecard", col: 2, name: "Proposer scorecard", def: "A reading of proposal quality assembled from round logs the loop already wrote. It costs no extra evaluation, and it answers a question the tournament cannot: whether the component generating candidates is getting better or worse at it." },
+    { id: "scalar", col: 2, name: "Scalar", def: "The one comparable number per generation, combining the drift loss with the pass rate under the epoch's weights. Everything that ranks, gates, or plots a difference reads this, which is why the weights that produce it are frozen for the epoch alongside the board." },
+    { id: "coverage", col: 2, name: "Expectation coverage", def: "How much of what a board runs it actually grades. An entry with no expectation is scored on drift alone, and a board mostly made of those is measuring style rather than success, which this reports before it silently shapes a hundred rounds." },
+    { id: "scoringseam", col: 2, name: "Scoring seam", def: "The two points where an operator can replace how scoring works: the reduction from a run's events to a loss, and the combination of measurements into the scalar. A declarative transform covers the common cases without code." },
+    { id: "judgeerror", col: 2, name: "Judge error register", def: "The durable record of a judge that failed to answer, kept as a third outcome beside pass and fail. Counting a call that errored as a failure would charge the candidate for the instrument breaking, so the distinction is recorded rather than collapsed." },
+    { id: "redaction", col: 2, name: "Redacted feedback", def: "What the proposer is told about failures, with board identities removed. It gets the shape of what went wrong and drift-anchored windows of the runs where it happened, while the identity of the entry stays out. This is the channel that lets the proposer learn from failure without learning the board." },
+    { id: "calibration", col: 2, name: "Calibration", def: "Whether the loop's stated confidence matches what happens. Each generation's predicted outcome is compared against its settled one and the running agreement is tracked, so a proposer that is consistently overconfident is visible as a trend rather than as a feeling." },
+    { id: "trajectory", col: 2, name: "Trajectory", def: "The path the optimization has actually taken through the mutation surface across an epoch: which points were touched, in what order, and what each attempt returned. It is what distinguishes steady progress from a loop circling the same few edits." },
+    { id: "mde", col: 2, name: "Detectable effect", def: "The smallest difference this board could reliably detect, computed from the measured noise floor and how many times each comparison ran. It answers the question a promote margin implies but does not state: is the margin above what the evaluation can actually see, or below it." },
+    { id: "discrimination", col: 2, name: "Discrimination", def: "How often a board entry actually separates one candidate from another. An entry that returns the same verdict for everything contributes no information, and is reported as dead only once enough comparisons exist to say so rather than on thin evidence." },
+    { id: "proposer", col: 3, name: "Proposer", def: "The component that reads the patterns and the operator's brief and emits an experiment. Its output must satisfy a schema. The proposer counts as part of the evaluation contract, so changing it or its skills opens a new epoch, because it changes how candidates are generated." },
+    { id: "memory", col: 3, name: "Experiment memory", def: "The capped digest of prior experiments shown to the proposer so it stops re-proposing known failures and builds on known wins. Each entry carries the core idea, the mutation points touched, the verdict, the rejection reason, and the signed score delta. Advisory rather than binding." },
+    { id: "experiment", col: 3, name: "Experiment", def: "The proposer's output: a mandatory structured hypothesis plus the patches that test it. After the tournament concludes an outcome block is appended to the same record, which makes one file the whole audit trail for why a candidate was or was not promoted." },
+    { id: "hypothesis", col: 3, name: "Hypothesis", def: "The half of an experiment written before the run, and the reason a journal is worth reading later. Six required fields: the core idea in one sentence, the mutation points modulated, the pattern observation motivating it, the drift movements expected per kind, a pass-rate band, and the plausible failure modes." },
+    { id: "patch", col: 3, name: "Patch", def: "One typed rewrite, addressed by mutation-point id rather than by line number, carrying the replacement text. One or more patches make up an experiment." },
+    { id: "applier", col: 3, name: "Applier", def: "Resolves every patch's mutation-point id to its source location, rewrites the span, validates the result, and publishes a new candidate snapshot. A patch that fails a validator is rejected; nothing is silently repaired." },
+    { id: "bestofn", col: 3, name: "Best-of-N", def: "Taking several proposal samples in one step and critiquing them, rather than one. A single call takes one sample and retries only on invalid output, so without this a valid but mediocre proposal is never reconsidered. Screening picks which sample becomes a challenger." },
+    { id: "diversity", col: 3, name: "Field diversity", def: "How much the challengers in one field actually differ, measured as the overlap between the sets of mutation points each one touches. A field of near-identical ideas costs a full round of evaluation and answers almost one question, so the overlap summary informs whether to soft-reject a near-duplicate." },
+    { id: "generation", col: 3, name: "Generation", def: "A specific version of the system under test's source, named by sequence within the epoch. The first is the baseline — the registered source at epoch start, or the final promoted generation of the previous epoch. Every later one is the applier's output." },
+    { id: "snapshot", col: 3, name: "Snapshot", def: "The directory holding one generation's full source. A complete copy rather than a reference, so copying or deleting it affects no other generation." },
+
+    { id: "round", col: 0, name: "Round", def: "One turn of the loop inside an epoch: run, measure, propose, apply, compare, record. A round mints one experiment and either advances the generation counter or leaves the parent standing. Round numbers run continuously across the epoch, so an epoch usually holds more rounds than generations." },
+    { id: "field", col: 3, name: "Field", def: "The several challengers a single round can mint at once, competing together rather than one at a time. The round runs as named phases over the whole field — propose and apply, run, gate, decide — and two of those phases can end it early with an outcome already written to disk." },
+    { id: "validation", col: 3, name: "Patch validation", def: "The checks a patch set passes before and after it is applied. Beforehand: does every patch address a mutation point that exists, with an edit that point can accept. Afterwards: does the tree still parse and import, and do the checks the contract declares still pass. The validator scores nothing and repairs nothing." },
+    { id: "placebo", col: 3, name: "Placebo arm", def: "An optional control challenger whose patch re-emits a mutation point's current text unchanged, so the candidate behaves exactly like the champion. A decision procedure that works must reject it. Promoting a placebo is evidence that the gate is responding to variation." },
+    { id: "genstore", col: 3, name: "Generation store", def: "The seam that persists a generation's source, with a directory backend that keeps a full copy per generation and a git backend that keeps one branch per epoch. Everything above it addresses generations by id, so which backend is in use changes what is on disk and nothing about the loop." },
+    { id: "complexity", col: 3, name: "Diff complexity", def: "A measure of how much a proposed change actually rewrites, used to prefer the simpler of two changes that score alike. A loop rewarded only on score will keep growing the thing it edits, and this is the counterweight." },
+    { id: "tournament", col: 4, name: "Tournament", def: "Compares champion against challenger on the board frozen for this epoch and applies the promotion gate. Full mode re-runs every entry against both generations; fast mode is cache-first and reuses the parent's recorded results." },
+    { id: "gate", col: 4, name: "Promotion gate", def: "The rules that decide eligibility, applied in order: the challenger must beat the champion by the configured margin on the scalar score, and must not regress any entry the champion already passed. It reports a reason on every rejection." },
+    { id: "holdout", col: 4, name: "Holdout confirmation", def: "The final comparison on entries withheld from the process that chose the challenger. A challenger that won on the training slice confirms when it does not meaningfully regress on the holdout; confirmation does not demand a second improvement." },
+    { id: "ladder", col: 4, name: "Ladder", def: "The governor that rations feedback from the hidden slice. It releases a confirmation only when the training improvement clears its threshold, and charges every consultation against an epoch-level query budget — including a withheld one, because the hidden data was inspected either way." },
+    { id: "outcome", col: 4, name: "Outcome", def: "The post-run half of an experiment: the actual drift movements, whether each matched the hypothesis, the score deltas, the decision, and the rejection reason if there was one." },
+    { id: "champion", col: 4, name: "Champion", def: "The generation currently standing as the head of the epoch. It is the thing every challenger is measured against, and the reference line on a difference plot is its own score. Lineage calls the same generation the parent when the subject is descent rather than competition." },
+    { id: "challenger", col: 4, name: "Challenger", def: "A candidate generation trying to replace the champion. Lineage calls it the child. A round may mint several at once, in which case they compete as a field and the structure the epoch declared decides how." },
+    { id: "champgate", col: 4, name: "Champion gate", def: "The single crowning duel that ends four of the five structures, between the reigning champion and whichever finalist the earlier stages produced. It is decided by the same promotion gate any comparison uses, so narrowing a field changes who reaches the duel and never the standard applied there." },
+    { id: "rating", col: 4, name: "Rating", def: "A strength fitted to each contestant from the pairwise duels observed, where the chance of one beating another follows the gap between their strengths. The fit also yields an uncertainty per contestant, and that is the operational payoff: contestants whose ranges overlap are the pairs worth running again." },
+    { id: "receipt", col: 4, name: "Settlement receipt", def: "The durable record written before a round's decision is committed, holding everything needed to finish it. A process that dies mid-commit replays the receipt on restart and lands in the same place, which is what keeps a crash from leaving a round half-decided." },
+    { id: "evidence", col: 4, name: "Evidence gate", def: "An optional layer that can hold a crowning the measured ratings cannot separate from noise. It runs a defer, replicate, refit schedule, so it answers two questions together: whether the difference is real, and whether running the pair again would settle it." },
+    { id: "pareto", col: 4, name: "Pareto frontier", def: "The record of which generations are unbeaten on every objective at once, written after a round's decision is final. A single scalar hides the trade a change made; the frontier keeps the candidates that no other candidate beats on all counts." },
+    { id: "rung", col: 4, name: "Rung", def: "One stage of a racing ladder, where the surviving field is cut, typically in half. A rung is labelled by what it does to the field — four contestants down to two — and the survivors carry forward to the next rung until one remains to meet the champion." },
+    { id: "analysis", col: 4, name: "Epoch analysis", def: "The pass that runs when an epoch closes, reading its journal and its records into one report of what the epoch actually established. It is written once, at the boundary, because that is when the contract stops moving and the rounds inside it become comparable as a set." },
+    { id: "copeland", col: 4, name: "Copeland score", def: "A contestant's count of pairwise wins, a half for each draw. It ranks a field from duels alone without needing a common scale, which is what a Swiss epoch accumulates and what the standings order by." },
+    { id: "resolver", col: 4, name: "Resolver", def: "What decides an order when pairwise results disagree with themselves — where one contestant beats a second, the second beats a third, and the third beats the first. Two are selectable: ranking by pairwise wins, or locking in the most decisive pairings first and discarding any that would close a cycle." },
+    { id: "falsepromote", col: 4, name: "False promotion", def: "Crowning a challenger that is not actually better. It is the failure this whole design is arranged against, because the loop builds the next round on the champion, so a wrong crowning corrupts everything proposed after it. Every margin, replicate and confirmation exists to make it rarer." },
+    { id: "regressiongate", col: 4, name: "Regression gate", def: "Runs the candidate's own test suite against its snapshot, and any failure rejects it however strong the scoring signal was. A patch can improve the drift loss and the pass rate on the board while breaking an invariant the board never exercises, and the scoring channel cannot see that." },
+    { id: "deadletter", col: 4, name: "Dead letter", def: "Where a crowning duel goes when the evidence gate spends its replicate budget and the two ratings still cannot be separated. Recording it as unresolved keeps an undecidable comparison from being read later as a decision that went one way." },
+    { id: "journal", col: 4, name: "Journal", def: "The running narrative of the epoch, appended every round with the core idea, the score deltas, and the decision. A closing analysis pass runs over it when the epoch closes." },
+    { id: "lineage", col: 4, name: "Lineage", def: "The cross-epoch graph of generations, recording each epoch's identity, its promoted and rejected versions, and the parent generation in the epoch before it." }
+  ];
+
+  var EDGES = [
+    ["epoch", "board", "freezes"], ["epoch", "brief", "freezes"], ["epoch", "weights", "freezes"],
+    ["noise", "mde", "sizes"], ["replicate", "mde", "shrinks"],
+    ["mde", "weights", "tells whether the margin in is visible"],
+    ["entry", "discrimination", "is measured for"], ["discrimination", "coverage", "is reported beside"],
+    ["generation", "regressiongate", "must pass"], ["regressiongate", "gate", "can override"],
+    ["evidence", "deadletter", "unresolved duels go to"], ["deadletter", "replicate", "records what more would need"],
+    ["structure", "gauntlet", "may be"], ["structure", "bracket", "may be"],
+    ["structure", "swiss", "may be"], ["structure", "racing", "may be"],
+    ["gauntlet", "champion", "preserves the"], ["bracket", "falsepromote", "risks"],
+    ["racing", "rung", "cuts at each"], ["swiss", "copeland", "accumulates"],
+    ["copeland", "resolver", "is ordered by"], ["resolver", "rating", "falls back on"],
+    ["falsepromote", "gate", "is what the margin in guards"],
+    ["falsepromote", "replicate", "is what motivates"],
+    ["falsepromote", "holdout", "is what motivates"],
+    ["loss", "calibration", "settles a prediction in"],
+    ["hypothesis", "calibration", "is scored by"],
+    ["patch", "trajectory", "accumulates into"], ["trajectory", "pattern", "informs"],
+    ["workspace", "epoch", "holds every"], ["workspace", "index", "holds the"],
+    ["prespend", "adapter", "proves"], ["prespend", "board", "proves"],
+    ["emulator", "sealed", "sees only its"], ["judge", "reliability", "is measured for"],
+    ["reliability", "noise", "contributes to"], ["genstore", "retention", "is pruned by"],
+    ["loss", "scalar", "combines into"], ["weights", "scalar", "parameterises"],
+    ["scalar", "gate", "is compared by"], ["board", "coverage", "is examined for"],
+    ["coverage", "health", "is reported by"], ["scoringseam", "reducer", "may replace"],
+    ["scoringseam", "scalar", "may replace"], ["judge", "judgeerror", "may fail into"],
+    ["pattern", "redaction", "is anonymised as"], ["redaction", "proposer", "is fed to"],
+    ["experiment", "complexity", "is measured for"], ["complexity", "scalar", "may penalise"],
+    ["structure", "rung", "a racing epoch cuts at each"], ["rung", "champgate", "the last leads to"],
+    ["journal", "analysis", "is closed by"], ["epoch", "analysis", "ends with"],
+    ["contract", "reflection", "is examined by"], ["reflection", "health", "shares findings with"],
+    ["entry", "boardunit", "one per generation and replicate is a"],
+    ["boardunit", "run", "is evaluated as"], ["boardunit", "tournament", "is reused across"],
+    ["roundlog", "scorecard", "is read by"], ["gate", "roundlog", "is recorded in"],
+    ["scorecard", "proposer", "grades"], ["proposer", "bestofn", "samples through"],
+    ["bestofn", "experiment", "screens into"], ["field", "diversity", "is summarised by"],
+    ["generation", "genstore", "is persisted by"], ["genstore", "snapshot", "writes"],
+    ["evidence", "gate", "may hold"], ["rating", "evidence", "feeds"],
+    ["outcome", "pareto", "is recorded on"],
+    ["contract", "structure", "declares"], ["structure", "tournament", "shapes"],
+    ["board", "split", "is divided into"], ["split", "holdout", "reserves entries for"],
+    ["entry", "replicate", "may be run as"], ["replicate", "loss", "several produce one"],
+    ["watchdog", "run", "kills a hung"], ["replicate", "noise", "measures"],
+    ["noise", "weights", "sizes the margin in"], ["round", "field", "may mint"],
+    ["field", "challenger", "holds several"], ["patch", "validation", "passes"],
+    ["validation", "applier", "gates"], ["placebo", "field", "joins as a control"],
+    ["structure", "champgate", "four of five end in"], ["champgate", "gate", "is decided by"],
+    ["tournament", "rating", "duels feed"], ["rating", "replicate", "names the duels worth"],
+    ["gate", "receipt", "is committed through"], ["receipt", "outcome", "replays"],
+    ["epoch", "contract", "holds still"], ["contract", "adapter", "declares"],
+    ["contract", "proposer", "declares"], ["entry", "persona", "an emulated entry carries"],
+    ["persona", "emulator", "drives"], ["emulator", "run", "plays the user in"],
+    ["harnesscall", "harness", "is the model role of"], ["auxcall", "proposer", "drives"],
+    ["auxcall", "emulator", "drives"], ["auxcall", "expectation", "grades a rubric in"],
+    ["loss", "index", "is projected into"], ["index", "memory", "supplies settled history to"],
+    ["loss", "health", "is examined by"], ["epoch", "round", "contains"],
+    ["round", "experiment", "mints"], ["generation", "champion", "may stand as"],
+    ["generation", "challenger", "may enter as"],
+    ["challenger", "tournament", "is compared in"],
+    ["champion", "tournament", "is defended in"],
+    ["board", "entry", "holds"], ["entry", "expectation", "carries"], ["entry", "judge", "carries"],
+    ["entry", "runner", "is run by"], ["adapter", "harness", "wraps"], ["adapter", "mutation", "declares"],
+    ["harness", "runner", "is executed by"], ["runner", "run", "produces"],
+    ["judge", "events", "emits drift into"], ["run", "events", "is captured as"],
+    ["events", "reducer", "is walked by"], ["reducer", "loss", "produces"], ["loss", "drift", "carries"],
+    ["expectation", "loss", "decides pass in"], ["loss", "pattern", "aggregates into"],
+    ["pattern", "proposer", "is read by"], ["brief", "proposer", "steers"], ["memory", "proposer", "informs"],
+    ["proposer", "experiment", "emits"], ["experiment", "hypothesis", "states"],
+    ["experiment", "patch", "carries"], ["mutation", "patch", "is addressed by"],
+    ["patch", "applier", "is applied by"], ["applier", "generation", "publishes"],
+    ["generation", "snapshot", "is stored as"], ["generation", "tournament", "competes in"],
+    ["weights", "tournament", "parameterizes"], ["tournament", "gate", "applies"],
+    ["gate", "holdout", "is confirmed by"], ["ladder", "holdout", "rations"],
+    ["gate", "outcome", "records"], ["outcome", "journal", "is narrated in"],
+    ["outcome", "memory", "feeds", true], ["gate", "lineage", "extends"],
+    ["lineage", "generation", "parents the next round", true]
+  ];
+
+  var byId = {};
+  NODES.forEach(function (n) { byId[n.id] = n; });
+  var adjacency = {};
+  NODES.forEach(function (n) { adjacency[n.id] = []; });
+  EDGES.forEach(function (e) {
+    adjacency[e[0]].push({ other: e[1], verb: e[2], dir: "to" });
+    adjacency[e[1]].push({ other: e[0], verb: e[2], dir: "from" });
+  });
+
+
+  /* The concepts a reader must hold to understand what the loop does; the rest
+     of the map refines them. Ordered the way the loop moves through them. */
+  var TOUR = [
+    ["harness", "Start here: the thing you point zicato at. It can be an agent system, a library, a prompt set. It need not use a model at all."],
+    ["adapter", "The only part that knows what your system is. It runs one task and lists the source that may be rewritten."],
+    ["mutation", "Rewriting is confined to locations you mark. Everything else is off limits, which is what makes the loop auditable."],
+    ["board", "How you say what good means: a list of tasks, frozen for the epoch so results stay comparable."],
+    ["entry", "One task, carrying both what to do and what counts as doing it right."],
+    ["expectation", "The outcome check. Without one, an entry is scored on process alone."],
+    ["contract", "The board, the brief, the weights, the adapter and the proposer together. This is what a score means."],
+    ["epoch", "One contract held still. Change any part of it and a new epoch opens, because scores across contracts are not comparable."],
+    ["round", "One turn of the loop inside an epoch. It mints one experiment and either advances a generation or leaves the champion standing."],
+    ["run", "One execution of your system against one task, recorded as an event stream."],
+    ["loss", "What a run reduces to: drift features, runtime, and whether the expectations passed."],
+    ["scalar", "The one comparable number per generation. Everything that ranks or gates reads this."],
+    ["pattern", "What repeats across runs in this epoch. This is what the proposer actually reads."],
+    ["proposer", "Reads the patterns and your brief, and emits a change to try."],
+    ["hypothesis", "Written before the run: the idea, what it should move, and how it might fail. Without it a journal cannot teach anything."],
+    ["experiment", "The hypothesis and the patches that test it, in one record that later gains its outcome."],
+    ["patch", "One rewrite, addressed by mutation-point id rather than by line, so it survives unrelated edits."],
+    ["applier", "Applies the patches and checks the result still parses and imports. A failing patch is rejected outright."],
+    ["generation", "The new version of your source. Named by sequence within the epoch."],
+    ["champion", "The version currently standing. Every comparison measures against it."],
+    ["challenger", "The candidate trying to replace it. A round may mint several at once."],
+    ["structure", "How the field competes. The choice matters more than it looks — see the trade-offs on each."],
+    ["tournament", "Champion against challenger on the frozen board."],
+    ["gate", "The rules that decide: beat the margin, and regress nothing that already passed."],
+    ["holdout", "A final check on entries withheld from the process that chose the challenger."],
+    ["falsepromote", "What all of it guards against. A wrong crowning corrupts every round built on it."],
+    ["outcome", "The verdict and its reason, written onto the same record as the hypothesis."],
+    ["journal", "The running narrative. Read this to learn what an epoch established."]
+  ];
+  var CORE = {};
+  TOUR.forEach(function (s) { CORE[s[0]] = true; });
+  ["drift", "weights", "brief", "snapshot", "memory"].forEach(function (id) { CORE[id] = true; });
+  var TOUR_WHY = {};
+  TOUR.forEach(function (s) { TOUR_WHY[s[0]] = s[1]; });
+  var tourAt = -1;
+
+  /* ============================================ map */
+  var svg = document.getElementById("conceptmap");
+  var NS = "http://www.w3.org/2000/svg";
+  var LANE_H = 40, CHIP_H = 31, PAD_X = 132, GUTTER = 13, LANE_GAP = 24, RIGHT_PAD = 70, CHIP_PAD = 32;
+  var W = 1060, W_MIN = 720, W_MAX = 1560;
+  var selected = "epoch";
+  var stageFilter = "all";
+  var search = "";
+  var tracing = false;
+  var view = "core";
+  var LAY = { height: 400, lanes: [] };
+
+  function el(tag, attrs) {
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) if (Object.prototype.hasOwnProperty.call(attrs, k)) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  function visibleNodes() {
+    return NODES.filter(function (n) { return view === "all" || CORE[n.id]; });
+  }
+
+  /* A chip is sized to its own label by MEASURING it in the live face, because
+     the picker can swap between a mono, a serif and a condensed grotesque and a
+     character-width guess is wrong for at least two of them. */
+  function measureNames() {
+    /* The measurer must be attached to the live SVG: a detached text node
+       reports zero length, which silently collapses every chip to its padding.
+       It is created and removed inside this call so a cleared canvas can never
+       leave a stale one behind. */
+    var m = el("text", { class: "nodelabel", x: -9999, y: -9999 });
+    svg.appendChild(m);
+    NODES.forEach(function (n) {
+      m.textContent = n.name;
+      var w = 0;
+      try { w = m.getComputedTextLength(); } catch (e) { w = 0; }
+      if (!w || !isFinite(w)) w = n.name.length * 7.4;
+      n.w = Math.ceil(w) + CHIP_PAD;
+    });
+    svg.removeChild(m);
+  }
+
+  /* Five lanes, one per part of the round. Chips flow left to right and wrap,
+     so a lane grows downward rather than crowding. */
+  function computePositions() {
+    var y = 62;
+    LAY.lanes = [];
+    var avail = W - PAD_X - RIGHT_PAD;
+    STAGES.forEach(function (s, ci) {
+      var list = visibleNodes().filter(function (n) { return n.col === ci; });
+      var rows = [[]], rowW = 0;
+      list.forEach(function (n) {
+        if (rowW + n.w > avail && rows[rows.length - 1].length) { rows.push([]); rowW = 0; }
+        rows[rows.length - 1].push(n);
+        rowW += n.w + GUTTER;
+      });
+      rows.forEach(function (row, ri) {
+        var x = PAD_X;
+        row.forEach(function (n) { n.x = x; n.y = y + ri * LANE_H; x += n.w + GUTTER; });
+      });
+      var h = rows.length * LANE_H;
+      LAY.lanes.push({ ci: ci, y: y, h: h, rows: rows.length });
+      y += h + LANE_GAP;
+    });
+    LAY.height = y + 10;
+  }
+
+  function cx(n) { return n.x + n.w / 2; }
+  function cy(n) { return n.y + CHIP_H / 2; }
+
+  /* Connections curve out of the side nearest their partner and bow away from
+     the chips, so a line never runs through a label. */
+  function linkPath(a, b) {
+    var ax = cx(a), ay = cy(a), bx = cx(b), by = cy(b);
+    if (Math.abs(ay - by) < 2) {
+      var lift = 20;
+      return "M" + ax + "," + (ay - CHIP_H / 2) + " C" + ax + "," + (ay - lift - 14) +
+             " " + bx + "," + (by - lift - 14) + " " + bx + "," + (by - CHIP_H / 2);
+    }
+    var down = by > ay;
+    var y1 = ay + (down ? CHIP_H / 2 : -CHIP_H / 2);
+    var y2 = by + (down ? -CHIP_H / 2 : CHIP_H / 2);
+    var mid = (y1 + y2) / 2;
+    return "M" + ax + "," + y1 + " C" + ax + "," + mid + " " + bx + "," + mid + " " + bx + "," + y2;
+  }
+
+  function layoutMap() {
+    var host = svg.parentNode && svg.parentNode.getBoundingClientRect
+      ? svg.parentNode.getBoundingClientRect().width : 0;
+    if (host > 0) W = Math.max(W_MIN, Math.min(W_MAX, Math.round(host)));
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    measureNames();
+    computePositions();
+    svg.setAttribute("viewBox", "0 0 " + W + " " + LAY.height);
+    svg.setAttribute("preserveAspectRatio", "xMidYMin meet");
+
+    LAY.lanes.forEach(function (L) {
+      svg.appendChild(el("rect", { class: "laneband", x: 0, y: L.y - 7, width: W,
+        height: L.h + 6, rx: 4, fill: "var(--s" + L.ci + ")" }));
+      var lab = el("text", { class: "lanename", x: 0, y: L.y + 17 });
+      lab.textContent = STAGES[L.ci];
+      svg.appendChild(lab);
+      svg.appendChild(el("rect", { class: "lanekey", x: 0, y: L.y + 25, width: 28, height: 3,
+        rx: 1.5, fill: "var(--s" + L.ci + ")" }));
+    });
+
+    /* the loop closes: the last part feeds the first again */
+    var top = LAY.lanes[0], bot = LAY.lanes[LAY.lanes.length - 1];
+    var by = bot.y + bot.h + 6, ty = top.y - 7;
+    var rx = W - 30;
+    svg.appendChild(el("path", { class: "loopback",
+      d: "M " + (rx - 14) + " " + by + " C " + (rx + 20) + " " + by + ", " + (rx + 20) + " " + ty + ", " + (rx - 14) + " " + ty }));
+    svg.appendChild(el("polygon", { class: "loophead", points: (rx - 14) + "," + ty + " " + (rx - 6) + "," + (ty - 4) + " " + (rx - 6) + "," + (ty + 4) }));
+    var mid = (by + ty) / 2;
+    var lp = el("text", { class: "loopnote", x: rx + 12, y: mid, "text-anchor": "middle",
+      transform: "rotate(90 " + (rx + 12) + " " + mid + ")" });
+    lp.textContent = "the round repeats";
+    svg.appendChild(lp);
+
+    var gLinks = el("g", {});
+    svg.appendChild(gLinks);
+
+    visibleNodes().forEach(function (n) {
+      var g = el("g", { class: "node" + (CORE[n.id] ? " core" : ""), "data-id": n.id,
+        tabindex: "0", role: "button", "aria-label": n.name + ", " + STAGES[n.col] });
+      /* An opaque backing so a connection curve passes cleanly behind a chip
+         rather than showing through its translucent fill. */
+      g.appendChild(el("rect", { class: "chipbg", x: n.x, y: n.y, width: n.w, height: CHIP_H, rx: 4 }));
+      g.appendChild(el("rect", { class: "chip", x: n.x, y: n.y, width: n.w, height: CHIP_H, rx: 4,
+        fill: "var(--s" + n.col + ")", stroke: "var(--s" + n.col + ")" }));
+      var lab = el("text", { class: "nodelabel", x: n.x + n.w / 2, y: n.y + CHIP_H / 2 + 4.8,
+        "text-anchor": "middle" });
+      lab.textContent = n.name;
+      g.appendChild(lab);
+      svg.appendChild(g);
+    });
+
+    applyHighlight();
+  }
+
+  function downstreamOf(id) {
+    var seen = {}, queue = [id];
+    while (queue.length) {
+      var cur = queue.shift();
+      (adjacency[cur] || []).forEach(function (r) {
+        if (r.dir !== "to" || seen[r.other]) return;
+        seen[r.other] = true; queue.push(r.other);
+      });
+    }
+    delete seen[id];
+    return seen;
+  }
+  function matchesSearch(n) {
+    if (!search) return true;
+    return (n.name + " " + n.def).toLowerCase().indexOf(search) !== -1;
+  }
+
+  /* Drawn for the selected concept only. A hundred permanent lines would be a
+     thicket; on demand they are the point of the figure. */
+  function drawLinks(down) {
+    var g = svg.querySelector("g");
+    while (g.firstChild) g.removeChild(g.firstChild);
+    var vis = {};
+    visibleNodes().forEach(function (n) { vis[n.id] = true; });
+    if (!vis[selected]) return;
+    (adjacency[selected] || []).forEach(function (r) {
+      if (!vis[r.other]) return;
+      g.appendChild(el("path", { class: "link " + (r.dir === "to" ? "out" : "in"),
+        d: linkPath(byId[selected], byId[r.other]) }));
+    });
+    if (tracing) {
+      Object.keys(down).forEach(function (id) {
+        if (!vis[id]) return;
+        (adjacency[id] || []).forEach(function (r) {
+          if (r.dir !== "to" || !down[r.other] || !vis[r.other]) return;
+          g.appendChild(el("path", { class: "link out faint", d: linkPath(byId[id], byId[r.other]) }));
+        });
+      });
+    }
+  }
+
+  function applyHighlight() {
+    var neighbors = {};
+    (adjacency[selected] || []).forEach(function (r) { neighbors[r.other] = true; });
+    var down = tracing ? downstreamOf(selected) : {};
+    var hits = 0;
+    Array.prototype.forEach.call(svg.querySelectorAll("g.node"), function (g) {
+      var id = g.getAttribute("data-id"), n = byId[id];
+      var inStage = (stageFilter === "all") || (String(n.col) === stageFilter);
+      var hit = matchesSearch(n);
+      if (search && hit) hits++;
+      g.classList.toggle("selected", id === selected);
+      g.classList.toggle("neighbor", !!neighbors[id] && id !== selected);
+      g.classList.toggle("down", !!down[id]);
+      g.classList.toggle("dim", !inStage || (!!search && !hit && id !== selected));
+    });
+    drawLinks(down);
+    var hint = document.getElementById("maphint");
+    if (search) hint.innerHTML = "<b>" + hits + "</b> of " + NODES.length + " match";
+    else if (tracing) hint.innerHTML = "<b>" + Object.keys(down).length + "</b> concepts downstream";
+    else hint.innerHTML = "<b>" + (adjacency[selected] || []).length + "</b> connections drawn";
+    renderDetail();
+  }
+
+  function renderDetail() {
+    var n = byId[selected];
+    var where = document.getElementById("nd-where");
+    where.textContent = STAGES[n.col];
+    where.style.color = "var(--s" + n.col + ")";
+    document.getElementById("nd-name").textContent = n.name;
+    document.getElementById("nd-def").textContent = n.def;
+    var why = document.getElementById("nd-why");
+    if (TOUR_WHY[n.id]) { why.textContent = TOUR_WHY[n.id]; why.hidden = false; } else { why.hidden = true; }
+    var ul = document.getElementById("nd-rels");
+    while (ul.firstChild) ul.removeChild(ul.firstChild);
+    (adjacency[selected] || []).forEach(function (r) {
+      var li = document.createElement("li");
+      var verb = document.createElement("span");
+      verb.className = "verb";
+      verb.textContent = (r.dir === "to" ? r.verb + " → " : "← " + r.verb + " ");
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = byId[r.other].name;
+      btn.addEventListener("click", function () { select(r.other); });
+      li.appendChild(verb); li.appendChild(btn); ul.appendChild(li);
+    });
+  }
+
+  function select(id, opts) {
+    if (!byId[id]) return;
+    if (view !== "all" && !CORE[id]) { view = "all"; syncViewButtons(); layoutMap(); }
+    selected = id;
+    applyHighlight();
+    if (!(opts && opts.silent)) {
+      try { history.replaceState(null, "", "#map~c=" + id); } catch (e) { /* file:// */ }
+    }
+  }
+
+  svg.addEventListener("click", function (ev) {
+    var g = ev.target.closest("g.node");
+    if (g) select(g.getAttribute("data-id"));
+  });
+  svg.addEventListener("keydown", function (ev) {
+    var g = ev.target.closest("g.node");
+    if (!g) return;
+    var id = g.getAttribute("data-id"), n = byId[id];
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(id); return; }
+    var step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
+    if (!step) return;
+    ev.preventDefault();
+    var vis = visibleNodes().slice().sort(function (a, b) { return (a.y - b.y) || (a.x - b.x); });
+    var at = vis.findIndex(function (m) { return m.id === n.id; });
+    var next = vis[(at + step + vis.length) % vis.length];
+    var target = svg.querySelector('g.node[data-id="' + next.id + '"]');
+    if (target) { target.focus(); select(next.id); }
+  });
+
+  var hc = document.getElementById("hovercard");
+  function showCard(node, text, x, y) {
+    hc.innerHTML = "";
+    var nm = document.createElement("span");
+    nm.className = "hc-name";
+    nm.textContent = node.name + " — ";
+    hc.appendChild(nm);
+    hc.appendChild(document.createTextNode(text));
+    hc.hidden = false;
+    var w = hc.offsetWidth, h = hc.offsetHeight;
+    var left = Math.min(x + 14, window.innerWidth - w - 12);
+    var top = (y + h + 22 > window.innerHeight) ? y - h - 12 : y + 18;
+    hc.style.left = Math.max(8, left) + "px";
+    hc.style.top = Math.max(8, top) + "px";
+  }
+  function hideCard() { hc.hidden = true; }
+  function firstLine(text) {
+    var stop = text.indexOf(". ");
+    return stop > 0 ? text.slice(0, stop + 1) : text;
+  }
+  svg.addEventListener("mousemove", function (ev) {
+    var g = ev.target.closest("g.node");
+    if (!g) { hideCard(); return; }
+    var n = byId[g.getAttribute("data-id")];
+    showCard(n, firstLine(n.def), ev.clientX, ev.clientY);
+  });
+  svg.addEventListener("mouseleave", hideCard);
+  svg.addEventListener("focusin", function (ev) {
+    var g = ev.target.closest("g.node");
+    if (!g) return;
+    var n = byId[g.getAttribute("data-id")];
+    var r = g.getBoundingClientRect();
+    showCard(n, firstLine(n.def), r.left, r.top);
+  });
+  svg.addEventListener("focusout", hideCard);
+
+  function syncViewButtons() {
+    Array.prototype.forEach.call(document.querySelectorAll("button[data-view]"), function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-view") === view));
+    });
+  }
+
+  /* the legend doubles as the stage filter */
+  var legend = document.getElementById("maplegend");
+  STAGES.forEach(function (s, ci) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("data-col", String(ci));
+    b.setAttribute("aria-pressed", "false");
+    var sw = document.createElement("span");
+    sw.className = "sw";
+    sw.style.background = "var(--s" + ci + ")";
+    b.appendChild(sw);
+    b.appendChild(document.createTextNode(s));
+    legend.appendChild(b);
+  });
+  legend.addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button[data-col]");
+    if (!btn) return;
+    var col = btn.getAttribute("data-col");
+    stageFilter = (stageFilter === col) ? "all" : col;
+    Array.prototype.forEach.call(legend.querySelectorAll("button"), function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-col") === stageFilter));
+    });
+    applyHighlight();
+  });
+
+  document.querySelector("[data-viewbar]").addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button[data-view]");
+    if (!btn) return;
+    view = btn.getAttribute("data-view");
+    syncViewButtons();
+    layoutMap();
+  });
+
+  var tourStart = document.getElementById("tourstart");
+  var tourPrev = document.getElementById("tourprev");
+  var tourNext = document.getElementById("tournext");
+  var tourEnd = document.getElementById("tourend");
+  var tourStep = document.getElementById("tourstep");
+
+  function paintTour() {
+    var on = tourAt >= 0;
+    tourStart.hidden = on;
+    [tourPrev, tourNext, tourEnd, tourStep].forEach(function (e) { e.hidden = !on; });
+    if (!on) return;
+    tourStep.textContent = (tourAt + 1) + " / " + TOUR.length;
+    tourPrev.disabled = tourAt === 0;
+    tourNext.disabled = tourAt === TOUR.length - 1;
+  }
+  function goTour(i) {
+    tourAt = Math.max(0, Math.min(TOUR.length - 1, i));
+    if (view !== "core") { view = "core"; syncViewButtons(); layoutMap(); }
+    select(TOUR[tourAt][0]);
+    paintTour();
+  }
+  tourStart.addEventListener("click", function () { goTour(0); });
+  tourPrev.addEventListener("click", function () { goTour(tourAt - 1); });
+  tourNext.addEventListener("click", function () { goTour(tourAt + 1); });
+  tourEnd.addEventListener("click", function () { tourAt = -1; paintTour(); });
+
+  document.getElementById("mapsearch").addEventListener("input", function () {
+    search = this.value.trim().toLowerCase();
+    applyHighlight();
+  });
+  document.getElementById("tracebtn").addEventListener("click", function () {
+    tracing = !tracing;
+    this.setAttribute("aria-pressed", String(tracing));
+    applyHighlight();
+  });
+
+  /* ============================================ round stepper */
+  var PHASES = [
+    { name: "Run the champion", body: "Every board entry runs against the parent generation, one run each. Under the default fast mode a run already recorded for this generation and entry is reused rather than repeated, so a long-standing champion is not re-evaluated every round.", writes: ".zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/events.jsonl" },
+    { name: "Reduce to loss", body: "The reducer walks each run's event stream once and writes one loss profile beside it: drift counts by kind and severity, plan revisions, task failure ratio, runtime, whether the run aborted, and the pass or fail the entry's expectations decided.", writes: ".../runs/{entry_id}/loss.json" },
+    { name: "Detect patterns", body: "Detectors read every loss profile in the epoch so far and emit typed aggregates — drift concentrated in one kind, a tag slice regressing, multi-turn memory failing, a mutation surface nothing has moved. These reset at the epoch boundary, because the contract they summarize has changed.", writes: ".zicato/epochs/{epoch}/patterns/round_{NNN}.json" },
+    { name: "Propose", body: "The proposer reads the patterns, the operator's brief, and a digest of what has already been tried, and emits an experiment: a structured hypothesis plus the patches that test it. A schema-invalid response is rejected and re-prompted with the error rather than coerced into shape.", writes: ".../generations/v{N+1}/experiment.json" },
+    { name: "Apply and validate", body: "The applier resolves each patch's mutation-point id to a source location, rewrites the span, and checks the result — the tree must still parse and import. A patch failing any validator is rejected outright. What survives is published as a new candidate snapshot.", writes: ".../generations/v{N+1}/snapshot/" },
+    { name: "Hold the tournament", body: "Champion and challenger are compared on the board frozen for this epoch, and each generation gets an aggregate score. Full mode re-runs every entry against both; fast mode reuses the champion's recorded results.", writes: ".../generations/v{N+1}/gen_score.json" },
+    { name: "Gate, then record", body: "The gate applies its rules in order — margin on the scalar score, then no regression on any entry the champion already passed — and a hidden-holdout confirmation may revise a provisional promotion. Either way the reason is written down: the outcome block is appended to the same experiment record, and a row is appended to the journal.", writes: ".../generations/v{N+1}/experiment.json · epochs/{epoch}/journal.md" }
+  ];
+
+  var steplist = document.getElementById("steplist");
+  var steppane = document.getElementById("steppane");
+
+  PHASES.forEach(function (p, i) {
+    var li = document.createElement("li");
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-selected", String(i === 0));
+    var ord = document.createElement("span");
+    ord.className = "ord";
+    ord.textContent = String(i + 1);
+    var nm = document.createElement("span");
+    nm.textContent = p.name;
+    btn.appendChild(ord);
+    btn.appendChild(nm);
+    btn.addEventListener("click", function () { setStep(i); });
+    li.appendChild(btn);
+    steplist.appendChild(li);
+  });
+
+  function setStep(i) {
+    Array.prototype.forEach.call(steplist.querySelectorAll("button"), function (b, bi) {
+      b.setAttribute("aria-selected", String(bi === i));
+    });
+    var p = PHASES[i];
+    while (steppane.firstChild) steppane.removeChild(steppane.firstChild);
+    var h = document.createElement("h3");
+    h.textContent = p.name;
+    var body = document.createElement("p");
+    body.textContent = p.body;
+    var wrap = document.createElement("div");
+    wrap.className = "writes";
+    var lbl = document.createElement("div");
+    lbl.className = "lbl";
+    lbl.textContent = "writes";
+    var path = document.createElement("div");
+    path.className = "path";
+    path.textContent = p.writes;
+    wrap.appendChild(lbl);
+    wrap.appendChild(path);
+    steppane.appendChild(h);
+    steppane.appendChild(body);
+    steppane.appendChild(wrap);
+  }
+
+  /* ============================================ rail current-section */
+  var links = Array.prototype.slice.call(document.querySelectorAll("#rail a"));
+  var sections = links.map(function (a) { return document.querySelector(a.getAttribute("href")); });
+  function markCurrent() {
+    var best = 0, bestTop = -Infinity;
+    sections.forEach(function (s, i) {
+      if (!s) return;
+      var top = s.getBoundingClientRect().top;
+      if (top <= 130 && top > bestTop) { bestTop = top; best = i; }
+    });
+    links.forEach(function (a, i) {
+      if (i === best) a.setAttribute("aria-current", "true");
+      else a.removeAttribute("aria-current");
+    });
+  }
+  var ticking = false;
+  window.addEventListener("scroll", function () {
+    if (ticking) return;
+    ticking = true;
+    window.requestAnimationFrame(function () { markCurrent(); ticking = false; });
+  }, { passive: true });
+
+  /* ============================================ boot */
+  applyTheme(currentTheme);
+  buildThemeList();
+  paintThemeTrigger();
+  applyType(currentType);
+  buildTypeList();
+  applyScale(currentScale);
+  syncViewButtons();
+  paintTour();
+  layoutMap();
+  (function hydrateFromHash() {
+    var m = /#map~c=([a-z0-9]+)/.exec(window.location.hash || "");
+    if (m && byId[m[1]]) {
+      select(m[1], { silent: true });
+      var sec = document.getElementById("map");
+      if (sec) sec.scrollIntoView({ block: "start" });
+    }
+  })();
+  setStep(0);
+  markCurrent();
+  var lastW = 0;
+  window.addEventListener("resize", function () {
+    hideCard();
+    var host = svg.parentNode.getBoundingClientRect().width;
+    if (Math.abs(host - lastW) < 24) return;
+    lastW = host;
+    layoutMap();
+  });
+  if (window.matchMedia) {
+    var mq = window.matchMedia("(prefers-color-scheme: dark)");
+    var onScheme = function () { if (currentTheme === "auto") paintThemeTrigger(); };
+    if (mq.addEventListener) mq.addEventListener("change", onScheme);
+  }
+})();
+</script>
