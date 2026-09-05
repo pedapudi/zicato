@@ -64,6 +64,23 @@ $PY -m zicato.cli epoch register --workspace .zicato \
     --adk agent.agent:root_agent \
     --mutable-tree $EX/agent
 
+# 2b. Name what each model role runs on. `evolve` takes no model
+#     options: an engine naming a `call_llm` dotted path is how these
+#     deterministic mocks reach the target and evaluation roles.
+$PY - <<'PYEOF'
+import json, pathlib
+cfg_path = pathlib.Path(".zicato/config.json")
+cfg = json.loads(cfg_path.read_text())
+cfg["models"] = {
+    "engines": {
+        "target": {"call_llm": "zicato_examples.target_1_presentation.mocks:target_llm"},
+        "evaluation": {"call_llm": "zicato_examples.target_1_presentation.mocks:aux_llm"},
+    },
+    "roles": {},
+}
+cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
+PYEOF
+
 # 3. Open an epoch from the example's board / brief / scoring. epoch new
 #    freezes a per-epoch copy AND publishes these files as the live
 #    contract (here: /tmp/zicato-smoke-t1/board.jsonl, brief.md,
@@ -80,9 +97,7 @@ $PY -m zicato.cli inspect mutations --workspace .zicato
 #    step 3, so it continues the t1_smoke epoch rather than rolling a
 #    new one.
 $PY -m zicato.cli evolve --workspace .zicato \
-    --rounds 2 --mode full \
-    --harness-call-llm   zicato_examples.target_1_presentation.mocks:target_llm \
-    --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
+    --rounds 2 --mode full
 
 # 6. Close the epoch to produce analysis.md and analysis.html.
 $PY -m zicato.cli epoch close --workspace .zicato
@@ -112,9 +127,7 @@ cp $EX/scoring.json ./scoring.json
 # evolve sees no current epoch, resolves the contract from the three
 # files above, and auto-opens epoch e0 before running the loop.
 $PY -m zicato.cli evolve --workspace .zicato \
-    --rounds 2 --mode full \
-    --harness-call-llm   zicato_examples.target_1_presentation.mocks:target_llm \
-    --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
+    --rounds 2 --mode full
 ```
 
 Editing any of those three files between `evolve` invocations changes
@@ -206,9 +219,7 @@ $PY -m zicato.cli epoch new t1_racing --workspace .zicato \
 # Evolve. The frozen contract carries structure=racing, so each round
 # proposes a 4-challenger field and runs the rung ladder.
 $PY -m zicato.cli evolve --workspace .zicato \
-    --rounds 2 --mode full \
-    --harness-call-llm   zicato_examples.target_1_presentation.mocks:target_llm \
-    --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
+    --rounds 2 --mode full
 ```
 
 ### (b) Set the structure with CLI flags
@@ -226,9 +237,7 @@ $PY -m zicato.cli evolve --workspace .zicato \
     --tournament-param field_size=4 \
     --tournament-param eta=2 \
     --tournament-param board_fraction=0.4 \
-    --tournament-param replicates=2 \
-    --harness-call-llm   zicato_examples.target_1_presentation.mocks:target_llm \
-    --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
+    --tournament-param replicates=2
 ```
 
 Each `--tournament-param KEY=VALUE` is repeatable; `VALUE` is parsed as
@@ -442,10 +451,10 @@ Two extension points:
 
 1. **Replace the mocks.** Author your own
    `pkg.module:target_call_llm` and `pkg.module:evaluation_call_llm`
-   conforming to `Callable[[str, str, str], Awaitable[str]]` and pass
-   them via `--harness-call-llm` / `--auxiliary-call-llm`. Anything
-   that returns the right text — a real model client, a local cache,
-   a replay log — works the same way.
+   conforming to `Callable[[str, str, str], Awaitable[str]]` and name
+   them as the `target` and `evaluation` engines' `call_llm` dotted
+   paths. Anything that returns the right text — a real model client, a
+   local cache, a replay log — works the same way.
 
 2. **Configure the evaluation callable in the workspace.** Edit
    `.zicato/config.json` to add a `runtime` block:
@@ -457,10 +466,10 @@ Two extension points:
    }
    ```
 
-   The orchestrator's runtime factory will import those dotted paths
-   when the CLI does not pass an explicit override. The
-   `--*-call-llm` flags still win when supplied — useful for one-off
-   replays against a different model without touching config.
+   The orchestrator's runtime factory imports those dotted paths. A
+   library caller entering through `evolve_n_rounds` may hand it
+   resolved callables instead, which is the one override that skips the
+   workspace configuration.
 
 The evaluation callable must NOT be the same Python object as the
 target callable; the runner enforces `is`-distinctness as a

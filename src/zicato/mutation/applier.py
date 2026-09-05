@@ -1068,4 +1068,4 @@ def _apply_patches_into_tree(
             raise ValueError(f"Patch {patch.id!r}: unknown op {patch.op!r}")
 
 
-__all__ = ["apply_patches", "apply_patches_unchecked"]
+__all__ = ["apply_patches", "apply_patches_unchecked", "replacement_source"]

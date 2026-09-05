@@ -65,8 +65,8 @@ async def evolve_once(
     *,
     workspace_root: Path,
     epoch_id: str | None = None,
-    target_call_llm: CallLLM,
-    evaluation_call_llm: CallLLM,
+    target_call_llm: CallLLM | None = None,
+    evaluation_call_llm: CallLLM | None = None,
     instance_id: str = "default",
     fast_mode: bool = False,
     max_proposer_retries: int = 2,
@@ -78,6 +78,17 @@ async def evolve_once(
     workspace_checked: bool = False,
 ) -> EvolveRoundOutcome:
     """Run ONE evolve round against the current epoch.
+
+    ``target_call_llm`` / ``evaluation_call_llm`` are optional overrides
+    for a library caller that already holds the callables. Left ``None``
+    — which is what ``zicato evolve`` passes — each role is resolved from
+    the workspace configuration by
+    :func:`zicato.runtime_factory.make_runtime_config`: the
+    ``models.engines`` entry the role maps to, then the ``runtime.*``
+    dotted path. That is the same resolution the tournament workers
+    perform in their own interpreters, so the loop and its workers agree
+    on which callable a role runs by construction rather than by the
+    orchestrator forwarding an object they cannot see.
 
     ``workspace_checked`` says the caller has already run the pre-spend
     workspace gate for this invocation. :func:`evolve_n_rounds` passes it

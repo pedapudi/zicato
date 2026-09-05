@@ -41,6 +41,73 @@ zicato is the third member of an ecosystem:
   templates, role scopes), runs tournaments, and promotes the patches that
   reduce loss.
 
+## A first run
+
+`zicato init --example` writes a complete project — a system under test, the
+adapter that runs it, the predicates that grade it, a proposer, a board, a
+brief, and a scoring contract — and wires `config.json` to all of it. It uses
+no model and needs no endpoint, so the sequence below runs offline.
+
+```sh
+pip install zicato
+
+mkdir first-zicato && cd first-zicato
+zicato init --example
+export PYTHONPATH=$PWD          # the scaffolded packages are top-level here
+
+zicato inspect mutations --workspace .zicato   # one mutation point: style_rules
+zicato evolve --workspace .zicato --dry-run    # validates; spends nothing
+zicato evolve --workspace .zicato --rounds 3
+zicato epoch close --workspace .zicato
+```
+
+`evolve` prints the dashboard's URL as it starts, and one record per round when
+it finishes. The three rounds converge:
+
+```json
+[{"parent_generation_id": "v0", "proposed_generation_id": "v1",
+  "parent_scalar": 0.75, "child_scalar": 0.5, "tournament_decision": "promoted"},
+ {"parent_generation_id": "v1", "proposed_generation_id": "v2",
+  "parent_scalar": 0.5, "child_scalar": 0.25, "tournament_decision": "promoted"},
+ {"parent_generation_id": "v2", "proposed_generation_id": "v3",
+  "parent_scalar": 0.25, "child_scalar": 0.0, "tournament_decision": "promoted"}]
+```
+
+The scalar is the loss. The example's system under test writes a short note
+whose shape is described by four style rules in `system_under_test/__init__.py`,
+and three of those rules each suppress a feature the four-entry board grades.
+Each round removes one, one board entry starts passing, and the promotion gate
+crowns the challenger. Read the evolved policy with
+`git -C .zicato/repo show HEAD:system_under_test/__init__.py`.
+
+### What to edit next
+
+Every file the scaffold wrote is a template. In the order they matter:
+
+| File | What it decides |
+|---|---|
+| `system_under_test/` | What is being improved. Its `# zicato:mutable` marker is what a proposer is allowed to rewrite. |
+| `board.jsonl` | The tasks, and how each run is graded. [`BOARD-FORMAT.md`](docs/design/BOARD-FORMAT.md) |
+| `example_wiring/adapter.py` | How one board entry runs against one generation. |
+| `example_wiring/predicates.py` | Whether a run passed. |
+| `brief.md` | What the proposer is told before it proposes. |
+| `scoring.json` | How a score becomes one number, and what wins. [`SCORING.md`](docs/design/SCORING.md) |
+| `.zicato/config.json` | Which model each role runs on, and where everything above lives. [`MODEL-CONFIG.md`](docs/design/MODEL-CONFIG.md) |
+
+The example's proposer is a script in `example_wiring/proposer.py`, bound
+through `runtime.proposer_agent`. A project that wants zicato's own proposer
+declares a `proposer` block naming a Foe binary instead —
+[`PROPOSER.md`](docs/design/PROPOSER.md) covers both doors.
+
+For wiring your own system under test rather than editing the example, the
+`zicato-bootstrap` skill ([`skills/zicato-bootstrap/SKILL.md`](skills/zicato-bootstrap/SKILL.md))
+walks through adapter registration, model engines, and the mutable surface.
+
+For what the words in that table mean — epoch, generation, round, contract,
+champion, holdout — open [`docs/atlas/index.html`](docs/atlas/index.html) in a
+browser. It maps the vocabulary onto the five parts of a round and walks
+through the ones the loop turns on.
+
 ## Where this fits
 
 | Layer | Owner | Cadence |

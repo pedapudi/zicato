@@ -96,8 +96,6 @@ ev.evolve_cmd.main(
         "--workspace", str(workspace),
         "--epoch", epoch_id,
         "--rounds", "1",
-        "--harness-call-llm", "llm_stubs:target_call_llm",
-        "--auxiliary-call-llm", "llm_stubs:aux_call_llm",
     ],
     standalone_mode=True,
 )
@@ -138,6 +136,20 @@ def test_sigterm_mid_round_reaps_children_and_releases_lock(tmp_path: Path) -> N
     driver = tmp_path / "driver.py"
     driver.write_text(_DRIVER)
     (tmp_path / "llm_stubs.py").write_text(_LLM_STUBS)
+    # ``zicato evolve`` takes no model options: the two roles a round
+    # needs are named in the workspace configuration, and the loop
+    # resolves them there. The stubs above are what this fixture's roles
+    # run on.
+    config_path = workspace / "config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["models"] = {
+        "engines": {
+            "target": {"call_llm": "llm_stubs:target_call_llm"},
+            "evaluation": {"call_llm": "llm_stubs:aux_call_llm"},
+        },
+        "roles": {},
+    }
+    config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     pid_file = tmp_path / "children.json"
     lock_file = workspace / "runtime" / "lock.json"
 

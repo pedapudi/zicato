@@ -35,10 +35,15 @@ the smoke run depending on unbounded model output.
 
 Where to swap a real LLM in
 ---------------------------
-Replace the import path on the command line::
+Point the workspace's ``models`` block at a real engine. The two roles
+a round needs are named in ``config.json``::
 
-    --harness-call-llm my_project.llms:target_call_llm
-    --auxiliary-call-llm my_project.llms:aux_call_llm
+    "models": {"engines": {
+        "target": {"model": "<model id>"},
+        "evaluation": {"model": "<model id>"}}, "roles": {}}
+
+An engine naming a ``call_llm`` dotted path instead of a ``model`` is
+how these mocks reach the same roles.
 
 The mocks here have no special status — they live under
 ``examples/`` precisely so they can be lifted into a project tree

@@ -65,10 +65,6 @@ def _invoke_evolve(
     result = runner.invoke(
         evolve_cmd,
         [
-            "--harness-call-llm",
-            "tests.test_cli_config_flags:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_cli_config_flags:_aux_call_llm",
             *flags,
         ],
     )
@@ -140,10 +136,6 @@ def test_aux_call_timeout_flag_rejects_non_positive(
     result = runner.invoke(
         evolve_cmd,
         [
-            "--harness-call-llm",
-            "tests.test_cli_config_flags:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_cli_config_flags:_aux_call_llm",
             "--aux-call-timeout",
             "0",
         ],

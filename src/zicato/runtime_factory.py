@@ -81,6 +81,34 @@ def resolve_host_worker_permits(runtime_dict: Mapping[str, Any]) -> tuple[int | 
     return limit, SOURCE_WORKSPACE
 
 
+def resolve_role_call_llm(workspace_config: Mapping[str, Any], *, role: str) -> CallLLM:
+    """Resolve one model role to the callable a round runs it on.
+
+    Two sources, in order: the ``models`` block's engine for ``role``,
+    then the ``runtime.<role>_call_llm`` dotted path. A workspace that
+    configures neither has not said what the role runs on, and this
+    raises naming both keys — the message an operator acts on, so it
+    names the file's keys rather than a function argument.
+
+    Shared by :func:`make_runtime_config` and by ``zicato evolve``, which
+    resolves the two roles a round always needs before opening one so the
+    refusal arrives at the command line rather than mid-loop.
+    """
+    models = load_models_config(workspace_config)
+    spec = models.role(role)
+    if not spec.is_empty:
+        return resolve_text_call_llm(spec, role=role)
+    runtime_dict = workspace_config.get("runtime", {}) or {}
+    dotted = runtime_dict.get(f"{role}_call_llm") if isinstance(runtime_dict, Mapping) else None
+    if not dotted:
+        raise ValueError(
+            f"model role {role!r} is unconfigured: name an engine for it under "
+            f"models.engines / models.roles, or give runtime.{role}_call_llm a "
+            f"dotted import path"
+        )
+    return _import_callable(str(dotted), kind=f"{role}_call_llm")
+
+
 def make_runtime_config(
     workspace_config: Mapping[str, Any],
     *,
@@ -100,7 +128,8 @@ def make_runtime_config(
         * ``runtime.workspace_root`` (path; overridden by the explicit
           ``workspace_root`` kwarg when supplied).
         * ``runtime.target_call_llm`` (dotted path; only consulted
-          when the kwarg is ``None``).
+          when the kwarg is ``None`` and ``models`` names no engine for
+          the role — see :func:`resolve_role_call_llm`).
         * ``runtime.evaluation_call_llm`` (dotted path; same rule).
         * ``runtime.seed`` (int or null).
     workspace_root:
@@ -145,30 +174,12 @@ def make_runtime_config(
     models = load_models_config(workspace_config)
 
     target = target_call_llm
-    if target is None and not models.target.is_empty:
-        target = resolve_text_call_llm(models.target, role="target")
     if target is None:
-        dotted = runtime_dict.get("target_call_llm")
-        if not dotted:
-            raise ValueError(
-                "workspace_config['runtime']['target_call_llm'] is required "
-                "when no target_call_llm callable is passed explicitly "
-                "and no models.target role is configured"
-            )
-        target = _import_callable(str(dotted), kind="target_call_llm")
+        target = resolve_role_call_llm(workspace_config, role="target")
 
     aux = evaluation_call_llm
-    if aux is None and not models.evaluation.is_empty:
-        aux = resolve_text_call_llm(models.evaluation, role="evaluation")
     if aux is None:
-        dotted = runtime_dict.get("evaluation_call_llm")
-        if not dotted:
-            raise ValueError(
-                "workspace_config['runtime']['evaluation_call_llm'] is required "
-                "when no evaluation_call_llm callable is passed explicitly "
-                "and no models.evaluation role is configured"
-            )
-        aux = _import_callable(str(dotted), kind="evaluation_call_llm")
+        aux = resolve_role_call_llm(workspace_config, role="evaluation")
 
     # Judges use ``models.judge`` when present; absent, ``judge_call_llm``
     # stays ``None`` and judges fall back to the evaluation callable via
@@ -402,4 +413,9 @@ def _import_callable(dotted: str, *, kind: str) -> CallLLM:
     return result  # type: ignore[no-any-return]
 
 
-__all__ = ["make_runtime_config", "resolve_host_worker_permits", "resolve_parallelism"]
+__all__ = [
+    "make_runtime_config",
+    "resolve_host_worker_permits",
+    "resolve_parallelism",
+    "resolve_role_call_llm",
+]

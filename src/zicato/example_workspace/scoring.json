@@ -1,0 +1,86 @@
+{
+  "pass_weight": 1.0,
+  "severity_weights": {
+    "info": 1.0,
+    "warning": 3.0,
+    "critical": 10.0
+  },
+  "per_kind_weights": {},
+  "per_judge_weights": {},
+  "default_judge_weight": 1.0,
+  "plan_revision_weight": 0.5,
+  "task_failure_weight": 10.0,
+  "not_completed_weight": 50.0,
+  "diff_complexity_weight": 0.0,
+  "diff_complexity_ceiling": 0.0,
+  "promote_margin": 0.01,
+  "holdout_margin": null,
+  "holdout_entry_regression_budget": 0,
+  "pass_rate_monotonicity": true,
+  "pass_rate_monotonicity_scope": "per_entry",
+  "regression_gate_enabled": false,
+  "regression_test_command": [
+    "pytest",
+    "tests/",
+    "-q"
+  ],
+  "regression_timeout_s": 600,
+  "namespace_weights": {
+    "drift:": 1.0,
+    "judge:": 1.0,
+    "failure:": 1.0,
+    "runtime:": 0.0,
+    "cost:": 0.001,
+    "latency:": 0.0001,
+    "rubric:": -1.0,
+    "output:": 0.0,
+    "schema:": 5.0
+  },
+  "namespace_monotonicity": {
+    "drift:": false,
+    "rubric:": true,
+    "schema:": true
+  },
+  "tournament": {
+    "structure": "gauntlet",
+    "params": {}
+  },
+  "overfitting": {
+    "enabled": true,
+    "holdout_fraction": 0.3,
+    "min_board_size_for_split": 6,
+    "restrict_proposer_visibility": true,
+    "ladder": {
+      "enabled": true,
+      "threshold": null,
+      "budget": 16,
+      "noise_scale": 0.0
+    },
+    "rotate_holdout": true,
+    "max_generations_per_contract": null,
+    "random_baseline_every_n": 0
+  },
+  "proposer_quality": {
+    "best_of_n": 1,
+    "critique_enabled": false,
+    "screen_entries": 0,
+    "screen_veto_only": false,
+    "process_exemplars": 0,
+    "recombine": false,
+    "genealogy": 0,
+    "calibration_feedback": 0,
+    "recombine_merge": "mechanical"
+  },
+  "experiment_memory": {
+    "cross_epoch": false
+  },
+  "outcome_summarizer_spec": "",
+  "pass_transform": null,
+  "drift_kind_aggregation": {},
+  "drift_reducer": "",
+  "scalar_fn": "",
+  "telemetry_dialect": "goldfive",
+  "block_on_containment_violation": false,
+  "block_on_gate_contradiction": false,
+  "mutation_surface": {}
+}

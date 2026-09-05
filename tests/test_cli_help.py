@@ -169,10 +169,6 @@ def test_evolve_passes_auto_epoch_true_by_default(
     result = runner.invoke(
         evolve_cmd,
         [
-            "--harness-call-llm",
-            "tests.test_cli_help:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_cli_help:_aux_call_llm",
             "--no-dashboard",
         ],
     )
@@ -191,10 +187,6 @@ def test_evolve_no_auto_epoch_flag_disables_auto_epoching(
     result = runner.invoke(
         evolve_cmd,
         [
-            "--harness-call-llm",
-            "tests.test_cli_help:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_cli_help:_aux_call_llm",
             "--no-auto-epoch",
             "--no-dashboard",
         ],
@@ -266,7 +258,7 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
             await ensure_epoch_for_contract(
                 kwargs["workspace_root"],
                 auto_epoch=kwargs.get("auto_epoch", True),
-                aux_call_llm=kwargs["evaluation_call_llm"],
+                aux_call_llm=_aux_call_llm,
                 epoch_name=kwargs.get("epoch_name"),
             )
         stop_reason_out = kwargs.get("stop_reason_out")
@@ -288,10 +280,6 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
         [
             "--workspace",
             str(workspace),
-            "--harness-call-llm",
-            "tests.test_cli_help:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_cli_help:_aux_call_llm",
             "--no-dashboard",
         ],
     )
@@ -320,10 +308,6 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
         [
             "--workspace",
             str(workspace),
-            "--harness-call-llm",
-            "tests.test_cli_help:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_cli_help:_aux_call_llm",
             "--no-dashboard",
         ],
     )

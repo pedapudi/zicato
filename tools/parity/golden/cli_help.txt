@@ -449,8 +449,8 @@ Options:
                                   .zicato]
   --epoch TEXT                    Epoch id. Defaults to the workspace's current
                                   epoch.
-  --dry-run                       Validate the workspace with the flags this
-                                  invocation would use, print the result, and
+  --dry-run                       Validate the workspace and probe every
+                                  configured model role, print the result, and
                                   exit without spending a round.
   --rounds INTEGER RANGE          Number of evolve rounds to attempt.  [default:
                                   1; x>=1]
@@ -465,10 +465,6 @@ Options:
                                   full = bypass the cache and force a fresh
                                   evaluation of every unit, both sides (noise
                                   re-sampling / debugging).  [default: fast]
-  --harness-call-llm TEXT         Dotted import path of the target call_llm
-                                  (e.g. mymodule:target).  [required]
-  --auxiliary-call-llm TEXT       Dotted import path of the evaluation call_llm
-                                  (e.g. mymodule:evaluation).  [required]
   --max-consecutive-rejections INTEGER RANGE
                                   Stop early when this many rounds in a row are
                                   rejected.  [default: 3; x>=1]
@@ -533,10 +529,7 @@ Options:
   --help                          Show this message and exit.
 
   Happy-path invocation:
-    zicato evolve \
-        --harness-call-llm  my_pkg.llms:harness \
-        --auxiliary-call-llm my_pkg.llms:aux \
-        --rounds 4
+    zicato evolve --rounds 4
 
   Auto-epoching:
     By default evolve rolls the epoch whenever the evaluation
@@ -581,8 +574,17 @@ Usage: zicato init [OPTIONS]
   workspace, use `zicato repair generation-source-backend`, which merges that
   one key.
 
+  --example also writes a complete project next to the workspace: a system under
+  test carrying one mutable span, an adapter that runs it, predicates that grade
+  it, a proposer that edits it, callables for the two model roles, a four-entry
+  board, a proposer brief, and a scoring contract. config.json is wired to all
+  of it, so the next command can be `zicato evolve`. It uses no model and needs
+  no endpoint. Put the project directory on PYTHONPATH first — the dotted paths
+  in config.json resolve there, in this process and in every tournament worker.
+
   Example:
     zicato init --workspace .zicato --instance-id my-project
+    zicato init --example
 
 Options:
   --workspace DIRECTORY  Workspace directory to create.  [default: .zicato]
@@ -592,6 +594,10 @@ Options:
                          already exists.
   --reset-lineage        Allow --force to discard a lineage.json that already
                          records epochs.
+  --example              Also scaffold a complete runnable example project next
+                         to the workspace and wire config.json to it, so `zicato
+                         evolve` runs a first round with nothing hand-authored.
+                         Existing files are left alone.
   --help                 Show this message and exit.
 
 ===== zicato inspect --help =====

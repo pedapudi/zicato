@@ -215,10 +215,6 @@ def _install_evolve_mocks(monkeypatch: pytest.MonkeyPatch) -> list[FakeDashboard
 
 def _evolve_args(*extra: str) -> list[str]:
     return [
-        "--harness-call-llm",
-        "tests.test_cli_dashboard:_target_call_llm",
-        "--auxiliary-call-llm",
-        "tests.test_cli_dashboard:_aux_call_llm",
         *extra,
     ]
 
