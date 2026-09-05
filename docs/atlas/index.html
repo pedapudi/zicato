@@ -1675,13 +1675,15 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
 
       <h3>Is the instrument itself trustworthy?</h3>
       <p>
-        Three figures watch the loop rather than the candidates. A calibration trend plots each
-        generation's predicted outcome against its settled one, so a proposer that is
-        consistently overconfident shows as a drift in the running agreement rather than as a
-        hunch. A diversity matrix grids the field against itself, shading how far each pair of
-        challengers overlaps in the mutation points they touch and marking the most overlapping
-        pair. A trajectory strip lays the epoch's edits along their path through the mutation
-        surface, so a loop circling the same few points looks different from one making ground.
+        A calibration trend and a diversity matrix watch the loop rather than the candidates.
+        The calibration trend plots each generation's predicted outcome against its settled one,
+        so a proposer that is consistently overconfident shows as a drift in the running
+        agreement rather than as an impression. The diversity matrix grids the field against
+        itself, shading how far each pair of challengers overlaps in the mutation points they
+        touch and marking the most overlapping pair. The trajectory strip belongs to the Traces
+        view instead: it draws one imported trace as a timeline of turns, tool calls, budget
+        spent and adverse signals, and the same figure appears at three sizes, in the trace
+        list, the trace detail and a suggestion's provenance card.
       </p>
 
       <h3>What is happening right now?</h3>
@@ -2155,8 +2157,8 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
     { id: "scoringseam", col: 2, name: "Scoring seam", def: "The two points where an operator can replace how scoring works: the reduction from a run's events to a loss, and the combination of measurements into the scalar. A declarative transform covers the common cases without code." },
     { id: "judgeerror", col: 2, name: "Judge error register", def: "The durable record of a judge that failed to answer, kept as a third outcome beside pass and fail. Counting a call that errored as a failure would charge the candidate for the instrument breaking, so the distinction is recorded rather than collapsed." },
     { id: "redaction", col: 2, name: "Redacted feedback", def: "What the proposer is told about failures, with board identities removed. It gets the shape of what went wrong and drift-anchored windows of the runs where it happened, while the identity of the entry stays out. This is the channel that lets the proposer learn from failure without learning the board." },
-    { id: "calibration", col: 2, name: "Calibration", def: "Whether the loop's stated confidence matches what happens. Each generation's predicted outcome is compared against its settled one and the running agreement is tracked, so a proposer that is consistently overconfident is visible as a trend rather than as a feeling." },
-    { id: "trajectory", col: 2, name: "Trajectory", def: "The path the optimization has actually taken through the mutation surface across an epoch: which points were touched, in what order, and what each attempt returned. It is what distinguishes steady progress from a loop circling the same few edits." },
+    { id: "calibration", col: 2, name: "Critic calibration", def: "Whether the proposer's stated confidence matches what happens. Each proposal predicts its outcome; once the round settles, the prediction is compared with the recorded decision and the running agreement is fed back to the proposer, so an overconfident proposer shows as a trend rather than as an impression. On the command line, calibration alone names a different step: the A/A measurement that gives the noise floor." },
+    { id: "trajectory", col: 2, name: "Trajectory", def: "The scalar and each weighted namespace's value at every promoted generation of the epoch, in lineage order, with a flag for whether the last few promotions have stopped moving the scalar. A lineage shorter than the plateau window cannot show a plateau, and the record says so instead of reporting one. The console's trajectory strip is a different figure: it draws an imported trace." },
     { id: "mde", col: 2, name: "Detectable effect", def: "The smallest difference this board could reliably detect, computed from the measured noise floor and how many times each comparison ran. It answers the question a promote margin implies but does not state: is the margin above what the evaluation can actually see, or below it." },
     { id: "discrimination", col: 2, name: "Discrimination", def: "How often a board entry actually separates one candidate from another. An entry that returns the same verdict for everything contributes no information, and is reported as dead only once enough comparisons exist to say so rather than on thin evidence." },
     { id: "proposer", col: 3, name: "Proposer", def: "The component that reads the patterns and the operator's brief and emits an experiment. Its output must satisfy a schema. The proposer counts as part of the evaluation contract, so changing it or its skills opens a new epoch, because it changes how candidates are generated." },
@@ -2165,7 +2167,7 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
     { id: "hypothesis", col: 3, name: "Hypothesis", def: "The half of an experiment written before the run, and the reason a journal is worth reading later. Six required fields: the core idea in one sentence, the mutation points modulated, the pattern observation motivating it, the drift movements expected per kind, a pass-rate band, and the plausible failure modes." },
     { id: "patch", col: 3, name: "Patch", def: "One typed rewrite, addressed by mutation-point id rather than by line number, carrying the replacement text. One or more patches make up an experiment." },
     { id: "applier", col: 3, name: "Applier", def: "Resolves every patch's mutation-point id to its source location, rewrites the span, validates the result, and publishes a new candidate snapshot. A patch that fails a validator is rejected; nothing is silently repaired." },
-    { id: "bestofn", col: 3, name: "Best-of-N", def: "Taking several proposal samples in one step and critiquing them, rather than one. A single call takes one sample and retries only on invalid output, so without this a valid but mediocre proposal is never reconsidered. Screening picks which sample becomes a challenger." },
+    { id: "bestofn", col: 3, name: "Best-of-N", def: "Taking several proposal samples in one step, each with a different edit-class hint, and choosing one with a critique pass instead of keeping the first valid sample. A single call takes one sample and retries only on invalid output, so without this a valid but mediocre proposal is never reconsidered. Screening can veto a sample that breaks entries the champion passes; the critique, not the screen, chooses among the survivors." },
     { id: "diversity", col: 3, name: "Field diversity", def: "How much the challengers in one field actually differ, measured as the overlap between the sets of mutation points each one touches. A field of near-identical ideas costs a full round of evaluation and answers almost one question, so the overlap summary informs whether to soft-reject a near-duplicate." },
     { id: "generation", col: 3, name: "Generation", def: "A specific version of the system under test's source, named by sequence within the epoch. The first is the baseline — the registered source at epoch start, or the final promoted generation of the previous epoch. Every later one is the applier's output." },
     { id: "snapshot", col: 3, name: "Snapshot", def: "The directory holding one generation's full source. A complete copy rather than a reference, so copying or deleting it affects no other generation." },
@@ -2177,7 +2179,7 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
     { id: "genstore", col: 3, name: "Generation store", def: "The seam that persists a generation's source, with a directory backend that keeps a full copy per generation and a git backend that keeps one branch per epoch. Everything above it addresses generations by id, so which backend is in use changes what is on disk and nothing about the loop." },
     { id: "complexity", col: 3, name: "Diff complexity", def: "A measure of how much a proposed change actually rewrites, used to prefer the simpler of two changes that score alike. A loop rewarded only on score will keep growing the thing it edits, and this is the counterweight." },
     { id: "tournament", col: 4, name: "Tournament", def: "Compares champion against challenger on the board frozen for this epoch and applies the promotion gate. Full mode re-runs every entry against both generations; fast mode is cache-first and reuses the parent's recorded results." },
-    { id: "gate", col: 4, name: "Promotion gate", def: "The rules that decide eligibility, applied in order: the challenger must beat the champion by the configured margin on the scalar score, and must not regress any entry the champion already passed. It reports a reason on every rejection." },
+    { id: "gate", col: 4, name: "Promotion gate", def: "Three rules applied in order to the finalist's full-board result: the challenger's scalar must beat the champion's by the promote margin; no entry the champion scored may drop by more than the tolerance (or, in aggregate scope, the mean score may not); and no weighted namespace may regress. An optional parsimony ceiling can veto before the three, and holdout confirmation can veto after them. Every rejection carries its reason." },
     { id: "holdout", col: 4, name: "Holdout confirmation", def: "The final comparison on entries withheld from the process that chose the challenger. A challenger that won on the training slice confirms when it does not meaningfully regress on the holdout; confirmation does not demand a second improvement." },
     { id: "ladder", col: 4, name: "Ladder", def: "The governor that rations feedback from the hidden slice. It releases a confirmation only when the training improvement clears its threshold, and charges every consultation against an epoch-level query budget — including a withheld one, because the hidden data was inspected either way." },
     { id: "outcome", col: 4, name: "Outcome", def: "The post-run half of an experiment: the actual drift movements, whether each matched the hypothesis, the score deltas, the decision, and the rejection reason if there was one." },
@@ -2187,10 +2189,10 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
     { id: "rating", col: 4, name: "Rating", def: "A strength fitted to each contestant from the pairwise duels observed, where the chance of one beating another follows the gap between their strengths. The fit also yields an uncertainty per contestant, and that is the operational payoff: contestants whose ranges overlap are the pairs worth running again." },
     { id: "receipt", col: 4, name: "Settlement receipt", def: "The durable record written before a round's decision is committed, holding everything needed to finish it. A process that dies mid-commit replays the receipt on restart and lands in the same place, which is what keeps a crash from leaving a round half-decided." },
     { id: "evidence", col: 4, name: "Evidence gate", def: "An optional layer that can hold a crowning the measured ratings cannot separate from noise. It runs a defer, replicate, refit schedule, so it answers two questions together: whether the difference is real, and whether running the pair again would settle it." },
-    { id: "pareto", col: 4, name: "Pareto frontier", def: "The record of which generations are unbeaten on every objective at once, written after a round's decision is final. A single scalar hides the trade a change made; the frontier keeps the candidates that no other candidate beats on all counts." },
+    { id: "pareto", col: 4, name: "Pareto frontier", def: "The per-epoch record of settled candidates that beat the champion on at least one weighted namespace and that no other recorded candidate dominates, meaning at least as good on every axis and better on one. The scalar is a weighted sum, so a change that halves cost for a small rubric loss is rejected and otherwise forgotten; this record keeps it. It is an observation and never enters the gate." },
     { id: "rung", col: 4, name: "Rung", def: "One stage of a racing ladder, where the surviving field is cut, typically in half. A rung is labelled by what it does to the field — four contestants down to two — and the survivors carry forward to the next rung until one remains to meet the champion." },
     { id: "analysis", col: 4, name: "Epoch analysis", def: "The pass that runs when an epoch closes, reading its journal and its records into one report of what the epoch actually established. It is written once, at the boundary, because that is when the contract stops moving and the rounds inside it become comparable as a set." },
-    { id: "copeland", col: 4, name: "Copeland score", def: "A contestant's count of pairwise wins, a half for each draw. It ranks a field from duels alone without needing a common scale, which is what a Swiss epoch accumulates and what the standings order by." },
+    { id: "copeland", col: 4, name: "Copeland score", def: "A contestant's count of duels won; a bye in an odd field counts as a win, and losses are kept beside it. Swiss standings order by this count and break ties by the mean scalar over the duels each contestant played, so the field is ranked from duels alone, without a common scale." },
     { id: "resolver", col: 4, name: "Resolver", def: "What decides an order when pairwise results disagree with themselves — where one contestant beats a second, the second beats a third, and the third beats the first. Two are selectable: ranking by pairwise wins, or locking in the most decisive pairings first and discarding any that would close a cycle." },
     { id: "falsepromote", col: 4, name: "False promotion", def: "Crowning a challenger that is not actually better. It is the failure this whole design is arranged against, because the loop builds the next round on the champion, so a wrong crowning corrupts everything proposed after it. Every margin, replicate and confirmation exists to make it rarer." },
     { id: "regressiongate", col: 4, name: "Regression gate", def: "Runs the candidate's own test suite against its snapshot, and any failure rejects it however strong the scoring signal was. A patch can improve the drift loss and the pass rate on the board while breaking an invariant the board never exercises, and the scoring channel cannot see that." },
@@ -2216,7 +2218,7 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
     ["falsepromote", "holdout", "is what motivates"],
     ["loss", "calibration", "settles a prediction in"],
     ["hypothesis", "calibration", "is scored by"],
-    ["patch", "trajectory", "accumulates into"], ["trajectory", "pattern", "informs"],
+    ["lineage", "trajectory", "is measured as"], ["trajectory", "analysis", "is read in"],
     ["workspace", "epoch", "holds every"], ["workspace", "index", "holds the"],
     ["prespend", "adapter", "proves"], ["prespend", "board", "proves"],
     ["emulator", "sealed", "sees only its"], ["judge", "reliability", "is measured for"],
@@ -2234,7 +2236,7 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
     ["boardunit", "run", "is evaluated as"], ["boardunit", "tournament", "is reused across"],
     ["roundlog", "scorecard", "is read by"], ["gate", "roundlog", "is recorded in"],
     ["scorecard", "proposer", "grades"], ["proposer", "bestofn", "samples through"],
-    ["bestofn", "experiment", "screens into"], ["field", "diversity", "is summarised by"],
+    ["bestofn", "experiment", "critiques into"], ["field", "diversity", "is summarised by"],
     ["generation", "genstore", "is persisted by"], ["genstore", "snapshot", "writes"],
     ["evidence", "gate", "may hold"], ["rating", "evidence", "feeds"],
     ["outcome", "pareto", "is recorded on"],
@@ -2313,7 +2315,7 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
     ["challenger", "The candidate trying to replace it. A round may mint several at once."],
     ["structure", "How the field competes. The choice matters more than it looks — see the trade-offs on each."],
     ["tournament", "Champion against challenger on the frozen board."],
-    ["gate", "The rules that decide: beat the margin, and regress nothing that already passed."],
+    ["gate", "The three rules that decide: beat the margin, drop no entry the champion scored, regress no weighted namespace."],
     ["holdout", "A final check on entries withheld from the process that chose the challenger."],
     ["falsepromote", "What all of it guards against. A wrong crowning corrupts every round built on it."],
     ["outcome", "The verdict and its reason, written onto the same record as the hypothesis."],
