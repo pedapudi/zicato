@@ -18,10 +18,11 @@
 // passes alongside `route.params`); a test may also call render with
 // `{ epochId, gen, cmp }` as the 3rd arg.
 //
-// Data: /api/epoch, /api/lineage, /api/score-trajectory,
-// /api/generation/{e}/{g}/per-entry, /api/tournaments,
-// /api/round/{e}/{champ}/{chall}/gate,
-// /api/run/{e}/{g}/{entry}/{expectations,per-judge}.
+// Data: /api/epoch, /api/lineage, /api/score-trajectory, /api/tournaments and
+// the round timeline for the epoch, then ONE dossier per candidate shown
+// (/api/epoch/{e}/candidate/{g}[?entry=]), which carries the per-board
+// results, the gates, the prediction scorecard, the proposal episode, the
+// drill-down and the racing field the server joined for it.
 
 import { el, svgEl } from '../core/dom.js';
 import { state } from '../core/state.js';
@@ -137,27 +138,31 @@ export async function render(host, ctx, params, route) {
   // scalar yet shows its climbing PROJECTED scalar / Δ (marked "projected").
   const liveProjected = (at && liveForThisEpoch && at.projected && typeof at.projected === 'object') ? at.projected : {};
 
+  // ONE read per candidate shown: the server's dossier of the per-candidate
+  // joins. The primary side (A) carries the entry drill-down; the compare side
+  // (B) reads its lifecycle clean.
+  const dossierA = await D.candidateDossier(epochId, genId, params.entry || null);
+  const dossierB = cmpId ? await D.candidateDossier(epochId, cmpId, null) : null;
+
   // THE RACING FIELD MODEL — resolved through the SHARED resolveNonGauntletSt
   // (live-first → the SERVED settled racing field) so the candidate dossier's
   // field-relative racing panels read the SAME `st` the Match-ups / epoch /
-  // per-round views do. The settled ladder comes off
-  // `/api/epoch/{id}/racing-field` (the per-challenger join lives server-side
-  // now); absent (null) → the dossier renders its honest empty racing state.
+  // per-round views do. The settled ladder rides the dossier (the
+  // per-challenger join lives server-side); absent (null) → the dossier
+  // renders its honest empty racing state.
+  const servedField = (dossierA && dossierA.racing_field && dossierA.racing_field.present) ? dossierA.racing_field : null;
   const racingSt = (String(structure) === 'racing')
     ? resolveNonGauntletSt({
         structure: 'racing', epochId,
         liveRaw: liveForThisEpoch ? at : null,
         heartbeat: state.heartbeat, activeRuns: state.activeRuns,
         params: (tournament && tournament.params) || {},
-        completedRecord: normalizeStructure(await D.racingField(epochId), false),
+        completedRecord: normalizeStructure(servedField, false),
       }).st
     : null;
 
-  // Resolve each side's full panel data (cached). Side B only when comparing.
-  // The primary side (A) honours the entry drill-down param; the compare side
-  // (B) reads its lifecycle clean.
-  const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, racingSt, epochInflight, liveProjected, liveness);
-  const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, racingSt, epochInflight, liveProjected, liveness) : null;
+  const sideA = resolveCandidate(dossierA, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, racingSt, epochInflight, liveProjected, liveness);
+  const sideB = cmpId ? resolveCandidate(dossierB, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, racingSt, epochInflight, liveProjected, liveness) : null;
 
   // the per-CANDIDATE visibility rating (the server-joined lineage triple;
   // distinct from the per-PAIR gate ratingBlock below). Absent on the Rust
@@ -216,9 +221,11 @@ export async function render(host, ctx, params, route) {
   });
 }
 
-// Resolve one candidate's full panel data (all cached reads). `entryParam`
-// only applies to the primary (A) side's drill-down.
-async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, racingSt, epochInflight, liveProjected, liveness) {
+// Fold one candidate's SERVED dossier into the panel model. `entryParam`
+// only applies to the primary (A) side's drill-down. A null dossier (an
+// unserved read) folds to the same empty model an unscored candidate has.
+function resolveCandidate(dossier, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, racingSt, epochInflight, liveProjected, liveness) {
+  const d = (dossier && typeof dossier === 'object') ? dossier : {};
   const node = genList.find((g) => g.id === genId) || { id: genId, parent: null, promoted: null };
   const baseline = !node.parent;
   const exp = experiments.find((x) => x.generation_id === genId) || null;
@@ -228,17 +235,11 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const mpts = exp && exp.hypothesis && Array.isArray(exp.hypothesis.mutation_points) ? exp.hypothesis.mutation_points.length
     : (exp && Array.isArray(exp.mutation_points) ? exp.mutation_points.length : null);
 
-  const [pe, scorecard, episode] = await Promise.all([
-    D.perEntry(epochId, genId),
-    // the proposer's PREDICTION-ACCURACY scorecard (DIAGNOSTIC — never the
-    // gate): predicted-vs-realised movements + the calibration fraction. A
-    // baseline (seed) made no falsifiable claim, so we skip the read for it.
-    baseline ? Promise.resolve(null) : D.hypothesisAccuracy(epochId, genId),
-    // Whether this candidate's proposal episode has Foe's static page, and
-    // what to run when it does not. A baseline was never proposed, so it has
-    // no episode and the read is skipped for it.
-    baseline ? Promise.resolve(null) : D.episodeExport(epochId, genId),
-  ]);
+  const pe = d.per_entry || null;
+  // the proposer's PREDICTION-ACCURACY scorecard (DIAGNOSTIC — never the
+  // gate) and the episode export; the server serves neither for the seed.
+  const scorecard = d.hypothesis_accuracy || null;
+  const episode = d.episode_export || null;
   const entries = (pe && Array.isArray(pe.entries)) ? pe.entries : [];
   // per-generation mean continuous outcome (#18); null on the pre-score path.
   const meanScore = pe && svg.isNum(pe.mean_score) ? pe.mean_score : null;
@@ -249,48 +250,31 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   // gets no verdict colour and no Δ-vs-champion treatment.
   const facetScores = facetRows(pe && pe.facet_scores);
 
-  // The SERVER's per-entry champion-vs-candidate join for this round
-  // (`/api/matchup-grid`): one row per board entry carrying both sides' score
-  // and drift loss, the movement between them, the candidate's replicate
-  // spread, and which channel decided the entry. The server computes the join,
-  // the slice restriction and the verdict; this view only renders them.
-  // Absent when the candidate IS the champion, or has no champion to compare
-  // against (a seed), in which case there is nothing to join.
+  // The SERVER's per-board champion comparison for this round (the dossier's
+  // `comparison`, projected from the matchup grid): one row per board entry
+  // carrying both sides' score, the candidate's replicate spread, the
+  // champion's drift loss and which channel decided the entry, plus the
+  // like-for-like drift sums over the boards both sides ran. Empty for the
+  // seed and for the reigning champion, which have no champion to compare
+  // against.
+  const cmp = (d.comparison && typeof d.comparison === 'object') ? d.comparison : {};
   const compare = {};
-  let championSigma = null, candidateSigma = null, gridDriftPresent = null;
-  if (championId && championId !== genId && !baseline) {
-    const grid = await D.matchupGrid(epochId, championId, genId);
-    const gridRows = (grid && Array.isArray(grid.entry_grid)) ? grid.entry_grid : [];
-    gridDriftPresent = grid ? grid.drift_present !== false : null;
-    for (const r of gridRows) {
-      if (!r || r.entry_id == null) continue;
-      compare[r.entry_id] = {
-        deltaScore: svg.isNum(r.delta_score) ? r.delta_score : null,
-        champScore: svg.isNum(r.parent_score) ? r.parent_score : null,
-        candScore: svg.isNum(r.child_score) ? r.child_score : null,
-        se: svg.isNum(r.score_se) ? r.score_se : null,
-        replicates: svg.isNum(r.score_replicates) ? r.score_replicates : 0,
-        champDrift: svg.isNum(r.parent_drift_loss) ? r.parent_drift_loss : null,
-        decidedBy: r.decided_by || null,
-      };
-      // The drift Σ pair is summed over the entries BOTH sides ran — the rows
-      // the server paired — so the two sums cover the same boards and their Δ
-      // is a like-for-like comparison rather than a slice artefact.
-      if (svg.isNum(r.parent_drift_loss) && svg.isNum(r.child_drift_loss)) {
-        championSigma = (championSigma || 0) + r.parent_drift_loss;
-        candidateSigma = (candidateSigma || 0) + r.child_drift_loss;
-      }
-    }
+  for (const [entryId, r] of Object.entries(cmp.entries || {})) {
+    if (!r || typeof r !== 'object') continue;
+    compare[entryId] = {
+      deltaScore: svg.isNum(r.delta_score) ? r.delta_score : null,
+      champScore: svg.isNum(r.champion_score) ? r.champion_score : null,
+      candScore: svg.isNum(r.candidate_score) ? r.candidate_score : null,
+      se: svg.isNum(r.score_se) ? r.score_se : null,
+      replicates: svg.isNum(r.score_replicates) ? r.score_replicates : 0,
+      champDrift: svg.isNum(r.champion_drift_loss) ? r.champion_drift_loss : null,
+      decidedBy: r.decided_by || null,
+    };
   }
-  if (candidateSigma == null) {
-    for (const e of entries) if (e && svg.isNum(e.drift_loss)) candidateSigma = (candidateSigma || 0) + e.drift_loss;
-  }
-  const deltaSigma = (svg.isNum(candidateSigma) && svg.isNum(championSigma)) ? candidateSigma - championSigma : null;
-  // Does the drift channel carry information in this workspace at all? The
-  // matchup grid answers for the pair; a seed with no matchup falls back to its
-  // own generation's per-entry answer. Either way the figure hides the drift
-  // readouts rather than painting a column of structural zeroes.
-  const driftPresent = gridDriftPresent != null ? gridDriftPresent : (pe ? pe.drift_present !== false : true);
+  const championSigma = svg.isNum(cmp.champion_sigma) ? cmp.champion_sigma : null;
+  const candidateSigma = svg.isNum(cmp.candidate_sigma) ? cmp.candidate_sigma : null;
+  const deltaSigma = svg.isNum(cmp.delta_sigma) ? cmp.delta_sigma : null;
+  const driftPresent = cmp.drift_present !== false;
 
   // the candidate's PATH through the tournament rungs (rung 0 → rung 1 →
   // racing-final, each Δ + survived/cut) — a pure projection of the SERVED
@@ -300,47 +284,34 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   // fix #3 — EVERY matchup the candidate was in (as champion OR challenger).
   const mine = allMatchups.filter((m) => m.champion === genId || m.challenger === genId);
 
-  // fix #1 — the gate(s) for this candidate. As challenger: its own round.
-  // As champion: each defended round.
-  const gateKeys = [];
-  if (!baseline && node.parent) gateKeys.push({ champ: node.parent, chall: genId, role: 'as challenger' });
-  for (const m of mine) {
-    if (m.champion === genId && m.challenger) gateKeys.push({ champ: genId, chall: m.challenger, role: 'defended' });
-  }
-  const seenK = new Set();
-  const gateSpecs = gateKeys.filter((k) => { const id = k.champ + '>' + k.chall; if (seenK.has(id)) return false; seenK.add(id); return true; });
-  // WHICH JUDGE DECIDED THE ROUND. The gate payload names ONE `primary_driver`;
-  // this read carries the ledger it was picked from — every judge's champion vs
-  // challenger weighted loss and the signed Δ between them — so "the round
-  // turned on judge X" is auditable rather than asserted. Fetched beside the
-  // gates (same round coordinates, same cached failure-tolerant class); a
-  // never-indexed workspace / the Rust supervisor reads null and the block is
-  // simply omitted.
-  const [gates, judgeComparisons] = await Promise.all([
-    Promise.all(gateSpecs.map((k) => D.gate(epochId, k.champ, k.chall))),
-    Promise.all(gateSpecs.map((k) => D.perJudgeComparison(epochId, k.champ, k.chall))),
-  ]);
+  // fix #1 — the gate(s) for this candidate, SERVED on the dossier: its own
+  // round as challenger, then each round it defended as champion, each with
+  // the per-judge ledger the gate's primary driver was picked from.
+  const served = Array.isArray(d.gates) ? d.gates.filter((g) => g && typeof g === 'object') : [];
+  const gateSpecs = served.map((g) => ({
+    champ: g.champion, chall: g.challenger,
+    role: g.role === 'champion' ? 'defended' : 'as challenger',
+  }));
+  const gates = served.map((g) => g.gate || null);
+  const judgeComparisons = served.map((g) => g.judge_comparison || null);
   const primaryGate = gates.find((g, i) => g && gateSpecs[i].role === 'as challenger') || null;
   const primaryDelta = primaryGate && svg.isNum(primaryGate.delta_scalar) ? primaryGate.delta_scalar : null;
   // The gate EXPLANATION for the lifecycle GATE node: which of the 3 rules was
   // the primary driver + the decisive numbers, read from the SAME gate payload
-  // the Promote-gate panel renders (D.gate). The deciding rule is the first
-  // rule that FIRED / failed (rules short-circuit in order); the scalar-margin
-  // detail carries "needs ≤ <margin>", a monotonicity rule carries the
-  // regressed predicate / namespace in its detail.
+  // the Promote-gate panel renders. The deciding rule is the first rule that
+  // FIRED / failed (rules short-circuit in order); the scalar-margin detail
+  // carries "needs ≤ <margin>", a monotonicity rule carries the regressed
+  // predicate / namespace in its detail.
   const gateExplain = primaryGate ? deriveGateExplain(primaryGate) : null;
 
-  let exps = null, judges = null, drillRow = null, drillHeader = null;
-  if (entryParam) {
-    [exps, judges, drillHeader] = await Promise.all([
-      D.expectations(epochId, genId, entryParam),
-      D.perJudgeForRun(epochId, genId, entryParam),
-      // the run HEADER carries adk_session_id — the harmonograf deep-link
-      // key (the per-entry index rows above do not surface it).
-      D.runHeader(epochId, genId, entryParam),
-    ]);
-    drillRow = entries.find((e) => e.entry_id === entryParam) || null;
-  }
+  // the entry drill-down the dossier was asked for (the primary side only).
+  const drill = (entryParam && d.drilldown && d.drilldown.entry_id === entryParam) ? d.drilldown : null;
+  const exps = drill ? (drill.expectations || null) : null;
+  const judges = drill ? (drill.judges || null) : null;
+  // the run HEADER carries adk_session_id — the harmonograf deep-link key
+  // (the per-entry index rows above do not surface it).
+  const drillHeader = drill ? (drill.header || null) : null;
+  const drillRow = entryParam ? (entries.find((e) => e.entry_id === entryParam) || null) : null;
 
   // LIVE — this candidate's in-flight board runs (current-epoch-scoped set,
   // filtered to THIS gen). Drives the BOARD lifecycle node + the per-board
@@ -1348,9 +1319,10 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
         + '⏱ timeout · Δ = candidate − champion · dim tag = rung/round it ran in · click → drill-down' }),
     ].filter(Boolean)));
     // per-generation MEAN continuous outcome (#18) — a board-level score
-    // summary beneath the per-board rows; higher is better. Absent on the
-    // pre-score path, so the caption simply does not render.
-    if (svg.isNum(s.meanScore)) {
+    // summary beneath the per-board rows; higher is better. The aggregate
+    // reports the pass rate here for a board with no scored entry, so the
+    // caption is drawn only when an entry carries a score.
+    if (scoreAxis && svg.isNum(s.meanScore)) {
       scoreCard.appendChild(el('div', { class: 'dn-faint dn-meanscore' }, [
         el('span', { text: 'mean score ' }),
         el('span', { class: 'dn-meanscore-val', text: svg.fmt(s.meanScore, 2) }),

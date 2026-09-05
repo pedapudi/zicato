@@ -10,7 +10,7 @@ installDom();
 
 const {
   router, svg, ui, shell, data, coreState,
-  rounds, hovercard, live, EPOCH_ID, lookupFixture, installFetch,
+  rounds, hovercard, live, EPOCH_ID, lookupFixture, installFetch, recordedRoutes,
   freshState, allByClass, readCss, svgsByClass, mountLiveShell,
 } = await import('./fixtures.mjs');
 
@@ -178,6 +178,7 @@ function installManyFetch(roundN) {
     points.push({ generation_id: id, scalar: 100 + i });
   }
   const MANY = {
+    ...recordedRoutes('many_rounds'),
     '/api/epoch': { epoch_id: MANY_EPOCH, closed: false, goal: 'Many rounds.',
       experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
         outcome: { decision: g.promoted ? 'baseline' : 'rejected' } })), board: [{ entry_id: 'b1', kind: 'single_turn' }] },

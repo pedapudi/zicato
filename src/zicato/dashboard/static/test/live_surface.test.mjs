@@ -6,17 +6,17 @@
 // Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
+import { elimPayload, recorded } from './recorded.mjs';
 
 installDom();
 
 const {
   router, svg, ui, shell, data, tree,
-  livestatus, coreState, rounds, live, STRUCT, racingFieldFromBracket,
+  livestatus, coreState, rounds, live, STRUCT,
   EPOCH_ID, installFetch, freshState, allByClass, svgsByClass, mountLiveShell,
-  SE_STRUCT, SWISS_STRUCT, RACING_STRUCT, structFixture, installFixtureMap, LIVE_RACING,
-  liveRacingField, liveElimField, RC_EPOCH, RACING_TOURNAMENTS, HERO_EPOCH,
+  SE_STRUCT, SWISS_STRUCT, RACING_STRUCT, structureFixture, racingLadderFixture, installFixtureMap, LIVE_RACING,
+  liveRacingField, liveElimField, RC_EPOCH, HERO_EPOCH,
 } = await import('./fixtures.mjs');
-const mock = await import('./mock_server.mjs');
 
 // ====================================================================
 // LIVE-STATUS — surfacing an ACTIVE run for ANY tournament structure
@@ -418,7 +418,7 @@ test('board view: an entry WITH completed results still renders the per-candidat
 
 test('epoch timeline: a NON-gauntlet (racing) epoch leads with the round timeline (one renderer for all structures, no separate strip)', async () => {
   freshState();
-  installFixtureMap(structFixture('racing', RACING_STRUCT, 'tourn_e0_rc'));
+  installFixtureMap(structureFixture('racing_field'));
   const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -652,7 +652,7 @@ test('live racing model: the champion-gate is PENDING (deciding…) during the r
 // (f) the fully-completed race still renders the full ladder (no regression).
 test('live racing model: a fully-completed race (all rounds, no live) still reconstructs the full ladder (no regression)', () => {
   // this is the existing reconstruct path — assert it is unaffected.
-  const st = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
+  const st = STRUCT.normalizeStructure(recorded('racing_ladder/racing_field'), false);
   assert(st && st.structure === 'racing', 'the completed reconstruction still yields a racing ladder');
   const model = STRUCT.racingModel(st);
   assert(model.hasRungs, 'the completed ladder has rungs');
@@ -920,7 +920,7 @@ test('projected (elim): an in-flight match re-ranks standings on the projected s
     },
   });
   const model = STRUCT.buildLiveElimModel({
-    at: mock.attachElimStates(at), heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
+    at: elimPayload('lone_final_pending', at), heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
     epochGens: ['v0', 'v1'],
   });
@@ -942,7 +942,7 @@ test('projected (standings table): an in-flight row renders the projected treatm
     projected: { v1: { scalar: 1.0, boards_done: 3, boards_total: 5, pass_rate: 1.0 } },
   });
   const model = STRUCT.buildLiveElimModel({
-    at: mock.attachElimStates(at), heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
+    at: elimPayload('lone_final_pending', at), heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
     epochGens: ['v0', 'v1'],
   });
@@ -1042,7 +1042,7 @@ test('swiss (completed): a swiss winner that does NOT beat the incumbent is NOT 
 // ---- completed ELIM → the radial bracket (elimBracket retired) -----
 
 test('elim (completed): single-elim → elimModel + the radial bracket with a champion seat', () => {
-  const st = STRUCT.normalizeStructure(mock.attachElimStates({ ...SE_STRUCT }), false);
+  const st = STRUCT.normalizeStructure(elimPayload('single_elim_semifinals', { ...SE_STRUCT }), false);
   const model = STRUCT.elimModel(st);
   assert(model && model.hasMatches, 'a single-elim model was derived');
   assertEqual(model.losers, null, 'single-elim has NO losers band');
@@ -1063,10 +1063,7 @@ test('elim (completed): single-elim → elimModel + the radial bracket with a ch
 test('elim (completed): double-elim → ONE radial SVG carrying the losers’ bracket on the lower arc', () => {
   const DE = JSON.parse(JSON.stringify(SE_STRUCT));
   DE.structure = 'double_elim';
-  DE.rounds.push({ round_index: 2, label: 'LB Round 1', matches: [
-    { match_id: 'LB-R0-0', competitors: ['v0', 'v2'], winner: 'v0', decision: 'rejected', bracket_slot: 'LB-R0-0', bye: false },
-  ] });
-  const st = STRUCT.normalizeStructure(mock.attachElimStates(DE), false);
+  const st = STRUCT.normalizeStructure(elimPayload('double_elim_losers_round', DE), false);
   const model = STRUCT.elimModel(st);
   assert(Array.isArray(model.losers) && model.losers.length >= 1, 'double-elim carries a losers band in the model');
   const node = svg.elimRadial({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, double: true, onCompetitor() {} });
@@ -1284,7 +1281,7 @@ test('survival funnel: a LIVE race leaves the pending rung neutral (nobody cut) 
 // ---- (a) reconstruct the rungs/field/cuts/survivors -----------------
 
 test('racing field (SERVED): rung0 {v1,v2,v3,v4} (v1/v2 cut ✕, v3/v4 survive ↑) and rung1 {v3,v4} (v4 cut, v3 survives) read verbatim', () => {
-  const st = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
+  const st = STRUCT.normalizeStructure(recorded('racing_ladder/racing_field'), false);
   assert(st, 'a racing structure was reconstructed from the per-challenger records');
   assertEqual(st.structure, 'racing', 'the reconstructed structure is racing');
   // only the RUNG rounds (racing-final is the gate rather than a rung).
@@ -1311,7 +1308,7 @@ test('racing field (SERVED): rung0 {v1,v2,v3,v4} (v1/v2 cut ✕, v3/v4 survive �
 // ---- (b) the champion-gate crowns v3 (NOT "tbd") --------------------
 
 test('racing field (SERVED): the champion-gate names v3 as the promoted champion ♛, NOT "tbd"', () => {
-  const st = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
+  const st = STRUCT.normalizeStructure(recorded('racing_ladder/racing_field'), false);
   const gate = st.rounds.find((r) => String(r.matches[0].match_id) === 'racing-final');
   assert(gate, 'a racing-final champion-gate round was reconstructed');
   const gm = gate.matches[0];
@@ -1337,7 +1334,7 @@ test('racing field (SERVED): the champion-gate names v3 as the promoted champion
 // ---- (c) competitors are clickable to their candidate ---------------
 
 test('racing field (SERVED): each competitor in the funnel is clickable → its candidate page', () => {
-  const st = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
+  const st = STRUCT.normalizeStructure(recorded('racing_ladder/racing_field'), false);
   let navTo = null;
   const ctx = { navigate: (v, p) => { navTo = { v, p }; }, href: router.href };
   const nodes = STRUCT.renderStructure(st, ctx, RC_EPOCH);
@@ -1390,13 +1387,7 @@ test('racing reconstruct: the LIVE /api/active-tournament path still renders the
 
 test('racing reconstruct: the match-ups page rebuilds the full ladder from the per-challenger /api/tournaments records (not an empty skeleton)', async () => {
   freshState();
-  const F = {
-    '/api/epoch': { epoch_id: RC_EPOCH, closed: true, goal: 'g', tournament: { structure: 'racing', params: RACING_TOURNAMENTS.structure_params },
-      experiments: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, parent_generation_id: g === 'v0' ? '' : 'v0', outcome: { decision: g === 'v0' ? 'baseline' : (g === 'v3' ? 'promoted' : 'rejected') } })), board: [] },
-    '/api/lineage': { generations: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, epoch_id: RC_EPOCH, parent_generation_id: g === 'v0' ? '' : 'v0', promoted: g === 'v0' || g === 'v3' })) },
-    '/api/score-trajectory': { points: [] },
-    '/api/tournaments': RACING_TOURNAMENTS,
-  };
+  const F = racingLadderFixture();
   installFixtureMap(F);
   // idle — no live run; the ladder must reconstruct from the completed records.
   coreState.state.heartbeat = { phase: 'idle' };

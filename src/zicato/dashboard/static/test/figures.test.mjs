@@ -10,11 +10,10 @@ installDom();
 
 const {
   router, svg, ui, data, tree, svgEl,
-  rounds, dag, hovercard, live, roundTimelineFromFixtures, EPOCH_ID,
+  rounds, dag, hovercard, live, recorded, recordedRoutes, elimCase, structureFixture, dossierVariant, dossierUrl, EPOCH_ID,
   FIXTURE, installFetch, freshState, allByClass, readCssAsync, readCss,
   svgsByClass, SE_STRUCT, structFixture, installFixtureMap,
 } = await import('./fixtures.mjs');
-const mock = await import('./mock_server.mjs');
 
 // ====================================================================
 // EVOLVE ROUNDS (champion-spine round model + timeline + drill-down + tree).
@@ -27,24 +26,20 @@ const mock = await import('./mock_server.mjs');
 
 // ---- (1) the round MODEL groups gens by round_index ----------------
 
-// Serve a round timeline for plain test inputs via the MOCK SERVER (the same
-// join build_round_timeline performs), then consume it exactly as the views
-// do — roundsFromTimeline + the live overlay. The client-side four-endpoint
-// join (epochRoundModel) is DELETED; these tests exercise the consumer.
-function roundsModelFor({ gens, scalarBy, bracket, structure, championId, projected, inflight }) {
-  const F = {
-    '/api/lineage': { generations: (gens || []).map((g) => ({
-      generation_id: g.id, epoch_id: 'e-model', parent_generation_id: g.parent || '',
-      promoted: g.promoted, round_index: g.round_index })) },
-    '/api/score-trajectory': { points: [...(scalarBy || new Map()).entries()].map(([generation_id, scalar]) => ({ generation_id, scalar })) },
-    '/api/tournaments': Object.assign({}, bracket || {}),
-    '/api/epoch': { epoch_id: 'e-model', tournament: { structure } },
-  };
-  const timeline = roundTimelineFromFixtures(F, 'e-model');
-  const records = Array.isArray(bracket && bracket.tournaments)
-    ? bracket.tournaments : Object.values(bracket || {}).filter((t) => t && t.tournament_id);
-  const byTournament = new Map(records.map((t) => [String(t.tournament_id), t]));
-  for (const r of timeline.rounds || []) r.tournament = byTournament.get(String(r.tournament_id)) || null;
+// Consume a RECORDED round timeline (tests/_console_scenarios.py, one
+// workspace per round-model scenario) exactly as the views do —
+// roundsFromTimeline + the live overlay — with the generations, scalars and
+// bracket read off the same recording.
+function modelInputs(workspace) {
+  const routes = recordedRoutes(workspace);
+  const at = (suffix) => routes[Object.keys(routes).find((k) => k.endsWith(suffix))];
+  const gens = at('/api/lineage?epoch=e-model').generations.map((g) => ({
+    id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted, round_index: g.round_index }));
+  const scalarBy = new Map(at('/api/score-trajectory?epoch=e-model').points.map((p) => [p.generation_id, p.scalar]));
+  return { gens, scalarBy, bracket: at('/api/tournaments?epoch=e-model'), timeline: recorded(`${workspace}/round_timeline`) };
+}
+function roundsModelFor(workspace, { structure, championId, projected, inflight }) {
+  const { gens, scalarBy, bracket, timeline } = modelInputs(workspace);
   const livePhases = new Set(['proposing', 'applying', 'tournament']);
   if (inflight && livePhases.has(inflight.phase) && Array.isArray(inflight.field_status)) {
     const last = timeline.rounds[timeline.rounds.length - 1];
@@ -62,15 +57,7 @@ function roundsModelFor({ gens, scalarBy, bracket, structure, championId, projec
 }
 
 test('round model: groups generations by round_index — champion spine threads v0 → promoted (SERVED timeline consumed)', () => {
-  const gens = [
-    { id: 'v0', parent: null, promoted: true, round_index: null },
-    { id: 'v1', parent: 'v0', promoted: false, round_index: 0 },
-    { id: 'v2', parent: 'v0', promoted: true, round_index: 0 },   // promoted in round 0
-    { id: 'v3', parent: 'v2', promoted: false, round_index: 1 },  // minted in round 1
-    { id: 'v4', parent: 'v2', promoted: false, round_index: 1 },
-  ];
-  const scalarBy = new Map([['v0', 100], ['v1', 110], ['v2', 80], ['v3', 85], ['v4', 90]]);
-  const model = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v0' });
+  const model = roundsModelFor('model_round_stamps', { structure: 'gauntlet', championId: 'v0' });
   assertEqual(model.length, 2, 'two rounds (round_index 0 and 1)');
   assertEqual(model[0].source, 'round_index', 'the model derives from the round_index stamp');
   // round 0: champion v0 (loss 100), minted {v1, v2}, gate promotes v2.
@@ -89,40 +76,19 @@ test('round model: groups generations by round_index — champion spine threads 
 // ---- the FIELD-RECORD fallback when round_index is ABSENT ----------
 
 test('round model: degrades to the per-round FIELD records when round_index is absent', () => {
-  const gens = [
-    { id: 'v0', parent: null, promoted: true, round_index: null },
-    { id: 'v1', parent: 'v0', promoted: false, round_index: null },
-    { id: 'v2', parent: 'v0', promoted: true, round_index: null },
-    { id: 'v3', parent: 'v2', promoted: false, round_index: null },
-  ];
-  const scalarBy = new Map([['v0', 100], ['v1', 110], ['v2', 80], ['v3', 90]]);
-  const bracket = { champion_lineage: ['v0', 'v2'], tournaments: [
-    // one FIELD record per round (swiss), each listing that round's competitors.
-    { tournament_id: 't0', structure: 'swiss', competitors: [{ generation_id: 'v0' }, { generation_id: 'v1' }, { generation_id: 'v2' }], rounds: [], standings: [] },
-    { tournament_id: 't1', structure: 'swiss', competitors: [{ generation_id: 'v2' }, { generation_id: 'v3' }], rounds: [], standings: [] },
-  ] };
-  const model = roundsModelFor({ gens, scalarBy, bracket, structure: 'swiss', championId: 'v0' });
+  // one swiss field record per round, each listing that round's competitors.
+  const model = roundsModelFor('model_field_records', { structure: 'swiss', championId: 'v0' });
   assertEqual(model.length, 2, 'two rounds from the two field records');
   assertEqual(model[0].source, 'field', 'the model derives from the field records');
   assertEqual(model[0].champion.id, 'v0', 'round 0 champion is v0');
   assertDeep(model[0].challengers.map((c) => c.id).sort(), ['v1', 'v2'], 'round 0 field minted {v1,v2}');
-  // round 1: v2 carried (it appeared in round 0), only v3 is fresh.
+  // round 1: v2 carried (it appeared in round 0), only v3 and v4 are fresh.
   assertEqual(model[1].champion.id, 'v2', 'round 1 champion is the carried v2');
-  assertDeep(model[1].challengers.map((c) => c.id), ['v3'], 'round 1 field minted only the fresh v3 (v2 carried)');
+  assertDeep(model[1].challengers.map((c) => c.id).sort(), ['v3', 'v4'], 'round 1 field minted only the fresh v3 and v4 (v2 carried)');
 });
 
 test('round model: degrades to a SINGLE round 0 when neither round_index nor field records exist (--rounds 1, every run so far)', () => {
-  const gens = [
-    { id: 'v0', parent: null, promoted: true, round_index: null },
-    { id: 'v1', parent: 'v0', promoted: false, round_index: null },
-    { id: 'v2', parent: 'v0', promoted: false, round_index: null },
-  ];
-  const scalarBy = new Map([['v0', 70], ['v1', 146], ['v2', 72]]);
-  const bracket = { champion_lineage: ['v0'], matchups: [
-    { champion: 'v0', challenger: 'v1', decision: 'rejected', ran_at: 'a' },
-    { champion: 'v0', challenger: 'v2', decision: 'rejected', ran_at: 'b' },
-  ] };
-  const model = roundsModelFor({ gens, scalarBy, bracket, structure: 'gauntlet', championId: 'v0' });
+  const model = roundsModelFor('model_matchups', { structure: 'gauntlet', championId: 'v0' });
   // gauntlet matchups: each is its own single-challenger round (the spine reads
   // r0 → r1), so two rounds — but a single-tournament epoch collapses to one.
   assert(model.length >= 1, 'at least one round is produced');
@@ -141,12 +107,6 @@ test('round model (issue #16): a NEW round still PROPOSING surfaces as its own i
   // round 0 SETTLED: v0 → field {v1,v2}, v2 promoted. round 1 PROPOSING: the
   // live envelope mints v5/v6/v7 (round_index 1) — none in the journal/lineage
   // yet (gens carry only the settled v0/v1/v2).
-  const gens = [
-    { id: 'v0', parent: null, promoted: true, round_index: 0 },
-    { id: 'v1', parent: 'v0', promoted: false, round_index: 0 },
-    { id: 'v2', parent: 'v0', promoted: true, round_index: 0 },
-  ];
-  const scalarBy = new Map([['v0', 100], ['v1', 110], ['v2', 80]]);
   const inflight = {
     epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 1,
     competitors: [{ generation_id: 'v2', seed: 1, role: 'champion' }],
@@ -156,7 +116,7 @@ test('round model (issue #16): a NEW round still PROPOSING surfaces as its own i
       { generation_id: 'v7', status: 'proposing' },
     ],
   };
-  const model = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v2', inflight });
+  const model = roundsModelFor('model_settled_round', { structure: 'gauntlet', championId: 'v2', inflight });
   assertEqual(model.length, 2, 'the settled round 0 + the in-flight round 1 (NOT one folded round)');
   const r1 = model[1];
   assertEqual(r1.round_index, 1, 'the in-flight round takes round_index 1 (the NEW round, not 0)');
@@ -172,13 +132,11 @@ test('round model (issue #16): a NEW round still PROPOSING surfaces as its own i
 });
 
 test('round model (issue #16): the in-flight round carries per-challenger field_status so the proposed/applied banner can increment', () => {
-  const gens = [{ id: 'v0', parent: null, promoted: true, round_index: 0 }, { id: 'v1', parent: 'v0', promoted: true, round_index: 0 }];
-  const scalarBy = new Map([['v0', 100], ['v1', 80]]);
   const base = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 1, competitors: [{ generation_id: 'v1', seed: 1, role: 'champion' }] };
   // EARLY: only v5 proposed (proposing). LATER: v5 applied, v6 proposing.
-  const early = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+  const early = roundsModelFor('model_promoted_pair', { structure: 'gauntlet', championId: 'v1',
     inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'proposing' }] } });
-  const later = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+  const later = roundsModelFor('model_promoted_pair', { structure: 'gauntlet', championId: 'v1',
     inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'applied' }, { generation_id: 'v6', status: 'proposing' }] } });
   const eR = early[early.length - 1];
   const lR = later[later.length - 1];
@@ -191,39 +149,31 @@ test('round model (issue #16): the in-flight round carries per-challenger field_
   // repaints), but is byte-IDENTICAL on a no-op re-derive (anti-flash).
   assert(rounds.roundModelDigest(early) !== rounds.roundModelDigest(later),
     'a field-status change (proposing → applied + a new slot) re-stamps the round digest');
-  const earlyAgain = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+  const earlyAgain = roundsModelFor('model_promoted_pair', { structure: 'gauntlet', championId: 'v1',
     inflight: { ...base, field_status: [{ generation_id: 'v5', status: 'proposing' }] } });
   assertEqual(rounds.roundModelDigest(early), rounds.roundModelDigest(earlyAgain),
     'a no-op re-derive (same field_status) yields a byte-identical digest — no repaint on an idle beat');
 });
 
 test('round model (issue #16): a SETTLED / done / idle envelope does NOT spawn a phantom in-flight round', () => {
-  const gens = [{ id: 'v0', parent: null, promoted: true, round_index: 0 }, { id: 'v1', parent: 'v0', promoted: true, round_index: 0 }];
-  const scalarBy = new Map([['v0', 100], ['v1', 80]]);
   const base = { epoch_id: 'e0', structure: 'gauntlet', round_index: 1, competitors: [{ generation_id: 'v1' }],
     field_status: [{ generation_id: 'v5', status: 'applied' }] };
   for (const phase of ['done', 'complete', 'completed', 'idle', 'tournament:round_1:v5', '']) {
-    const model = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1',
+    const model = roundsModelFor('model_promoted_pair', { structure: 'gauntlet', championId: 'v1',
       inflight: { ...base, phase } });
     assert(!model.some((r) => r.inflight), `phase="${phase}" must NOT spawn an in-flight round (it is terminal/settled)`);
   }
   // and no envelope at all → no in-flight round (the pre-feature path).
-  const none = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1' });
+  const none = roundsModelFor('model_promoted_pair', { structure: 'gauntlet', championId: 'v1' });
   assert(!none.some((r) => r.inflight), 'no live envelope → no in-flight round');
 });
 
 test('round model (issue #16): once the new round SETTLES into a recorded round, the in-flight overlay defers (no duplicate)', () => {
   // v5 has now landed in the journal (round_index 1) AND the live envelope still
   // names it — the settled source owns it; the overlay must NOT duplicate it.
-  const gens = [
-    { id: 'v0', parent: null, promoted: true, round_index: 0 },
-    { id: 'v1', parent: 'v0', promoted: true, round_index: 0 },
-    { id: 'v5', parent: 'v1', promoted: false, round_index: 1 },
-  ];
-  const scalarBy = new Map([['v0', 100], ['v1', 80], ['v5', 85]]);
   const inflight = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 1,
     competitors: [{ generation_id: 'v1' }], field_status: [{ generation_id: 'v5', status: 'applied' }] };
-  const model = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v1', inflight });
+  const model = roundsModelFor('model_recorded_round', { structure: 'gauntlet', championId: 'v1', inflight });
   assertEqual(model.length, 2, 'round 0 + the now-recorded round 1 (no phantom duplicate)');
   const r1 = model[model.length - 1];
   assert(!r1.inflight, 'the recorded round 1 is NOT re-flagged in-flight — the settled source is authoritative');
@@ -232,12 +182,10 @@ test('round model (issue #16): once the new round SETTLES into a recorded round,
 
 test('round model (issue #16): round 0’s OWN proposing overlays the forming field IN PLACE (no phantom duplicate round)', () => {
   // only the seed v0 exists; round 0 is proposing its first field v1/v2 live.
-  const gens = [{ id: 'v0', parent: null, promoted: false, round_index: null }];
-  const scalarBy = new Map([['v0', 100]]);
   const inflight = { epoch_id: 'e0', structure: 'gauntlet', phase: 'proposing', round_index: 0,
     competitors: [{ generation_id: 'v0' }],
     field_status: [{ generation_id: 'v1', status: 'applied' }, { generation_id: 'v2', status: 'proposing' }] };
-  const model = roundsModelFor({ gens, scalarBy, bracket: {}, structure: 'gauntlet', championId: 'v0', inflight });
+  const model = roundsModelFor('model_seed_only', { structure: 'gauntlet', championId: 'v0', inflight });
   assertEqual(model.length, 1, 'round 0’s own proposing stays ONE round (overlaid in place, not duplicated)');
   const r0 = model[0];
   assert(r0.inflight === true, 'round 0 is flagged in-flight while it proposes its first field');
@@ -322,7 +270,7 @@ test('round timeline: the per-round structure figure is embedded via the figureF
 
 test('elim parity: a single-elim epoch episode leads with the radial bracket (NOT the mini-bracket)', async () => {
   freshState();
-  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  installFixtureMap(structureFixture('single_elim'));
   const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -342,7 +290,7 @@ test('round drill-down: the route carries a round param + renders ONE round’s 
   assertEqual(router.href('gens', { epochId: EPOCH_ID }), `#/e/${EPOCH_ID}/gens`, 'the all-rounds gens href is unchanged');
 
   freshState();
-  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  installFixtureMap(structureFixture('single_elim'));
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, round: '0' });
@@ -358,7 +306,7 @@ test('round drill-down: the route carries a round param + renders ONE round’s 
 
 test('round drill-down: an out-of-range round reads an honest empty', async () => {
   freshState();
-  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  installFixtureMap(structureFixture('single_elim'));
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, round: '7' });
@@ -402,24 +350,7 @@ test('tree: groups generations by round when round_index is present (Round 0 / R
 
 test('round model: reads the CANONICAL per-round champion (id + cached/re-run eval mode) from the tournament record, not the reconstructed spine', async () => {
   const rounds = await import('../js/rounds.js');
-  const gens = [
-    { id: 'v0', parent: null, promoted: false, round_index: 0 },
-    { id: 'v1', parent: 'v0', promoted: false, round_index: 0 },
-    { id: 'v2', parent: 'v0', promoted: false, round_index: 1 },
-  ];
-  // per-round field records carrying the CANONICAL champion + its eval mode:
-  // round 0 ran the champion FULL (re-run), round 1 reused it FAST (cached).
-  const bracket = { tournaments: [
-    { tournament_id: 't0', competitors: [{ generation_id: 'v1' }], champion: { id: 'v0', scalar: 5.0, eval_mode: 'full', run_ref: 'epochs/e/generations/v0' } },
-    { tournament_id: 't1', competitors: [{ generation_id: 'v2' }], champion: { id: 'v0', scalar: 4.0, eval_mode: 'fast', run_ref: 'epochs/e/generations/v0' } },
-  ] };
-  const F = {
-    '/api/lineage': { generations: gens.map((g) => ({ generation_id: g.id, epoch_id: 'e-cm', parent_generation_id: g.parent || '', promoted: g.promoted, round_index: g.round_index })) },
-    '/api/score-trajectory': { points: [] },
-    '/api/tournaments': bracket,
-    '/api/epoch': { epoch_id: 'e-cm', tournament: { structure: 'swiss' } },
-  };
-  const timeline = roundTimelineFromFixtures(F, 'e-cm');
+  const { gens, bracket, timeline } = modelInputs('model_champion_modes');
   const model = rounds.roundsForTree({ timeline, gens, bracket, structure: 'swiss', championId: 'v0' });
   const r0 = model.find((r) => r.round_index === 0);
   const r1 = model.find((r) => r.round_index === 1);
@@ -505,16 +436,7 @@ test('duelFlow: the field renders as Δ-vs-champion lanes — good below / bad a
 // ---- elimRadial: winner continues inward / loser ✕ / champion → seat ----
 
 test('elimRadial: the winner\'s spoke continues inward (good), the loser\'s ends with ✕, the champion dashes into the crowned seat', () => {
-  const winners = [
-    { round_index: 0, label: 'Semifinal', matches: [
-      { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], winner: 'v0', decision: 'win', delta_scalar: -1.2, bracket_slot: 'WB-R0-0' },
-      { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], winner: 'v1', decision: 'win', delta_scalar: -0.8, bracket_slot: 'WB-R0-1' },
-    ] },
-    { round_index: 1, label: 'Final', matches: [
-      { match_id: 'WB-R1-0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', delta_scalar: -2.0, bracket_slot: 'WB-R1-0' },
-    ] },
-  ];
-  const served = mock.deriveElimStates(winners);
+  const served = elimCase('single_elim_semifinals_decided').served;
   const node = svg.elimRadial({ rounds: served.rounds, gen_states: served.gen_states, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
   // one spoke per competitor; one ring per round plus the gate ring.
   const spokes = allByClass(node, 'dn-elimradial-spoke');
@@ -558,19 +480,7 @@ test('waterfall: rounds as downward steps (good by direction), a held round flat
 test('waterfall: SERVED on the round timeline — a promotion drops the floor, a held round holds it flat (never re-derived)', () => {
   // the loss-floor steps ride on the SERVED timeline payload (waterfall beside
   // rounds); the client accessor only type-guards the read.
-  const F = {
-    '/api/lineage': { generations: [
-      { generation_id: 'v0', epoch_id: 'e-w', parent_generation_id: '', promoted: false, round_index: null },
-      { generation_id: 'v1', epoch_id: 'e-w', parent_generation_id: 'v0', promoted: true, round_index: 0 },
-      { generation_id: 'v2', epoch_id: 'e-w', parent_generation_id: 'v1', promoted: false, round_index: 1 },
-    ] },
-    '/api/score-trajectory': { points: [
-      { generation_id: 'v0', scalar: 20 }, { generation_id: 'v1', scalar: 14 }, { generation_id: 'v2', scalar: 16 },
-    ] },
-    '/api/tournaments': {},
-    '/api/epoch': { epoch_id: 'e-w', tournament: { structure: 'gauntlet' } },
-  };
-  const timeline = roundTimelineFromFixtures(F, 'e-w');
+  const timeline = recorded('model_waterfall/round_timeline');
   const steps = rounds.waterfallSteps(timeline);
   assertEqual(steps.length, 2, 'one step per round');
   assertEqual(steps[0].from, 20); assertEqual(steps[0].to, 14); assertEqual(steps[0].delta, -6);
@@ -948,19 +858,29 @@ test('#18 ui.scoreFmt: finite score formats; absent score reads "—"', () => {
 
 // A scored fixture: v1 carries a CONTINUOUS score + precision/recall on
 // waffles_single and a BOOL-ONLY entry on picky (no score / metrics).
+// The recorded v1 dossier with waffles_single scored on both sides (the
+// champion's row of the comparison too) and picky_stakeholder_emulated
+// bool-only, so the per-board figure carries one scored row and one ✓/✗ row.
 function scoredFixture() {
-  const F = { ...FIXTURE };
+  const F = dossierVariant('v1', null, (d) => {
+    d.per_entry.mean_score = 0.71;
+    for (const e of d.per_entry.entries) {
+      if (e.entry_id !== 'waffles_single') continue;
+      e.pass_fail = true; e.wall_clock_budget_exceeded = false;
+      e.score = 0.81; e.metrics = { precision: 0.88, recall: 0.74 };
+    }
+    Object.assign(d.comparison.entries.waffles_single, { delta_score: 0.19, champion_score: 0.62, candidate_score: 0.81, score_replicates: 1 });
+  });
+  // the board view reads the per-entry rows of both sides.
   F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = {
     epoch_id: EPOCH_ID, generation_id: 'v1', mean_score: 0.71, entries: [
       { entry_id: 'waffles_single', run_id: 'run_v1_waffles', drift_loss: 60.5, pass_fail: true,
         runtime_ms: 180000, wall_clock_budget_exceeded: false,
         score: 0.81, metrics: { precision: 0.88, recall: 0.74 } },
-      // bool-only entry: no score / metrics — must keep the pass/fail display.
       { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v1_picky', drift_loss: 105.5,
         pass_fail: false, runtime_ms: 360000, wall_clock_budget_exceeded: false },
     ],
   };
-  // champion v0 also has a scored waffles + a bool-only picky.
   F[`/api/generation/${EPOCH_ID}/v0/per-entry`] = {
     epoch_id: EPOCH_ID, generation_id: 'v0', mean_score: 0.62, entries: [
       { entry_id: 'waffles_single', run_id: 'run_v0_waffles', drift_loss: 70.0, pass_fail: true,
@@ -1046,8 +966,9 @@ test('#18 candidate digest: a CHANGED score repaints (the score is folded into t
   // move ONLY the score (drift_loss / pass unchanged) → the digest must flip.
   freshState();
   const F2 = scoredFixture();
-  F2[`/api/generation/${EPOCH_ID}/v1/per-entry`].entries[0].score = 0.42;
-  F2[`/api/generation/${EPOCH_ID}/v1/per-entry`].entries[0].metrics = { precision: 0.40, recall: 0.45 };
+  const scored = F2[dossierUrl(EPOCH_ID, 'v1')].per_entry.entries.find((e) => e.entry_id === 'waffles_single');
+  scored.score = 0.42;
+  scored.metrics = { precision: 0.40, recall: 0.45 };
   installFixtureMap(F2);
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
   assert(host.getAttribute('data-t-digest') !== digest1, 'a moved score flips the digest (a real repaint, no flashing bug)');
@@ -1240,11 +1161,9 @@ test('elimRadial H6: cardinal-E/W spoke labels never overrun the viewBox (horizo
   // horizontally past the box. Before the fix the East 8-char label runs to ~358
   // (W=340) and the West label clips at x<0; the radial labelPad never bounds it.
   // The radial reads the SERVED model (rounds + gen_states) verbatim, so the
-  // fixture is enriched via deriveElimStates the way the server does.
+  // fixture is the server's recorded fold of the eight-seed round.
   const ids = ['genaaaaa', 'genbbbbb', 'genccccc', 'genddddd', 'geneeeee', 'genfffff', 'genggggg', 'genhhhhh'];
-  const matches = [];
-  for (let i = 0; i < ids.length; i += 2) matches.push({ match_id: 'm' + i, competitors: [ids[i], ids[i + 1]], winner: ids[i] });
-  const served = mock.deriveElimStates([{ label: 'R0', round_index: 0, matches }]);
+  const served = elimCase('eight_seed_round').served;
   const node = svg.elimRadial({
     rounds: served.rounds, gen_states: served.gen_states,
     championId: ids[0], benchmarkId: 'v0', gateState: 'crowned',
@@ -1389,12 +1308,9 @@ test('waterfall H10: on an improved step the crown ♛ is lifted clear of the fl
 test('elimRadial double-elim: a WB->LB transfer arc STARTS at the source WB node angle (the equator-mirror of the LB node), not a bare constant-offset rim point', () => {
   // v3 loses in the WB (R0) then drops into an LB-slotted match (R1) and loses
   // again — so its spoke sits on the LB (lower) arc and it qualifies as a drop.
-  // The radial reads the SERVED gen_states verbatim, so the fixture is enriched
-  // via deriveElimStates (the WB/LB side + drop classification are the server's).
-  const served = mock.deriveElimStates([
-    { label: 'R0', round_index: 0, matches: [{ match_id: 'm0', competitors: ['v1', 'v3'], winner: 'v1' }] },
-    { label: 'LB1', round_index: 1, matches: [{ match_id: 'm1', bracket_slot: 'LB1', competitors: ['v3', 'v2'], winner: 'v2' }] },
-  ]);
+  // The radial reads the SERVED gen_states verbatim, so the fixture is the
+  // server's recorded fold (the WB/LB side + drop classification are the server's).
+  const served = elimCase('losers_bracket_drop').served;
   const node = svg.elimRadial({
     double: true, rounds: served.rounds, gen_states: served.gen_states,
     championId: 'v1', benchmarkId: 'v0', gateState: 'crowned',
@@ -1426,22 +1342,8 @@ test('elimRadial double-elim: EVERY WB→LB transfer arc ANCHORS on real nodes �
   // SECOND-and-later drops began and ended a few px OUTSIDE it — detached from both
   // the source-mirror and the destination LB node. So this fixture forces THREE
   // drops (v2 + v4 off WB-R0, v3 off WB-R1) — the extra arcs are exactly the ones
-  // a floating placement would drift. The served model (deriveElimStates) drives the side/drop read.
-  const served = mock.deriveElimStates([
-    { round_index: 0, label: 'R0', matches: [
-      { competitors: ['v1', 'v2'], winner: 'v1', bracket_slot: 'WB-R0-0' },
-      { competitors: ['v3', 'v4'], winner: 'v3', bracket_slot: 'WB-R0-1' },
-    ] },
-    { round_index: 1, label: 'R1', matches: [
-      { competitors: ['v1', 'v3'], winner: 'v1', bracket_slot: 'WB-R1-0' },
-    ] },
-    { round_index: 2, label: 'LB2', matches: [
-      { competitors: ['v2', 'v4'], winner: 'v2', bracket_slot: 'LB-R2-0' },
-    ] },
-    { round_index: 3, label: 'LB3', matches: [
-      { competitors: ['v2', 'v3'], winner: 'v2', bracket_slot: 'LB-R3-0' },
-    ] },
-  ]);
+  // a floating placement would drift. The served model (the recorded fold) drives the side/drop read.
+  const served = elimCase('double_elim_three_drops').served;
   const node = svg.elimRadial({
     double: true, rounds: served.rounds, gen_states: served.gen_states,
     championId: 'v2', benchmarkId: 'v0', gateState: 'crowned',
@@ -1516,17 +1418,7 @@ test('elimRadial: a DEGENERATE column with a DUPLICATE match (same bracket_slot 
   // the duplicate; the figure must draw each competitor once, in the settled
   // state. The duplicate is listed PENDING-first then DECIDED-second to
   // exercise the most-decided retention.
-  const winners = [
-    { round_index: 0, label: 'Round 1', matches: [
-      // the duplicate pair: same slot, same competitors — pending, then settled.
-      { competitors: ['v5', 'v6'], winner: null, pending: true, bracket_slot: 'WB-R0-0' },
-      { competitors: ['v5', 'v6'], winner: 'v5', decision: 'win', bracket_slot: 'WB-R0-0' },
-      // a DISTINCT match sharing the column (different competitors) must
-      // be PRESERVED — it keeps its own key, its own convergence node.
-      { competitors: ['v7', 'v8'], winner: 'v7', decision: 'win', bracket_slot: 'WB-R0-1' },
-    ] },
-  ];
-  const served = mock.deriveElimStates(winners);
+  const served = elimCase('duplicate_pending_match').served;
   const node = svg.elimRadial({ rounds: served.rounds, gen_states: served.gen_states, championId: 'v5', benchmarkId: 'v6', gateState: 'crowned' });
   const spokes = allByClass(node, 'dn-elimradial-spoke');
   // four competitors → exactly four spokes (the duplicate match adds none).

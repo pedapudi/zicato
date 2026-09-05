@@ -82,9 +82,16 @@ EXCLUDED_FROM_BUDGET = (
     # drawn on a slide, which no simplification of the repository changes.
     "docs/presentation/slides/",
     # Captured payloads that tests replay as recorded evidence of what a
-    # producer emitted. Shortening one to save lines would destroy the record.
+    # producer emitted: the reader-parity snapshot, the trace-view fixtures,
+    # the endpoint-route recording with the label-to-URL probe map that keys
+    # it, and the served elimination folds over the round lists the browser
+    # suite declares. Shortening one to save lines would destroy the record.
     "src/zicato/dashboard/static/test/fixtures/trace_view/",
     "tests/data/reader_parity_snapshot.json",
+    "tests/data/endpoint_route_snapshot.json",
+    "tests/data/endpoint_route_probes.json",
+    "tests/data/elim_states_cases.json",
+    "tests/data/elim_states_served.json",
 )
 ASSET_SUFFIXES = {".ico", ".pdf", ".png", ".svg", ".woff2"}
 DOCSTRING_HOLDERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)

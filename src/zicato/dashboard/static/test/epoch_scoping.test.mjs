@@ -13,6 +13,7 @@ const {
   compare, coreState, rounds, live, EPOCH_ID, FIXTURE,
   lookupFixture, installFetch, freshState, allByClass, readCss, svgsByClass,
   installFixtureMap, TWO_EP_OLD, TWO_EP_NEW, twoEpochFixture,
+  dossierVariant,
 } = await import('./fixtures.mjs');
 
 // ====================================================================
@@ -345,15 +346,13 @@ test('svg.heatmap: higher-contrast theme-aware cell scale — wider range, monot
 });
 
 test('candidate view: per-board dumbbell click → board drill-down for THAT run; duplicate rungs disambiguated', async () => {
-  freshState(); installFetch();
+  freshState();
   const candidate = await import('../js/views/candidate.js');
   // same entry raced in TWO rungs (different match_id + rung) → two rows.
-  const path = `/api/generation/${EPOCH_ID}/v1/per-entry`;
-  const saved = FIXTURE[path];
-  FIXTURE[path] = { epoch_id: EPOCH_ID, generation_id: 'v1', entries: [
+  installFixtureMap(dossierVariant('v1', null, (d) => { d.per_entry.entries = [
     { entry_id: 'waffles_single', run_id: 'run_v1_w_r0', drift_loss: 80.0, pass_fail: false, runtime_ms: 180000, wall_clock_budget_exceeded: false, match_id: 'rung0_m1', rung: 'rung 0' },
     { entry_id: 'waffles_single', run_id: 'run_v1_w_r1', drift_loss: 40.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false, match_id: 'rung1_m1', rung: 'rung 1' },
-  ] };
+  ]; }));
   try {
     const host = document.createElement('div');
     let navTo = null;
@@ -369,7 +368,7 @@ test('candidate view: per-board dumbbell click → board drill-down for THAT run
     assert(navTo && navTo.v === 'board' && navTo.p.entry === 'waffles_single' && navTo.p.gen === 'v1' && navTo.p.epochId === EPOCH_ID,
       'a dumbbell row click opens the board drill-down for that exact run (entry + gen)');
   } finally {
-    FIXTURE[path] = saved;
+    freshState();
   }
 });
 

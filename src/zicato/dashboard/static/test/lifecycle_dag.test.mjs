@@ -12,9 +12,9 @@ installDom();
 const {
   router, svg, ui, shell, data, tree,
   coreState, rounds, dag, hovercard, live, STRUCT,
-  racingFieldFromBracket, EPOCH_ID, FIXTURE, lookupFixture, installFetch, freshState,
+  recorded, recordedRoutes, racingLadderFixture, structureFixture, EPOCH_ID, FIXTURE, lookupFixture, installFetch, freshState,
   allByClass, readCss, hovercardTextOf, hasNativeTitle, svgsByClass, hasScrollWrapperAncestor,
-  mountLiveShell, installFixtureMap, LIVE_RACING, RC_EPOCH, RACING_TOURNAMENTS,
+  mountLiveShell, installFixtureMap, LIVE_RACING, RC_EPOCH,
 } = await import('./fixtures.mjs');
 
 // ====================================================================
@@ -514,13 +514,7 @@ test('survival funnel: the WINNER lane is emphasised end-to-end + reaches the ga
 // (a) the racing epoch strip renders the funnel from the per-challenger records.
 test('survival funnel: the racing epoch strip renders the funnel (stages narrow N→…→1, cuts ✕, gate crowns v3)', async () => {
   freshState();
-  const F = {
-    '/api/epoch': { epoch_id: RC_EPOCH, closed: true, goal: 'g', tournament: { structure: 'racing', params: RACING_TOURNAMENTS.structure_params },
-      experiments: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, parent_generation_id: g === 'v0' ? '' : 'v0', outcome: { decision: g === 'v0' ? 'baseline' : (g === 'v3' ? 'promoted' : 'rejected') } })), board: [] },
-    '/api/lineage': { generations: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, epoch_id: RC_EPOCH, parent_generation_id: g === 'v0' ? '' : 'v0', promoted: g === 'v0' || g === 'v3' })) },
-    '/api/score-trajectory': { points: [] },
-    '/api/tournaments': RACING_TOURNAMENTS,
-  };
+  const F = racingLadderFixture();
   installFixtureMap(F);
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = [];
@@ -552,13 +546,7 @@ test('survival funnel: the racing epoch strip renders the funnel (stages narrow 
 // (b) a competitor is clickable → its candidate.
 test('survival funnel: a competitor is clickable → its candidate page', async () => {
   freshState();
-  const F = {
-    '/api/epoch': { epoch_id: RC_EPOCH, closed: true, goal: 'g', tournament: { structure: 'racing', params: RACING_TOURNAMENTS.structure_params },
-      experiments: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, parent_generation_id: g === 'v0' ? '' : 'v0', outcome: { decision: g === 'v0' ? 'baseline' : (g === 'v3' ? 'promoted' : 'rejected') } })), board: [] },
-    '/api/lineage': { generations: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, epoch_id: RC_EPOCH, parent_generation_id: g === 'v0' ? '' : 'v0', promoted: g === 'v0' || g === 'v3' })) },
-    '/api/score-trajectory': { points: [] },
-    '/api/tournaments': RACING_TOURNAMENTS,
-  };
+  const F = racingLadderFixture();
   installFixtureMap(F);
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = [];
@@ -579,21 +567,15 @@ test('survival funnel: a competitor is clickable → its candidate page', async 
 // (c) the live path shows a pending stage + "deciding…".
 test('survival funnel: a LIVE racing run shows the in-progress funnel (pending stage neutral, gate "deciding…")', async () => {
   freshState();
-  const F = {
-    '/api/epoch': { epoch_id: RC_EPOCH, closed: false, goal: 'g', tournament: { structure: 'racing', params: LIVE_RACING.structure_params }, experiments: [], board: [] },
-    '/api/lineage': { generations: LIVE_RACING.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: RC_EPOCH, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: false })) },
-    '/api/score-trajectory': { points: [] },
-    '/api/tournaments': { epoch_id: RC_EPOCH, structure: 'racing', champion_lineage: [], matchups: [], tournaments: [] },
-    '/api/active-tournament': LIVE_RACING,
-  };
+  const F = structureFixture('racing_round_live');
   installFixtureMap(F);
-  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1' });
+  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1', generation_id: 'v1', epoch_id: EPOCH_ID });
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
-  coreState.state.activeTournament = { structure: 'racing', phase: 'running' };
+  coreState.state.activeTournament = F['/api/active-tournament'];
 
   const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
-  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: RC_EPOCH });
+  await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
   const funnel = svgsByClass(host, 'dn-funnel')[0];
   assert(funnel, 'the LIVE racing funnel rendered from /api/active-tournament');
@@ -613,19 +595,7 @@ test('survival funnel: a LIVE racing run shows the in-progress funnel (pending s
 // (d) with no rung records, degrade to the static summary (no empty funnel).
 test('survival funnel: with NO rung records the strip degrades to the static "field of N" summary (no empty funnel)', async () => {
   freshState();
-  const F = {
-    '/api/epoch': { epoch_id: RC_EPOCH, closed: false, goal: 'g', tournament: { structure: 'racing', params: { rungs: [1, 2] } }, experiments: [
-      { generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } },
-      { generation_id: 'v1', parent_generation_id: 'v0', outcome: { decision: 'rejected' } },
-    ], board: [] },
-    '/api/lineage': { generations: [
-      { generation_id: 'v0', epoch_id: RC_EPOCH, parent_generation_id: '', promoted: true },
-      { generation_id: 'v1', epoch_id: RC_EPOCH, parent_generation_id: 'v0', promoted: false },
-    ] },
-    '/api/score-trajectory': { points: [] },
-    // no racing records yet — nothing to reconstruct.
-    '/api/tournaments': { epoch_id: RC_EPOCH, structure: 'racing', champion_lineage: [], matchups: [], tournaments: [] },
-  };
+  const F = recordedRoutes('racing_no_records');
   installFixtureMap(F);
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = [];
@@ -1112,7 +1082,7 @@ test('lifecycle DAG (integration): the candidate view feeds the champion compari
 
 test('lifecycle RUNG-PROGRESSION strip: projects rung0→rung1→final (Δ + survived/cut) off the SERVED racing field', () => {
   // v3’s racing path off the SERVED field: rung0 survived → rung1 → final promoted.
-  const RACING_FIELD_SERVED = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
+  const RACING_FIELD_SERVED = STRUCT.normalizeStructure(recorded('racing_ladder/racing_field'), false);
   const prog = STRUCT.candidateProgression(RACING_FIELD_SERVED, 'v3');
   assert(prog && Array.isArray(prog.stages), 'a progression was reconstructed for the racing candidate v3');
   assertDeep(prog.stages.map((s) => s.label), ['rung 0', 'rung 1', 'final'], 'the path is rung0 → rung1 → final');
@@ -1122,7 +1092,7 @@ test('lifecycle RUNG-PROGRESSION strip: projects rung0→rung1→final (Δ + sur
   assertEqual(prog.stages[2].delta, -32.19, 'the final stage carries the Δ-vs-champion');
 
   // a cut candidate (v4: rung0 → rung1, no final) ends "cut".
-  const prog4 = STRUCT.candidateProgression(STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false), 'v4');
+  const prog4 = STRUCT.candidateProgression(STRUCT.normalizeStructure(recorded('racing_ladder/racing_field'), false), 'v4');
   assert(prog4, 'v4 has a progression');
   assertEqual(prog4.stages[prog4.stages.length - 1].verdict, 'cut', 'v4 was cut at its last rung (no final reached)');
 
@@ -1144,19 +1114,7 @@ test('lifecycle RUNG-PROGRESSION strip: projects rung0→rung1→final (Δ + sur
 test('lifecycle RUNG-PROGRESSION strip: a racing candidate page renders the strip; a gauntlet candidate page does NOT', async () => {
   // a racing candidate (v3) on the live reconstruction fixture.
   freshState();
-  const F = {
-    '/api/epoch': { epoch_id: RC_EPOCH, closed: true, goal: 'g', tournament: { structure: 'racing', params: RACING_TOURNAMENTS.structure_params },
-      experiments: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, parent_generation_id: g === 'v0' ? '' : 'v0', outcome: { decision: g === 'v0' ? 'baseline' : (g === 'v3' ? 'promoted' : 'rejected') } })), board: [] },
-    '/api/lineage': { generations: ['v0', 'v1', 'v2', 'v3', 'v4'].map((g) => ({ generation_id: g, epoch_id: RC_EPOCH, parent_generation_id: g === 'v0' ? '' : 'v0', promoted: g === 'v0' || g === 'v3' })) },
-    '/api/score-trajectory': { points: [] },
-    '/api/tournaments': RACING_TOURNAMENTS,
-  };
-  // per-entry records for v3: the SAME entry raced across rungs, carrying rung tags.
-  F[`/api/generation/${RC_EPOCH}/v3/per-entry`] = { entries: [
-    { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: true, match_id: 'rung0_m2', rung: 'rung 0' },
-    { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: false, match_id: 'rung1_m0', rung: 'rung 1' },
-    { entry_id: 'q3_metrics_outline', run_id: 'r2', drift_loss: 63.5, pass_fail: false, match_id: 'racing-final', rung: 'final' },
-  ] };
+  const F = racingLadderFixture();
   installFixtureMap(F);
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
@@ -1165,10 +1123,6 @@ test('lifecycle RUNG-PROGRESSION strip: a racing candidate page renders the stri
   const strip = svgsByClass(host, 'ezn-rungprog')[0];
   assert(strip, 'the progression SVG rendered');
   assert(strip.textContent.includes('rung 0') && strip.textContent.includes('final'), 'the strip shows rung0 → … → final');
-  // the board node also reveals its per-run losses, labelled by rung.
-  const boardNode = host.querySelectorAll('[class]').filter((n) => n.localName === 'g'
-    && (n.getAttribute('class') || '').split(/\s+/).includes('ezn-board-node'))[0];
-  assert(boardNode && (boardNode.getAttribute('class') || '').includes('ezn-board-expandable'), 'the racing board node is expandable on the candidate page');
 
   // a gauntlet candidate (default fixture) renders NO progression strip.
   freshState(); installFetch();

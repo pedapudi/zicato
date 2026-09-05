@@ -23,12 +23,12 @@
 // regression that strands a spoke or orphans a drop fails here.
 
 import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+import { elimPayload } from './recorded.mjs';
 
 installDom();
 
 const svg = await import('../js/svg.js');
 const structure = await import('../js/tournament_model.js');
-const mock = await import('./mock_server.mjs');
 
 // ---- SVG geometry readers ------------------------------------------------
 
@@ -123,20 +123,8 @@ test('single-elim radial: each spoke survives inward ring by ring, the loser end
     structure: 'single_elim',
     champion_lineage: ['v0', 'v1'],
     competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v1' }, { generation_id: 'v2' }, { generation_id: 'v3' }, { generation_id: 'v4' }],
-    rounds: [
-      { round_index: 0, label: 'Round 1', matches: [
-        { match_id: 'WB-R0-0', competitors: ['v1', 'v2'], winner: 'v1', bracket_slot: 'WB-R0-0' },
-        { match_id: 'WB-R0-1', competitors: ['v3', 'v4'], winner: 'v3', bracket_slot: 'WB-R0-1' },
-      ] },
-      { round_index: 1, label: 'Round 2', matches: [
-        { match_id: 'WB-R1-0', competitors: ['v1', 'v3'], winner: 'v1', bracket_slot: 'WB-R1-0' },
-      ] },
-      { round_index: 2, label: 'Final', matches: [
-        { match_id: 'final', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'final' },
-      ] },
-    ],
   };
-  const model = structure.elimModel(mock.attachElimStates(st));
+  const model = structure.elimModel(elimPayload('single_elim_four_crowned', st));
   assertEqual(model.championId, 'v1', 'v1 is crowned');
   assertEqual(model.benchmarkId, 'v0', 'v0 is the benchmark/incumbent');
   assertEqual(model.gateState, 'crowned', 'the gate crowned the survivor');
@@ -191,26 +179,8 @@ test('double-elim radial: winners on the upper arc, losers on the lower, drops a
     structure: 'double_elim',
     champion_lineage: ['v0', 'v1'],
     competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v1' }, { generation_id: 'v2' }, { generation_id: 'v3' }, { generation_id: 'v4' }],
-    rounds: [
-      { round_index: 0, label: "Winners' bracket", matches: [
-        { match_id: 'WB-R0-0', competitors: ['v1', 'v2'], winner: 'v1', bracket_slot: 'WB-R0-0' },
-        { match_id: 'WB-R0-1', competitors: ['v3', 'v4'], winner: 'v3', bracket_slot: 'WB-R0-1' },
-      ] },
-      { round_index: 1, label: "Winners' bracket", matches: [
-        { match_id: 'WB-R1-0', competitors: ['v1', 'v3'], winner: 'v1', bracket_slot: 'WB-R1-0' },
-      ] },
-      { round_index: 2, label: "Losers' bracket", matches: [
-        { match_id: 'LB-R2-0', competitors: ['v2', 'v4'], winner: 'v2', bracket_slot: 'LB-R2-0' },
-      ] },
-      { round_index: 3, label: "Losers' bracket", matches: [
-        { match_id: 'LB-R3-0', competitors: ['v2', 'v3'], winner: 'v2', bracket_slot: 'LB-R3-0' },
-      ] },
-      { round_index: 4, label: 'Grand final', matches: [
-        { match_id: 'GF', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'GF' },
-      ] },
-    ],
   };
-  const model = structure.elimModel(mock.attachElimStates(st));
+  const model = structure.elimModel(elimPayload('double_elim_crowned', st));
   assertEqual(model.championId, 'v1', 'v1 promoted at the grand final');
   assertEqual(model.benchmarkId, 'v0', 'v0 is the benchmark/incumbent');
   assert(Array.isArray(model.losers) && model.losers.length === 2, 'the losers bracket has two rounds');
@@ -274,20 +244,8 @@ test('single-elim radial: a BYE advances cleanly and does not desync the ring/sp
     structure: 'single_elim',
     champion_lineage: ['v0'],
     competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v1' }, { generation_id: 'v2' }, { generation_id: 'v3' }],
-    rounds: [
-      { round_index: 0, label: 'Round 1', matches: [
-        { match_id: 'WB-R0-0', competitors: ['v1', 'v2'], winner: 'v1', bracket_slot: 'WB-R0-0' },
-        { match_id: 'WB-R0-1', competitors: ['v3'], winner: 'v3', bye: true, bracket_slot: 'WB-R0-1' },
-      ] },
-      { round_index: 1, label: 'Round 2', matches: [
-        { match_id: 'WB-R1-0', competitors: ['v1', 'v3'], winner: 'v3', bracket_slot: 'WB-R1-0' },
-      ] },
-      { round_index: 2, label: 'Final', matches: [
-        { match_id: 'final', competitors: ['v0', 'v3'], winner: 'v0', decision: 'rejected', bracket_slot: 'final' },
-      ] },
-    ],
   };
-  const model = structure.elimModel(mock.attachElimStates(st));
+  const model = structure.elimModel(elimPayload('single_elim_bye_stands', st));
   assertEqual(model.gateState, 'stands', 'the survivor lost the gate — champion stands');
   assertEqual(model.championId, null, 'no new champion crowned');
   const f = readRadial(radial(model));
@@ -320,16 +278,8 @@ test('live elim radial: the in-flight (pending) final maps the same as a settled
     structure: 'single_elim', live: true, phase: 'running',
     champion_lineage: ['v0'],
     competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v1' }, { generation_id: 'v2' }],
-    rounds: [
-      { round_index: 0, label: 'Round 1', matches: [
-        { match_id: 'WB-R0-0', competitors: ['v1', 'v2'], winner: 'v1', bracket_slot: 'WB-R0-0' },
-      ] },
-      { round_index: 1, label: 'Final', matches: [
-        { match_id: 'final', competitors: ['v0', 'v1'], winner: null, pending: true, bracket_slot: 'final' },
-      ] },
-    ],
   };
-  const lm = structure.elimModel(structure.normalizeStructure(mock.attachElimStates(live), true));
+  const lm = structure.elimModel(structure.normalizeStructure(elimPayload('single_elim_final_pending', live), true));
   assert(lm.live, 'the model is live');
   assertEqual(lm.gateState, 'deciding', 'a live bracket is deciding');
   const f = readRadial(radial(lm, { live: true }));
@@ -393,26 +343,8 @@ test('double-elim drop routing: ≥2 losers demoted draw nested transfer arcs �
     structure: 'double_elim',
     champion_lineage: ['v0', 'v1'],
     competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v1' }, { generation_id: 'v2' }, { generation_id: 'v3' }, { generation_id: 'v4' }],
-    rounds: [
-      { round_index: 0, label: "Winners' bracket", matches: [
-        { match_id: 'WB-R0-0', competitors: ['v1', 'v2'], winner: 'v1', bracket_slot: 'WB-R0-0' },
-        { match_id: 'WB-R0-1', competitors: ['v3', 'v4'], winner: 'v3', bracket_slot: 'WB-R0-1' },
-      ] },
-      { round_index: 1, label: "Winners' bracket", matches: [
-        { match_id: 'WB-R1-0', competitors: ['v1', 'v3'], winner: 'v1', bracket_slot: 'WB-R1-0' },
-      ] },
-      { round_index: 2, label: "Losers' bracket", matches: [
-        { match_id: 'LB-R2-0', competitors: ['v2', 'v4'], winner: 'v2', bracket_slot: 'LB-R2-0' },
-      ] },
-      { round_index: 3, label: "Losers' bracket", matches: [
-        { match_id: 'LB-R3-0', competitors: ['v2', 'v3'], winner: 'v2', bracket_slot: 'LB-R3-0' },
-      ] },
-      { round_index: 4, label: 'Grand final', matches: [
-        { match_id: 'GF', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'GF' },
-      ] },
-    ],
   };
-  const model = structure.elimModel(mock.attachElimStates(st));
+  const model = structure.elimModel(elimPayload('double_elim_crowned', st));
   const f = readRadial(radial(model, { double: true }));
   assertEqual(f.transfers.length, 3, `three WB→LB demotion arcs render (got ${f.transfers.length})`);
 

@@ -29,6 +29,7 @@
 //     and a no-op heartbeat churns NO DOM (digest-gated).
 
 import { installDom, test, run, assert, assertEqual, assertDeep } from './harness.mjs';
+import { recorded } from './recorded.mjs';
 
 installDom();
 
@@ -336,6 +337,8 @@ test('home view: a NEW scored generation in the trend flips the home digest (rep
 // movement landing flips the dossier digest → repaint (the bug class, through
 // the real render path).
 
+// The URL the candidate page fetches one candidate's dossier from.
+const dossierUrl = (epochId, gen, entry) => `/api/epoch/${epochId}/candidate/${gen}` + (entry ? `?entry=${entry}` : '');
 const DEPOCH = 'e1';
 const DGEN = 'v1';
 function candidateBackend(scorecard) {
@@ -362,7 +365,8 @@ function candidateBackend(scorecard) {
   F[`/api/round/${DEPOCH}/v0/v1/gate`] = { decision: 'rejected', delta_scalar: 5.2, rules: [
     { id: 'scalar_margin', label: 'Scalar margin', status: 'fail', fired: true, detail: '41 → 46' },
   ] };
-  F[`/api/hypothesis-accuracy/${DEPOCH}/v1`] = scorecard;
+  // the dossier carries the scorecard the candidate page renders.
+  F[dossierUrl(DEPOCH, 'v1')] = Object.assign(recorded('console/candidate/v1'), { epoch_id: DEPOCH, hypothesis_accuracy: scorecard });
   return F;
 }
 
@@ -412,7 +416,7 @@ test('candidate dossier: a candidate with NO hypothesis data drops the scorecard
   globalThis.window.location = { hash: '', search: '' };
   // the 404 fallback → null scorecard → no panel.
   const F = candidateBackend(scorecardFixture());
-  delete F[`/api/hypothesis-accuracy/${DEPOCH}/v1`];
+  F[dossierUrl(DEPOCH, 'v1')].hypothesis_accuracy = null;
   installFetch(F);
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: DEPOCH, gen: DGEN });

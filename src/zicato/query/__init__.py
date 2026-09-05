@@ -21,6 +21,7 @@ endpoint built on top of this ever returns a 500.
 
 from __future__ import annotations
 
+from zicato.query.candidate_view import build_candidate_dossier
 from zicato.query.conversations_view import build_matchup_conversations
 from zicato.query.epoch_view import (
     build_epoch_analysis,
@@ -140,6 +141,7 @@ __all__ = [
     "build_adjudication_xray",
     "build_bracket",
     "build_calibration_trend",
+    "build_candidate_dossier",
     "build_contract_diff",
     "build_drift_movements",
     "build_environment",

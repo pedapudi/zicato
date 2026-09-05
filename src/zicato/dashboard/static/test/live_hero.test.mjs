@@ -5,16 +5,16 @@
 // Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
-import { attachElimStates } from './mock_server.mjs';
+import { elimPayload, recorded } from './recorded.mjs';
 
 installDom();
 
 const {
   router, svg, data, tree, coreState, rounds,
-  live, STRUCT, racingFieldFromBracket, EPOCH_ID, freshHb, installFetch,
+  live, STRUCT, EPOCH_ID, freshHb, installFetch,
   freshState, allByClass, readCss, svgsByClass, mountLiveShell, installFixtureMap,
-  RC_EPOCH, RACING_PER_CHALLENGER, RACING_TOURNAMENTS, HERO_EPOCH, TWO_EP_OLD, TWO_EP_NEW,
-  twoEpochFixture,
+  RC_EPOCH, HERO_EPOCH, TWO_EP_OLD, TWO_EP_NEW,
+  twoEpochFixture, racingLadderFixture,
 } = await import('./fixtures.mjs');
 
 // ====================================================================
@@ -275,22 +275,13 @@ test('live hero: a LIVE SWISS tournament shows the SWISS LADDER + round-based pr
 // a LIVE single-elim tournament for the current epoch — bracket, NO funnel.
 // the served live payload carries gen_states (attach_elim_states on the server;
 // the radial renders the SERVED model verbatim, with no client re-derivation).
-const HERO_LIVE_ELIM_E3 = attachElimStates({
+const HERO_LIVE_ELIM_E3 = elimPayload('semifinal_in_flight', {
   structure: 'single_elim', phase: 'running', epoch_id: HERO_EPOCH,
   structure_params: { board_size: 4 },
   champion_lineage: ['v0'],
   competitors: [
     { generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' },
     { generation_id: 'v2', role: 'challenger' }, { generation_id: 'v3', role: 'challenger' },
-  ],
-  rounds: [
-    { round_index: 0, label: 'Semifinal', matches: [
-      { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], winner: 'v0', decision: 'win', bracket_slot: 'WB-R0-0' },
-      { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], bracket_slot: 'WB-R0-1' },
-    ] },
-    { round_index: 1, label: 'Final', matches: [
-      { match_id: 'WB-R1-0', competitors: ['v0', 'v1'], bracket_slot: 'WB-R1-0' },
-    ] },
   ],
   standings: [],
 });
@@ -538,7 +529,7 @@ test('live motion: prefers-reduced-motion suppresses the live animation classes/
 // carries the champion/benchmark (v0) reference …" test below.)
 
 test('racing: the racingModel derives the champion/benchmark (v0) seat distinct from the survivor', () => {
-  const st = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
+  const st = STRUCT.normalizeStructure(recorded('racing_ladder/racing_field'), false);
   const model = STRUCT.racingModel(st);
   assert(model, 'a racing model was derived');
   assertEqual(model.benchmarkId, 'v0', 'the benchmark is the champion v0 (the seat the field is raced against)');
@@ -576,13 +567,7 @@ test('live: idle (no active run) hides the live hero — the normal summary lead
 
 test('live: an idle racing epoch still renders the static completed funnel/summary (the live hero does not interfere)', async () => {
   freshState();
-  installFixtureMap({
-    '/api/epoch': { epoch_id: RC_EPOCH, closed: true, goal: 'g', tournament: { structure: 'racing', params: RACING_TOURNAMENTS.structure_params },
-      experiments: RACING_PER_CHALLENGER.map((t) => ({ generation_id: t.tournament_id.split('->')[1], parent_generation_id: 'v0', outcome: { decision: 'rejected' } })), board: [] },
-    '/api/lineage': { generations: [{ generation_id: 'v0', epoch_id: RC_EPOCH, parent_generation_id: '', promoted: true }] },
-    '/api/score-trajectory': { points: [] },
-    '/api/tournaments': RACING_TOURNAMENTS,
-  });
+  installFixtureMap(racingLadderFixture());
   coreState.state.heartbeat = { phase: 'idle' };
   coreState.state.activeRuns = []; coreState.state.activeTournament = null;
   const epoch = await import('../js/views/epoch.js');
@@ -840,10 +825,10 @@ test('epoch view (cross-epoch): a PROPOSING e1 shows the honest empty state — 
 
 test('racing field: the client-side reconstruction is DELETED — the ladder is SERVED and epoch-scoped by the server', () => {
   // reconstructRacing (the client join over per-challenger records) is GONE:
-  // the server scopes + joins (build_racing_field); the mock server mirrors it.
+  // the server scopes + joins (build_racing_field); the suite reads its recording.
   assertEqual(STRUCT.reconstructRacing, undefined, 'reconstructRacing is deleted from the client');
   const brk = twoEpochFixture(TWO_EP_NEW)['/api/tournaments'];
-  const e0 = STRUCT.normalizeStructure(racingFieldFromBracket(brk, TWO_EP_OLD), false);
+  const e0 = STRUCT.normalizeStructure(recorded('two_epochs/older/racing_field'), false);
   assert(e0 && e0.structure === 'racing', 'the e0 ladder still reconstructs from its own records');
 });
 

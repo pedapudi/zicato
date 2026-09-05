@@ -17,7 +17,7 @@ installDom();
 
 const {
   router, data, STRUCT, EPOCH_ID, FIXTURE, installFetch,
-  freshState, allByClass, SWISS_STRUCT, structFixture, installFixtureMap,
+  freshState, allByClass, structureFixture, installFixtureMap,
 } = await import('./fixtures.mjs');
 
 const ui = await import('../js/ui.js');
@@ -55,19 +55,12 @@ test('ratingTripleDigest: int tuple when rated, null when unrated (pre-rating sh
 // Standings table (structure.js)
 // ====================================================================
 
-function ratedSwiss() {
-  const st = JSON.parse(JSON.stringify(SWISS_STRUCT));
-  // v1 rated + credible; v0 rated + provisional; add an UNRATED third row.
-  st.standings[0] = { ...st.standings[0], elo: 1534.4, elo_se: 33.6, elo_games: 7 };
-  st.standings[1] = { ...st.standings[1], elo: 1465.6, elo_se: 52.1, elo_games: 2 };
-  st.standings.push({ generation_id: 'v2', rank: 3, scalar: 0.6, wins: 0, losses: 1,
-    status: 'eliminated', elo: null, elo_se: null, elo_games: null });
-  return st;
-}
-
+// The rated swiss ladder (tests/_console_scenarios.py build_swiss_rated_workspace):
+// v1 won five games, so its rating is settled; v2 played twice, so its rating
+// is thin; v5 sits in the standings without a game.
 test('standings: the rating column renders mono value ±se, provisional suffix, and — for unrated', async () => {
   freshState();
-  installFixtureMap(structFixture('swiss', ratedSwiss(), 'tourn_e0_sw'));
+  installFixtureMap(structureFixture('swiss_rated'));
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -75,21 +68,22 @@ test('standings: the rating column renders mono value ±se, provisional suffix, 
   const table = allByClass(host, 'dt-standings')[0];
   assert(table, 'the standings leaderboard rendered');
   assert(table.textContent.includes('rating'), 'the standings carries a rating column header');
-  assert(table.textContent.includes('1534 ±34'), 'the credible rating renders mono `value ±se`');
-  assert(table.textContent.includes('1466 ±52'), 'the thin-sample rating still shows its estimate in the table');
+  assert(table.textContent.includes('1716 ±132'), 'the credible rating renders mono `value ±se`');
+  assert(table.textContent.includes('1416 ±152'), 'the thin-sample rating still shows its estimate in the table');
   const provs = allByClass(table, 'dt-rating-prov');
   assertEqual(provs.length, 1, 'exactly the thin-sample row carries the faint provisional suffix');
   assert(provs[0].textContent.includes('provisional'), 'the suffix reads provisional');
   // the unrated row renders the honest dash — and NO chip anywhere.
   const cells = allByClass(table, 'dt-rating');
-  assertEqual(cells.length, 3, 'every standings row carries a rating cell');
+  assertEqual(cells.length, 4, 'every standings row carries a rating cell');
   assert(cells.some((c) => c.textContent === '—'), 'an unrated generation reads —');
 });
 
 test('standings: digest guardrail — a no-op beat churns NO DOM; a rating move repaints', async () => {
   freshState();
-  const st = ratedSwiss();
-  installFixtureMap(structFixture('swiss', st, 'tourn_e0_sw'));
+  const F = structureFixture('swiss_rated');
+  installFixtureMap(F);
+  const st = F[`/api/tournament-structure/${EPOCH_ID}/${encodeURIComponent(`${EPOCH_ID}:field:v1`)}`];
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };

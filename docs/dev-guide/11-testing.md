@@ -37,7 +37,7 @@
 > | V7 | the provenance-scoped-reaper rule | **The dashboard reaper selects by workspace provenance and never signals its own process group.** A provenance-blind reaper once group-killed an innocent concurrent evolve (`12-bug-casebook.md` case 5). |
 > | V8 | the parity-green-on-unchanged-behaviour rule | **Every parity gate is GREEN on unchanged behaviour; a RED gate is information.** A golden is re-captured only with a stated behavioural reason, and a re-capture never bakes an unrelated sibling change. |
 > | V9 | the contracts-are-lint rule | **The library never imports a driver; the query layer stays dashboard-free; the retired private paths stay retired.** The import linter (`lint-imports`) and `ruff` catch these as violations; no pytest test does. |
-> | V10 | the exit-code-is-the-node-signal rule | **A node suite's real signal is the PROCESS EXIT CODE rather than the tail line.** The `mock_server` mirrors the Python readers; a divergence is a bug in the mock. |
+> | V10 | the exit-code-is-the-node-signal rule | **A node suite's real signal is the PROCESS EXIT CODE rather than the tail line.** The served joins a suite renders are recorded endpoint responses (§11.9.3). |
 
 ---
 
@@ -1414,42 +1414,34 @@ models — the latter is the render-discipline backbone (the `noteProgress`
 cursor, the `core/sse.js` seq skip gate, the four run-states, the chrome
 pill's zero-DOM no-op beat).
 
-### 11.9.3 The mock_server parity pin
+### 11.9.3 The recorded fixtures
 
-The server computes the round-timeline and racing-field joins
-(09-dashboard-and-query.md §9.2.5), while the node fixtures describe
-workspaces in terms of the granular endpoints. `test/mock_server.mjs`
-therefore PLAYS THE SERVER, deriving those two served payloads from a
-fixture map the way the Python readers do. Its own rule: any divergence is a
-bug in the mock, never grounds to re-derive in prod:
+The server computes the round-timeline, racing-field and matchup-grid joins
+and the elimination fold (09-dashboard-and-query.md §9.2.5), and the node
+suite holds no Python. `static/test/recorded.mjs` therefore serves what the
+Python endpoints answered: `tests/data/endpoint_route_snapshot.json` records
+every probed route over the workspaces `tests/_console_scenarios.py` writes
+(one per browser scenario — the shared console epoch, the racing ladder, the
+cross-epoch pair, the structure records, the round-model cases), and
+`tests/data/endpoint_route_probes.json` names the URL behind each label, so
+`recordedRoutes('single_elim')` is a fixture map keyed the way the views
+fetch. The elimination round lists the suite draws are declared once in
+`tests/data/elim_states_cases.json`, and `tests/data/elim_states_served.json`
+is `derive_elim_states` over each of them, so `elimCase(name)` hands a test
+the server's model of its bracket.
 
-```javascript
-// It is TEST-ONLY scaffolding — nothing
-// under js/ imports it — and any behavioural divergence from the Python
-// readers is a bug in THIS file, never grounds to re-derive in prod code.
-```
-— `src/zicato/dashboard/static/test/mock_server.mjs`
+Both recordings are pinned by Python: `tests/test_dashboard_endpoint_table.py`
+serves every workspace through the real application and compares each body
+byte for byte, and `tests/test_tournament_view_elim_states.py` folds every
+declared case. A reader change that is meant to move a response is
+re-recorded with `ZICATO_ENDPOINT_SNAPSHOT_UPDATE=1` on those two suites
+(09-dashboard-and-query.md §9.16, step 3), and a shape no recorded workspace
+covers is added as a scenario with its probes rather than written by hand.
 
-The Python side of that pin is `tests/test_dashboard_racing_and_rounds.py`,
-which asserts the real readers produce what the mock mirrors. When you change
-`build_round_timeline` / `build_racing_field`, update `mock_server.mjs` to
-match (09-dashboard-and-query.md §9.16, step 3) — the mock is a parity
-witness rather than a second implementation.
-
-> ⛔ NEVER re-derive a served join in prod JS to make a node test pass. If the
-> mock and the prod client disagree, the mock is wrong (the
-> exit-code-is-the-node-signal rule) — it exists to prove the client reads the
-> server's answer, and never to license the client to compute its own. Fixing
-> the divergence in `mock_server.mjs` (to mirror the Python reader) is the
-> correct move; re-deriving in `views/*.js` re-opens the client/server
-> drift the served join closes (the server-computes-client-renders rule —
-> 09-dashboard-and-query.md, doctrine `DQ1`).
-
-The mock mirrors THREE served joins: round-timeline, racing-field, and the
-elim `gen_states` fold (`attachElimStates`, mirroring `derive_elim_states` —
-09-dashboard-and-query.md §9.2.5). The elim mirror's Python parity witness is
-the shared `tests/data/elim_states_fixture.json`, asserted by BOTH the Python
-`derive_elim_states` and the Rust `elim_states.rs` fold.
+> ⛔ NEVER hand-write a served join or an elimination model in a node fixture
+> to make a test pass. The suite exists to prove the client renders the
+> server's answer; a fixture the server never produced proves nothing about
+> the console. Add the scenario on the Python side and record it.
 
 ### 11.9.4 The console test-file map, by view
 
@@ -2323,8 +2315,8 @@ ls ${TMPDIR:-/tmp} | grep ztw-snap && echo "LEAK" || echo "clean"
   contracts (schema version, state serde, the `_is_safe_id` / start-time
   twins) CI enforces on both sides.
 - 09-dashboard-and-query.md §9.7 (the digest-gated rendering spec the node
-  conventions enforce), §9.16 (the payload-shape clean break that updates
-  the `mock_server` parity pin + goldens).
+  conventions enforce), §9.16 (the payload-shape clean break that re-records
+  the node fixtures + goldens).
 - 12-bug-casebook.md — every bug whose regression test §11.15 teaches you to
   write; the casebook entry names the invariant, the test protects it.
 
@@ -2355,7 +2347,7 @@ where to ADD) a test, by concern.
 | the library/driver + query-dashboard-free contracts | `pyproject.toml [tool.importlinter]` → `uv run lint-imports` |
 | the retired private paths stay retired | `pyproject.toml [tool.ruff...banned-api]` → `uv run ruff check` |
 | the digest / no-op / DOM-identity render discipline | `src/zicato/dashboard/static/test/*.test.mjs` → `make node-test` |
-| the served-join parity witness | `src/zicato/dashboard/static/test/mock_server.mjs` + `tests/test_dashboard_racing_and_rounds.py` |
+| the node suite renders what the endpoints serve | `tests/_console_scenarios.py` + `tests/test_dashboard_endpoint_table.py` → `static/test/recorded.mjs` |
 | the whole thing, reproducibly, in Python, JavaScript, and Rust | `.github/workflows/ci.yml` (default Python tier + dashboard JavaScript + `cargo test`) and `.github/workflows/slow-tier.yml` (statistical and end-to-end oracles) |
 
 The single command that runs the most in one shot is `make check` (lint +

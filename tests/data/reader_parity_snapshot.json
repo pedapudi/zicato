@@ -67,6 +67,304 @@
     "rolling_mean": null,
     "trend_sign": 0
   },
+  "candidate_dossier::e1::v0": {
+    "champion": "v0",
+    "comparison": {
+      "candidate_sigma": null,
+      "champion_sigma": null,
+      "delta_sigma": null,
+      "drift_present": false,
+      "entries": {}
+    },
+    "drilldown": null,
+    "episode_export": null,
+    "epoch_id": "e1",
+    "found": true,
+    "gates": [],
+    "generation_id": "v0",
+    "hypothesis_accuracy": null,
+    "matchup_grid": null,
+    "parent": null,
+    "per_entry": {
+      "drift_present": false,
+      "entries": [],
+      "epoch_id": "e1",
+      "facet_scores": {
+        "facets": {},
+        "overall": null
+      },
+      "generation_id": "v0",
+      "mean_score": null,
+      "tournament_id": null
+    },
+    "racing_field": null,
+    "structure": "gauntlet"
+  },
+  "candidate_dossier::e1::v1::t1": {
+    "champion": "v0",
+    "comparison": {
+      "candidate_sigma": 0.62,
+      "champion_sigma": 0.6,
+      "delta_sigma": 0.020000000000000018,
+      "drift_present": true,
+      "entries": {
+        "t1": {
+          "candidate_score": 0.9,
+          "champion_drift_loss": 0.3,
+          "champion_score": 0.9,
+          "decided_by": "drift",
+          "delta_score": 0.0,
+          "score_replicates": 1,
+          "score_se": null
+        },
+        "t2": {
+          "candidate_score": 0.9,
+          "champion_drift_loss": 0.3,
+          "champion_score": 0.9,
+          "decided_by": "drift",
+          "delta_score": 0.0,
+          "score_replicates": 1,
+          "score_se": null
+        }
+      }
+    },
+    "drilldown": {
+      "entry_id": "t1",
+      "expectations": {
+        "entry_id": "t1",
+        "epoch_id": "e1",
+        "generation_id": "v1",
+        "outcomes": []
+      },
+      "header": {
+        "adk_session_id": null,
+        "drift_loss": 0.31,
+        "entry_id": "t1",
+        "epoch_id": "e1",
+        "generation_id": "v1",
+        "output_chars": null,
+        "pass_fail": true,
+        "plan_revisions": null,
+        "run_id": "e1-v1-t1",
+        "runtime_ms": null,
+        "tokens_spent": null,
+        "turns_completed": null,
+        "wall_clock_budget_exceeded": null
+      },
+      "judges": {
+        "judges": [],
+        "run_id": "e1-v1-t1"
+      }
+    },
+    "episode_export": {
+      "command": "",
+      "episode_log": "",
+      "epoch_id": "e1",
+      "export_available": false,
+      "generation_id": "v1",
+      "slot": null
+    },
+    "epoch_id": "e1",
+    "found": true,
+    "gates": [
+      {
+        "challenger": "v1",
+        "champion": "v0",
+        "gate": {
+          "challenger": "v1",
+          "challenger_scalar": 0.49,
+          "champion": "v0",
+          "champion_scalar": 0.5,
+          "deciding_rule": null,
+          "decision": "promoted",
+          "delta_pass_rate": 0.0,
+          "delta_scalar": -0.010000000000000009,
+          "epoch_id": "e1",
+          "live": null,
+          "margin": 0.01,
+          "override": {
+            "action": null,
+            "present": false,
+            "reason": null
+          },
+          "primary_driver": null,
+          "rating": {
+            "present": false
+          },
+          "reason": "",
+          "regressed_namespace": null,
+          "regressed_predicate": null,
+          "rules": [
+            {
+              "detail": "disabled",
+              "fired": false,
+              "id": "regression_suite",
+              "label": "Regression suite",
+              "status": "skipped"
+            },
+            {
+              "detail": "0.50 → 0.49 (-0.01; needs ≤ -0.01)",
+              "fired": false,
+              "id": "scalar_margin",
+              "label": "Scalar margin",
+              "status": "pass"
+            },
+            {
+              "detail": "all preserved",
+              "fired": false,
+              "id": "pass_rate_monotonicity",
+              "label": "Pass-rate monotonicity",
+              "status": "pass"
+            },
+            {
+              "detail": "namespace aggregates not recorded",
+              "fired": false,
+              "id": "namespace_monotonicity",
+              "label": "Namespace monotonicity",
+              "status": "unknown"
+            }
+          ],
+          "scalar_components": {
+            "challenger": null,
+            "champion": null
+          },
+          "scalar_decomposition": {
+            "challenger": {
+              "drift": {
+                "fail_open": false,
+                "fallback_reason": null,
+                "kind": "builtin",
+                "present": false,
+                "raw": null,
+                "source": "built-in formula",
+                "transforms": []
+              },
+              "scalar": {
+                "fail_open": false,
+                "fallback_reason": null,
+                "kind": "builtin",
+                "present": false,
+                "raw": null,
+                "source": "built-in formula",
+                "transforms": []
+              }
+            },
+            "champion": {
+              "drift": {
+                "fail_open": false,
+                "fallback_reason": null,
+                "kind": "builtin",
+                "present": false,
+                "raw": null,
+                "source": "built-in formula",
+                "transforms": []
+              },
+              "scalar": {
+                "fail_open": false,
+                "fallback_reason": null,
+                "kind": "builtin",
+                "present": false,
+                "raw": null,
+                "source": "built-in formula",
+                "transforms": []
+              }
+            },
+            "fail_open": false,
+            "present": false
+          }
+        },
+        "judge_comparison": {
+          "challenger": "v1",
+          "champion": "v0",
+          "epoch_id": "e1",
+          "judges": [],
+          "primary_driver": null
+        },
+        "role": "challenger"
+      }
+    ],
+    "generation_id": "v1",
+    "hypothesis_accuracy": {
+      "claims": [],
+      "epoch_id": "e1",
+      "generation_id": "v1",
+      "pass_rate": {
+        "observed": null,
+        "predicted": ""
+      },
+      "score": {
+        "brier": null,
+        "fraction": null,
+        "hits": 0,
+        "total": 0
+      }
+    },
+    "matchup_grid": {
+      "challenger": "v1",
+      "champion": "v0",
+      "drift_present": true,
+      "entry_grid": [
+        {
+          "child_drift_loss": 0.31,
+          "child_metrics": null,
+          "child_pass": true,
+          "child_score": 0.9,
+          "decided_by": "drift",
+          "delta": 0.010000000000000009,
+          "delta_score": 0.0,
+          "entry_id": "t1",
+          "parent_drift_loss": 0.3,
+          "parent_metrics": null,
+          "parent_pass": true,
+          "parent_score": 0.9,
+          "score_replicates": 1,
+          "score_se": null,
+          "verdict": "regressed",
+          "won_by": "v0"
+        },
+        {
+          "child_drift_loss": 0.31,
+          "child_metrics": null,
+          "child_pass": true,
+          "child_score": 0.9,
+          "decided_by": "drift",
+          "delta": 0.010000000000000009,
+          "delta_score": 0.0,
+          "entry_id": "t2",
+          "parent_drift_loss": 0.3,
+          "parent_metrics": null,
+          "parent_pass": true,
+          "parent_score": 0.9,
+          "score_replicates": 1,
+          "score_se": null,
+          "verdict": "regressed",
+          "won_by": "v0"
+        }
+      ],
+      "epoch_id": "e1",
+      "scalar": {
+        "child": 0.49,
+        "delta": -0.010000000000000009,
+        "parent": 0.5
+      },
+      "source": "loss_files"
+    },
+    "parent": "v0",
+    "per_entry": {
+      "drift_present": false,
+      "entries": [],
+      "epoch_id": "e1",
+      "facet_scores": {
+        "facets": {},
+        "overall": null
+      },
+      "generation_id": "v1",
+      "mean_score": null,
+      "tournament_id": "e1:v0->v1"
+    },
+    "racing_field": null,
+    "structure": "gauntlet"
+  },
   "contract_diff::e0": {
     "any_changed": true,
     "components": [

@@ -340,7 +340,7 @@ test('proposalDigest: byte-identical on a no-op beat; flips when the proposal or
 
 // ── 6. the dossier, end to end: the idea leads, the numbers follow ─────────
 
-const { router, lookupFixture, freshState } = await import('./fixtures.mjs');
+const { router, lookupFixture, freshState, dossierUrl, recorded } = await import('./fixtures.mjs');
 const ID_EPOCH = '2026-08-01_identity';
 
 function installIdentityFetch() {
@@ -372,6 +372,9 @@ function installIdentityFetch() {
     },
   };
   for (const g of gens) F[`/api/generation/${ID_EPOCH}/${g.generation_id}/per-entry`] = { entries: [{ entry_id: 'b1', drift_loss: 0.5 }] };
+  // v2's dossier, recorded over the identity workspace: its scalar clears the
+  // margin and the pass-rate rule rejects it for the entry it failed.
+  F[dossierUrl(ID_EPOCH, 'v2')] = recorded('identity/candidate/v2');
   globalThis.fetch = async (path) => {
     const v = lookupFixture(F, path);
     return v !== undefined ? { ok: true, json: async () => v } : { ok: false, status: 404, json: async () => ({}) };
@@ -390,7 +393,7 @@ test('candidate dossier: opens on the IDEA, with the verdict sentence under it a
   const verdict = allByClass(host, 'dn-verdictline')[0];
   assert(verdict, 'the one-line verdict sentence rendered');
   assertEqual(verdict.textContent,
-    'rejected · pass-rate monotonicity · regressed q3_metrics_outline · 0.034 short of the 0.020 margin',
+    'rejected · pass-rate monotonicity · regressed q3_metrics_outline · 0.010 clear of the 0.020 margin',
     'assembled from the SERVED structured gate fields — deciding_rule + regressed_predicate + margin');
 
   // ORDER: the identity precedes the lifecycle figure it explains.

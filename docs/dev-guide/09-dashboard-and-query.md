@@ -35,7 +35,7 @@
 > | DQ8 | null-degrade under the Rust supervisor | **Every new GET null-degrades on the Rust supervisor.** A payload the Rust reader does not serve returns `null`/empty; the client paints the honest empty state, never a spinner or a crash. |
 > | DQ9 | controls gate on writability | **Controls gate on `read_only:false`; a destructive control takes a two-step confirm.** A control write forces an explicit refresh — it does not advance the progress `seq`, so the no-op-skip gate would otherwise stall the readback. |
 > | DQ10 | the champion is the reigning spine end | **`current_champion` is the reigning spine end** — the LAST promoted generation — never the first-scored or the highest-scored; a decision surface names its `deciding_rule`. |
-> | DQ11 | a payload-shape change is a clean break | **A payload-shape change is a clean break.** Server and client change in the same commit, client-side coalescers are deleted, the node `mock_server` parity pin and the goldens are updated together. |
+> | DQ11 | a payload-shape change is a clean break | **A payload-shape change is a clean break.** Server and client change in the same commit, client-side coalescers are deleted, and the node suite's recorded responses and the goldens are re-recorded together. |
 > | DQ12 | validate an id before it touches the workspace | **An id path param is validated by `_is_safe_id` before it touches the workspace.** A malformed coordinate degrades to the empty shape at HTTP 200 — never a 500, never a traversal. |
 > | DQ13 | every JSON GET has a declared contract | **Every JSON GET has a declared query contract.** `query.contracts.ENDPOINT_PAYLOADS` is the exhaustive inventory. |
 > | DQ14 | lineage owns topology | **Lineage owns topology.** `lineage.json` alone supplies parent and tri-state promotion; experiment outcomes are journal detail. |
@@ -530,21 +530,19 @@ model itself needs defensive guards against phantom eliminations, because an
 under-specified payload leaves it guessing; serving the model removes the
 reason for the whole guard family at once (12-bug-casebook.md, case 12).
 
-One place does re-derive these joins: the node `mock_server.mjs` rebuilds them
-from fixture maps the way the Python readers do, so the node suite can check
-the served shape without a Python server. Any divergence between the two is a
-bug in the mock and never grounds to re-derive in production code (§9.16,
-11-testing.md §11.9.3):
+The candidate page's per-candidate reads are one such join as well:
+`query.build_candidate_dossier` (`src/zicato/query/candidate_view.py`) calls
+the per-entry, scorecard, episode, grid, gate, comparison, drill-down and
+racing-field readers and serves the result on
+`/api/epoch/{epoch_id}/candidate/{generation_id}`, so `views/candidate.js`
+reads one payload per candidate and recomputes no verdict.
 
-```javascript
-// The prod frontend no longer joins rounds / racing ladders client-side: the
-// server serves them (`build_round_timeline` / `build_racing_field`, pinned by
-// tests/test_dashboard_racing_and_rounds.py). ...
-// It is TEST-ONLY scaffolding — nothing
-// under js/ imports it — and any behavioural divergence from the Python
-// readers is a bug in THIS file, never grounds to re-derive in prod code.
-```
-— `src/zicato/dashboard/static/js/test/mock_server.mjs` (header)
+The node suite derives none of these joins either. `static/test/recorded.mjs`
+serves the responses `tests/data/endpoint_route_snapshot.json` records over
+the workspaces `tests/_console_scenarios.py` writes, keyed by the URL in
+`tests/data/endpoint_route_probes.json`, and serves the elimination fold from
+`tests/data/elim_states_served.json`; a browser test therefore renders a join
+a Python endpoint produced (§9.16 step 3, 11-testing.md §11.9.3).
 
 > ✅ ALWAYS move a multi-record join to the server the moment the client
 > starts stitching ids or walking more than one endpoint's payload to build a
@@ -2415,8 +2413,8 @@ the SAME payload, and asserts node identity:
 ```
 
 Also assert the null path renders an honest empty state and, if the
-panel derives from a served join, extend `mock_server.mjs` to mirror the new
-reader (§9.16).
+panel derives from a served join, record the join's response for the suite
+(§9.16, step 3).
 
 **Step 8 — The Rust degradation check.** Confirm the client renders
 correctly when the endpoint 404s. Either the accessor's `null` path (tested
@@ -2467,20 +2465,21 @@ compensating for a wobbly wire; the clean break removes the wobble, so the
 coalescer must go too. The `livestatus.js::heartbeatTs` comment ("the four
 alternate keys are DELETED") is the model — deleting the aliases IS the fix.
 
-**Step 3 — Update the node `mock_server` parity pin.** If the payload is one
-of the two SERVED JOINS (round-timeline / racing-field), update
-`test/mock_server.mjs` to mirror the new reader shape — it re-derives the
-served join from fixtures "exactly as the Python readers do", so a shape
-change there is a required, matching edit (its own rule: a divergence is a
-bug in the mock, never grounds to re-derive in prod):
+**Step 3 — Re-record the responses the node suite serves.** If the payload
+is one a browser test renders, re-record it:
 
-```javascript
-// this module PLAYS THE SERVER: it derives the two served payloads from a fixture
-// map exactly as the Python readers do. It is TEST-ONLY scaffolding — nothing
-// under js/ imports it — and any behavioural divergence from the Python
-// readers is a bug in THIS file, never grounds to re-derive in prod code.
+```bash
+ZICATO_ENDPOINT_SNAPSHOT_UPDATE=1 uv run pytest -q \
+    tests/test_dashboard_endpoint_table.py tests/test_tournament_view_elim_states.py
 ```
-— `src/zicato/dashboard/static/js/test/mock_server.mjs`
+
+rewrites `tests/data/endpoint_route_snapshot.json`,
+`tests/data/endpoint_route_probes.json` and
+`tests/data/elim_states_served.json`, and `static/test/recorded.mjs` serves
+the new bodies to the suite. A shape the recorded workspaces do not cover is
+added as a scenario in `tests/_console_scenarios.py` with its probes in
+`tests/_endpoint_snapshot_harness.py`, rather than written by hand in the
+suite.
 
 **Step 4 — Update the goldens.** If the payload is captured by a parity
 golden (the MOCK-GOLDEN gate freezes `gen_score.json` / `experiment.json` /
@@ -2499,7 +2498,7 @@ dashboards skew. Update the Rust route's serde
 
 ```bash
 uv run pytest tests/ -q -k "dashboard or query or the_changed_payload"
-make node-test                                 # mock_server + view tests agree
+make node-test                                 # the views render the recorded responses
 bash tools/parity.sh --only MOCK-GOLDEN --only REINDEX-DUMP   # re-capture if legit
 cargo test -p zicato-supervisor                # Rust parity, if applicable
 ```
@@ -2557,7 +2556,7 @@ Where to add (and what will catch) a regression, by concern:
 | coercers: `coerce_float` bool-exclusion, `_opt_bool` | no dedicated suite — exercised only INDIRECTLY, through the reader suites that consume them. A direct unit test for `zicato/query/paths.py` is the standing gap here |
 | entry-status four-bucket canon + `status_raw` preservation | `tests/test_dashboard_*runtime*` / the runtime-view suite |
 | `_is_safe_id` / degrade-to-200 / `?epoch=` 404 | `tests/test_dashboard_server.py` (+ `tests/test_issue_250_pins.py` for the `_is_safe_id`/Rust mirror) |
-| the served joins (round-timeline / racing-field) match the client mock | `tests/test_dashboard_racing_and_rounds.py` + `test/mock_server.mjs` |
+| the served joins (round-timeline / racing-field) reach the node suite as recorded responses | `tests/test_dashboard_endpoint_table.py` + `static/test/recorded.mjs` |
 | a field round names the WINNER after a promotion (by role tag rather than by borrow) | `tests/test_dashboard_racing_and_rounds.py::test_field_round_names_the_new_champion_after_a_promotion` |
 | a field round's champion provenance: current round, and unknown vs `"full"` | `tests/test_dashboard_racing_and_rounds.py` (`…metadata_comes_from_that_round`, `…no_crowning_row_reports_an_unknown_eval_mode`, `…legacy_row_without_the_v8_columns_still_reads_full`) |
 | SSE frame shape (kinds + seq + terminal only), coalescing, ordering | `tests/test_dashboard_sse*.py`, node `live_protocol.test.mjs` |

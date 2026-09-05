@@ -5,6 +5,7 @@
 // Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
+import { elimPayload, elimCase } from './recorded.mjs';
 
 installDom();
 
@@ -12,9 +13,9 @@ const {
   router, svg, data, tree, livestatus, coreState,
   rounds, dag, live, STRUCT, EPOCH_ID, freshHb,
   freshState, allByClass, svgsByClass, mountLiveShell, SE_STRUCT, RACING_STRUCT,
-  installFixtureMap, liveRacingField, liveElimField, HERO_EPOCH,
+  installFixtureMap, liveRacingField, liveElimField, HERO_EPOCH, recordedRoutes,
+  recorded, dossierUrl, FIXTURE,
 } = await import('./fixtures.mjs');
-const mock = await import('./mock_server.mjs');
 
 // ====================================================================
 // LIVE-RUN UX wave — five coordinated fixes on the live/structure/svg surface.
@@ -386,27 +387,15 @@ test('standings table (LIVE elim): a mid-run champion/eliminated standing is NOT
 
 test('cached champion: per-entry cached/source_epoch surfaces a "cached · from <epoch>" badge + a fast eval-mode tag (no "no entries scored")', async () => {
   freshState();
-  const CC_EPOCH = '2026-06-02_cc';
-  const F = {
-    '/api/epoch': { epoch_id: CC_EPOCH, closed: true, goal: 'g',
-      tournament: { structure: 'racing', params: {} },
-      experiments: [{ generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } }], board: [] },
-    '/api/lineage': { generations: [
-      { generation_id: 'v0', epoch_id: CC_EPOCH, parent_generation_id: '', promoted: true },
-    ] },
-    '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 50 }] },
-    '/api/tournaments': { epoch_id: CC_EPOCH, champion_lineage: ['v0'], matchups: [], tournaments: [] },
-    // the champion v0's per-board results are CACHED from a prior epoch.
-    [`/api/generation/${CC_EPOCH}/v0/per-entry`]: { entries: [
-      { entry_id: 'b0', run_id: 'r0', drift_loss: 40, pass_fail: true, cached: true, source_epoch: '2026-06-01_e0', source_run: 'run_prior' },
-    ] },
-  };
+  // the champion v0's per-board results were REUSED from a prior epoch (the
+  // cached_champion workspace records the fast-mode rows).
+  const F = { ...FIXTURE, [dossierUrl(EPOCH_ID, 'v0')]: recorded('cached_champion/candidate/v0') };
   installFixtureMap(F);
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
-  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: CC_EPOCH, gen: 'v0' });
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v0' });
   assert(/cached/i.test(host.textContent), 'a cached champion shows a "cached" badge');
-  assert(/2026-06-01_e0/.test(host.textContent), 'the badge names the source epoch');
+  assert(/2026-05-29_e0/.test(host.textContent), 'the badge names the source epoch');
   assert(/fast — champion reused/.test(host.textContent), 'a fast-mode header tag reads "fast — champion reused"');
   assert(!/no per-entry scores|no board entries scored/i.test(host.textContent),
     'a cached champion does NOT read "no board entries scored"');
@@ -434,6 +423,7 @@ test('epoch overview: "field of N" counts champion + applied challengers, EXCLUD
   freshState();
   const FN_EPOCH = '2026-06-02_fn';
   const F = {
+    ...recordedRoutes('field_count'),
     '/api/epoch': { epoch_id: FN_EPOCH, closed: false, goal: 'g',
       tournament: { structure: 'swiss', params: { rounds: 3 } },
       experiments: [], board: [] },
@@ -478,8 +468,7 @@ test('crown glyphs: the shared CROWN constant is ♛ current / ♔ former; no �
   assert(!funnel.textContent.includes('♚'), 'a crowned funnel gate does NOT emit ♚');
 
   // a crowned radial bracket seat.
-  const winners = [{ round_index: 0, label: 'Final', matches: [{ match_id: 'WB-R0-0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'WB-R0-0' }] }];
-  const servedCrown = mock.deriveElimStates(winners);
+  const servedCrown = elimCase('lone_final_crowned').served;
   const bracket = svg.elimRadial({ rounds: servedCrown.rounds, gen_states: servedCrown.gen_states, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
   assert(bracket.textContent.includes('♛'), 'a crowned radial seat emits ♛');
   assert(!bracket.textContent.includes('♚'), 'a crowned radial seat does NOT emit ♚');
@@ -683,7 +672,7 @@ test('Task 2 — treeLiveSet: derives the running gen+entry ids from active-runs
 // ── the radial elimination bracket ──
 
 test('elimRadial: rounds as rings, one spoke per generation; surviving segments + a terminating ✕, the crown at the seat', () => {
-  const model = STRUCT.elimModel(STRUCT.normalizeStructure(mock.attachElimStates({ ...SE_STRUCT }), false));
+  const model = STRUCT.elimModel(STRUCT.normalizeStructure(elimPayload('single_elim_semifinals', { ...SE_STRUCT }), false));
   const bracket = svg.elimRadial({
     rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId,
     gateState: model.gateState, live: false, onCompetitor() {},
@@ -725,7 +714,7 @@ test('the elim figure is the radial bracket (elimRadial), the seat/box tree and 
 
 test('a LIVE radial bracket draws in-flight spokes as DASHED (pending convention) from the published rounds', () => {
   const model = STRUCT.elimModel(STRUCT.buildLiveElimModel({
-    at: mock.attachElimStates(liveElimField()),
+    at: elimPayload('semifinals_undecided', liveElimField()),
     heartbeat: { phase: 'tournament:round_0', epoch_id: HERO_EPOCH },
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', progress: 0.5 }],
     epochGens: ['v0', 'v1', 'v2', 'v3'],
@@ -742,12 +731,7 @@ test('elimRadial: an UNDECIDED match draws dashed in-flight spokes, NOT a premat
   // the WINNER advances toward the seat and the loser drops or is cut — so
   // NEITHER spoke may commit to the seat yet. The in-flight signal is the
   // dashed pending segment on each spoke.
-  const winners = [
-    { round_index: 0, label: 'Round 1', matches: [
-      { competitors: ['v12', 'v13'], winner: null, pending: true, bracket_slot: 'WB-R0-0' },
-    ] },
-  ];
-  const servedU = mock.deriveElimStates(winners);
+  const servedU = elimCase('lone_match_pending').served;
   const bracket = svg.elimRadial({ rounds: servedU.rounds, gen_states: servedU.gen_states, championId: 'v3', benchmarkId: 'v3', live: true });
   assertEqual(allByClass(bracket, 'dn-elimradial-pending').length, 2, 'both undecided spokes dash as pending');
   assertEqual(allByClass(bracket, 'dn-elimradial-gateline').length, 0, 'an undecided match commits no spoke to the seat');
@@ -760,16 +744,7 @@ test('elimRadial: a spoke ELIMINATED in a column survives NO ring, even when it 
   // BOTH `advanced` and `eliminated` at column 0. Elimination wins: v1 draws no
   // surviving segment and ends with ✕ at its first ring. Only the champion v3
   // survives both rings and dashes into the seat.
-  const winners = [
-    { round_index: 0, label: 'Round 1', matches: [
-      { competitors: ['v1', 'v2'], winner: 'v1', decision: 'win', bracket_slot: 'WB-R0-0' },
-      { competitors: ['v3', 'v1'], winner: 'v3', decision: 'win', bracket_slot: 'WB-R0-1' },
-    ] },
-    { round_index: 1, label: 'Final', matches: [
-      { competitors: ['v3', 'v0'], winner: 'v3', decision: 'win', bracket_slot: 'WB-R1-0' },
-    ] },
-  ];
-  const servedD = mock.deriveElimStates(winners);
+  const servedD = elimCase('three_rounds_v3_crowned').served;
   const bracket = svg.elimRadial({ rounds: servedD.rounds, gen_states: servedD.gen_states, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned' });
   const spokeOf = (id) => allByClass(bracket, 'dn-elimradial-spoke').find((g) => allByClass(g, 'dn-elimradial-name').some((t) => t.textContent.startsWith(id)));
   const goodSegs = (g) => allByClass(g, 'dn-elimradial-seg').filter((s) => (s.getAttribute('class') || '').includes('dn-good'));
