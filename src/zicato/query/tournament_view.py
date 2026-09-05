@@ -1061,7 +1061,7 @@ def derive_elim_states(rounds: Any) -> dict[str, Any]:
     an elimination or a winners→losers drop, and guards against phantom
     eliminations. Doing it server-side is what lets every consumer (Python
     service, Rust supervisor, the node mock) serve ONE identical model; a
-    client (``svg.js`` elimFlow and its radial twin) that derived it per render
+    client (``svg.js`` elimRadial) that derived it per render
     would be re-deriving what the server already owns. Ported line-for-line
     into ``crates/supervisor/src/elim_states.rs`` — the shared fixture
     ``tests/data/elim_states_fixture.json`` pins the two folds together.

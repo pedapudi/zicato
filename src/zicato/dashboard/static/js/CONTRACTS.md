@@ -414,7 +414,7 @@ From `js/ui.js`:
 
 From `js/svg.js`: the figure builders (`heatmap`, `valueDotPlot`,
 `sparkbar`, `sparkline`, `genDots`, `survivalFunnel`, `swissLadder`,
-`swissOverview`, `elimFlow`, `duelFlow`, `racingScalarTrack`,
+`swissOverview`, `elimRadial`, `duelFlow`, `racingScalarTrack`,
 `gauntletFieldBars`, `radarSilhouette`, `roundTimeline`, `waterfall`,
 `reignGantt`, `metaLoopLedger`, `calibrationTrend`, `sideBySideDiff`,
 and the rest). Each returns an `<svg>`; each figure that a view gates on

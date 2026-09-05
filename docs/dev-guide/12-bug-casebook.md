@@ -1105,8 +1105,8 @@ reader cannot take the write lock or create a journal.
 ### Symptom
 
 This case has no single crash to point at; the client-side logic accumulated
-over time. `elimFlow`, and the retired radial elimination figure, carried a
-re-sort of its caller's columns, a match de-duplication step, a classifier
+over time. The two elimination figures of the time, the lane flow `elimFlow`
+and the radial `elimRadial`, each carried a re-sort of its caller's columns, a match de-duplication step, a classifier
 separating an elimination from a drop, and five guards against phantom `✕`
 eliminations. Each one was added to patch a different sighting of a malformed
 payload. Together they came to roughly 100 lines of client-side domain logic
@@ -1128,8 +1128,8 @@ copies drifted.
 ONCE on the server — pre-sorted rounds, per-match `loser`, per-round
 `bracket_side`, and a top-level `gen_states` map — and both the Python service
 and the Rust supervisor serve it, pinned to each other by
-`tests/data/elim_states_fixture.json`. `elimFlow` renders `gen_states`
-verbatim, and the whole guard family is gone: a served model leaves the client
+`tests/data/elim_states_fixture.json`. `elimRadial`, the one elimination
+figure, renders `gen_states` verbatim, and the whole guard family is gone: a served model leaves the client
 nothing to repair.
 
 ### You are about to reintroduce this if…

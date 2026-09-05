@@ -296,7 +296,7 @@ test('live elim model: PUBLISHED single_elim rounds render the bracket (not "bei
   const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, HERO_EPOCH);
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
-  assert(svgsByClass(host, 'dn-elimflow')[0], 'the bracket-as-flow SVG rendered from the published rounds');
+  assert(svgsByClass(host, 'dn-elimradial')[0], 'the radial bracket SVG rendered from the published rounds');
   assert(!/being seeded/i.test(host.textContent), 'NOT the "being seeded" state once the rounds are published');
 });
 
@@ -477,12 +477,12 @@ test('crown glyphs: the shared CROWN constant is ♛ current / ♔ former; no �
   assert(funnel.textContent.includes('♛'), 'a crowned funnel gate emits ♛');
   assert(!funnel.textContent.includes('♚'), 'a crowned funnel gate does NOT emit ♚');
 
-  // a crowned elim bracket-as-flow gate.
+  // a crowned radial bracket seat.
   const winners = [{ round_index: 0, label: 'Final', matches: [{ match_id: 'WB-R0-0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'WB-R0-0' }] }];
   const servedCrown = mock.deriveElimStates(winners);
-  const bracket = svg.elimFlow({ rounds: servedCrown.rounds, gen_states: servedCrown.gen_states, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
-  assert(bracket.textContent.includes('♛'), 'a crowned elim flow gate emits ♛');
-  assert(!bracket.textContent.includes('♚'), 'a crowned elim flow gate does NOT emit ♚');
+  const bracket = svg.elimRadial({ rounds: servedCrown.rounds, gen_states: servedCrown.gen_states, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
+  assert(bracket.textContent.includes('♛'), 'a crowned radial seat emits ♛');
+  assert(!bracket.textContent.includes('♚'), 'a crowned radial seat does NOT emit ♚');
 
   // the tree current/former champion glyphs.
   const thost = document.createElement('div');
@@ -680,112 +680,86 @@ test('Task 2 — treeLiveSet: derives the running gen+entry ids from active-runs
   assertEqual(idle.size, 0, 'an idle workspace (running=false) yields the empty set');
 });
 
-// ── Task 3 — the elim generations-across-rounds flow ──
+// ── the radial elimination bracket ──
 
-test('Task 3 — elimFlow: rounds as columns, one lane per generation; advancing lines + a terminating ✕, the crown at the gate', () => {
+test('elimRadial: rounds as rings, one spoke per generation; surviving segments + a terminating ✕, the crown at the seat', () => {
   const model = STRUCT.elimModel(STRUCT.normalizeStructure(mock.attachElimStates({ ...SE_STRUCT }), false));
-  const flow = svg.elimFlow({
+  const bracket = svg.elimRadial({
     rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId,
     gateState: model.gateState, live: false, onCompetitor() {},
   });
-  assertEqual(flow.getAttribute('class'), 'dn-elimflow', 'the flow is its own renderer (dn-elimflow)');
-  assert((flow.getAttribute('width') || '') === '100%' && (flow.getAttribute('viewBox') || ''), 'fit-to-width: width:100% + a viewBox');
-  // rounds-as-columns headers + the gate column.
-  const cols = allByClass(flow, 'dn-elimflow-col').map((c) => c.textContent);
-  assert(cols.some((t) => /Semifinal|R0/.test(t)) && cols.some((t) => /Final|R1/.test(t)), 'rounds are columns (R0 · R1 · …)');
-  assert(cols.some((t) => /champion-gate/i.test(t)), 'the champion-gate is the trailing column');
-  // an advancing leg (good) + a terminating ✕ (bad) exist.
-  assert(allByClass(flow, 'dn-elimflow-good').length >= 1, 'an advancing line/marker reads --v2-good');
-  assert(flow.textContent.includes('✕'), 'an eliminated generation terminates with ✕');
-  // the champion (v1) reaches the gate with the current crown; v0 (displaced
-  // incumbent / benchmark) reads the former crown.
+  assertEqual(bracket.getAttribute('class'), 'dn-elimradial', 'the radial is its own renderer (dn-elimradial)');
+  assert((bracket.getAttribute('width') || '') === '100%' && (bracket.getAttribute('viewBox') || ''), 'fit-to-width: width:100% + a viewBox');
+  // rounds-as-rings (one per round) + the centre gate ring; one spoke per generation.
+  assertEqual(allByClass(bracket, 'dn-elimradial-ring').length, 3, 'two rounds draw two rings plus the gate ring');
+  assertEqual(allByClass(bracket, 'dn-elimradial-spoke').length, 4, 'one spoke per generation (v0..v3)');
+  // a surviving segment (good) + a terminating ✕ (bad) exist.
+  assert(allByClass(bracket, 'dn-elimradial-seg').some((s) => (s.getAttribute('class') || '').includes('dn-good')), 'a surviving segment reads --v2-good');
+  assert(bracket.textContent.includes('✕'), 'an eliminated generation terminates with ✕');
+  // the champion (v1) dashes into the seat with the current crown; v0 (displaced
+  // incumbent / benchmark) reads the former crown on its label.
   assertEqual(String(model.championId), 'v1', 'v1 is the bracket champion');
-  assert(flow.textContent.includes(svg.CROWN.current), 'the champion lane reaches the gate marked ♛ (CROWN.current)');
-  assert(flow.textContent.includes(svg.CROWN.former), 'the displaced incumbent (benchmark v0) reads ♔ (CROWN.former)');
-  assert(!flow.textContent.includes('♚'), 'no stray ♚ glyph literal');
+  assertEqual(allByClass(bracket, 'dn-elimradial-gateline').length, 1, 'the champion spoke dashes into the seat');
+  assertEqual(allByClass(bracket, 'dn-elimradial-seatlab')[0].textContent, svg.CROWN.current, 'the seat reads ♛ (CROWN.current)');
+  const v0 = allByClass(bracket, 'dn-elimradial-name').find((t) => t.textContent.startsWith('v0'));
+  assert(v0 && v0.textContent.includes(svg.CROWN.former), 'the displaced incumbent (benchmark v0) reads ♔ (CROWN.former)');
+  assert(!bracket.textContent.includes('♚'), 'no stray ♚ glyph literal');
 });
 
-test('Task 3 — the elim figure is the bracket-as-FLOW (elimFlow), the seat/box tree retired; ABSENT for non-elim (racing)', () => {
-  // elim: the bracket-as-flow IS the figure (no seat/box tree).
+test('the elim figure is the radial bracket (elimRadial), the seat/box tree and the lane flow retired; ABSENT for non-elim (racing)', () => {
+  // elim: the radial IS the figure (no seat/box tree, no lane flow).
   const elimNodes = STRUCT.renderStructure(STRUCT.normalizeStructure(SE_STRUCT, false), { navigate() {}, href: router.href }, EPOCH_ID);
   const elimHost = document.createElement('div');
   for (const n of elimNodes) elimHost.appendChild(n);
   assertEqual(svgsByClass(elimHost, 'dn-elimbracket').length, 0, 'the seat/box bracket tree is retired');
-  assert(svgsByClass(elimHost, 'dn-elimflow')[0], 'the bracket-as-flow (elimFlow) is the elim figure');
-  assert(/Bracket flow/i.test(elimHost.textContent), 'the section carries its bracket-flow title');
+  assertEqual(svgsByClass(elimHost, 'dn-elimflow').length, 0, 'the lane flow is deleted');
+  assertEqual(svgsByClass(elimHost, 'dn-elimradial').length, 1, 'the radial bracket is the one elim figure');
+  assert(/rings narrowing to the champion gate/i.test(elimHost.textContent), 'the section carries its bracket title');
 
-  // racing: NO elim flow (it is elim-only).
+  // racing: NO radial (it is elim-only).
   const racingNodes = STRUCT.renderStructure(STRUCT.normalizeStructure(RACING_STRUCT, false), { navigate() {}, href: router.href }, EPOCH_ID);
   const racingHost = document.createElement('div');
   for (const n of racingNodes) racingHost.appendChild(n);
-  assertEqual(svgsByClass(racingHost, 'dn-elimflow').length, 0, 'the elim flow is ABSENT for a non-elim (racing) structure');
+  assertEqual(svgsByClass(racingHost, 'dn-elimradial').length, 0, 'the radial is ABSENT for a non-elim (racing) structure');
 });
 
-test('Task 3 — a LIVE elim flow draws in-flight legs as DASHED (pending convention) from the published rounds', () => {
+test('a LIVE radial bracket draws in-flight spokes as DASHED (pending convention) from the published rounds', () => {
   const model = STRUCT.elimModel(STRUCT.buildLiveElimModel({
     at: mock.attachElimStates(liveElimField()),
     heartbeat: { phase: 'tournament:round_0', epoch_id: HERO_EPOCH },
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', progress: 0.5 }],
     epochGens: ['v0', 'v1', 'v2', 'v3'],
   }));
-  const flow = svg.elimFlow({
+  const bracket = svg.elimRadial({
     rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId,
     gateState: model.gateState, live: true,
   });
-  assert(allByClass(flow, 'dn-elimflow-seg-pending').length >= 1, 'an in-flight (pending) leg is drawn with the pending (dashed) class');
+  assert(allByClass(bracket, 'dn-elimradial-pending').length >= 1, 'an in-flight (pending) spoke segment is drawn with the pending (dashed) class');
 });
 
-test('Task 3 — elimFlow: an UNDECIDED match draws a "deciding" node + a SHORT in-flight stub, NOT a premature leg to the champion-gate', () => {
-  // a just-seeded WB-R0 head-to-head, undecided (no winner): v12 vs v13. In a
-  // double-elim only the WINNER advances toward the gate and the loser drops to
-  // the losers' bracket — so NEITHER lane may draw a full leg to the gate yet.
-  // The in-flight signal is the "deciding" match node + a short dashed stub
-  // (mirroring elimRadial's one-ring pending spoke).
+test('elimRadial: an UNDECIDED match draws dashed in-flight spokes, NOT a premature dash into the champion seat', () => {
+  // a just-seeded WB-R0 head-to-head, undecided (no winner): v12 vs v13. Only
+  // the WINNER advances toward the seat and the loser drops or is cut — so
+  // NEITHER spoke may commit to the seat yet. The in-flight signal is the
+  // dashed pending segment on each spoke.
   const winners = [
     { round_index: 0, label: 'Round 1', matches: [
       { competitors: ['v12', 'v13'], winner: null, pending: true, bracket_slot: 'WB-R0-0' },
     ] },
   ];
   const servedU = mock.deriveElimStates(winners);
-  const flow = svg.elimFlow({ rounds: servedU.rounds, gen_states: servedU.gen_states, championId: 'v3', benchmarkId: 'v3', live: true });
-  // the undecided match node reads "deciding" — the figure's in-flight signal.
-  assert(allByClass(flow, 'dn-elimflow-deciding').length >= 1, 'an undecided match node is marked deciding');
-  // NO committed (good) advance is drawn while the match is undecided.
-  const segs = allByClass(flow, 'dn-elimflow-seg');
-  const good = segs.filter((s) => (s.getAttribute('class') || '').includes('dn-elimflow-good'));
-  assertEqual(good.length, 0, 'an undecided match draws no committed advance (no good segment)');
-  // each pending leg is a SHORT stub rather than a full leg to the gate.
-  const stubs = allByClass(flow, 'dn-elimflow-seg-pending');
-  assert(stubs.length >= 1, 'an undecided lane draws a short in-flight stub');
-  for (const s of stubs) {
-    const len = Math.abs(parseFloat(s.getAttribute('x2')) - parseFloat(s.getAttribute('x1')));
-    assert(len < 60, `the in-flight stub is SHORT (${len.toFixed(1)}px), not a full gate-bound leg`);
-  }
+  const bracket = svg.elimRadial({ rounds: servedU.rounds, gen_states: servedU.gen_states, championId: 'v3', benchmarkId: 'v3', live: true });
+  assertEqual(allByClass(bracket, 'dn-elimradial-pending').length, 2, 'both undecided spokes dash as pending');
+  assertEqual(allByClass(bracket, 'dn-elimradial-gateline').length, 0, 'an undecided match commits no spoke to the seat');
+  assertEqual(allByClass(bracket, 'dn-elimradial-cut').length, 0, 'an undecided match cuts nobody');
+  assertEqual(allByClass(bracket, 'dn-elimradial-seatlab')[0].textContent, '…', 'the seat reads deciding');
 });
 
-test('Task 3 — elimFlow: the over-long "Winners\'/Losers\' bracket" round labels compact to "WB R0"/"LB R0" (no "Winners\' br…" truncation); meaningful short labels are KEPT', () => {
-  const winners = [
-    { round_index: 0, label: "Winners' bracket", matches: [
-      { competitors: ['v0', 'v1'], winner: 'v1', decision: 'win', bracket_slot: 'WB-R0-0' },
-    ] },
-    { round_index: 1, label: "Losers' bracket", matches: [
-      { competitors: ['v0', 'v2'], winner: 'v0', decision: 'win', bracket_slot: 'LB-R0-0' },
-    ] },
-  ];
-  const servedL = mock.deriveElimStates(winners);
-  const flow = svg.elimFlow({ rounds: servedL.rounds, gen_states: servedL.gen_states, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned' });
-  const cols = allByClass(flow, 'dn-elimflow-col').map((c) => c.textContent);
-  assert(cols.includes('WB R0'), `the winners' bracket round compacts to "WB R0" (got ${JSON.stringify(cols)})`);
-  assert(cols.includes('LB R0'), `the losers' bracket round compacts to "LB R0" (got ${JSON.stringify(cols)})`);
-  assert(!cols.some((t) => t.includes('…')), `no header truncates mid-word (got ${JSON.stringify(cols)})`);
-});
-
-test('Task 3 — elimFlow: a lane ELIMINATED in a column draws NO phantom advancing segment, even when it also WON a sibling match in the same column (degenerate live champion-vs-field round)', () => {
+test('elimRadial: a spoke ELIMINATED in a column survives NO ring, even when it also WON a sibling match in the same column (degenerate live champion-vs-field round)', () => {
   // v1 plays TWO matches in column 0 — WINS vs v2, LOSES vs v3 — so it is marked
-  // BOTH `advanced` and `eliminated` at column 0. Pre-fix, the won-match drew a
-  // solid green "advanced" segment leaving v1's eliminated dot and landing at a
-  // column with NO dot (the dangling "disconnected" line). Only the champion
-  // v3's path (col0→col1, col1→gate) should draw advancing segments.
+  // BOTH `advanced` and `eliminated` at column 0. Elimination wins: v1 draws no
+  // surviving segment and ends with ✕ at its first ring. Only the champion v3
+  // survives both rings and dashes into the seat.
   const winners = [
     { round_index: 0, label: 'Round 1', matches: [
       { competitors: ['v1', 'v2'], winner: 'v1', decision: 'win', bracket_slot: 'WB-R0-0' },
@@ -796,11 +770,13 @@ test('Task 3 — elimFlow: a lane ELIMINATED in a column draws NO phantom advanc
     ] },
   ];
   const servedD = mock.deriveElimStates(winners);
-  const flow = svg.elimFlow({ rounds: servedD.rounds, gen_states: servedD.gen_states, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned' });
-  const segs = allByClass(flow, 'dn-elimflow-seg');
-  const goodSegs = segs.filter((s) => (s.getAttribute('class') || '').includes('dn-elimflow-good'));
-  assertEqual(goodSegs.length, 2, 'only the champion v3 advances (col0→col1, col1→gate) — the eliminated v1 draws no phantom segment');
-  assert(flow.textContent.includes('✕'), 'the eliminated lanes still terminate with ✕');
+  const bracket = svg.elimRadial({ rounds: servedD.rounds, gen_states: servedD.gen_states, championId: 'v3', benchmarkId: 'v0', gateState: 'crowned' });
+  const spokeOf = (id) => allByClass(bracket, 'dn-elimradial-spoke').find((g) => allByClass(g, 'dn-elimradial-name').some((t) => t.textContent.startsWith(id)));
+  const goodSegs = (g) => allByClass(g, 'dn-elimradial-seg').filter((s) => (s.getAttribute('class') || '').includes('dn-good'));
+  assertEqual(goodSegs(spokeOf('v1')).length, 0, 'the eliminated v1 survives no ring despite its sibling win');
+  assertEqual(allByClass(spokeOf('v1'), 'dn-elimradial-cut').length, 1, 'v1 terminates with ✕');
+  assertEqual(goodSegs(spokeOf('v3')).length, 2, 'only the champion v3 survives both rings');
+  assertEqual(allByClass(spokeOf('v3'), 'dn-elimradial-gateline').length, 1, 'v3 dashes into the seat');
 });
 
 await run();
