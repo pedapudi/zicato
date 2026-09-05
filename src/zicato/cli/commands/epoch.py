@@ -565,18 +565,20 @@ def set_goal_cmd(epoch_id: str, goal: str, workspace: str) -> None:
 def rounds_cmd(workspace: str, epoch_id: str | None, verify: bool, as_json: bool) -> None:
     """Check ROUND-BY-ROUND that an epoch measured what it claims to have.
 
-    Liveness is not integrity. A loop that exits cleanly, and even one
-    that demonstrably reached the model, can still have settled rounds
-    that produced no duel — an endpoint outage mid-run leaves earlier
-    rounds intact and later ones empty, and a mean built from the
-    survivors is not a smaller measurement, it is a different one. This
-    reads the durable per-round event logs
+    A clean exit proves the loop ran; this command checks what it
+    measured. A loop that exits cleanly, and even one that reached the
+    model, can still have settled rounds that produced no duel — an
+    endpoint outage mid-run leaves earlier rounds intact and later ones
+    empty, and a mean built from the survivors is a different
+    measurement rather than a smaller one. This reads the durable
+    per-round event logs
     (`epochs/{epoch}/rounds/{round}/round_log.jsonl`) and classifies
-    every round as `complete` (settled with a gate evaluation),
-    `settled_degraded` (settled with no gate, but the proposer was
-    reached and returned an invalid patch — a real measurement), or
-    `void` (a torn log, a hard credential/transport failure, or a round
-    that closed with neither a measurement nor an explanation).
+    every round as `complete` (the round settled with a promotion-gate
+    decision), `settled_degraded` (the round settled without a gate
+    decision because the proposer returned an invalid patch, which is a
+    real measurement of the proposer), or `void` (a torn log, a hard
+    credential/transport failure, or a round that closed with neither a
+    measurement nor an explanation).
 
     The cell-acceptance rule: an epoch is ACCEPTED iff it contains zero
     void rounds. Pass --verify to make that verdict the exit code.

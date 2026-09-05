@@ -63,11 +63,11 @@ Usage: zicato board audit [OPTIONS]
   Measure the evaluation's A/A noise floor and record it on the epoch.
 
   Runs the current champion against ITSELF --runs times (fresh draws through the
-  same board-unit workers every duel uses) and reports the delta_scalar spread —
-  the smallest difference the board can actually resolve. The measured floor is
-  persisted onto the epoch record (config.json's noise_floor field) so `zicato
-  evolve` can warn when promote_margin is below it while the evidence gate is
-  off.
+  same workers every tournament duel uses) and reports the spread of the scalar
+  differences between draws: the noise floor, the smallest difference the board
+  can resolve. The measured floor is persisted onto the epoch record
+  (config.json's noise_floor field) so `zicato evolve` can warn when
+  promote_margin is below it while the evidence gate is off.
 
 Options:
   --workspace TEXT           Path to the zicato workspace root.  [default:
@@ -365,16 +365,17 @@ Usage: zicato epoch rounds [OPTIONS]
 
   Check ROUND-BY-ROUND that an epoch measured what it claims to have.
 
-  Liveness is not integrity. A loop that exits cleanly, and even one that
-  demonstrably reached the model, can still have settled rounds that produced no
-  duel — an endpoint outage mid-run leaves earlier rounds intact and later ones
-  empty, and a mean built from the survivors is not a smaller measurement, it is
-  a different one. This reads the durable per-round event logs
-  (`epochs/{epoch}/rounds/{round}/round_log.jsonl`) and classifies every round
-  as `complete` (settled with a gate evaluation), `settled_degraded` (settled
-  with no gate, but the proposer was reached and returned an invalid patch — a
-  real measurement), or `void` (a torn log, a hard credential/transport failure,
-  or a round that closed with neither a measurement nor an explanation).
+  A clean exit proves the loop ran; this command checks what it measured. A loop
+  that exits cleanly, and even one that reached the model, can still have
+  settled rounds that produced no duel — an endpoint outage mid-run leaves
+  earlier rounds intact and later ones empty, and a mean built from the
+  survivors is a different measurement rather than a smaller one. This reads the
+  durable per-round event logs (`epochs/{epoch}/rounds/{round}/round_log.jsonl`)
+  and classifies every round as `complete` (the round settled with a promotion-
+  gate decision), `settled_degraded` (the round settled without a gate decision
+  because the proposer returned an invalid patch, which is a real measurement of
+  the proposer), or `void` (a torn log, a hard credential/transport failure, or
+  a round that closed with neither a measurement nor an explanation).
 
   The cell-acceptance rule: an epoch is ACCEPTED iff it contains zero void
   rounds. Pass --verify to make that verdict the exit code. --verify ALSO fails
@@ -454,17 +455,18 @@ Options:
                                   exit without spending a round.
   --rounds INTEGER RANGE          Number of evolve rounds to attempt.  [default:
                                   1; x>=1]
-  --mode [full|fast]              fast (default) = cache-first: every
-                                  (generation, entry, replicate) board unit is
-                                  evaluated at most once and reused across all
-                                  pairings/rounds/structures; only cache misses
-                                  run. On the gauntlet the champion is a frozen
-                                  cached aggregate, so replicates reduce
-                                  CHALLENGER-side noise only — repeated rounds
+  --mode [full|fast]              fast (default) = cache-first: every board unit
+                                  (one generation on one board entry at one
+                                  replicate index) is evaluated at most once and
+                                  its result reused across pairings, rounds and
+                                  structures; only cache misses run. On the
+                                  gauntlet the champion's side is a cached
+                                  aggregate, so replicates reduce noise on the
+                                  challenger's side only, and repeated rounds
                                   are not independent draws of the contrast.
-                                  full = bypass the cache and force a fresh
-                                  evaluation of every unit, both sides (noise
-                                  re-sampling / debugging).  [default: fast]
+                                  full = bypass the cache and evaluate every
+                                  unit afresh on both sides (noise re-sampling /
+                                  debugging).  [default: fast]
   --max-consecutive-rejections INTEGER RANGE
                                   Stop early when this many rounds in a row are
                                   rejected.  [default: 3; x>=1]
@@ -561,8 +563,9 @@ Usage: zicato init [OPTIONS]
   directory if it doesn't exist, writes an empty lineage DAG (lineage.json:
   {"epochs": []}), and writes config.json containing {instance_id, created_at,
   generation_source_backend}. It also scaffolds the operator's live scoring.json
-  (next to the workspace, only when absent) with the full recommended contract —
-  racing field 4, replicates 2, the evidence gate enabled explicitly. Run it
+  (next to the workspace, only when absent) with the recommended contract: a
+  racing tournament that fields four challengers per round, two replicates per
+  duel, and the evidence gate enabled with its replicate budget stated. Run it
   once per project; then point `zicato evolve` at the same workspace.
 
   Refuses to overwrite an existing workspace unless --force is passed. Force

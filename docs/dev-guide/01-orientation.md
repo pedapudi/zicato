@@ -130,66 +130,71 @@ rules and the green-gates rule (§4).
 
 ## 2. Vocabulary
 
-Every term below is load-bearing: it appears in code, on disk, or in the
-dashboard with the meaning given here. For each term you get the
-definition, where it lives in code, and the file that owns it. When two
-terms name the same thing from different angles (champion/parent), that
-is called out explicitly. Skim it now and come back to it as you work.
+The glossary is [`docs/design/VOCABULARY.md`](../design/VOCABULARY.md),
+and every term below links to its entry there. This section adds what
+the glossary leaves out: the symbol and file that own each term, and
+the traps that sit next to them in code. When two terms name the same
+thing from different angles (champion/parent), that is called out
+explicitly. Skim it now and come back to it as you work.
 
 ### 2.0 Quick reference: term → owning type → owning file
 
-Use this table to jump; the subsections below carry the definitions.
+Use this table to jump. The term column links to the definition in the
+glossary; the subsections below say where each concept lives in code.
+Two rows name code mechanisms with no user-facing concept and carry no
+link. `tests/test_vocabulary_glossary.py` checks that every other row
+resolves to a glossary heading.
 
 | Term | Owning symbol | Owning file |
 |---|---|---|
-| workspace | `WorkspaceLayout` | `src/zicato/workspace/` |
-| epoch | `EpochConfig` | `src/zicato/core/epoch.py` (type) / `src/zicato/epoch/lifecycle.py` (lifecycle) |
-| contract / contract hash | `ContractInputs`, `compute_contract_hash` | `src/zicato/epoch/contract.py` |
-| generation | `Generation` | `src/zicato/core/epoch.py` |
-| generation source tree | `GenerationStore` | `src/zicato/epoch/genstore.py` (+ `git_genstore.py`, the default) |
-| round (evolve round) | `Generation.round_index` / `Experiment.round_index` | `src/zicato/core/` |
-| stage (inner round) | `RoundRecord.stage_index` | `src/zicato/selection/strategy.py` |
-| run | `LossProfile` | `src/zicato/core/loss.py` |
-| board / board entry | `BoardEntry` | `src/zicato/core/board.py` (type) / `src/zicato/board/jsonl.py` (I/O) |
-| expectation / predicate / rubric | `Expectation`, `ExpectationKind` | `src/zicato/core/board.py` |
-| judge | `JudgeSpec` | `src/zicato/core/board.py` (type) / `src/zicato/judge_runtime/` (bridge) |
-| drift kinds / severities | `DriftKind`, `DriftSeverity`, `GOLDFIVE_DRIFT_KINDS` | `src/zicato/core/drift_kinds.py` — zicato's string mirror of goldfive's enums (goldfive is an optional extra) |
-| proposer brief | `ProposerBrief` | `src/zicato/proposer/brief.py` |
-| scoring | `ScoringWeights` | `src/zicato/core/scoring_config.py` |
-| Goldfive configuration document | `goldfive.RuntimeConfigDocument` | Goldfive owns the schema; `src/zicato/integrations/goldfive.py` is Zicato's lazy bridge |
-| mutation point / patch | `MutationPoint`, `Patch` | `src/zicato/core/mutation.py` / `src/zicato/mutation/` |
-| loss profile | `LossProfile` | `src/zicato/core/loss.py` (type) / `src/zicato/telemetry/reducer.py` (producer) |
-| scalar | `aggregate_generation_score` | `src/zicato/tournament/scoring.py` |
-| gate | `evaluate_gate`, `GateOutcome` | `src/zicato/tournament/gate.py` |
-| pattern | `Pattern`, `detect_patterns` | `src/zicato/core/patterns.py`, `src/zicato/patterns/detectors.py` |
-| failure profile | `_render_failure_profile` | `src/zicato/evolve/decision_support.py` (+ `analyzer/outcome_marginals.py`) |
-| process exemplars | `extract_process_exemplars` | `src/zicato/analyzer/process_exemplars.py` |
-| noise floor | `NoiseFloor`, `CALIBRATION_REPLICATE_BASE` | `src/zicato/tournament/calibration.py` |
-| preflight | `PreflightReport`, `PREFLIGHT_REPLICATE_BASE` | `src/zicato/epoch/preflight.py` |
-| tournament (runner) | `run_tournament`, `run_matchup`, `TournamentResult` | `src/zicato/tournament/runner.py` |
-| tournament structure | `TournamentStructure` | `src/zicato/core/tournament.py` |
-| selection strategy / decision | `SelectionStrategy`, `SelectionDecision` | `src/zicato/selection/strategy.py` |
-| resolve / drive a field | `resolve_tournament`, `EvidencePreGate` | `src/zicato/selection/driver.py` |
-| evidence gate | `EVIDENCE_REPLICATE_BASE`, `rating_block` | `src/zicato/selection/evidence_gate.py` |
-| holdout/train split | `split_board`, `rotation_seed` | `src/zicato/board/split.py` |
-| facet slice (display only) | `FACET_TAG_PREFIX`, `facet_scores_for_generation` | `src/zicato/query/eval_view.py` |
-| Ladder | `LadderConfig` / `holdout_record` | `src/zicato/core/scoring_config.py` / `src/zicato/tournament/ladder.py` |
-| screen | `run_candidate_screen`, `SCREEN_REPLICATE_BASE` | `src/zicato/epoch/screen.py` |
-| slate / best-of-N | `BestOfNProposerAgent`, `wrap_with_proposer_quality` | `src/zicato/proposer/best_of_n.py` |
-| placebo | `placebo_round_due`, `PLACEBO_HYPOTHESIS_MARKER` | `src/zicato/evolve/placebo.py`, `src/zicato/core/experiment.py` |
-| experiment / hypothesis / outcome | `Experiment`, `HypothesisSpec`, `OutcomeRecord` | `src/zicato/core/experiment.py` |
-| experiment memory | `PriorExperiment`, `EXPERIMENT_MEMORY_MAX_ENTRIES` | `src/zicato/core/experiment.py` |
-| journal | `append_journal_entry` | `src/zicato/epoch/journal.py` |
-| lineage | `append_to_lineage`, `load_lineage` | `src/zicato/epoch/lineage.py` |
-| RoundLog | `RoundLog`, `fold_round_record` | `src/zicato/epoch/round_log.py` |
-| index | `rebuild_index` | `src/zicato/index/` |
-| heartbeat / progress log | `HeartbeatBeater` / `progress_log` | `src/zicato/runtime/heartbeat.py`, `src/zicato/runtime/progress_log.py` |
-| control protocol | `claim_gate_override`, `claim_skip_round`, … | `src/zicato/runtime/control_consumer.py` |
-| crash resume | `prepare_resume`, `ResumePlan` | `src/zicato/runtime/resume.py` |
-| deferral | `DEFERRED_INFRA_DECISION` | `src/zicato/evolve/round_api.py` (re-exported from `zicato.orchestrator`) |
-| adapter | `HarnessAdapter` | `src/zicato/adapters/` |
-| runtime knobs | `RuntimeConfig`, `RoundTokenLedger` | `src/zicato/core/runtime.py` |
-| round outcome | `EvolveRoundOutcome` | `src/zicato/evolve/round_api.py` (re-exported from `zicato.orchestrator`) |
+| [workspace](../design/VOCABULARY.md#workspace) | `WorkspaceLayout` | `src/zicato/workspace/` |
+| [epoch](../design/VOCABULARY.md#epoch) | `EpochConfig` | `src/zicato/core/epoch.py` (type) / `src/zicato/epoch/lifecycle.py` (lifecycle) |
+| [contract / contract hash](../design/VOCABULARY.md#contract) | `ContractInputs`, `compute_contract_hash` | `src/zicato/epoch/contract.py` |
+| [generation](../design/VOCABULARY.md#generation) | `Generation` | `src/zicato/core/epoch.py` |
+| [generation source tree](../design/VOCABULARY.md#generation-store) | `GenerationStore` | `src/zicato/epoch/genstore.py` (+ `git_genstore.py`, the default) |
+| [round (evolve round)](../design/VOCABULARY.md#round) | `Generation.round_index` / `Experiment.round_index` | `src/zicato/core/` |
+| [stage (inner round)](../design/VOCABULARY.md#round) | `RoundRecord.stage_index` | `src/zicato/selection/strategy.py` |
+| [run](../design/VOCABULARY.md#run) | `LossProfile` | `src/zicato/core/loss.py` |
+| [board](../design/VOCABULARY.md#board) / [board entry](../design/VOCABULARY.md#board-entry) | `BoardEntry` | `src/zicato/core/board.py` (type) / `src/zicato/board/jsonl.py` (I/O) |
+| [expectation](../design/VOCABULARY.md#expectation) / [predicate](../design/VOCABULARY.md#predicate) / [rubric](../design/VOCABULARY.md#rubric) | `Expectation`, `ExpectationKind` | `src/zicato/core/board.py` |
+| [judge](../design/VOCABULARY.md#judge) | `JudgeSpec` | `src/zicato/core/board.py` (type) / `src/zicato/judge_runtime/` (bridge) |
+| [drift kinds / severities](../design/VOCABULARY.md#drift) | `DriftKind`, `DriftSeverity`, `GOLDFIVE_DRIFT_KINDS` | `src/zicato/core/drift_kinds.py` — zicato's string mirror of goldfive's enums (goldfive is an optional extra) |
+| [proposer brief](../design/VOCABULARY.md#proposer-brief) | `ProposerBrief` | `src/zicato/proposer/brief.py` |
+| [scoring](../design/VOCABULARY.md#scoring-weights) | `ScoringWeights` | `src/zicato/core/scoring_config.py` |
+| [Goldfive configuration document](../design/VOCABULARY.md#goldfive-configuration-document) | `goldfive.RuntimeConfigDocument` | Goldfive owns the schema; `src/zicato/integrations/goldfive.py` is Zicato's lazy bridge |
+| [mutation point](../design/VOCABULARY.md#mutation-point) / [patch](../design/VOCABULARY.md#patch) | `MutationPoint`, `Patch` | `src/zicato/core/mutation.py` / `src/zicato/mutation/` |
+| [loss profile](../design/VOCABULARY.md#loss-profile) | `LossProfile` | `src/zicato/core/loss.py` (type) / `src/zicato/telemetry/reducer.py` (producer) |
+| [scalar](../design/VOCABULARY.md#scalar) | `aggregate_generation_score` | `src/zicato/tournament/scoring.py` |
+| [gate](../design/VOCABULARY.md#promotion-gate) | `evaluate_gate`, `GateOutcome` | `src/zicato/tournament/gate.py` |
+| [pattern](../design/VOCABULARY.md#pattern) | `Pattern`, `detect_patterns` | `src/zicato/core/patterns.py`, `src/zicato/patterns/detectors.py` |
+| [failure profile](../design/VOCABULARY.md#failure-profile) | `_render_failure_profile` | `src/zicato/evolve/decision_support.py` (+ `analyzer/outcome_marginals.py`) |
+| [process exemplars](../design/VOCABULARY.md#process-exemplars) | `extract_process_exemplars` | `src/zicato/analyzer/process_exemplars.py` |
+| [noise floor](../design/VOCABULARY.md#noise-floor) | `NoiseFloor`, `CALIBRATION_REPLICATE_BASE` | `src/zicato/tournament/calibration.py` |
+| [preflight](../design/VOCABULARY.md#preflight) | `PreflightReport`, `PREFLIGHT_REPLICATE_BASE` | `src/zicato/epoch/preflight.py` |
+| [tournament (runner)](../design/VOCABULARY.md#tournament) | `run_tournament`, `run_matchup`, `TournamentResult` | `src/zicato/tournament/runner.py` |
+| [tournament structure](../design/VOCABULARY.md#tournament-structure) | `TournamentStructure` | `src/zicato/core/tournament.py` |
+| [selection strategy](../design/VOCABULARY.md#tournament-structure) / [decision](../design/VOCABULARY.md#crowning) | `SelectionStrategy`, `SelectionDecision` | `src/zicato/selection/strategy.py` |
+| [resolve / drive a field](../design/VOCABULARY.md#field) | `resolve_tournament`, `EvidencePreGate` | `src/zicato/selection/driver.py` |
+| [evidence gate](../design/VOCABULARY.md#evidence-gate) | `EVIDENCE_REPLICATE_BASE`, `rating_block` | `src/zicato/selection/evidence_gate.py` |
+| [holdout/train split](../design/VOCABULARY.md#board-split) | `split_board`, `rotation_seed` | `src/zicato/board/split.py` |
+| [facet slice (display only)](../design/VOCABULARY.md#facet) | `FACET_TAG_PREFIX`, `facet_scores_for_generation` | `src/zicato/query/eval_view.py` |
+| [Ladder](../design/VOCABULARY.md#ladder) | `LadderConfig` / `holdout_record` | `src/zicato/core/scoring_config.py` / `src/zicato/tournament/ladder.py` |
+| [screen](../design/VOCABULARY.md#screening) | `run_candidate_screen`, `SCREEN_REPLICATE_BASE` | `src/zicato/epoch/screen.py` |
+| [slate / best-of-N](../design/VOCABULARY.md#best-of-n) | `BestOfNProposerAgent`, `wrap_with_proposer_quality` | `src/zicato/proposer/best_of_n.py` |
+| [placebo](../design/VOCABULARY.md#placebo-arm) | `placebo_round_due`, `PLACEBO_HYPOTHESIS_MARKER` | `src/zicato/evolve/placebo.py`, `src/zicato/core/experiment.py` |
+| [experiment](../design/VOCABULARY.md#experiment) / [hypothesis](../design/VOCABULARY.md#hypothesis) / [outcome](../design/VOCABULARY.md#outcome) | `Experiment`, `HypothesisSpec`, `OutcomeRecord` | `src/zicato/core/experiment.py` |
+| [experiment memory](../design/VOCABULARY.md#experiment-memory) | `PriorExperiment`, `EXPERIMENT_MEMORY_MAX_ENTRIES` | `src/zicato/core/experiment.py` |
+| [journal](../design/VOCABULARY.md#journal) | `append_journal_entry` | `src/zicato/epoch/journal.py` |
+| [lineage](../design/VOCABULARY.md#lineage) | `append_to_lineage`, `load_lineage` | `src/zicato/epoch/lineage.py` |
+| [RoundLog](../design/VOCABULARY.md#round-log) | `RoundLog`, `fold_round_record` | `src/zicato/epoch/round_log.py` |
+| [index](../design/VOCABULARY.md#analytical-index) | `rebuild_index` | `src/zicato/index/` |
+| [heartbeat / progress log](../design/VOCABULARY.md#heartbeat) | `HeartbeatBeater` / `progress_log` | `src/zicato/runtime/heartbeat.py`, `src/zicato/runtime/progress_log.py` |
+| [control protocol](../design/VOCABULARY.md#control-protocol) | `claim_gate_override`, `claim_skip_round`, … | `src/zicato/runtime/control_consumer.py` |
+| [crash resume](../design/VOCABULARY.md#resume) | `prepare_resume`, `ResumePlan` | `src/zicato/runtime/resume.py` |
+| [deferral](../design/VOCABULARY.md#deferral) | `DEFERRED_INFRA_DECISION` | `src/zicato/evolve/round_api.py` (re-exported from `zicato.orchestrator`) |
+| [adapter](../design/VOCABULARY.md#adapter) | `HarnessAdapter` | `src/zicato/adapters/` |
+| [runtime knobs](../design/VOCABULARY.md#runtime-configuration) | `RuntimeConfig`, `RoundTokenLedger` | `src/zicato/core/runtime.py` |
+| [round outcome](../design/VOCABULARY.md#round) | `EvolveRoundOutcome` | `src/zicato/evolve/round_api.py` (re-exported from `zicato.orchestrator`) |
 | worker boundary | `_callable_dotted_path`, `_weights_spec` | `src/zicato/tournament/worker_transport.py` |
 | record-format guard | `RECORD_FORMAT_VERSION`, `check_record_format` | `src/zicato/epoch/_storage.py` |
 
@@ -255,12 +260,13 @@ The unqualified word "round" in this guide always means the evolve round.
 `epochs/{epoch}/generations/{gen}/runs/…`; path math in
 `src/zicato/core/workspace.py` (`loss_profile_path` and friends).
 
-**board unit** — the scheduling unit of a tournament: one board entry
-evaluated for one duel, typically as a champion run + challenger run
-pair. `RuntimeConfig.parallelism` bounds how many board units are in
-flight (`src/zicato/core/runtime.py`) — in full mode each unit runs its
-two sides concurrently, so size the LLM endpoint against
-`2 × parallelism`.
+**board unit** — the cache quantum `(generation, entry, replicate)`
+(`src/zicato/tournament/unit_cache.py`): evaluated at most once under a
+fixed contract and reused by every pairing, round, and structure. The
+scheduler admits units per board entry: `RuntimeConfig.parallelism`
+bounds how many entries are in flight (`src/zicato/core/runtime.py`),
+and in full mode each entry runs its champion unit and its challenger
+unit concurrently, so size the LLM endpoint against `2 × parallelism`.
 
 ### 2.2 The contract side
 

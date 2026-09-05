@@ -667,14 +667,15 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
     default="fast",
     show_default=True,
     help=(
-        "fast (default) = cache-first: every (generation, entry, "
-        "replicate) board unit is evaluated at most once and reused "
-        "across all pairings/rounds/structures; only cache misses run. "
-        "On the gauntlet the champion is a frozen cached aggregate, so "
-        "replicates reduce CHALLENGER-side noise only — repeated rounds "
-        "are not independent draws of the contrast. "
-        "full = bypass the cache and force a fresh evaluation of every "
-        "unit, both sides (noise re-sampling / debugging)."
+        "fast (default) = cache-first: every board unit (one generation "
+        "on one board entry at one replicate index) is evaluated at most "
+        "once and its result reused across pairings, rounds and "
+        "structures; only cache misses run. On the gauntlet the "
+        "champion's side is a cached aggregate, so replicates reduce "
+        "noise on the challenger's side only, and repeated rounds are "
+        "not independent draws of the contrast. "
+        "full = bypass the cache and evaluate every unit afresh on both "
+        "sides (noise re-sampling / debugging)."
     ),
 )
 @click.option(

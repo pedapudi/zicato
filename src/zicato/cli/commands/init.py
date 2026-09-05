@@ -66,9 +66,10 @@ def init_cmd(
     DAG (lineage.json: {"epochs": []}), and writes config.json
     containing {instance_id, created_at, generation_source_backend}. It also scaffolds
     the operator's live scoring.json (next to the workspace, only when
-    absent) with the full recommended contract — racing field 4,
-    replicates 2, the evidence gate enabled explicitly. Run it once per
-    project; then point `zicato evolve` at the same workspace.
+    absent) with the recommended contract: a racing tournament that
+    fields four challengers per round, two replicates per duel, and the
+    evidence gate enabled with its replicate budget stated. Run it once
+    per project; then point `zicato evolve` at the same workspace.
 
     Refuses to overwrite an existing workspace unless --force is
     passed. Force rewrites config.json and lineage.json while preserving a
