@@ -38,6 +38,7 @@ import { epochIsLive } from '../livestatus.js';
 import { CROWN, fmt } from '../svg.js';
 import { harmonografMini, harmonografIsLive } from '../core/harmonograf.js';
 import { flipWhisker, discriminationPips, vizFromFeedAdmission } from '../core/admission_viz.js';
+import { mount as mountEvalHealth } from '../panels/evals_health.js';
 
 // ── module-level filter state ─────────────────────────────────────────
 // Persists across the shell's SSE-driven re-dispatch so a steady beat keeps the
@@ -273,17 +274,15 @@ function build(host, ctx, matrix, epochId, live, ghosts, epochLive) {
   const entries = Array.isArray(matrix.entries) ? matrix.entries : [];
   const cells = Array.isArray(matrix.cells) ? matrix.cells : [];
 
-  // ── the WS-HEALTH mount seam (adjudicated placement, EVAL-VIEW.md §5) ──
-  // The instrument panel lives as a strip ABOVE the matrix + a section BELOW,
-  // built by a SEPARATE module (health-a's evals_health.js). We own the two
-  // host containers; its module owns their contents, so the two branches merge
-  // without editing each other's lines. A guarded dynamic import: if the module
-  // exists and exports `mount`, we call mount({strip, section}, matrix, ctx);
-  // absent module / export → the hosts stay empty (nothing extra renders).
+  // ── the instrument-health panel (EVAL-VIEW.md §5) ──
+  // The panel (panels/evals_health.js) paints a strip ABOVE the matrix and a
+  // section BELOW it. This view owns the two host containers; the panel owns
+  // their contents and fetches its own payload, so its mount is not awaited:
+  // the matrix paints first and the panel fills its hosts when its read lands.
   const stripHost = el('div', { class: 'dn-evals-health-strip' });
   const sectionHost = el('section', { class: 'dn-evals-health-section' });
   nodes.push(stripHost);
-  mountHealth(stripHost, sectionHost, matrix, ctx);
+  mountEvalHealth({ strip: stripHost, section: sectionHost }, matrix, ctx);
 
   if (!candidates.length && !entries.length) {
     nodes.push(section('Matrix', el('div', { class: 'dn-panel' }, [
@@ -590,17 +589,4 @@ function cellNode(ctx, epochId, entry, cand, cell, live) {
     }
   }
   return td;
-}
-
-// The WS-HEALTH mount (health-a's module). A guarded dynamic import so the view
-// degrades cleanly when the module is absent (this branch alone) and lights up
-// when it lands (the merged branch). Any import / call failure is swallowed —
-// the instrument panel is additive, never load-bearing for the matrix.
-function mountHealth(strip, sectionEl, matrix, ctx) {
-  import('./evals_health.js').then((mod) => {
-    const fn = mod && (mod.mount || mod.mountEvalsHealth || mod.default);
-    if (typeof fn === 'function') {
-      try { fn({ strip, section: sectionEl }, matrix, ctx); } catch (e) { /* additive — never break the matrix */ }
-    }
-  }).catch(() => { /* module absent (this branch) → render nothing extra */ });
 }

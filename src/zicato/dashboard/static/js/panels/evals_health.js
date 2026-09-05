@@ -1,4 +1,5 @@
-// js/views/evals_health.js — the WS-HEALTH instrument panel (EVAL-VIEW.md §5).
+// js/panels/evals_health.js — the instrument-health panel of the evals page
+// (EVAL-VIEW.md §5).
 //
 // The board read as a MEASURING DEVICE, live: the measured A/A noise floor + the
 // live MDE ladder (§4.3), and the ranked instrument-quality findings — noisiest
@@ -6,20 +7,18 @@
 // cost, the holdout-ladder budget, rotation cadence, and redundancy clusters
 // (only when a reflection is already built; else a deferred pointer at `reflect`).
 //
-// MOUNT SEAM (merge-safe with the sibling WS-MATRIX view). This is a SEPARATE
-// module the Evals view (evals.js) mounts as a strip + section INSIDE itself
-// (EVAL-VIEW.md §5 "Where WS-HEALTH lives"). evals.js owns two host containers —
-// a strip ABOVE the matrix and a section BELOW it — and calls our `mount`:
-//
-//   const eh = await import('./evals_health.js');
-//   await eh.mount({ strip, section }, matrixPayload, { navigate, href });
+// A panel rather than a view: it has no route of its own. The evals view
+// (views/evals.js) owns two host containers — a strip ABOVE the matrix and a
+// section BELOW it — and calls `mount({ strip, section }, matrixPayload,
+// { navigate, href })` on every render.
 //
 // `mount` FETCHES its own /api/epoch/{id}/eval-health payload (the matrix payload
 // only supplies `epoch_id`), builds the model, and paints the strip + section
-// digest-gated. Any failure degrades to honest-empty hosts (the matrix renders
-// fine with nothing extra). The lower-level `evalHealthModel` / `evalHealthDigest`
-// / `renderEvalHealthStrip` / `renderEvalHealthSection` exports are pure and
-// unit-tested; a caller wanting a single combined node uses `renderEvalHealth`.
+// digest-gated. A failed or empty read degrades to honest-empty hosts (the
+// matrix renders fine with nothing extra). The lower-level `evalHealthModel` /
+// `evalHealthDigest` / `renderEvalHealthStrip` / `renderEvalHealthSection`
+// exports are pure and unit-tested; a caller wanting a single combined node
+// uses `renderEvalHealth`.
 //
 // The panel derives every field DEFENSIVELY from the build_eval_health reader,
 // degrades to honest empties (never a fabricated number — §4), and is

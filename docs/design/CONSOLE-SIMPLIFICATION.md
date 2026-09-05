@@ -4,8 +4,8 @@ This document is a proposal written on 2026-09-05. It describes intended changes
 to the console (the browser dashboard served by `zicato dashboard`) and the
 measurements behind them. Every number is taken at commit `74ed7514` of
 `main` with the command shown beside it, so a maintainer can re-run the
-measurement after any change. Proposals §3.2 and §3.4 are implemented and
-each ends with a sentence stating the state the code is in; the other
+measurement after any change. Proposals §3.2, §3.4 and §3.6 are implemented
+and each ends with a sentence stating the state the code is in; the other
 proposals are not implemented.
 
 The proposal is about the size and shape of the console's implementation.
@@ -617,6 +617,12 @@ surfaces in the console log instead of being swallowed.
 `evals_health.test.mjs`.
 
 **Depends on.** Nothing.
+
+**State.** Implemented for the eval-health panel. `views/evals.js` imports
+`panels/evals_health.js` statically and calls its `mount` directly, so a
+failure inside the panel reaches the console log. `boardstatus.js` and
+`ledger.js` still sit under `views/`; moving them edits the import lines of
+`views/epoch.js`, which remains to do.
 
 ### 3.7 Delete the unreferenced stylesheet rules
 

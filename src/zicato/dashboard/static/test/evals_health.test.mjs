@@ -11,7 +11,7 @@ import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
 installDom();
 
-const eh = await import('../js/views/evals_health.js');
+const eh = await import('../js/panels/evals_health.js');
 const ui = await import('../js/ui.js');
 
 function allByClass(host, cls) {

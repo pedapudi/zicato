@@ -173,7 +173,7 @@ lenses rather than onto addresses:
 | --- | --- | --- |
 | `views/structure.js` | Standings | **built** (the served model; see the deferred progressive live fill below) |
 | `views/boardstatus.js` | Board | deferred |
-| `views/evals_health.js` | Board — MDE / dead / noisiest / redundancy are all "can this instrument measure?" | deferred |
+| `panels/evals_health.js` | Board — MDE / dead / noisiest / redundancy are all "can this instrument measure?" | deferred |
 | `views/home.js` health panel | Health | deferred |
 
 **The operator applies a recommendation; the console never does.** The

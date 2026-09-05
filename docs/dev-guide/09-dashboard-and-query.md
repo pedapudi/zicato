@@ -76,7 +76,8 @@ server + the JS). Nothing in the library knows the driver exists.
 | `src/zicato/dashboard/static_assets.py` | `resolve_static_dir` — the bundle-resolution seam | 50 lines |
 | `src/zicato/dashboard/static/js/core/` | `sse.js` (the seq gate), `api.js` (`postControl`), `state.js` (`noteProgress`, `AppState`), `dom.js`, `bus.js` | — |
 | `src/zicato/dashboard/static/js/` | `router.js`, `shell.js` (dispatch + chrome + loop controls), `live.js` (the live engine + `pipelineStepper`), `livestatus.js` (the four run-states), `data.js` (null-degrading accessors), `svg.js` (the figure grammar), `ui.js` (`gatedSwap`) | — |
-| `src/zicato/dashboard/static/js/views/` | one module per page: `home.js`, `epoch.js`, `gens.js`, `candidate.js`, `board(s).js`, `mutations.js`, `instrument.js` (the board-reflection lens — landing / bill-of-health / judge-audit / x-ray), `diff.js`, … each an `async render(host, ctx, params)` | — |
+| `src/zicato/dashboard/static/js/views/` | one module per page: `home.js`, `epoch.js`, `gens.js`, `candidate.js`, `board(s).js`, `mutations.js`, `instrument.js` (the board-reflection lens — landing / bill-of-health / judge-audit / x-ray), `diff.js`, … each an `async render(host, ctx, params)`; `structure.js`, `boardstatus.js` and `ledger.js` are panels the epoch page composes | — |
+| `src/zicato/dashboard/static/js/panels/` | page sections a view imports and mounts into hosts it owns, with no route: `evals_health.js` (the evals page's instrument-health strip and section) | — |
 
 Two orientation facts before anything else:
 
