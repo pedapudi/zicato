@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 471,206 | +62,545 |
-| Production | 197,702 | 204,264 | +6,562 |
-| Production logic | 110,276 | 113,518 | +3,242 |
+| Total | 408,661 | 471,365 | +62,704 |
+| Production | 197,702 | 204,180 | +6,478 |
+| Production logic | 110,276 | 113,452 | +3,176 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,8 +84,8 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 72,986 | 39,291 | 27,204 | 30.8% |
-| src/zicato/query | 18,672 | 18,672 | 11,159 | 40.2% |
+| src/zicato/dashboard | 71,573 | 37,856 | 26,441 | 30.2% |
+| src/zicato/query | 20,023 | 20,023 | 11,856 | 40.8% |
 | src/zicato/evolve | 12,662 | 12,662 | 7,533 | 40.5% |
 | src/zicato/reflection | 9,779 | 9,779 | 6,159 | 37.0% |
 | src/zicato/epoch | 12,287 | 12,287 | 5,704 | 53.6% |
@@ -381,3 +381,4 @@ dropped rows named.
 | Three tournament structures behind an experimental opt-in (production) | 204,665 | +259 | 204,924 | Issue #394: `core/scoring_config.py` gains 61 for the `ExperimentalConfig` dataclass, its docstring, the `experimental` field and the load-time refusal of an experimental structure without the flag; `contract_draft/operations.py` 34 for `set_experimental`; `core/tournament.py` 28 for the experimental token set, the key and the one refusal message every surface renders; `cli/commands/evolve.py` 27 for the option's validating callback and its longer help; `selection/registry.py` 26 for the second registry, the gated resolution and the `experimental_structures` parameter, whose keyword-only marker it shares with the replicate parameters the noise-floor sizing added; `builder/copilot_tools.py` 22 for the `set_experimental` tool and the reworded `set_structure` description; `dashboard/static/js/views/builder.js` 21 for the gated card group and the Experimental section; `dashboard/static/js/builder/model.js` 15 for the split structure lists and the predicate; `selection/experimental/__init__.py` 12 of package docstring; `builder/api.py` 4 for the dispatch arm; `runtime/resume.py` 3, `core/types.py` 2 and `selection/__init__.py` 2 for the export and the threaded flag; `evolve/round_entry.py` and `cli/commands/tournament.py` 1 each for the flag passed to `make_strategy`. The three moved strategy modules change no line. |
 | Three tournament structures behind an experimental opt-in (production logic) | 113,824 | +130 | 113,954 | Issue #394: the executable growth is 24 lines in `core/scoring_config.py` (the dataclass, the field, the import and the refusal), 23 in `contract_draft/operations.py` (`set_experimental`), 18 in `cli/commands/evolve.py` (the callback and the option's help string), 18 in `dashboard/static/js/views/builder.js`, 10 in `selection/registry.py`, 9 each in `builder/copilot_tools.py` and `core/tournament.py`, 6 in `dashboard/static/js/builder/model.js`, 4 in `builder/api.py`, 3 in `runtime/resume.py`, 2 each in `core/types.py` and `selection/__init__.py`, and 1 each in `evolve/round_entry.py` and `cli/commands/tournament.py`. Nothing executable is removed. |
 | Production logic per subsystem and over time (total) | 471,301 | +699 | 472,000 | `tools/line_budget.py` adds 336: the partition of the three measurements by subsystem with each subsystem's prose share, the `--report` table, the per-subsystem table in this document that `--write-summary` writes and `--check-ledger` verifies, and the `--history` walk over first-parent commits through a content-addressed cache. `tests/test_line_budget.py` adds 352: hand counts of one small file per language in a subsystem of its own, the identity that the subsystems sum to the repository-wide counts, the table checks, and the history walk's caching and its refusal of a commit off the first-parent chain. The CI job writes the `--report` table into the job summary (8 lines) and `.gitignore` names the history cache (3). No production file changes, so the production and production-logic counts hold. |
+| Generation file and mutation readers in the query layer (total) | 471,206 | +215 | 471,421 | Proposal §3.4 of `docs/design/CONSOLE-SIMPLIFICATION.md`: the generation-file and mutation-site readers move from the dashboard package to `query/file_view.py` and `query/mutation_view.py`, and their seven routes become rows of the read-endpoint table in place of a hand-written factory. Production falls by 14 and production logic by 7, both limits ratcheting down to the measured totals: the deleted factory and its route bindings outweigh the seven rows, the `query` field that carries the content route's `?path=` coordinate, and the one degrade that names two refusals. The total rises for the coverage the move needs: 145 lines of the endpoint golden for the fourteen probes that pin what the seven routes serve for a coordinate the fixture holds, for one the guard rejects, and for the content route without its path, recorded from the hand-written handlers and asserted against the table; and the three boundary tests that hold every GET route outside a declared hand-written set to being a table row, every table reader to the query package, and the route module's `zicato` imports to `zicato.query`. |
