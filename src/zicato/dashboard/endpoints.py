@@ -11,9 +11,9 @@ their path, the coordinates they take, the reader they call, and the
 canned shape they serve when a coordinate is rejected. Those routes are
 declared as data in :data:`READ_ENDPOINTS` and built by one handler
 factory, so adding a read route is a table row rather than a function.
-The routes that are not that shape — the filesystem browser, the
-transcripts, the raw markdown and HTML documents, the query-parameter
-reads, and the control POSTs — stay hand-written below the table.
+The routes that are not that shape — the transcripts, the raw markdown
+and HTML documents, the query-parameter reads, and the control POSTs —
+stay hand-written below the table.
 
 GET routes are always available. The POST control routes write a marker
 file into ``.zicato/runtime/control/`` (the file-based control-channel
@@ -92,13 +92,16 @@ def _is_safe_run_ref(value: str) -> bool:
     )
 
 
-#: The guard each coordinate is validated with, keyed by its path-parameter
-#: name. A guard belongs to the KIND of coordinate rather than to a route: a
+#: The guard each coordinate is validated with, keyed by its parameter name.
+#: A guard belongs to the KIND of coordinate rather than to a route: a
 #: tournament id is admitted by the same alphabet wherever it appears. Any
 #: name absent here takes the strict :func:`_is_safe_id`.
 COORDINATE_GUARDS: Final[Mapping[str, Callable[[str], bool]]] = {
     "tournament_id": _is_safe_tournament_id,
     "run_ref": _is_safe_run_ref,
+    # A file path inside a generation tree: any non-empty value. Traversal is
+    # refused by the generation store, which answers with an ``error`` field.
+    "path": bool,
 }
 
 
@@ -186,11 +189,17 @@ class ReadEndpoint:
     params:
         The path parameters, in reader-argument order. Each is validated by
         the guard :data:`COORDINATE_GUARDS` gives its name.
+    query:
+        Query-string parameters the reader takes after the path parameters,
+        in reader-argument order. An absent one reads as the empty string,
+        and each is validated by the same guard table, so a route that
+        needs a value declares its parameter under a name whose guard
+        refuses the empty string.
     degrade:
         The body a rejected coordinate (or a rejected ``?epoch=`` scope)
         answers with, at ``degrade_status``. Required on a route with
-        something to reject — a path parameter, or a scope mode that
-        refuses — and ``None`` on a route with neither.
+        something to reject — a path or query parameter, or a scope mode
+        that refuses — and ``None`` on a route with neither.
     epoch_scope:
         How the optional ``?epoch=<id>`` parameter is handled — one of the
         four ``SCOPE_`` / ``EPOCH_SCOPE_NONE`` values above. When it is not
@@ -206,15 +215,21 @@ class ReadEndpoint:
     reader: Callable[..., Any]
     serves: str
     params: tuple[str, ...] = ()
+    query: tuple[str, ...] = ()
     degrade: Degrade | None = None
     degrade_status: int = 200
     epoch_scope: str = EPOCH_SCOPE_NONE
     off_event_loop: bool = False
 
     @property
+    def coordinates(self) -> tuple[str, ...]:
+        """Every parameter a request can be refused on, in reader order."""
+        return self.params + self.query
+
+    @property
     def rejects_coordinates(self) -> bool:
         """Whether any request to this route can be refused before the read."""
-        return bool(self.params) or self.epoch_scope in (
+        return bool(self.coordinates) or self.epoch_scope in (
             SCOPE_REJECT_UNKNOWN_EPOCH,
             SCOPE_REJECT_MALFORMED_EPOCH,
         )
@@ -285,6 +300,16 @@ def _degrade_drift_movements(paths: WorkspacePaths, coordinates: dict[str, str])
         "challenger": generation_id,
         "movements": [],
     }
+
+
+_INVALID_GENERATION_COORDINATE = "invalid epoch or generation id"
+
+
+def _degrade_file_content(_paths: WorkspacePaths, coordinates: dict[str, str]) -> dict[str, Any]:
+    """The refusal names the ids when either is unsafe, else the absent path."""
+    if all(_is_safe_id(coordinates[name]) for name in ("epoch_id", "generation_id")):
+        return {"error": "missing 'path' query param"}
+    return {"error": _INVALID_GENERATION_COORDINATE}
 
 
 def _degrade_trace_detail(_paths: WorkspacePaths, coordinates: dict[str, str]) -> dict[str, Any]:
@@ -836,6 +861,68 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         degrade=lambda _paths, c: _empty_provenance(c["reflection_id"], c["suggestion_id"]),
         off_event_loop=True,
     ),
+    # -- generation files and the mutation surface ----------------------
+    ReadEndpoint(
+        path="/api/files",
+        reader=query.build_file_index,
+        serves="Every epoch's generations, each with file and patch counts and ``has_tree``.",
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/files/{epoch_id}/{generation_id}/tree",
+        reader=query.build_generation_tree,
+        serves="One generation's source tree as a flat ``{path, is_dir, size}`` list.",
+        params=("epoch_id", "generation_id"),
+        degrade=_fixed(error=_INVALID_GENERATION_COORDINATE, entries=[]),
+        degrade_status=400,
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/files/{epoch_id}/{generation_id}/content",
+        reader=query.read_generation_file,
+        serves="One file of a generation's source tree, named by ``?path=``.",
+        params=("epoch_id", "generation_id"),
+        query=("path",),
+        degrade=_degrade_file_content,
+        degrade_status=400,
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/files/{epoch_id}/{generation_id}/patches",
+        reader=query.build_generation_patches,
+        serves="The patch set that derived one generation from its parent.",
+        params=("epoch_id", "generation_id"),
+        degrade=_fixed(error=_INVALID_GENERATION_COORDINATE, patches=[]),
+        degrade_status=400,
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/files/{epoch_id}/{generation_id}/diff",
+        reader=query.build_generation_diff,
+        serves="The files one generation changed against its parent, with both contents.",
+        params=("epoch_id", "generation_id"),
+        degrade=_fixed(error=_INVALID_GENERATION_COORDINATE, files=[]),
+        degrade_status=400,
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/mutations/{epoch_id}",
+        reader=query.build_mutation_index,
+        serves="Every mutation site in one epoch's baseline, with the generations that patched it.",
+        params=("epoch_id",),
+        degrade=_fixed(error="invalid epoch id", mutations=[]),
+        degrade_status=400,
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/mutations/{epoch_id}/{mutation_id}",
+        reader=query.build_mutation_detail,
+        serves="One mutation site's baseline content and each patching generation's version.",
+        params=("epoch_id", "mutation_id"),
+        degrade=_fixed(error="invalid epoch or mutation id"),
+        degrade_status=400,
+        off_event_loop=True,
+    ),
 )
 
 
@@ -861,6 +948,7 @@ def _read_handler(paths: WorkspacePaths, entry: ReadEndpoint) -> Any:
 
     async def handler(request: Request) -> JSONResponse:
         coordinates = {name: request.path_params[name] for name in entry.params}
+        coordinates.update({name: request.query_params.get(name, "") for name in entry.query})
         for name, value in coordinates.items():
             if not _coordinate_guard(name)(value):
                 return JSONResponse(degrade(paths, coordinates), status_code=entry.degrade_status)
@@ -1078,97 +1166,6 @@ def _make_proposal_episode_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     return {
         "api_proposal_episode_export": api_proposal_episode_export,
         "api_proposal_episode_export_html": api_proposal_episode_export_html,
-    }
-
-
-def _make_files_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
-    """File-tree / mutation-site browser surface."""
-
-    async def api_files(_request: Request) -> JSONResponse:
-        from zicato.dashboard import filetree
-
-        return JSONResponse(filetree.build_file_index(paths))
-
-    async def api_files_tree(request: Request) -> JSONResponse:
-        from zicato.dashboard import filetree
-
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
-            return JSONResponse(
-                {"error": "invalid epoch or generation id", "entries": []},
-                status_code=400,
-            )
-        return JSONResponse(filetree.build_generation_tree(paths, epoch_id, generation_id))
-
-    async def api_files_content(request: Request) -> JSONResponse:
-        from zicato.dashboard import filetree
-
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
-            return JSONResponse({"error": "invalid epoch or generation id"}, status_code=400)
-        rel_path = request.query_params.get("path", "")
-        if not rel_path:
-            return JSONResponse({"error": "missing 'path' query param"}, status_code=400)
-        # The store layer rejects traversal; a 200 with an ``error``
-        # field keeps the dashboard from surfacing a hard failure.
-        return JSONResponse(filetree.read_generation_file(paths, epoch_id, generation_id, rel_path))
-
-    async def api_files_patches(request: Request) -> JSONResponse:
-        from zicato.dashboard import filetree
-
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
-            return JSONResponse(
-                {"error": "invalid epoch or generation id", "patches": []},
-                status_code=400,
-            )
-        return JSONResponse(filetree.build_generation_patches(paths, epoch_id, generation_id))
-
-    async def api_files_diff(request: Request) -> JSONResponse:
-        from zicato.dashboard import filetree
-
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
-            return JSONResponse(
-                {"error": "invalid epoch or generation id", "files": []},
-                status_code=400,
-            )
-        return JSONResponse(filetree.build_generation_diff(paths, epoch_id, generation_id))
-
-    # -- mutation-site browser endpoints -----------------------------
-
-    async def api_mutations(request: Request) -> JSONResponse:
-        from zicato.dashboard import mutations
-
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse(
-                {"error": "invalid epoch id", "mutations": []},
-                status_code=400,
-            )
-        return JSONResponse(mutations.build_mutation_index(paths, epoch_id))
-
-    async def api_mutation_detail(request: Request) -> JSONResponse:
-        from zicato.dashboard import mutations
-
-        epoch_id = request.path_params["epoch_id"]
-        mutation_id = request.path_params["mutation_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(mutation_id):
-            return JSONResponse({"error": "invalid epoch or mutation id"}, status_code=400)
-        return JSONResponse(mutations.build_mutation_detail(paths, epoch_id, mutation_id))
-
-    return {
-        "api_files": api_files,
-        "api_files_tree": api_files_tree,
-        "api_files_content": api_files_content,
-        "api_files_patches": api_files_patches,
-        "api_files_diff": api_files_diff,
-        "api_mutations": api_mutations,
-        "api_mutation_detail": api_mutation_detail,
     }
 
 
@@ -1505,7 +1502,6 @@ def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) ->
     handlers.update(_make_state_endpoints(paths, read_only=read_only, started=started))
     handlers.update(_make_epoch_document_endpoints(paths))
     handlers.update(_make_proposal_episode_endpoints(paths))
-    handlers.update(_make_files_endpoints(paths))
     handlers.update(_make_conversation_endpoints(paths))
     handlers.update(_make_control_endpoints(paths, read_only=read_only))
     return handlers

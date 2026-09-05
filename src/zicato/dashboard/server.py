@@ -315,29 +315,6 @@ def create_app(
             "/api/generation/{epoch_id}/{generation_id}/episode-export.html",
             handlers["api_proposal_episode_export_html"],
         ),
-        # The file-tree / mutation-site browser.
-        Route("/api/files", handlers["api_files"]),
-        Route(
-            "/api/files/{epoch_id}/{generation_id}/tree",
-            handlers["api_files_tree"],
-        ),
-        Route(
-            "/api/files/{epoch_id}/{generation_id}/content",
-            handlers["api_files_content"],
-        ),
-        Route(
-            "/api/files/{epoch_id}/{generation_id}/patches",
-            handlers["api_files_patches"],
-        ),
-        Route(
-            "/api/files/{epoch_id}/{generation_id}/diff",
-            handlers["api_files_diff"],
-        ),
-        Route("/api/mutations/{epoch_id}", handlers["api_mutations"]),
-        Route(
-            "/api/mutations/{epoch_id}/{mutation_id}",
-            handlers["api_mutation_detail"],
-        ),
         # The transcript surface.
         Route("/api/conversation/{run_id}", handlers["api_conversation"]),
         Route(

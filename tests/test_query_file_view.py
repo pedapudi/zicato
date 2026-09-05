@@ -1,4 +1,4 @@
-"""Tests for the dashboard Files view — :mod:`zicato.dashboard.filetree`.
+"""Tests for the generation file reader — :mod:`zicato.query.file_view`.
 
 The Files view browses every generation's source tree and applied
 patches through the :class:`~zicato.epoch.genstore.GenerationStore`
@@ -22,9 +22,9 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.core.types import Experiment, HypothesisSpec, Patch
-from zicato.dashboard.mutations import SPANS_CAPTION
 from zicato.dashboard.server import create_app
 from zicato.epoch.genstore import DirectoryGenerationStore
+from zicato.query.mutation_view import SPANS_CAPTION
 
 
 def _write(path: Path, body: str) -> None:

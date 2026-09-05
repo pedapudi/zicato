@@ -379,7 +379,7 @@ def load_mutation_surface(layout: WorkspaceLayout, epoch_id: str) -> tuple[dict[
     enumeration that keeps every recorded field (the dashboard's
     ``_parse_mutations`` keeps only a preview). The dashboard's
     mutation-site browser reads it too, as the record that outlives a
-    pruned snapshot tree — see :mod:`zicato.dashboard.mutations`.
+    pruned snapshot tree — see :mod:`zicato.query.mutation_view`.
     """
     raw = _read_json(layout.mutations(epoch_id))
     if not isinstance(raw, list):

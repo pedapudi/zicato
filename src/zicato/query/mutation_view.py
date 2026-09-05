@@ -1,7 +1,7 @@
-"""Mutation-site browser views for the dashboard.
+"""Readers of an epoch's mutation surface and one site's per-generation diff.
 
-This module backs the dashboard **Files** view's *mutation-site
-browser* section. Where :mod:`zicato.dashboard.filetree` renders a
+These readers serve the console **Files** view's *mutation-site
+browser* section. Where :mod:`zicato.query.file_view` renders a
 generation's whole source tree and applied patch set, this module
 renders the **mutation surface** — the ``# zicato:mutable id="..."``
 annotated spans that are zicato's editable region — and, for each, a
@@ -51,8 +51,8 @@ declares its ``provenance`` — ``"snapshot"`` (re-enumerated, exact) or
 ``"records"`` (reconstructed) — and a records-sourced payload also
 carries the caption the view must render. Never silence.
 
-Endpoints (wired in :mod:`zicato.dashboard.server`)
----------------------------------------------------
+Routes (rows of :data:`zicato.dashboard.endpoints.READ_ENDPOINTS`)
+------------------------------------------------------------------
 * ``GET /api/mutations/{epoch}`` → :func:`build_mutation_index` — every
   mutation site in the epoch's baseline, each with its file, role, and
   the list of generations that patched it.
@@ -79,8 +79,7 @@ from zicato.epoch.genstore import (
 )
 from zicato.epoch.journal import read_generation_patches
 from zicato.mutation.enumerator import enumerate_mutations
-from zicato.query import WorkspacePaths
-from zicato.query.paths import layout_of
+from zicato.query.paths import WorkspacePaths, layout_of
 from zicato.storage import workspace_backend
 from zicato.workspace import generation_ids, natural_key
 from zicato.workspace_loader import activate_mutation_surface
@@ -111,7 +110,7 @@ UNREACHABLE_CAPTION = "snapshot unreachable · reconstructed from records"
 
 #: The caption for a pruned generation's *file* views. Whole-tree
 #: browsing is genuinely unrecoverable; the spans its patches touched
-#: are. Consumed by :mod:`zicato.dashboard.filetree`.
+#: are. Consumed by :mod:`zicato.query.file_view`.
 SPANS_CAPTION = "full tree pruned by GC · patch-touched spans reconstructed"
 
 #: The same caption for the OTHER way the tree side goes missing: the reader
@@ -141,7 +140,7 @@ _STRING_LITERAL_RE = re.compile(
 def _resolve_store(paths: WorkspacePaths) -> tuple[GenerationStore | None, str]:
     """The workspace's generation store, or ``(None, reason)`` when there is none.
 
-    Mirrors :func:`zicato.dashboard.filetree._resolve_store` — the
+    Mirrors :func:`zicato.query.file_view._resolve_store` — the
     mutation-site browser is backend-neutral by routing every read through
     the store seam, exactly like the file-tree browser it sits beside.
 
