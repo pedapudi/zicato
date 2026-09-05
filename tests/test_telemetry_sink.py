@@ -174,39 +174,48 @@ def test_make_run_sinks_attaches_harmonograf_when_env_set(
     assert constructed["server_addr"] == "127.0.0.1:7531"
 
 
-def test_harmonograf_sink_passes_session_index_metadata(
-    monkeypatch: pytest.MonkeyPatch,
+def test_harmonograf_metadata_stays_on_registration_envelopes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import sys
-    import types
+    from concurrent.futures import ThreadPoolExecutor
 
+    from harmonograf_client.identity import load_or_create
+    from harmonograf_client.pb import telemetry_pb2
+    from harmonograf_client.transport import Transport
+
+    from tests._telemetry_support import sentinel_operator_registry
     from zicato.telemetry.sink import _make_harmonograf_sink
 
-    constructed: dict[str, object] = {}
+    sentinel = sentinel_operator_registry(tmp_path, monkeypatch)
+    sentinel_before = sentinel.read_bytes()
+    identity_root = tmp_path / "test-registry"
+    identity = load_or_create("zicato", root=identity_root)
+    identity_path = identity_root / "agents" / "zicato.json"
+    identity_before = identity_path.read_bytes()
+    # Registration serialization uses the real client without opening a socket.
+    monkeypatch.setattr(Transport, "start", lambda self: None)
 
-    class _StubClient:
-        def __init__(self, *, name: str, server_addr: str, metadata: dict[str, str]) -> None:
-            constructed.update(name=name, server_addr=server_addr, metadata=metadata)
+    def register_unit(side: str) -> None:
+        metadata = {"zicato.tournament_id": "tour-42", "zicato.side": side}
+        sink = _make_harmonograf_sink(
+            "127.0.0.1:7531", metadata=metadata, identity_root=identity_root
+        )
+        assert sink is not None
+        try:
+            hello = sink.client._transport._build_hello(telemetry_pb2, session_id=side)
+            assert hello.agent_id == identity.agent_id
+            assert hello.session_id == side
+            assert dict(hello.metadata) == metadata
+        finally:
+            asyncio.run(sink.close())
+            sink.client.shutdown(flush_timeout=0)
 
-    class _StubHarmonografSink:
-        def __init__(self, client: object) -> None:
-            self.client = client
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(register_unit, ["parent", "child"]))
 
-    stub_mod = types.ModuleType("harmonograf_client")
-    stub_mod.Client = _StubClient  # type: ignore[attr-defined]
-    stub_mod.HarmonografSink = _StubHarmonografSink  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "harmonograf_client", stub_mod)
-
-    sink = _make_harmonograf_sink(
-        "http://127.0.0.1:7531",
-        metadata={"zicato.tournament_id": "tour-42", "zicato.side": "child"},
-    )
-
-    assert sink is not None
-    assert constructed["metadata"] == {
-        "zicato.tournament_id": "tour-42",
-        "zicato.side": "child",
-    }
+    assert identity_path.read_bytes() == identity_before
+    assert sentinel.read_bytes() == sentinel_before
+    assert list(sentinel.parent.iterdir()) == [sentinel]
 
 
 def test_make_run_sinks_strips_url_scheme_for_grpc_target(
@@ -418,14 +427,20 @@ def test_make_run_sinks_uses_real_harmonograf_client_when_available(
 
     from harmonograf_client import HarmonografSink  # type: ignore[import-not-found]
 
+    from tests._telemetry_support import sentinel_operator_registry
     from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, make_run_sinks
 
+    sentinel = sentinel_operator_registry(tmp_path, monkeypatch)
+    sentinel_before = sentinel.read_bytes()
     monkeypatch.setenv(HARMONOGRAF_URL_ENV, "127.0.0.1:7531")
-    sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
+    identity_root = tmp_path / "test-registry"
+    sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA", identity_root=identity_root)
 
     # The list is [JSONL sink, HarmonografSink] when both are available.
     assert len(sinks) == 2
     assert isinstance(sinks[1], HarmonografSink)
+    assert (identity_root / "agents" / "zicato.json").is_file()
+    assert sentinel.read_bytes() == sentinel_before
 
     # Tear down each sink to avoid leaving orphan gRPC tasks from the
     # harmonograf client's background recv loop (no server is listening
@@ -437,3 +452,4 @@ def test_make_run_sinks_uses_real_harmonograf_client_when_available(
                 asyncio.run(close())
             except Exception:  # noqa: BLE001 — best-effort cleanup
                 pass
+    sinks[1].client.shutdown(flush_timeout=0)

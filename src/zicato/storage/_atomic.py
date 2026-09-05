@@ -1,12 +1,10 @@
-"""Internal helper: atomic JSON writes via ``.tmp`` + ``fsync`` + rename.
+"""Atomic record replacement through an exclusive temporary file and rename.
 
-This is the one definition of "atomic file write" in zicato. The file
-storage backend (:mod:`zicato.storage.files`) is its primary consumer —
-it delivers the :class:`~zicato.storage.base.StorageBackend` atomic-write
-contract by routing every write through here. The module sits in the
-``storage`` package so that the storage layer is self-contained:
-``runtime`` depends on ``storage``, never the reverse. :mod:`zicato.storage`
-re-exports these names as the public face for callers outside the package.
+The file storage backend (:mod:`zicato.storage.files`) and workspace
+configuration share this replacement helper. The module belongs to
+``storage`` so that the storage layer is self-contained: ``runtime``
+depends on ``storage``. :mod:`zicato.storage` re-exports these functions
+for callers outside the package.
 
 The goal is a hard guarantee: no reader ever observes a half-written
 file. A crash mid-write leaves the on-disk file either untouched (at the
@@ -16,7 +14,8 @@ truncated mix.
 The pattern is:
 
 1. Ensure the parent directory exists.
-2. Write the full payload to ``path.with_suffix(path.suffix + ".tmp")``.
+2. Exclusively create a uniquely named sibling ending in ``.tmp`` and
+   write the full payload, completing any short writes.
 3. ``fsync`` the temporary file (durability of contents).
 4. :func:`os.replace` it onto the final path (atomic on POSIX and
    Windows for files on the same filesystem).
@@ -24,26 +23,22 @@ The pattern is:
    without it a power loss can forget the directory entry even though
    the file's blocks reached disk, leaving the OLD file, or none).
 
-Readers can use :func:`read_json` which tolerates a missing file (returns
-``None``) and a transient mid-rename window (rare; retries once).
+Failures before replacement leave the destination unchanged and remove
+only this operation's temporary file. Competing writers each publish a
+complete payload; callers still need ownership or a lock for compound
+read-modify-write operations to avoid lost updates.
+
+Readers can use :func:`read_json`, which returns ``None`` for a missing file.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from errno import EIO
 from pathlib import Path
 from typing import Any
-
-
-def _tmp_path(path: Path) -> Path:
-    """Return the sibling ``.tmp`` path for an atomic write.
-
-    Suffix is ``.tmp`` appended to the existing extension so writes
-    don't collide if two callers ever race on the same final path —
-    the temporary lives only briefly and ``os.replace`` is atomic.
-    """
-    return path.with_suffix(path.suffix + ".tmp")
+from uuid import uuid4
 
 
 def _fsync_dir(directory: Path) -> None:
@@ -74,23 +69,37 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
-def atomic_write_text(path: Path, content: str) -> None:
+def atomic_write_text(path: Path, content: str, *, mode: int = 0o644) -> None:
     """Atomically replace ``path`` with ``content``.
 
-    Creates parent directories as needed. ``fsync`` flushes the temp
-    file's content before the rename so a crash after the rename
-    cannot leave an empty file behind, and the parent directory is
-    fsynced after the rename so the rename itself is durable.
+    Creates parent directories as needed. The replacement uses ``mode``
+    subject to the process umask. The completed temporary file is synced
+    before replacement; its parent directory is synced afterwards where
+    supported. Readers observe complete payloads even when writers overlap.
     """
+    remaining = memoryview(content.encode("utf-8"))
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _tmp_path(path)
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    while True:
+        tmp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
+        try:
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+            break
+        except FileExistsError:
+            continue
     try:
-        os.write(fd, content.encode("utf-8"))
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    os.replace(tmp, path)
+        try:
+            while remaining:
+                written = os.write(fd, remaining)
+                if written == 0:
+                    raise OSError(EIO, "atomic write made no progress", str(path))
+                remaining = remaining[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     _fsync_dir(path.parent)
 
 

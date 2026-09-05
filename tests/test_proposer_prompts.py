@@ -9,6 +9,12 @@ when the proposer's visibility is restricted.
 
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from tests._pattern_feedback_support import private_detector_patterns
 from tests._proposal_evidence import render_proposal_evidence
 from zicato.core.types import ProposerSkill
 from zicato.proposer.foe_request import SKILLS_SECTION, instruction_sections
@@ -82,63 +88,86 @@ from zicato.proposer.prompts import (  # noqa: E402
 )
 
 
-def _hot_task_pattern() -> Pattern:
-    # Mirrors a detect_hot_tasks detail dict, which names the entry + task.
-    return Pattern(
-        id="p1",
-        kind="hot_task",
-        summary="task fails frequently",
-        detail={
-            "entry_id": "contradictory",
-            "task_id": "t3",
-            "fail_or_block_rate": "0.40",
-            "starts": "10",
-        },
-        affected_mutation_ids=("m1",),
-        severity="warning",
-    )
-
-
-def _metric_freq_pattern() -> Pattern:
-    return Pattern(
-        id="p2",
-        kind="metric_frequency",
-        summary="off_topic fires often",
-        detail={
-            "metric": "drift:off_topic",
-            "affected_entry_ids": "a,b,c,d",
-            "rate": "0.40",
-        },
-        severity="warning",
-    )
-
-
-def test_pattern_block_unrestricted_is_verbatim() -> None:
-    patterns = [_hot_task_pattern(), _metric_freq_pattern()]
+@pytest.mark.asyncio
+async def test_pattern_block_unrestricted_is_verbatim(tmp_path: Path) -> None:
+    patterns = await private_detector_patterns(tmp_path)
     rendered = render_pattern_block(patterns, restrict=False)
-    # The default-arg call (no restrict) must match the explicit False.
     assert render_pattern_block(patterns) == rendered
-    # Per-entry identities render verbatim when unrestricted.
-    assert "entry_id=contradictory" in rendered
-    assert "task_id=t3" in rendered
-    assert "affected_entry_ids=a,b,c,d" in rendered
+    for pattern in patterns:
+        assert pattern.summary in rendered
+        for key, value in pattern.detail.items():
+            assert f"{key}={value}" in rendered
+    for identity in ("private-entry", "private-task", "private-agent", "private-loss-run"):
+        assert identity in rendered
 
 
-def test_pattern_block_restricted_aggregates_identities() -> None:
-    patterns = [_hot_task_pattern(), _metric_freq_pattern()]
+@pytest.mark.asyncio
+async def test_restricted_requests_project_every_real_detector(tmp_path: Path) -> None:
+    from zicato.proposer.foe_request import ProposalEvidence, render_task
+
+    patterns = await private_detector_patterns(tmp_path)
+    assert {pattern.kind for pattern in patterns} == {
+        "drift_kind_frequency",
+        "cost_metric_frequency",
+        "rubric_metric_frequency",
+        "hot_task",
+        "hot_agent",
+        "plan_revision_instability",
+        "multi_turn_memory_failure",
+        "multi_turn_context_loss",
+    }
     rendered = render_pattern_block(patterns, restrict=True)
-    # No literal per-entry / per-task identity survives.
-    assert "contradictory" not in rendered
-    assert "task_id=t3" not in rendered
-    assert "a,b,c,d" not in rendered
-    # But aggregate counts / rates DO survive so a general fix can be sized.
-    assert "entries_affected=4" in rendered
-    assert "fail_or_block_rate=0.40" in rendered
-    assert "rate=0.40" in rendered
-    # The non-leaky structure (id / kind / summary / mutation ids) is intact.
-    assert "id=p1" in rendered
-    assert "task fails frequently" in rendered
-    assert "affected_mutation_ids: m1" in rendered
+    task = render_task(
+        ProposalEvidence(patterns=patterns, restrict_visibility=True),
+        read_root=Path("/parent"),
+        write_root=Path("/candidate"),
+    )
+    assert rendered in task
+    assert "private" not in task
+    for expected in (
+        "entries_affected=1",
+        "fail_or_block_rate=1",
+        "starts=1",
+        "drift_count=6",
+        "outlier_run_count=1",
+        "max_revisions=9",
+        "positive_run_count=3",
+        "run_count=3",
+        "severity=warning",
+        "off_topic",
+    ):
+        assert expected in rendered
+    # Diagnostic identifiers must not give findings stable task correspondence.
+    renamed = await private_detector_patterns(tmp_path, identity="renamed")
+    assert rendered == render_pattern_block(renamed, restrict=True)
+    assert rendered == render_pattern_block(reversed(patterns), restrict=True)
+
+
+@pytest.mark.parametrize("value", ["private-task", "1 private-task", "nan", "inf"])
+def test_restricted_pattern_fields_require_declared_numeric_values(value: str) -> None:
+    pattern = Pattern(
+        id="private-pattern",
+        kind="hot_task",
+        summary="private-summary",
+        detail={
+            "starts": "4",
+            "fail_or_block_rate": value,
+            "extra": "private-extra",
+            "agent_name": "private-agent",
+            "outlier_run_ids": "private-run",
+        },
+        affected_mutation_ids=("instruction",),
+        severity="warning",
+    )
+    rendered = render_pattern_block([pattern], restrict=True)
+    assert "private" not in rendered
+    assert "fail_or_block_rate" not in rendered
+    assert "starts=4" in rendered
+    assert "affected_mutation_ids: instruction" in rendered
+    assert pattern.summary == "private-summary"
+    unknown = render_pattern_block([replace(pattern, kind="private-kind")], restrict=True)
+    assert "private" not in unknown
+    assert "instruction" in unknown
 
 
 def _prior(delta: float | None, *, gen: str = "g1") -> PriorExperiment:

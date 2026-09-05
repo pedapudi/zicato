@@ -160,7 +160,11 @@ keyed on `state.heartbeat.harmonograf_meta_session`.
 
 ### 3c. Tournament navigation is a metadata filter over ordinary sessions
 
-Each target-run client stamps non-sensitive session labels:
+Each target-run client stamps non-sensitive session labels on its registration
+envelope. The client loads its persistent identity without unit labels, so
+concurrent units sharing the `zicato` identity keep their metadata separate.
+Sink builders accept an explicit
+`identity_root`; tests use temporary roots to isolate the operator registry.
 
 | label | value |
 |---|---|

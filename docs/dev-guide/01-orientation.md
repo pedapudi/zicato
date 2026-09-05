@@ -1146,8 +1146,7 @@ computed artifacts against committed goldens under
 #                  gen_score.json / experiment.json / loss.json / lineage.json
 #                  artifacts byte-identical (after masking wall-clock noise)
 #                  to the golden.
-#   MYPY           the mypy error count is not worse than the committed
-#                  baseline (a refactor should reduce it).
+#   MYPY           type checking must complete successfully.
 ```
 *(tools/parity.sh, header comment)*
 

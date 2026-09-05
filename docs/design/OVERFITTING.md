@@ -203,20 +203,16 @@ fills it in
 | Surface | Built by | Per-entry identity leaked? | Memorization risk |
 |---|---|---|---|
 | **Loss summary** | `_render_loss_summary` (`orchestrator.py:3058`) | **No** — board-wide aggregate only: `drift_loss_mean=… over N runs, pass_rate=… over M entries`. | **Low.** This is the one surface that is already aggregated. It cannot, on its own, tell the proposer *which* entry to target. |
-| **Detector patterns** | `patterns/detectors.py`, rendered by `render_pattern_block` (`prompts.py:196`) | **Yes.** `detect_metric_frequency` puts `affected_entry_ids` in `Pattern.detail` (`detectors.py:265`); `detect_hot_tasks` names `entry_id`+`task_id` (`detectors.py:380`); `detect_hot_agents` names `entry_id`+`agent` (`detectors.py:466`). `render_pattern_block` dumps `detail` verbatim as `k=v` pairs. | **High.** This is the primary per-entry channel. It tells the proposer *which specific entries* are failing and on *which task/agent* — the precise information needed to special-case them. |
+| **Detector patterns** | `patterns/detectors.py`, projected by `proposer/pattern_feedback.py` and rendered by `render_pattern_block` | Restricted requests receive declared numeric fields, severity, known metric labels, and mutation references. Diagnostic ids, summaries, entry/task/agent/run identities, unknown fields, and custom metric labels are omitted. | Anonymous counts and rates still provide optimization feedback. Disabling `restrict_proposer_visibility` exposes the full identifying diagnostic record. |
 | **Mutation manifest** | `render_mutation_block` (`prompts.py:246`) | n/a (shows full editable span content, up to 8000 chars) | **Medium.** The proposer sees, and may rewrite, the *entire* content of every mutable span (a prompt body, a tool docstring). This is the *capability* to hardcode; the patterns tell it *what* to hardcode toward. |
 | **Experiment memory** | `render_prior_experiments_block` (`prompts.py:293`); digest from the index | Per-experiment `Δscalar` against the **same board** (`_render_prior_experiment_line`, `prompts.py:270`) | **Medium.** Settled `Δscalar` history is the gradient signal of an iterative optimizer: it tells the proposer which *directions* lowered the measured loss, round over round. See [`EXPERIMENT-MEMORY.md`](EXPERIMENT-MEMORY.md). |
 | **Telemetry insights** | LLM-summarised per-round observations (`ProposalEvidence.insights`, rendered by `render_evidence`) | Possibly (free text — may name entries) | **Medium.** An evaluation LLM summary that can re-surface per-entry specifics the structured channels withheld. |
 
-zicato's loss *summary* is already
-overfitting-resistant (aggregated, no per-entry identities), but the
-**detector-pattern channel leaks per-entry identities by design**, and
-the mutation manifest gives the proposer the capability to act on them.
-The combination — "entry `contradictory` fails on task `t3`" + "here is
-the full prompt you may rewrite" — is the adversarial-Goodhart channel.
-Restricting it (§11) is the single most zicato-specific lever in this
-note, and it is *cheaper* than any holdout machinery because it changes
-only what is rendered rather than how zicato evaluates.
+Restricted pattern feedback constructs summaries from permitted measurements
+and counts affected entries. It sorts findings by rendered content, so detector
+ordering cannot preserve a correspondence to private identities. The original
+`Pattern` records retain identifying evidence for operators. Restricting feedback
+changes prompt contents without adding evaluation runs.
 
 ---
 
@@ -727,14 +723,14 @@ and durable reservation protocol are defined in
 [§"What query budget means"](#what-query-budget-means).
 
 **#3 — Restrict the proposer's per-entry visibility. (SHIPPED.)**
-*What:* §11's restrictions 1–4 — patterns on train only, aggregate
-`affected_entry_ids` to counts, withhold exact failing inputs, coarsen
-experiment-memory deltas. *Where:* `patterns/detectors.py` (the detail
-dicts) and `proposer/prompts.py` (`render_pattern_block`,
-`render_prior_experiments_block`). *Cost:* near-zero compute; localized
-edits. *Tradeoff:* less precise steering → possibly more rounds to a fix.
-**Independently shippable — no prerequisite — so ship it first** as the
-cheapest, most direct strike at adversarial Goodhart.
+*What:* §11's restrictions 1–4 — patterns on the training slice, declared
+numeric feedback with summaries constructed from measurements, affected-entry
+counts, and coarsened experiment-memory deltas. *Where:*
+`proposer/pattern_feedback.py` owns the pattern projection;
+`proposer/prompts.py` renders patterns and experiment history. Proposal and
+critique requests use the same evidence renderer. *Cost:* numeric parsing and
+formatting, without additional evaluations. *Tradeoff:* less precise feedback
+may require more proposal rounds.
 
 **#4 — Diff/complexity regularization in the gate or loss. (SHIPPED — both halves.)**
 *What:* two paired parsimony levers over `complexity = added + removed +

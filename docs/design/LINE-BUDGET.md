@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 471,880 | +63,219 |
-| Production | 197,702 | 204,337 | +6,635 |
-| Production logic | 110,276 | 113,515 | +3,239 |
+| Total | 408,661 | 472,446 | +63,785 |
+| Production | 197,702 | 204,430 | +6,728 |
+| Production logic | 110,276 | 113,621 | +3,345 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,20 +84,20 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 70,435 | 37,606 | 26,200 | 30.3% |
+| src/zicato/dashboard | 70,434 | 37,605 | 26,200 | 30.3% |
 | src/zicato/query | 20,300 | 20,300 | 12,052 | 40.6% |
 | src/zicato/evolve | 12,662 | 12,662 | 7,533 | 40.5% |
 | src/zicato/reflection | 9,779 | 9,779 | 6,159 | 37.0% |
 | src/zicato/epoch | 12,287 | 12,287 | 5,704 | 53.6% |
+| src/zicato/proposer | 11,109 | 11,109 | 5,568 | 49.9% |
 | crates/supervisor | 14,561 | 12,130 | 5,498 | 54.7% |
 | src/zicato/tournament | 10,793 | 10,793 | 5,498 | 49.1% |
-| src/zicato/proposer | 11,053 | 11,053 | 5,491 | 50.3% |
 | src/zicato/cli | 8,192 | 8,192 | 5,178 | 36.8% |
 | src/zicato/analyzer | 7,635 | 7,635 | 4,781 | 37.4% |
 | src/zicato/selection | 5,271 | 5,271 | 2,837 | 46.2% |
 | src/zicato/index | 5,513 | 5,513 | 2,773 | 49.7% |
 | src/zicato/tui | 3,839 | 3,839 | 2,535 | 34.0% |
-| src/zicato/telemetry | 4,684 | 4,684 | 2,236 | 52.3% |
+| src/zicato/telemetry | 4,709 | 4,709 | 2,249 | 52.2% |
 | src/zicato/runtime | 5,080 | 5,080 | 2,183 | 57.0% |
 | src/zicato/core | 6,228 | 6,228 | 1,970 | 68.4% |
 | src/zicato/contract_draft | 2,928 | 2,928 | 1,684 | 42.5% |
@@ -110,14 +110,14 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/testing | 1,447 | 1,447 | 760 | 47.5% |
 | src/zicato/judge_runtime | 1,749 | 1,749 | 740 | 57.7% |
 | src/zicato/_tournament_worker.py | 1,262 | 1,262 | 633 | 49.8% |
-| src/zicato/workspace | 1,614 | 1,614 | 629 | 61.0% |
+| src/zicato/workspace | 1,618 | 1,618 | 631 | 61.0% |
 | src/zicato/synthetic | 1,139 | 1,139 | 544 | 52.2% |
 | src/zicato/scoring | 1,388 | 1,388 | 464 | 66.6% |
 | src/zicato/patterns | 804 | 804 | 417 | 48.1% |
 | src/zicato/models_config.py | 447 | 447 | 356 | 20.4% |
 | src/zicato/emulator | 675 | 675 | 306 | 54.7% |
+| src/zicato/storage | 940 | 940 | 303 | 67.8% |
 | src/zicato/example_workspace | 658 | 658 | 301 | 54.3% |
-| src/zicato/storage | 931 | 931 | 289 | 69.0% |
 | src/zicato/config.py | 679 | 679 | 225 | 66.9% |
 | src/zicato/logging_stream.py | 445 | 445 | 215 | 51.7% |
 | src/zicato/runtime_factory.py | 421 | 421 | 210 | 50.1% |
@@ -389,3 +389,6 @@ dropped rows named.
 | Candidate dossier served from the query layer (total) | 471,372 | +508 | 471,880 | Proposal §3.1 of `docs/design/CONSOLE-SIMPLIFICATION.md`: the candidate page reads one served dossier per candidate. `src/zicato/query/candidate_view.py` is new (274 lines: the dossier reader over the per-entry, scorecard, episode, grid, gate, comparison, drill-down and racing-field readers), `endpoints.py` gains its row and the optional `entry` guard (19), the query surface and the contracts each gain a line, `views/candidate.js` folds the dossier in place of its fan-out (−28), `data.js` sheds the six accessors only that page used (−29), and the test side gains 245 Python lines (three scenario workspaces and the dossier probes) and 24 in the node suites. The recorded dossiers are in the excluded recordings and count for nothing here. |
 | Candidate dossier served from the query layer (production) | 204,098 | +239 | 204,337 | Proposal §3.1 of `docs/design/CONSOLE-SIMPLIFICATION.md`: `src/zicato/query/candidate_view.py` is new (274 lines), `endpoints.py` gains the dossier row and the optional `entry` coordinate guard (19), `query/__init__.py` and `query/contracts.py` gain a line each; `views/candidate.js` loses 28 lines of fan-out and `data.js` 29 lines of accessors only that page used. The verdict fields of the dossier come from the gate, grid and comparison readers unchanged. |
 | Candidate dossier served from the query layer (production logic) | 113,331 | +184 | 113,515 | Proposal §3.1 of `docs/design/CONSOLE-SIMPLIFICATION.md`: the executing lines of the dossier reader and its route row, against the fan-out and accessors removed from the candidate page. |
+| Record, feedback, and verification correctness (total) | 471,880 | +566 | 472,446 | Issues #463, #479, #485, and #494: reproduce concurrent record writes, partial writes, identity storage contamination, restricted-feedback disclosure, and false-success verification. Real detector and synchronization-order fixtures replace weaker synthetic cases. |
+| Record, feedback, and verification correctness (production) | 204,337 | +93 | 204,430 | Issues #463, #479, and #485: complete and exclusive record replacement, explicit telemetry identity ownership, and declared aggregate feedback fields. Configuration and prompt consumers share their respective owners. |
+| Record, feedback, and verification correctness (production logic) | 113,515 | +106 | 113,621 | Issues #463, #479, and #485: add 106 executable lines for complete writes, identity isolation, and permitted aggregate projection. These correctness repairs establish invariants that the implementation consolidation must preserve. |

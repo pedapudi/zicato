@@ -12,11 +12,17 @@ an error naming the remedy its caller chose.
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
 
-from zicato.workspace.config_io import WorkspaceConfig, read_workspace_config
+from zicato.workspace.config_io import (
+    WorkspaceConfig,
+    read_workspace_config,
+    write_workspace_config,
+)
 
 
 def _workspace(tmp_path: Path, config: object) -> Path:
@@ -118,3 +124,40 @@ def test_require_returns_a_config_that_is_there(tmp_path: Path) -> None:
     root = _workspace(tmp_path, {"instance_id": "test"})
     config = read_workspace_config(root)
     assert config.require() is config
+
+
+def test_config_write_preserves_format_permissions_and_syncs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reference = tmp_path / "permissions.txt"
+    reference.write_text("", encoding="utf-8")
+    real_open, real_fsync = os.open, os.fsync
+    creation_modes: list[int] = []
+    synced: list[str] = []
+
+    def observed_open(path: str, flags: int, mode: int = 0o777) -> int:
+        if flags & os.O_CREAT:
+            creation_modes.append(mode)
+        return real_open(path, flags, mode)
+
+    def observed_fsync(fd: int) -> None:
+        synced.append("directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "open", observed_open)
+    monkeypatch.setattr(os, "fsync", observed_fsync)
+    write_workspace_config(tmp_path, {"z": "é", "a": 1})
+
+    target = tmp_path / "config.json"
+    assert target.read_bytes() == b'{\n  "a": 1,\n  "z": "\\u00e9"\n}\n'
+    assert creation_modes == [0o666]
+    assert stat.S_IMODE(target.stat().st_mode) == stat.S_IMODE(reference.stat().st_mode)
+    assert synced == ["file", "directory"]
+    assert set(tmp_path.iterdir()) == {reference, target}
+
+
+def test_config_write_requires_an_existing_workspace(tmp_path: Path) -> None:
+    root = tmp_path / "missing"
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        write_workspace_config(root, {})
+    assert not root.exists()

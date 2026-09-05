@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -41,6 +42,7 @@ pytest.importorskip("goldfive", reason="goldfive not installed")
 
 from starlette.testclient import TestClient  # noqa: E402
 
+from tests._telemetry_support import sentinel_operator_registry  # noqa: E402
 from zicato.dashboard.server import create_app  # noqa: E402
 from zicato.telemetry.harmonograf_supervisor import (  # noqa: E402
     build_meta_loop_sink,
@@ -54,7 +56,9 @@ from zicato.telemetry.harmonograf_supervisor import (  # noqa: E402
 _STATIC_DIR = Path(__file__).resolve().parents[1] / "src" / "zicato" / "dashboard" / "static"
 
 
-def _emit_goldfive_run_session(grpc_target: str, session_id: str) -> None:
+def _emit_goldfive_run_session(
+    grpc_target: str, session_id: str, identity_root: Path, metadata: dict[str, str]
+) -> None:
     """Emit a minimal goldfive run-lifecycle pair through the REAL sink.
 
     Mirrors the worker's per-run path: a ``Client(name="zicato")`` (no
@@ -64,10 +68,16 @@ def _emit_goldfive_run_session(grpc_target: str, session_id: str) -> None:
     that id (docs/design/HARMONOGRAF.md §2a).
     """
     from goldfive.events import run_completed_event, run_started_event
-    from harmonograf_client import Client, HarmonografSink
 
-    client = Client(name="zicato", server_addr=grpc_target)
-    sink = HarmonografSink(client)
+    from zicato.telemetry.sink import _make_harmonograf_sink
+
+    sink = _make_harmonograf_sink(
+        grpc_target,
+        grpc_target=grpc_target,
+        identity_root=identity_root,
+        metadata=metadata,
+    )
+    assert sink is not None
 
     async def _drive() -> None:
         # session_id stamped on the envelope is the deep-link key.
@@ -77,11 +87,13 @@ def _emit_goldfive_run_session(grpc_target: str, session_id: str) -> None:
         await sink.emit(completed)
         await sink.close()
 
-    asyncio.run(_drive())
-    client.shutdown(flush_timeout=5.0)
+    try:
+        asyncio.run(_drive())
+    finally:
+        sink.client.shutdown(flush_timeout=5.0)
 
 
-def _emit_meta_loop_session(harmonograf_url: str, session_id: str) -> None:
+def _emit_meta_loop_session(harmonograf_url: str, session_id: str, identity_root: Path) -> None:
     """Emit a meta-loop event through the REAL ``build_meta_loop_sink`` path.
 
     This is the exact sink the orchestrator attaches for its proposer +
@@ -90,7 +102,7 @@ def _emit_meta_loop_session(harmonograf_url: str, session_id: str) -> None:
     """
     from goldfive.events import agent_invocation_started_event
 
-    sink = build_meta_loop_sink(harmonograf_url, session_id)
+    sink = build_meta_loop_sink(harmonograf_url, session_id, identity_root=identity_root)
     assert sink is not None, "meta-loop sink should construct against a live server"
 
     async def _drive() -> None:
@@ -105,7 +117,10 @@ def _emit_meta_loop_session(harmonograf_url: str, session_id: str) -> None:
         await sink.emit(evt)
         await sink.close()
 
-    asyncio.run(_drive())
+    try:
+        asyncio.run(_drive())
+    finally:
+        sink.client.shutdown(flush_timeout=5.0)
 
 
 def _write_board_run_loss(ws: Path, *, adk_session_id: str) -> tuple[str, str, str]:
@@ -150,9 +165,22 @@ def workspace(tmp_path: Path) -> Path:
     return ws
 
 
-def test_operator_sees_harmonograf_at_both_levels(workspace: Path) -> None:
+def test_operator_sees_harmonograf_at_both_levels(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The full operator-facing arc: emit two real sessions, observe both
     deep-links resolve over the dashboard's HTTP surface."""
+    import grpc
+    from harmonograf_client.identity import load_or_create
+    from harmonograf_client.pb import frontend_pb2, service_pb2_grpc
+
+    sentinel = sentinel_operator_registry(tmp_path, monkeypatch)
+    sentinel_before = sentinel.read_bytes()
+    identity_root = tmp_path / "client-identities"
+    load_or_create("zicato", root=identity_root)
+    identity_path = identity_root / "agents" / "zicato.json"
+    identity_before = identity_path.read_bytes()
+
     # 1. Stand up the REAL persistent per-workspace harmonograf server.
     handle = ensure_workspace_harmonograf(workspace)
     if not handle.web_url:
@@ -172,10 +200,41 @@ def test_operator_sees_harmonograf_at_both_levels(workspace: Path) -> None:
 
         # 2. Emit BOTH sessions through the REAL client/sink paths.
         board_sid = "adk-e2e-board-0001"
-        _emit_goldfive_run_session(handle.grpc_target, board_sid)
+        child_sid = "adk-e2e-board-0002"
+
+        def emit_unit(unit: tuple[str, str]) -> None:
+            session_id, side = unit
+            _emit_goldfive_run_session(
+                handle.grpc_target,
+                session_id,
+                identity_root,
+                {"zicato.tournament_id": "tournament-e2e", "zicato.side": side},
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(emit_unit, [(board_sid, "parent"), (child_sid, "child")]))
 
         meta_sid = meta_loop_session_id("2026-06-06T12:00:00+00:00")
-        _emit_meta_loop_session(handle.web_url, meta_sid)
+        _emit_meta_loop_session(handle.web_url, meta_sid, identity_root)
+
+        # The server must receive each unit's labels without mixing siblings.
+        with grpc.insecure_channel(handle.grpc_target) as channel:
+            rpc = service_pb2_grpc.HarmonografStub(channel)
+            for session_id, side in [(board_sid, "parent"), (child_sid, "child")]:
+                sessions = rpc.ListSessions(
+                    frontend_pb2.ListSessionsRequest(
+                        metadata_filter={
+                            "zicato.tournament_id": "tournament-e2e",
+                            "zicato.side": side,
+                        }
+                    ),
+                    timeout=5,
+                )
+                assert [session.id for session in sessions.sessions] == [session_id]
+
+        assert identity_path.read_bytes() == identity_before
+        assert sentinel.read_bytes() == sentinel_before
+        assert list(sentinel.parent.iterdir()) == [sentinel]
 
         # 3. Lay down the on-disk artifacts the dashboard reads.
         epoch_id, gen_id, entry_id = _write_board_run_loss(workspace, adk_session_id=board_sid)

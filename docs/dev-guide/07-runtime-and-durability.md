@@ -251,8 +251,8 @@ Two placement rules fall out of the table:
 
 ## 7.3 The atomic-write contract
 
-There is exactly one definition of "atomic file write" in zicato, and it
-lives in `src/zicato/storage/_atomic.py`. Its public face is re-exported by
+The file storage backend and workspace configuration share the replacement
+helper in `src/zicato/storage/_atomic.py`. Its public face is re-exported by
 `zicato.storage` (`atomic_write_json`, `atomic_write_text`, `atomic_claim`,
 `read_json`); a lint ban (`TID251`, see 11-testing.md §11.8)
 keeps everyone off the private module path.
@@ -263,7 +263,8 @@ The pattern, verbatim from the module that owns it:
 The pattern is:
 
 1. Ensure the parent directory exists.
-2. Write the full payload to ``path.with_suffix(path.suffix + ".tmp")``.
+2. Exclusively create a uniquely named sibling ending in ``.tmp`` and
+   write the full payload, completing any short writes.
 3. ``fsync`` the temporary file (durability of contents).
 4. :func:`os.replace` it onto the final path (atomic on POSIX and
    Windows for files on the same filesystem).
@@ -272,6 +273,18 @@ The pattern is:
    the file's blocks reached disk, leaving the OLD file, or none).
 ```
 — `src/zicato/storage/_atomic.py` (module docstring)
+
+Each operation owns its temporary file and removes that file on failure before
+replacement. An unrecoverable write, file-sync, or replacement error propagates
+without changing the committed destination. Directory synchronization remains
+best-effort where the platform does not support it. Atomic replacement protects
+readers from incomplete payloads; compound read-modify-write operations still
+require a domain lock or explicit single-writer ownership to avoid lost updates.
+
+Workspace configuration uses `write_workspace_config` to serialize sorted,
+indented JSON with a trailing newline, then calls `atomic_write_text`. Shared
+record writes create files with mode `0644`; configuration writes use `0666`.
+Both creation modes are restricted by the process umask.
 
 Step 5 is the part naive reimplementations forget: `os.replace` mutates the
 *directory*, and on POSIX the directory entry must itself be fsynced for the
