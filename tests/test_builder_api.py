@@ -103,13 +103,13 @@ def test_builder_draft_inits_from_live(client: TestClient) -> None:
 def test_builder_op_set_structure_returns_full_envelope(client: TestClient) -> None:
     resp = client.post(
         "/builder/op",
-        json={"session": "s2", "op": "set_structure", "args": {"structure": "swiss"}},
+        json={"session": "s2", "op": "set_structure", "args": {"structure": "racing"}},
     )
     assert resp.status_code == 200
     body = resp.json()
     assert body["patch"]["op"] == "set_structure"
-    assert body["draft"]["scoring"]["tournament"]["structure"] == "swiss"
-    assert body["cost"]["structure"] == "swiss"
+    assert body["draft"]["scoring"]["tournament"]["structure"] == "racing"
+    assert body["cost"]["structure"] == "racing"
     assert "warnings" in body
     assert "structure" in body["diff"]["changed_components"]
 
@@ -165,7 +165,7 @@ def test_builder_op_goldfive_rejects_non_string_context_editor_rules(
 def test_builder_op_accumulates_across_calls_in_a_session(client: TestClient) -> None:
     client.post(
         "/builder/op",
-        json={"session": "s3", "op": "set_structure", "args": {"structure": "swiss"}},
+        json={"session": "s3", "op": "set_structure", "args": {"structure": "racing"}},
     )
     resp = client.post(
         "/builder/op",
@@ -174,7 +174,7 @@ def test_builder_op_accumulates_across_calls_in_a_session(client: TestClient) ->
     body = resp.json()
     params = body["draft"]["scoring"]["tournament"]["params"]
     assert params["field_size"] == 4
-    assert body["draft"]["scoring"]["tournament"]["structure"] == "swiss"
+    assert body["draft"]["scoring"]["tournament"]["structure"] == "racing"
 
 
 def test_builder_op_unknown_op_is_400(client: TestClient) -> None:
@@ -367,7 +367,7 @@ def test_builder_op_float_knobs_are_typed_not_passed_through(client: TestClient)
 def test_builder_apply_dry_run(client: TestClient, workspace: Path) -> None:
     client.post(
         "/builder/op",
-        json={"session": "s6", "op": "set_structure", "args": {"structure": "swiss"}},
+        json={"session": "s6", "op": "set_structure", "args": {"structure": "racing"}},
     )
     resp = client.post("/builder/apply", json={"session": "s6", "confirm": False})
     assert resp.status_code == 200
@@ -403,7 +403,7 @@ def test_builder_endpoints_read_only_forbids_writes(workspace: Path, tmp_path: P
     assert ro_client.get("/builder/draft").status_code == 200
     # POST ops are forbidden.
     op_resp = ro_client.post(
-        "/builder/op", json={"op": "set_structure", "args": {"structure": "swiss"}}
+        "/builder/op", json={"op": "set_structure", "args": {"structure": "racing"}}
     )
     assert op_resp.status_code == 403
     apply_resp = ro_client.post("/builder/apply", json={"confirm": True})
@@ -453,7 +453,7 @@ def test_builder_op_envelope_carries_noise_floor_refuse_warning(
 
     resp = client.post(
         "/builder/op",
-        json={"session": "pf3", "op": "set_structure", "args": {"structure": "swiss"}},
+        json={"session": "pf3", "op": "set_structure", "args": {"structure": "racing"}},
     )
     assert resp.status_code == 200
     warns = {w["code"]: w for w in resp.json()["warnings"]}
@@ -667,13 +667,13 @@ def test_builder_op_set_telemetry_dialect_dispatch(client: TestClient) -> None:
 def test_builder_op_fork_switch_list_roundtrip(client: TestClient) -> None:
     s = {"session": "life"}
     # Build state, fork it, verify the slot list + the patch shape.
-    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "swiss"}})
+    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "racing"}})
     r = client.post("/builder/op", json={**s, "op": "fork", "args": {"name": "variant-a"}})
     assert r.status_code == 200
     body = r.json()
     assert body["patch"]["op"] == "fork"
     assert body["drafts"] == ["variant-a"]
-    assert body["draft"]["scoring"]["tournament"]["structure"] == "swiss"
+    assert body["draft"]["scoring"]["tournament"]["structure"] == "racing"
 
     # Edit the slot, fork B, switch back to A — A's state is intact.
     client.post(
@@ -684,7 +684,7 @@ def test_builder_op_fork_switch_list_roundtrip(client: TestClient) -> None:
     client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "racing"}})
     r = client.post("/builder/op", json={**s, "op": "switch", "args": {"name": "variant-a"}})
     body = r.json()
-    assert body["draft"]["scoring"]["tournament"]["structure"] == "swiss"
+    assert body["draft"]["scoring"]["tournament"]["structure"] == "racing"
     assert body["draft"]["scoring"]["tournament"]["params"]["field_size"] == 4
     assert body["drafts"] == ["variant-a", "variant-b"]
 
@@ -751,13 +751,13 @@ def test_builder_apply_writes_the_active_slot(client: TestClient, workspace: Pat
 
     s = {"session": "slotapply"}
     client.post("/builder/op", json={**s, "op": "fork", "args": {"name": "to-apply"}})
-    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "swiss"}})
+    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "racing"}})
     live_before = _json.loads((workspace.parent / "scoring.json").read_text(encoding="utf-8"))
     assert "tournament" not in live_before  # forking wrote nothing
     resp = client.post("/builder/apply", json={**s, "confirm": True})
     assert resp.json()["confirmed"] is True
     live = _json.loads((workspace.parent / "scoring.json").read_text(encoding="utf-8"))
-    assert live["tournament"]["structure"] == "swiss"
+    assert live["tournament"]["structure"] == "racing"
 
 
 # ---------------------------------------------------------------------------
@@ -1033,7 +1033,7 @@ def test_builder_suggestions_feed_sees_mint_mode(client: TestClient, workspace: 
 
 def test_builder_op_revert_to_live_restores_the_draft(client: TestClient) -> None:
     s = {"session": "rvt"}
-    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "swiss"}})
+    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "racing"}})
     client.post("/builder/op", json={**s, "op": "remove_board_entry", "args": {"entry_id": "e1"}})
     r = client.post("/builder/op", json={**s, "op": "revert_to_live", "args": {}})
     assert r.status_code == 200
@@ -1049,7 +1049,7 @@ def test_builder_op_revert_to_live_restores_the_draft(client: TestClient) -> Non
 
 def test_builder_op_undo_pops_edits_and_reports_empty(client: TestClient) -> None:
     s = {"session": "und"}
-    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "swiss"}})
+    client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "racing"}})
     client.post(
         "/builder/op",
         json={**s, "op": "set_param", "args": {"key": "field_size", "value": 4}},
@@ -1061,7 +1061,7 @@ def test_builder_op_undo_pops_edits_and_reports_empty(client: TestClient) -> Non
     body = r.json()
     assert body["patch"]["op"] == "undo"
     t = body["draft"]["scoring"]["tournament"]
-    assert t["structure"] == "swiss"
+    assert t["structure"] == "racing"
     assert "field_size" not in (t.get("params") or {})
 
     # Undo the structure edit.

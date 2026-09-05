@@ -18,9 +18,11 @@ from zicato.core.constraints import (
     validate_knobs,
 )
 from zicato.core.tournament import (
+    EXPERIMENTAL_TOURNAMENT_STRUCTURES,
     PassRateMonotonicityScope,
     TournamentStructure,
     _default_tournament_structure,
+    experimental_structure_refusal,
 )
 
 # ---------------------------------------------------------------------------
@@ -675,6 +677,47 @@ def _default_experiment_memory_config() -> ExperimentMemoryConfig:
     return ExperimentMemoryConfig.defaults()
 
 
+@dataclass(frozen=True, slots=True)
+class ExperimentalConfig:
+    """The contract's opt-ins for features without a measured case.
+
+    A feature stays in this block until a measurement sweep graduates it
+    (``docs/design/CAMPAIGN.md``); graduation moves the knob out of the
+    block, which rolls the epoch. A field of :class:`ScoringWeights`,
+    omitted from the contract canonical form while every flag holds its
+    default, so a contract that names none of them keeps its hash and one
+    that enables a flag rolls the epoch.
+
+    Fields
+    ------
+    tournament_structures:
+        Admits the structures in
+        :data:`zicato.core.tournament.EXPERIMENTAL_TOURNAMENT_STRUCTURES`
+        (``single_elim``, ``double_elim``, ``swiss``) as the contract's
+        ``tournament.structure``. ``False`` (default): a contract naming
+        one of them is refused at load, by the builder, and by the strategy
+        registry, each with the message
+        :func:`zicato.core.tournament.experimental_structure_refusal`
+        renders. ``True``: the three resolve like ``gauntlet`` and
+        ``racing``.
+    """
+
+    tournament_structures: bool = field(
+        default=False,
+        metadata=_knob(builder_op="set_experimental"),
+    )
+
+    @classmethod
+    def defaults(cls) -> ExperimentalConfig:
+        """The config with every opt-in off."""
+        return cls()
+
+
+def _default_experimental_config() -> ExperimentalConfig:
+    """Default-factory for :attr:`ScoringWeights.experimental`."""
+    return ExperimentalConfig.defaults()
+
+
 # ---------------------------------------------------------------------------
 # Scoring weights
 # ---------------------------------------------------------------------------
@@ -1163,6 +1206,14 @@ class ScoringWeights:
         default_factory=_default_experiment_memory_config,
         metadata=_knob(omit_at_default=True),
     )
+    # Opt-ins for features without a measured case (issue #394's
+    # graduation namespace). Omitted from the canonical form while every
+    # flag is off, so a contract naming none of them keeps its hash; a
+    # flag turned on rolls the epoch. See :class:`ExperimentalConfig`.
+    experimental: ExperimentalConfig = field(
+        default_factory=_default_experimental_config,
+        metadata=_knob(omit_at_default=True),
+    )
     # Goldfive settings are absent unless the selected adapter declares that
     # integration; an explicit block then binds all behavior to the epoch.
     goldfive: Mapping[str, Any] | None = field(
@@ -1403,6 +1454,15 @@ class ScoringWeights:
                 f"holdout_margin must be >= 0 (or None to reuse promote_margin), "
                 f"got {self.holdout_margin!r}"
             )
+        # An experimental structure is admitted by the contract's own opt-in,
+        # checked here so a hand-edited scoring.json is refused at load
+        # rather than at round start, after the epoch has already rolled.
+        structure = self.tournament_structure.structure
+        if (
+            structure in EXPERIMENTAL_TOURNAMENT_STRUCTURES
+            and not self.experimental.tournament_structures
+        ):
+            raise ValueError(experimental_structure_refusal(structure))
 
     def to_json(self) -> dict[str, Any]:
         """Serialise to a JSON-shaped dict via the field-enumerating serde.
@@ -1478,6 +1538,7 @@ CONTRACT_KNOB_TYPES: tuple[type, ...] = (
     LadderConfig,
     ProposerQualityConfig,
     ExperimentMemoryConfig,
+    ExperimentalConfig,
 )
 
 

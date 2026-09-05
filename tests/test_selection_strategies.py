@@ -1,4 +1,8 @@
-"""Unit tests for the SelectionStrategy abstraction and the five strategies.
+"""Unit tests for the SelectionStrategy abstraction and the default structures.
+
+The gauntlet and racing strategies, the registry, and the driver live here;
+the three experimental structures are exercised in
+``tests/test_selection_experimental_structures.py``.
 
 These tests drive each strategy's scheduling / advance / stopping on
 SYNTHETIC matchup results — no real tournament runs (the project rule is
@@ -16,6 +20,7 @@ import pytest
 
 from zicato.core.types import TournamentStructure
 from zicato.selection import (
+    EXPERIMENTAL_STRATEGY_REGISTRY,
     STRATEGY_REGISTRY,
     Contestant,
     Matchup,
@@ -189,171 +194,6 @@ def test_gauntlet_respects_replicates_param() -> None:
     s = make_strategy(TournamentStructure(structure="gauntlet", params={"replicates": 3}))
     s.seed(_champion("v0"), [_challenger("v1")])
     assert s.next_matchups()[0].replicates == 3
-
-
-# ---------------------------------------------------------------------------
-# Single elimination
-# ---------------------------------------------------------------------------
-
-
-def test_single_elim_lowest_challenger_reaches_final_and_promotes() -> None:
-    s = make_strategy(TournamentStructure(structure="single_elim", params={"field_size": 4}))
-    champ = _champion("v0")
-    challengers = [_challenger(f"v{i}") for i in (1, 2, 3, 4)]
-    # v3 is the strongest challenger (lowest scalar); champion v0 worst.
-    scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.8, "v3": 0.3, "v4": 0.7}
-    dec = _run_strategy(s, champ, challengers, scalars)
-    # v3 should win the bracket and then beat the champion at the final.
-    assert dec.promoted_generation_id == "v3"
-    assert dec.decision == "promoted"
-    assert dec.crowning_matchup_id == "final"
-
-
-def test_single_elim_champion_stands_when_no_finalist_beats_it() -> None:
-    s = make_strategy(TournamentStructure(structure="single_elim", params={"field_size": 2}))
-    champ = _champion("v0")
-    challengers = [_challenger("v1"), _challenger("v2")]
-    # Champion is the strongest of all — the bracket survivor loses the final.
-    scalars = {"v0": 0.1, "v1": 0.5, "v2": 0.7}
-    dec = _run_strategy(s, champ, challengers, scalars)
-    assert dec.promoted_generation_id is None
-    assert dec.decision == "rejected"
-
-
-def test_single_elim_defaults_to_replicated_duels() -> None:
-    s = make_strategy(TournamentStructure(structure="single_elim", params={"field_size": 2}))
-    s.seed(_champion("v0"), [_challenger("v1"), _challenger("v2")])
-    batch = s.next_matchups()
-    assert batch
-    assert all(m.replicates >= 2 for m in batch)
-
-
-def test_single_elim_odd_field_gets_a_bye() -> None:
-    s = make_strategy(TournamentStructure(structure="single_elim", params={"field_size": 3}))
-    champ = _champion("v0")
-    challengers = [_challenger("v1"), _challenger("v2"), _challenger("v3")]
-    scalars = {"v0": 1.0, "v1": 0.5, "v2": 0.6, "v3": 0.4}
-    dec = _run_strategy(s, champ, challengers, scalars)
-    # v3 is strongest challenger and should be crowned.
-    assert dec.promoted_generation_id == "v3"
-    # A bye match should appear in the round records.
-    rounds = s.rounds()
-    assert any(m.bye for r in rounds for m in r.matches)
-
-
-def test_single_elim_records_full_bracket_audit() -> None:
-    s = make_strategy(TournamentStructure(structure="single_elim", params={"field_size": 4}))
-    champ = _champion("v0")
-    challengers = [_challenger(f"v{i}") for i in (1, 2, 3, 4)]
-    scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.8, "v3": 0.3, "v4": 0.7}
-    dec = _run_strategy(s, champ, challengers, scalars)
-    # 4 challengers => 2 semis + 1 challenger-final + 1 champion-final = 4.
-    assert len(dec.matchups) == 4
-
-
-# ---------------------------------------------------------------------------
-# Double elimination
-# ---------------------------------------------------------------------------
-
-
-def test_double_elim_promotes_strongest_challenger() -> None:
-    s = make_strategy(TournamentStructure(structure="double_elim", params={"field_size": 4}))
-    champ = _champion("v0")
-    challengers = [_challenger(f"v{i}") for i in (1, 2, 3, 4)]
-    scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.8, "v3": 0.2, "v4": 0.7}
-    dec = _run_strategy(s, champ, challengers, scalars)
-    assert dec.promoted_generation_id == "v3"
-    assert dec.crowning_matchup_id == "GF"
-
-
-def test_double_elim_eliminates_only_on_second_loss() -> None:
-    s = make_strategy(TournamentStructure(structure="double_elim", params={"field_size": 4}))
-    champ = _champion("v0")
-    challengers = [_challenger(f"v{i}") for i in (1, 2, 3, 4)]
-    scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.8, "v3": 0.2, "v4": 0.7}
-    _run_strategy(s, champ, challengers, scalars)
-    # Every challenger that lost a WB match got a losers'-bracket "second
-    # life": at least one LB match must have been scheduled (LB- prefix).
-    assert any(r.left_id and r.matchup_id.startswith("LB-") for r in s._audit)
-
-
-def test_double_elim_champion_stands_when_unbeaten() -> None:
-    s = make_strategy(TournamentStructure(structure="double_elim", params={"field_size": 2}))
-    champ = _champion("v0")
-    challengers = [_challenger("v1"), _challenger("v2")]
-    scalars = {"v0": 0.1, "v1": 0.5, "v2": 0.6}
-    dec = _run_strategy(s, champ, challengers, scalars)
-    assert dec.promoted_generation_id is None
-
-
-# ---------------------------------------------------------------------------
-# Swiss
-# ---------------------------------------------------------------------------
-
-
-def test_swiss_runs_configured_number_of_rounds() -> None:
-    s = make_strategy(
-        TournamentStructure(structure="swiss", params={"field_size": 3, "rounds_n": 3})
-    )
-    champ = _champion("v0")
-    challengers = [_challenger("v1"), _challenger("v2"), _challenger("v3")]
-    scalars = {"v0": 0.9, "v1": 0.4, "v2": 0.5, "v3": 0.6}
-    _run_strategy(s, champ, challengers, scalars)
-    swiss_rounds = [r for r in s.rounds() if r.label.startswith("Swiss")]
-    assert len(swiss_rounds) == 3
-
-
-def test_swiss_promotes_leader_only_if_it_clears_champion_gate() -> None:
-    s = make_strategy(
-        TournamentStructure(structure="swiss", params={"field_size": 2, "rounds_n": 2})
-    )
-    champ = _champion("v0")
-    challengers = [_challenger("v1"), _challenger("v2")]
-    # v1 is the best contestant overall and beats the champion at the gate.
-    scalars = {"v0": 0.9, "v1": 0.2, "v2": 0.5}
-    dec = _run_strategy(s, champ, challengers, scalars)
-    assert dec.promoted_generation_id == "v1"
-    assert dec.crowning_matchup_id == "swiss-final"
-
-
-def test_swiss_leader_that_loses_champion_gate_is_not_crowned() -> None:
-    s = make_strategy(
-        TournamentStructure(structure="swiss", params={"field_size": 2, "rounds_n": 2})
-    )
-    champ = _champion("v0")
-    challengers = [_challenger("v1"), _challenger("v2")]
-    # The champion is the strongest — the Swiss leader loses the gate.
-    scalars = {"v0": 0.1, "v1": 0.4, "v2": 0.6}
-    dec = _run_strategy(s, champ, challengers, scalars)
-    assert dec.promoted_generation_id is None
-    assert dec.decision == "rejected"
-
-
-def test_swiss_standings_rank_by_copeland() -> None:
-    s = make_strategy(
-        TournamentStructure(structure="swiss", params={"field_size": 3, "rounds_n": 2})
-    )
-    champ = _champion("v0")
-    challengers = [_challenger("v1"), _challenger("v2"), _challenger("v3")]
-    scalars = {"v0": 0.9, "v1": 0.2, "v2": 0.5, "v3": 0.6}
-    dec = _run_strategy(s, champ, challengers, scalars)
-    # v1 (lowest scalar) should win the most duels and rank first.
-    assert dec.standings[0].generation_id == "v1"
-
-
-def test_swiss_standings_count_a_loss_for_every_pairing_lost() -> None:
-    s = make_strategy(
-        TournamentStructure(structure="swiss", params={"field_size": 3, "rounds_n": 2})
-    )
-    champ = _champion("v0")
-    challengers = [_challenger("v1"), _challenger("v2"), _challenger("v3")]
-    # An even field pairs (v0,v1) and (v2,v3) in round 1 — v1 and v2 win.
-    # Round 2 pairs the two winners and the two losers: v1 beats v2, v3
-    # beats v0. Byes never occur, so wins and losses balance per round.
-    scalars = {"v0": 0.9, "v1": 0.2, "v2": 0.5, "v3": 0.6}
-    dec = _run_strategy(s, champ, challengers, scalars)
-    tally = {r.generation_id: (r.wins, r.losses) for r in dec.standings}
-    assert tally == {"v1": (2, 0), "v2": (1, 1), "v3": (1, 1), "v0": (0, 2)}
 
 
 # ---------------------------------------------------------------------------
@@ -616,15 +456,6 @@ def test_unknown_structure_raises_listing_valid_keys() -> None:
     assert "gauntlet" in str(exc.value)
 
 
-def test_field_size_one_degrades_any_structure_to_gauntlet() -> None:
-    # A single-elim with field_size 1 has one challenger: bracket survivor
-    # is that challenger, then the champion-gate final decides — exactly
-    # the gauntlet's single full-board duel.
-    s = make_strategy(TournamentStructure(structure="single_elim", params={"field_size": 1}))
-    dec = _run_strategy(s, _champion("v0"), [_challenger("v1")], {"v0": 1.0, "v1": 0.5})
-    assert dec.promoted_generation_id == "v1"
-
-
 def test_every_field_structure_shares_the_champion_gate_base() -> None:
     """Every registered structure but the gauntlet inherits the shared final.
 
@@ -638,7 +469,7 @@ def test_every_field_structure_shares_the_champion_gate_base() -> None:
     """
     field_structures = {
         token: cls
-        for token, cls in STRATEGY_REGISTRY.items()
+        for token, cls in (*STRATEGY_REGISTRY.items(), *EXPERIMENTAL_STRATEGY_REGISTRY.items())
         if token != GauntletStrategy.structure
     }
     assert set(field_structures) == {"single_elim", "double_elim", "swiss", "racing"}
@@ -670,25 +501,3 @@ def test_resolve_tournament_drives_gauntlet() -> None:
 
     dec = asyncio.run(resolve_tournament(s, request_field=request_field, run_matchup=run_matchup))
     assert dec.promoted_generation_id == "v1"
-
-
-def test_resolve_tournament_drives_single_elim_to_completion() -> None:
-    s = make_strategy(TournamentStructure(structure="single_elim", params={"field_size": 4}))
-    champ = _champion("v0")
-    challengers = [_challenger(f"v{i}") for i in (1, 2, 3, 4)]
-    scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.8, "v3": 0.3, "v4": 0.7}
-
-    async def request_field(n: int):
-        assert n == 4
-        return champ, challengers
-
-    async def run_matchup(m: Matchup) -> MatchupResult:
-        return _result(
-            m,
-            left_scalar=scalars[m.left.generation_id],
-            right_scalar=scalars[m.right.generation_id],
-        )
-
-    dec = asyncio.run(resolve_tournament(s, request_field=request_field, run_matchup=run_matchup))
-    assert dec.promoted_generation_id == "v3"
-    assert dec.decision == "promoted"

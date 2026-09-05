@@ -135,6 +135,10 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
         )
     if op == "set_experiment_memory":
         return ops.set_experiment_memory(draft, cross_epoch=_opt_bool(args, "cross_epoch"))
+    if op == "set_experimental":
+        return ops.set_experimental(
+            draft, tournament_structures=_opt_bool(args, "tournament_structures")
+        )
     if op == "set_goldfive":
         if "config" not in args:
             raise ValueError("set_goldfive requires an object or null config")

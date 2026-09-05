@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._contract_pins import pin_deterministic
+from tests._contract_pins import experimental_for, pin_deterministic
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     install_stub_adapter_factory,
@@ -235,6 +235,7 @@ def _bootstrap(
                 tournament_structure=TournamentStructure(
                     structure=structure, params=_struct_params(structure, field_size)
                 ),
+                experimental=experimental_for(structure),
                 **({"overfitting": overfitting} if overfitting is not None else {}),
             )
         ),

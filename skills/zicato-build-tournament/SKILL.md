@@ -18,7 +18,8 @@ holdout split, the proposer, and the promote gate. It is the *workflow* skill;
 it does NOT restate the design knowledge it composes. Defer:
 
 - **Which structure, and its params** → [`zicato-design-tournament-structure`](../zicato-design-tournament-structure/SKILL.md)
-  (gauntlet / swiss / single_elim / double_elim / racing; `field_size`,
+  (gauntlet / racing, or the experimental swiss / single_elim / double_elim
+  under `experimental.tournament_structures`; `field_size`,
   `replicates`, `rounds_n`, `eta`, `board_fraction`; the contract-roll rule).
 - **The board, judges, and weighted loss** → the sibling
   [`zicato-build-board`](../zicato-build-board/SKILL.md).
@@ -89,9 +90,10 @@ Defer the whole decision to
 [`zicato-design-tournament-structure`](../zicato-design-tournament-structure/SKILL.md).
 The short version the copilot offers: **start at gauntlet** (one champion, one
 challenger, one duel); reach for a field-structure only once the proposer
-emits multiple challengers worth comparing; use `racing` for a large field on
-a budget, `swiss` when the operator wants a leaderboard, `single_elim` for a
-quick winner. Set it with `set_structure`.
+emits multiple challengers worth comparing; use `racing` for a field. `swiss`,
+`single_elim` and `double_elim` are experimental and need
+`set_experimental(tournament_structures=True)` first. Set the structure with
+`set_structure`.
 
 ### 2. Set field_size and replicates — the noise lever
 

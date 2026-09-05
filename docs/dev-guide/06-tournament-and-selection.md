@@ -72,7 +72,8 @@ owns it, and the selection layer only *reads* its verdict.
 | `src/zicato/selection/strategy.py` | The `SelectionStrategy` ABC + the value types (`Contestant`, `Matchup`, `MatchupResult`, `SelectionDecision`, `Standing`, `RoundRecord`, `MatchRecord`), `pending_match_record`, `rung_for_match_id` | 564 lines |
 | `src/zicato/selection/driver.py` | `resolve_tournament` (the structure-agnostic walk), `confirm_promotion_with_evidence` (the BT defer→replicate→inconclusive loop) | 400 lines |
 | `src/zicato/selection/registry.py` | `STRATEGY_REGISTRY`, `make_strategy`, `STRUCTURE_DEFAULT_REPLICATES`, `default_replicates_for` | 110 lines |
-| `src/zicato/selection/strategies/*.py` | `gauntlet` (164), `single_elim` (413), `double_elim` (474), `swiss` (413), `racing` (467) | — |
+| `src/zicato/selection/strategies/*.py` | `gauntlet` (164), `racing` (467), and the `ChampionGateStrategy` base | — |
+| `src/zicato/selection/experimental/*.py` | `single_elim` (413), `double_elim` (474), `swiss` (413) — admitted only by `experimental.tournament_structures` | — |
 | `src/zicato/selection/evidence_gate.py` | The Bradley–Terry pre-gate: `evidence_verdict`, `closest_ci_duel`, `EVIDENCE_REPLICATE_BASE`, `MIN_CREDIBLE_DUELS`, `read_promote_confidence_threshold`, `rating_block` | 502 lines |
 | `src/zicato/selection/resolve.py` | The cycle-robust winner resolvers (propose-only): `condorcet_check`, `smith_set`, `ranked_pairs`, `copeland_order`, `resolve_leader`, `build_matrix` | 383 lines |
 | `src/zicato/selection/dead_letter.py` | `InconclusiveRecord`, `record_inconclusive`, `read_inconclusive`, `list_inconclusive` | 122 lines |
@@ -1600,18 +1601,24 @@ orchestrator publish the live bracket/ladder WHILE the round runs, with
 
 ## 6.10 The five strategies
 
-`make_strategy(spec, board_ids)` (`registry.py`) maps a structure token to a
-fresh strategy. An unknown token raises with the valid keys listed
-(defence-in-depth — the config loader already validated at load time). Any
+`make_strategy(spec, board_ids, experimental_structures=...)` (`registry.py`)
+maps a structure token to a fresh strategy. `STRATEGY_REGISTRY` holds
+`gauntlet` and `racing`; `EXPERIMENTAL_STRATEGY_REGISTRY` holds `single_elim`,
+`double_elim` and `swiss`, which resolve only when the caller passes the
+contract's `experimental.tournament_structures` flag as `True` — otherwise the
+call raises, naming the token and the key. An unknown token raises with the
+valid keys listed (defence-in-depth — the config loader already validated at
+load time, and `ScoringWeights` refuses an experimental structure without the
+opt-in). Any
 structure constructed with `field_size == 1` degrades to gauntlet semantics
 organically.
 
 | Structure | Shape | `_default_replicates` | Notable params | Maps to (SELECTION.md) |
 |---|---|---|---|---|
 | `gauntlet` | 1 champion, 1 challenger, 1 full-board duel, promote-on-gate | 2 | `replicates` | degenerate single-replicate dueling bandit §6.3 |
-| `single_elim` | single-elimination bracket over the field, then a champion-gate | 2 | `field_size`, `replicates` | knockout identification |
-| `double_elim` | winners'/losers' bracket, then a champion-gate | 2 | `field_size`, `replicates` | double-knockout |
-| `swiss` | `rounds_n` non-eliminating Swiss rounds by Copeland standing, then a champion-gate of the leader | 2 | `rounds_n`, `field_size`, `resolver`, `rating` | Copeland identification §6.2 |
+| `single_elim` (experimental) | single-elimination bracket over the field, then a champion-gate | 2 | `field_size`, `replicates` | knockout identification |
+| `double_elim` (experimental) | winners'/losers' bracket, then a champion-gate | 2 | `field_size`, `replicates` | double-knockout |
+| `swiss` (experimental) | `rounds_n` non-eliminating Swiss rounds by Copeland standing, then a champion-gate of the leader | 2 | `rounds_n`, `field_size`, `resolver`, `rating` | Copeland identification §6.2 |
 | `racing` | successive-halving rungs on escalating board slices, then a final full-board champion-gate | 1 | `eta`, `board_fraction`, `rung0_board_size`, `field_size` | successive-halving / best-arm §7 |
 
 ### 6.10.1 The gauntlet as the reference implementation
@@ -1684,7 +1691,7 @@ then confirm the LEADER against the champion with the unchanged gate:
             ),
         )
 ```
-— `src/zicato/selection/strategies/swiss.py`, `_maybe_final`
+— `src/zicato/selection/experimental/swiss.py`, `_maybe_final`
 
 The crucial invariant: `_pick_leader` always names a NON-champion challenger.
 The optional `resolver` knob (§6.12) only *proposes* an internal leader from the
@@ -1733,7 +1740,7 @@ verdict:
         self._eliminated_round[loser.generation_id] = self._stage_index
         self._current_round.append(winner)
 ```
-— `src/zicato/selection/strategies/single_elim.py`, `record_result`
+— `src/zicato/selection/experimental/single_elim.py`, `record_result`
 
 Only the FINAL node (`_maybe_final` → `Matchup(left=champion, right=survivor,
 bracket_slot="final")`) applies all three gate rungs against the reigning

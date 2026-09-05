@@ -62,6 +62,7 @@ function freshDraft() {
       regression_timeout_s: 600,
       proposer_quality: { best_of_n: 3, critique_enabled: true, screen_entries: 0, screen_veto_only: false },
       experiment_memory: { cross_epoch: false },
+      experimental: { tournament_structures: false },
       telemetry_dialect: 'goldfive',
     },
     board: [
@@ -164,6 +165,7 @@ function installBuilderFetch() {
       }
       // mutate the shared draft so the applied envelope is observably different.
       if (body.op === 'set_structure') DRAFT.scoring.tournament.structure = body.args.structure;
+      if (body.op === 'set_experimental') DRAFT.scoring.experimental = { tournament_structures: !!body.args.tournament_structures };
       if (body.op === 'set_telemetry_dialect' && body.args.dialect) DRAFT.scoring.telemetry_dialect = body.args.dialect;
       if (body.op === 'set_goldfive') {
         if (body.args.config === null) delete DRAFT.scoring.goldfive;
@@ -235,28 +237,44 @@ test('builder view: renders the left-rail sections + the structure section', asy
   const host = globalThis.document.createElement('div');
   await view.render(host);
   const railItems = byClass(host, 'dn-bld-railitem');
-  assertEqual(railItems.length, 8, 'eight contract sections in the left rail (incl. Overfitting + Weights)');
-  // the structure section leads with the five structure cards.
+  assertEqual(railItems.length, 9, 'nine contract sections in the left rail (incl. Overfitting, Weights, Experimental)');
+  // the structure section leads with the two default-choice structure cards;
+  // the experimental group is absent while the contract has not admitted it.
   const cards = byClass(host, 'dn-bld-card');
-  assertEqual(cards.length, 5, 'five structure picker cards');
+  assertEqual(cards.length, 2, 'two structure picker cards: gauntlet and racing');
+  assert(!cards.find((c) => c.textContent.toLowerCase().includes('swiss')), 'no experimental card without the opt-in');
+  assert(!byClass(host, 'dn-bld-subhead').find((h) => h.textContent === 'Experimental'), 'no experimental group without the opt-in');
   // the live preview painted a cost meter from the op envelope's cost.
   assert(firstClass(host, 'dn-bld-cost'), 'the live preview shows a cost meter');
 });
 
-test('builder view: a structure pick calls /builder/op and applies the returned draft + diff', async () => {
-  installBuilderFetch();
-  globalThis.window.localStorage.clear();
-  const host = globalThis.document.createElement('div');
-  await view.render(host);
+test('builder view: the Experimental section admits the three structures, and a pick calls /builder/op and applies the returned draft + diff', async () => {
+  const host = await mountAt('Experimental');
+  const flag = byAria(host, 'dn-bld-check', 'Experimental tournament structures');
+  assert(flag, 'the experimental-structures toggle renders');
+  assert(!flag.checked, 'the toggle is unchecked at the false default');
+  flag.checked = true;
+  flag.dispatchEvent(makeEvent('change'));
+  await tick();
+  const optIn = OP_CALLS.find((c) => c.op === 'set_experimental' && 'tournament_structures' in c.args);
+  assert(optIn && optIn.args.tournament_structures === true,
+    'the toggle posts set_experimental {tournament_structures:true} — exact op+args');
+  // With the flag on, the Structure section renders the experimental group
+  // under its own heading, after the two default-choice cards.
+  const structureRail = byClass(host, 'dn-bld-railitem').find((r) => r.textContent.includes('Structure'));
+  structureRail.dispatchEvent(makeEvent('click'));
+  await tick();
   const cards = byClass(host, 'dn-bld-card');
-  // pick "swiss" (4th card) — click drives set_structure.
+  assertEqual(cards.length, 5, 'five structure picker cards once the contract admits the experimental three');
+  assert(byClass(host, 'dn-bld-subhead').find((h) => h.textContent === 'Experimental'), 'the experimental group carries its heading');
+  // pick "swiss" — click drives set_structure.
   const swiss = cards.find((c) => c.textContent.toLowerCase().includes('swiss'));
   assert(swiss, 'the swiss card is present');
   swiss.dispatchEvent(makeEvent('click'));
   await tick();
-  assertEqual(OP_CALLS.length, 1, 'exactly one op call');
-  assertEqual(OP_CALLS[0].op, 'set_structure', 'the op was set_structure');
-  assertEqual(OP_CALLS[0].args.structure, 'swiss', 'the structure arg was swiss');
+  assertEqual(OP_CALLS.length, 2, 'exactly two op calls: the opt-in, then the pick');
+  assertEqual(OP_CALLS[1].op, 'set_structure', 'the op was set_structure');
+  assertEqual(OP_CALLS[1].args.structure, 'swiss', 'the structure arg was swiss');
   // the applied diff rolls the epoch — the preview impact pill reflects it.
   const impact = firstClass(host, 'dn-bld-impact');
   assert(impact && impact.textContent.includes('rolls epoch'), 'the contract-impact pill shows the epoch roll');

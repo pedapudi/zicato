@@ -269,7 +269,9 @@ def set_structure(draft: TournamentDraft, structure: str) -> DraftPatch:
 
     Raises :class:`ValueError` on an invalid structure token (the
     :class:`TournamentStructure` constructor validates and lists the
-    valid tokens).
+    valid tokens) and on an experimental token while the draft's
+    ``experimental.tournament_structures`` flag is off (the
+    :class:`ScoringWeights` constructor refuses it, naming the flag).
     """
     old = draft.scoring.tournament_structure
     new_ts = TournamentStructure(structure=structure, params=dict(old.params))
@@ -818,6 +820,37 @@ def set_experiment_memory(
         )
         changed["cross_epoch"] = {"from": memory.cross_epoch, "to": cross_epoch}
     return DraftPatch(op="set_experiment_memory", changed=changed)
+
+
+def set_experimental(
+    draft: TournamentDraft,
+    *,
+    tournament_structures: bool | None = None,
+) -> DraftPatch:
+    """Set the contract's opt-ins for features without a measured case.
+
+    ``tournament_structures=True`` admits ``single_elim``, ``double_elim``
+    and ``swiss`` as the draft's structure; ``False`` (the default) refuses
+    them, and is itself refused while the draft's structure is one of the
+    three. A contract field — changing it rolls the epoch.
+    """
+    changed: dict[str, Any] = {}
+    experimental = draft.scoring.experimental
+    if (
+        tournament_structures is not None
+        and tournament_structures != experimental.tournament_structures
+    ):
+        draft.scoring = _replace_scoring(
+            draft,
+            experimental=dataclasses.replace(
+                experimental, tournament_structures=tournament_structures
+            ),
+        )
+        changed["tournament_structures"] = {
+            "from": experimental.tournament_structures,
+            "to": tournament_structures,
+        }
+    return DraftPatch(op="set_experimental", changed=changed)
 
 
 def set_goldfive(
@@ -2284,6 +2317,7 @@ __all__ = [
     "set_namespace_weights",
     "set_proposer_quality",
     "set_experiment_memory",
+    "set_experimental",
     "set_goldfive",
     "set_mutation_surface",
     "set_telemetry_dialect",

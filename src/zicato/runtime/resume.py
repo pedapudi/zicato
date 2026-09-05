@@ -423,10 +423,13 @@ def _configured_field_size(workspace_root: Path, epoch_id: str) -> int:
     from zicato.selection.registry import make_strategy  # noqa: PLC0415
 
     try:
-        spec = load_epoch(workspace_root, epoch_id).scoring.tournament_structure
+        scoring = load_epoch(workspace_root, epoch_id).scoring
     except FileNotFoundError:
         return 1
-    return make_strategy(spec).field_size()
+    return make_strategy(
+        scoring.tournament_structure,
+        experimental_structures=scoring.experimental.tournament_structures,
+    ).field_size()
 
 
 def _field_cleanup_checkpoint(_boundary: str) -> None:

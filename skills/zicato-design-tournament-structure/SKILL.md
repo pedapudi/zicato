@@ -10,7 +10,9 @@ at most one promotion. The default is the **gauntlet**: one champion, one
 challenger, one full-board duel, promote-on-gate — the historical
 king-of-the-hill loop. When the proposer can emit *several* challengers per
 round, or when a single duel is too noisy to trust, an epoch can select a
-different **structure**: `swiss`, `single_elim`, `double_elim`, or `racing`.
+different **structure**: `racing`, or — with `experimental.tournament_structures`
+set to `true` in `scoring.json` — the experimental `swiss`, `single_elim`, or
+`double_elim`.
 
 The structure is part of the **evaluation contract** (it is a field of
 `ScoringWeights`, folded into the contract hash). Changing the structure or
@@ -60,17 +62,19 @@ evaluation with a protected incumbent. Map the situation to a structure:
 | Situation | Structure | Why |
 |---|---|---|
 | One challenger per round; cheapest possible 1-vs-1 | **gauntlet** | The default. One full-board duel per replicate, promote-on-gate. Raise `replicates` above its default 2 if the verdict is still too noisy — no structure change needed. |
-| A field, and you want a full RANKING in few duels | **swiss** | Fixed `rounds_n` Swiss rounds rank the whole field by Copeland (duels won); no elimination, so every candidate is rated. Cheap, non-adaptive. |
-| A field, and you only need the single best (knockout) | **single_elim** | A bracket over the challengers halves the field each round; the survivor faces the champion. Fewer duels than swiss, but loses the full ranking. |
-| Same, but you want a "second chance" against an upset | **double_elim** | Winners' + losers' bracket; eliminated only on the SECOND node loss. Offered for completeness — prefer raising `replicates` on `single_elim` (cheaper, more robust). |
+| A field, and you want a full RANKING in few duels | **swiss** (experimental) | Needs `experimental.tournament_structures = true`. Fixed `rounds_n` Swiss rounds rank the whole field by Copeland (duels won); no elimination, so every candidate is rated. Cheap, non-adaptive. |
+| A field, and you only need the single best (knockout) | **single_elim** (experimental) | Needs the same opt-in. A bracket over the challengers halves the field each round; the survivor faces the champion. Fewer duels than swiss, but loses the full ranking. |
+| Same, but you want a "second chance" against an upset | **double_elim** (experimental) | Needs the same opt-in. Winners' + losers' bracket; eliminated only on the SECOND node loss. Offered for completeness — prefer raising `replicates` on `single_elim` (cheaper, more robust). |
 | A LARGE field, pick the best cheaply, noise-robust | **racing** | Successive halving: cheap rung-0 duels on a board SLICE cut the worst by `eta`; survivors re-duel on larger slices. Trades board coverage for cheapness. The one bracket-shaped structure endorsed for zicato's regime. |
 
 Rules of thumb:
 - **More than one challenger but a tight budget** → `racing` (it never wastes
   full-board runs on obvious losers).
-- **You want to *report* a leaderboard of the field** → `swiss`.
-- **You just want a winner from a small field** → `single_elim` (its
-  `replicates` already defaults to 2).
+- **You want to *report* a leaderboard of the field** → `swiss`, after
+  setting `experimental.tournament_structures = true`.
+- **You just want a winner from a small field** → `racing` with a small
+  field; `single_elim` needs the same opt-in and has no measured case at
+  that size.
 - **You distrust the gauntlet's verdict** → stay on `gauntlet` and raise
   `replicates` past 2. That is strictly cheaper than switching to a bracket.
 
@@ -114,7 +118,7 @@ form; the CLI flags below just write into it.
   "promote_margin": 0.01,
   // … the usual drift-loss weights / per_judge_weights / predicates …
   "tournament": {
-    "structure": "racing",      // gauntlet | single_elim | double_elim | swiss | racing
+    "structure": "racing",      // gauntlet | racing; the experimental three need the opt-in
     "params": {
       "field_size": 4,          // challengers proposed per round (gauntlet ⇒ 1)
       "replicates": 2,          // paired runs per duel, averaged — the noise lever
@@ -146,7 +150,7 @@ zicato evolve \
     --rounds 2
 ```
 
-- `--tournament-structure {gauntlet|single_elim|double_elim|swiss|racing}`
+- `--tournament-structure {gauntlet|racing}`
   writes `{structure, params}` into the live `scoring.json` BEFORE the
   contract hash is computed, so it participates in the hash like a hand edit.
 - `--tournament-param KEY=VALUE` is repeatable; `VALUE` is parsed as JSON when
@@ -228,8 +232,9 @@ final survivor sees the full board + the gate:
   actually emits multiple challengers worth comparing.
 - **Reach for `replicates` before bracket shape** when the problem is noise —
   it is the honest, cheaper lever.
-- **Use `racing` for large fields**, `swiss` when you want the ranking,
-  `single_elim` for a quick winner; `double_elim` rarely earns its cost.
+- **Use `racing` for a field.** `swiss`, `single_elim` and `double_elim` are
+  experimental: they need `experimental.tournament_structures = true`, and
+  none has a measured case at zicato's field size.
 - **Let `field_size == 1` degrade gracefully** — every structure collapses to
   a single full-board duel, so a misconfigured field never errors out.
 - **Never start a live `zicato evolve` to test a structure without the

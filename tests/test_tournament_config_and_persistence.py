@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -42,7 +43,12 @@ def test_scoring_without_tournament_key_is_gauntlet() -> None:
 
 
 def test_scoring_parses_swiss_block_with_params() -> None:
-    w = scoring_weights_from_dict({"tournament": {"structure": "swiss", "params": {"rounds_n": 6}}})
+    w = scoring_weights_from_dict(
+        {
+            "tournament": {"structure": "swiss", "params": {"rounds_n": 6}},
+            "experimental": {"tournament_structures": True},
+        }
+    )
     assert w.tournament_structure.structure == "swiss"
     assert w.tournament_structure.params["rounds_n"] == 6
 
@@ -218,20 +224,24 @@ def _write_scoring(tmp_path: Path, payload: dict) -> ContractInputs:
     )
 
 
+#: The block that admits an experimental structure into a contract.
+_ADMIT: dict[str, Any] = {"experimental": {"tournament_structures": True}}
+
+
 def test_structure_change_moves_contract_hash(tmp_path: Path) -> None:
     gauntlet = _write_scoring(tmp_path, {"pass_weight": 1.0})
     h_gauntlet = compute_contract_hash(gauntlet)
-    swiss = _write_scoring(tmp_path, {"tournament": {"structure": "swiss"}})
+    swiss = _write_scoring(tmp_path, {"tournament": {"structure": "swiss"}, **_ADMIT})
     h_swiss = compute_contract_hash(swiss)
     assert h_gauntlet != h_swiss
 
 
 def test_param_change_moves_contract_hash(tmp_path: Path) -> None:
     four = _write_scoring(
-        tmp_path, {"tournament": {"structure": "swiss", "params": {"rounds_n": 4}}}
+        tmp_path, {"tournament": {"structure": "swiss", "params": {"rounds_n": 4}}, **_ADMIT}
     )
     six = _write_scoring(
-        tmp_path, {"tournament": {"structure": "swiss", "params": {"rounds_n": 6}}}
+        tmp_path, {"tournament": {"structure": "swiss", "params": {"rounds_n": 6}}, **_ADMIT}
     )
     assert compute_contract_hash(four) != compute_contract_hash(six)
 

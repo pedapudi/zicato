@@ -1165,7 +1165,8 @@ The last three structures are the ones the unified round pipeline reaches
 through registries that no other lane touches end to end; their contracts
 live beside the racing one as `scoring.swiss.json`,
 `scoring.single_elim.json`, and `scoring.double_elim.json` in
-`examples/zicato_examples/target_1_presentation/`.
+`examples/zicato_examples/target_1_presentation/`; each sets
+`experimental.tournament_structures` to `true`, which admits its structure.
 
 Every lane drives `evolve_n_rounds`, single-round lanes included: at
 `rounds=1` the loop's persisted artifacts are byte-identical to a bare

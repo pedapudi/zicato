@@ -668,6 +668,9 @@
       "experiment_memory": {
         "cross_epoch": false
       },
+      "experimental": {
+        "tournament_structures": false
+      },
       "holdout_entry_regression_budget": 0,
       "holdout_margin": null,
       "mutation_surface": {},
@@ -1896,6 +1899,9 @@
       "drift_reducer": "",
       "experiment_memory": {
         "cross_epoch": false
+      },
+      "experimental": {
+        "tournament_structures": false
       },
       "holdout_entry_regression_budget": 0,
       "holdout_margin": null,
@@ -9536,6 +9542,9 @@
       "experiment_memory": {
         "cross_epoch": false
       },
+      "experimental": {
+        "tournament_structures": false
+      },
       "holdout_entry_regression_budget": 0,
       "holdout_margin": null,
       "mutation_surface": {},
@@ -9647,6 +9656,9 @@
       "drift_reducer": "",
       "experiment_memory": {
         "cross_epoch": false
+      },
+      "experimental": {
+        "tournament_structures": false
       },
       "holdout_entry_regression_budget": 0,
       "holdout_margin": null,

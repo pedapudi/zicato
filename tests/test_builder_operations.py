@@ -37,10 +37,10 @@ def _board(n: int) -> list[BoardEntry]:
 def test_set_structure_changes_structure_and_keeps_params() -> None:
     draft = TournamentDraft()
     ops.set_param(draft, "field_size", 4)
-    patch = ops.set_structure(draft, "swiss")
-    assert draft.scoring.tournament_structure.structure == "swiss"
+    patch = ops.set_structure(draft, "racing")
+    assert draft.scoring.tournament_structure.structure == "racing"
     assert draft.scoring.tournament_structure.params["field_size"] == 4
-    assert patch.to_dict()["changed"]["structure"] == {"from": "gauntlet", "to": "swiss"}
+    assert patch.to_dict()["changed"]["structure"] == {"from": "gauntlet", "to": "racing"}
 
 
 def test_set_param_and_remove() -> None:
@@ -306,7 +306,7 @@ def test_restore_draft_in_place_reports_components() -> None:
 
     draft = TournamentDraft()
     draft.entries = _board(3)
-    ops.set_structure(draft, "swiss")
+    ops.set_structure(draft, "racing")
     ops.set_board_meta(draft, judge_only=True)
 
     before_identity = draft
@@ -365,6 +365,7 @@ def test_cost_swiss() -> None:
     # test's subject is the swiss run arithmetic over the whole board, so
     # pin the holdout split off.
     _no_holdout(draft)
+    ops.set_experimental(draft, tournament_structures=True)
     ops.set_structure(draft, "swiss")
     ops.set_param(draft, "field_size", 4)
     ops.set_param(draft, "replicates", 2)
@@ -453,6 +454,7 @@ def test_cost_swiss_unset_replicates_uses_strategy_default_two() -> None:
     draft = TournamentDraft()
     draft.entries = _board(8)
     _no_holdout(draft)
+    ops.set_experimental(draft, tournament_structures=True)
     ops.set_structure(draft, "swiss")
     ops.set_param(draft, "field_size", 4)
     # ``replicates`` is deliberately NOT set.
@@ -470,6 +472,7 @@ def test_cost_explicit_replicates_overrides_structure_default() -> None:
     draft = TournamentDraft()
     draft.entries = _board(8)
     _no_holdout(draft)
+    ops.set_experimental(draft, tournament_structures=True)
     ops.set_structure(draft, "swiss")
     ops.set_param(draft, "field_size", 4)
     ops.set_param(draft, "replicates", 1)
@@ -498,6 +501,7 @@ def test_cost_unset_replicates_per_structure_defaults() -> None:
         draft = TournamentDraft()
         draft.entries = _board(8)
         _no_holdout(draft)
+        ops.set_experimental(draft, tournament_structures=True)
         ops.set_structure(draft, structure)
         ops.set_param(draft, "field_size", 4)
         # ``replicates`` UNSET → the estimator resolves the structure default.
@@ -516,10 +520,10 @@ def test_estimator_default_matches_strategy_default_for_every_structure() -> Non
     # without the other.
     from zicato.core.types import VALID_TOURNAMENT_STRUCTURES
     from zicato.selection import default_replicates_for
-    from zicato.selection.registry import STRATEGY_REGISTRY
+    from zicato.selection.registry import EXPERIMENTAL_STRATEGY_REGISTRY, STRATEGY_REGISTRY
 
     for structure in VALID_TOURNAMENT_STRUCTURES:
-        cls = STRATEGY_REGISTRY[structure]
+        cls = {**STRATEGY_REGISTRY, **EXPERIMENTAL_STRATEGY_REGISTRY}[structure]
         # The strategy's actual default, as resolved in its ``__init__`` with
         # no ``replicates`` param.
         strategy = cls(params={})
@@ -542,6 +546,7 @@ def test_estimator_default_matches_strategy_default_for_every_structure() -> Non
 def test_validate_field_size_one_degrades_to_gauntlet() -> None:
     draft = TournamentDraft()
     draft.entries = _board(4)
+    ops.set_experimental(draft, tournament_structures=True)
     ops.set_structure(draft, "swiss")
     ops.set_param(draft, "field_size", 1)
     codes = {w.code for w in ops.validate(draft)}
@@ -569,6 +574,7 @@ def test_validate_racing_rung0_slice() -> None:
 def test_validate_replicates_recommended_for_brackets() -> None:
     draft = TournamentDraft()
     draft.entries = _board(8)
+    ops.set_experimental(draft, tournament_structures=True)
     ops.set_structure(draft, "single_elim")
     ops.set_param(draft, "field_size", 4)
     ops.set_param(draft, "replicates", 1)
@@ -1389,11 +1395,11 @@ def test_draftstore_fork_switch_roundtrip(tmp_path) -> None:
 
     # Build up some working state, then fork it into slot A.
     working = store.get("s", ws)
-    ops.set_structure(working, "swiss")
+    ops.set_structure(working, "racing")
     forked = store.fork("s", "variant-a", ws)
     assert store.list_drafts() == ["variant-a"]
     # The fork inherits the working state and IS the session's draft now.
-    assert forked.scoring.tournament_structure.structure == "swiss"
+    assert forked.scoring.tournament_structure.structure == "racing"
     assert store.get("s", ws) is forked
 
     # Edits accumulate on the slot; fork B from A, edit B; switch back to A.
@@ -1402,11 +1408,11 @@ def test_draftstore_fork_switch_roundtrip(tmp_path) -> None:
     ops.set_structure(forked_b, "racing")
     assert store.list_drafts() == ["variant-a", "variant-b"]
     back = store.switch("s", "variant-a")
-    assert back.scoring.tournament_structure.structure == "swiss"
+    assert back.scoring.tournament_structure.structure == "racing"
     assert back.scoring.tournament_structure.params["field_size"] == 4
     # B kept its own state — the fork was a real copy, no shared mutation.
     assert store.slot("variant-b").scoring.tournament_structure.structure == "racing"
-    assert store.slot("variant-a").scoring.tournament_structure.structure == "swiss"
+    assert store.slot("variant-a").scoring.tournament_structure.structure == "racing"
 
     # Errors: duplicate name, malformed name, unknown switch target.
     with pytest.raises(ValueError, match="already exists"):
@@ -1443,7 +1449,7 @@ def test_compare_drafts_keyed_diff() -> None:
     assert same["board"] == {"added": [], "removed": [], "changed": []}
 
     # Scoring diff is keyed on the contract-canonical scoring keys.
-    ops.set_structure(b, "swiss")
+    ops.set_structure(b, "racing")
     ops.set_gate(b, promote_margin=0.05)
     # Board: b gains an entry, loses one, and edits one in place.
     ops.edit_board_entry(b, _entry("extra"))
@@ -1457,7 +1463,7 @@ def test_compare_drafts_keyed_diff() -> None:
     assert set(diff["changed_components"]) == {"scoring", "board", "brief"}
     assert diff["scoring"]["promote_margin"] == {"a": 0.01, "b": 0.05}
     assert diff["scoring"]["tournament_structure"]["a"]["structure"] == "gauntlet"
-    assert diff["scoring"]["tournament_structure"]["b"]["structure"] == "swiss"
+    assert diff["scoring"]["tournament_structure"]["b"]["structure"] == "racing"
     assert diff["board"]["added"] == ["extra"]
     assert diff["board"]["removed"] == ["e0"]
     assert diff["board"]["changed"] == ["e1"]
@@ -1673,6 +1679,7 @@ def test_draftstore_remember_dedups_and_pop_undo_restores(tmp_path) -> None:
     assert store.pop_undo("s") is None
 
     store.remember("s")  # pre-op snapshot (gauntlet state)
+    ops.set_experimental(draft, tournament_structures=True)
     ops.set_structure(draft, "swiss")
     store.remember("s")  # a second, distinct snapshot
     store.remember("s")  # dedup: identical to the top — records nothing

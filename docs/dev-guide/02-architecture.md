@@ -938,8 +938,8 @@ structure's scheduling shape
 | Structure | `field_size` | Shape | Key params |
 |---|---|---|---|
 | `gauntlet` | 1 | one champion-vs-challenger duel; promote-on-gate | `replicates` (default 2) |
-| `single_elim` / `double_elim` | bracket | challenger-vs-challenger nodes (winner = `lower_scalar_id()`), then champion-gate crowning | `field_size`, `replicates` |
-| `swiss` | N | `rounds_n` swiss pairings, then crowning | `field_size`, `rounds_n`, `replicates` |
+| `single_elim` / `double_elim` (experimental) | bracket | challenger-vs-challenger nodes (winner = `lower_scalar_id()`), then champion-gate crowning | `field_size`, `replicates` |
+| `swiss` (experimental) | N | `rounds_n` swiss pairings, then crowning | `field_size`, `rounds_n`, `replicates` |
 | `racing` | N | escalating board-slice rungs cut the field (`board_subset` per rung); a rung CUTS, it does not crown; final full-train crowning duel | `field_size`, `eta`, `board_fraction`, optional `matchup_budget_seconds`, `promote_confidence_threshold`/`promote_confidence_replicates` |
 
 All structures end the same way: ONE crowning champion-gate duel whose

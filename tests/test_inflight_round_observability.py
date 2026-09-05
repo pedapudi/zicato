@@ -48,7 +48,7 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
-from zicato.core.types import ScoringWeights, TournamentStructure
+from zicato.core.types import ExperimentalConfig, ScoringWeights, TournamentStructure
 from zicato.epoch.lifecycle import new_epoch
 
 
@@ -167,6 +167,7 @@ def _bootstrap_single_elim_workspace(tmp_path: Path, *, field_size: int) -> tupl
                 structure="single_elim",
                 params={"field_size": field_size, "replicates": 1},
             ),
+            experimental=ExperimentalConfig(tournament_structures=True),
         ),
         auto_close_previous=False,
     )

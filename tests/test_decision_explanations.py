@@ -280,7 +280,7 @@ def test_gauntlet_says_which_precondition_was_missing() -> None:
 
 
 def test_single_elim_names_the_bracket_that_produced_no_finalist() -> None:
-    from zicato.selection.strategies.single_elim import SingleEliminationStrategy
+    from zicato.selection.experimental.single_elim import SingleEliminationStrategy
 
     strategy = SingleEliminationStrategy()
     strategy.seed(

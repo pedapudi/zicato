@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from tests._contract_pins import pin_deterministic
+from tests._contract_pins import experimental_for, pin_deterministic
 
 # Reuse the fully-mocked harness from the gauntlet orchestrator tests.
 from tests._foe_support import stand_in_proposer_block
@@ -126,6 +126,7 @@ def _bootstrap_swiss_workspace(
                         else {"field_size": field_size, "replicates": 1}
                     ),
                 ),
+                experimental=experimental_for(structure),
                 # ``None`` keeps the dataclass default, so every existing
                 # caller's contract hash is unchanged.
                 **({"overfitting": overfitting} if overfitting is not None else {}),

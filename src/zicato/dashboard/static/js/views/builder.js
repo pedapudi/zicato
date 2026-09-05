@@ -28,7 +28,7 @@ import {
   entryEditor, entryToBuffer, bufferToEntryJson, newEntryBuffer, HOLDOUT_TAG,
 } from '../builder/entry_form.js';
 import {
-  STRUCTURES, STRUCTURE_GLYPH, paramSpecsFor, structureGlyphSvg,
+  STRUCTURES, EXPERIMENTAL_STRUCTURES, experimentalStructuresOn, STRUCTURE_GLYPH, paramSpecsFor, structureGlyphSvg,
   readChatWidth, persistChatWidth, readChatCollapsed, persistChatCollapsed,
   CHAT_MIN, CHAT_MAX,
 } from '../builder/model.js';
@@ -47,6 +47,7 @@ const SECTIONS = [
   { id: 'weights', label: 'Weights' },
   { id: 'proposer', label: 'Proposer' },
   { id: 'gate', label: 'Gate' },
+  { id: 'experimental', label: 'Experimental' },
   { id: 'review', label: 'Review' },
 ];
 
@@ -337,6 +338,7 @@ function sectionDone(id) {
     case 'weights': return sc.pass_weight != null;
     case 'proposer': return !!d.proposer;
     case 'gate': return sc.promote_margin != null;
+    case 'experimental': return experimentalStructuresOn(d);
     case 'review': return !!(_diff && _diff.rolls_epoch);
     default: return false;
   }
@@ -382,6 +384,7 @@ function renderCenter(host) {
       case 'weights': body = weightsSection(d); break;
       case 'proposer': body = proposerSection(d); break;
       case 'gate': body = gateSection(d); break;
+      case 'experimental': body = experimentalSection(d); break;
       case 'review': body = reviewSection(d); break;
       default: body = empty('Unknown section.');
     }
@@ -480,7 +483,7 @@ function addKeyNumRow(opts, onAdd) {
 
 function structureSection(d) {
   const cur = ((d.scoring || {}).tournament || {}).structure || 'gauntlet';
-  const cards = STRUCTURES.map((s) => {
+  const cardFor = (s) => {
     const card = el('button', {
       class: 'dn-bld-card' + (s.id === cur ? ' dn-bld-card-on' : ''),
       type: 'button', 'aria-pressed': String(s.id === cur), title: s.blurb,
@@ -491,10 +494,28 @@ function structureSection(d) {
     ]);
     card.addEventListener('click', () => { if (s.id !== cur) runOp('set_structure', { structure: s.id }); });
     return card;
-  });
-  return section('Tournament structure',
+  };
+  const nodes = [
     el('p', { class: 'dn-lede', text: 'How challengers are raced against the reigning champion each epoch. The picker drives a contract change — applying it rolls the epoch.' }),
-    el('div', { class: 'dn-bld-cards' }, cards));
+    el('div', { class: 'dn-bld-cards' }, STRUCTURES.map(cardFor)),
+  ];
+  // The experimental group renders only while the contract admits it; the
+  // Experimental section holds the flag.
+  if (experimentalStructuresOn(d)) {
+    nodes.push(el('div', { class: 'dn-bld-subhead', text: 'Experimental' }));
+    nodes.push(el('div', { class: 'dn-bld-cards' }, EXPERIMENTAL_STRUCTURES.map(cardFor)));
+  }
+  return section('Tournament structure', ...nodes);
+}
+
+function experimentalSection(d) {
+  return section('Experimental',
+    el('p', { class: 'dn-lede', text: 'Features without a measured case. Each stays here until a measurement sweep graduates it; enabling one is a contract edit — it rolls the epoch.' }),
+    controlRow('Experimental tournament structures', {
+      title: 'experimental.tournament_structures', def: 'off',
+      body: 'Admits single elimination, double elimination and Swiss pairing as the structure. Each pairs challengers against each other, so a candidate\'s fate depends on its draw; the second life a losers\' bracket buys is what replicates already buys, and Swiss is racing without the escalating board slice. None has a measured case at a field of two to four candidates under an expensive, noisy evaluator. Turning the flag off while the structure is one of the three is refused.',
+    }, checkInput(experimentalStructuresOn(d), 'Experimental tournament structures', 'admit single_elim, double_elim and swiss as the structure',
+      (on) => runOp('set_experimental', { tournament_structures: on }))));
 }
 
 function fieldSection(d) {

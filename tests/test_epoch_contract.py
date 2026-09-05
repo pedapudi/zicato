@@ -502,6 +502,30 @@ def test_hash_changes_when_screening_opted_in(tmp_path: Path) -> None:
     assert h_on != h_veto_only
 
 
+def test_hash_stable_when_experimental_block_at_default(tmp_path: Path) -> None:
+    # The ``experimental`` block is omit-at-default: a contract that spells
+    # out the off flag hashes byte-identically to one that omits the block.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
+    h_omitted = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"pass_weight": 1.0, "experimental": {"tournament_structures": False}})
+    )
+    assert compute_contract_hash(base) == h_omitted
+
+
+def test_hash_changes_when_experimental_structures_admitted(tmp_path: Path) -> None:
+    # Admitting the experimental structures is a contract input like the
+    # structure itself, so turning the flag on rolls the epoch.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
+    h_default = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"pass_weight": 1.0, "experimental": {"tournament_structures": True}})
+    )
+    assert compute_contract_hash(base) != h_default
+
+
 def test_hash_stable_when_recombine_at_default(tmp_path: Path) -> None:
     # The recombination slot (WS-REC) is omit-at-default like the screen
     # knobs: a contract that predates the field hashes byte-identically to
