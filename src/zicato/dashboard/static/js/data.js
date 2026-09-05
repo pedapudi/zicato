@@ -376,9 +376,6 @@ export function perEntry(epochId, genId) {
 export function evalMatrix(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/evals`);
 }
-export function perJudgeForGen(epochId, genId) {
-  return cachedJson(`/api/generation/${enc(epochId)}/${enc(genId)}/per-judge`);
-}
 // Whether one candidate's proposal episode has Foe's static page — the
 // self-contained HTML the round renders beside the episode's log when the
 // episode settles. `export_available` decides whether the proposal header
