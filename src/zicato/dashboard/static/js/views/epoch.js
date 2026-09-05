@@ -390,11 +390,10 @@ export async function render(host, ctx, params) {
             champion_lineage: bracket && bracket.champion_lineage, source: 'index',
           }, false)
         : null;
-      // elim PARITY (#1): the per-round figure for elim is elimFlow (the
-      // generations-across-rounds slopegraph), matching racing→funnel /
-      // swiss→bump — NOT the compact mini-bracket. The full bracket tree lives
-      // in the round drill-down (Match-ups). Prefer the aggregate (live-first)
-      // model for a single round; fall back to the round's own record.
+      // The per-round figure for an elimination structure is the radial
+      // bracket, matching racing→funnel / swiss→bump. Prefer the aggregate
+      // (live-first) model for a single round; fall back to the round's own
+      // record.
       if (structure === 'racing') {
         // RACING: a per-round FIELD record carries `rounds: []` by design (rungs
         // live in the per-challenger records the resolver reconstructs), so
@@ -417,10 +416,10 @@ export async function render(host, ctx, params) {
         });
       } else if (structure === 'single_elim' || structure === 'double_elim') {
         const m = single && elimOver ? elimOver.model : (stFromRef ? elimModel(stFromRef) : null);
-        if (m && m.hasMatches !== false && m.winners.length) return svg.elimFlow({
+        if (m && m.hasMatches !== false && m.winners.length) return svg.elimRadial({
           rounds: m.rounds, gen_states: m.gen_states,
           championId: m.championId, benchmarkId: m.benchmarkId,
-          gateState: m.gateState, live: m.live, onCompetitor: open,
+          gateState: m.gateState, live: m.live, double: structure === 'double_elim', onCompetitor: open,
         });
       }
       return null;

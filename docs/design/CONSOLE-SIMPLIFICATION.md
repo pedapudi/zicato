@@ -515,6 +515,11 @@ and it needs the operator's choice of which figure survives; the design
 document names the
 flow.
 
+**Decided.** The radial is the one elimination figure: `elimRadial` draws
+every elimination surface, and `elimFlow`, its digest, the `dn-elimflow-*`
+rules and the double-elimination figure toggle are deleted; §4.1 of the design
+document names the radial.
+
 **Risk and check.** Visual. Check with a review of the structure page and
 the live hero on the `mock_evolve_single_elim_full` and
 `mock_evolve_double_elim_full` workspaces (the parity lanes in

@@ -20,7 +20,7 @@ const mock = await import('./mock_server.mjs');
 // EVOLVE ROUNDS (champion-spine round model + timeline + drill-down + tree).
 //   * the round model groups gens by round_index (+ field-record fallback);
 //   * the spine timeline renders one episode per round (champion-loss + figure
-//     + gate); --rounds 1 degrades to a single episode; elim uses elimFlow;
+//     + gate); --rounds 1 degrades to a single episode; elim uses elimRadial;
 //   * the round drill-down renders ONE round; the tree groups by round and
 //     degrades when round_index is absent.
 // ====================================================================
@@ -318,16 +318,16 @@ test('round timeline: the per-round structure figure is embedded via the figureF
     'the per-round structure figure is embedded in the episode');
 });
 
-// ---- ELIM PARITY (#1): the elim epoch episode uses elimFlow ---------
+// ---- the elim epoch episode uses the radial bracket ---------
 
-test('elim parity: a single-elim epoch episode leads with elimFlow (NOT the mini-bracket)', async () => {
+test('elim parity: a single-elim epoch episode leads with the radial bracket (NOT the mini-bracket)', async () => {
   freshState();
   installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
   const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
-  assert(svgsByClass(host, 'dn-elimflow')[0], 'the elim episode embeds the generations-across-rounds flow (elimFlow)');
-  assertEqual(svgsByClass(host, 'dn-elimbracket-compact').length, 0, 'NO mini-bracket on the epoch overview (elimFlow subsumes it)');
+  assert(svgsByClass(host, 'dn-elimradial')[0], 'the elim episode embeds the radial bracket (elimRadial)');
+  assertEqual(svgsByClass(host, 'dn-elimbracket-compact').length, 0, 'NO mini-bracket on the epoch overview (the radial subsumes it)');
 });
 
 // ---- (4) the ROUND DRILL-DOWN renders ONE round --------------------
@@ -347,13 +347,13 @@ test('round drill-down: the route carries a round param + renders ONE round’s 
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, round: '0' });
   // the round drill heads with the round + renders that round's full tournament
-  // (the bracket-as-flow, with the match convergence nodes — the seat/box tree retired).
+  // (the radial bracket, one spoke per competitor — the seat/box tree retired).
   assert(host.textContent.includes('Round 0 · match-ups'), 'the drill-down heads with "Round N · match-ups"');
   assert(host.textContent.includes('all rounds'), 'a "← all rounds" affordance returns to the full Match-ups');
   assertEqual(svgsByClass(host, 'dn-elimbracket').length, 0, 'the seat/box bracket tree is retired in the round drill too');
-  const flow = svgsByClass(host, 'dn-elimflow')[0];
-  assert(flow, 'the round drill renders the bracket-as-flow (elimFlow)');
-  assert(allByClass(flow, 'dn-elimflow-convnode').length >= 1, 'the round drill shows the match convergence nodes');
+  const bracket = svgsByClass(host, 'dn-elimradial')[0];
+  assert(bracket, 'the round drill renders the radial bracket (elimRadial)');
+  assert(allByClass(bracket, 'dn-elimradial-spoke').length >= 1, 'the round drill shows the competitor spokes');
 });
 
 test('round drill-down: an out-of-range round reads an honest empty', async () => {
@@ -502,9 +502,9 @@ test('duelFlow: the field renders as Δ-vs-champion lanes — good below / bad a
   assert(!node.textContent.includes('tighten the slide structure'), 'the hypothesis is NOT a visible label — it is on the hovercard');
 });
 
-// ---- elimFlow CONVERGENCE: winner continues / loser ✕ / champion → gate ----
+// ---- elimRadial: winner continues inward / loser ✕ / champion → seat ----
 
-test('elimFlow convergence: two lanes meet at a match node; the winner continues (good), the loser ✕, the champion → crowned gate', () => {
+test('elimRadial: the winner\'s spoke continues inward (good), the loser\'s ends with ✕, the champion dashes into the crowned seat', () => {
   const winners = [
     { round_index: 0, label: 'Semifinal', matches: [
       { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], winner: 'v0', decision: 'win', delta_scalar: -1.2, bracket_slot: 'WB-R0-0' },
@@ -515,19 +515,19 @@ test('elimFlow convergence: two lanes meet at a match node; the winner continues
     ] },
   ];
   const served = mock.deriveElimStates(winners);
-  const node = svg.elimFlow({ rounds: served.rounds, gen_states: served.gen_states, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
-  // a two-lane match CONVERGENCE node per decided match.
-  const convs = allByClass(node, 'dn-elimflow-convnode');
-  assert(convs.length >= 3, 'a convergence node per match (2 semis + 1 final)');
-  assert(convs.filter((c) => (c.getAttribute('class') || '').includes('dn-elimflow-good')).length >= 1, 'a decided match convergence reads --v2-good');
-  // the winner CONTINUES (an advancing good leg), the loser TERMINATES (✕).
-  assert(allByClass(node, 'dn-elimflow-good').length >= 1, 'the winner lane continues (good)');
-  assert(node.textContent.includes('✕'), 'a losing lane terminates with ✕');
-  // the champion reaches the crowned gate ♛.
-  assert(node.textContent.includes(svg.CROWN.current), 'the champion lane reaches the crowned gate ♛');
-  assert(node.textContent.toLowerCase().includes('champion-gate'), 'the trailing gate column');
-  // the convergence node is hovercard-wired (the pairing + Δ on hover).
-  assert(convs.every((c) => c.getAttribute('data-hovercard') === '1'), 'each convergence node is hovercard-wired (pairing + Δ on hover)');
+  const node = svg.elimRadial({ rounds: served.rounds, gen_states: served.gen_states, championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', onCompetitor() {} });
+  // one spoke per competitor; one ring per round plus the gate ring.
+  const spokes = allByClass(node, 'dn-elimradial-spoke');
+  assertEqual(spokes.length, 4, 'a spoke per competitor (v0..v3)');
+  assertEqual(allByClass(node, 'dn-elimradial-ring').length, 3, 'two rounds draw two rings plus the gate ring');
+  // the winner CONTINUES inward (a good segment), the loser TERMINATES (✕).
+  assert(allByClass(node, 'dn-elimradial-seg').some((s) => (s.getAttribute('class') || '').includes('dn-good')), 'a winner\'s spoke continues inward (good)');
+  assert(node.textContent.includes('✕'), 'a losing spoke terminates with ✕');
+  // the champion dashes into the crowned seat ♛.
+  assert(allByClass(node, 'dn-elimradial-gateline').length === 1, 'exactly one spoke (the champion) dashes into the seat');
+  assert(allByClass(node, 'dn-elimradial-seatlab')[0].textContent === svg.CROWN.current, 'the seat reads the current crown ♛');
+  // each spoke label is hovercard-wired (the outcome + round on hover).
+  assert(allByClass(node, 'dn-elimradial-name').every((c) => c.getAttribute('data-hovercard') === '1'), 'each spoke label is hovercard-wired');
 });
 
 // ---- the LOSS-FLOOR WATERFALL — steps good-coloured + spine accent + hover ----
@@ -697,10 +697,6 @@ const RESPONSIVE_BUILDERS = [
     rungs: [{ label: 'Rung 0', competitors: ['v5', 'v6', 'v7'], survivors: ['v5', 'v6'], cut: ['v7'] }],
     championId: 'v5', benchmarkId: 'v0', gateState: 'crowned', ...extra,
   })],
-  ['elimFlow', 'dn-elimflow', 'dn-elimflow-hero', (extra) => ({
-    winners: [{ label: 'R0', round_index: 0, matches: [{ match_id: 'm0', competitors: ['v1', 'v2'], winner: 'v1' }] }],
-    championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', ...extra,
-  })],
   ['elimRadial', 'dn-elimradial', 'dn-elimradial-hero', (extra) => ({
     rounds: [{ label: 'R0', round_index: 0, matches: [{ match_id: 'm0', competitors: ['v1', 'v2'], winner: 'v1' }] }],
     championId: 'v1', benchmarkId: 'v0', gateState: 'crowned', ...extra,
@@ -733,7 +729,7 @@ test('responsive: every structure builder defaults to a FIXED figure (no hero cl
     // the fixed render still keeps a height attr (its intrinsic pixel height).
     assert(node.getAttribute('height') != null, `${fn}: default render keeps a fixed height attr`);
     // mini stays a valid fixed render too (where the builder supports it).
-    if (fn !== 'elimFlow' && fn !== 'swissLadder') {
+    if (fn !== 'swissLadder') {
       const m = svg[fn](mk({ mini: true }));
       assert(!(m.getAttribute('class') || '').split(/\s+/).includes(heroCls), `${fn}: mini render is NOT a hero either`);
       assert(m.getAttribute('height') != null, `${fn}: mini render keeps a fixed height`);
@@ -1516,12 +1512,12 @@ test('swissOverview (single round): the lone-round bump centers ONE dot per comp
     'both competitors share the lone centered round column');
 });
 
-test('Task 3 — elimFlow: a DEGENERATE column with a DUPLICATE match (same bracket_slot + competitors emitted twice) draws ONE convergence node, keeping the most-decided instance', () => {
+test('elimRadial: a DEGENERATE column with a DUPLICATE match (same bracket_slot + competitors emitted twice) draws ONE spoke per competitor in its most-decided state', () => {
   // The backend has been observed publishing the SAME match twice in one column
-  // (an identical bracket_slot + competitor pair). Pre-fix each duplicate drew
-  // its own convergence elbow + node STACKED on the first, so one match read as
-  // two overlapping convergences. The duplicate is listed PENDING-first then
-  // DECIDED-second to exercise the most-decided retention.
+  // (an identical bracket_slot + competitor pair). The served model collapses
+  // the duplicate; the figure must draw each competitor once, in the settled
+  // state. The duplicate is listed PENDING-first then DECIDED-second to
+  // exercise the most-decided retention.
   const winners = [
     { round_index: 0, label: 'Round 1', matches: [
       // the duplicate pair: same slot, same competitors — pending, then settled.
@@ -1533,16 +1529,15 @@ test('Task 3 — elimFlow: a DEGENERATE column with a DUPLICATE match (same brac
     ] },
   ];
   const served = mock.deriveElimStates(winners);
-  const flow = svg.elimFlow({ rounds: served.rounds, gen_states: served.gen_states, championId: 'v5', benchmarkId: 'v6', gateState: 'crowned' });
-  const nodes = allByClass(flow, 'dn-elimflow-convnode');
-  // two DISTINCT matches → exactly two convergence nodes (the duplicate collapses).
-  assertEqual(nodes.length, 2, `the duplicated WB-R0-0 collapses to one node; v7/v8 stays — 2 nodes total (got ${nodes.length})`);
-  // the surviving WB-R0-0 node is the MOST-DECIDED (settled winner) instance, not
-  // the pending duplicate that was listed first.
-  const pendingNodes = nodes.filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-elimflow-pending'));
-  assertEqual(pendingNodes.length, 0, 'the kept duplicate is the decided instance — no pending convergence node survives');
-  const goodNodes = nodes.filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-elimflow-good'));
-  assertEqual(goodNodes.length, 2, 'both surviving nodes are decided wins (v5 over v6, v7 over v8)');
+  const node = svg.elimRadial({ rounds: served.rounds, gen_states: served.gen_states, championId: 'v5', benchmarkId: 'v6', gateState: 'crowned' });
+  const spokes = allByClass(node, 'dn-elimradial-spoke');
+  // four competitors → exactly four spokes (the duplicate match adds none).
+  assertEqual(spokes.length, 4, `one spoke per competitor — the duplicated WB-R0-0 adds none (got ${spokes.length})`);
+  // the WB-R0-0 pair reads its MOST-DECIDED (settled) state, not the pending
+  // duplicate that was listed first: no spoke dashes as pending.
+  assertEqual(allByClass(node, 'dn-elimradial-pending').length, 0, 'the kept duplicate is the decided instance — no pending spoke survives');
+  // both decided losers (v6, v8) are cut; both winners (v5, v7) are not.
+  assertEqual(allByClass(node, 'dn-elimradial-cut').length, 2, 'the two decided losses (v5 over v6, v7 over v8) read ✕');
 });
 
 test('duelFlow: a long (>=9-char) challenger id + status glyph stays INSIDE the left viewBox edge (the name gutter fits shortLabel(id,9)+glyph)', () => {

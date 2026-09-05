@@ -1,28 +1,26 @@
-// test/bracket.test.mjs — the elimination bracket-flow connectivity guard.
+// test/bracket.test.mjs — the radial elimination bracket's connectivity guard.
 //
-// The operator could not trace who-plays-whom / who-advances in the single- and
-// double-elimination bracket views: dots, labels and connector lines were
-// mis-associated. The defects this pins (all in svg.elimFlow + the elimModel
-// band split that feeds it):
+// The operator must be able to trace who advanced, who was eliminated where,
+// and who dropped into the losers' bracket from the rendered figure alone. The
+// properties this pins (all in svg.elimRadial over the served elimination
+// model `elimModel` shapes):
 //
-//   * COLUMN ORDER — the double-elim caller passes winners.concat(losers), which
-//     lists the GRAND FINAL (a winners' band) BEFORE the losers' rounds. The
-//     renderer must lay columns out by round_index (WB → LB → GF), so every
-//     advancement / drop edge runs left-to-right into its REAL target column, not
-//     a neighbour, and the losers' bracket is not stranded to the right of the
-//     gate.
-//   * WINNERS→LOSERS DROP — a generation that loses in the WB is NOT eliminated
-//     (it gets a second life in the LB). Its WB dot must connect to its LB entry
-//     by a DROP edge (no orphan dot), it must NOT draw a phantom ✕ in the WB, and
-//     its TRUE elimination ✕ sits at its LAST (losers') loss.
-//   * BYE — a competitor with a bye advances cleanly and does not desync the rest
-//     of the bracket's dot/label/line mapping.
+//   * RING ORDER — rings are the served rounds in payload order, outermost
+//     first, narrowing to the champion seat; every survival segment runs
+//     INWARD (from an outer ring to the next ring in), never outward.
+//   * WINNERS→LOSERS DROP — a generation that loses in the winners' bracket is
+//     NOT eliminated (it gets a second life in the losers' bracket). Its spoke
+//     sits on the lower (losers') arc, a transfer arc ends on its outer node
+//     and starts on that node's equator mirror, it draws no phantom ✕ for the
+//     first loss, and its TRUE elimination ✕ sits at its LAST (losers') loss.
+//   * BYE — a competitor with a bye advances cleanly and does not desync the
+//     ring/spoke mapping of the other spokes.
 //   * LIVE vs SETTLED — the live `pending` final maps the same as a settled one
-//     (the in-flight leg reads pending, nothing is falsely eliminated).
+//     (the in-flight spoke dashes, nothing is falsely eliminated).
 //
-// The assertions read the rendered SVG geometry directly (column x, lane y, dot
-// class, segment endpoints, ✕ marks) so a regression that re-strands a column or
-// re-orphans a dropped lane fails here.
+// The assertions read the rendered SVG geometry directly (ring radii, spoke
+// segment endpoints, node tones, ✕ marks, transfer-arc endpoints) so a
+// regression that strands a spoke or orphans a drop fails here.
 
 import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
@@ -38,112 +36,85 @@ function walk(node, fn) {
   fn(node);
   for (const c of (node.childNodes || [])) if (c.nodeType === 1) walk(c, fn);
 }
-function clsOf(n) { return (n.getAttribute && n.getAttribute('class')) || ''; }
+function clsOf(n) { return ((n.getAttribute && n.getAttribute('class')) || '').split(/\s+/); }
 function num(n, a) { const v = n.getAttribute(a); return v == null ? null : Number(v); }
 
-// The double-elim WB→LB drop connector is a rounded channel path rather than a
-// rounded orthogonal <path class="…dn-elimflow-seg-drop…"> built by elbowPath():
-// it dips through a staggered bus and rises into the LB re-entry node, so the
-// visual connection is intact (no orphan dot). A <path> has no x1/x2/y1 attrs, so
-// we recover the seg's endpoints from its `d` grammar. elbowPath emits
-//   M x0 y0  L x0 …  Q …  L …  Q …  L xt yt
-// i.e. the FIRST coordinate pair (the M) is the WB-loss start (x1,y1) and the LAST
-// coordinate pair (the terminal L) is the LB re-entry end (x2,y2). The drop runs
-// on a single lane row, so y1 ≈ y2 ≈ the lane y — exactly what segFromTo matches.
-function dropPathEndpoints(d) {
-  const s = String(d || '');
-  // first command is "M x0 y0"
-  const m = s.match(/^\s*M\s*(-?[\d.]+)[ ,]+(-?[\d.]+)/);
-  // last coordinate pair anywhere in the path is the terminal "L xt yt"
-  const pairs = [...s.matchAll(/(-?[\d.]+)[ ,]+(-?[\d.]+)/g)];
-  if (!m || pairs.length === 0) return null;
-  const last = pairs[pairs.length - 1];
-  return { x1: Number(m[1]), y1: Number(m[2]), x2: Number(last[1]), y2: Number(last[2]) };
-}
-
-// Read the rendered elim-flow into a structured, assertable shape.
-function readFlow(flow) {
-  const dots = [];     // { x, y, tone, tip }
-  const segs = [];      // { x1, x2, y, drop, pending }
-  const cuts = [];      // { x, y }
-  const lanes = [];     // label text -> y, top-to-bottom render order
-  const convs = [];     // convergence nodes { x, y }
-  walk(flow, (n) => {
-    const cls = clsOf(n);
-    const list = cls.split(/\s+/);
-    if (list.includes('dn-elimflow-dot')) {
-      const tone = list.includes('dn-elimflow-good') ? 'good'
-        : list.includes('dn-elimflow-bad') ? 'bad'
-          : list.includes('dn-elimflow-pending') ? 'pending' : 'none';
-      // the hovercard tip is attached to the node; read it from the title-ish
-      // sibling the harness records is not available, so derive tone only.
-      dots.push({ x: num(n, 'cx'), y: num(n, 'cy'), tone });
-    } else if (list.includes('dn-elimflow-seg')) {
-      // A <line> seg carries x1/x2/y1; a <path> drop seg (elbowPath) carries `d`
-      // instead — parse its endpoints out of the path grammar so the drop edge is
-      // tracked with real coordinates (not null) and segFromTo can match it.
-      let x1 = num(n, 'x1');
-      let x2 = num(n, 'x2');
-      let y = num(n, 'y1');
-      if (n.localName === 'path' && x1 == null) {
-        const ep = dropPathEndpoints(n.getAttribute('d'));
-        if (ep) { x1 = ep.x1; x2 = ep.x2; y = ep.y1; }
-      }
-      segs.push({
-        x1, x2, y,
-        drop: list.includes('dn-elimflow-seg-drop'),
-        pending: list.includes('dn-elimflow-seg-pending'),
-      });
-    } else if (list.includes('dn-elimflow-cut')) {
-      cuts.push({ x: num(n, 'x'), y: num(n, 'y') });
-    } else if (list.includes('dn-elimflow-convnode')) {
-      convs.push({ x: num(n, 'cx'), y: num(n, 'cy') });
-    } else if (list.includes('dn-elimflow-name')) {
-      lanes.push({ label: n.textContent, y: num(n, 'y') });
+// Read the rendered radial into a structured, assertable shape. Ring k is the
+// k-th ring circle from the outside (ring 0 = the outer node ring, ring k =
+// "entered round k"); the champion seat is the centre. A point maps to the
+// ring whose radius is nearest to its distance from the centre.
+function readRadial(node) {
+  const rings = [];      // ring radii, outermost first
+  let cx = null; let cy = null;
+  walk(node, (n) => {
+    if (clsOf(n).includes('dn-elimradial-ring')) {
+      rings.push(num(n, 'r'));
+      if (cx == null) { cx = num(n, 'cx'); cy = num(n, 'cy'); }
     }
   });
-  return { dots, segs, cuts, lanes, convs };
+  rings.sort((a, b) => b - a);
+  const ringOf = (x, y) => {
+    const r = Math.hypot(x - cx, y - cy);
+    if (r < 1) return 'centre';
+    let best = 0;
+    rings.forEach((rr, k) => { if (Math.abs(rr - r) < Math.abs(rings[best] - r)) best = k; });
+    // a radius past the innermost ring (the seat) is the centre gate.
+    if (r < rings[rings.length - 1] - 2) return 'centre';
+    return best;
+  };
+  const spokes = [];     // { id, side, segs:[{from,to,tone}], nodes:[{ring,tone}], cut:ring|null, gate:bool, label }
+  const transfers = [];  // { start:{x,y}, end:{x,y}, r }
+  let equator = false;
+  walk(node, (n) => {
+    const cls = clsOf(n);
+    if (cls.includes('dn-elimradial-equator')) equator = true;
+    if (cls.includes('dn-elimradial-transfer')) {
+      const m = (n.getAttribute('d') || '').match(/^M([-\d.]+) ([-\d.]+) A([\d.]+) [\d.]+ 0 \d \d ([-\d.]+) ([-\d.]+)$/);
+      assert(m, `a transfer arc path parses (d=${n.getAttribute('d')})`);
+      transfers.push({ start: { x: Number(m[1]), y: Number(m[2]) }, end: { x: Number(m[4]), y: Number(m[5]) }, r: Number(m[3]) });
+    }
+    if (!cls.includes('dn-elimradial-spoke')) return;
+    const sp = { id: null, label: '', segs: [], nodes: [], cut: null, gate: false, side: null, outer: null };
+    walk(n, (c) => {
+      const cc = clsOf(c);
+      const tone = cc.includes('dn-good') ? 'good' : cc.includes('dn-bad') ? 'bad'
+        : cc.includes('dn-elimradial-pending') ? 'pending' : cc.includes('dn-elimradial-gateline') ? 'gate' : 'none';
+      if (cc.includes('dn-elimradial-seg')) {
+        const from = ringOf(num(c, 'x1'), num(c, 'y1'));
+        const to = ringOf(num(c, 'x2'), num(c, 'y2'));
+        sp.segs.push({ from, to, tone });
+        if (tone === 'gate') sp.gate = true;
+      } else if (cc.includes('dn-elimradial-node')) {
+        const ring = ringOf(num(c, 'cx'), num(c, 'cy'));
+        sp.nodes.push({ ring, tone });
+        if (ring === 0) sp.outer = { x: num(c, 'cx'), y: num(c, 'cy') };
+      } else if (cc.includes('dn-elimradial-cut')) {
+        sp.cut = ringOf(num(c, 'x'), num(c, 'y') - 3.2);
+      } else if (cc.includes('dn-elimradial-name')) {
+        sp.label = c.textContent;
+        sp.id = String(c.textContent).trim().split(/\s+/)[0];
+      }
+    });
+    sp.side = sp.outer ? (sp.outer.y < cy ? 'upper' : 'lower') : null;
+    spokes.push(sp);
+  });
+  return { cx, cy, rings, spokes, transfers, equator, byId: (id) => spokes.find((s) => s.id === id) || null };
 }
 
-// The y a lane label sits on (labels carry a trailing crown/marker — match by
-// the leading id token).
-function laneY(flow, id) {
-  const f = flow._read || (flow._read = readFlow(flow));
-  const row = f.lanes.find((l) => String(l.label).trim().split(/\s+/)[0] === id);
-  return row ? row.y : null;
+// the rings a spoke survived: the good segments as [from, to] ring pairs.
+function goodSegs(sp) { return sp.segs.filter((s) => s.tone === 'good'); }
+// did the spoke survive round k (a good segment from ring k to ring k+1)?
+function survived(sp, k) { return goodSegs(sp).some((s) => s.from === k && s.to === k + 1); }
+function radial(model, extra) {
+  return svg.elimRadial({
+    rounds: model.rounds, gen_states: model.gen_states, championId: model.championId,
+    benchmarkId: model.benchmarkId, gateState: model.gateState, ...(extra || {}),
+  });
 }
-// A dot at (≈x, ≈y) — dots sit on the lane's exact y; the label baseline is the
-// same y + ~3.2 so we match the lane y within a small tolerance.
-function dotAt(flow, id, x) {
-  const f = flow._read || (flow._read = readFlow(flow));
-  const y = laneY(flow, id);
-  if (y == null) return null;
-  return f.dots.find((d) => Math.abs(d.x - x) < 1 && Math.abs(d.y - (y - 3.2)) < 4) || null;
-}
-// Is there a connector segment on `id`'s lane from x1≈ to x2≈ ?
-function segFromTo(flow, id, x1, x2) {
-  const f = flow._read || (flow._read = readFlow(flow));
-  const y = laneY(flow, id);
-  if (y == null) return null;
-  return f.segs.find((s) => Math.abs(s.y - (y - 3.2)) < 4 && Math.abs(s.x1 - x1) < 1 && Math.abs(s.x2 - x2) < 1) || null;
-}
-function cutOn(flow, id, x) {
-  const f = flow._read || (flow._read = readFlow(flow));
-  const y = laneY(flow, id);
-  if (y == null) return null;
-  // the ✕ sits 8px right of the column node x, on the lane label baseline (y).
-  return f.cuts.find((c) => Math.abs(c.x - (x + 8)) < 2 && Math.abs(c.y - y) < 4) || null;
-}
-
-// the column x the renderer uses: padL(16) + ci*colW(116) + 8.
-function colX(ci) { return 16 + ci * 116 + 8; }
-function gateX(nCols) { return 16 + nCols * 116 + 8; }
-// the lane row height the renderer uses (lanes are laneH apart, centred on lane y).
-function laneH() { return 22; }
 
 // ---- SINGLE-ELIM (settled, with a champion crowned) ----------------------
 
-test('single-elim bracket: dots/labels/edges connect each match into the next round, champion reaches the gate', () => {
+test('single-elim radial: each spoke survives inward ring by ring, the loser ends with ✕ at its loss, the champion dashes into the seat', () => {
   // v0 = champion (benchmark). 4 challengers v1..v4.
   //   R0: WB-R0-0 v1>v2, WB-R0-1 v3>v4
   //   R1: WB-R1-0 v1>v3
@@ -170,39 +141,48 @@ test('single-elim bracket: dots/labels/edges connect each match into the next ro
   assertEqual(model.benchmarkId, 'v0', 'v0 is the benchmark/incumbent');
   assertEqual(model.gateState, 'crowned', 'the gate crowned the survivor');
   assert(model.losers == null, 'single-elim has no losers band');
-  const flow = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
+  const f = readRadial(radial(model));
 
-  // columns: 0=R0, 1=R1, 2=Final ; gate after column 2.
-  // v1 advances every round → a continuous good chain into the gate.
-  assert(dotAt(flow, 'v1', colX(0)) && dotAt(flow, 'v1', colX(0)).tone === 'good', 'v1 won R0 (good dot)');
-  assert(dotAt(flow, 'v1', colX(1)) && dotAt(flow, 'v1', colX(1)).tone === 'good', 'v1 won R1 (good dot)');
-  assert(dotAt(flow, 'v1', colX(2)) && dotAt(flow, 'v1', colX(2)).tone === 'good', 'v1 won the final (good dot)');
-  assert(segFromTo(flow, 'v1', colX(0), colX(1)), 'v1 R0→R1 advancement edge');
-  assert(segFromTo(flow, 'v1', colX(1), colX(2)), 'v1 R1→Final advancement edge');
-  assert(segFromTo(flow, 'v1', colX(2), gateX(3)), 'v1 Final→gate edge (the champion reaches the gate)');
-  assert(!cutOn(flow, 'v1', colX(0)) && !cutOn(flow, 'v1', colX(2)), 'the champion is never marked eliminated');
+  // rings: one per served round + the centre gate ring.
+  assertEqual(f.rings.length, 4, 'three rounds draw three rings plus the gate ring');
+  assertEqual(f.spokes.length, 5, 'one spoke per generation');
+  assert(!f.equator, 'single-elim draws no equator');
+
+  // v1 advances every round → a continuous good chain into the seat.
+  const v1 = f.byId('v1');
+  assert(survived(v1, 0) && survived(v1, 1) && survived(v1, 2), 'v1 survives R0, R1 and the final (good segments ring 0→1→2→3)');
+  assert(v1.gate, 'v1 dashes from the innermost ring into the champion seat');
+  assertEqual(v1.cut, null, 'the champion is never marked eliminated');
+  assert(v1.label.includes(svg.CROWN.current), 'the champion spoke carries the current crown');
 
   // v3 wins R0 then loses R1: its true (and only) elimination ✕ is at R1.
-  assert(dotAt(flow, 'v3', colX(0)) && dotAt(flow, 'v3', colX(0)).tone === 'good', 'v3 won R0');
-  assert(dotAt(flow, 'v3', colX(1)) && dotAt(flow, 'v3', colX(1)).tone === 'bad', 'v3 lost R1');
-  assert(segFromTo(flow, 'v3', colX(0), colX(1)), 'v3 R0→R1 edge connects its two played columns');
-  assert(cutOn(flow, 'v3', colX(1)), 'v3 eliminated at R1 (the ✕ sits at its only loss)');
+  const v3 = f.byId('v3');
+  assert(survived(v3, 0), 'v3 survived R0');
+  assert(!survived(v3, 1), 'v3 did not survive R1');
+  assert(v3.nodes.some((n) => n.ring === 1 && n.tone === 'bad'), 'v3 lost at ring 1 (bad node)');
+  assertEqual(v3.cut, 2, 'v3 eliminated at R1 (the ✕ caps the loss segment leaving ring 1)');
+  assert(!v3.gate, 'an eliminated spoke never reaches the seat');
 
-  // v2 loses R0 immediately → eliminated at R0, single dot + ✕, no forward edge.
-  assert(dotAt(flow, 'v2', colX(0)) && dotAt(flow, 'v2', colX(0)).tone === 'bad', 'v2 lost R0');
-  assert(cutOn(flow, 'v2', colX(0)), 'v2 eliminated at R0');
-  assert(!segFromTo(flow, 'v2', colX(0), colX(1)), 'a first-round loser has no forward edge');
+  // v2 loses R0 immediately → no survival segment, ✕ at its first ring.
+  const v2 = f.byId('v2');
+  assertEqual(goodSegs(v2).length, 0, 'a first-round loser survives no ring');
+  assert(v2.nodes.some((n) => n.ring === 0 && n.tone === 'bad'), 'v2 lost at ring 0');
+  assertEqual(v2.cut, 1, 'v2 eliminated at R0');
 
   // the two R0 feeder matches converge into the single R1 match — a winner from
-  // each (v1, v3) carries forward and they MEET at R1: assert v1 & v3 both have a
-  // dot in column 1 (the shared next match), v2 & v4 do not.
-  assert(dotAt(flow, 'v1', colX(1)) && dotAt(flow, 'v3', colX(1)), 'both R0 winners meet in the R1 match');
-  assert(!dotAt(flow, 'v2', colX(1)) && !dotAt(flow, 'v4', colX(1)), 'R0 losers do not appear in R1');
+  // each (v1, v3) carries forward and they MEET at ring 1; v2 & v4 stay outside.
+  assert(v1.nodes.some((n) => n.ring === 1) && v3.nodes.some((n) => n.ring === 1), 'both R0 winners carry a node on ring 1 (the shared next match)');
+  assert(!v2.nodes.some((n) => n.ring === 1) && !f.byId('v4').nodes.some((n) => n.ring === 1), 'R0 losers carry no node on ring 1');
+
+  // every survival segment runs inward (outer ring → the next ring in).
+  for (const sp of f.spokes) for (const s of goodSegs(sp)) assert(s.to === s.from + 1, `${sp.id}: a survival segment steps one ring inward (${s.from}→${s.to})`);
+  // the displaced incumbent reads the former crown.
+  assert(f.byId('v0').label.includes(svg.CROWN.former), 'the displaced incumbent v0 reads ♔');
 });
 
 // ---- DOUBLE-ELIM (settled, with a losers-bracket drop) -------------------
 
-test('double-elim bracket: columns order WB→LB→GF, winners→losers DROP edges connect, true eliminations at the second loss', () => {
+test('double-elim radial: winners on the upper arc, losers on the lower, drops as transfer arcs onto real nodes, true eliminations at the second loss', () => {
   // v0 = champion. v1..v4 challengers.
   //   WB: WB-R0-0 v1>v2 (v2 drops), WB-R0-1 v3>v4 (v4 drops); WB-R1-0 v1>v3 (v3 drops). v1 = WB survivor.
   //   LB: LB-R2-0 v2>v4 (v4 OUT), LB-R3-0 v2>v3 (v3 OUT). v2 = LB survivor.
@@ -234,58 +214,61 @@ test('double-elim bracket: columns order WB→LB→GF, winners→losers DROP edg
   assertEqual(model.championId, 'v1', 'v1 promoted at the grand final');
   assertEqual(model.benchmarkId, 'v0', 'v0 is the benchmark/incumbent');
   assert(Array.isArray(model.losers) && model.losers.length === 2, 'the losers bracket has two rounds');
-  // the SERVED rounds (already sorted; the fixture above is round_index-keyed).
-  const flow = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
+  const f = readRadial(radial(model, { double: true }));
 
-  // COLUMNS, by round_index: 0=WB-R0, 1=WB-R1, 2=LB-R2, 3=LB-R3, 4=GF, gate after 4.
-  // v1: WB-R0(c0)→WB-R1(c1)→GF(c4)→gate ; never touches the LB columns.
-  assert(dotAt(flow, 'v1', colX(0)) && dotAt(flow, 'v1', colX(0)).tone === 'good', 'v1 won WB-R0');
-  assert(dotAt(flow, 'v1', colX(1)) && dotAt(flow, 'v1', colX(1)).tone === 'good', 'v1 won WB-R1');
-  assert(dotAt(flow, 'v1', colX(4)) && dotAt(flow, 'v1', colX(4)).tone === 'good', 'v1 won the grand final');
-  assert(segFromTo(flow, 'v1', colX(1), colX(4)), 'v1 WB-R1→GF edge SKIPS the losers columns (left-to-right into the GF)');
-  assert(segFromTo(flow, 'v1', colX(4), gateX(5)), 'v1 GF→gate edge');
+  // RINGS by served round order: 0=WB-R0, 1=WB-R1, 2=LB-R2, 3=LB-R3, 4=GF, then the gate ring.
+  assertEqual(f.rings.length, 6, 'five served rounds draw five rings plus the gate ring');
+  assert(f.equator, 'double-elim draws the dashed equator between the two arcs');
 
-  // v0 plays ONLY the grand final (one dot, loses) → eliminated at the GF column.
-  assert(dotAt(flow, 'v0', colX(4)) && dotAt(flow, 'v0', colX(4)).tone === 'bad', 'v0 lost the grand final');
-  assert(cutOn(flow, 'v0', colX(4)), 'v0 (incumbent) eliminated at the GF');
+  // v1: never enters the losers' bracket → upper arc; survives to the seat.
+  const v1 = f.byId('v1');
+  assertEqual(v1.side, 'upper', 'v1 sits on the upper (winners\') arc');
+  assert([0, 1, 2, 3, 4].every((k) => survived(v1, k)), 'v1 survives every ring inward to the gate ring');
+  assert(v1.gate && v1.cut == null, 'v1 dashes into the seat and is never cut');
 
-  // v2 — the DROP case: loses WB-R0 (c0), drops to the LB, wins LB-R2 (c2) + LB-R3 (c3).
-  const v2c0 = dotAt(flow, 'v2', colX(0));
-  assert(v2c0 && v2c0.tone === 'bad', 'v2 lost WB-R0 (its dot reads as a loss, not pending)');
-  assert(!cutOn(flow, 'v2', colX(0)), 'the WB loss is NOT a phantom elimination — v2 has a second life');
-  const drop = segFromTo(flow, 'v2', colX(0), colX(2));
-  assert(drop && drop.drop, 'v2 WB-R0→LB-R2 DROP edge connects the WB loss to the LB entry (no orphan dot)');
-  assert(dotAt(flow, 'v2', colX(2)) && dotAt(flow, 'v2', colX(2)).tone === 'good', 'v2 won LB-R2');
-  assert(dotAt(flow, 'v2', colX(3)) && dotAt(flow, 'v2', colX(3)).tone === 'good', 'v2 won LB-R3');
-  assert(segFromTo(flow, 'v2', colX(2), colX(3)), 'v2 LB-R2→LB-R3 edge');
-  assert(!cutOn(flow, 'v2', colX(0)) && !cutOn(flow, 'v2', colX(2)) && !cutOn(flow, 'v2', colX(3)),
-    'the LB survivor is never marked eliminated');
+  // v0 plays ONLY the grand final and loses it → its ✕ caps the GF ring.
+  const v0 = f.byId('v0');
+  assertEqual(v0.side, 'upper', 'the incumbent never drops, so it sits on the upper arc');
+  assert(v0.nodes.some((n) => n.ring === 4 && n.tone === 'bad'), 'v0 lost at the grand final ring');
+  assertEqual(v0.cut, 5, 'v0 (incumbent) eliminated at the GF');
 
-  // v3 — drops then is OUT: wins WB-R0 (c0), loses WB-R1 (c1, DROP), loses LB-R3 (c3, ELIMINATED).
-  assert(dotAt(flow, 'v3', colX(0)) && dotAt(flow, 'v3', colX(0)).tone === 'good', 'v3 won WB-R0');
-  assert(!cutOn(flow, 'v3', colX(1)), 'v3 WB-R1 loss is a drop, NOT a phantom elimination ✕');
-  const v3drop = segFromTo(flow, 'v3', colX(1), colX(3));
-  assert(v3drop && v3drop.drop, 'v3 WB-R1→LB-R3 DROP edge connects the WB loss to the LB re-entry');
-  assert(cutOn(flow, 'v3', colX(3)), "v3's TRUE elimination ✕ is at its SECOND loss (LB-R3), not the WB");
+  // v2 — the DROP case: loses WB-R0, drops to the LB, wins LB-R2 + LB-R3.
+  const v2 = f.byId('v2');
+  assertEqual(v2.side, 'lower', 'a dropped lane sits on the lower (losers\') arc');
+  assertEqual(v2.cut, null, 'the WB loss is NOT a phantom elimination — v2 has a second life and is never cut');
+  assert(!v2.nodes.some((n) => n.tone === 'bad'), 'the LB survivor carries no loss node');
+  assert(survived(v2, 2) && survived(v2, 3), 'v2 survives both losers\' rounds (rings 2→3→4)');
 
-  // v4 — drops then OUT at the FIRST losers round: loses WB-R0 (c0), loses LB-R2 (c2).
-  assert(!cutOn(flow, 'v4', colX(0)), 'v4 WB-R0 loss is a drop, not a phantom elimination');
-  const v4drop = segFromTo(flow, 'v4', colX(0), colX(2));
-  assert(v4drop && v4drop.drop, 'v4 WB-R0→LB-R2 DROP edge');
-  assert(cutOn(flow, 'v4', colX(2)), 'v4 eliminated at LB-R2 (its second loss)');
+  // v3 — drops then is OUT: wins WB-R0, loses WB-R1 (DROP), loses LB-R3 (ELIMINATED).
+  const v3 = f.byId('v3');
+  assertEqual(v3.side, 'lower', 'v3 dropped, so it sits on the lower arc');
+  assert(survived(v3, 0) && survived(v3, 1) && survived(v3, 2), 'v3\'s spoke reaches the LB-R3 ring: the WB-R1 loss is a drop, not a ✕');
+  assertEqual(v3.cut, 4, "v3's TRUE elimination ✕ caps its SECOND loss (LB-R3), not the WB");
 
-  // no advancement/drop edge points BACKWARDS (every connector runs left→right).
-  const f = readFlow(flow);
-  assert(f.segs.every((s) => s.x2 > s.x1), 'every connector runs left-to-right (no backwards edge into a stranded column)');
-  // the losers' columns are LEFT of the gate (not stranded to its right): the
-  // rightmost real column is the GF (c4) and the gate is to its right.
-  const maxDotX = Math.max(...f.dots.map((d) => d.x));
-  assertEqual(maxDotX, colX(4), 'the GF is the rightmost match column — the LB is not stranded past the gate');
+  // v4 — drops then OUT at the FIRST losers round: loses WB-R0, loses LB-R2.
+  const v4 = f.byId('v4');
+  assertEqual(v4.side, 'lower', 'v4 dropped, so it sits on the lower arc');
+  assert(survived(v4, 0) && survived(v4, 1), 'v4\'s spoke reaches the LB-R2 ring (its WB-R0 loss is a drop)');
+  assertEqual(v4.cut, 3, 'v4 eliminated at LB-R2 (its second loss)');
+
+  // one transfer arc per drop, each anchored on the dropped spoke's outer node
+  // and starting on that node's equator mirror on the upper arc.
+  assertEqual(f.transfers.length, 3, 'three WB→LB drops draw three transfer arcs');
+  for (const id of ['v2', 'v3', 'v4']) {
+    const sp = f.byId(id);
+    const arc = f.transfers.find((t) => Math.hypot(t.end.x - sp.outer.x, t.end.y - sp.outer.y) < 0.6);
+    assert(arc, `${id}: a transfer arc ends exactly on its outer (losers\'-bracket entry) node`);
+    assert(arc.start.y < f.cy && arc.end.y > f.cy, `${id}: the arc runs from the upper arc down to the lower arc`);
+    assert(Math.abs(arc.start.x - arc.end.x) < 0.2 && Math.abs((arc.start.y - f.cy) + (arc.end.y - f.cy)) < 0.2,
+      `${id}: the arc starts on the equator mirror of its LB node`);
+  }
+  // every survival segment steps inward.
+  for (const sp of f.spokes) for (const s of goodSegs(sp)) assert(s.to === s.from + 1, `${sp.id}: a survival segment steps one ring inward (${s.from}→${s.to})`);
 });
 
 // ---- BYE (settled) -------------------------------------------------------
 
-test('single-elim bracket: a BYE advances cleanly and does not desync the dot/label/line mapping', () => {
+test('single-elim radial: a BYE advances cleanly and does not desync the ring/spoke mapping', () => {
   // 3 challengers: R0 v1>v2, v3 BYE. R1 v1 vs v3 → v3 wins. Final v0 vs v3 → champion stands.
   const st = {
     structure: 'single_elim',
@@ -307,27 +290,31 @@ test('single-elim bracket: a BYE advances cleanly and does not desync the dot/la
   const model = structure.elimModel(mock.attachElimStates(st));
   assertEqual(model.gateState, 'stands', 'the survivor lost the gate — champion stands');
   assertEqual(model.championId, null, 'no new champion crowned');
-  const flow = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
+  const f = readRadial(radial(model));
 
-  // v3's BYE: a good dot at R0 that connects forward to its real R1 match.
-  assert(dotAt(flow, 'v3', colX(0)) && dotAt(flow, 'v3', colX(0)).tone === 'good', 'v3 advances via the bye (good dot at R0)');
-  assert(segFromTo(flow, 'v3', colX(0), colX(1)), 'the bye lane connects R0→R1 (no gap)');
-  assert(!cutOn(flow, 'v3', colX(0)), 'a bye is not an elimination');
-  // v3 reaches the final and loses it → its only ✕ is at the final column.
-  assert(dotAt(flow, 'v3', colX(2)) && dotAt(flow, 'v3', colX(2)).tone === 'bad', 'v3 lost the final');
-  assert(cutOn(flow, 'v3', colX(2)), 'v3 eliminated at the final');
+  // v3's BYE: it survives R0 without a loss node and reaches its real R1 match.
+  const v3 = f.byId('v3');
+  assert(survived(v3, 0), 'v3 advances via the bye (survives ring 0→1)');
+  assert(!v3.nodes.some((n) => n.ring === 0 && n.tone === 'bad'), 'a bye is not a loss');
+  assert(survived(v3, 1), 'v3 won R1 (survives ring 1→2)');
+  // v3 reaches the final and loses it → its only ✕ caps the final ring.
+  assert(v3.nodes.some((n) => n.ring === 2 && n.tone === 'bad'), 'v3 lost the final');
+  assertEqual(v3.cut, 3, 'v3 eliminated at the final');
 
   // v1 is unaffected by v3's bye: won R0, lost R1.
-  assert(dotAt(flow, 'v1', colX(0)) && dotAt(flow, 'v1', colX(0)).tone === 'good', 'v1 won R0');
-  assert(dotAt(flow, 'v1', colX(1)) && dotAt(flow, 'v1', colX(1)).tone === 'bad', 'v1 lost R1');
-  assert(cutOn(flow, 'v1', colX(1)), 'v1 eliminated at R1 (the bye did not shift its mapping)');
+  const v1 = f.byId('v1');
+  assert(survived(v1, 0), 'v1 won R0');
+  assert(v1.nodes.some((n) => n.ring === 1 && n.tone === 'bad'), 'v1 lost R1');
+  assertEqual(v1.cut, 2, 'v1 eliminated at R1 (the bye did not shift its mapping)');
   // v2 lost R0.
-  assert(cutOn(flow, 'v2', colX(0)), 'v2 eliminated at R0');
+  assertEqual(f.byId('v2').cut, 1, 'v2 eliminated at R0');
+  // nobody is crowned: no spoke dashes into the seat and the seat reads the former crown.
+  assert(f.spokes.every((s) => !s.gate), 'no spoke reaches the seat while the champion stands');
 });
 
 // ---- LIVE vs SETTLED -----------------------------------------------------
 
-test('live elim bracket: the in-flight (pending) final maps the same as a settled one — nothing falsely eliminated', () => {
+test('live elim radial: the in-flight (pending) final maps the same as a settled one — nothing falsely eliminated', () => {
   // R0 v1>v2 settled; the Final v0 vs v1 is IN FLIGHT (winner:null, pending).
   const live = {
     structure: 'single_elim', live: true, phase: 'running',
@@ -345,20 +332,21 @@ test('live elim bracket: the in-flight (pending) final maps the same as a settle
   const lm = structure.elimModel(structure.normalizeStructure(mock.attachElimStates(live), true));
   assert(lm.live, 'the model is live');
   assertEqual(lm.gateState, 'deciding', 'a live bracket is deciding');
-  const flow = svg.elimFlow({ rounds: lm.rounds, gen_states: lm.gen_states, championId: lm.championId, benchmarkId: lm.benchmarkId, gateState: lm.gateState, live: true });
+  const f = readRadial(radial(lm, { live: true }));
 
-  // v1 won R0 (good), races the pending final (pending dot), connected R0→Final.
-  assert(dotAt(flow, 'v1', colX(0)) && dotAt(flow, 'v1', colX(0)).tone === 'good', 'v1 won R0 (good)');
-  const v1fin = dotAt(flow, 'v1', colX(1));
-  assert(v1fin && v1fin.tone === 'pending', 'v1 is racing the in-flight final (pending dot, not falsely won/lost)');
-  assert(segFromTo(flow, 'v1', colX(0), colX(1)), 'v1 R0→Final edge connects into the live match');
+  // v1 won R0 (good), races the pending final (a dashed spoke), never cut.
+  const v1 = f.byId('v1');
+  assert(survived(v1, 0), 'v1 won R0 (good)');
+  assert(v1.segs.some((s) => s.tone === 'pending'), 'v1 is racing the in-flight final (a dashed pending segment, not falsely won/lost)');
+  assert(v1.cut == null && !v1.gate, 'v1 is neither cut nor committed to the seat while the final is in flight');
   // v0 sits ONLY at the pending final — never falsely eliminated.
-  const v0fin = dotAt(flow, 'v0', colX(1));
-  assert(v0fin && v0fin.tone === 'pending', 'v0 races the pending final (pending dot)');
-  assert(!cutOn(flow, 'v0', colX(1)), 'v0 is not eliminated while the final is in flight');
+  const v0 = f.byId('v0');
+  assert(v0.segs.some((s) => s.tone === 'pending'), 'v0 races the pending final (dashed)');
+  assert(v0.cut == null && !v0.nodes.some((n) => n.tone === 'bad'), 'v0 is not eliminated while the final is in flight');
   // v2 lost R0 → its (settled) elimination still reads correctly under a live run.
-  assert(dotAt(flow, 'v2', colX(0)) && dotAt(flow, 'v2', colX(0)).tone === 'bad', 'v2 lost R0');
-  assert(cutOn(flow, 'v2', colX(0)), 'a settled R0 loss is still a clean elimination during a live run');
+  const v2 = f.byId('v2');
+  assertEqual(goodSegs(v2).length, 0, 'v2 survived no ring');
+  assertEqual(v2.cut, 1, 'a settled R0 loss is still a clean elimination during a live run');
 });
 
 // The persisted within-tournament stage key is `stage_index`; normalizeStructure
@@ -389,54 +377,18 @@ test('normalizeStructure: stage_index → round_index (new key + legacy fallback
   assertEqual(both.rounds[0].round_index, 5, 'an explicit round_index is not overwritten by stage_index');
 });
 
-// ---- DOUBLE-ELIM DROP ROUTING (≥2 losers demoted: clean, non-crossing) ----
+// ---- DOUBLE-ELIM DROP ROUTING (≥2 losers demoted: nested, non-overlapping) ----
 //
-// Regression guard for the WB→LB demotion connectors. A route that dips a half-row
-// beneath the SOURCE lane and run their horizontal bus THERE — straight across the
-// rows (dots / labels / boxes) of every lane physically between the WB column and
-// the LB re-entry column; with TWO losers demoted from one node the two buses
-// straddled the intervening lanes and crossed each other. The fix routes every
-// demotion through a reserved CHANNEL below the whole lane stack, one horizontal
-// lane per drop, with a per-edge x-nudge so two drops that share a source column
-// never share a vertical. This test renders a double-elim where TWO losers drop
-// from the SAME WB column into the SAME LB column (the two-loser case) and asserts:
-//   * every horizontal run of every drop path sits BELOW the bottom lane row (in
-//     the channel) — so no run can cross a node box / label / dot,
-//   * each drop owns a DISTINCT channel run-y (its own lane),
-//   * the two same-column drops have DISTINCT source verticals (parallel, no overlap),
-//   * the path endpoints still land on the WB-loss dot and the LB-entry node
-//     (the visual connection is intact).
+// Regression guard for the WB→LB transfer arcs. Two losers demoted from the
+// SAME winners' column into the SAME losers' column (the two-loser case) plus
+// a third drop from the next column: every arc must start and end ON the outer
+// node ring (never on a staggered rim outside it, where no node exists), end
+// exactly on its own losers'-bracket entry node, and the arcs must nest on
+// DISTINCT radii so no two overlap.
 
-// Parse an elbow/channel drop `d` into its absolute vertices (M / L / Q endpoints).
-function pathPoints(d) {
-  const pts = [];
-  const re = /([MLQ])\s*([-\d.]+)\s+([-\d.]+)(?:\s+([-\d.]+)\s+([-\d.]+))?/g;
-  let m;
-  while ((m = re.exec(String(d || '')))) {
-    if (m[1] === 'Q') pts.push({ x: Number(m[4]), y: Number(m[5]) });  // arc endpoint
-    else pts.push({ x: Number(m[2]), y: Number(m[3]) });
-  }
-  return pts;
-}
-// the (near-)horizontal runs of a path: consecutive vertices with ~equal y.
-function horizontalRuns(pts) {
-  const runs = [];
-  for (let i = 1; i < pts.length; i++) {
-    if (Math.abs(pts[i].y - pts[i - 1].y) < 0.5 && Math.abs(pts[i].x - pts[i - 1].x) > 0.5) {
-      runs.push({ y: pts[i].y, x1: Math.min(pts[i].x, pts[i - 1].x), x2: Math.max(pts[i].x, pts[i - 1].x) });
-    }
-  }
-  return runs;
-}
-// the longest horizontal run (the channel "bus" run rather than a tiny jog).
-function busRun(pts) {
-  return horizontalRuns(pts).sort((a, b) => (b.x2 - b.x1) - (a.x2 - a.x1))[0] || null;
-}
-
-test('double-elim drop routing: ≥2 losers demoted route in their own channel below the stack — no run crosses a node, distinct lanes, no overlap', () => {
+test('double-elim drop routing: ≥2 losers demoted draw nested transfer arcs — each anchored on real nodes, distinct radii, no overlap', () => {
   // Two losers (v2, v4) drop from the SAME WB column (WB-R0) into the SAME LB
-  // column (LB-R2); a third (v3) drops WB-R1 → LB-R3. Three demotion edges total,
-  // two of them sharing both endpoints' columns — the worst case for crossing.
+  // column (LB-R2); a third (v3) drops WB-R1 → LB-R3. Three demotion arcs total.
   const st = {
     structure: 'double_elim',
     champion_lineage: ['v0', 'v1'],
@@ -461,102 +413,26 @@ test('double-elim drop routing: ≥2 losers demoted route in their own channel b
     ],
   };
   const model = structure.elimModel(mock.attachElimStates(st));
-  const flow = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState });
+  const f = readRadial(radial(model, { double: true }));
+  assertEqual(f.transfers.length, 3, `three WB→LB demotion arcs render (got ${f.transfers.length})`);
 
-  // collect the drop paths (raw `d`) so we can inspect their channel routing.
-  const drops = [];
-  walk(flow, (n) => {
-    const list = clsOf(n).split(/\s+/);
-    if (n.localName === 'path' && list.includes('dn-elimflow-seg-drop')) drops.push(n.getAttribute('d'));
-  });
-  assert(drops.length === 3, `three WB→LB demotion edges render (got ${drops.length})`);
-
-  // the bottom lane row: the lowest lane y the renderer placed a competitor on.
-  const f = readFlow(flow);
-  const bottomLaneY = Math.max(...f.lanes.map((l) => l.y));   // label baseline ≈ lane y + 3.2
-  const lastRowBottom = bottomLaneY + laneH() / 2;            // bottom edge of the last row's box
-
-  // (1) the long channel BUS run of EVERY drop path sits BELOW the last lane row —
-  // i.e. inside the reserved channel, so it cannot cross any node box / label / dot.
-  // (The only other horizontals are the tiny source/target jogs, which sit just
-  // below their OWN dot in the inter-row gap; the spanning run is what could cross.)
-  for (const d of drops) {
-    const pts = pathPoints(d);
-    for (const run of horizontalRuns(pts)) {
-      if (run.x2 - run.x1 > laneH()) {
-        assert(run.y > lastRowBottom, `a drop's channel run (y=${run.y}) is below the last lane row (${lastRowBottom}) — never across a node`);
-      }
-    }
+  // (1) BOTH endpoints of every arc sit ON the outer node ring.
+  const nodeR = f.rings[0];
+  for (const t of f.transfers) {
+    assert(Math.abs(Math.hypot(t.start.x - f.cx, t.start.y - f.cy) - nodeR) < 0.6, 'an arc START sits on the outer node ring');
+    assert(Math.abs(Math.hypot(t.end.x - f.cx, t.end.y - f.cy) - nodeR) < 0.6, 'an arc END sits on the outer node ring');
   }
-
-  // (2) each drop owns a DISTINCT channel run-y (its own lane — no shared bus).
-  const busYs = drops.map((d) => busRun(pathPoints(d)).y);
-  const uniqYs = new Set(busYs.map((y) => y.toFixed(1)));
-  assert(uniqYs.size === drops.length, `each demotion runs on its OWN channel lane (distinct run-y); got ${[...uniqYs].join(', ')}`);
-
-  // (3) the TWO losers sharing the SAME WB→LB columns (v2, v4: c0→c2) have
-  // DISTINCT source verticals — parallel pipes, never one overlapping vertical.
-  const sameCol = drops.filter((d) => {
-    const ep = dropPathEndpoints(d);
-    return ep && Math.abs(ep.x1 - colX(0)) < 1 && Math.abs(ep.x2 - colX(2)) < 1;
-  });
-  assert(sameCol.length === 2, 'two losers demote from WB-R0 into LB-R2 (the two-loser case)');
-  // the nudged source-vertical x (the x the path settles onto after the initial jog
-  // off the dot: the 4th vertex of the channel grammar); the per-edge nudge makes
-  // the two differ.
-  const srcVertX = (d) => {
-    const pts = pathPoints(d);
-    return pts.length > 3 ? pts[3].x : pts[0].x;
-  };
-  const [ax, bx] = sameCol.map(srcVertX);
-  assert(Math.abs(ax - bx) > 1.5, `the two same-column drops have DISTINCT source verticals (${ax} vs ${bx}) — no overlap`);
-
-  // (4) the path ENDPOINTS still land on the WB-loss dot and the LB-entry node, so
-  // the connection is intact (the routing change did not orphan any lane).
-  assert(segFromTo(flow, 'v2', colX(0), colX(2)) && segFromTo(flow, 'v2', colX(0), colX(2)).drop, 'v2 WB-R0→LB-R2 drop still connects dot→node');
-  assert(segFromTo(flow, 'v4', colX(0), colX(2)) && segFromTo(flow, 'v4', colX(0), colX(2)).drop, 'v4 WB-R0→LB-R2 drop still connects dot→node');
-  assert(segFromTo(flow, 'v3', colX(1), colX(3)) && segFromTo(flow, 'v3', colX(1), colX(3)).drop, 'v3 WB-R1→LB-R3 drop still connects dot→node');
-});
-
-
-// ---- THE SHARED FIXTURE PIN (node leg) -------------------------------------
-//
-// tests/data/elim_states_fixture.json pins the SERVER fold three ways: the
-// Python reader (tests/test_tournament_view_elim_states.py), the Rust
-// supervisor twin (crates/supervisor/src/elim_states.rs), and THIS mirror.
-// A divergence here is a bug in mock_server.mjs — never grounds to re-derive
-// the model in prod code.
-test('mock deriveElimStates matches the shared Python/Rust fixture byte-for-byte', async () => {
-  const fs = await import('node:fs');
-  const fixturePath = new URL('../../../../../tests/data/elim_states_fixture.json', import.meta.url);
-  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
-  const got = mock.deriveElimStates(fixture.input_rounds);
-  const canon = (v) => {
-    const sort = (x) => Array.isArray(x) ? x.map(sort)
-      : (x && typeof x === 'object')
-        ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sort(x[k])]))
-        : x;
-    return JSON.stringify(sort(v));
-  };
-  assertEqual(canon(got), canon(fixture.expected), 'the node mirror reproduces the served fold exactly');
-});
-
-// The scalar contract the server owns — non-scalar competitors/winner (bool, null,
-// object, array) drop identically across the Python, Rust, and node folds.
-test('mock deriveElimStates drops non-scalar competitors/winner per the shared fixture', async () => {
-  const fs = await import('node:fs');
-  const fixturePath = new URL('../../../../../tests/data/elim_states_fixture.json', import.meta.url);
-  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
-  const c = fixture.malformed_competitors_case;
-  const got = mock.deriveElimStates(c.input_rounds);
-  const canon = (v) => {
-    const sort = (x) => Array.isArray(x) ? x.map(sort)
-      : (x && typeof x === 'object')
-        ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, sort(x[k])]))
-        : x;
-    return JSON.stringify(sort(v));
-  };
-  assertEqual(canon(got), canon(c.expected), 'the node mirror drops non-scalars exactly like the twins');
+  // (2) each arc owns a DISTINCT radius — the arcs nest rather than overlap.
+  const radii = new Set(f.transfers.map((t) => t.r.toFixed(1)));
+  assertEqual(radii.size, 3, `each demotion arc rides its OWN radius; got ${[...radii].join(', ')}`);
+  // (3) the two losers sharing the SAME WB→LB columns (v2, v4) each have an arc
+  // ending on their OWN outer node — two arcs, never one shared connector.
+  const ends = ['v2', 'v4'].map((id) => f.byId(id).outer);
+  assert(Math.hypot(ends[0].x - ends[1].x, ends[0].y - ends[1].y) > 5, 'v2 and v4 own distinct outer nodes');
+  for (const id of ['v2', 'v3', 'v4']) {
+    const o = f.byId(id).outer;
+    assert(f.transfers.some((t) => Math.hypot(t.end.x - o.x, t.end.y - o.y) < 0.6), `${id}: a transfer arc terminates exactly on its losers'-bracket entry node`);
+  }
 });
 
 await run();

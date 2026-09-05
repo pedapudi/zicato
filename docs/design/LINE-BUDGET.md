@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 472,000 | +63,339 |
-| Production | 197,702 | 204,924 | +7,222 |
-| Production logic | 110,276 | 113,954 | +3,678 |
+| Total | 408,661 | 471,206 | +62,545 |
+| Production | 197,702 | 204,264 | +6,562 |
+| Production logic | 110,276 | 113,518 | +3,242 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,7 +84,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 73,780 | 39,951 | 27,640 | 30.8% |
+| src/zicato/dashboard | 72,986 | 39,291 | 27,204 | 30.8% |
 | src/zicato/query | 18,672 | 18,672 | 11,159 | 40.2% |
 | src/zicato/evolve | 12,662 | 12,662 | 7,533 | 40.5% |
 | src/zicato/reflection | 9,779 | 9,779 | 6,159 | 37.0% |

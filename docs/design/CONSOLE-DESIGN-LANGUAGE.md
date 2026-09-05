@@ -198,7 +198,7 @@ the same thing everywhere.
 | `racingLadder` | the per-rung **successive-halving ladder** on Match-ups — one column per rung escalating to a trailing champion-gate, each runner's Δ-vs-champion right-aligned, a persistent v0 pace line at Δ=0. |
 | `swissLadder` | the swiss **standings ladder** — a column per round, accumulating Copeland points (win 1 / draw ½), the leader flowing into a champion-gate. |
 | `swissOverview` | the swiss epoch-overview centerpiece — a **standings bump chart** (one line per competitor, y = rank, lines cross as the leader emerges) over a **ranked Copeland-point bar**. |
-| `elimFlow` | the elim figure EVERYWHERE (epoch hero + Match-ups) — the Tufte **bracket-as-flow**: rounds are columns, one lane per generation; two lanes **converge** at a match node, the winner's lane continues (`↑`, good), the loser's terminates (`✕`, bad), the champion's lane reaches the crowned gate (`♛`). Double-elim renders the losers' bracket as a second band of re-converging lanes. Pairing + Δ on hover. |
+| `elimRadial` | the elim figure EVERYWHERE (epoch hero, Match-ups, live hero, builder preview) — the **radial bracket**: rounds are concentric rings narrowing to a centre champion seat, one spoke per competitor; a spoke's surviving segments read good, the ring it was eliminated at ends with `✕` (bad), the champion's spoke dashes into the crowned seat (`♛`). Double-elim puts the winners' bracket on the upper arc and the losers' on the lower, split by a dashed equator; a winners'→losers' drop is a rim-hugging transfer arc. Outcome + round on hover. |
 | `duelFlow` | the **gauntlet** structure-flow — the round's field as Δ-vs-champion lanes: a horizontal Δ=0 reference rule is the champion (the crowned `♛` gate node), each challenger a lane with a dot **below** the rule when it improved (good) / **above** when it regressed (bad), status as a glyph (`↑`/`✕`/`○`). The per-challenger hypothesis and its Δ live on hover. |
 | `waterfall` | the **loss-floor descent across rounds** — one downward step per round sized by its promotion Δ (good by direction; a held round is flat), the running floor annotated, the champion-spine baseline in `accent`, the winning mutation per step on hover. The headline figure of the epoch round-timeline. |
 | `reignGantt` | **champion tenure across rounds** — one bar per champion spanning the rounds it held; the current champion `accent` + `♛`, former champions dim ink + `♔`. The candidate page's **reign ribbon** (shown only for a generation that became champion). |
@@ -216,9 +216,10 @@ the same thing everywhere.
 | `proposingTracker` | the field forming — one row per minted challenger (`vN ✓ applied` / `vN ✗ rejected`), the seed of the live hero. |
 
 > **Two figures the catalogue does not list.** There is no seat/box bracket
-> tree; `elimFlow` (the bracket-as-flow) is the elim figure everywhere. There is
-> no standalone champion-spine reel module; `roundTimeline`'s spine is that
-> reel, generalised across all structures and rounds.
+> tree and no lane-flow bracket; `elimRadial` (the radial bracket) is the elim
+> figure everywhere. There is no standalone champion-spine reel module;
+> `roundTimeline`'s spine is that reel, generalised across all structures and
+> rounds.
 
 ### 4.2 The shared mark conventions
 
@@ -226,8 +227,8 @@ Every figure above honours this table:
 
 | convention | meaning | where set |
 | --- | --- | --- |
-| `↑` | this competitor **survives** the rung / round — the winner's lane **continues** | funnel, ladder runners, elim-flow / duel-flow lanes |
-| `✕` | this competitor was **cut** — the loser's lane **terminates** | funnel dead-end branches, ladder, elim-flow / duel-flow lanes |
+| `↑` | this competitor **survives** the rung / round — the winner's lane **continues** | funnel, ladder runners, elim-radial spokes, duel-flow lanes |
+| `✕` | this competitor was **cut** — the loser's lane **terminates** | funnel dead-end branches, ladder, elim-radial spokes, duel-flow lanes |
 | `○` | this competitor is **pending** (still racing, undecided) | duel-flow lanes |
 | `♛` | the **current champion** (the crowned survivor of the gate) | gate labels, round-timeline spine, reign-gantt bar, tree badge, candidate / board / publication accents |
 | `♔` | a **former champion** — the displaced incumbent / a transient round-leader before the gate decides | swiss ladder, bump chart, standings |
@@ -471,7 +472,7 @@ tournament structure. (The champion/challenger vs parent/child terminology is in
 - **Which crown glyph a champion takes.** The single rule is `♛` for the
   current champion and `♔` for a former champion. The crown glyphs have one
   definition: `svg.js` exports `CROWN = { current: '♛', former: '♔' }`. Every
-  emitter imports it — the `svg.js` funnel, ladder, elim-flow and duel-flow
+  emitter imports it — the `svg.js` funnel, ladder, elim-radial and duel-flow
   gate labels, the `waterfall` / `reignGantt` / `roundTimeline` crowns,
   `views/structure.js` gate notes, legends and standings, the `live.js`
   activity feed, `tree.js` badges, the `dag.js` terminal, and `views/epoch.js`

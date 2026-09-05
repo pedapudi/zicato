@@ -70,7 +70,7 @@ export function previewNodes(model) {
   let fig;
   if (structure === 'racing') fig = svg.survivalFunnel(sm);
   else if (structure === 'swiss') fig = svg.swissLadder(sm);
-  else if (structure === 'single_elim' || structure === 'double_elim') fig = svg.elimFlow(sm);
+  else if (structure === 'single_elim' || structure === 'double_elim') fig = svg.elimRadial({ ...sm, mini: true, double: structure === 'double_elim' });
   else fig = svg.valueDotPlot(sm); // gauntlet → the Δ dot-plot
   nodes.push(el('div', { class: 'dn-bld-figure' }, [fig]));
 

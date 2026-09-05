@@ -675,17 +675,21 @@ test('swiss ladder + elim flow: token-themed in the scoped stylesheet, no hardco
   assert(/\.dn-swissladder-standlab\.dn-good[^}]*var\(--v2-good\)/.test(css), 'the swiss leader uses the --v2-good token');
   assert(/\.dn-swissladder-gatebox\.dn-good[^}]*var\(--v2-good\)/.test(css), 'the crowned swiss gate uses the --v2-good token');
   assert(/\.dn-swissladder-bar[^}]*var\(--v2-accent\)/.test(css), 'the live swiss progress bar uses the accent token');
-  // elim flow (the bracket-as-flow — the seat/box tree is retired).
+  // the radial bracket (the one elimination figure; the seat/box tree and the
+  // lane flow are gone).
   assert(!/\.dn-elimbracket/.test(css), 'the retired seat/box bracket CSS is gone');
-  assert(/\.dn-elimflow-seg\.dn-elimflow-good[^}]*var\(--v2-good\)/.test(css), 'an advancing elim-flow leg uses the --v2-good token');
-  assert(/\.dn-elimflow-dot\.dn-elimflow-bad[^}]*var\(--v2-bad\)/.test(css), 'an eliminated elim-flow dot uses the --v2-bad token');
-  assert(/\.dn-elimflow-convnode\.dn-elimflow-good[^}]*var\(--v2-good\)/.test(css), 'a decided match convergence node uses the --v2-good token');
+  assert(!/\.dn-elimflow/.test(css), 'the deleted lane-flow CSS is gone');
+  assert(/\.dn-elimradial-seg\.dn-good[^}]*var\(--v2-good\)/.test(css), 'a surviving radial segment uses the --v2-good token');
+  assert(/\.dn-elimradial-node\.dn-bad[^}]*var\(--v2-bad\)/.test(css), 'an eliminated radial node uses the --v2-bad token');
+  assert(/\.dn-elimradial-seat\.dn-good[^}]*var\(--v2-good\)/.test(css), 'a crowned radial seat uses the --v2-good token');
   // NO hardcoded hex in the swiss/elim rules (token-only).
-  const slice = css.slice(css.indexOf('.dn-swissladder-head'), css.indexOf('.dn-elimflow-lane:focus-visible') + 80);
-  assert(!/#[0-9a-fA-F]{3,6}\b/.test(slice), 'the swiss/elim mark rules carry NO hardcoded hex (theme-token only)');
-  // the reduced-motion gate covers the live transitions.
+  const swissSlice = css.slice(css.indexOf('.dn-swissladder-head'), css.indexOf('.dn-swissladder-bench') + 120);
+  const radialSlice = css.slice(css.indexOf('.dn-elimradial-ring'), css.indexOf('.dn-elimradial-seg.dn-elimradial-pending.dn-proj') + 80);
+  assert(!/#[0-9a-fA-F]{3,6}\b/.test(swissSlice + radialSlice), 'the swiss/elim mark rules carry NO hardcoded hex (theme-token only)');
+  // the reduced-motion gate covers the live transitions (the radial declares none).
   const rm = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
-  assert(/\.dn-swissladder/.test(rm) && /\.dn-elimflow/.test(rm), 'the swiss/elim live transitions are suppressed under reduced motion');
+  assert(/\.dn-swissladder/.test(rm), 'the swiss live transitions are suppressed under reduced motion');
+  assert(!/\.dn-elimradial[^{]*transition/.test(css), 'the radial bracket declares no transition to gate');
 });
 
 // ====================================================================

@@ -38,7 +38,7 @@ test('structure helpers: label + non-gauntlet detection', () => {
   assert(STRUCT.structureLabel('racing', { rungs: [1, 2, 3] }).includes('3 rungs'), 'racing label names its rungs');
 });
 
-test('structure: single-elim renders a fit-to-width bracket-as-FLOW (elimFlow lanes + standings)', async () => {
+test('structure: single-elim renders a fit-to-width RADIAL bracket (elimRadial spokes + standings)', async () => {
   freshState();
   installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
   const gens = await import('../js/views/gens.js');
@@ -50,24 +50,26 @@ test('structure: single-elim renders a fit-to-width bracket-as-FLOW (elimFlow la
   assert(host.textContent.includes('Single elimination'), 'the pill names single-elim');
   assertEqual(allByClass(host, 'dt-champ-banner').length, 0, 'NO gauntlet champion-defends banner for a non-gauntlet structure');
 
-  // the seat/box bracket tree is RETIRED — the elim figure is the bracket-as-flow.
+  // the seat/box bracket tree and the lane flow are gone — the elim figure is the radial.
   assertEqual(svgsByClass(host, 'dn-elimbracket').length, 0, 'the seat/box bracket tree (dn-elimbracket) is retired');
-  const flow = svgsByClass(host, 'dn-elimflow')[0];
-  assert(flow, 'the elim figure is the bracket-as-FLOW (dn-elimflow)');
-  assertEqual(flow.getAttribute('width'), '100%', 'the flow is fit-to-width (width:100%)');
-  assert((flow.getAttribute('viewBox') || '').startsWith('0 0 '), 'the flow carries a viewBox so it scales to its pane');
-  assert(!hasScrollWrapperAncestor(flow, host), 'no horizontal-scroll wrapper around the flow');
-  // both bracket rounds rendered as columns + the trailing champion-gate column.
-  assert(host.textContent.includes('Semifinal') && host.textContent.includes('Final'), 'both bracket rounds render as columns');
-  assert(flow.textContent.toLowerCase().includes('champion-gate'), 'the flow carries the champion-gate column');
-  // a two-lane convergence (a match node) is drawn — the bracket-as-flow.
-  assert(allByClass(flow, 'dn-elimflow-convnode').length >= 1, 'a match convergence node is drawn');
+  assertEqual(svgsByClass(host, 'dn-elimflow').length, 0, 'the lane flow is deleted');
+  const bracket = svgsByClass(host, 'dn-elimradial')[0];
+  assert(bracket, 'the elim figure is the RADIAL bracket (dn-elimradial)');
+  assertEqual(svgsByClass(host, 'dn-elimradial').length, 1, 'ONE radial on the page — no companion figure');
+  assertEqual(bracket.getAttribute('width'), '100%', 'the radial is fit-to-width (width:100%)');
+  assert((bracket.getAttribute('viewBox') || '').startsWith('0 0 '), 'the radial carries a viewBox so it scales to its pane');
+  assert(!hasScrollWrapperAncestor(bracket, host), 'no horizontal-scroll wrapper around the radial');
+  // both bracket rounds rendered as rings + the centre champion seat.
+  assertEqual(allByClass(bracket, 'dn-elimradial-ring').length, 3, 'both bracket rounds render as rings, plus the gate ring');
+  assertEqual(allByClass(bracket, 'dn-elimradial-seat').length, 1, 'the radial carries the centre champion seat');
+  // one spoke per competitor.
+  assertEqual(allByClass(bracket, 'dn-elimradial-spoke').length, 4, 'a spoke per competitor is drawn');
   // a standings leaderboard rendered too.
   assert(allByClass(host, 'dt-standings').length >= 1, 'a standings leaderboard rendered');
   assert(host.textContent.includes('champion'), 'the standings names the champion status');
 });
 
-test('structure: double-elim renders the bracket-as-FLOW with the losers’ band re-converging as a second band of lanes', async () => {
+test('structure: double-elim renders the RADIAL bracket with the losers’ bracket on the lower arc', async () => {
   freshState();
   const DE = JSON.parse(JSON.stringify(SE_STRUCT));
   DE.structure = 'double_elim';
@@ -80,14 +82,18 @@ test('structure: double-elim renders the bracket-as-FLOW with the losers’ band
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(host.textContent.includes('Double elimination'), 'the pill names double-elim');
-  // the seat/box bracket tree is retired — one flow SVG holds the winners' +
-  // losers' lanes (the losers' band re-converges as a second band of lanes).
+  // one radial SVG holds both brackets: winners' on the upper arc, losers' on
+  // the lower, split by the equator; no figure toggle is offered.
   assertEqual(svgsByClass(host, 'dn-elimbracket').length, 0, 'the seat/box bracket tree is retired');
-  const flow = svgsByClass(host, 'dn-elimflow')[0];
-  assert(flow, 'the double-elim flow SVG rendered');
-  assert(flow.textContent.toLowerCase().includes('champion-gate'), 'the double-elim flow ends in the champion-gate column');
-  // the LB round columns are present (the losers' band re-converges).
-  assert(/LB Round 1|LB R/i.test(flow.textContent), 'the losers’ bracket rounds render as lanes');
+  assertEqual(svgsByClass(host, 'dn-elimflow').length, 0, 'the lane flow is deleted');
+  const bracket = svgsByClass(host, 'dn-elimradial')[0];
+  assert(bracket, 'the double-elim radial SVG rendered');
+  assertEqual(svgsByClass(host, 'dn-elimradial').length, 1, 'ONE radial on the page — no toggle, no companion');
+  assertEqual(allByClass(host, 'dt-fig-switch').length, 0, 'no figure-variant toggle');
+  assertEqual(allByClass(bracket, 'dn-elimradial-equator').length, 1, 'the dashed equator splits the two brackets');
+  assertEqual(allByClass(bracket, 'dn-elimradial-seat').length, 1, 'the radial ends in the centre champion seat');
+  // the LB round adds a ring (three rounds + the gate ring).
+  assertEqual(allByClass(bracket, 'dn-elimradial-ring').length, 4, 'the losers’ bracket round renders as a ring');
 });
 
 test('structure: swiss renders the standings LADDER hero + per-round pairings', async () => {
@@ -529,12 +535,12 @@ test('REGRESSION (view-divergence): the EPOCH swiss + single_elim overviews buil
   await epochMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(svgsByClass(host, 'dn-swissover')[0], 'SETTLED swiss: the epoch overview builds the swiss bump/bars figure from the record');
   assert(!host.textContent.includes('not a gauntlet'), 'SETTLED swiss: no negative placeholder');
-  // SINGLE-ELIM settled: the epoch overview builds the elim flow from the record.
+  // SINGLE-ELIM settled: the epoch overview builds the radial bracket from the record.
   freshState();
   installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
   host = document.createElement('div');
   await epochMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
-  assert(svgsByClass(host, 'dn-elimflow')[0], 'SETTLED single_elim: the epoch overview builds the elim flow from the recorded rounds');
+  assert(svgsByClass(host, 'dn-elimradial')[0], 'SETTLED single_elim: the epoch overview builds the radial bracket from the recorded rounds');
   assert(!host.textContent.includes('not a gauntlet'), 'SETTLED single_elim: no negative placeholder');
 });
 
@@ -770,7 +776,7 @@ test('epoch timeline (swiss): the round episode embeds the standings BUMP chart 
   assert(host.textContent.includes('open round'), 'the episode keeps the "open round →" drill affordance');
 });
 
-test('epoch timeline (single-elim): the elim episode embeds the GENERATIONS-ACROSS-ROUNDS FLOW (elim parity), NOT the mini-bracket', async () => {
+test('epoch timeline (single-elim): the elim episode embeds the RADIAL bracket (elim parity), NOT the mini-bracket', async () => {
   freshState();
   installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
   const epoch = await import('../js/views/epoch.js');
@@ -779,14 +785,13 @@ test('epoch timeline (single-elim): the elim episode embeds the GENERATIONS-ACRO
 
   assert(!host.textContent.includes('not a gauntlet'), 'the negative placeholder is GONE for elim too');
   assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline rendered for the elim epoch');
-  // ELIM PARITY (#1): the epoch hero leads with elimFlow (matching racing→funnel,
-  // swiss→bump) rather than the compact mini-bracket. The bracket tree lives in the
-  // round drill-down (Match-ups).
-  const flow = svgsByClass(host, 'dn-elimflow')[0];
-  assert(flow, 'the elim episode embeds the generations-across-rounds flow (elimFlow)');
-  assertEqual(flow.getAttribute('width'), '100%', 'the elim flow is fit-to-width');
-  assert((flow.getAttribute('viewBox') || '').startsWith('0 0 '), 'the elim flow carries a viewBox');
-  assertEqual(svgsByClass(host, 'dn-elimbracket-compact').length, 0, 'NO compact mini-bracket on the epoch overview (it is now elimFlow)');
+  // the epoch hero leads with the radial bracket (matching racing→funnel,
+  // swiss→bump) rather than the compact mini-bracket.
+  const bracket = svgsByClass(host, 'dn-elimradial')[0];
+  assert(bracket, 'the elim episode embeds the radial bracket (elimRadial)');
+  assertEqual(bracket.getAttribute('width'), '100%', 'the radial is fit-to-width');
+  assert((bracket.getAttribute('viewBox') || '').startsWith('0 0 '), 'the radial carries a viewBox');
+  assertEqual(svgsByClass(host, 'dn-elimbracket-compact').length, 0, 'NO compact mini-bracket on the epoch overview (it is the radial)');
 });
 
 test('epoch timeline (no data): the timeline renders an honest empty — NEVER the negative "not a gauntlet" placeholder', async () => {

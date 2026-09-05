@@ -493,10 +493,9 @@ columns, de-duplicates repeated matches, and classifies each loss as an
 elimination or as a winners-to-losers drop (the second life). A client that
 derived that model per render would be computing a domain conclusion, which
 server authority forbids. `derive_elim_states(rounds)` is the fold, served as
-a top-level `gen_states` join, and both bracket figures — `svg.js`'s
-`elimFlow` lane-flow read and its `elimRadial` concentric-ring twin
-(single_elim's primary figure and double_elim's optional toggle) — render it
-verbatim:
+a top-level `gen_states` join, and the bracket figure — `svg.js`'s
+`elimRadial`, the concentric-ring bracket every elimination surface draws —
+renders it verbatim:
 
 ```python
 def derive_elim_states(rounds: Any) -> dict[str, Any]:

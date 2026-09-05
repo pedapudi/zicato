@@ -27,7 +27,7 @@
 
 import { el, patchText, patchClass } from './core/dom.js';
 import {
-  isNum, swissLadder, elimFlow,
+  isNum, swissLadder,
   racingScalarTrack, racingScalarTrackDigest,
   elimRadial, elimRadialDigest,
   gauntletFieldBars,
@@ -1112,7 +1112,7 @@ export class LiveController {
   //
   //   racing      → racingScalarTrack({ mini, responsive })   (the single-round PRIMARY)
   //   single_elim → elimRadial({ mini, responsive })          (square — centres under its cap)
-  //   double_elim → elimFlow combo ({ responsive }, WB/LB bands) (the single-round DEFAULT)
+  //   double_elim → elimRadial({ double, mini, responsive })  (the same square, WB/LB arcs)
   //   gauntlet    → gauntletFieldBars({ mini, responsive })   (the wave-vs-standard hero)
   //   swiss       → swissLadder({ responsive })               (no mini mode in the builder)
   //
@@ -1174,33 +1174,17 @@ export class LiveController {
       const st = buildLiveElimModel({ at, heartbeat, activeRuns, epochGens: gens }) || normalizeStructure(at, true);
       const model = elimModel(st);
       if (!model || !model.hasMatches) return null;
-      const isDouble = structure === 'double_elim';
-      if (isDouble) {
-        // DOUBLE-ELIM hero: the refined orthogonal-pipe elimFlow combo WITH the
-        // WB/LB bands — the SAME figure the single-round page leads with by
-        // DEFAULT for double-elim. At hero size the WB/LB band split + life
-        // glyphs read more truthfully than a tiny radial (a mini radial would
-        // collapse two interleaved arcs into an unreadable knot), so we keep the
-        // combo for consistency-with-default AND legibility.
-        // FULL-WIDTH HERO: the WB/LB elimFlow combo scales aspect-locked to fill
-        // the hero width (`responsive` → svg.dn-elimflow-hero cap governs), a wide
-        // figure filling to its cap — matching racing's full-width treatment.
-        const opts = {
-          rounds: model.rounds, gen_states: model.gen_states,
-          championId: model.championId, benchmarkId: model.benchmarkId,
-          live: model.live, gateState: model.gateState, responsive: true, onCompetitor,
-        };
-        return { node: elimFlow(opts), digest: 'elim|' + elimDigest(model) };
-      }
-      // SINGLE-ELIM hero: the concentric-ring radial — the single-round PRIMARY,
-      // reading the SERVED gen_states verbatim (the same model elimFlow gates on).
-      // FULL-WIDTH HERO: aspect-locked + responsive; as a SQUARE figure the
-      // svg.dn-elimradial-hero cap centres it under the cap (margin-inline:auto).
+      // ELIM hero: the concentric-ring radial — the single-round PRIMARY for
+      // both elimination structures, reading the SERVED gen_states verbatim.
+      // Double elimination puts the winners' bracket on the upper arc and the
+      // losers' on the lower one. FULL-WIDTH HERO: aspect-locked + responsive;
+      // as a SQUARE figure the svg.dn-elimradial-hero cap centres it under the
+      // cap (margin-inline:auto).
       const opts = {
         rounds: model.rounds, gen_states: model.gen_states,
         championId: model.championId, benchmarkId: model.benchmarkId,
-        gateState: model.gateState, live: model.live, double: false, mini: true,
-        responsive: true, onCompetitor,
+        gateState: model.gateState, live: model.live, double: structure === 'double_elim',
+        mini: true, responsive: true, onCompetitor,
       };
       return { node: elimRadial(opts), digest: 'elim|' + elimRadialDigest(opts) };
     }
@@ -1383,11 +1367,11 @@ function liveBelongsToEpoch(at, heartbeat) {
 // digest (ZERO DOM writes) but a real board landing / re-rank fires the swap.
 // `.toFixed(3)` the scalar; integer board counts.
 //
-// NOTE: racing, single-elim and gauntlet digest via their builders' own
+// NOTE: racing, elimination and gauntlet digest via their builders' own
 // `*Digest` (racingScalarTrackDigest / elimRadialDigest / gauntletModelDigest)
-// so the hero mini's swap compares the exact model those builders draw. Swiss and
-// double-elim use these local model digests (swissLadder / the elimFlow
-// combo, which carry no companion `*Digest` export).
+// so the hero mini's swap compares the exact model those builders draw. Swiss
+// uses this local model digest (swissLadder carries no companion `*Digest`
+// export).
 function projMatch(m) {
   return m && m.projected ? Object.keys(m.projected).sort().map((g) => {
     const p = m.projected[g];
@@ -1404,13 +1388,5 @@ function swissDigest(model) {
       s.in_flight ? 'j' + (isNum(s.projected_scalar) ? s.projected_scalar.toFixed(3) : '?') + '/' + (s.boards_done == null ? '?' : s.boards_done) + '/' + (s.boards_total == null ? '?' : s.boards_total) : '']),
     r: (model.rounds || []).map((r) => [r.label, r.queued,
       (r.pairings || []).map((p) => [p.a, p.b, p.winner, p.bye, p.pending, p.done, p.total, p.inflight, projMatch(p)])]),
-  });
-}
-function elimDigest(model) {
-  const band = (rs) => (rs || []).map((r) => [r.label, r.queued,
-    (r.matches || []).map((m) => [m.match_id, m.bracket_slot, (m.competitors || []).join('/'), m.winner, m.decision, m.bye, m.pending, m.done, m.total, m.inflight, m.queued, projMatch(m)])]);
-  return JSON.stringify({
-    b: model.benchmarkId || null, c: model.championId || null, g: model.gateState || null,
-    w: band(model.winners), l: band(model.losers),
   });
 }

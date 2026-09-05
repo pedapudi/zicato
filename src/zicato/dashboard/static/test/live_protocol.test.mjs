@@ -305,7 +305,7 @@ test('gauntlet — the live hero renders the field-bars mini (the default-struct
 });
 
 // ===========================================================================
-// SINGLE-ELIM — radial (single-round PRIMARY + hero) + flow (secondary).
+// SINGLE-ELIM — the radial bracket (single-round PRIMARY + hero).
 // ===========================================================================
 
 const ELIM_SETTLED = {
@@ -368,7 +368,7 @@ test('single-elim — live hero renders the radial mini + emits the ✕ eliminat
 });
 
 // ===========================================================================
-// DOUBLE-ELIM — the elimFlow combo (single-round PRIMARY + hero) + radial toggle.
+// DOUBLE-ELIM — the radial bracket in double mode (single-round PRIMARY + hero).
 // ===========================================================================
 
 const DELIM_SETTLED = {
@@ -406,32 +406,37 @@ function delimLive() {
   return r;
 }
 
-test('double-elim — single-round elimFlow combo renders the WB→LB drop + the live GF, and the radial toggle is offered', () => {
+test('double-elim — the single-round radial renders the WB→LB transfer arc + the live GF as pending, with no figure toggle', () => {
   const f = renderSingleRound(delimLive(), true);
-  const flow = svgsByClass(f, 'dn-elimflow')[0];
-  assert(flow, 'live: the double-elim flow renders');
-  // the WB→LB drop connector is present (a rounded path, marked a drop).
-  const dropSegs = nodesByClass(flow, 'dn-elimflow-seg-drop');
-  assert(dropSegs.length >= 1, 'live: at least one WB→LB drop connector is drawn (the second-life edge)');
-  // the radial is ALSO offered (the non-default toggle / companion).
+  assertEqual(svgsByClass(f, 'dn-elimradial').length, 1, 'live: ONE double-elim radial renders');
+  assertEqual(svgsByClass(f, 'dn-elimflow').length, 0, 'live: no lane flow');
+  assertEqual(nodesByClass(f, 'dt-fig-switch').length, 0, 'no figure-variant toggle is offered');
   const radial = svgsByClass(f, 'dn-elimradial')[0];
-  assert(radial, 'the radial double-elim view is offered alongside the flow');
+  assertEqual(nodesByClass(radial, 'dn-elimradial-equator').length, 1, 'live: the equator splits the winners’ arc from the losers’ arc');
+  // the WB→LB transfer arcs are present (the second-life edges).
+  assert(nodesByClass(radial, 'dn-elimradial-transfer').length >= 1, 'live: at least one WB→LB transfer arc is drawn (the second-life edge)');
+  assert(nodesByClass(radial, 'dn-elimradial-pending').length >= 1, 'live: the in-flight grand final reads as pending');
 
   const s = renderSingleRound(DELIM_SETTLED, false);
-  const flowS = svgsByClass(s, 'dn-elimflow')[0];
-  assert(flowS, 'settled: the double-elim flow renders');
-  assert(/✕/.test(textOf(flowS)), 'settled: the true (second-loss) eliminations read ✕');
+  const radialS = svgsByClass(s, 'dn-elimradial')[0];
+  assert(radialS, 'settled: the double-elim radial renders');
+  assert(/✕/.test(textOf(radialS)), 'settled: the true (second-loss) eliminations read ✕');
+  assertEqual(nodesByClass(radialS, 'dn-elimradial-pending').length, 0, 'settled: no pending spoke remains');
 });
 
-test('double-elim — live hero KEEPS the elimFlow combo (not the radial)', () => {
+test('double-elim — the live hero renders the radial in DOUBLE mode (equator + transfer arcs), responsive under its cap', () => {
   const c = new live.LiveController({});
   const figHost = heroFigure(c, { activeTournament: delimLive(), heartbeat: hb({ phase: 'tournament:round_4' }),
     activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1' }] });
-  assert(svgsByClass(figHost, 'dn-elimflow')[0], 'hero: the double-elim mini is the elimFlow combo (WB/LB drops visible)');
-  assertEqual(svgsByClass(figHost, 'dn-elimradial').length, 0, 'hero: the radial is the single-elim mini, NOT double-elim');
-  // FULL-WIDTH HERO: the WB/LB flow combo fills the width (aspect-locked) like
-  // racing's scalar track — width:100% + the svg.dn-elimflow-hero cap.
-  assertHeroResponsive(svgsByClass(figHost, 'dn-elimflow')[0], 'dn-elimflow-hero', 'double-elim hero');
+  const radial = svgsByClass(figHost, 'dn-elimradial')[0];
+  assert(radial, 'hero: the double-elim hero is the radial');
+  assertEqual(svgsByClass(figHost, 'dn-elimflow').length, 0, 'hero: no lane flow');
+  assertEqual(nodesByClass(radial, 'dn-elimradial-equator').length, 1, 'hero: the radial is in double mode — the equator is drawn');
+  assert(nodesByClass(radial, 'dn-elimradial-transfer').length >= 1, 'hero: the WB→LB transfer arcs are drawn');
+  assert(nodesByClass(radial, 'dn-elimradial-pending').length >= 1, 'hero: the in-flight grand final reads as pending');
+  // FULL-WIDTH HERO: the radial scales aspect-locked; as a SQUARE figure its
+  // svg.dn-elimradial-hero cap centres it under the cap (margin-inline:auto).
+  assertHeroResponsive(radial, 'dn-elimradial-hero', 'double-elim hero');
 });
 
 // ===========================================================================
@@ -521,7 +526,7 @@ test('swiss — live hero renders the swiss ladder mini', () => {
 const NONRACING_HERO_CASES = [
   ['swiss', () => swissLive('projected'), 'tournament:round_1', 'dn-swissladder', 'dn-swissladder-hero'],
   ['single_elim', () => elimLive('inflight'), 'tournament:round_1', 'dn-elimradial', 'dn-elimradial-hero'],
-  ['double_elim', () => delimLive(), 'tournament:round_4', 'dn-elimflow', 'dn-elimflow-hero'],
+  ['double_elim', () => delimLive(), 'tournament:round_4', 'dn-elimradial', 'dn-elimradial-hero'],
   ['gauntlet', () => gauntletLive('projected'), 'tournament:round_0', 'dn-fieldbars', 'dn-fieldbars-hero'],
 ];
 
@@ -563,7 +568,7 @@ const CONVERGENCE_CASES = [
   ['racing', RACING_SETTLED, 'dn-scalartrack'],
   ['gauntlet', GAUNTLET_SETTLED, 'dn-fieldbars'],
   ['single_elim', ELIM_SETTLED, 'dn-elimradial'],
-  ['double_elim', DELIM_SETTLED, 'dn-elimflow'],
+  ['double_elim', DELIM_SETTLED, 'dn-elimradial'],
   ['swiss', SWISS_SETTLED, 'dn-swissladder'],
 ];
 

@@ -928,11 +928,12 @@ test('projected (elim): an in-flight match re-ranks standings on the projected s
   const top = model.standings.slice().sort((a, b) => a.rank - b.rank)[0];
   assertEqual(String(top.generation_id), 'v1', 'elim re-ranks the in-flight leader on its projected scalar');
   assertEqual(top.in_flight, true, 'the leading row is marked in-flight/projected');
-  // the elim flow renders the projected treatment on the lane.
+  // the radial bracket renders the projected treatment on the spoke.
   const em = STRUCT.elimModel(model);
-  const node = svg.elimFlow({ rounds: em.rounds, gen_states: em.gen_states, championId: em.championId, benchmarkId: em.benchmarkId, live: true, gateState: em.gateState });
-  assert(allByClass(node, 'dn-proj').length >= 1, 'the elim flow marks the in-flight lane/node dn-proj');
-  assert(/~proj/.test(node.textContent), 'the projected elim lane reads ~proj');
+  const node = svg.elimRadial({ rounds: em.rounds, gen_states: em.gen_states, championId: em.championId, benchmarkId: em.benchmarkId, live: true, gateState: em.gateState });
+  assert(allByClass(node, 'dn-proj').length >= 1, 'the radial marks the in-flight spoke dn-proj');
+  const projLabel = allByClass(node, 'dn-elimradial-name').find((t) => (t.getAttribute('class') || '').includes('dn-proj'));
+  assert(projLabel && /~$/.test(projLabel.textContent), 'the projected spoke label reads the ~ suffix');
 });
 
 // the STANDINGS TABLE projected treatment (dashed row + ~prefix + proj badge +
@@ -1039,27 +1040,28 @@ test('swiss (completed): a swiss winner that does NOT beat the incumbent is NOT 
   assert(/champion stands/.test(node.textContent), 'the gate reads "champion stands"');
 });
 
-// ---- completed ELIM → the bracket-as-FLOW (elimBracket retired) -----
+// ---- completed ELIM → the radial bracket (elimBracket retired) -----
 
-test('elim (completed): single-elim → elimModel + the bracket-as-FLOW with a champion-gate', () => {
+test('elim (completed): single-elim → elimModel + the radial bracket with a champion seat', () => {
   const st = STRUCT.normalizeStructure(mock.attachElimStates({ ...SE_STRUCT }), false);
   const model = STRUCT.elimModel(st);
   assert(model && model.hasMatches, 'a single-elim model was derived');
   assertEqual(model.losers, null, 'single-elim has NO losers band');
   assertEqual(model.winners.length, 2, 'two winners-bracket rounds (semifinal + final)');
   assertEqual(typeof svg.elimBracket, 'undefined', 'the elimBracket renderer is deleted (retired)');
-  const node = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onCompetitor() {} });
-  assertEqual(node.localName, 'svg', 'the flow is an SVG');
+  assertEqual(typeof svg.elimFlow, 'undefined', 'the lane-flow renderer is deleted');
+  const node = svg.elimRadial({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onCompetitor() {} });
+  assertEqual(node.localName, 'svg', 'the radial is an SVG');
   assertEqual(node.getAttribute('width'), '100%', 'fit-to-width');
-  assert(node.textContent.includes('Semifinal') && node.textContent.includes('Final'), 'both rounds render as columns');
-  // winner continues (↑/good), loser terminates (✕), champion → crowned gate.
-  assert(/✕/.test(node.textContent), 'an eliminated lane terminates with ✕');
-  assert(node.textContent.includes(svg.CROWN.current), 'the champion lane reaches the crowned gate ♛');
-  assert(node.textContent.toLowerCase().includes('champion-gate'), 'the flow carries the champion-gate column');
-  assert(allByClass(node, 'dn-elimflow-convnode').length >= 1, 'a two-lane match convergence node is drawn');
+  assertEqual(allByClass(node, 'dn-elimradial-ring').length, 3, 'both rounds render as rings, plus the gate ring');
+  // winner continues inward (good), loser terminates (✕), champion → crowned seat.
+  assert(/✕/.test(node.textContent), 'an eliminated spoke terminates with ✕');
+  assertEqual(allByClass(node, 'dn-elimradial-seatlab')[0].textContent, svg.CROWN.current, 'the champion seat reads the crown ♛');
+  assertEqual(allByClass(node, 'dn-elimradial-gateline').length, 1, 'the champion spoke dashes into the seat');
+  assertEqual(allByClass(node, 'dn-elimradial-spoke').length, 4, 'one spoke per competitor');
 });
 
-test('elim (completed): double-elim → ONE flow SVG carrying the losers’ band as re-converging lanes', () => {
+test('elim (completed): double-elim → ONE radial SVG carrying the losers’ bracket on the lower arc', () => {
   const DE = JSON.parse(JSON.stringify(SE_STRUCT));
   DE.structure = 'double_elim';
   DE.rounds.push({ round_index: 2, label: 'LB Round 1', matches: [
@@ -1068,9 +1070,12 @@ test('elim (completed): double-elim → ONE flow SVG carrying the losers’ band
   const st = STRUCT.normalizeStructure(mock.attachElimStates(DE), false);
   const model = STRUCT.elimModel(st);
   assert(Array.isArray(model.losers) && model.losers.length >= 1, 'double-elim carries a losers band in the model');
-  const node = svg.elimFlow({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, onCompetitor() {} });
-  assert(/LB Round 1|LB R/i.test(node.textContent), 'the losers’ bracket round renders as a re-converging lane column');
-  assert(node.textContent.includes('Semifinal'), 'the winners band still renders');
+  const node = svg.elimRadial({ rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId, gateState: model.gateState, double: true, onCompetitor() {} });
+  assertEqual(allByClass(node, 'dn-elimradial-equator').length, 1, 'the dashed equator splits the winners’ arc from the losers’ arc');
+  assertEqual(allByClass(node, 'dn-elimradial-ring').length, 4, 'the losers’ bracket round adds a ring (three rounds + the gate ring)');
+  const cy = Number(allByClass(node, 'dn-elimradial-ring')[0].getAttribute('cy'));
+  const outer = allByClass(node, 'dn-elimradial-node').map((n) => Number(n.getAttribute('cy')));
+  assert(outer.some((y) => y > cy) && outer.some((y) => y < cy), 'spokes sit on both arcs: the dropped lane on the lower, the winners’ on the upper');
 });
 
 // ---- progressive LIVE swiss model -----------------------------------
@@ -1194,8 +1199,8 @@ test('live elim model: an undecided round fills in board-by-board (active round,
   const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, HERO_EPOCH);
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
-  const bracket = svgsByClass(host, 'dn-elimflow')[0];
-  assert(bracket, 'the live bracket-as-flow rendered (not the being-seeded empty state)');
+  const bracket = svgsByClass(host, 'dn-elimradial')[0];
+  assert(bracket, 'the live radial bracket rendered (not the being-seeded empty state)');
   assert(!/being seeded/i.test(host.textContent), 'NOT the being-seeded placeholder once matches exist');
 });
 
@@ -1237,9 +1242,9 @@ test('live elim model: a no-op repeat render leaves the bracket node identity un
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   ui.gatedSwap(host, STRUCT.structureDigest(a), () => STRUCT.renderStructure(a, ctx, HERO_EPOCH));
-  const first = svgsByClass(host, 'dn-elimflow')[0];
+  const first = svgsByClass(host, 'dn-elimradial')[0];
   ui.gatedSwap(host, STRUCT.structureDigest(b), () => STRUCT.renderStructure(b, ctx, HERO_EPOCH));
-  const second = svgsByClass(host, 'dn-elimflow')[0];
+  const second = svgsByClass(host, 'dn-elimradial')[0];
   assert(first === second, 'the bracket node identity is preserved across a no-op tick');
 });
 

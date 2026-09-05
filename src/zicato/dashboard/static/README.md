@@ -36,7 +36,7 @@ in `js/CONTRACTS.md`.
   hierarchical hash routes), `tree.js` (the data-model TREE sidebar,
   round-grouped), `svg.js` (the data-viz primitives — `heatmap`,
   `valueDotPlot`, `sparkbar`/`genDots`, the structure figures
-  `survivalFunnel`/`swissLadder`/`swissOverview`/`elimFlow`/`duelFlow`,
+  `survivalFunnel`/`swissLadder`/`swissOverview`/`elimRadial`/`duelFlow`,
   the epoch figures `roundTimeline`/`waterfall`/`reignGantt`, the
   `sankey`, the side-by-side diff), `dag.js` (the lifecycle DAG),
   `matrix.js` (the `dn-mtx` table grid the mutation surface, the

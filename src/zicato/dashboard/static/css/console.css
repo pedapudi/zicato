@@ -2621,7 +2621,7 @@
   /* competitor labels — survivors (good ↑), cuts (bad ✕), racing (neutral). The
      ✕ glyph + bad colour already mark a cut, so NO strikethrough — a line
      through the name reads as the connector slashing the text. A cut name is
-     DIMMED (the ✕ carries the signal), matching elimFlow's dimmed-loss idiom. */
+     DIMMED (the ✕ carries the signal). */
   .dn-funnel-name { fill: var(--v2-ink-soft); font: 11px var(--v2-mono); }
   .dn-funnel-name.dn-good { fill: var(--v2-good); font-weight: 600; }
   .dn-funnel-name.dn-bad { fill: var(--v2-bad); opacity: 0.7; }
@@ -2633,8 +2633,8 @@
   .dn-funnel-bar-live { fill: var(--v2-accent); }
   .dn-funnel-runner:hover .dn-funnel-name,
   .dn-funnel-runner:focus .dn-funnel-name { fill: var(--v2-accent); outline: none; }
-  /* the terminal champion-gate seat — a hairline seat aligned with elimFlow's
-     gate vocabulary (soft tint + a crown glyph); crowned reads --v2-good. */
+  /* the terminal champion-gate seat — a hairline seat in the shared gate
+     vocabulary (soft tint + a crown glyph); crowned reads --v2-good. */
   .dn-funnel-gatebox { fill: var(--v2-rule-soft);
     stroke: color-mix(in srgb, var(--v2-rule) 80%, transparent); stroke-width: 1;
     vector-effect: non-scaling-stroke; }
@@ -2677,9 +2677,7 @@
    * (the runner/lane/elim-node classes opt in via .dn-proj.) */
   .dn-proj { opacity: var(--v2-projected-op); }
   text.dn-proj, .dn-funnel-name.dn-proj, .dn-swissladder-pairlab.dn-proj,
-  .dn-swissladder-standlab.dn-proj, .dn-elimflow-name.dn-proj { fill: var(--v2-projected); }
-  .dn-elimflow-convnode.dn-proj, .dn-elimflow-dot.dn-proj { fill: var(--v2-projected); }
-  .dn-elimflow-conv.dn-proj { stroke: var(--v2-projected-line); stroke-dasharray: var(--v2-projected-dash); }
+  .dn-swissladder-standlab.dn-proj { fill: var(--v2-projected); }
   /* the scored board-progress sub-bar drawn INSIDE an SVG figure. */
   .dn-proj-bar-bg { fill: none; stroke: var(--v2-projected-line);
     stroke-dasharray: var(--v2-projected-dash); vector-effect: non-scaling-stroke; }
@@ -2739,51 +2737,6 @@
   .dn-swissladder-gate:hover .dn-swissladder-gatelab,
   .dn-swissladder-gate:focus .dn-swissladder-gatelab { fill: var(--v2-accent); outline: none; }
   .dn-swissladder-bench { fill: var(--v2-accent); font: 9.5px var(--v2-mono); font-weight: 600; }
-
-  /* ---- elim FLOW (generations across rounds — the slopegraph companion) ----
-   * Rounds as columns, one lane per generation; advancing legs read --v2-good,
-   * eliminations read --v2-bad (✕), pending (live) legs dash. All --v2-* tokens.*/
-  .dn-elimflow-col { fill: var(--v2-ink-faint); font: 10px var(--v2-mono);
-    text-transform: uppercase; letter-spacing: 0.04em; }
-  .dn-elimflow-name { fill: var(--v2-ink-soft); font: 10.5px var(--v2-mono); }
-  .dn-elimflow-name.dn-elimflow-good { fill: var(--v2-good); font-weight: 700; }
-  .dn-elimflow-name.dn-elimflow-bad { fill: var(--v2-ink-faint); }
-  .dn-elimflow-name.dn-elimflow-former { fill: var(--v2-ink-faint); font-style: italic; }
-  .dn-elimflow-seg { stroke: var(--v2-good); stroke-width: 1.8; opacity: 0.55;
-    vector-effect: non-scaling-stroke; }
-  .dn-elimflow-seg.dn-elimflow-good { stroke: var(--v2-good); opacity: 0.7; }
-  .dn-elimflow-seg-pending { stroke: var(--v2-ink-faint); stroke-dasharray: 4 3; opacity: 0.6; }
-  /* the winners→losers DROP edge — a faint dashed line in the loss tone so a
-     dropped lane visibly threads from its WB loss into its losers'-bracket entry
-     (distinct from a solid advancement edge). */
-  .dn-elimflow-seg.dn-elimflow-seg-drop { stroke: var(--v2-bad); stroke-dasharray: 2 3; opacity: 0.5; }
-  .dn-elimflow-dot { vector-effect: non-scaling-stroke; }
-  .dn-elimflow-dot.dn-elimflow-good { fill: var(--v2-good); }
-  .dn-elimflow-dot.dn-elimflow-bad { fill: var(--v2-bad); }
-  .dn-elimflow-dot.dn-elimflow-pending { fill: var(--v2-ink-faint); }
-  .dn-elimflow-cut { font: 11px var(--v2-mono); font-weight: 700; }
-  .dn-elimflow-cut.dn-elimflow-bad { fill: var(--v2-bad); }
-  .dn-elimflow-gate { fill: var(--v2-ink-soft); font: 12px var(--v2-mono); }
-  .dn-elimflow-gate.dn-elimflow-good { fill: var(--v2-good); font-weight: 700; }
-  .dn-elimflow-gate.dn-elimflow-former { fill: var(--v2-ink-faint); }
-  .dn-elimflow-lane:hover .dn-elimflow-name,
-  .dn-elimflow-lane:focus .dn-elimflow-name { fill: var(--v2-accent); outline: none; }
-  .dn-elimflow-lane:focus-visible { outline: 2px solid var(--v2-accent); }
-  /* the bracket-as-flow MATCH CONVERGENCE: two lanes pinch toward the match node.*/
-  .dn-elimflow-conv { stroke: var(--v2-rule); stroke-width: 1.4; opacity: 0.7;
-    vector-effect: non-scaling-stroke; }
-  .dn-elimflow-conv-pending { stroke: var(--v2-ink-faint); stroke-dasharray: 4 3; }
-  .dn-elimflow-convnode { fill: var(--v2-ink-soft); vector-effect: non-scaling-stroke; }
-  .dn-elimflow-convnode.dn-elimflow-good { fill: var(--v2-good); }
-  .dn-elimflow-convnode.dn-elimflow-pending { fill: var(--v2-ink-faint); }
-  /* a DECIDING (undecided / in-flight) match node — the bracket's primary
-   * in-flight signal now that a pending lane draws no gate-bound leg. A soft
-   * pulse in the projected/live tone; suppressed under reduced motion. */
-  .dn-elimflow-convnode.dn-elimflow-deciding { fill: var(--v2-projected);
-    animation: dn-elim-deciding 1.4s ease-in-out infinite; }
-  @keyframes dn-elim-deciding { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-  @media (prefers-reduced-motion: reduce) {
-    .dn-elimflow-convnode.dn-elimflow-deciding { animation: none; opacity: 1; } }
 
   /* ---- the GAUNTLET DUEL FLOW (the field as Δ-vs-champion lanes) ----
    * Each challenger a lane vs the crowned champion-gate; a dot below the Δ=0
@@ -2949,24 +2902,6 @@
   .dn-elimradial-gate:focus-visible { outline: 2px solid var(--v2-accent); }
   .dn-elimradial-name.dn-proj { fill: var(--v2-projected); }
   .dn-elimradial-seg.dn-elimradial-pending.dn-proj { stroke: var(--v2-projected-line); }
-
-  /* ---- FIGURE-VARIANT SWITCH (double-elim: combo ⟷ radial) ----
-   * A small segmented control ON the figure that flips between the DEFAULT
-   * orthogonal-pipe combo and the optional radial view of the SAME bracket.
-   * Mirrors the chrome's .dn-theme-switch idiom; pure client-side visibility
-   * (no data change → never disturbs the digest-gated swap). All --v2-* tokens. */
-  .dt-fig-switchrow { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; }
-  .dt-fig-switchlab { font: 9px var(--v2-mono); letter-spacing: .08em; text-transform: uppercase;
-    color: var(--v2-ink-faint); }
-  .dt-fig-switch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
-  .dt-fig-btn { font: 9.5px var(--v2-mono); padding: 2px 9px; background: transparent;
-    color: var(--v2-ink-faint); border: none; cursor: pointer; transition: background 0.15s, color 0.15s;
-    border-right: 1px solid var(--v2-rule); }
-  .dt-fig-btn:last-child { border-right: none; }
-  .dt-fig-btn:hover { color: var(--v2-ink); }
-  .dt-fig-btn.dt-fig-active { background: var(--v2-accent); color: var(--v2-paper); }
-  .dt-figview { display: none; }
-  .dt-figview.dt-figview-on { display: block; }
 
   /* ---- RADAR SILHOUETTE (challenger vs champion across the gate axes) ----
    * Candidate = filled accent polygon; champion = dashed faint polygon; OUTER =
@@ -3148,18 +3083,6 @@
   .dn-racing-cand-row td { background: color-mix(in srgb, var(--v2-accent) 14%, transparent); }
   .dn-racing-cand { color: var(--v2-accent); font-weight: 700; }
 
-  /* ---- elimFlow DOUBLE-ELIM bands (WB ●● / LB ●○ tinted) ----
-   * The winners' / losers' columns tint into two distinguished bands behind the
-   * lanes (the study opt-7 banding); the drop pipes route through a staggered bus.
-   * --v2-good-soft (WB) and a caution mix (LB) keep it theme-adaptive. */
-  .dn-elimflow-band { stroke-width: 1; stroke-opacity: 0.45; vector-effect: non-scaling-stroke; }
-  .dn-elimflow-band.dn-elimflow-band-wb { fill: var(--v2-good-soft); fill-opacity: 0.30; stroke: var(--v2-accent); }
-  .dn-elimflow-band.dn-elimflow-band-lb { fill: color-mix(in srgb, var(--v2-caution) 90%, transparent);
-    fill-opacity: 0.14; stroke: var(--v2-caution); }
-  .dn-elimflow-bandlab { font: 700 9px var(--v2-mono); letter-spacing: 0.06em; }
-  .dn-elimflow-bandlab.dn-elimflow-band-wb { fill: var(--v2-accent); }
-  .dn-elimflow-bandlab.dn-elimflow-band-lb { fill: var(--v2-caution); }
-
   /* ---- the LOSS-FLOOR WATERFALL (the epoch's descent across rounds) ----
    * Each round a step sized by its promotion Δ — improvement reads --v2-good,
    * regression --v2-bad, a held round is flat. The accent spine is the floor. */
@@ -3321,9 +3244,8 @@
    * cuts recede). */
   .dn-funnel-spline, .dn-funnel-dot { transition: opacity 0.3s ease; }
   .dn-funnel-runner, .dn-funnel-cut { transition: opacity 0.3s ease, transform 0.3s ease; }
-  /* swiss/elim live figures ease their value/position changes the same way. */
+  /* the swiss live figure eases its value/position changes the same way. */
   .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge { transition: opacity 0.3s ease, transform 0.3s ease; }
-  .dn-elimflow-lane, .dn-elimflow-seg, .dn-elimflow-conv { transition: opacity 0.3s ease; }
 
   /* ---- the LIVE-RUN HERO (the animated home of a live run) ---- */
   /* The host is ALWAYS present now — it carries the one-line status band in
@@ -3557,7 +3479,6 @@
     .dn-inflight-pulse { animation: none; }
     .dn-funnel-spline, .dn-funnel-dot, .dn-funnel-runner, .dn-funnel-cut, .dn-funnel-bar,
     .dn-swissladder-pair, .dn-swissladder-stand, .dn-swissladder-edge, .dn-swissladder-bar,
-    .dn-elimflow-lane, .dn-elimflow-seg, .dn-elimflow-conv,
     .dt-rungstep-pip, .dt-live-match-fill, .dn-hm-cell { transition: none; }
   }
 
@@ -4110,7 +4031,6 @@
    * shearing the SVG. */
   .dn-scalartrack-hero,
   .dn-funnel-hero,
-  .dn-elimflow-hero,
   .dn-fieldbars-hero,
   .dn-swissladder-hero {
     display: block; width: 100%; height: auto;
@@ -4125,7 +4045,6 @@
    * the `svg.` prefix on these caps. */
   svg.dn-scalartrack-hero { max-width: 1000px; }  /* wide/short: ≈120–150px tall */
   svg.dn-funnel-hero      { max-width: 640px;  }  /* aspect ≈2.2 → ≈290px tall */
-  svg.dn-elimflow-hero    { max-width: 820px;  }
   svg.dn-fieldbars-hero   { max-width: 680px;  }
   svg.dn-swissladder-hero { max-width: 760px;  }
   /* The composed meta-loop ledger is a wide cross-epoch HERO (aspect ≈1.8); same
@@ -4134,10 +4053,15 @@
   svg.dn-metaledger-hero {
     display: block; width: 100%; height: auto; max-width: 1100px;
   }
-  /* square / centred figures: max-width caps BOTH dimensions cleanly (1:1). */
+  /* square / centred figures: max-width caps BOTH dimensions cleanly (1:1).
+   * The radial bracket is the hero for both elimination structures; its cap is
+   * therefore also its reading HEIGHT (420px at the cap), sized so the
+   * double-elimination mode — one ring per round of both brackets, the two
+   * half-arcs and the rim transfer arcs inside the same square — reads at hero
+   * width. Below the cap the square shrinks with the pane. */
   svg.dn-elimradial-hero {
     display: block; width: 100%; height: auto;
-    max-width: 380px; margin-inline: auto;
+    max-width: 420px; margin-inline: auto;
   }
   svg.dn-radar-hero {
     display: block; width: 100%; height: auto; max-width: 420px;
