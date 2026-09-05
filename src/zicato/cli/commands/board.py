@@ -230,7 +230,7 @@ def audit_cmd(
 
     from zicato import adapter_factory, runtime_factory, workspace_loader  # noqa: PLC0415
     from zicato.board.jsonl import load_board_with_meta  # noqa: PLC0415
-    from zicato.cli.commands.evolve import _import_callable  # noqa: PLC0415
+    from zicato.cli.dotted import import_callable  # noqa: PLC0415
     from zicato.epoch.lifecycle import (  # noqa: PLC0415
         current_epoch_id,
         load_epoch,
@@ -246,8 +246,8 @@ def audit_cmd(
             "(or `zicato epoch new`) first, or pass --epoch"
         )
 
-    target_call_llm = _import_callable(harness_dotted, kind="target_call_llm")
-    evaluation_call_llm = _import_callable(auxiliary_dotted, kind="evaluation_call_llm")
+    target_call_llm = import_callable(harness_dotted, kind="target_call_llm")
+    evaluation_call_llm = import_callable(auxiliary_dotted, kind="evaluation_call_llm")
 
     try:
         epoch_cfg = load_epoch(workspace_root, resolved_epoch)
@@ -415,7 +415,7 @@ def preflight_cmd(
 
     from zicato import adapter_factory, runtime_factory, workspace_loader  # noqa: PLC0415
     from zicato.board.jsonl import load_board_with_meta  # noqa: PLC0415
-    from zicato.cli.commands.evolve import _import_callable  # noqa: PLC0415
+    from zicato.cli.dotted import import_callable  # noqa: PLC0415
     from zicato.epoch.lifecycle import (  # noqa: PLC0415
         current_epoch_id,
         load_epoch,
@@ -440,8 +440,8 @@ def preflight_cmd(
             "(or `zicato epoch new`) first, or pass --epoch"
         )
 
-    target_call_llm = _import_callable(harness_dotted, kind="target_call_llm")
-    evaluation_call_llm = _import_callable(auxiliary_dotted, kind="evaluation_call_llm")
+    target_call_llm = import_callable(harness_dotted, kind="target_call_llm")
+    evaluation_call_llm = import_callable(auxiliary_dotted, kind="evaluation_call_llm")
 
     try:
         epoch_cfg = load_epoch(workspace_root, resolved_epoch)
@@ -740,9 +740,9 @@ def judges_cmd(
         raise click.ClickException(
             "--test-retest needs --auxiliary-call-llm (inline judges are LLM-backed)"
         )
-    from zicato.cli.commands.evolve import _import_callable  # noqa: PLC0415
+    from zicato.cli.dotted import import_callable  # noqa: PLC0415
 
-    aux_call_llm = _import_callable(auxiliary_dotted, kind="evaluation_call_llm")
+    aux_call_llm = import_callable(auxiliary_dotted, kind="evaluation_call_llm")
     transcript = (
         Path(transcript_path).read_text(encoding="utf-8") if transcript_path else FIXTURE_TRANSCRIPT
     )

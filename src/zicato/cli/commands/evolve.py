@@ -30,9 +30,7 @@ See :mod:`zicato.orchestrator` for the loop implementation.
 
 Usage::
 
-    zicato evolve --rounds 4 \\
-        --harness-call-llm my_pkg.llms:target_call_llm \\
-        --auxiliary-call-llm my_pkg.llms:aux_call_llm
+    zicato evolve --rounds 4
 
 The ``--mode`` flag picks between cache-first and force-fresh
 board-unit evaluation. The default is ``fast``: a board unit —
@@ -49,9 +47,12 @@ is a clean miss — there is no cross-contract reuse. Pass ``--mode
 full`` to bypass the cache and force a fresh evaluation of every unit
 (noise re-sampling / debugging).
 
-The two ``--*-call-llm`` options accept dotted import paths in either
-``pkg.mod:attr`` or ``pkg.mod.attr`` form — the same convention the
-runtime factory uses everywhere else in the tree.
+The command takes no model options. Which model each role runs on is
+a property of the workspace, declared once in ``config.json`` under
+``models.engines`` and read by :func:`zicato.runtime_factory
+.make_runtime_config`; an engine that names a ``call_llm`` dotted path
+instead of a ``model`` is how an offline or deterministic system under
+test supplies its own callable.
 """
 
 from __future__ import annotations
@@ -66,7 +67,6 @@ from typing import Any
 import click
 
 from zicato.config import IntegrationConfig, load_config, pin_overrides
-from zicato.import_path import import_dotted_path
 
 
 def _pin_config_flags(
@@ -557,24 +557,6 @@ def _write_tournament_structure_into_scoring(
     scoring_path.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _import_callable(dotted: str, *, kind: str) -> Any:
-    """Resolve ``pkg.mod:attr`` or ``pkg.mod.attr`` to a callable.
-
-    Delegates to :func:`zicato.import_path.import_dotted_path` and re-raises
-    any :class:`ValueError` as :class:`click.BadParameter` so the CLI surfaces
-    the error with Click's formatting rather than a raw traceback.
-    """
-    try:
-        fn: Any = import_dotted_path(dotted, label=kind)
-    except ValueError as exc:
-        raise click.BadParameter(str(exc)) from exc
-    if not callable(fn):
-        raise click.BadParameter(
-            f"{kind}: {dotted!r} resolved to {type(fn).__name__}, expected a callable"
-        )
-    return fn
-
-
 def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
     """Report the workspace gate's verdict and exit without spending.
 
@@ -641,10 +623,7 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
     epilog=(
         "\b\n"
         "Happy-path invocation:\n"
-        "  zicato evolve \\\n"
-        "      --harness-call-llm  my_pkg.llms:harness \\\n"
-        "      --auxiliary-call-llm my_pkg.llms:aux \\\n"
-        "      --rounds 4\n"
+        "  zicato evolve --rounds 4\n"
         "\n"
         "\b\n"
         "Auto-epoching:\n"
@@ -671,8 +650,8 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
     is_flag=True,
     default=False,
     help=(
-        "Validate the workspace with the flags this invocation would use, print the "
-        "result, and exit without spending a round."
+        "Validate the workspace and probe every configured model role, print "
+        "the result, and exit without spending a round."
     ),
 )
 @click.option(
@@ -697,18 +676,6 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
         "full = bypass the cache and force a fresh evaluation of every "
         "unit, both sides (noise re-sampling / debugging)."
     ),
-)
-@click.option(
-    "--harness-call-llm",
-    "harness_dotted",
-    required=True,
-    help="Dotted import path of the target call_llm (e.g. mymodule:target).",
-)
-@click.option(
-    "--auxiliary-call-llm",
-    "auxiliary_dotted",
-    required=True,
-    help="Dotted import path of the evaluation call_llm (e.g. mymodule:evaluation).",
 )
 @click.option(
     "--max-consecutive-rejections",
@@ -840,8 +807,6 @@ def evolve_cmd(
     dry_run: bool,
     rounds: int,
     mode: str,
-    harness_dotted: str,
-    auxiliary_dotted: str,
     max_consecutive_rejections: int,
     max_wall_clock_seconds: int | None,
     parallelism: int | None,
@@ -896,12 +861,6 @@ def evolve_cmd(
         _write_tournament_structure_into_scoring(
             workspace_root, tournament_structure, tournament_params
         )
-
-    # Resolve both required callables before the dry-run exit: a dry run
-    # validates the invocation that would execute, including its two
-    # process-boundary imports.
-    target_call_llm = _import_callable(harness_dotted, kind="target_call_llm")
-    evaluation_call_llm = _import_callable(auxiliary_dotted, kind="evaluation_call_llm")
 
     # ``--dry-run`` exits through the same validators as the public loop.
     # Normal execution is gated inside ``evolve_n_rounds`` itself.
@@ -983,8 +942,6 @@ def evolve_cmd(
                 rounds=rounds,
                 workspace_root=workspace_root,
                 epoch_id=epoch,
-                target_call_llm=target_call_llm,
-                evaluation_call_llm=evaluation_call_llm,
                 fast_mode=(mode == "fast"),
                 max_consecutive_rejections=max_consecutive_rejections,
                 max_wall_clock_seconds=max_wall_clock_seconds,

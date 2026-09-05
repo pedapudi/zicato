@@ -413,8 +413,8 @@ async def evolve_n_rounds(
     rounds: int,
     workspace_root: Path,
     epoch_id: str | None = None,
-    target_call_llm: CallLLM,
-    evaluation_call_llm: CallLLM,
+    target_call_llm: CallLLM | None = None,
+    evaluation_call_llm: CallLLM | None = None,
     instance_id: str = "default",
     fast_mode: bool = False,
     max_consecutive_rejections: int = 3,
@@ -426,6 +426,11 @@ async def evolve_n_rounds(
     stop_reason_out: list[str] | None = None,
 ) -> list[EvolveRoundOutcome]:
     """Loop :func:`evolve_once` up to ``rounds`` times.
+
+    ``target_call_llm`` / ``evaluation_call_llm`` are forwarded to
+    :func:`evolve_once` unchanged; ``None`` (the default, and what
+    ``zicato evolve`` passes) means each role is resolved from the
+    workspace configuration.
 
     Stops early on ``max_consecutive_rejections`` rejected rounds in a
     row — that's a strong signal the proposer is stuck and the
@@ -510,6 +515,7 @@ async def evolve_n_rounds(
         claim_rubric_replacement,
         claim_skip_round,
     )
+    from zicato.runtime_factory import resolve_role_call_llm  # noqa: PLC0415
 
     def _set_stop_reason(reason: str) -> None:
         if stop_reason_out is not None:
@@ -537,6 +543,19 @@ async def evolve_n_rounds(
         epoch_id=epoch_id,
         live_contract=epoch_id is None,
     )
+
+    # Resolve the two roles a round always needs. This is the spend
+    # boundary, and auto-epoching below already calls the evaluation
+    # model, so both must be in hand before the first round rather than
+    # per round. An argument the caller passed wins; otherwise the
+    # workspace configuration answers, which is the only way ``zicato
+    # evolve`` supplies them.
+    if target_call_llm is None or evaluation_call_llm is None:
+        role_config = workspace_loader.load_workspace_config(workspace_root)
+        if target_call_llm is None:
+            target_call_llm = resolve_role_call_llm(role_config, role="target")
+        if evaluation_call_llm is None:
+            evaluation_call_llm = resolve_role_call_llm(role_config, role="evaluation")
 
     if max_consecutive_rejections <= 0:
         # 0 / negative effectively disables early-stop — protect against

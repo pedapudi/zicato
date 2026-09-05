@@ -143,8 +143,6 @@ zicato evolve \
     --tournament-param eta=2 \
     --tournament-param board_fraction=0.4 \
     --tournament-param replicates=2 \
-    --harness-call-llm   my_pkg.llms:harness \
-    --auxiliary-call-llm my_pkg.llms:aux \
     --rounds 2
 ```
 

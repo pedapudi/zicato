@@ -758,10 +758,6 @@ def _evolve(root: Path, *args: str):
         [
             "--workspace",
             str(root),
-            "--harness-call-llm",
-            "tests.test_check_gate:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_check_gate:_evaluation_call_llm",
             "--no-dashboard",
             *args,
         ],
@@ -982,6 +978,13 @@ def test_implicit_evolve_accepts_a_live_drift_only_contract(tmp_path: Path) -> N
 
 
 def test_dry_run_rejects_an_unresolvable_llm_callable(tmp_path: Path) -> None:
+    """A role's ``call_llm`` engine is resolved by the gate, not by a flag.
+
+    ``zicato evolve`` takes no model options: a callable reaches a role
+    only as a ``models.engines.<name>.call_llm`` dotted path. A path that
+    imports to nothing is therefore a workspace defect, and the dry run
+    reports it from the gate with the failing path named.
+    """
     root = _workspace(
         tmp_path / ".zicato",
         config={
@@ -989,7 +992,11 @@ def test_dry_run_rejects_an_unresolvable_llm_callable(tmp_path: Path) -> None:
                 "kind": "adk",
                 "entrypoint": _VALID_ADK_ENTRYPOINT,
                 "mutable_trees": [],
-            }
+            },
+            "models": {
+                "engines": {"target": {"call_llm": "no_such_module:harness"}},
+                "roles": {},
+            },
         },
         board=[_entry("e1", expectation={"kind": "expected_text", "spec": "hi"})],
         scoring={},
@@ -997,15 +1004,7 @@ def test_dry_run_rejects_an_unresolvable_llm_callable(tmp_path: Path) -> None:
     )
     result = CliRunner().invoke(
         evolve_cmd,
-        [
-            "--workspace",
-            str(root),
-            "--harness-call-llm",
-            "no_such_module:harness",
-            "--auxiliary-call-llm",
-            "tests.test_check_gate:_evaluation_call_llm",
-            "--dry-run",
-        ],
+        ["--workspace", str(root), "--dry-run"],
     )
     assert result.exit_code != 0
     assert "no_such_module" in result.output

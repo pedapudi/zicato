@@ -648,11 +648,11 @@ def _run_adjudication(
     import dataclasses  # noqa: PLC0415
 
     from zicato import runtime_factory, workspace_loader  # noqa: PLC0415
-    from zicato.cli.commands.evolve import _import_callable  # noqa: PLC0415
+    from zicato.cli.dotted import import_callable  # noqa: PLC0415
     from zicato.reflection import scorecards as scorecards_mod  # noqa: PLC0415
     from zicato.reflection.adjudicator import adjudicate_corpus  # noqa: PLC0415
 
-    adjudicator_call_llm = _import_callable(adjudicator_dotted, kind="adjudicator_call_llm")
+    adjudicator_call_llm = import_callable(adjudicator_dotted, kind="adjudicator_call_llm")
     workspace_config = workspace_loader.load_workspace_config(workspace_root)
     # Placeholder harness/aux: adjudication re-reads persisted transcripts and
     # calls only the adjudicator, so the harness surface is never invoked — but

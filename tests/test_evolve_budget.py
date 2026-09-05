@@ -364,10 +364,6 @@ def test_cli_passes_max_wall_clock_seconds_flag(
     result = runner.invoke(
         evolve_cmd,
         [
-            "--harness-call-llm",
-            "tests.test_evolve_budget:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_evolve_budget:_aux_call_llm",
             "--max-wall-clock-seconds",
             "450",
         ],
@@ -391,10 +387,6 @@ def test_cli_max_wall_clock_seconds_defaults_to_none(
     result = runner.invoke(
         evolve_cmd,
         [
-            "--harness-call-llm",
-            "tests.test_evolve_budget:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_evolve_budget:_aux_call_llm",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -422,10 +414,6 @@ def test_cli_max_wall_clock_seconds_env_var_is_ignored(
     result = runner.invoke(
         evolve_cmd,
         [
-            "--harness-call-llm",
-            "tests.test_evolve_budget:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_evolve_budget:_aux_call_llm",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -454,10 +442,6 @@ def test_cli_summary_reports_budget_stop(
     result = runner.invoke(
         evolve_cmd,
         [
-            "--harness-call-llm",
-            "tests.test_evolve_budget:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_evolve_budget:_aux_call_llm",
             "--rounds",
             "5",
             "--max-wall-clock-seconds",
@@ -494,10 +478,6 @@ def test_cli_summary_reports_mid_round_abort(
     result = runner.invoke(
         evolve_cmd,
         [
-            "--harness-call-llm",
-            "tests.test_evolve_budget:_target_call_llm",
-            "--auxiliary-call-llm",
-            "tests.test_evolve_budget:_aux_call_llm",
             "--rounds",
             "3",
             "--max-wall-clock-seconds",
