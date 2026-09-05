@@ -100,10 +100,10 @@ supported third-party SDK client factory, or a bare async
 ```python
 judges = assemble_judges(              # drop `judges=` below and NO judge runs
     entry_judges=entry.judges, disable_drift=entry_disable_drift(entry),
-    aux_call_llm=config.effective_judge_call_llm(),   # aux, never the harness
+    aux_call_llm=config.effective_judge_call_llm(),  # evaluation, never target
 )
 outcome = await goldfive.run(
-    my_target, entry.input, sinks=sinks, call_llm=config.harness_call_llm,
+    my_target, entry.input, sinks=sinks, call_llm=config.target_call_llm,
     judges=judges,
 )
 ```
