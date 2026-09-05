@@ -29,9 +29,12 @@ instead:
   `skills/zicato-bootstrap`, step 4 — the `mocks:target_llm` / `mocks:aux_llm`
   callables). This exercises the full path with zero budget.
 
-Only after the user says go do you run with live engines. Prefer named engines
-in `.zicato/config.json`; use the two callable flags for deterministic or
-low-level integrations.
+Only after the user says go do you run with live engines. Which model each
+role runs on is a property of the workspace, named under `models.engines` and
+`models.roles` in `.zicato/config.json`. An engine may give a `call_llm` dotted
+path in place of a `model`, which is how a deterministic or offline
+integration supplies its own callable; the `target` and `evaluation` engines
+must then resolve to different Python objects.
 
 ## Happy-path invocation
 
@@ -44,10 +47,12 @@ The dashboard is launched automatically; its URL is printed
 
 ## The flags that matter
 
+`evolve` takes no model options. A workspace that has not answered the
+`target` and `evaluation` roles is refused before the round opens, naming the
+`models.engines` entry or the `runtime.<role>_call_llm` dotted path to fill.
+
 | Flag | Use |
 |---|---|
-| `--harness-call-llm TEXT` | Low-level override for the target adapter's text-call seam (`module:symbol`). Not required when `models.roles.target` resolves, and irrelevant to a target adapter that uses no LLM. |
-| `--auxiliary-call-llm TEXT` | Low-level override for evaluator-side text consumers. Not required when the named roles resolve. Must be a different Python object from the target callable. |
 | `--rounds INTEGER` | Number of propose/tournament/promote rounds to attempt (default 1, must be >=1). |
 | `--mode full\|fast` | `fast` (default) = **cache-first**: every `(generation, entry, replicate)` board UNIT is evaluated at most once and reused across all pairings / rounds / structures — only cache misses run. So a carried champion is reused rather than re-run (the round records `champion_eval_mode` = `fast`, or `fast-degraded` when some units had to run to seed the cache). The contract's `replicates` knob reaches this path: on the gauntlet the challenger board runs `replicates` times (default **2** — so the default configuration doubles challenger board runs) while the champion stays ONE frozen cached aggregate, making the noise reduction one-sided; a warning says so and names `--mode full`. `full` = bypass the cache and re-run every unit on both sides. Use `full` for the mock smoke, for independent draws on both sides, and when you don't trust the cache; `fast` for cheaper real runs (and it is what makes a multi-challenger field affordable). |
 | `--max-wall-clock-seconds INTEGER` | Total wall-clock budget for the whole invocation. The loop stops cleanly between rounds once spent; a single round that would overrun is cancelled and recorded as aborted. Unset = unbounded. Stacks on top of each board entry's own `wall_clock_budget_seconds`. |
