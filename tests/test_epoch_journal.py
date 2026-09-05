@@ -88,7 +88,7 @@ def _experiment(
 
 
 def _outcome(
-    decision: str = "promoted",
+    decision: str | None = "promoted",
     rejection_reason: str = "",
 ) -> OutcomeRecord:
     return OutcomeRecord(
@@ -490,24 +490,42 @@ def test_typed_record_and_served_classifier_agree_on_one_body(
     assert canonical_decision(experiment_decision(body)) == str(loaded.outcome.tournament_decision)
 
 
-def test_outcome_naming_no_decision_reads_as_rejected(
+def test_outcome_naming_no_decision_reads_as_none(
     epoch_root: tuple[Path, str],
 ) -> None:
-    """An outcome carrying no decision token reads back as REJECTED.
+    """An outcome carrying no decision token reads back as ``None``.
 
-    ``OutcomeRecord.tournament_decision`` is non-optional, so the decoder
-    has no token for "settled, decision unknown" and picks the one that
-    never crowns a generation the tournament did not crown. The stored
-    body still says no decision was recorded, which is why views that
-    must tell the two apart serve the body rather than the typed record.
+    The typed record and the classifier the dashboard serves give the
+    same answer for the same body: no decision was recorded. Neither
+    turns that absence into a rejection.
     """
     ws, eid = epoch_root
     _write_body(ws, eid, "v_silent", _body_with_outcome(eid, "v_silent", {"ran_at": "2026-04-08"}))
 
     loaded = read_experiment(ws, eid, "v_silent")
     assert loaded.outcome is not None
-    assert loaded.outcome.tournament_decision is TournamentDecision.REJECTED
+    assert loaded.outcome.tournament_decision is None
     assert experiment_decision({"outcome": {"ran_at": "2026-04-08"}}) is None
+
+
+def test_typed_record_round_trips_no_decision(epoch_root: tuple[Path, str]) -> None:
+    """A record written with no decision reads back with none.
+
+    The encoder emits JSON ``null`` for the field and the decoder reads
+    ``null`` as no decision, so an in-flight outcome survives a write and
+    a read without gaining a verdict.
+    """
+    ws, eid = epoch_root
+    experiment = _experiment(generation_id="v_in_flight", outcome=_outcome(decision=None))
+    write_experiment(ws, eid, "v_in_flight", experiment)
+
+    body = json.loads(
+        (generation_dir(ws, eid, "v_in_flight") / "experiment.json").read_text(encoding="utf-8")
+    )
+    assert body["outcome"]["tournament_decision"] is None
+    loaded = read_experiment(ws, eid, "v_in_flight")
+    assert loaded.outcome is not None
+    assert loaded.outcome.tournament_decision is None
 
 
 def test_update_experiment_outcome_preserves_patches(

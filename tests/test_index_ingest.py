@@ -30,6 +30,7 @@ from zicato.index.query import (
     index_counts,
     loss_profiles_for_generation,
     metric_counts_for_run,
+    prior_experiments_for_epoch,
     runs_for_generation,
     tournaments_for_epoch,
 )
@@ -587,6 +588,44 @@ def test_ingest_experiment_unresolved_writes_no_tournament(
     assert counts["experiments"] == 1
     # No outcome -> no tournament row yet.
     assert counts["tournaments"] == 0
+
+
+def test_ingest_experiment_without_decision_writes_null_decision(tmp_path: Path) -> None:
+    """An outcome recording no decision ingests as an unsettled row.
+
+    ``experiments.tournament_decision`` is nullable and every promotion
+    statistic in ``index/query.py`` skips a NULL there. An outcome that
+    ran but recorded no decision must reach that NULL rather than count
+    as a rejection, and the crowning-tournament row it still earns (the
+    matchup ran and its delta is real) carries the same NULL.
+    """
+    ws = tmp_path / ".zicato"
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    rubric = tmp_path / "rubric.md"
+    rubric.write_text("# r\n", encoding="utf-8")
+    cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
+    eid = cfg.id
+    seed_promoted_lineage(ws, eid)
+    exp = make_experiment(
+        epoch_id=eid,
+        generation_id="v1",
+        parent_generation_id="v0",
+        outcome=make_outcome_record(tournament_decision=None),
+    )
+    write_experiment(ws, eid, "v1", exp)
+    ingest_experiment(ws, None, eid, "v1")
+    db = ws / "index.db"
+
+    (row,) = experiments_for_epoch(db, eid)
+    assert row["tournament_decision"] is None
+    (tournament,) = tournaments_for_epoch(db, eid)
+    assert tournament["decision"] is None
+    # Settled-only: the experiment-memory digest carries no entry for it.
+    assert prior_experiments_for_epoch(db, eid) == []
 
 
 def test_incremental_ingest_matches_full_rebuild(tmp_path: Path) -> None:

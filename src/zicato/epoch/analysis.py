@@ -438,7 +438,9 @@ def render_trajectory_table(
                 core = exp.hypothesis.core_idea.splitlines()[0].strip()
             else:
                 delta_cell = f"{exp.outcome.scalar_score_delta:+.3f}"
-                decision_cell = exp.outcome.tournament_decision
+                # An outcome recording no decision renders the same
+                # word as a missing outcome: the decision is pending.
+                decision_cell = exp.outcome.tournament_decision or "pending"
                 core = exp.hypothesis.core_idea.splitlines()[0].strip()
         # Pipes and newlines break markdown tables — sanitize.
         core = core.replace("|", "\\|").replace("\n", " ")

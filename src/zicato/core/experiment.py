@@ -221,10 +221,15 @@ class OutcomeRecord:
         :class:`ScoringWeights`). The sign of this field gates the
         :attr:`tournament_decision`.
     tournament_decision:
-        The decision (see :data:`TournamentDecision`).
+        The decision (see :data:`TournamentDecision`), or ``None`` when
+        the record carries no decision: the round is still in flight, or
+        it finished without the tournament recording one. ``None`` is a
+        distinct third state; it never reads as a rejection. The field
+        has no default, so every construction site states which of the
+        two it means.
     rejection_reason:
         Symbolic reason when :attr:`tournament_decision` is
-        ``"rejected"``. Empty string for the other two outcomes.
+        ``"rejected"``. Empty string otherwise.
     """
 
     ran_at: str
@@ -232,7 +237,7 @@ class OutcomeRecord:
     pass_rate_delta: float
     drift_loss_delta: float
     scalar_score_delta: float
-    tournament_decision: TournamentDecision
+    tournament_decision: TournamentDecision | None
     rejection_reason: str = ""
     # Generalised: realised movements over any namespaced metric. The
     # original `drift_movements` field is kept verbatim so existing

@@ -266,7 +266,10 @@ def _build_recombination_pair(
             candidates.append(
                 ParentCandidate(
                     generation_id=exp.generation_id,
-                    decision=(exp.outcome.tournament_decision if exp.outcome is not None else ""),
+                    # The pool admits only rejected outcomes, so the
+                    # empty fallback is unreachable; it keeps the field
+                    # a plain string.
+                    decision=(exp.outcome.tournament_decision or "") if exp.outcome else "",
                     parent_generation_id=exp.parent_generation_id,
                     is_placebo=hyp.core_idea.startswith(PLACEBO_HYPOTHESIS_MARKER),
                     is_recombined=bool(exp.recombined_from),
@@ -396,7 +399,10 @@ def _build_genealogy_items(
             except Exception as exc:  # noqa: BLE001 — unreadable record: skip
                 log.debug("genealogy: record %s/%s unreadable (%s)", epoch_id, gid, exc)
                 continue
-            if exp.outcome is None:
+            # The genealogy reads settled decisions. A record with no
+            # outcome, or an outcome recording no decision, is still in
+            # flight and neither anchors the spine nor inspires.
+            if exp.outcome is None or exp.outcome.tournament_decision is None:
                 continue
             hyp = exp.hypothesis
             patch_text = "\n".join(p.new_content or "" for p in exp.patches)
