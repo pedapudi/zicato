@@ -1690,6 +1690,19 @@ reach the total and the production subtotal only, so deleting a docstring buys
 no room under the logic ceiling. The report groups the total by language and
 subsystem so movement is reviewable.
 
+`--report` prints every subsystem's total, production subset, production
+logic, and prose share (the share of production lines that do not execute) in
+descending order of production logic; the three columns partition the
+repository-wide counts. `--write-summary` rewrites the
+per-subsystem table in `docs/design/LINE-BUDGET.md` from the same measurement,
+and `--check-ledger` fails while that table differs from the tree, so a change
+to production code lands with the table it produces; the CI job writes the
+`--report` table into the job summary. `--history [--since <ref>] [--subsystem
+<name>]` prints the production-logic series per subsystem along the
+first-parent chain ending at `--ref` (default `HEAD`), from the baseline
+reference by default, through a content-addressed cache under `.cache/` that a
+change to the counters discards.
+
 `.line-budget.json` contains hard limits without an allowance. Keep the three
 independent one-line-overage assertions in `tests/test_line_budget.py`: each
 proves that one limit fails at `limit + 1` while the other two are unchanged.

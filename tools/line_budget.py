@@ -1,25 +1,52 @@
-"""Report and enforce the repository's simplification budgets."""
+"""Report and enforce the repository's simplification budgets.
+
+Three measurements are taken over the tracked files: ``total`` newline counts,
+the ``production`` subset of them, and the ``production_logic`` lines that
+execute. Each is enforced against a limit in ``.line-budget.json`` and each is
+also reported per subsystem, where a subsystem's three numbers partition the
+repository-wide ones, so the per-subsystem logic column sums to the enforced
+logic count. A subsystem's prose share is the share of its production lines
+that do not execute: ``1 - production_logic / production``.
+
+The logic counters reach Python, JavaScript, and Rust. CSS and HTML hold no
+counter, so every line of a CSS or HTML file counts as executable, in the
+per-subsystem view as in the enforced measurement: the console's stylesheet is
+measured by its newline count in both. Extending a counter to a language moves
+the enforced measurement, so it is a change to the measurement contract in
+``docs/design/LINE-BUDGET.md`` rather than to one view of it.
+
+``--history`` walks the first-parent chain of a ref and reports the
+production-logic series per subsystem. Its cache is content-addressed: a blob's
+counts are keyed by the blob id and the file suffix, a commit's tallies by its
+id, and the whole cache by a digest of this module's source, so a change to a
+counter discards it.
+"""
 
 from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import io
 import json
 import re
 import subprocess
 import sys
 import tokenize
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, astuple, dataclass
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / ".line-budget.json"
 LEDGER_PATH = "docs/design/LINE-BUDGET.md"
 LEDGER = ROOT / LEDGER_PATH
 LEDGER_HEADING = "## Deliberate increases"
+SUBSYSTEM_HEADING = "## Production logic by subsystem"
+SUBSYSTEM_TABLE_HEADER = "| Subsystem | Total | Production | Production logic | Prose share |"
+HISTORY_CACHE = ROOT / ".cache" / "line_budget_history.json"
 MEASUREMENTS = ("total", "production", "production_logic")
 # The summary table's row labels, in the order the table lists them, against the
 # measurement each names in the config.
@@ -67,6 +94,22 @@ RUST_RAW_STRING = re.compile(r'b?r(#*)"')
 
 
 @dataclass(frozen=True)
+class Lines:
+    """The three measurements over one subsystem's files."""
+
+    total: int
+    production: int
+    production_logic: int
+
+    @property
+    def prose_share(self) -> float | None:
+        """The share of production lines that do not execute; None with no production."""
+        if not self.production:
+            return None
+        return 1 - self.production_logic / self.production
+
+
+@dataclass(frozen=True)
 class Report:
     files: int
     lines: int
@@ -74,7 +117,7 @@ class Report:
     production_lines: int
     production_logic_lines: int
     languages: dict[str, int]
-    subsystems: dict[str, int]
+    subsystems: dict[str, Lines]
 
 
 def _git(*args: str, cwd: Path = ROOT) -> bytes:
@@ -88,6 +131,14 @@ def _paths(ref: str | None, cwd: Path) -> list[str]:
 
 def _content(path: str, ref: str | None, cwd: Path) -> bytes:
     return _git("show", f"{ref}:{path}", cwd=cwd) if ref else (cwd / path).read_bytes()
+
+
+def _tree(ref: str, cwd: Path) -> Iterator[tuple[str, str]]:
+    """Yield each tracked file at a ref as its blob id and its path."""
+    for entry in _git("ls-tree", "-r", "-z", ref, cwd=cwd).decode().split("\0"):
+        if entry:
+            meta, path = entry.split("\t", 1)
+            yield meta.split()[2], path
 
 
 def _excluded(path: str) -> bool:
@@ -296,10 +347,12 @@ def _subsystem(path: str) -> str:
     return parts[0]
 
 
-def measure(ref: str | None = None, cwd: Path = ROOT) -> Report:
-    languages: Counter[str] = Counter()
-    subsystems: Counter[str] = Counter()
-    files = lines = production_files = production_lines = production_logic_lines = 0
+def _entries(ref: str | None, cwd: Path) -> Iterator[tuple[str, int, int]]:
+    """Yield each counted file's path, newline count, and executable-line count.
+
+    The logic count is taken for production files only; other files yield 0,
+    which :func:`_summarize` never adds.
+    """
     for path in _paths(ref, cwd):
         if _excluded(path):
             continue
@@ -308,14 +361,32 @@ def measure(ref: str | None = None, cwd: Path = ROOT) -> Report:
         except FileNotFoundError:
             continue
         count = data.count(b"\n")
+        yield path, count, _logic(path, data, count) if _production(path) else 0
+
+
+def _rank(item: tuple[str, Lines]) -> tuple[int, int, str]:
+    """Sort key: production logic descending, then total descending, then name."""
+    name, lines = item
+    return -lines.production_logic, -lines.total, name
+
+
+def _summarize(entries: Iterable[tuple[str, int, int]]) -> Report:
+    languages: Counter[str] = Counter()
+    tallies: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
+    files = lines = production_files = production_lines = production_logic_lines = 0
+    for path, count, logic in entries:
         files += 1
         lines += count
         languages[_language(path)] += count
-        subsystems[_subsystem(path)] += count
+        tally = tallies[_subsystem(path)]
+        tally[0] += count
         if _production(path):
             production_files += 1
             production_lines += count
-            production_logic_lines += _logic(path, data, count)
+            production_logic_lines += logic
+            tally[1] += count
+            tally[2] += logic
+    subsystems = {name: Lines(*tally) for name, tally in tallies.items()}
     return Report(
         files,
         lines,
@@ -323,8 +394,12 @@ def measure(ref: str | None = None, cwd: Path = ROOT) -> Report:
         production_lines,
         production_logic_lines,
         dict(languages.most_common()),
-        dict(subsystems.most_common()),
+        dict(sorted(subsystems.items(), key=_rank)),
     )
+
+
+def measure(ref: str | None = None, cwd: Path = ROOT) -> Report:
+    return _summarize(_entries(ref, cwd))
 
 
 def _format_rows(rows: Iterable[tuple[str, int]]) -> str:
@@ -332,6 +407,7 @@ def _format_rows(rows: Iterable[tuple[str, int]]) -> str:
 
 
 def render(report: Report) -> str:
+    by_total = sorted(report.subsystems.items(), key=lambda item: -item[1].total)
     return "\n".join(
         (
             f"total             {report.lines:>9,} lines  {report.files:>5,} files",
@@ -342,9 +418,231 @@ def render(report: Report) -> str:
             "by language",
             _format_rows(report.languages.items()),
             "by subsystem",
-            _format_rows(report.subsystems.items()),
+            _format_rows((name, lines.total) for name, lines in by_total),
         )
     )
+
+
+def _share(lines: Lines) -> str:
+    return "" if lines.prose_share is None else f"{lines.prose_share:.1%}"
+
+
+def report_json(report: Report) -> dict[str, Any]:
+    """The report as JSON data, each subsystem carrying its prose share."""
+    payload = asdict(report)
+    payload["subsystems"] = {
+        name: {
+            **asdict(lines),
+            "prose_share": None if lines.prose_share is None else round(lines.prose_share, 3),
+        }
+        for name, lines in report.subsystems.items()
+    }
+    return payload
+
+
+def render_report(report: Report) -> str:
+    """A plain table of every subsystem in descending order of production logic."""
+    width = max(len(name) for name in report.subsystems) if report.subsystems else 9
+    rows = [
+        f"{'subsystem':<{width}}  {'total':>9}  {'production':>10}  "
+        f"{'production logic':>16}  {'prose share':>11}"
+    ]
+    for name, lines in report.subsystems.items():
+        rows.append(
+            f"{name:<{width}}  {lines.total:>9,}  {lines.production:>10,}  "
+            f"{lines.production_logic:>16,}  {_share(lines):>11}"
+        )
+    return "\n".join(rows)
+
+
+def render_subsystem_table(report: Report) -> str:
+    """The ledger's per-subsystem table: every subsystem holding production files."""
+    rows = [SUBSYSTEM_TABLE_HEADER, "|---|---:|---:|---:|---:|"]
+    for name, lines in report.subsystems.items():
+        if lines.production:
+            rows.append(
+                f"| {name} | {lines.total:,} | {lines.production:,} | "
+                f"{lines.production_logic:,} | {_share(lines)} |"
+            )
+    return "\n".join(rows)
+
+
+def _subsystem_section(text: str) -> tuple[int, int]:
+    """The span of the per-subsystem table in the ledger document, header row included."""
+    start = text.find(SUBSYSTEM_HEADING)
+    if start < 0:
+        raise ValueError(f"{LEDGER_PATH} has no '{SUBSYSTEM_HEADING}' section")
+    end = text.find("\n## ", start + len(SUBSYSTEM_HEADING))
+    end = len(text) if end < 0 else end
+    table = text.find(SUBSYSTEM_TABLE_HEADER, start, end)
+    if table < 0:
+        return end, end
+    lines = text[table:end].split("\n")
+    rows = 0
+    while rows < len(lines) and lines[rows].startswith("|"):
+        rows += 1
+    return table, table + len("\n".join(lines[:rows]))
+
+
+def write_summary(text: str, report: Report) -> str:
+    """Return the ledger document with its per-subsystem table rewritten from the report."""
+    start, end = _subsystem_section(text)
+    table = render_subsystem_table(report)
+    if start == end:
+        table = "\n" + table + "\n"
+    return text[:start] + table + text[end:]
+
+
+def _table_rows(table: str) -> dict[str, str]:
+    rows = {}
+    for line in table.splitlines()[2:]:
+        name, _, cells = line.strip().strip("|").strip().partition(" | ")
+        rows[name] = cells
+    return rows
+
+
+def check_subsystem_table(text: str, report: Report) -> list[str]:
+    """Check that the ledger's per-subsystem table states what the report measures.
+
+    A row whose numbers differ, a subsystem with no row, and a row for a
+    subsystem the report does not measure are each an error, so the table
+    cannot fall behind the tree it describes. ``--write-summary`` rewrites it.
+    """
+    start, end = _subsystem_section(text)
+    expected = render_subsystem_table(report)
+    found = text[start:end]
+    if found == expected:
+        return []
+    errors = []
+    stated, measured = _table_rows(found), _table_rows(expected)
+    for name, cells in measured.items():
+        if name not in stated:
+            errors.append(f"subsystem table: no row for {name}, which measures {cells}")
+        elif stated[name] != cells:
+            errors.append(
+                f"subsystem table, {name}: states {stated[name]}, but the tree measures {cells}"
+            )
+    errors += [
+        f"subsystem table, {name}: no production files measure under that name"
+        for name in stated
+        if name not in measured
+    ]
+    if not errors:
+        errors.append("subsystem table: the rows are out of order")
+    return errors + ["run `python tools/line_budget.py --write-summary` to rewrite the table"]
+
+
+@dataclass(frozen=True)
+class Point:
+    """One commit on the walked chain and its per-subsystem measurements."""
+
+    sha: str
+    date: str
+    subject: str
+    subsystems: dict[str, Lines]
+
+
+def _cached_entries(
+    sha: str, blobs: dict[str, list[int]], cwd: Path
+) -> Iterator[tuple[str, int, int]]:
+    """Yield a commit's counted files, reading only the blobs the cache has not seen.
+
+    The logic count is taken for every file here, so a blob's entry is valid
+    wherever the file is later classified.
+    """
+    for blob, path in _tree(sha, cwd):
+        if _excluded(path):
+            continue
+        key = f"{blob} {PurePosixPath(path).suffix.lower()}"
+        if key not in blobs:
+            data = _content(path, sha, cwd)
+            count = data.count(b"\n")
+            blobs[key] = [count, _logic(path, data, count)]
+        count, logic = blobs[key]
+        yield path, count, logic
+
+
+def _chain(since: str, ref: str, cwd: Path) -> list[tuple[str, str, str]]:
+    """The first-parent commits from ``since`` to ``ref``, oldest first, with date and subject.
+
+    Membership is read off the chain itself rather than through ``since..ref``,
+    so a ``since`` that a merge brought in from a side branch is refused rather
+    than walked past to the root.
+    """
+    log = _git("log", "--first-parent", "--format=%H%x09%cs%x09%s", ref, cwd=cwd).decode()
+    commits = [tuple(line.split("\t", 2)) for line in log.splitlines()]
+    full = _git("rev-parse", "--verify", f"{since}^{{commit}}", cwd=cwd).decode().strip()
+    index = next((i for i, commit in enumerate(commits) if commit[0] == full), None)
+    if index is None:
+        raise ValueError(f"{since} is not on the first-parent chain of {ref}")
+    return [(sha, date, subject) for sha, date, subject in reversed(commits[: index + 1])]
+
+
+def _tool_digest() -> str:
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:16]
+
+
+def history(
+    since: str, ref: str, cwd: Path = ROOT, cache_path: Path = HISTORY_CACHE
+) -> list[Point]:
+    """Measure every first-parent commit from ``since`` to ``ref``, through the cache.
+
+    The cache holds per-blob counts and per-commit tallies, both content-
+    addressed, under a digest of this module's source; a cache written by a
+    different version of the counters is discarded whole.
+    """
+    digest = _tool_digest()
+    cache: dict[str, Any] = {"tool": digest, "blobs": {}, "commits": {}}
+    if cache_path.exists():
+        stored = json.loads(cache_path.read_text())
+        if stored.get("tool") == digest:
+            cache = stored
+    points = []
+    try:
+        for sha, date, subject in _chain(since, ref, cwd):
+            if sha not in cache["commits"]:
+                report = _summarize(_cached_entries(sha, cache["blobs"], cwd))
+                cache["commits"][sha] = {
+                    name: astuple(lines) for name, lines in report.subsystems.items()
+                }
+            subsystems = {name: Lines(*tally) for name, tally in cache["commits"][sha].items()}
+            points.append(Point(sha, date, subject, subsystems))
+    finally:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(cache))
+    return points
+
+
+def _logic_at(point: Point, name: str) -> int:
+    return point.subsystems[name].production_logic if name in point.subsystems else 0
+
+
+def render_history(points: list[Point], subsystem: str | None = None) -> str:
+    """One row per commit: its id, date, the enforced logic count, each subsystem, the subject.
+
+    Without a subsystem, the columns are the subsystems holding production
+    logic at the last commit, in the order of that commit's values; the names
+    drop the ``src/zicato/`` prefix to keep the row readable.
+    """
+    last = points[-1].subsystems if points else {}
+    names = [subsystem] if subsystem else [n for n, lines in last.items() if lines.production_logic]
+    heads = [name.removeprefix("src/zicato/") for name in names]
+    widths = [max(len(head), 7) for head in heads]
+    header = "commit    date        all logic  " + "  ".join(
+        f"{head:>{width}}" for head, width in zip(heads, widths, strict=True)
+    )
+    rows = [header.rstrip() + "  subject"]
+    for point in points:
+        total = sum(lines.production_logic for lines in point.subsystems.values())
+        cells = [
+            f"{_logic_at(point, name):>{width},}" for name, width in zip(names, widths, strict=True)
+        ]
+        rows.append(
+            f"{point.sha[:8]}  {point.date}  {total:>9,}  "
+            + "  ".join(cells)
+            + f"  {point.subject}"
+        )
+    return "\n".join(rows)
 
 
 def check(report: Report, config_path: Path = CONFIG) -> list[str]:
@@ -525,15 +823,53 @@ def main(argv: list[str] | None = None) -> int:
         help="check the deliberate-increases ledger instead of measuring",
     )
     parser.add_argument("--base", help="ref whose ledger rows must all still be present")
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="print every subsystem's three counts and prose share, by production logic",
+    )
+    parser.add_argument(
+        "--write-summary",
+        action="store_true",
+        help=f"rewrite the per-subsystem table in {LEDGER_PATH} from the measurement",
+    )
+    parser.add_argument(
+        "--history",
+        action="store_true",
+        help="print the production-logic series per subsystem along first-parent commits",
+    )
+    parser.add_argument("--since", help="oldest commit of the walk (default: the baseline ref)")
+    parser.add_argument("--subsystem", help="restrict the history to one subsystem")
+    parser.add_argument("--cache", type=Path, default=HISTORY_CACHE, help="history cache file")
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
     if args.check_ledger:
         base = _content(LEDGER_PATH, args.base, ROOT).decode() if args.base else None
-        errors = check_ledger(LEDGER.read_text(), base)
+        text = LEDGER.read_text()
+        errors = check_ledger(text, base) + check_subsystem_table(text, measure(args.ref))
         subject = "line-budget ledger"
+    elif args.history:
+        since = args.since or json.loads(CONFIG.read_text())["baseline"]["ref"]
+        try:
+            points = history(since, args.ref or "HEAD", cache_path=args.cache)
+        except ValueError as error:
+            print(f"line-budget history failed:\n  {error}", file=sys.stderr)
+            return 1
+        if args.as_json:
+            print(json.dumps([asdict(point) for point in points], indent=2))
+        else:
+            print(render_history(points, args.subsystem))
+        return 0
     else:
         report = measure(args.ref)
-        print(json.dumps(asdict(report), indent=2) if args.as_json else render(report))
+        if args.write_summary:
+            LEDGER.write_text(write_summary(LEDGER.read_text(), report))
+        if args.as_json:
+            print(json.dumps(report_json(report), indent=2))
+        elif args.report:
+            print(render_report(report))
+        else:
+            print(render(report))
         errors = check(report) if args.check else []
         subject = "line budget"
     if errors:

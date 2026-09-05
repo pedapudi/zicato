@@ -4,16 +4,28 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
+import tools.line_budget as line_budget
 from tools.line_budget import (
     EXCLUDED_FROM_BUDGET,
     LEDGER,
     ROOT,
+    Lines,
+    Point,
     Report,
     _excluded,
     _production,
     check,
     check_ledger,
+    check_subsystem_table,
+    history,
     measure,
+    render_history,
+    render_report,
+    render_subsystem_table,
+    report_json,
+    write_summary,
 )
 
 PYTHON_FIXTURE = '''"""Module docstring.
@@ -132,7 +144,7 @@ def test_measure_reports_language_subsystem_and_production(tmp_path: Path) -> No
     assert (report.files, report.lines) == (2, 3)
     assert (report.production_files, report.production_lines) == (1, 2)
     assert report.languages == {"Python": 3}
-    assert report.subsystems == {"src/zicato/core": 2, "tests": 1}
+    assert report.subsystems == {"src/zicato/core": Lines(2, 2, 2), "tests": Lines(1, 0, 0)}
 
 
 def test_python_docstrings_and_comments_stay_out_of_the_logic_count(tmp_path: Path) -> None:
@@ -161,6 +173,110 @@ def test_file_types_without_a_counter_keep_their_raw_count(tmp_path: Path) -> No
     report = _measure(tmp_path, {"src/zicato/dashboard/static/a.css": "/* c */\nbody { }\n"})
 
     assert (report.production_lines, report.production_logic_lines) == (2, 2)
+
+
+CSS_FIXTURE = """/* A comment the tool holds no counter for. */
+
+body {
+  margin: 0;
+}
+"""
+
+HTML_FIXTURE = """<!-- A comment the tool holds no counter for. -->
+<main>
+</main>
+"""
+
+PER_LANGUAGE = {
+    "src/zicato/core/a.py": PYTHON_FIXTURE,
+    "src/zicato/dashboard/static/a.js": JAVASCRIPT_FIXTURE,
+    "crates/supervisor/src/a.rs": RUST_FIXTURE,
+    "src/zicato/builder/a.css": CSS_FIXTURE,
+    "src/zicato/tui/a.html": HTML_FIXTURE,
+    "tests/test_a.py": "test = 0\n",
+}
+
+
+def test_each_subsystem_carries_its_hand_counted_three_measurements(tmp_path: Path) -> None:
+    """One small file per language, each in a subsystem of its own.
+
+    CSS and HTML have no logic counter, so their comment lines count as
+    executable in the per-subsystem view exactly as in the enforced count.
+    """
+    report = _measure(tmp_path, PER_LANGUAGE)
+
+    assert report.subsystems == {
+        "crates/supervisor": Lines(24, 24, 5),
+        "src/zicato/builder": Lines(5, 5, 5),
+        "src/zicato/dashboard": Lines(9, 9, 4),
+        "src/zicato/tui": Lines(3, 3, 3),
+        "src/zicato/core": Lines(11, 11, 2),
+        "tests": Lines(1, 0, 0),
+    }
+    # Production logic descending, then total descending: the Rust and CSS
+    # files tie at five executable lines and the longer file leads.
+    assert list(report.subsystems) == [
+        "crates/supervisor",
+        "src/zicato/builder",
+        "src/zicato/dashboard",
+        "src/zicato/tui",
+        "src/zicato/core",
+        "tests",
+    ]
+
+
+def test_subsystems_partition_the_repository_wide_measurements(tmp_path: Path) -> None:
+    report = _measure(tmp_path, PER_LANGUAGE)
+    lines = report.subsystems.values()
+
+    assert sum(each.total for each in lines) == report.lines == 53
+    assert sum(each.production for each in lines) == report.production_lines == 52
+    assert sum(each.production_logic for each in lines) == report.production_logic_lines == 19
+
+
+def test_prose_share_is_the_non_executing_share_of_production_lines() -> None:
+    assert Lines(11, 11, 2).prose_share == pytest.approx(9 / 11)
+    assert Lines(1, 0, 0).prose_share is None
+
+
+def test_json_carries_each_subsystem_with_its_prose_share(tmp_path: Path) -> None:
+    payload = report_json(_measure(tmp_path, PER_LANGUAGE))
+
+    assert payload["production_logic_lines"] == 19
+    assert payload["subsystems"]["src/zicato/core"] == {
+        "total": 11,
+        "production": 11,
+        "production_logic": 2,
+        "prose_share": 0.818,
+    }
+    assert payload["subsystems"]["tests"]["prose_share"] is None
+
+
+def test_report_lists_every_subsystem_by_production_logic(tmp_path: Path) -> None:
+    rows = render_report(_measure(tmp_path, PER_LANGUAGE)).splitlines()
+
+    assert rows[0].split() == [
+        "subsystem",
+        "total",
+        "production",
+        "production",
+        "logic",
+        "prose",
+        "share",
+    ]
+    assert rows[1].split() == ["crates/supervisor", "24", "24", "5", "79.2%"]
+    assert rows[-1].split() == ["tests", "1", "0", "0"]
+
+
+def test_the_ledger_table_lists_only_subsystems_holding_production_files(tmp_path: Path) -> None:
+    table = render_subsystem_table(_measure(tmp_path, PER_LANGUAGE)).splitlines()
+
+    assert table[:3] == [
+        "| Subsystem | Total | Production | Production logic | Prose share |",
+        "|---|---:|---:|---:|---:|",
+        "| crates/supervisor | 24 | 24 | 5 | 79.2% |",
+    ]
+    assert not any(row.startswith("| tests ") for row in table)
 
 
 def test_check_rejects_one_line_total_overage(tmp_path: Path) -> None:
@@ -303,3 +419,239 @@ def test_deleting_a_summary_row_is_not_a_way_to_pass(tmp_path: Path) -> None:
     errors = check_ledger(trimmed, config_path=_ledger_config(tmp_path))
 
     assert errors == ["summary table: no readable 'Production logic' row"]
+
+
+SUBSYSTEM_DOC = """# Line budgets
+
+## Production logic by subsystem
+
+Prose the writer keeps.
+
+| Subsystem | Total | Production | Production logic | Prose share |
+|---|---:|---:|---:|---:|
+| crates/supervisor | 24 | 24 | 5 | 79.2% |
+| src/zicato/core | 11 | 11 | 2 | 81.8% |
+
+## Ratchet policy
+"""
+
+REWRITE_HINT = "run `python tools/line_budget.py --write-summary` to rewrite the table"
+
+
+def _subsystem_report(**subsystems: Lines) -> Report:
+    return Report(1, 0, 1, 0, 0, {}, subsystems)
+
+
+def test_the_repository_subsystem_table_is_current() -> None:
+    assert check_subsystem_table(LEDGER.read_text(), measure()) == []
+
+
+def test_a_current_subsystem_table_passes() -> None:
+    report = _subsystem_report(
+        **{"crates/supervisor": Lines(24, 24, 5)}, **{"src/zicato/core": Lines(11, 11, 2)}
+    )
+
+    assert check_subsystem_table(SUBSYSTEM_DOC, report) == []
+
+
+def test_a_stale_subsystem_row_fails() -> None:
+    report = _subsystem_report(
+        **{"crates/supervisor": Lines(24, 24, 5)}, **{"src/zicato/core": Lines(12, 12, 3)}
+    )
+
+    assert check_subsystem_table(SUBSYSTEM_DOC, report) == [
+        "subsystem table, src/zicato/core: states 11 | 11 | 2 | 81.8%, "
+        "but the tree measures 12 | 12 | 3 | 75.0%",
+        REWRITE_HINT,
+    ]
+
+
+def test_a_subsystem_without_a_row_fails() -> None:
+    report = _subsystem_report(
+        **{"crates/supervisor": Lines(24, 24, 5)},
+        **{"src/zicato/core": Lines(11, 11, 2)},
+        **{"src/zicato/tui": Lines(3, 3, 1)},
+    )
+
+    assert check_subsystem_table(SUBSYSTEM_DOC, report) == [
+        "subsystem table: no row for src/zicato/tui, which measures 3 | 3 | 1 | 66.7%",
+        REWRITE_HINT,
+    ]
+
+
+def test_a_row_naming_no_measured_subsystem_fails() -> None:
+    report = _subsystem_report(**{"crates/supervisor": Lines(24, 24, 5)})
+
+    assert check_subsystem_table(SUBSYSTEM_DOC, report) == [
+        "subsystem table, src/zicato/core: no production files measure under that name",
+        REWRITE_HINT,
+    ]
+
+
+def test_write_summary_rewrites_the_table_and_nothing_else() -> None:
+    report = _subsystem_report(**{"src/zicato/core": Lines(12, 12, 3)})
+
+    written = write_summary(SUBSYSTEM_DOC, report)
+
+    assert written == SUBSYSTEM_DOC.replace(
+        "| crates/supervisor | 24 | 24 | 5 | 79.2% |\n| src/zicato/core | 11 | 11 | 2 | 81.8% |",
+        "| src/zicato/core | 12 | 12 | 3 | 75.0% |",
+    )
+    assert check_subsystem_table(written, report) == []
+
+
+def test_write_summary_fills_a_section_holding_no_table_yet() -> None:
+    report = _subsystem_report(**{"src/zicato/core": Lines(12, 12, 3)})
+    empty = "## Production logic by subsystem\n\nProse.\n\n## Ratchet policy\n"
+
+    written = write_summary(empty, report)
+
+    assert written == (
+        "## Production logic by subsystem\n\nProse.\n\n"
+        "| Subsystem | Total | Production | Production logic | Prose share |\n"
+        "|---|---:|---:|---:|---:|\n"
+        "| src/zicato/core | 12 | 12 | 3 | 75.0% |\n\n## Ratchet policy\n"
+    )
+
+
+def _commit(cwd: Path, files: dict[str, str], message: str) -> str:
+    for name, content in files.items():
+        (cwd / name).parent.mkdir(parents=True, exist_ok=True)
+        (cwd / name).write_text(content)
+    run = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*run, "add", "-A"], cwd=cwd, check=True)
+    subprocess.run([*run, "commit", "-q", "-m", message], cwd=cwd, check=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _recorded_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the path of every file the tool reads, in order."""
+    reads: list[str] = []
+    content = line_budget._content
+
+    def read(path: str, ref: str | None, cwd: Path) -> bytes:
+        reads.append(path)
+        return content(path, ref, cwd)
+
+    monkeypatch.setattr(line_budget, "_content", read)
+    return reads
+
+
+def _repository(tmp_path: Path) -> tuple[Path, str]:
+    """A repository of two first-parent commits; returns its path and the first commit.
+
+    The repository is a subdirectory, so a cache written beside it is never
+    committed by the ``git add -A`` a later commit runs.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    first = _commit(repo, {"src/zicato/core/a.py": "one = 1\n"}, "first")
+    _commit(repo, {"src/zicato/core/a.py": "one = 1\ntwo = 2\n", "tests/a.py": "t = 0\n"}, "second")
+    return repo, first
+
+
+def test_history_measures_each_first_parent_commit(tmp_path: Path) -> None:
+    cwd, first = _repository(tmp_path)
+
+    points = history(first, "HEAD", cwd, tmp_path / "cache.json")
+
+    assert [(p.subject, p.subsystems["src/zicato/core"]) for p in points] == [
+        ("first", Lines(1, 1, 1)),
+        ("second", Lines(2, 2, 2)),
+    ]
+    assert points[1].subsystems["tests"] == Lines(1, 0, 0)
+
+
+def test_history_reads_only_blobs_the_cache_has_not_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd, first = _repository(tmp_path)
+    cache = tmp_path / "cache.json"
+    history(first, "HEAD", cwd, cache)
+    _commit(cwd, {"tests/a.py": "t = 1\n"}, "third")
+    reads = _recorded_reads(monkeypatch)
+
+    points = history(first, "HEAD", cwd, cache)
+
+    assert [p.subject for p in points] == ["first", "second", "third"]
+    assert reads == ["tests/a.py"]
+
+
+def test_history_serves_walked_commits_without_reading_the_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd, first = _repository(tmp_path)
+    cache = tmp_path / "cache.json"
+    points = history(first, "HEAD", cwd, cache)
+    monkeypatch.setattr(line_budget, "_tree", lambda ref, cwd: pytest.fail("read the tree"))
+
+    assert history(first, "HEAD", cwd, cache) == points
+
+
+def test_a_cache_written_by_other_counters_is_discarded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd, first = _repository(tmp_path)
+    cache = tmp_path / "cache.json"
+    history(first, "HEAD", cwd, cache)
+    monkeypatch.setattr(line_budget, "_tool_digest", lambda: "other counters")
+    reads = _recorded_reads(monkeypatch)
+
+    history(first, "HEAD", cwd, cache)
+
+    assert sorted(reads) == ["src/zicato/core/a.py", "src/zicato/core/a.py", "tests/a.py"]
+
+
+def test_a_since_off_the_first_parent_chain_is_refused(tmp_path: Path) -> None:
+    cwd, first = _repository(tmp_path)
+    subprocess.run(["git", "checkout", "-q", "-b", "side", first], cwd=cwd, check=True)
+    side = _commit(cwd, {"src/zicato/core/b.py": "b = 1\n"}, "side")
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=cwd, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "m",
+            "side",
+        ],
+        cwd=cwd,
+        check=True,
+    )
+
+    with pytest.raises(ValueError, match="not on the first-parent chain of HEAD"):
+        history(side, "HEAD", cwd, tmp_path / "cache.json")
+
+
+def test_history_renders_one_row_per_commit() -> None:
+    points = [
+        Point("abcdef0123", "2026-01-01", "first", {"src/zicato/core": Lines(3, 3, 1)}),
+        Point(
+            "0123abcdef",
+            "2026-01-02",
+            "second",
+            {"src/zicato/core": Lines(4, 4, 2), "tests": Lines(1, 0, 0)},
+        ),
+    ]
+
+    rows = render_history(points).splitlines()
+
+    assert rows[0].split() == ["commit", "date", "all", "logic", "core", "subject"]
+    assert rows[1].split() == ["abcdef01", "2026-01-01", "1", "1", "first"]
+    assert rows[2].split() == ["0123abcd", "2026-01-02", "2", "2", "second"]
+    assert render_history(points, "tests").splitlines()[1].split() == [
+        "abcdef01",
+        "2026-01-01",
+        "1",
+        "0",
+        "first",
+    ]

@@ -24,6 +24,14 @@ jobs:
           python tools/line_budget.py --check-ledger \
             --base "origin/${{ github.base_ref || github.ref_name }}"
 
+      - name: Show production logic per subsystem in the job summary
+        run: |
+          {
+            echo '```'
+            python tools/line_budget.py --report
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   prose-lint:
     name: prose lint
     runs-on: ubuntu-latest
