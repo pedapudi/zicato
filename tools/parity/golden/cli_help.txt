@@ -502,7 +502,7 @@ Options:
                                   harmonograf_url; the flag wins). Unset (the
                                   default) auto-launches a per-workspace
                                   harmonograf on a free localhost port.
-  --tournament-structure [gauntlet|single_elim|double_elim|swiss|racing]
+  --tournament-structure [gauntlet|racing]
                                   Set the per-epoch tournament structure. This
                                   is a CONTRACT-MUTATING convenience: it writes
                                   {structure, params} into the live scoring.json
@@ -511,7 +511,12 @@ Options:
                                   epoch if it differs from the current one —
                                   exactly equivalent to editing scoring.json by
                                   hand. Unset (the default) reads whatever
-                                  scoring.json says (gauntlet when absent).
+                                  scoring.json says (gauntlet when absent). The
+                                  experimental structures single_elim,
+                                  double_elim and swiss are selected in
+                                  scoring.json alongside
+                                  experimental.tournament_structures = true,
+                                  which admits them.
   --tournament-param KEY=VALUE    Set one tournament params key (repeatable).
                                   VALUE is parsed as JSON when possible, else
                                   taken as a string. Only applied when

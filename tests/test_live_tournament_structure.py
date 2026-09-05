@@ -61,7 +61,8 @@ def _result(matchup, *, left_scalar: float, right_scalar: float) -> MatchupResul
 
 def _seed(structure: str, field_size: int, **params):
     strategy = make_strategy(
-        TournamentStructure(structure=structure, params={"field_size": field_size, **params})
+        TournamentStructure(structure=structure, params={"field_size": field_size, **params}),
+        experimental_structures=True,
     )
     champion = Contestant(generation_id="v0", role="champion")
     challengers = [

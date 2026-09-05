@@ -48,7 +48,7 @@ ACROSS-round: the EVOLUTION loop  ──  `zicato evolve --rounds N`
    ▲  (fed prior_experiments + insights)           │                └─ champion-gate: ONE duel
    └──────────────────────────────────────────────┘                   vs the reigning champion
                                           WITHIN-round: the bracket STRUCTURE
-                                          (gauntlet | single_elim | double_elim | swiss | racing)
+                                          (gauntlet | racing; swiss | single_elim | double_elim experimental)
 ```
 
 - **WITHIN-round — the bracket STRUCTURE.** Selects at most one winner from
@@ -102,9 +102,9 @@ The short map:
 | Situation | Structure | Cost note |
 |---|---|---|
 | One challenger per round; cheapest 1-vs-1 | **gauntlet** (default) | one duel, `replicates 2` by default → 2× a full board |
-| A field; you want a full RANKING | **swiss** | `rounds_n` pairings; `replicates 2` |
-| A field; you only need the single best | **single_elim** | bracket depth; `replicates 2` |
-| Same, want a "second chance" vs an upset | **double_elim** | **~3–4× single-elim** (losers'-bracket re-evals) — rarely earns it |
+| A field; you want a full RANKING | **swiss** (experimental: needs `experimental.tournament_structures = true`) | `rounds_n` pairings; `replicates 2` |
+| A field; you only need the single best | **single_elim** (experimental) | bracket depth; `replicates 2` |
+| Same, want a "second chance" vs an upset | **double_elim** (experimental) | **~3–4× single-elim** (losers'-bracket re-evals) — rarely earns it |
 | LARGE field, pick the best cheaply | **racing** | slice-culls via `eta` / `board_fraction`; the one structure that pins `replicates 1` (it replicates intrinsically via growing slices) |
 
 Two cross-cutting levers worth internalizing:

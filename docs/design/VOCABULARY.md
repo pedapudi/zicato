@@ -413,6 +413,19 @@ section, is advisory, and is scoped to the current contract. A
 [proposer brief](#proposer-brief) is the operator's steering; experiment
 memory is neither. See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
 
+## Experimental block
+
+The `experimental` block of the scoring contract: one flag per feature
+that has no measured case, each off by default. A feature stays in the
+block until a measurement sweep graduates it
+([CAMPAIGN.md](CAMPAIGN.md)); graduation moves the knob out of the
+block, which rolls the epoch. Its first member,
+`experimental.tournament_structures`, admits the three experimental
+[tournament structures](#tournament-structure). The block is omitted
+from the contract hash while every flag is off, so a contract that names
+none of them keeps its hash, and a flag turned on rolls the epoch. See
+`src/zicato/core/scoring_config.py` (`ExperimentalConfig`).
+
 ## Facet
 
 A named diagnostic slice of the board. It is declared by tagging
@@ -1061,15 +1074,18 @@ one comparison outside the loop and defaults to `--mode full`. See
 
 ## Tournament structure
 
-The shape of competition an epoch declares in its `tournament` block.
-Five are implemented: `gauntlet` (the default, one challenger against
-the champion), `single_elim` and `double_elim` (pair the field, cut the
-losers, repeat), `swiss` (every contestant plays every round, paired by
-standing), and `racing` (successive halving over growing board slices).
-The four wider structures differ only in how they narrow a field to one
-finalist and then end in the same [champion gate](#champion-gate). The
-structure and its params are part of the contract, so a change rolls the
-epoch. See [TOURNAMENT-STRUCTURES.md](TOURNAMENT-STRUCTURES.md).
+The competition an epoch declares in its `tournament` block. Two form
+the default choice: `gauntlet` (the default, one challenger against the
+champion) and `racing` (successive halving over growing board slices).
+Three are experimental and resolve only when the contract also sets
+`experimental.tournament_structures` to `true`: `single_elim` and
+`double_elim` (pair the field, cut the losers, repeat) and `swiss` (every
+contestant plays every round, paired by standing). The four wider
+structures differ only in how they narrow a field to one finalist and
+then end in the same [champion gate](#champion-gate). The structure, its
+params, and the opt-in are part of the contract, so a change rolls the
+epoch. See [TOURNAMENT-STRUCTURES.md](TOURNAMENT-STRUCTURES.md) and the
+[experimental block](#experimental-block).
 
 ## Trajectory
 

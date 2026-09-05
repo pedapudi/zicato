@@ -135,12 +135,12 @@ class Side(StrEnum):
 PassRateMonotonicityScope = Literal["per_entry", "aggregate"]
 
 
-#: The five v1 tournament structures. ``"gauntlet"`` is the default and
-#: reproduces the historical king-of-the-hill behaviour byte-for-byte.
-#: The other four are configurable per-epoch via the ``tournament`` block
-#: of ``scoring.json`` (see :class:`TournamentStructure`). The string
+#: Every tournament structure token a contract may name. ``"gauntlet"``
+#: is the default; ``"racing"`` is the structure the scaffold recommends;
+#: the three in :data:`EXPERIMENTAL_TOURNAMENT_STRUCTURES` resolve only
+#: under the opt-in named by :data:`EXPERIMENTAL_STRUCTURES_KEY`. The
 #: tokens are the closed enum the loader validates against and the keys
-#: the selection-strategy registry maps to concrete strategy classes.
+#: the selection-strategy registries map to concrete strategy classes.
 VALID_TOURNAMENT_STRUCTURES: tuple[str, ...] = (
     "gauntlet",
     "single_elim",
@@ -148,6 +148,34 @@ VALID_TOURNAMENT_STRUCTURES: tuple[str, ...] = (
     "swiss",
     "racing",
 )
+
+#: The structures an operator must opt into. Each pairs challengers against
+#: each other, so a candidate's fate depends on its draw; the second life a
+#: losers' bracket buys is what ``replicates`` already buys, and Swiss
+#: pairing is racing without the escalating board slice. None has a
+#: measured case at zicato's field size of two to four candidates under an
+#: expensive, noisy evaluator, so they stay available for an operator who
+#: wants to try them and sit outside the default structure choice.
+EXPERIMENTAL_TOURNAMENT_STRUCTURES: frozenset[str] = frozenset(
+    {"single_elim", "double_elim", "swiss"}
+)
+
+#: The ``scoring.json`` path of the flag that admits the experimental
+#: structures, spelled the way an operator writes it.
+EXPERIMENTAL_STRUCTURES_KEY: str = "experimental.tournament_structures"
+
+
+def experimental_structure_refusal(structure: str) -> str:
+    """The one message every surface uses to refuse an experimental structure.
+
+    Names the token, states its tier, and names the key that admits it, so
+    the contract loader, the builder, the CLI option, and the strategy
+    registry refuse with the same wording.
+    """
+    return (
+        f"tournament structure {structure!r} is experimental; enable it with "
+        f"{EXPERIMENTAL_STRUCTURES_KEY} = true in scoring.json"
+    )
 
 
 #: Bounds on the structure params that carry a domain regardless of which

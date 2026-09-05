@@ -171,10 +171,13 @@ def _result_json(payload: dict[str, Any]) -> str:
 
 
 def set_structure(structure: str) -> str:
-    """Set the tournament structure (e.g. ``gauntlet`` / ``swiss`` / ``racing``).
+    """Set the tournament structure (``gauntlet`` or ``racing``).
 
     Mutates the session draft and returns the patch + updated cost /
-    warnings. Invalid structure tokens are reported as an ``error``.
+    warnings. Invalid structure tokens are reported as an ``error``, as is
+    an experimental token (``single_elim`` / ``double_elim`` / ``swiss``)
+    while ``set_experimental(tournament_structures=True)`` has not admitted
+    it.
     """
     ctx = _active_context()
     try:
@@ -461,6 +464,23 @@ def set_experiment_memory(cross_epoch: bool | None = None) -> str:
     """
     ctx = _active_context()
     patch = ops.set_experiment_memory(ctx.draft(), cross_epoch=cross_epoch)
+    return _result_json(_summary(patch))
+
+
+def set_experimental(tournament_structures: bool | None = None) -> str:
+    """Set the contract's opt-ins for features without a measured case.
+
+    ``tournament_structures=True`` admits ``single_elim``, ``double_elim``
+    and ``swiss`` as the draft's structure; ``False`` (the default) refuses
+    them. A contract change — it rolls the epoch. Turning the flag off
+    while the draft's structure is one of the three is reported as an
+    ``error``.
+    """
+    ctx = _active_context()
+    try:
+        patch = ops.set_experimental(ctx.draft(), tournament_structures=tournament_structures)
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
     return _result_json(_summary(patch))
 
 
@@ -864,6 +884,7 @@ DEFAULT_BUILDER_TOOLS = (
     set_namespace_weights,
     set_proposer_quality,
     set_experiment_memory,
+    set_experimental,
     set_goldfive,
     set_telemetry_dialect,
     set_mutation_surface,
@@ -901,6 +922,7 @@ __all__ = [
     "set_namespace_weights",
     "set_proposer_quality",
     "set_experiment_memory",
+    "set_experimental",
     "set_goldfive",
     "set_telemetry_dialect",
     "set_mutation_surface",

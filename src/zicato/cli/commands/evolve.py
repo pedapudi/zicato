@@ -500,6 +500,30 @@ async def _terminate_child(proc: asyncio.subprocess.Process | None) -> None:
 _terminate_supervisor = _terminate_child
 
 
+#: The structures ``--tournament-structure`` accepts: the default choice.
+#: An experimental structure is selected in ``scoring.json`` alongside the
+#: flag that admits it, so the option refuses it and names that flag.
+_STRUCTURE_CHOICES: tuple[str, ...] = ("gauntlet", "racing")
+
+
+def _validate_structure(
+    ctx: click.Context, param: click.Parameter, value: str | None
+) -> str | None:
+    """Refuse an experimental or unknown ``--tournament-structure`` token."""
+    del ctx
+    if value is None or value in _STRUCTURE_CHOICES:
+        return value
+    from zicato.core.tournament import (  # noqa: PLC0415
+        EXPERIMENTAL_TOURNAMENT_STRUCTURES,
+        experimental_structure_refusal,
+    )
+
+    if value in EXPERIMENTAL_TOURNAMENT_STRUCTURES:
+        raise click.BadParameter(experimental_structure_refusal(value), param=param)
+    choices = ", ".join(_STRUCTURE_CHOICES)
+    raise click.BadParameter(f"{value!r} is not one of {choices}", param=param)
+
+
 def _parse_tournament_param(raw: str) -> tuple[str, Any]:
     """Parse one ``KEY=VALUE`` param; VALUE is JSON-if-possible, else str."""
     if "=" not in raw:
@@ -745,7 +769,8 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
 )
 @click.option(
     "--tournament-structure",
-    type=click.Choice(["gauntlet", "single_elim", "double_elim", "swiss", "racing"]),
+    metavar="[gauntlet|racing]",
+    callback=_validate_structure,
     default=None,
     help=(
         "Set the per-epoch tournament structure. This is a "
@@ -754,7 +779,9 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
         "participates in the hash and auto-rolls the epoch if it differs "
         "from the current one — exactly equivalent to editing scoring.json "
         "by hand. Unset (the default) reads whatever scoring.json says "
-        "(gauntlet when absent)."
+        "(gauntlet when absent). The experimental structures single_elim, "
+        "double_elim and swiss are selected in scoring.json alongside "
+        "experimental.tournament_structures = true, which admits them."
     ),
 )
 @click.option(

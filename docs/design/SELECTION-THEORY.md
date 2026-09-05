@@ -32,7 +32,8 @@ This is the companion to two shipped docs:
   loop).
 - [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) — the
   `SelectionStrategy` abstraction and the five shipped structures
-  (gauntlet, swiss, single_elim, double_elim, racing).
+  (gauntlet and racing; swiss, single_elim and double_elim under the
+  `experimental.tournament_structures` opt-in).
 
 Those two answer *which duels run* (scheduling). This note answers two
 different questions that sit *beneath* scheduling:

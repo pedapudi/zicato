@@ -369,7 +369,7 @@ def test_swiss_theta_rank_standings_opt_in_changes_order_vs_copeland() -> None:
         structure="swiss",
         params={"field_size": 3, "rounds_n": 3, "rating": "bradley_terry"},
     )
-    strat = make_strategy(spec)
+    strat = make_strategy(spec, experimental_structures=True)
     decision = _drive(strat, champion, challengers, scalars)
     standings = decision.standings
     assert standings  # non-empty
@@ -380,14 +380,16 @@ def test_swiss_theta_rank_standings_opt_in_changes_order_vs_copeland() -> None:
 def test_swiss_default_path_is_byte_identical_with_and_without_absent_knobs() -> None:
     scalars = {"v0": 0.5, "v1": 0.2, "v2": 0.4}
     base = make_strategy(
-        TournamentStructure(structure="swiss", params={"field_size": 2, "rounds_n": 2})
+        TournamentStructure(structure="swiss", params={"field_size": 2, "rounds_n": 2}),
+        experimental_structures=True,
     )
     # An explicit "none" rating / resolver must resolve identically to absent.
     noned = make_strategy(
         TournamentStructure(
             structure="swiss",
             params={"field_size": 2, "rounds_n": 2, "rating": "none", "resolver": "none"},
-        )
+        ),
+        experimental_structures=True,
     )
     d_base = _drive(base, _champion("v0"), [_challenger("v1"), _challenger("v2")], scalars)
     d_none = _drive(noned, _champion("v0"), [_challenger("v1"), _challenger("v2")], scalars)
@@ -424,7 +426,7 @@ def test_single_elim_resolver_leader_opt_in_runs_end_to_end() -> None:
         structure="single_elim",
         params={"field_size": 3, "resolver": "ranked_pairs"},
     )
-    strat = make_strategy(spec)
+    strat = make_strategy(spec, experimental_structures=True)
     decision = _drive(strat, champion, challengers, scalars)
     # A finalist was chosen and crowned (it beat the champion on scalar).
     assert decision.decision in {"promoted", "rejected", "deferred"}
@@ -439,7 +441,7 @@ def test_double_elim_resolver_and_rating_opt_in_runs_end_to_end() -> None:
         structure="double_elim",
         params={"field_size": 3, "resolver": "copeland", "rating": "bradley_terry"},
     )
-    strat = make_strategy(spec)
+    strat = make_strategy(spec, experimental_structures=True)
     decision = _drive(strat, champion, challengers, scalars)
     assert decision.decision in {"promoted", "rejected", "deferred"}
     assert decision.standings

@@ -323,6 +323,17 @@ recombination arm alone at K ≈ 32** (floor ≈ 0.023), rather than a re-run of
 whole sweep. Run 2 placed that arm fifth rather than first, so the spend buys
 another look at an arm with no established lead.
 
+The contract carries this recommendation as a namespace. A feature without
+a measured case sits under the `experimental` block of `scoring.json`, one
+flag per feature and every flag off by default; the recommended scaffold
+sets none of them, and `tests/test_knob_registry.py` pins that. A feature
+graduates when a sweep of this design clears the bar above for it: the
+knob then moves out of the block, which rolls the epoch, and the flag is
+deleted. The block's first member is `experimental.tournament_structures`,
+which admits the single-elimination, double-elimination and Swiss
+tournament structures (SELECTION.md §8). The arsenal knobs this campaign
+measured are candidates for the block.
+
 ---
 
 ## 0. Why this campaign exists

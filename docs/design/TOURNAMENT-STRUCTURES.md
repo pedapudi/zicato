@@ -225,8 +225,12 @@ never re-implements the gate.
 
 ## 3. The five concrete strategies
 
-Each lives in `src/zicato/selection/strategies/<name>.py`. The
-one-line scheduling / advance / stopping summary, then the notes.
+`gauntlet` and `racing` live in `src/zicato/selection/strategies/<name>.py`.
+`single_elim`, `double_elim` and `swiss` live in
+`src/zicato/selection/experimental/<name>.py` and resolve only when the
+contract sets `experimental.tournament_structures` to `true`
+(`SELECTION.md §8`). The one-line scheduling / advance / stopping summary,
+then the notes.
 
 The four structures that narrow a field of challengers — `single_elim`,
 `double_elim`, `swiss`, `racing` — share one base, `ChampionGateStrategy`
@@ -348,7 +352,7 @@ single-replicate dueling bandit (`SELECTION.md §6.3`).
   second life, being eliminated on its second node loss; the grand final
   still pits the two survivors; and the crowning champion-gate is
   unchanged. See the module docstring in
-  `src/zicato/selection/strategies/double_elim.py`.
+  `src/zicato/selection/experimental/double_elim.py`.
 
 ### 3.4 `swiss`
 
@@ -427,13 +431,18 @@ single-replicate dueling bandit (`SELECTION.md §6.3`).
 
 ### 3.6 Degeneracy and the registry
 
-A `STRATEGY_REGISTRY: dict[str, type[SelectionStrategy]]` maps the
-`structure` string to its class. Any structure constructed with
-`field_size == 1` degrades to `gauntlet` semantics (one challenger, one
-full-board duel) rather than erroring — the same graceful degeneracy
-fast mode already uses when no champion cache exists
+Two registries map the `structure` string to its class:
+`STRATEGY_REGISTRY` holds `gauntlet` and `racing`, and
+`EXPERIMENTAL_STRATEGY_REGISTRY` holds `single_elim`, `double_elim` and
+`swiss`. `make_strategy` resolves an experimental token only when the
+contract's `experimental.tournament_structures` flag is `true`; otherwise
+it raises, naming the token and that key, as the contract loader, the
+builder and `zicato evolve --tournament-structure` do. Any structure
+constructed with `field_size == 1` degrades to `gauntlet` semantics (one
+challenger, one full-board duel) rather than erroring — the same graceful
+degeneracy fast mode already uses when no champion cache exists
 (`SELECTION.md §3.1`). An unknown `structure` string raises at config
-load, listing the registry keys.
+load, listing the valid tokens.
 
 ---
 
@@ -500,7 +509,7 @@ it). Example — racing with a four-challenger field:
   "promote_margin": 0.01,
   // … the usual scoring weights …
   "tournament": {
-    "structure": "racing",        // gauntlet | single_elim | double_elim | swiss | racing
+    "structure": "racing",        // gauntlet | racing; the experimental three need the opt-in (§3.6)
     "params": {
       "field_size": 4,            // challengers proposed per round (gauntlet ⇒ 1)
       "replicates": 2,            // paired runs per duel, averaged (§6 noise lever)

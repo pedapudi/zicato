@@ -50,6 +50,7 @@ def _board(n: int) -> list[BoardEntry]:
 def _draft(structure: str, entries: int, **params: Any) -> TournamentDraft:
     draft = TournamentDraft()
     draft.entries = _board(entries)
+    ops.set_experimental(draft, tournament_structures=True)
     ops.set_structure(draft, structure)
     for key, value in params.items():
         ops.set_param(draft, key, value)

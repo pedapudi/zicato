@@ -1,11 +1,15 @@
-"""The strategy registry — structure string → concrete strategy class.
+"""The strategy registries — structure token → concrete strategy class.
 
 ``make_strategy(spec)`` constructs a fresh :class:`SelectionStrategy` from
-a :class:`~zicato.core.types.TournamentStructure`. An unknown structure
-string raises with the valid keys listed (the same posture the config
-loader takes). Any structure constructed with ``field_size == 1`` degrades
-to gauntlet semantics organically — one challenger, one full-board duel —
-rather than erroring, mirroring fast mode's graceful degeneracy.
+a :class:`~zicato.core.types.TournamentStructure`. Two registries hold the
+tokens: :data:`STRATEGY_REGISTRY` carries the default structure choice
+(``gauntlet`` and ``racing``) and :data:`EXPERIMENTAL_STRATEGY_REGISTRY`
+the three an operator admits through ``experimental.tournament_structures``
+in ``scoring.json``. An experimental token without that opt-in, or a token
+in neither registry, raises ``ValueError``. Any structure constructed with
+``field_size == 1`` degrades to gauntlet semantics — one challenger, one
+full-board duel — rather than erroring, mirroring fast mode's graceful
+degeneracy.
 """
 
 from __future__ import annotations
@@ -13,24 +17,32 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from zicato.selection.strategies.double_elim import DoubleEliminationStrategy
+from zicato.core.tournament import experimental_structure_refusal
+from zicato.selection.experimental.double_elim import DoubleEliminationStrategy
+from zicato.selection.experimental.single_elim import SingleEliminationStrategy
+from zicato.selection.experimental.swiss import SwissStrategy
 from zicato.selection.strategies.gauntlet import GauntletStrategy
 from zicato.selection.strategies.racing import RacingStrategy
-from zicato.selection.strategies.single_elim import SingleEliminationStrategy
-from zicato.selection.strategies.swiss import SwissStrategy
 from zicato.selection.strategy import SelectionStrategy
 
 if TYPE_CHECKING:
     from zicato.core.types import TournamentStructure
 
-#: Maps the ``structure`` token to its concrete strategy class. Keys match
-#: :data:`zicato.core.types.VALID_TOURNAMENT_STRUCTURES`.
+#: The default structure choice: one challenger against the champion, or a
+#: field of challengers raced on escalating board slices.
 STRATEGY_REGISTRY: dict[str, type[SelectionStrategy]] = {
     GauntletStrategy.structure: GauntletStrategy,
+    RacingStrategy.structure: RacingStrategy,
+}
+
+#: The structures that resolve only under the contract opt-in. Keys equal
+#: :data:`zicato.core.tournament.EXPERIMENTAL_TOURNAMENT_STRUCTURES`; the
+#: two registries together cover
+#: :data:`zicato.core.types.VALID_TOURNAMENT_STRUCTURES`.
+EXPERIMENTAL_STRATEGY_REGISTRY: dict[str, type[SelectionStrategy]] = {
     SingleEliminationStrategy.structure: SingleEliminationStrategy,
     DoubleEliminationStrategy.structure: DoubleEliminationStrategy,
     SwissStrategy.structure: SwissStrategy,
-    RacingStrategy.structure: RacingStrategy,
 }
 
 #: The per-structure default ``replicates`` (when ``params["replicates"]`` is
@@ -40,9 +52,11 @@ STRATEGY_REGISTRY: dict[str, type[SelectionStrategy]] = {
 #: live strategy can never disagree: changing one changes both. The builder
 #: cost estimator reads this instead of assuming a flat ``1``, so the cost
 #: meter matches the schedule a structure actually runs (the under-reporting
-#: bug class — swiss/elim default to 2, not 1). Keyed by structure token.
+#: bug class — swiss/elim default to 2, not 1). Keyed by structure token,
+#: over both registries: the cost meter prices an experimental draft too.
 STRUCTURE_DEFAULT_REPLICATES: dict[str, int] = {
-    structure: cls._default_replicates for structure, cls in STRATEGY_REGISTRY.items()
+    structure: cls._default_replicates
+    for structure, cls in (*STRATEGY_REGISTRY.items(), *EXPERIMENTAL_STRATEGY_REGISTRY.items())
 }
 
 
@@ -64,6 +78,7 @@ def make_strategy(
     *,
     replicates: int | None = None,
     noise_floor_delta_std: float | None = None,
+    experimental_structures: bool = False,
 ) -> SelectionStrategy:
     """Construct a fresh strategy for one tournament resolution.
 
@@ -94,16 +109,26 @@ def make_strategy(
         (:class:`zicato.selection.strategies.racing.RacingStrategy`); the
         other structures ignore it. ``None`` injects nothing, and racing
         then cuts by rank alone.
+    experimental_structures:
+        The contract's ``experimental.tournament_structures`` flag. When
+        ``True`` a token in :data:`EXPERIMENTAL_STRATEGY_REGISTRY` resolves;
+        when ``False`` (the default) such a token is refused.
 
     Raises
     ------
     ValueError
-        When ``spec.structure`` is not a registry key. (The config loader
-        already validates the token at load time via
-        :class:`TournamentStructure.__post_init__`; this is the
+        When ``spec.structure`` is experimental and the contract has not
+        opted in, or is in neither registry. (The config loader already
+        validates the token at load time via
+        :class:`TournamentStructure.__post_init__` and the opt-in via
+        :class:`~zicato.core.scoring_config.ScoringWeights`; this is the
         defence-in-depth check at construction.)
     """
     cls = STRATEGY_REGISTRY.get(spec.structure)
+    if cls is None and spec.structure in EXPERIMENTAL_STRATEGY_REGISTRY:
+        if not experimental_structures:
+            raise ValueError(experimental_structure_refusal(spec.structure))
+        cls = EXPERIMENTAL_STRATEGY_REGISTRY[spec.structure]
     if cls is None:
         valid = ", ".join(repr(k) for k in sorted(STRATEGY_REGISTRY))
         raise ValueError(
@@ -123,6 +148,7 @@ def make_strategy(
 
 
 __all__ = [
+    "EXPERIMENTAL_STRATEGY_REGISTRY",
     "STRATEGY_REGISTRY",
     "STRUCTURE_DEFAULT_REPLICATES",
     "default_replicates_for",

@@ -638,6 +638,7 @@ async def evolve_once(
         board_ids=[e.id for e in train_board],
         replicates=replicate_setting.replicates,
         noise_floor_delta_std=replicate_setting.delta_std,
+        experimental_structures=weights.experimental.tournament_structures,
     )
     prepared = generation_phase.PreparedRound(
         workspace_root=workspace_root,

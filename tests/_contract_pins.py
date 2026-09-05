@@ -24,7 +24,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from zicato.core.tournament import EXPERIMENTAL_TOURNAMENT_STRUCTURES
 from zicato.core.types import (
+    ExperimentalConfig,
     ProposerQualityConfig,
     ScoringWeights,
     TournamentStructure,
@@ -62,6 +64,15 @@ def pin_deterministic(weights: ScoringWeights) -> ScoringWeights:
         tournament_structure=structure,
         proposer_quality=proposer_quality,
     )
+
+
+def experimental_for(structure: str) -> ExperimentalConfig:
+    """The ``experimental`` block a contract naming ``structure`` needs.
+
+    The three experimental structures are refused at contract construction
+    unless the block admits them; the two in the default choice need nothing.
+    """
+    return ExperimentalConfig(tournament_structures=structure in EXPERIMENTAL_TOURNAMENT_STRUCTURES)
 
 
 def deterministic_weights(**kwargs: Any) -> ScoringWeights:

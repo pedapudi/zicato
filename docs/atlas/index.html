@@ -1452,24 +1452,24 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
             <tr>
               <td><strong>Swiss</strong></td>
               <td>Everyone plays every round, paired against contestants on similar scores. Drawn as accumulating Copeland points, with a bump chart of rank where lines cross as the lead changes hands.</td>
-              <td>Ranks a whole field rather than only finding a winner, and pays for it by running every contestant in every round.</td>
+              <td>Ranks a whole field rather than only finding a winner, and pays for it by running every contestant in every round. Experimental: the contract admits it only with <span class="mono">experimental.tournament_structures</span> set to true.</td>
             </tr>
             <tr>
               <td><strong>Elimination</strong><br><span class="mono">single or double</span></td>
               <td>Pair, cut the losers, repeat. Drawn as rounds in columns with lanes converging at each match; double elimination adds a second band where losers re-converge.</td>
-              <td>Defends the budget rather than the result. The repository's own analysis calls this the wrong primitive here.</td>
+              <td>Defends the budget rather than the result. Experimental: admitted only with <span class="mono">experimental.tournament_structures</span> set to true, because at zicato's field size a bracket is unnecessary.</td>
             </tr>
           </tbody>
         </table>
       </div>
       <p>
-        That last verdict is worth stating plainly, because the console will draw a bracket for
-        you if you ask. Brackets were built to triage a large field of cheap candidates, and
-        zicato has a small field of expensive, noisy ones where a wrong crowning corrupts the
-        champion that every later round builds on. The evaluation needed to separate two
-        candidates grows as their scores get closer and as the measurement gets noisier, and in
-        that regime the answer is fewer candidates with more evaluation each. That is
-        replication rather than halving, which is what the gauntlet does.
+        The three experimental structures are drawn the same way once admitted. Brackets were
+        built to triage a large field of cheap candidates, and zicato has a small field of
+        expensive, noisy ones where a wrong crowning corrupts the champion that every later
+        round builds on. At two to four candidates there is nothing to triage, and the
+        evaluation needed to separate two candidates grows as their scores get closer and as
+        the measurement gets noisier. In that regime the answer is more evaluation per
+        candidate: replication, sized to the measured noise floor, for every structure.
       </p>
 
       <h3>Is the epoch as a whole getting better?</h3>
@@ -2117,14 +2117,14 @@ cat .zicato/epochs/&lt;epoch&gt;/journal.md</pre>
 
     { id: "contract", col: 0, name: "Evaluation contract", def: "Everything that decides what a score means: the board, the brief's forbidden list, the scoring weights, the declared adapter, and the proposer. An epoch is one contract held still. Changing any part of it opens a new epoch, because scores measured under two contracts are not comparable." },
     { id: "persona", col: 0, name: "Persona", def: "What drives the simulated user in a multi-turn emulated entry: a goal, behavioural constraints, and the condition that ends the conversation. The emulator sees the persona and the user-facing transcript, and nothing else." },
-    { id: "structure", col: 0, name: "Tournament structure", def: "The shape of competition the epoch declares: a gauntlet where each challenger meets the champion directly, single or double elimination, Swiss pairing, or a racing ladder that halves the field at each rung. Four of the five differ only in how they narrow a field to one finalist, and then end identically." },
+    { id: "structure", col: 0, name: "Tournament structure", def: "The competition the epoch declares: a gauntlet where each challenger meets the champion directly, or a racing ladder that halves the field at each rung. Single or double elimination and Swiss pairing are admitted only when the contract sets experimental.tournament_structures to true. Four of the five differ only in how they narrow a field to one finalist, and then end identically." },
     { id: "split", col: 0, name: "Board split", def: "The division of the board into a training slice, which every selection and gate decision reads, and a hidden slice reserved for confirming a crowning. The split is drawn once per epoch, and the proposer sees neither the hidden entries nor their results." },
     { id: "reflection", col: 0, name: "Board reflection", def: "Treating the contract itself as an instrument and every promotion as a measurement it took. The loop trusts board, scoring, judges and gate as an oracle; this asks whether that oracle is noisy, invalid, or too insensitive to see a real difference, and reports findings rather than changing anything on its own." },
     { id: "workspace", col: 0, name: "Workspace", def: "The directory holding everything zicato has recorded for one project: the configuration, every epoch, the lineage, and the derived index. Where each artifact lives is declared in one place, so a reader and a writer cannot disagree about a path." },
     { id: "prespend", col: 0, name: "Pre-spend check", def: "What the loop can prove about a workspace before it spends a round: that the adapter loads, that the declared roles are reachable, that the board parses, that the mutation points resolve. A wiring mistake caught here costs seconds instead of a full evaluation." },
     { id: "gauntlet", col: 0, name: "Gauntlet", def: "The default structure: each challenger meets the standing champion directly, and the champion is preserved unless a challenger beats it outright. Laid beside the mature algorithm for this problem — elitist iterated racing — the correspondence is near-total, which is why it is the default rather than a placeholder." },
-    { id: "bracket", col: 0, name: "Elimination bracket", def: "Single or double elimination: pair the field, cut the losers, repeat. Its design defends the budget rather than the result, so a candidate cut in an early round is gone even when it lost to variance. The repository's own analysis calls this the wrong primitive for zicato and says why." },
-    { id: "swiss", col: 0, name: "Swiss pairing", def: "Every contestant plays every round, accumulating a point per win and a half per draw, with pairings drawn between contestants on similar scores. It ranks a whole field rather than only finding a winner, at the cost of running every contestant in every round." },
+    { id: "bracket", col: 0, name: "Elimination bracket", def: "Single or double elimination: pair the field, cut the losers, repeat. Its design defends the budget rather than the result, so a candidate cut in an early round is gone even when it lost to variance. Experimental: the contract admits it only with experimental.tournament_structures set to true. At zicato's field size of two to four candidates a bracket is unnecessary, and the second life a losers' bracket buys is what replicates already buys." },
+    { id: "swiss", col: 0, name: "Swiss pairing", def: "Every contestant plays every round, accumulating a point per win and a half per draw, with pairings drawn between contestants on similar scores. It ranks a whole field rather than only finding a winner, at the cost of running every contestant in every round. Experimental: admitted only with experimental.tournament_structures set to true; racing is Swiss with the board slice escalating rung by rung." },
     { id: "racing", col: 0, name: "Racing ladder", def: "Give every candidate a small budget, cut the weakest fraction, give the survivors more, and repeat. Resources concentrate on what looks promising. It suits triage of a large cheap field, and it shares the bracket's weakness: an early cut is permanent." },
     { id: "adapter", col: 1, name: "Adapter", def: "The protocol implementation that decouples zicato from any specific framework. Zicato talks to the adapter; the adapter wraps the system under test. It answers two questions of interest: run this entry, and list the source locations that may be rewritten." },
     { id: "harness", col: 1, name: "System under test", def: "The system zicato evaluates and proposes changes to, treated as a black box behind the adapter. It may be a multi-agent system of any shape, and it may equally be a library, a prompt set, or a rule engine. It need not involve a language model at all, which is what the name is chosen to keep visible." },

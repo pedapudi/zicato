@@ -139,8 +139,10 @@ the current epoch, and opens a fresh one automatically.
 Everything above runs the **gauntlet** — one challenger per round, one
 full-board duel, king-of-the-hill (the default when `scoring.json`
 carries no `tournament` block). zicato also supports configurable
-per-epoch tournament structures: `gauntlet` (default), `single_elim`,
-`double_elim`, `swiss`, and `racing`. This example ships a ready-made
+per-epoch tournament structures: `gauntlet` (default) and `racing`, plus the
+experimental `single_elim`, `double_elim`, and `swiss` when `scoring.json`
+sets `experimental.tournament_structures` to `true` (the three example
+contracts for them do). This example ships a ready-made
 **racing** contract alongside the gauntlet one:
 [`scoring.racing.json`](./scoring.racing.json).
 

@@ -316,3 +316,23 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
     assert (
         len(epochs_after_second) == 2
     ), f"contract drift should have rolled the epoch: {epochs_after_second}"
+
+
+# ---------------------------------------------------------------------------
+# ``--tournament-structure`` accepts the default choice only.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("structure", ["single_elim", "double_elim", "swiss"])
+def test_tournament_structure_option_refuses_an_experimental_token(structure: str) -> None:
+    """The option names the token, its tier, and the key that admits it."""
+    result = CliRunner().invoke(evolve_cmd, ["--tournament-structure", structure])
+    assert result.exit_code == 2, result.output
+    assert f"tournament structure '{structure}' is experimental" in result.output
+    assert "experimental.tournament_structures = true in scoring.json" in result.output
+
+
+def test_tournament_structure_option_lists_the_default_choice_for_an_unknown_token() -> None:
+    result = CliRunner().invoke(evolve_cmd, ["--tournament-structure", "ladder"])
+    assert result.exit_code == 2, result.output
+    assert "'ladder' is not one of gauntlet, racing" in result.output

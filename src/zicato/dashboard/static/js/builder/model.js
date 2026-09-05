@@ -41,19 +41,34 @@ export function persistChatCollapsed(c) {
   return !!c;
 }
 
-// ── the five structures ───────────────────────────────────────────────
+// ── the structures ────────────────────────────────────────────────────
 
 export const STRUCTURE_GLYPH = {
   gauntlet: '⚔', single_elim: '◣', double_elim: '◳', swiss: '⇄', racing: '⥥',
 };
 
+// The default structure choice: one challenger against the champion, or a
+// field of challengers raced on escalating board slices.
 export const STRUCTURES = [
   { id: 'gauntlet', label: 'Gauntlet', blurb: 'Each challenger duels the champion; the best Δ promotes.' },
+  { id: 'racing', label: 'Racing', blurb: 'Successive halving — the field is cut each rung.' },
+];
+
+// The structures the contract admits only under
+// `experimental.tournament_structures`. Each pairs challengers against each
+// other, so a candidate's fate depends on its draw; none has a measured case
+// at zicato's field size. The picker shows them only while the flag is on.
+export const EXPERIMENTAL_STRUCTURES = [
   { id: 'single_elim', label: 'Single elim', blurb: 'A knockout bracket — one loss eliminates.' },
   { id: 'double_elim', label: 'Double elim', blurb: 'A bracket with a losers’ lane — two losses out.' },
   { id: 'swiss', label: 'Swiss', blurb: 'Fixed rounds, score-paired; Copeland-point standings.' },
-  { id: 'racing', label: 'Racing', blurb: 'Successive halving — the field is cut each rung.' },
 ];
+
+// Whether the draft admits the experimental structures.
+export function experimentalStructuresOn(draft) {
+  const ex = ((draft || {}).scoring || {}).experimental || {};
+  return ex.tournament_structures === true;
+}
 
 // ── per-structure param specs (label + bounds + info-popover copy) ─────
 

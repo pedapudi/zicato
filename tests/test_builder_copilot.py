@@ -3,7 +3,7 @@
 Drives :func:`zicato.builder.copilot.run_copilot` with a copilot
 ``LlmAgent`` wired to a :class:`zicato.testing.adk_fake.FakeADKModel`, on
 ADK's own ``Runner``. The fake model scripts two builder tool rounds
-(``set_structure("swiss")`` then ``set_holdout(fraction=0.3)``) followed by
+(``set_structure("racing")`` then ``set_holdout(fraction=0.3)``) followed by
 a final summary turn, and the tests assert:
 
 * the SSE stream emits ``tool`` + ``patch`` + ``done`` frames carrying the
@@ -110,7 +110,7 @@ async def test_graceful_degrade_no_model_yields_single_error(tmp_path: Path) -> 
         run_copilot(
             config,
             session_id="s1",
-            message="set the structure to swiss",
+            message="set the structure to racing",
             store=store,
             workspace_root=ws,
         )
@@ -128,7 +128,7 @@ async def test_graceful_degrade_leaves_draft_untouched(tmp_path: Path) -> None:
         run_copilot(
             BuilderConfig(),
             session_id="s1",
-            message="set the structure to swiss",
+            message="set the structure to racing",
             store=store,
             workspace_root=ws,
         )
@@ -182,10 +182,10 @@ async def test_two_tool_rounds_mutate_shared_draft_and_stream_patches(tmp_path: 
 
     agent = _copilot_agent_with_script(
         [
-            FunctionCallTurn(name="set_structure", args={"structure": "swiss"}),
+            FunctionCallTurn(name="set_structure", args={"structure": "racing"}),
             FunctionCallTurn(name="set_holdout", args={"fraction": 0.3}),
             FunctionCallTurn(name="remove_board_entry", args={"entry_id": "e4"}),
-            TextTurn(text="Done — swiss with a 0.3 holdout, e4 dropped."),
+            TextTurn(text="Done — racing with a 0.3 holdout, e4 dropped."),
         ]
     )
 
@@ -193,7 +193,7 @@ async def test_two_tool_rounds_mutate_shared_draft_and_stream_patches(tmp_path: 
         run_copilot(
             config,
             session_id="sess",
-            message="make it swiss with a 30% holdout and drop e4",
+            message="make it racing with a 30% holdout and drop e4",
             store=store,
             workspace_root=ws,
             agent=agent,
@@ -208,14 +208,14 @@ async def test_two_tool_rounds_mutate_shared_draft_and_stream_patches(tmp_path: 
 
     tool_frames = [f for f in frames if f["type"] == "tool"]
     assert tool_frames[0]["name"] == "set_structure"
-    assert tool_frames[0]["args"] == {"structure": "swiss"}
+    assert tool_frames[0]["args"] == {"structure": "racing"}
     assert tool_frames[1]["name"] == "set_holdout"
     assert tool_frames[2]["name"] == "remove_board_entry"
     assert tool_frames[2]["args"] == {"entry_id": "e4"}
 
     patch_frames = [f for f in frames if f["type"] == "patch"]
     assert patch_frames[0]["patch"]["op"] == "set_structure"
-    assert patch_frames[0]["patch"]["changed"]["structure"]["to"] == "swiss"
+    assert patch_frames[0]["patch"]["changed"]["structure"]["to"] == "racing"
     assert patch_frames[1]["patch"]["op"] == "set_holdout"
     assert patch_frames[2]["patch"]["op"] == "remove_board_entry"
     assert patch_frames[2]["patch"]["changed"] == {"entry_id": "e4", "action": "removed"}
@@ -225,7 +225,7 @@ async def test_two_tool_rounds_mutate_shared_draft_and_stream_patches(tmp_path: 
 
     # The SAME session draft in the shared store was mutated.
     draft = store.get("sess", ws)
-    assert draft.scoring.tournament_structure.structure == "swiss"
+    assert draft.scoring.tournament_structure.structure == "racing"
     assert draft.scoring.overfitting.holdout_fraction == pytest.approx(0.3)
     assert {e.id for e in draft.entries} == {"e1", "e2", "e3"}
 
@@ -243,8 +243,8 @@ async def test_form_get_draft_reflects_copilot_edit(tmp_path: Path) -> None:
 
     agent = _copilot_agent_with_script(
         [
-            FunctionCallTurn(name="set_structure", args={"structure": "swiss"}),
-            TextTurn(text="Switched to swiss."),
+            FunctionCallTurn(name="set_structure", args={"structure": "racing"}),
+            TextTurn(text="Switched to racing."),
         ]
     )
 
@@ -252,7 +252,7 @@ async def test_form_get_draft_reflects_copilot_edit(tmp_path: Path) -> None:
         run_copilot(
             config,
             session_id="shared",
-            message="swiss please",
+            message="racing please",
             store=store,
             workspace_root=ws,
             agent=agent,
@@ -265,7 +265,7 @@ async def test_form_get_draft_reflects_copilot_edit(tmp_path: Path) -> None:
     resp = client.get("/builder/draft?session=shared")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["draft"]["scoring"]["tournament"]["structure"] == "swiss"
+    assert body["draft"]["scoring"]["tournament"]["structure"] == "racing"
 
 
 @pytest.mark.asyncio
@@ -283,7 +283,7 @@ async def test_copilot_apply_tool_only_dry_runs(tmp_path: Path) -> None:
 
     agent = _copilot_agent_with_script(
         [
-            FunctionCallTurn(name="set_structure", args={"structure": "swiss"}),
+            FunctionCallTurn(name="set_structure", args={"structure": "racing"}),
             FunctionCallTurn(name="preview_apply", args={}),
             TextTurn(text="Here is what applying would do."),
         ]
@@ -293,7 +293,7 @@ async def test_copilot_apply_tool_only_dry_runs(tmp_path: Path) -> None:
         run_copilot(
             config,
             session_id="dry",
-            message="preview applying swiss",
+            message="preview applying racing",
             store=store,
             workspace_root=ws,
             agent=agent,
@@ -355,6 +355,7 @@ def test_default_builder_tools_registry_covers_every_op() -> None:
         "set_namespace_weights",
         "set_proposer_quality",
         "set_experiment_memory",
+        "set_experimental",
         "set_screening",
         "edit_board_entry",
         "add_board_entry",
@@ -495,7 +496,7 @@ def test_lifecycle_tools_fork_switch_compare(tmp_path: Path) -> None:
         # forked FIRST, then edited (the session was bound to A), then B
         # forked from A. So A == B here; compare says identical.
         assert r3["compare"]["changed_components"] == []
-        _json.loads(copilot_tools.set_structure("swiss"))
+        _json.loads(copilot_tools.set_structure("racing"))
         r4 = _json.loads(copilot_tools.compare("variant-a", "variant-b"))
         assert "scoring" in r4["compare"]["changed_components"]
         r5 = _json.loads(copilot_tools.switch("variant-a"))
@@ -563,8 +564,8 @@ def test_copilot_edit_undone_through_rest(tmp_path: Path) -> None:
     store = DraftStore()
     ctx = BuilderToolContext(session_id="shared", store=store, workspace_root=ws)
     with bind_builder_tool_context(ctx):
-        copilot_tools.set_structure("swiss")
-    assert store.get("shared", ws).scoring.tournament_structure.structure == "swiss"
+        copilot_tools.set_structure("racing")
+    assert store.get("shared", ws).scoring.tournament_structure.structure == "racing"
 
     app = Starlette(routes=builder_routes(ws, store=store))
     client = TestClient(app)

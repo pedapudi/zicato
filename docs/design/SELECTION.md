@@ -11,7 +11,8 @@
 > is a per-structure contract default. The gauntlet, Swiss and both
 > elimination structures default `tournament.params["replicates"]` to 2,
 > and racing pins it to 1 because escalating board slices replicate
-> intrinsically (`src/zicato/selection/strategies/`). Passages below that
+> intrinsically (`src/zicato/selection/strategies/` and
+> `src/zicato/selection/experimental/`). Passages below that
 > reason from a single unreplicated duel describe the cheapest
 > configuration, which an operator can still pin, rather than the
 > default.
@@ -231,14 +232,15 @@ evaluation gets *noisier*, and in that regime the right response is
 than aggressive halving. Brackets are noise-fragile at the decision
 boundary that matters.
 
-**Verdict for zicato.** *Wrong primitive.* Brackets suit cheap triage of
-a large field; zicato has a *small* field of *expensive*,
-*noisy* candidates where a false promotion is costly (it corrupts the
-champion the next round builds on). The verified guidance is blunt:
-"brackets are the wrong primitive when each candidate yields a noisy
-absolute scalar and the cost of a false promotion is high." This is the
-direct evidence against the single-elimination and double-elimination
-structures considered earlier (§8).
+**Verdict for zicato.** Brackets are unnecessary at zicato's field size.
+A bracket earns its bookkeeping by triaging a large field of cheap
+candidates; zicato's field is two to four candidates measured by an
+expensive, noisy evaluator, where a false promotion corrupts the champion
+the next round builds on. At that size every candidate can meet the
+champion directly, and noise is answered the same way for every
+structure: by replication sized to the measured noise floor, the spread
+of the champion evaluated against itself (§9, §10.2). The elimination
+structures remain available as experimental options (§8).
 
 ### A note on elitism — the same idea under a fourth name
 
@@ -812,17 +814,25 @@ so it should spend them on replication.
 
 ---
 
-## 8. Why not double-elimination or Swiss (the explicit verdict)
+## 8. Single elimination, double elimination and Swiss are experimental
 
-These were considered directly. The evidence-backed answer:
+The three structures pair challengers against each other, so a
+candidate's fate depends on its draw. Each buys something that zicato's
+regime has a cheaper answer for:
 
-| Structure | What it buys | Why it is wrong for zicato |
+| Structure | What it buys | Why the default choice does without it |
 |---|---|---|
-| **Single-elimination** | Cheap triage of a large field | Noise-fragile at the boundary; a strong candidate dies to one unlucky run. Designed for *many cheap* candidates rather than *few expensive noisy* ones. |
-| **Double-elimination** | A second chance for a variance victim | Its only benefit — robustness to a single bad match — is delivered more directly and cheaply by **replication**. Same compute, more confidence, no bracket bookkeeping, no "freeze the field" constraint. |
-| **Swiss** | Full ranking without elimination fragility | Right goal, superseded form. **Iterated racing** is Swiss with statistical elimination and adaptive replication — strictly more sample-efficient for the same confidence. |
+| **Single-elimination** | Triage of a large field | At two to four candidates there is nothing to triage: every candidate can meet the champion directly, and a candidate cut by one noisy match is lost. |
+| **Double-elimination** | A second chance for a variance victim | `replicates` buys the same second chance for the same compute, with no losers' bracket and no frozen field. |
+| **Swiss** | A full ranking without elimination | Racing is Swiss with the board slice escalating rung by rung, and the crowning duel is the only ranking the loop consumes. |
 
-Adopt **racing + replication**; do not build brackets.
+None of the three has a measured case for zicato's regime: the two
+144-cell sweeps in [CAMPAIGN.md](CAMPAIGN.md#r4-zero-of-nine-features-graduate--twice)
+graduated no feature. They remain available to an operator who wants to
+try them: set `experimental.tournament_structures` to `true` in
+`scoring.json` alongside the `tournament` block. The default structure
+choice is `gauntlet` and `racing`, with replication as the noise lever in
+both.
 
 ---
 
@@ -982,9 +992,10 @@ The instrument-health panel serves the same ladder over the same
 
 ## 10. Configurable per-epoch tournament structures
 
-> **Status.** SHIPPED. The `SelectionStrategy` seam, all five structures
-> (gauntlet · single_elim · double_elim · swiss · racing), the
-> `tournament` contract block, and the CLI surface are in the tree; the
+> **Status.** SHIPPED. The `SelectionStrategy` interface, the five
+> structures (gauntlet and racing in the default choice; single_elim,
+> double_elim and swiss under the `experimental.tournament_structures`
+> opt-in), the `tournament` contract block, and the CLI surface are in the tree; the
 > full interface spec and reference live in
 > [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md). This section is
 > the *decision-theory* placement of that work into the rest of this
@@ -998,16 +1009,16 @@ elitist iterated racing (§4). The recommended path (§9) keeps the
 gauntlet's shape and adds replication and a confidence-bounded test
 *inside* it.
 
-An orthogonal axis is exposed as well: **the bracket shape itself, made
-configurable per epoch.** The gauntlet stays
-the default; an epoch may instead elect single-elimination,
-double-elimination, Swiss, or racing / successive-halving. Each
-structure below is stated in the language of §2, §5 and §6. The
-single-elimination family (§2) and §8 give the evidence-backed verdict
-that **brackets are the wrong primitive for few, expensive, noisy
-candidates.** Exposing them as options does not repeal that verdict; it
-makes the trade explicit and per-epoch, and it forces every non-gauntlet
-structure to carry the replication §9 prescribes.
+An orthogonal axis is exposed as well: **which competition the field
+runs, chosen per epoch.** The gauntlet stays the default and racing is
+the scaffold's recommendation; an epoch may instead elect
+single-elimination, double-elimination or Swiss pairing under the
+`experimental.tournament_structures` opt-in. Each structure below is
+stated in the language of §2, §5 and §6. §2 and §8 give the reason the
+three are experimental: at zicato's field size a bracket is unnecessary,
+and noise is answered by replication for every structure. Exposing them
+makes the trade explicit and per-epoch, and every non-gauntlet structure
+carries the replication §9 prescribes.
 
 ### 10.1 The strategy abstraction
 
@@ -1028,21 +1039,22 @@ interface, per-structure design, and backend plan are in
 | Structure (`tournament.structure`) | What it is here | §-mapping | Selection / advance | Stopping rule | Replication stance |
 |---|---|---|---|---|---|
 | **`gauntlet`** *(default)* | Today's king-of-the-hill (§3) | Degenerate single-replicate dueling bandit (§6.3); `(μ+λ)` elitism (§2 elitism note) | One duel/round: champion vs the round's one challenger; promote on gate `promoted` | §3.3 / §5 — `rounds`, `max_consecutive_rejections`, posterior stop (§5.4) | None today; §9 adds replication, a paired significance gate, and winner's-curse confirmation in place |
-| **`single_elim`** | Bracket of *K* challengers; winners advance; champion is a seed/bye | Condorcet identification (§6.2) over a one-shot field; **the wrong primitive** (§2, §8) | Each bracket node is a duel; node winner = the side the gate prefers; champion enters as a bye and meets the bracket survivor in the final | Tournament resolves when one finalist remains; champion promoted only if it clears the gate as the final duel's challenger | **Mandatory** ≥ r duels/node, or a strong candidate dies to one unlucky run (§2, §8) |
-| **`double_elim`** | Winners' + losers' brackets; one loss is survivable | Condorcet ID with a "second life" (§6.2); §8's explicit *not-recommended* | Two brackets; a node-loser drops to the losers' bracket; grand final is winners'-survivor vs losers'-survivor | Resolves when the losers' bracket is exhausted; champion-gate applied to the grand-final survivor | §8: the second-life benefit is **delivered more cheaply by replication** — prefer raising `replicates` over building the losers' bracket |
-| **`swiss`** | Fixed `rounds_n` rounds, pair by running standing | Copeland identification (§6.2); Swiss-as-non-adaptive-racing (§7) | Each round pairs near-standing generations into duels; standing = Copeland score (duels won) tie-broken by mean scalar | Resolves after `rounds_n` Swiss rounds; champion = top of final standing if it clears the gate vs the incumbent | Pairings repeat opponents rarely; **per-pairing replication** is how Swiss earns noise robustness (§6.2's "duels tighten the relative bound") |
+| **`single_elim`** | Bracket of *K* challengers; winners advance; champion is a seed/bye | Condorcet identification (§6.2) over a one-shot field; **experimental** (§8; opt-in `experimental.tournament_structures`) | Each bracket node is a duel; node winner = the side the gate prefers; champion enters as a bye and meets the bracket survivor in the final | Tournament resolves when one finalist remains; champion promoted only if it clears the gate as the final duel's challenger | **Mandatory** ≥ r duels/node, or a strong candidate dies to one unlucky run (§2, §8) |
+| **`double_elim`** | Winners' + losers' brackets; one loss is survivable | Condorcet ID with a second life (§6.2); **experimental** (§8; the same opt-in) | Two brackets; a node-loser drops to the losers' bracket; grand final is winners'-survivor vs losers'-survivor | Resolves when the losers' bracket is exhausted; champion-gate applied to the grand-final survivor | §8: the second-life benefit is **delivered more cheaply by replication** — prefer raising `replicates` over building the losers' bracket |
+| **`swiss`** | Fixed `rounds_n` rounds, pair by running standing | Copeland identification (§6.2); Swiss-as-non-adaptive-racing (§7); **experimental** (§8; the same opt-in) | Each round pairs near-standing generations into duels; standing = Copeland score (duels won) tie-broken by mean scalar | Resolves after `rounds_n` Swiss rounds; champion = top of final standing if it clears the gate vs the incumbent | Pairings repeat opponents rarely; **per-pairing replication** is how Swiss earns noise robustness (§6.2's "duels tighten the relative bound") |
 | **`racing`** | All challengers on a board *subset*, cut the worst, escalate budget | **Successive Halving / best-arm identification** (§2); the *adaptive* form of Swiss/round-robin (§7) and the structure §9's elitist-iterated-racing synthesis converges on | Rung 0: every challenger duels the champion on a board slice; eliminate the worst `1−1/eta`; survivors re-duel on a larger slice; repeat | Resolves when one survivor remains or the board is fully consumed; that survivor faces the full-board gate (plus the optional winner's-curse confirmation of §9) | **Built-in** — racing *is* escalating replication; this is the structure §7–§9 actually recommend, and the only bracket-shaped option this document endorses |
 
 §7's conclusion holds here: every non-gauntlet structure spends more
 duels, and the lever that buys confidence is **how many times each
-candidate is re-evaluated** rather than the bracket shape. `single_elim` / `double_elim` /
-`swiss` are exposed for completeness and for cheap-field regimes that
-may be created later, such as a large proposer fan-out under a generous
-budget. `racing` is the one structure whose noise handling the
-literature endorses for zicato's regime, because its replication is
-intrinsic rather than added on top. The config field carries this honesty forward: the
-default stays `gauntlet`, and the docs for `single_elim` / `double_elim`
-must repeat §8's verdict at their point of use.
+candidate is re-evaluated** rather than the bracket shape. `single_elim`,
+`double_elim` and `swiss` resolve only when the contract sets
+`experimental.tournament_structures` to `true`; the contract loader, the
+strategy registry, the builder and the CLI refuse them otherwise, each
+naming that key. They serve an operator who wants to try a cheap-field
+regime, such as a large proposer fan-out under a generous budget.
+`racing` is the one structure whose noise handling the literature
+endorses for zicato's regime, because its replication is intrinsic
+rather than added on top. The default stays `gauntlet`.
 
 ### 10.3 The prerequisite: a multi-candidate field
 
@@ -1108,9 +1120,8 @@ across structures.
    per-entry-delta variance? With a `K`-challenger field, is Condorcet
    identification worth its duel budget, or does a Copeland fallback pay
    for itself only past some field size?
-7. **Which structure for which epoch (§10).** Given §8's verdict that
-   brackets are noise-fragile for zicato's regime, when is a non-`racing`
-   structure ever the right per-epoch choice — only under a large
+7. **Which structure for which epoch (§10).** Given §8, when is an
+   experimental structure ever the right per-epoch choice — only under a large
    proposer fan-out with a generous budget, or never? What
    `field_size` / `eta` / board-subset schedule does `racing` need to
    beat the replicated gauntlet on simple regret per unit compute, and

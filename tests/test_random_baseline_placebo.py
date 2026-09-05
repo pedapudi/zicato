@@ -17,7 +17,11 @@ from pathlib import Path
 import pytest
 
 import zicato_examples.target_0_convergence as _t0_pkg
-from tests._contract_pins import pin_deterministic, resolved_contract_with_proposer
+from tests._contract_pins import (
+    experimental_for,
+    pin_deterministic,
+    resolved_contract_with_proposer,
+)
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     install_stub_adapter_factory,
@@ -407,6 +411,7 @@ def _bootstrap_swiss_with_placebo(tmp_path: Path, *, field_size: int) -> tuple[P
                     structure="swiss",
                     params={"field_size": field_size, "rounds_n": 1, "replicates": 1},
                 ),
+                experimental=experimental_for("swiss"),
                 overfitting=OverfittingConfig(random_baseline_every_n=1),
             )
         ),

@@ -297,7 +297,12 @@ def _contract_replicates(scoring_path: Path) -> int:
     from zicato.selection import make_strategy
 
     weights = _scoring_from_dict(json.loads(scoring_path.read_text(encoding="utf-8")))
-    return int(make_strategy(weights.tournament_structure).replicates())
+    return int(
+        make_strategy(
+            weights.tournament_structure,
+            experimental_structures=weights.experimental.tournament_structures,
+        ).replicates()
+    )
 
 
 def _read_json_norm(path: Path, tmp_root: str) -> object | None:

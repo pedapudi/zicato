@@ -32,7 +32,7 @@ def _evaluate(
     gate_decision: TournamentDecision,
 ) -> TournamentEvaluation:
     """Drive one structure over a champion and a single challenger."""
-    strategy = make_strategy(spec)
+    strategy = make_strategy(spec, experimental_structures=True)
 
     async def request_field(n: int) -> tuple[Contestant, list[Contestant]]:
         return (

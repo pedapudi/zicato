@@ -99,7 +99,10 @@ def _settle_swiss(structure: str = "swiss"):
     the champion gate against ``v0`` — a promotion, so the standings carry
     a ``champion`` status row.
     """
-    strategy = make_strategy(TournamentStructure(structure=structure, params={"field_size": 4}))
+    strategy = make_strategy(
+        TournamentStructure(structure=structure, params={"field_size": 4}),
+        experimental_structures=True,
+    )
     champion = Contestant(generation_id="v0", role="champion")
     challengers = [Contestant(generation_id=f"v{i}", role="challenger") for i in (1, 2, 3, 4)]
     scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.8, "v3": 0.3, "v4": 0.7}

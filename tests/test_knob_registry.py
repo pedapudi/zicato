@@ -47,12 +47,14 @@ from zicato.contract_draft.draft import TournamentDraft
 from zicato.core.constraints import knob_constraint
 from zicato.core.scoring_config import (
     ContractKnob,
+    ExperimentalConfig,
     LadderConfig,
     OverfittingConfig,
     ProposerQualityConfig,
     ScoringWeights,
     contract_knobs,
     omit_at_default_fields,
+    recommended_scaffold_weights,
 )
 from zicato.core.tournament import TournamentStructure
 
@@ -84,6 +86,10 @@ _FROZEN_OMIT_AT_DEFAULT_FIELDS = frozenset(
         "holdout_margin",
         "holdout_entry_regression_budget",
         "experiment_memory",
+        # The opt-ins for features without a measured case (issue #394).
+        # Omitted while every flag is off, so a contract naming none of
+        # them keeps its hash; a flag turned on rolls the epoch.
+        "experimental",
         "random_baseline_every_n",
         "block_on_containment_violation",
         "block_on_gate_contradiction",
@@ -286,6 +292,7 @@ _NO_BUILDER_OP_KNOBS = {
     "ScoringWeights.overfitting": "container — its fields carry the ops",
     "ScoringWeights.proposer_quality": "container — its fields carry the ops",
     "ScoringWeights.experiment_memory": "container — its fields carry the ops",
+    "ScoringWeights.experimental": "container — its fields carry the ops",
     # Dotted CALLABLE specs (``pkg.mod:fn``) resolved by the same importer
     # predicates / judges use. A GUI field that names arbitrary importable
     # code to run is a code-execution surface, not a knob; these stay
@@ -448,6 +455,22 @@ def test_every_bounded_knob_has_an_inadmissible_value() -> None:
         f"{owner.__name__}.{name}" for owner, name in set(_INADMISSIBLE_VALUES) - declared
     )
     assert not stale, f"_INADMISSIBLE_VALUES names knob(s) {stale} that declare no bound."
+
+
+def test_recommended_scaffold_enables_no_experimental_knob() -> None:
+    """Every flag in the ``experimental`` block stays off in the scaffold.
+
+    The block holds features without a measured case (issue #394). A
+    feature graduates by moving out of it; the scaffold turns no flag on.
+    Walking the dataclass fields keeps the pin true for a flag added later.
+    """
+    scaffold = recommended_scaffold_weights().experimental
+    enabled = [
+        knob.name
+        for knob in contract_knobs()
+        if knob.owner is ExperimentalConfig and getattr(scaffold, knob.name) != knob.default
+    ]
+    assert not enabled, f"the recommended scaffold enables experimental knob(s) {enabled}"
 
 
 def test_promote_margin_may_not_invert_the_gate() -> None:

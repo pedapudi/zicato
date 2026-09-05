@@ -38,6 +38,7 @@ from typing import Any
 import pytest
 
 from zicato.core.types import (
+    ExperimentalConfig,
     ExperimentMemoryConfig,
     LadderConfig,
     OverfittingConfig,
@@ -62,6 +63,7 @@ _CONTRACT_DATACLASSES = [
     LadderConfig,
     ProposerQualityConfig,
     ExperimentMemoryConfig,
+    ExperimentalConfig,
 ]
 
 # A hand-curated, constraint-VALID non-default value for every field of
@@ -106,6 +108,9 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
     "ExperimentMemoryConfig": {
         "cross_epoch": True,
     },
+    "ExperimentalConfig": {
+        "tournament_structures": True,
+    },
     "ScoringWeights": {
         "goldfive": {"fail_fast_on_revision_rejection": True},
         "pass_weight": 3.5,
@@ -129,7 +134,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "namespace_weights": {"drift:": 2.0, "failure:": 2.0, "cost:": 0.002},
         "namespace_monotonicity": {"drift:": True, "rubric:": False},
         "tournament_structure": TournamentStructure(
-            structure="swiss", params={"rounds_n": 3, "nested": {"a": [1, 2, 3]}}
+            structure="racing", params={"rounds_n": 3, "nested": {"a": [1, 2, 3]}}
         ),
         "overfitting": OverfittingConfig(
             enabled=False,
@@ -138,6 +143,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         ),
         "proposer_quality": ProposerQualityConfig(best_of_n=5, critique_enabled=False),
         "experiment_memory": ExperimentMemoryConfig(cross_epoch=True),
+        "experimental": ExperimentalConfig(tournament_structures=True),
         "outcome_summarizer_spec": "pkg.mod:summarize_outcomes",
         "pass_transform": {"op": "pow", "exponent": 2.0},
         "drift_kind_aggregation": {
@@ -341,7 +347,7 @@ def test_nested_tournament_and_overfitting_survive_round_trip() -> None:
     w = replace(
         ScoringWeights(),
         tournament_structure=TournamentStructure(
-            structure="swiss", params={"rounds_n": 3, "nested": {"a": [1, 2, 3]}}
+            structure="racing", params={"rounds_n": 3, "nested": {"a": [1, 2, 3]}}
         ),
         overfitting=OverfittingConfig(
             enabled=False,

@@ -92,7 +92,7 @@ def test_diff_vs_live_clean_when_unchanged(workspace: Path) -> None:
 
 def test_diff_vs_live_flags_structure_and_scoring(workspace: Path) -> None:
     draft = TournamentDraft.from_workspace(workspace)
-    ops.set_structure(draft, "swiss")
+    ops.set_structure(draft, "racing")
     diff = draft.diff_vs_live(workspace)
     changed = set(diff.to_dict()["changed_components"])
     assert "structure" in changed
@@ -116,7 +116,7 @@ def test_apply_dry_run_writes_nothing(workspace: Path) -> None:
     before = board_path.read_text(encoding="utf-8")
 
     draft = TournamentDraft.from_workspace(workspace)
-    ops.set_structure(draft, "swiss")
+    ops.set_structure(draft, "racing")
     ops.set_brief(draft, "dry run brief")
     result = ops.apply(draft, workspace, confirm=False)
 
@@ -137,7 +137,7 @@ def test_apply_confirm_writes_contract_and_rolls_on_next_resolve(workspace: Path
     stored_hash = load_epoch(workspace, epoch_id).contract_hash
 
     draft = TournamentDraft.from_workspace(workspace)
-    ops.set_structure(draft, "swiss")
+    ops.set_structure(draft, "racing")
     ops.set_param(draft, "field_size", 4)
     result = ops.apply(draft, workspace, confirm=True)
 
@@ -147,7 +147,7 @@ def test_apply_confirm_writes_contract_and_rolls_on_next_resolve(workspace: Path
 
     # The live scoring.json now carries the swiss structure.
     live_scoring = json.loads(scoring_path.read_text(encoding="utf-8"))
-    assert live_scoring["tournament"]["structure"] == "swiss"
+    assert live_scoring["tournament"]["structure"] == "racing"
 
     # The re-derived live contract hash differs from the epoch's stored
     # hash — proof the auto-epoch machinery WILL roll on the next resolve.
@@ -234,7 +234,7 @@ def test_board_meta_round_trips_through_any_op_and_apply(meta_workspace: Path) -
     board_path = meta_workspace.parent / "board.jsonl"
 
     draft = TournamentDraft.from_workspace(meta_workspace)
-    ops.set_structure(draft, "swiss")  # any op — unrelated to the header
+    ops.set_structure(draft, "racing")  # any op — unrelated to the header
     result = ops.apply(draft, meta_workspace, confirm=True)
 
     assert result.confirmed is True
@@ -259,7 +259,7 @@ def test_dry_run_hash_equals_confirm_hash_for_meta_board(meta_workspace: Path) -
     equal the confirmed apply's hash for a meta-carrying board — both writers
     thread disable_drift/judge_only through save_board."""
     draft = TournamentDraft.from_workspace(meta_workspace)
-    ops.set_structure(draft, "swiss")
+    ops.set_structure(draft, "racing")
     predicted = ops.apply(draft, meta_workspace, confirm=False).new_contract_hash
     confirmed = ops.apply(draft, meta_workspace, confirm=True).new_contract_hash
     assert predicted == confirmed

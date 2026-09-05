@@ -211,7 +211,8 @@ def test_pregate_holds_a_noisy_swiss_crowning_promote() -> None:
     # separate: the crown is held on the evidence rather than awarded on a
     # 0.01 win.
     s = make_strategy(
-        TournamentStructure(structure="swiss", params={"field_size": 2, "rounds_n": 2})
+        TournamentStructure(structure="swiss", params={"field_size": 2, "rounds_n": 2}),
+        experimental_structures=True,
     )
     champ = _champion("v0")
     challengers = [_challenger("v1"), _challenger("v2")]

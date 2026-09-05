@@ -156,14 +156,15 @@ hypothesis* rather than a *sampled mutation*.
 
 The king-of-the-hill gauntlet of §1.1–§1.3 is the **default** tournament
 structure. The structure is a **per-epoch configurable choice**: an epoch's
-frozen contract carries a `tournament` block selecting one of `gauntlet`
-(default), `single_elim`, `double_elim`, `swiss`, or `racing`. The
-arguments in §1.3 *for* the gauntlet are the reason it is the default.
-The other structures serve regimes with a *large* proposer fan-out — a
-multi-candidate field, in the selection-lever vocabulary of
-`SELECTION.md §9` — and `racing` is the structure whose noise handling
-the selection theory endorses for zicato's few-expensive-noisy regime
-(`SELECTION.md §7–§9`).
+frozen contract carries a `tournament` block selecting `gauntlet`
+(default) or `racing`, or — when the contract also sets
+`experimental.tournament_structures` to `true` — `single_elim`,
+`double_elim`, or `swiss`. The arguments in §1.3 *for* the gauntlet are
+the reason it is the default. `racing` serves a multi-candidate field —
+the selection-lever vocabulary of `SELECTION.md §9` — and is the
+structure whose noise handling the selection theory endorses for
+zicato's few-expensive-noisy regime (`SELECTION.md §7–§9`); the three
+experimental structures have no measured case there (`SELECTION.md §8`).
 
 The runner is not hard-wired to "one champion, one challenger, one
 duel". A **`SelectionStrategy`** — chosen from the epoch's

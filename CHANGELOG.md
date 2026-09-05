@@ -1,5 +1,31 @@
 # Changelog
 
+### Three tournament structures move behind an experimental opt-in
+
+`single_elim`, `double_elim` and `swiss` resolve only when `scoring.json`
+sets `experimental.tournament_structures` to `true`; the default
+structure choice is `gauntlet` and `racing`. The gauntlet takes one
+challenger, so a field of candidates needs a structure that narrows it,
+and the scaffold recommends racing with a field of four. Each of the
+three experimental structures pairs challengers against each other, so a
+candidate's fate depends on its draw; the second life a losers' bracket
+buys is what `replicates` already buys, and Swiss pairing is racing
+without the escalating board slice. None has a measured case at zicato's
+field size of two to four candidates under an expensive, noisy evaluator
+(`docs/design/CAMPAIGN.md`).
+
+The `experimental` block is the contract's namespace for features
+without a measured case, one flag per feature, every flag off by
+default, omitted from the contract hash while every flag is off. A
+contract naming one of the three structures without the flag is refused
+at load, by the builder, by `zicato evolve --tournament-structure`, and
+by the strategy registry, each naming the key that admits it. The
+builder renders the block as its own section and shows the three
+structures under an "Experimental" heading only while the flag is on.
+The three strategy modules live in `zicato.selection.experimental`. A
+workspace whose contract names one of the three structures must add the
+flag; doing so rolls its epoch.
+
 ### One glossary defines every term a user surface uses
 
 `docs/design/VOCABULARY.md` is the one place a zicato term is defined. It

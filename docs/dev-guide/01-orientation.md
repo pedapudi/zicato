@@ -439,7 +439,8 @@ Every selection strategy uses it for each scheduled duel.
 type: `TournamentResult`.
 
 **tournament structure / `SelectionStrategy`** — the per-epoch shape of
-competition: gauntlet (default), single_elim, double_elim, swiss, racing.
+competition: gauntlet (default) and racing, plus single_elim, double_elim and
+swiss under the `experimental.tournament_structures` opt-in.
 Configured as `ScoringWeights.tournament_structure`
 (`TournamentStructure`, `src/zicato/core/tournament.py`) so it folds into
 the contract hash. The strategy abstraction lives in
