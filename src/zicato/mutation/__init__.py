@@ -37,7 +37,11 @@ Public API
 
 from __future__ import annotations
 
-from zicato.mutation.applier import apply_patches, apply_patches_unchecked
+from zicato.mutation.applier import (
+    apply_patches,
+    apply_patches_unchecked,
+    replacement_source,
+)
 from zicato.mutation.enumerator import enumerate_mutations
 from zicato.mutation.markers import (
     MARKER_FILE_PREFIX,
@@ -55,6 +59,7 @@ __all__ = [
     "enumerate_mutations",
     "apply_patches",
     "apply_patches_unchecked",
+    "replacement_source",
     "validate_patches",
     "validate_post_apply",
     "check_forbidden_ids",

@@ -12,9 +12,15 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
+from zicato.cli.example_scaffold import (
+    EXAMPLE_ROOT,
+    copy_example_project,
+    example_config_overlay,
+)
 from zicato.workspace.config_io import (
     CONFIG_FILENAME,
     GENERATION_SOURCE_BACKEND_KEY,
@@ -58,8 +64,15 @@ def initialize_workspace(
     instance_id: str,
     force: bool = False,
     reset_lineage: bool = False,
+    example: bool = False,
 ) -> dict[str, Any]:
     """Create ``workspace_root`` with an empty lineage and a config file.
+
+    ``example`` scaffolds a whole runnable project rather than a bare
+    workspace: the tree in :mod:`zicato.example_workspace` is copied next
+    to the workspace and the config written here names the copies, so
+    ``zicato evolve`` runs a first round against them with nothing hand-
+    authored. See :mod:`zicato.cli.example_scaffold` for what is copied.
 
     Returns the config that was written. Raises :class:`FileExistsError`
     if the workspace already exists and ``force`` is False, and also when
@@ -89,7 +102,11 @@ def initialize_workspace(
       see :func:`zicato.core.scoring_config.recommended_scaffold_weights`),
       written only when no ``scoring.json`` exists there yet (never
       clobbered rather than even with ``force`` — it is the operator's live
-      contract source, resolved by ``resolve_contract_inputs``).
+      contract source, resolved by ``resolve_contract_inputs``). Under
+      ``example`` the file written there is the example's own contract: a
+      gauntlet over four board entries with one candidate per round, which
+      is what a deterministic proposer and a four-entry board can actually
+      resolve.
     """
     if workspace_root.exists():
         if not force:
@@ -181,6 +198,21 @@ def initialize_workspace(
             },
         },
     }
+    project_root = workspace_root.resolve().parent
+    if example:
+        # The example declares its proposer as a bound class rather than a
+        # Foe episode, so the scaffold's Foe block would be a second,
+        # unused answer to the same question.
+        config.pop(PROPOSER_BLOCK_KEY, None)
+        overlay = example_config_overlay(project_root)
+        # ``models`` is merged rather than replaced: the guide the scaffold
+        # writes defines every role, and the example only fills two of them.
+        models = dict(config["models"])
+        models.update(overlay.pop("models"))
+        config["models"] = models
+        config.update(overlay)
+        copy_example_project(project_root)
+
     write_workspace_config(workspace_root, config)
 
     # Scaffold the operator's live scoring.json with the FULL effective
@@ -189,14 +221,19 @@ def initialize_workspace(
     # than implicit. Lives at the default contract-source location
     # (<workspace_root_parent>/scoring.json). Only written when absent: an
     # existing contract is the operator's, never overwritten.
-    scoring_scaffold = workspace_root.resolve().parent / "scoring.json"
+    scoring_scaffold = project_root / "scoring.json"
     if not scoring_scaffold.exists():
-        from zicato.core.scoring_config import recommended_scaffold_weights  # noqa: PLC0415
-        from zicato.epoch.lifecycle import scoring_to_dict  # noqa: PLC0415
+        if example:
+            shutil.copyfile(EXAMPLE_ROOT / "scoring.json", scoring_scaffold)
+        else:
+            from zicato.core.scoring_config import (  # noqa: PLC0415
+                recommended_scaffold_weights,
+            )
+            from zicato.epoch.lifecycle import scoring_to_dict  # noqa: PLC0415
 
-        scoring_scaffold.write_text(
-            json.dumps(scoring_to_dict(recommended_scaffold_weights()), indent=2) + "\n"
-        )
+            scoring_scaffold.write_text(
+                json.dumps(scoring_to_dict(recommended_scaffold_weights()), indent=2) + "\n"
+            )
 
     # Sanity check that the config file is actually on disk now.
     assert workspace_is_initialized(
