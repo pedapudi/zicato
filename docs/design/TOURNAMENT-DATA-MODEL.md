@@ -15,6 +15,11 @@
 > halves: its field name (`tournament`) and its shape
 > (`{structure, params}`) must stay byte-identical across both
 > specifications.
+>
+> The reader module these sections cite as `dashboard/state_reader.py` has
+> since been split into the `zicato.query` package: the epoch view now lives
+> in `query/epoch_view.py` and the bracket reader in `query/tournament_view.py`.
+> Line numbers in the citations below predate that split and are not current.
 
 The tournament structure is a per-epoch configurable choice —
 `gauntlet` (the default), `single_elim`, `double_elim`, `swiss`,
@@ -455,7 +460,7 @@ state.
 
 ### 3.1 Extended fields on existing endpoints (additive)
 
-- **`GET /api/epoch`** (`build_epoch_view`, `state_reader.py:893`) — add
+- **`GET /api/epoch`** (`build_epoch_view`, `query/epoch_view.py`) — add
   a `tournament` block echoing the epoch's resolved structure:
   ```jsonc
   "tournament": { "structure": "swiss", "params": { "rounds": 4 } }
@@ -464,7 +469,7 @@ state.
   frontend defaults to gauntlet). This lets the Epoch view name the
   structure without a second fetch.
 
-- **`GET /api/tournaments`** (`build_bracket`, `state_reader.py:1400`) —
+- **`GET /api/tournaments`** (`build_bracket`, `query/tournament_view.py`) —
   add top-level `structure` and `structure_params`, and keep `matchups`
   / `champion_lineage` unchanged (the gauntlet shape).
   When the structure is non-gauntlet, ADD a `tournaments` field carrying

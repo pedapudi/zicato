@@ -31,9 +31,10 @@ zicato is the third member of an ecosystem:
 - **[goldfive](https://github.com/pedapudi/goldfive)** — orchestration scaffolding:
   goals, plans, per-turn drift analysis, an intervention ladder. Emits a typed
   event stream (`goldfive.v1.Event`) that names *what went wrong* in a run.
-- **[harmonograf](https://github.com/pedapudi/harmonograf)** — the observability
-  + HCI console: Gantt, graph, trajectory, intervention history. Renders the
-  goldfive stream live and lets operators steer.
+- **[harmonograf](https://github.com/pedapudi/harmonograf)** — the execution-trace
+  console: it renders a single run as a Gantt chart with lifelines, so an operator
+  can read what that run did step by step. It is a read-only view over recorded
+  evidence.
 - **zicato** — the meta-loop: same telemetry stream, but consumed across many
   runs. zicato aggregates drift into **loss patterns**, proposes structured
   edits to the system under test (agent instructions, tool descriptions, planner
@@ -45,7 +46,7 @@ zicato is the third member of an ecosystem:
 | Layer | Owner | Cadence |
 |---|---|---|
 | Single-turn refine (replan in response to drift) | goldfive | within one run |
-| Operator-driven steering | harmonograf | within one run |
+| Reading one run's execution trace | harmonograf | within one run |
 | **System-under-test rewrites across runs** | **zicato** | **across generations** |
 
 Model-backed adapters use named `target` and `evaluation` engines; a target is

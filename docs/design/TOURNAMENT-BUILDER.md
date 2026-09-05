@@ -11,7 +11,7 @@
 > launcher rail entry in the Settings drawer
 > (`dashboard/static/js/views/settings.js`), and the standalone
 > `zicato dashboard --view builder` command
-> (`zicato/cli/commands/builder.py`). The whole stack is exercised by the
+> (`zicato dashboard --view builder`). The whole stack is exercised by the
 > test suite (`tests/test_builder_*.py`, the JavaScript `builder.test.mjs`
 > and `settings.test.mjs`, and `tests/test_cli_builder.py`).
 > Operator-facing instructions live in the two builder skills.
