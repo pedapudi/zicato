@@ -1,12 +1,17 @@
 # Console simplification proposal
 
 This document is a proposal written on 2026-09-05. It describes intended changes
-to the console (the browser dashboard served by `zicato dashboard`) and the
-measurements behind them. Every number is taken at commit `74ed7514` of
-`main` with the command shown beside it, so a maintainer can re-run the
-measurement after any change. Proposals §3.2, §3.4, §3.5 and §3.6 are
-implemented and each ends with a sentence stating the state the code is in; the other
-proposals are not implemented.
+to the console (the browser dashboard served by `zicato dashboard`) and the measurements
+behind them. The numbers in §1, §2.5, §2.6 and §2.8 are taken at commit
+`74ed7514` of `main` with the command shown beside each. The numbers in
+§2.1, §2.2, §2.3, §2.4 and §2.7 are the output of `tools/console_measure.py`
+(§6) at commit `7a93f6a3`, the last commit before the stylesheet deletion of
+§3.7 and the model move of §3.9. The subcommand is named beside each table,
+so a maintainer can re-run the measurement after any change. Proposals
+§3.2, §3.3, §3.4, §3.5, §3.6, §3.7 and §3.9 and the export deletions of
+§2.2 are implemented, and each ends with a sentence stating the state the
+code is in (§3.3 in its decision paragraph); §3.1 and §3.8 are not
+implemented.
 
 The proposal is about the size and shape of the console's implementation.
 Every proposal keeps the constraints the console already carries:
@@ -48,45 +53,46 @@ under `src/zicato/tui/`, which reaches the workspace only over HTTP and reads
 
 ### 2.1 Copied code is a small fraction of the browser code
 
-A token-shingle clone finder (a script of about 60 lines: normalise each
-line by stripping whitespace, collapsing string literals and numbers, dropping
-blank, comment and brace-only lines; hash every window of eight consecutive
-lines; report every window seen twice and merge overlapping hits into
-maximal runs) gives:
+A token-shingle clone finder (`tools/console_measure.py clones`: normalise
+each line by stripping whitespace, collapsing string literals and numbers,
+dropping blank, comment and brace-only lines; hash every window of eight
+consecutive lines; report every window seen twice; merge the hits of one
+file pair whose two spans both overlap into one run, and count the
+duplicate copy's lines once per run) gives, over the 30,484 lines of
+browser code at `7a93f6a3`:
 
-| Pass | Clone pairs | Lines in the duplicate copies | Share of 31,223 |
+| Pass | Clone pairs | Lines in the duplicate copies | Share of 30,484 |
 | --- | --- | --- | --- |
-| exact text, window 8 | 21 | 217 | 0.7 % |
-| identifiers replaced by a placeholder, window 8 | 70 | 709 | 2.3 % |
-| identifiers replaced, window 12 | 13 | 183 | 0.6 % |
+| exact text, window 8 | 9 | 102 | 0.3 % |
+| identifiers replaced by a placeholder, window 8 (`--loose`) | 31 | 318 | 1.0 % |
+| identifiers replaced, window 12 (`--loose --window 12`) | 8 | 112 | 0.4 % |
 
 The families the loose pass finds:
 
-- `views/builder.js` carries 752 of the 709-line total's pair-ends (a file
-  pairs with itself). The repeated unit is a `controlRow(...)` declaration:
-  one per contract knob, 48 in all (12 in the weights section, 10 in the
-  overfitting section, 10 in the promote-gate section, 9 in the proposer
-  section, 3 in the field section, 1 in the board section, 1 in the
-  experimental section). Each row carries a title, a default and a help
-  paragraph; the 48 `body:` strings hold 14,524 characters of help text. Command: `grep -c "controlRow("
-  static/js/views/builder.js`; `grep -E "^\s+body: '" static/js/views/builder.js
-  | wc -c`.
-- `svg.js` lines 381–396 and `console.js` lines 80–97 are self-repeating
-  lines (a path-string builder that emits `L`/`Q` segments, and the Google
-  Fonts family list). They are lists, and there is nothing to fold.
+- `views/builder.js` carries 95 of the 318 lines' pair-ends (a file pairs
+  with itself). The repeated unit is a `controlRow(...)` declaration: one
+  per contract knob, 48 in all, each a title and an input over the help
+  and default `/builder/config` serves (§3.5). Command: `grep -c
+  "controlRow(" static/js/views/builder.js`.
+- `console.js` lines 80–96 (the Google Fonts family list), `ui.js` 153–168
+  and 201–215, `data.js` 90–108, `shell.js` 48–62 and `facets.js` 73–98 are
+  self-repeating lines: lists of similar entries, with nothing to fold.
 - `views/instrument.js` `buildLanding` and `views/traces.js` `buildLanding`
-  share 14 lines: both open with a page head and a "pick a reflection" list.
+  share 14 lines: both open with a page head and a "pick a reflection" list;
+  a second pair of 11 lines follows at `instrument.js` 363–381 and
+  `traces.js` 199–215.
 - `builder/chat.js` 151–163 and `shell.js` 340–354 share the pointer and
-  keyboard wiring of a drag handle (12 lines).
-- `tree.js` 269–315 repeats its branch-row builder for two branch kinds
-  (11 lines); `views/settings.js` 465–508 repeats a picker mount (12 lines).
+  keyboard wiring of a drag handle (11 lines).
+- `tree.js` 275–290 repeats its branch-row builder for a second branch kind
+  at 296–314 (12 lines); `views/settings.js` 465–477 repeats a picker mount
+  at 496–508 (11 lines).
 
 Conclusion: the console's size comes from breadth (many panels, many
 figures, many knobs), and from the size of single functions, rather than
-from copy and paste. Twenty-four functions exceed 150 lines; the largest are
-`views/board.js render` 525, `views/epoch.js render` 507, `dag.js
-lifecycleDag` 435, `views/candidate.js paintCandidate` 428,
-`views/structure.js buildLiveModel` 377, `svg.js elimFlow` 354. Command: a
+from copy and paste. At `74ed7514`, twenty-four functions exceed 150 lines;
+the largest are `views/board.js render` 525, `views/epoch.js render` 507,
+`dag.js lifecycleDag` 435, `views/candidate.js paintCandidate` 428 and
+`buildLiveModel` 377 (in `tournament_model.js` since §3.9). Command: a
 20-line script that pairs each column-0 `function` with the next column-0 `}`.
 
 The shared builders in `ui.js` are in use: `dataTable` at 24 sites in
@@ -96,48 +102,45 @@ in 16 modules. The `renderView` scaffold is used by 4 views (`boards`,
 scaffold, which `docs/dev-guide/09-dashboard-and-query.md` §9.9.4 permits
 for a view whose flow diverges.
 
-### 2.2 The figure grammar has 55 exports, two of them unused, and two figures for every tournament structure
+### 2.2 The figure grammar has 52 exports, one of them unused, and two figures for three of the four tournament structures
 
-`svg.js` exports 55 names (`grep -c '^export' static/js/svg.js`) across 62
-top-level functions holding 3,798 lines. Sixteen modules import it as a
-namespace (`import * as svg`), five import named helpers. Counting call
-sites outside `svg.js` (a script that counts `svg.<name>(` and named-import
-uses per module):
+`svg.js` exports 52 names (`grep -c '^export' static/js/svg.js`). Counting
+call sites outside `svg.js` (`tools/console_measure.py exports`, which
+counts `svg.<name>(` and named-import uses per module, whether the module
+uses the name itself, and bare references in the tests):
 
 | Callers outside `svg.js` | Exports |
 | --- | --- |
-| none, and unused inside `svg.js` too | `NS`, `elbowPath` (15 lines together; `elbowPath` is referenced by one test) |
-| none in production; used inside `svg.js` and exported for tests | `finiteValues`, `channelDropPath`, `decollide`, `jitterColumn`, `fitInto`, `CHAR_EM`, `fitLabel`, `textPx`, `digestOpts`, `title`, `scale` |
+| none, and unused inside `svg.js` too | `NS` (one line; `elbowPath` left with the flow figure of §3.3) |
+| none in production; used inside `svg.js` and exported for tests | `finiteValues`, `decollide`, `jitterColumn`, `fitInto`, `CHAR_EM`, `fitLabel`, `textPx`, `digestOpts`, `title`, `scale` |
 | one | `gauntletFieldBarsDigest`, `elimRadialDigest`, `pairedSlopegraph`, `bumps`, `genDots`, `swissOverview`, `radarSilhouetteDigest`, `sparkbar`, `proposingDigest`, `diversityMatrixDigest`, `diversityMatrix`, `roundTimeline`, `reignGantt`, `extent`, `duelFlow`, `racingScalarTrackDigest`, `radarSilhouette`, `metaLoopLedgerDigest`, `waterfall`, `metaLoopLedger` |
-| two to six | `trajectoryStrip`, `valueBars`, `proposingTracker`, `gauntletFieldBars`, `valueDotPlot`, `racingScalarTrack`, `calibrationTrend`, `heatmap`, `sideBySideDiff`, `edgeText`, `elimRadial`, `swissLadder`, `survivalFunnel`, `elimFlow`, `sparkline` |
+| two to six | `trajectoryStrip`, `trajectoryStripDigest`, `valueBars`, `proposingTracker`, `gauntletFieldBars`, `valueDotPlot`, `racingScalarTrack`, `calibrationTrend`, `calibrationTrendDigest`, `heatmap`, `sideBySideDiff`, `edgeText`, `elimRadial`, `swissLadder`, `survivalFunnel`, `sparkline` |
 | many | `fmtPercent` 8 · `CROWN` 14 · `fmtSigned` 22 · `fmt` 115 · `isNum` 571 |
+
+**State.** `svg.NS`, `ui.linkButton` (§2.6) and `data.perJudgeForGen` (§2.3)
+are deleted; the exports pass reports no `svg.js` export without a caller.
 
 A figure with one caller is the normal case for a figure that draws one
 panel; the count says nothing about whether it earns its place. The
-overlap finding is about the tournament figures. Eight builders, 1,666
-lines, draw the five tournament structures, and every structure has two:
+overlap finding is about the tournament figures. Seven builders draw the
+five tournament structures; racing, swiss and gauntlet have two each:
 
 | Structure | Builders (lines) | Where each is drawn |
 | --- | --- | --- |
 | racing | `survivalFunnel` (286), `racingScalarTrack` (203) | funnel: epoch overview, structure view, builder preview; track: live hero, structure view |
 | swiss | `swissLadder` (186), `swissOverview` (136) | ladder: live hero, structure view, builder preview; overview: epoch overview |
-| single and double elimination | `elimFlow` (354), `elimRadial` (237) | flow: epoch overview, structure view, builder preview, live hero for double elimination; radial: structure view as the primary single-elimination figure and as a toggle beside the flow for double elimination, live hero for single elimination |
+| single and double elimination | `elimRadial` (237) | epoch overview, structure view, builder preview, live hero (§3.3) |
 | gauntlet | `duelFlow` (119), `gauntletFieldBars` (145) | duel flow: rounds view; field bars: live hero, structure view |
 
 The racing, swiss and gauntlet pairs draw different readings (an overview
 beside a per-rung ladder; a settled field beside a live one). The
-elimination pair draws the same served model (`rounds` plus `gen_states`)
-twice. The elimination and swiss structures run only for a contract that
-opts in through `experimental.tournament_structures`
-(`src/zicato/selection/experimental/`), so both figures of that pair draw
-for opted-in epochs only, while the racing and gauntlet pairs draw for
-every epoch. `CONSOLE-DESIGN-LANGUAGE.md` §4.1 names `elimFlow` as "the elim
-figure everywhere" and lists no radial bracket; `views/structure.js` lines
-686–760 and `live.js` lines 1114–1205 draw `elimRadial`. The radial figure
-owns 29 CSS rules (65 lines) under `dn-elimradial-*`, a digest function, and
-is named in 4 test files (10 references, 18 class references). Commands:
-`grep -n "svg.elimRadial(\|svg.elimFlow(" static/js/views/*.js static/js/live.js
-static/js/builder/preview.js`; `grep -rl elimRadial static/test`.
+elimination structures have one figure, `elimRadial`, which reads the
+served model (`rounds` plus `gen_states`) verbatim (§3.3). The elimination
+and swiss structures run only for a contract that opts in through
+`experimental.tournament_structures` (`src/zicato/selection/experimental/`),
+so their figures draw for opted-in epochs only, while the racing and
+gauntlet pairs draw for every epoch. Command: `grep -n "svg.elimRadial("
+static/js/views/*.js static/js/live.js static/js/builder/preview.js`.
 
 The five trend figures (`sparkline` 118, `sparkbar` 54, `trajectoryStrip`
 134, `calibrationTrend` 138, `racingScalarTrack` 203) read different inputs
@@ -152,7 +155,9 @@ holes and `{param}` segments both become `{x}`) and matches it against the
 79 served routes (78 under `/api/` and `/events`). Control POSTs reach the server through `postControl` and
 `postFieldOverride` in `core/api.js`, the transcript delta through
 `transcript_stream.js`, and `/events` through `core/sse.js`, so those count
-as read. The result, at `74ed7514`:
+as read. The result (`tools/console_measure.py routes`, which joins
+`+`-concatenated literals on one line and matches a hole to any one path
+segment), at `7a93f6a3`:
 
 - 62 routes are read by the browser console; 14 routes under `/api/` by the terminal console
   (`/api/health`, `/api/epoch`, `/api/lineage`, `/api/workspace`,
@@ -160,19 +165,23 @@ as read. The result, at `74ed7514`:
   `/api/tournament-structure/…`, `/api/epoch/{id}/cost`,
   `/api/epoch/{id}/trajectory`, `/api/reflections`, and three
   `/api/reflection/{id}/…` reads).
-- 16 GET routes have no reader in either console: `/api/active-runs`,
+- 17 GET routes have no reader in either console: `/api/active-runs`,
   `/api/config`, `/api/contract-diff/{epoch_id}`,
   `/api/drift-movements/{generation_id}`,
+  `/api/epoch/{epoch_id}/analysis.html`,
   `/api/epoch/{epoch_id}/execution-plan`, `/api/epoch/{epoch_id}/journal`,
   `/api/epoch/{epoch_id}/journal.md`, `/api/files`,
   `/api/files/{epoch_id}/{generation_id}/tree`, `/api/heartbeat`,
   `/api/live/execution-plan`, `/api/matchup/{entry_id}/conversations`,
   `/api/run/{run_id}/per-judge`, `/api/search`, `/api/state`,
   `/api/tournaments/{generation_id}`. `CONTRACTS.md` §1 documents six of
-  them as operator surfaces for direct HTTP requests. `/api/epoch/{id}/analysis.html`
-  is named by the CLI's report command as the rendered page.
-- Two accessors in `data.js` have no caller: `perJudgeForGen` and
-  `fieldStatusSummary` (the latter is used by one test).
+  them as operator surfaces for direct HTTP requests; the CLI's report
+  command, which is not a console, names `/api/epoch/{id}/analysis.html` as
+  the rendered page.
+- `data.js perJudgeForGen` had no caller and is deleted, so the
+  `/api/generation/{epoch_id}/{generation_id}/per-judge` route it read joins
+  the routes no console reads; `fieldStatusSummary` is called by one test
+  and no module.
 
 **The beat path reads components the views discard.** On every
 `state_change` frame the client fetches `/api/environment` once
@@ -216,48 +225,55 @@ rounds (`/api/epoch/{id}/round-timeline`). `views/epoch.js` makes
 15 accessor calls in the same way; `views/home.js` and `views/epoch.js`
 both fetch `trajectory`, `tournamentCost` and `calibrationTrend`.
 
-### 2.4 Sixty-two class selectors are styled and never emitted
+### 2.4 Fifty-eight class selectors are styled and never emitted at `7a93f6a3`
 
-A five-source pass over the stylesheet takes every class in a selector and
-counts references in (1) string literals under `static/js/**` and
-`static/console.js`, (2) `static/index.html`, (3) `static/test/**`,
-(4) Python under `src/zicato/**`, and (5) the CSS itself. A class built at
-run time from a prefix (`'dn-turn dn-turn-' + role`, `` `dt-glyph-${kind}` ``)
-is matched by prefix. The pass collects every string literal whose last
-token ends in `-` and is followed by `+` or a template hole. That yields 23
-prefixes (`dn-chip-`, `dn-kind-`, `dn-turn-`, `dn-instr-t-`, `dt-glyph-`,
-`dt-logs-t-`, …).
+A five-source pass over the stylesheet (`tools/console_measure.py css`)
+takes every class in a selector and counts references in (1) string
+literals under `static/js/**` and `static/console.js`, (2)
+`static/index.html`, (3) Python under `src/zicato/**`, (4) the dynamic
+prefixes the JavaScript completes at run time, and (5) `static/test/**`.
+Test references are reported separately, because a test naming a class the
+console never emits pins nothing. The pass collects every string literal whose
+last token ends in `-` and is followed by `+` (`'dn-turn dn-turn-' +
+role`) or a template hole (`` `dt-glyph-${kind}` ``); a class that starts
+with such a token is matched by prefix. That yields 23 prefixes
+(`dn-chip-`, `dn-kind-`, `dn-turn-`, `dn-instr-t-`, `dt-glyph-`,
+`dt-logs-t-`, …). A literal whose last token is only the family name
+(`` `dn-pill dn-${verdict}` `` in `ui.js verdictPill`) explains a class when
+the rest of the class is a bare string literal somewhere in the JavaScript
+(`'pending'`, `'deferred'`). `dn-active`, `dn-nav`, `dn-running` and
+`dn-status` are kept on that ground.
 
 | Measure | Value |
 | --- | --- |
-| distinct class selectors | 1,579 |
-| rules | 2,075 |
-| classes with no static reference in JS, HTML or Python | 146 |
-| of those 146, the ones a dynamic prefix explains | 84 |
-| classes with no static and no dynamic reference | 62 |
-| of those 62, the ones only a test names | 10 (`dt-type-btn`, `dn-set-select`, `dt-swiss-pairings`, `dn-deferred`, `dn-pending`, `dn-radar-axistick`, `dn-viewhost`, `dt-run-pulse`, `dt-struct-strip`, `dt-type-switch`) |
-| rules made only of unreferenced classes | 73, about 170 lines |
-| classes referenced from one JS site only | 1,079 (68 %) |
+| distinct class selectors | 1,548 |
+| rules | 2,012 |
+| classes with no static reference in JS, HTML or Python | 148 |
+| of those 148, the ones a dynamic prefix explains | 90 |
+| classes with no static and no dynamic reference | 58 |
+| of those 58, the ones only a test names | 8 (`dt-type-btn`, `dn-set-select`, `dt-swiss-pairings`, `dn-radar-axistick`, `dn-viewhost`, `dt-run-pulse`, `dt-struct-strip`, `dt-type-switch`) |
+| rules made only of unreferenced classes | 72, 95 lines |
+| classes referenced from one JS site only | 1,087 (70 %) |
 
 The unreferenced families are the remains of retired chrome:
 
 - a breadcrumb (`dn-crumb*`, `dn-crumbs`);
-- a top bar and brand block (`dn-topbar*`, `dn-brand*`, `dn-nav*`);
-- inline theme and typeface buttons (`dn-theme-btn`, `dn-type-btn`,
+- a top bar and brand block (`dn-topbar*`, `dn-brand*`, `dn-nav-link`);
+- inline theme and typeface buttons (`dn-theme-*`, `dn-type-*`,
   `dt-type-*`);
-- a connection status dot (`dn-status*`, `dn-connected`, `dn-running`,
-  `dn-pending`);
+- a connection status dot (`dn-status-dot`, `dn-connected`);
 - a hand-rolled diff (`dn-diff-*`) and a paired-slopegraph grid
   (`dn-pslope-grid/-cell/-title`);
 - a structure strip (`dt-struct-strip*`, `dt-struct-over`),
-  `dt-funnel-card`, `dt-swiss-pairings`, `dt-swiss-round-h`;
-- `dn-alt-*`, `dn-patch-scalar*`, `dn-pairing-*`, `dn-illustrative-banner`,
-  `dn-evalmtx-flip`, `dn-set-panel`, `dn-set-kvrow-static`, `dn-viewhost`,
-  `dt-run-pulse`, `dt-split-b`, `dn-radar-axistick`, `dn-active`,
-  `dn-deferred`.
+  `dt-funnel-card`, `dt-swiss-pairings`, `dt-swiss-round-h`,
+  `dn-pairing-*`;
+- `dn-alt-*`, `dn-patch-scalar*`, `dn-illustrative-banner`,
+  `dn-evalmtx-flip`, `dn-set-panel`, `dn-set-kvrow-static`,
+  `dn-set-select`, `dn-viewhost`, `dt-run-pulse`, `dn-radar-axistick`, and
+  `mono`, which `style.css` styles beside the `code` element.
 
-Selector counts by component prefix show where the stylesheet's weight
-sits: `dn-bld` (the builder) 240 selectors, `dt-live` 75, `dn-instr` 72,
+Selector counts by component prefix at `74ed7514` show where the
+stylesheet's weight sits: `dn-bld` (the builder) 240 selectors, `dt-live` 75, `dn-instr` 72,
 `dn-elimflow` 65, `dn-roundtl` 64, `dn-evalmtx` 61, `dn-set` 53,
 `dn-metaledger` 48, `dn-funnel` 46, `dn-swissladder` 39, `dn-fieldbars`
 39, `dn-scalartrack` 37, `dn-elimradial` 34, `dn-duelflow` 28. The 16
@@ -335,29 +351,30 @@ What each of the four modules owns:
 | `live.js` | 1,416 | `LiveController` (536 lines, lines 709–1245: the band, the drawer, the live figure, the match rows), `ActivityTicker`, `liveProgress` (67), `deriveActivity` (62), `liveSnapshot`, the pipeline and rung steppers, the kill and follow buttons. One export is imported elsewhere (`LiveController`, by `shell.js`); the other ten are exported for tests. |
 | `livestatus.js` | 547 | `deriveLiveStatus` (119) and `deriveLiveness` fold heartbeat phase, active runs and the active tournament into one verdict; `livenessFor` is the entry point 13 modules import; `liveStatusDigest`, `treeLiveSet`, the labels. Seven exports have no importer; all seven are used inside the module and by tests. |
 | `shell.js` | 1,393 | `mountShell` (241), `buildTreeModel` (177), `wireRailHandle` (77), `renderStatus` (75, the chrome status pill), `buildLoopControls` (46), `renderLoopControls` (30), `dispatch` (56), `dispatchSettingsOverlay` (43), `onStateChanged` (33), `refreshLive` (21). |
-| `ui.js` | 1,159 | 85 exports: `gatedSwap`, `renderView`, `dataTable`, `section`, `empty`, the pills, `overrideControlCell` (79), `renderMarkdown` (74), the theme and typeface tables, `persistColor` (41). Ten exports have no importer; three are dead (`linkButton`, 3 lines) or test-only (`_resetPendingOverrides`, 13), the rest are used inside the module. |
+| `ui.js` | 1,159 | 85 exports: `gatedSwap`, `renderView`, `dataTable`, `section`, `empty`, the pills, `overrideControlCell` (79), `renderMarkdown` (74), the theme and typeface tables, `persistColor` (41). Ten exports have no importer; one is test-only (`_resetPendingOverrides`, 13), the rest are used inside the module (`linkButton`, which no site called, is deleted). |
 
 Three functions derive liveness at different scopes and compose rather than
 repeat: `livestatus.livenessFor` (the loop), `unit_liveness.unitLiveness`
 (one board unit; it composes the loop verdict with the active-run record),
-and `live.liveProgress` (progress of the running tournament). The overlap
-that remains is structural: `buildLiveModel` (377 lines) and the three
-`buildLive*Model` wrappers sit in `views/structure.js` and are called only
-from `live.js`, so the live hero depends on a view module and the view
-module carries code no view calls.
+and `live.liveProgress` (progress of the running tournament).
+`buildLiveModel` (377 lines) and the three `buildLive*Model` wrappers are
+called only from `live.js`; they are in `tournament_model.js` (§3.9), so
+the live hero imports no view module.
 
 ### 2.7 Tests pin markup in about a third of their assertions, and endpoint-keyed fixtures pin the route table
 
 The harness exports `assert`, `assertEqual` and `assertDeep`. Classifying
-every assertion line in the 67 test files (`grep -cE "\bassert(Equal|Deep)?\s*\("`
-with a second pattern for what the line names):
+every assertion line in the 67 test files (`tools/console_measure.py
+assertions`: a line that quotes a class literal counts as the first row,
+otherwise one naming a DOM property as the second, otherwise one calling
+`querySelector` as the third), 5,297 lines at `7a93f6a3`:
 
 | Assertion names | Count | Share |
 | --- | --- | --- |
-| a `dn-`/`dt-` class literal | 835 | 16 % |
-| `textContent`, `innerHTML`, an attribute, `tagName`, `classList` or `dataset` | 1,010 | 19 % |
-| `querySelector` inside the assertion | 17 | 0 % |
-| none of these (a digest string, a count, node identity across two renders, a fetched path, a thrown error, a model field) | 3,396 | 65 % |
+| a `dn-`/`dt-` class literal | 859 | 16 % |
+| `textContent`, `innerHTML`, an attribute, `tagName`, `classList` or `dataset` | 1,006 | 19 % |
+| `querySelector` inside the assertion | 8 | 0 % |
+| none of these (a digest string, a count, node identity across two renders, a fetched path, a thrown error, a model field) | 3,424 | 65 % |
 
 A further 1,195 non-assertion lines select DOM or name a class to find the
 node under test. 699 distinct `dn-`/`dt-` class names appear in tests, 44 %
@@ -654,6 +671,12 @@ closes the check.
 
 **Depends on.** Do after §3.3 so the pass runs once over the final set.
 
+**State.** Implemented. `console.css` holds no rule whose every selector
+names an unreferenced class: the 72 rules (95 lines) the pass found at
+`7a93f6a3` and the `.dn-evalmtx-flip` selector are deleted, with the nine
+test lines that named the eight test-only classes.
+`tools/test_console_measure.py` holds the pass at zero dead rules.
+
 ### 3.8 Feed the node fixtures from the recorded endpoint responses
 
 **Change.** The Python golden `tests/data/endpoint_route_snapshot.json`
@@ -697,6 +720,12 @@ imports from a model module rather than from a view.
 **Risk and check.** None beyond the suite.
 
 **Depends on.** Nothing.
+
+**State.** Implemented. `static/js/tournament_model.js` (1,758 lines) holds
+the model builders, the resolver, the digests and the liveness helpers, and
+`views/structure.js` (661 lines) holds the renderers, the standings table
+and the diversity ribbon and imports the models it draws; `live.js` imports
+the model module and no view.
 
 ## 4. Ordering
 
@@ -779,5 +808,8 @@ The scripts behind §2 are short and are meant to be re-run:
 - **Function sizes** (§2.1, §2.6): column-0 `function` to the next
   column-0 `}` for JavaScript; `ast` for Python.
 
-Landing them under `tools/console_measure/` with the first proposal keeps
-every number in this document reproducible.
+`tools/console_measure.py` holds the first five as subcommands (`clones`,
+`exports`, `routes`, `css`, `assertions`), each printing a table or, with
+`--json`, one object; `tools/test_console_measure.py` runs every subcommand
+on the tree. The test-to-module map and the function-size pass are not in
+the tool.
