@@ -4,8 +4,8 @@ This document is a proposal written on 2026-09-05. It describes intended changes
 to the console (the browser dashboard served by `zicato dashboard`) and the
 measurements behind them. Every number is taken at commit `74ed7514` of
 `main` with the command shown beside it, so a maintainer can re-run the
-measurement after any change. Proposals §3.2, §3.4 and §3.6 are implemented
-and each ends with a sentence stating the state the code is in; the other
+measurement after any change. Proposals §3.2, §3.4, §3.5 and §3.6 are
+implemented and each ends with a sentence stating the state the code is in; the other
 proposals are not implemented.
 
 The proposal is about the size and shape of the console's implementation.
@@ -597,6 +597,15 @@ find; the Python test enumerates the builder's knob keys against the served
 map. `builder.test.mjs` and `builder_board_editor.test.mjs` pin the rows.
 
 **Depends on.** Nothing.
+
+**State.** Implemented. `zicato.builder.knob_help` reads the `Fields`
+section of each scoring-config dataclass docstring, `GET /builder/config`
+serves it as `knob_help` keyed by contract path, and every scoring-knob row
+of `views/builder.js` reads its help and default through `knobInfo(key)`;
+`tests/test_knob_registry.py` fails for a builder knob with no docstring
+entry and for a row key the server does not serve. The rows for the
+structure parameters and the proposer directory keep their own text, since
+neither is a scoring-config field.
 
 ### 3.6 Import the eval-health panel statically and file the panel modules as panels
 

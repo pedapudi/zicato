@@ -9,7 +9,7 @@ config dataclasses carries :func:`~zicato.core.scoring_config._knob` metadata
 optional :class:`~zicato.core.constraints.KnobConstraint` bound), and the
 mechanical registries derive from / are enforced against it.
 
-Three guards live here:
+Four guards live here:
 
 * :func:`test_derived_omit_set_equals_frozen_literal` — the contract
   canonicalizer's omit set is now DERIVED from the ``omit_at_default``
@@ -29,6 +29,12 @@ Three guards live here:
   bound is refused by the contract loader and by the builder operation that
   sets it, with the same message. Each surface used to carry its own copy of
   each rule, and the copies drifted.
+
+* :func:`test_every_builder_op_knob_has_served_help` and
+  :func:`test_builder_rows_name_served_knobs_only` — every knob the builder
+  exposes has a field docstring entry, which ``GET /builder/config`` serves
+  as the row's help text, and every help key the builder's rows name is a
+  served one.
 """
 
 from __future__ import annotations
@@ -42,6 +48,7 @@ import pytest
 import zicato.dashboard as _dashboard_pkg
 from zicato.builder import api as builder_api
 from zicato.builder import copilot_tools
+from zicato.builder.knob_help import knob_help, knob_paths
 from zicato.contract_draft import operations
 from zicato.contract_draft.draft import TournamentDraft
 from zicato.core.constraints import knob_constraint
@@ -364,7 +371,45 @@ def test_every_builder_op_knob_is_fully_wired() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Guard 3 — one declared bound per knob, honoured by loader and builder alike.
+# Guard 3 — every builder knob has served help, and the rows name only served keys.
+# ---------------------------------------------------------------------------
+
+
+def test_every_builder_op_knob_has_served_help() -> None:
+    """A knob the builder exposes has a docstring entry the builder can serve.
+
+    The builder's help popovers show ``GET /builder/config`` ``knob_help``,
+    which :func:`zicato.builder.knob_help.knob_help` reads from the ``Fields``
+    section of each knob dataclass's docstring. A field with a ``builder_op``
+    and no entry there would render a row with no help at all.
+    """
+    served = knob_help()
+    prefixes = knob_paths()
+    missing = [
+        knob.key
+        for knob in contract_knobs()
+        if knob.builder_op and not served.get(prefixes[knob.owner] + knob.name, {}).get("help")
+    ]
+    assert not missing, (
+        f"builder knob(s) with no served help text: {sorted(missing)}. Add an entry "
+        "for the field to the Fields section of its dataclass docstring."
+    )
+
+
+def test_builder_rows_name_served_knobs_only() -> None:
+    """Every ``knobInfo('<path>')`` key in builder.js is a served contract path.
+
+    A typo'd key would render a row with no help while the docstring entry
+    exists; the scan fails closed on an empty match set.
+    """
+    keys = re.findall(r"knobInfo\('([a-z_.]+)'", _BUILDER_JS.read_text(encoding="utf-8"))
+    assert keys, "no knobInfo(...) call found in builder.js; widen the scan"
+    unknown = sorted(set(keys) - set(knob_help()))
+    assert not unknown, f"builder.js names knob help key(s) the server does not serve: {unknown}"
+
+
+# ---------------------------------------------------------------------------
+# Guard 4 — one declared bound per knob, honoured by loader and builder alike.
 # ---------------------------------------------------------------------------
 
 #: One inadmissible value per knob that declares a bound. Both the contract

@@ -1,5 +1,16 @@
 # Changelog
 
+### The builder's knob help is the scoring configuration's documentation
+
+Each help popover in the tournament builder shows the docstring of the
+contract field it edits, read from `zicato.core.scoring_config` and served
+on `GET /builder/config` as `knob_help`, with the field's default. The
+browser code carries no copy of that text, so the help cannot drift from
+the configuration reference, and a knob the builder exposes without a
+docstring entry fails the knob registry's tests. Where a copy in the
+browser had said something the docstring did not, the docstring now says
+it; where the two disagreed, the docstring stands.
+
 ### Three tournament structures move behind an experimental opt-in
 
 `single_elim`, `double_elim` and `swiss` resolve only when `scoring.json`

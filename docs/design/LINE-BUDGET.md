@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 471,365 | +62,704 |
-| Production | 197,702 | 204,180 | +6,478 |
-| Production logic | 110,276 | 113,452 | +3,176 |
+| Total | 408,661 | 471,589 | +62,928 |
+| Production | 197,702 | 204,206 | +6,504 |
+| Production logic | 110,276 | 113,451 | +3,175 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,7 +84,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 71,573 | 37,856 | 26,441 | 30.2% |
+| src/zicato/dashboard | 71,519 | 37,752 | 26,332 | 30.3% |
 | src/zicato/query | 20,023 | 20,023 | 11,856 | 40.8% |
 | src/zicato/evolve | 12,662 | 12,662 | 7,533 | 40.5% |
 | src/zicato/reflection | 9,779 | 9,779 | 6,159 | 37.0% |
@@ -99,10 +99,10 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/tui | 3,839 | 3,839 | 2,535 | 34.0% |
 | src/zicato/telemetry | 4,684 | 4,684 | 2,236 | 52.3% |
 | src/zicato/runtime | 5,080 | 5,080 | 2,183 | 57.0% |
-| src/zicato/core | 6,274 | 6,274 | 1,970 | 68.6% |
+| src/zicato/core | 6,228 | 6,228 | 1,970 | 68.4% |
 | src/zicato/contract_draft | 2,928 | 2,928 | 1,684 | 42.5% |
+| src/zicato/builder | 2,341 | 2,341 | 1,330 | 43.2% |
 | src/zicato/health | 2,268 | 2,268 | 1,226 | 45.9% |
-| src/zicato/builder | 2,165 | 2,165 | 1,222 | 43.6% |
 | src/zicato/mutation | 2,607 | 2,607 | 1,135 | 56.5% |
 | src/zicato/board | 2,346 | 2,346 | 1,044 | 55.5% |
 | src/zicato/check | 1,566 | 1,566 | 956 | 39.0% |
@@ -382,3 +382,5 @@ dropped rows named.
 | Three tournament structures behind an experimental opt-in (production logic) | 113,824 | +130 | 113,954 | Issue #394: the executable growth is 24 lines in `core/scoring_config.py` (the dataclass, the field, the import and the refusal), 23 in `contract_draft/operations.py` (`set_experimental`), 18 in `cli/commands/evolve.py` (the callback and the option's help string), 18 in `dashboard/static/js/views/builder.js`, 10 in `selection/registry.py`, 9 each in `builder/copilot_tools.py` and `core/tournament.py`, 6 in `dashboard/static/js/builder/model.js`, 4 in `builder/api.py`, 3 in `runtime/resume.py`, 2 each in `core/types.py` and `selection/__init__.py`, and 1 each in `evolve/round_entry.py` and `cli/commands/tournament.py`. Nothing executable is removed. |
 | Production logic per subsystem and over time (total) | 471,301 | +699 | 472,000 | `tools/line_budget.py` adds 336: the partition of the three measurements by subsystem with each subsystem's prose share, the `--report` table, the per-subsystem table in this document that `--write-summary` writes and `--check-ledger` verifies, and the `--history` walk over first-parent commits through a content-addressed cache. `tests/test_line_budget.py` adds 352: hand counts of one small file per language in a subsystem of its own, the identity that the subsystems sum to the repository-wide counts, the table checks, and the history walk's caching and its refusal of a commit off the first-parent chain. The CI job writes the `--report` table into the job summary (8 lines) and `.gitignore` names the history cache (3). No production file changes, so the production and production-logic counts hold. |
 | Generation file and mutation readers in the query layer (total) | 471,206 | +215 | 471,421 | Proposal §3.4 of `docs/design/CONSOLE-SIMPLIFICATION.md`: the generation-file and mutation-site readers move from the dashboard package to `query/file_view.py` and `query/mutation_view.py`, and their seven routes become rows of the read-endpoint table in place of a hand-written factory. Production falls by 14 and production logic by 7, both limits ratcheting down to the measured totals: the deleted factory and its route bindings outweigh the seven rows, the `query` field that carries the content route's `?path=` coordinate, and the one degrade that names two refusals. The total rises for the coverage the move needs: 145 lines of the endpoint golden for the fourteen probes that pin what the seven routes serve for a coordinate the fixture holds, for one the guard rejects, and for the content route without its path, recorded from the hand-written handlers and asserted against the table; and the three boundary tests that hold every GET route outside a declared hand-written set to being a table row, every table reader to the query package, and the route module's `zicato` imports to `zicato.query`. |
+| Builder knob help served from the scoring docstrings (total) | 471,365 | +224 | 471,589 | Proposals §3.5 and §3.6 of `docs/design/CONSOLE-SIMPLIFICATION.md`: the builder's knob help is served from the scoring configuration's field docstrings, and the eval-health panel is imported statically. Production rises by 26 and its limit moves to 204,206: `src/zicato/builder/knob_help.py` is new, 173 lines, the reader of each knob dataclass's `Fields` docstring section, the markup stripper, the default renderer and the contract-path map; `builder/api.py` carries 3 for the `knob_help` key of `GET /builder/config`; `dashboard/static/js/builder/popover.js` 18 for rendering help paragraphs and a control's own note. Against that, `core/scoring_config.py` falls by 46 as its field entries are rewritten for the operator who reads them in the builder, six entries are added for the fields the builder exposes without one, and the field comments that restated the entries are trimmed; `dashboard/static/js/views/builder.js` falls by 107 as forty-six rows' help and default literals become `knobInfo(key)` reads; `views/evals.js` falls by 14 with the guarded dynamic import gone, and `panels/evals_health.js` by 1. Production logic falls by 1 and its limit ratchets down to 113,451. Tests carry the other 198 of the total: `tests/test_builder_knob_help.py` is new, 92 lines, the parser's paragraph, list, markup and default cases; `static/test/builder.test.mjs` adds 50 for the served-help rows; `tests/test_knob_registry.py` 45 for the two guards that fail a builder knob with no docstring entry and a row key the server does not serve; `tests/test_builder_api.py` 11 for the served payload. |
+| Builder knob help served from the scoring docstrings (production) | 204,180 | +26 | 204,206 | Proposals §3.5 and §3.6 of `docs/design/CONSOLE-SIMPLIFICATION.md`: the builder's knob help is served from the scoring configuration's field docstrings, and the eval-health panel is imported statically. Production rises by 26 and its limit moves to 204,206: `src/zicato/builder/knob_help.py` is new, 173 lines, the reader of each knob dataclass's `Fields` docstring section, the markup stripper, the default renderer and the contract-path map; `builder/api.py` carries 3 for the `knob_help` key of `GET /builder/config`; `dashboard/static/js/builder/popover.js` 18 for rendering help paragraphs and a control's own note. Against that, `core/scoring_config.py` falls by 46 as its field entries are rewritten for the operator who reads them in the builder, six entries are added for the fields the builder exposes without one, and the field comments that restated the entries are trimmed; `dashboard/static/js/views/builder.js` falls by 107 as forty-six rows' help and default literals become `knobInfo(key)` reads; `views/evals.js` falls by 14 with the guarded dynamic import gone, and `panels/evals_health.js` by 1. Production logic falls by 1 and its limit ratchets down to 113,451. Tests carry the other 198 of the total: `tests/test_builder_knob_help.py` is new, 92 lines, the parser's paragraph, list, markup and default cases; `static/test/builder.test.mjs` adds 50 for the served-help rows; `tests/test_knob_registry.py` 45 for the two guards that fail a builder knob with no docstring entry and a row key the server does not serve; `tests/test_builder_api.py` 11 for the served payload. |

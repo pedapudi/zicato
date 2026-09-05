@@ -1088,6 +1088,17 @@ def test_builder_op_undo_covers_revert_to_live(client: TestClient) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_builder_config_carries_knob_help_from_the_scoring_docstrings(client: TestClient) -> None:
+    body = client.get("/builder/config").json()
+    help_map = body["knob_help"]
+    assert help_map["pass_weight"]["default"] == "1.0"
+    assert help_map["pass_weight"]["help"].startswith("Coefficient on the (1 - pass_rate)")
+    assert help_map["overfitting.ladder.budget"]["default"] == "16"
+    assert help_map["proposer_quality.recombine_merge"]["default"] == "mechanical"
+    # served as plain text: no docstring markup reaches the browser.
+    assert not any("``" in e["help"] or ":attr:" in e["help"] for e in help_map.values())
+
+
 def test_builder_config_carries_server_derived_vocab(client: TestClient) -> None:
     resp = client.get("/builder/config")
     assert resp.status_code == 200

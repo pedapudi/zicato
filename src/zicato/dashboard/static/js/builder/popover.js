@@ -5,8 +5,10 @@
 // (NOT the pre-circled ⓘ — that stacked a circle inside the CSS circle and
 // read as two concentric rings). One ring, one mark.
 //
-// The additional-detail surface every param control carries: definition,
-// default, and the cost/contract tradeoff. Accessible — a real <button>
+// The additional-detail surface every param control carries: the title, the
+// default, the help paragraphs (`body`; a blank line separates paragraphs and
+// a newline separates the lines of a list), and an optional `note` about the
+// control itself, set faint under the help. Accessible — a real <button>
 // trigger (keyboard-focusable; Enter/Space/Escape), aria-expanded +
 // aria-describedby wiring, and the panel marked role="note". It opens on
 // hover OR focus and closes on blur / mouseleave / Escape. Positioned with
@@ -17,6 +19,21 @@
 import { el } from '../core/dom.js';
 
 let _idSeq = 0;
+
+// One <p> per paragraph; the lines of a paragraph (a list's items) are
+// separated by <br>, since the panel's text does not preserve newlines.
+function bodyParagraphs(body) {
+  if (!body) return [];
+  return String(body).split(/\n\s*\n/).map((para) => {
+    const lines = para.split('\n');
+    const children = [];
+    lines.forEach((line, i) => {
+      if (i) children.push(el('br'));
+      children.push(line);
+    });
+    return el('p', { class: 'dn-bld-pop-body' }, children);
+  });
+}
 
 export function infoPopover(info) {
   const data = info || {};
@@ -30,7 +47,8 @@ export function infoPopover(info) {
       el('span', { class: 'dn-bld-pop-def-k', text: 'default ' }),
       el('span', { class: 'dn-bld-pop-def-v dn-mono', text: String(data.def) }),
     ]) : null,
-    data.body ? el('p', { class: 'dn-bld-pop-body', text: data.body }) : null,
+    ...bodyParagraphs(data.body),
+    data.note ? el('p', { class: 'dn-bld-pop-body dn-faint', text: data.note }) : null,
   ].filter(Boolean));
 
   const trigger = el('button', {
