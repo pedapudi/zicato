@@ -71,6 +71,7 @@ forbidden** — §10.11 is the enforcement.
 | File | What lives there | Size |
 |---|---|---|
 | `src/zicato/builder/config.py` | `BuilderConfig` / `load_builder_config` — builder skills and theme | ~60 lines |
+| `src/zicato/builder/knob_help.py` | `knob_help` — the knob help `GET /builder/config` serves, read from the `Fields` section of each scoring-config dataclass docstring and keyed by contract path | ~170 lines |
 | `src/zicato/contract_draft/draft.py` | `TournamentDraft` (the mutable editable contract), `DraftStore` (sessions + named slots), `ContractDiff` | ~450 lines |
 | `src/zicato/contract_draft/operations.py` | **THE mutation surface** — every `set_*` op, `estimate_cost`, `validate`, `compare_drafts`, `preflight`, `apply`, and their result dataclasses | ~1,600 lines |
 | `src/zicato/builder/api.py` | `_dispatch_op` + the Starlette routes (`builder_routes`) | ~490 lines |
@@ -202,7 +203,7 @@ by the dashboard at `/builder/*`):
 
 | Method + route | Handler | What it does |
 |---|---|---|
-| `GET /builder/config` | `builder_config` | `load_builder_config(root).to_public_dict()` with credential values omitted + the server-derived `vocab` (entry kinds / expectation kinds / reads / judge modes / severities / drift kinds — the GUI never hardcodes an enum) |
+| `GET /builder/config` | `builder_config` | `load_builder_config(root).to_public_dict()` with credential values omitted + the server-derived `vocab` (entry kinds / expectation kinds / reads / judge modes / severities / drift kinds — the GUI never hardcodes an enum) + `knob_help` (`{contract path: {help, default}}` for every documented scoring knob, read from the field docstrings of `zicato.core.scoring_config`; the GUI's `knobInfo(key)` rows show it, so no help paragraph lives in the JS) |
 | `GET /builder/draft?session=ID` | `builder_draft` | the draft snapshot + cost/warnings/diff/slots + `proposer_dirs` (discovered `<workspace_parent>/proposers/*` candidates; degrades to `[]`) |
 | `POST /builder/op` | `builder_op` | `{session, op, args}` → dispatch → the shared envelope |
 | `POST /builder/apply` | `builder_apply` | `{session, confirm}` → `ApplyResult.to_dict()` |

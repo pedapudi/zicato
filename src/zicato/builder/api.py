@@ -3,7 +3,8 @@
 Four thin handlers over the operations in :mod:`zicato.contract_draft.operations`
 and the draft state in :mod:`zicato.contract_draft.draft`:
 
-* ``GET  /builder/config`` — the public builder config + ``chat_enabled``.
+* ``GET  /builder/config`` — the public builder config, ``chat_enabled``, the
+  enum ``vocab`` and the ``knob_help`` read from the scoring docstrings.
 * ``GET  /builder/draft?session=ID`` — the draft snapshot (init from the
   live contract when the session is new).
 * ``POST /builder/op`` ``{session, op, args}`` — run one operation and
@@ -31,6 +32,7 @@ from starlette.routing import Route
 
 from zicato.builder.config import load_builder_config
 from zicato.builder.copilot import builder_chat_enabled
+from zicato.builder.knob_help import knob_help
 from zicato.contract_draft import operations as ops
 from zicato.contract_draft.draft import DraftStore, TournamentDraft
 from zicato.core.types import (
@@ -398,6 +400,7 @@ def make_builder_endpoints(
                 **cfg.to_public_dict(),
                 "chat_enabled": builder_chat_enabled(root),
                 "vocab": _builder_vocab(),
+                "knob_help": knob_help(),
             }
         )
 

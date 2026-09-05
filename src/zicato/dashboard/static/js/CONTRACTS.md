@@ -29,7 +29,8 @@ static/
     svg.js, dag.js      — the figure builders
     matrix.js           — the dn-mtx table-grid primitives
     data.js             — the per-epoch read accessors
-    views/              — one module per detail pane
+    views/              — one module per routed detail pane
+    panels/             — page sections a view composes; no route
   test/                 — JS/DOM test harness
     harness.mjs         — minimal DOM + assert harness
     *.test.mjs          — per-module behaviour tests
@@ -420,10 +421,18 @@ that digest with the volatile keys named explicitly.
 `js/dag.js` builds the candidate lifecycle DAG, and `js/hovercard.js`
 owns the single hover-for-detail card every `moreMark` attaches to.
 
-## 7. The detail panes (`js/views/`)
+## 7. The detail panes (`js/views/`) and the panels (`js/panels/`)
 
 The shell hosts one detail pane at a time, chosen by the route (§8).
-Each module under `js/views/` exports `render(host, ctx, params)`.
+The view registry (`VIEWS` in `router.js`, `RENDERERS` in `shell.js`)
+names fifteen views, and each has a module under `js/views/` that exports
+`render(host, ctx, params)`. A page section that another view composes,
+with no route of its own, is a panel. `js/panels/evals_health.js` is one:
+the evals page imports it and mounts it into two hosts it owns. Three
+panels still sit under `js/views/` beside the views that mount them:
+`structure.js` (the tournament model builders and figures the epoch page,
+the rounds page and the live band draw), `boardstatus.js` and `ledger.js`
+(both mounted by the epoch page).
 
 - **home** — the workspace as a fleet: a cross-epoch overview strip, one
   compact card per epoch carrying its loss trendline, the composed
@@ -434,7 +443,7 @@ Each module under `js/views/` exports `render(host, ctx, params)`.
   board-by-generation drift-loss heatmap.
 - **gens** — the epoch's tournament rounds, optionally scoped to one
   round.
-- **structure** — the configured tournament structure, drawn per
+- **structure** (panel) — the configured tournament structure, drawn per
   structure kind.
 - **candidate** — one generation, comparison-first: the lifecycle DAG,
   the per-board scoring dot plot, every match-up, and the stacked
@@ -445,15 +454,16 @@ Each module under `js/views/` exports `render(host, ctx, params)`.
 - **boards** — the board trellis: one small multiple per board entry.
 - **board** — one board entry across every candidate, with the
   champion-versus-challenger transcript inline.
-- **boardstatus** — the train/holdout split and where each slice is
-  played, derived defensively from `/api/epoch`.
+- **boardstatus** (panel) — the train/holdout split and where each slice
+  is played, derived defensively from `/api/epoch`.
 - **evals** — the entries-by-candidates matrix: rows are board entries
   (the instrument), columns are candidates (what it measured).
-- **evals_health** — the board read as a measuring device: the measured
-  same-versus-same noise floor, the minimum-detectable-effect ladder,
-  and the ranked instrument-quality findings.
-- **ledger** — the epoch's experiments as one list: each proposed idea,
-  the sites it touched, and how the gate settled it.
+- **evals_health** (panel, under `js/panels/`) — the board read as a
+  measuring device: the measured same-versus-same noise floor, the
+  minimum-detectable-effect ladder, and the ranked instrument-quality
+  findings.
+- **ledger** (panel) — the epoch's experiments as one list: each proposed
+  idea, the sites it touched, and how the gate settled it.
 - **instrument** — the board-reflection lens: the bill of health, the
   practice review, the judge audit, and the adjudication x-ray.
 - **traces** — imported foreign trajectories: one trajectory strip per

@@ -47,11 +47,14 @@ in `js/CONTRACTS.md`.
   `ui.js` (digest-gated swap, pills, themes, typefaces), `data.js` (the
   per-epoch read accessors), plus `convo.js`, `facets.js`, `rounds.js`,
   `swatchdropdown.js`, `transcript_stream.js`, `turns.js`,
-  `typefacedropdown.js` and `unit_liveness.js`. Each module under
-  `js/views/**` paints one detail pane: `home`, `epoch`, `gens`,
-  `candidate`, `board`, `boards`, `boardstatus`, `builder`, `diff`,
-  `evals`, `evals_health`, `instrument`, `ledger`, `logs`, `mutations`,
-  `publication`, `settings`, `structure`, `traces`.
+  `typefacedropdown.js` and `unit_liveness.js`. Each routed view has a
+  module under `js/views/`: `home`, `epoch`, `gens`, `candidate`,
+  `board`, `boards`, `builder`, `diff`, `evals`, `instrument`, `logs`,
+  `mutations`, `publication`, `settings`, `traces`. `js/panels/` holds a
+  page section a view composes rather than routes to (`evals_health`, the
+  evals page's instrument-health panel); `boardstatus`, `ledger` and
+  `structure` are panels of the same kind that still sit under
+  `js/views/` beside the epoch page that mounts them.
 - `css/console.css` — all console styling: the sixteen-theme `--v2-*`
   six-role token contract (swapped by `[data-t-theme]`), the typeface
   tokens (`[data-t-type]`), and every fit-to-width SVG mark's classes

@@ -32,6 +32,15 @@ const CONFIG = {
     severities: ['info', 'warning', 'critical'],
     drift_kinds: ['tone', 'format'],
   },
+  // the knob help the server reads from the scoring configuration's field
+  // docstrings, keyed by contract path; a knob absent here renders its row
+  // with no help paragraph.
+  knob_help: {
+    pass_weight: { help: 'Coefficient on the miss term.\n\nEvery measured channel rides namespace_weights instead.', default: '1.0' },
+    severity_weights: { help: 'Per-severity multipliers inside the drift-loss aggregation.', default: '{"critical": 10.0, "info": 1.0, "warning": 3.0}' },
+    holdout_margin: { help: 'The scalar tolerance the holdout confirmation applies.', default: 'unset' },
+    namespace_weights: { help: 'Per-namespace coefficients of the scalar:\n* Positive: higher is worse.\n* Negative: higher is better.', default: '{"drift:": 1.0}' },
+  },
 };
 
 function freshDraft() {
@@ -1221,6 +1230,47 @@ test('builder view: Weights adds the default-judge / plan-revision / runtime sca
   await setNum('Not completed weight', 25);
   assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.not_completed_weight === 25),
     'the not-completed row posts set_weights {not_completed_weight}');
+});
+
+// The dn-bld-row that holds a control.
+function rowOf(host, control) {
+  return byClass(host, 'dn-bld-row').find((r) => allDesc(r).includes(control));
+}
+
+test('builder view: a knob row reads its help paragraphs and default from /builder/config knob_help', async () => {
+  const host = await mountAt('Weights');
+  const passRow = rowOf(host, byAria(host, 'dn-bld-num', 'Pass weight'));
+  assert(passRow, 'the pass-weight row renders');
+  assertEqual(firstClass(passRow, 'dn-bld-pop-title').textContent, 'pass_weight', 'the popover title is the contract path');
+  assertEqual(firstClass(passRow, 'dn-bld-pop-def-v').textContent, '1.0', 'the default is the served one');
+  const paras = byClass(passRow, 'dn-bld-pop-body').map((n) => n.textContent);
+  assertEqual(paras.join(' | '), 'Coefficient on the miss term. | Every measured channel rides namespace_weights instead.',
+    'each served paragraph renders as its own <p>');
+  // a knob the served map lacks renders its row with a title and no help.
+  const judgeRow = rowOf(host, byAria(host, 'dn-bld-num', 'Default judge weight'));
+  assertEqual(firstClass(judgeRow, 'dn-bld-pop-title').textContent, 'default_judge_weight', 'the title still names the knob');
+  assertEqual(byClass(judgeRow, 'dn-bld-pop-body').length, 0, 'no help paragraph is invented');
+  assertEqual(firstClass(judgeRow, 'dn-bld-pop-def-v'), null, 'no default is invented');
+  // a mapping row names its key in the title and reads the field's help.
+  const sevRow = rowOf(host, byAria(host, 'dn-bld-num', 'Severity weight warning'));
+  assertEqual(firstClass(sevRow, 'dn-bld-pop-title').textContent, 'severity_weights["warning"]', 'the mapping row title names the key');
+  assertEqual(firstClass(sevRow, 'dn-bld-pop-body').textContent, 'Per-severity multipliers inside the drift-loss aggregation.',
+    'the mapping row reads the field help');
+  // a list inside a paragraph keeps one line per item.
+  const nsRow = rowOf(host, byAria(host, 'dn-bld-num', 'Namespace weight drift:'));
+  const nsBody = firstClass(nsRow, 'dn-bld-pop-body');
+  assertEqual(nsBody.children.filter((n) => String(n.tagName).toLowerCase() === 'br').length, 2, 'the two list items follow line breaks');
+});
+
+test('builder view: a row whose control has its own convention states it as a faint note under the served help', async () => {
+  const host = await mountAt('Gate');
+  const row = rowOf(host, byAria(host, 'dn-bld-num', 'Holdout margin'));
+  const bodies = byClass(row, 'dn-bld-pop-body');
+  assertEqual(bodies[0].textContent, 'The scalar tolerance the holdout confirmation applies.', 'the served help comes first');
+  const note = bodies[bodies.length - 1];
+  assert(note.classList.contains('dn-faint'), 'the note is set faint');
+  assert(note.textContent.includes('-1'), 'the note states the form\'s -1 convention');
+  assertEqual(firstClass(row, 'dn-bld-pop-def-v').textContent, 'unset', 'the default is the served one');
 });
 
 test('builder view: Weights severity_weights editor renders FIXED vocab rows + posts the WHOLE mapping', async () => {

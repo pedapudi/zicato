@@ -134,52 +134,59 @@ def _knob(
 
 @dataclass(frozen=True, slots=True)
 class LadderConfig:
-    """The Ladder/Thresholdout governor over the holdout query (OVERFITTING.md §4, §12 #2).
+    """The Ladder governor over holdout queries (OVERFITTING.md §4).
 
-    The train/holdout split and the holdout-*confirmation* step live in
-    :class:`OverfittingConfig`. This sub-config governs *how* that holdout
-    is queried across an epoch's rounds, after Blum & Hardt's Ladder: a
-    reused holdout stays valid under an adaptively-querying proposer only if
-    every interaction with it is mediated by a mechanism that limits the
-    information leaked back. The two rules:
+    The train/holdout split and the holdout confirmation step live in
+    :class:`OverfittingConfig`. This block governs how that holdout is
+    queried across an epoch's rounds, after Blum and Hardt's Ladder: a
+    reused holdout stays valid under a proposer that adapts to its answers
+    only when every query passes through a mechanism that limits the
+    information leaked back. Two rules do that:
 
-    * **Release rule.** A new holdout-based signal is released only when the
-      *train-measured* improvement clears the threshold beyond the noise
-      band. Within the band the previous best is re-reported, so the
-      proposer cannot chase board fluctuations.
-    * **Budget.** Each holdout query charges a finite per-epoch budget; once
-      exhausted, the runner schedules no further holdout comparisons. The
-      training verdict then decides the round without holdout gating.
+    * Release rule. A holdout-based signal is released only when the
+      train-measured improvement clears a threshold beyond the noise band.
+      Within the band the previous best is reported again, so the proposer
+      cannot chase board fluctuations.
+    * Budget. Each holdout query charges a finite per-epoch budget. Once it
+      is spent, the runner schedules no further holdout comparison and the
+      training verdict decides the round.
 
-    Folded into the contract hash through :class:`OverfittingConfig` →
-    :class:`ScoringWeights` (the canonicalizer recurses into nested frozen
-    dataclasses), so changing any knob — or the one-time default-on rollout —
-    rolls the epoch, exactly as retuning ``promote_margin`` does.
+    Part of the contract hash through :class:`OverfittingConfig`, so a
+    change to any field rolls the epoch. An empty holdout (a small board, or
+    the split switched off) leaves nothing to govern: every holdout query
+    is then answered directly.
 
-    Default-on with a safe auto-degrade: an empty holdout (small board, split
-    disabled) leaves nothing to govern, so the Ladder is a no-op and every
-    holdout query is answered directly.
+    Each field entry below is served to the tournament builder as the
+    knob's help text.
 
     Fields
     ------
     enabled:
-        Master switch for the Ladder governor. ``True`` by default. When
-        ``False`` the holdout confirmation runs unmediated: every query is
-        answered, with no budget and no release rule.
+        Switches the Ladder governor on. On by default. When off, the
+        holdout confirmation runs unmediated: every query is answered, with
+        no budget and no release rule. The governor is what keeps a reused
+        holdout valid under a proposer that adapts to its answers.
     threshold:
-        The train-improvement bar the release rule applies. ``None``
-        (default) derives it from :attr:`ScoringWeights.promote_margin` so
-        the Ladder reuses the gate's existing noise threshold; a float pins
-        it explicitly.
+        The train-side improvement a round must show before a holdout
+        signal is released at all. Unset by default, which derives the bar
+        from ``promote_margin`` so the Ladder reuses the gate's noise
+        threshold; a number pins it. Raising it withholds the holdout query
+        from a round that clears the gate on train, and that train promote
+        then stands unconfirmed. To widen the tolerance of the confirmation
+        that runs after release, set ``holdout_margin`` instead. Must be
+        ``>= 0``.
     budget:
-        Per-epoch holdout-query budget. Each round that consults the holdout
-        charges one. When the budget is exhausted the runner stops consulting
-        the holdout and preserves the training verdict. Must be ``>= 0``
-        (``0`` schedules no holdout comparison).
+        Per-epoch holdout-query budget. Each round that consults the
+        holdout charges one. When the budget is spent the runner stops
+        consulting the holdout and the training verdict decides the round.
+        The finite budget is what keeps a reused holdout statistically
+        valid under an adaptive proposer. Must be ``>= 0``; ``0`` schedules
+        no holdout comparison.
     noise_scale:
-        Width of the noise band added to the threshold. ``0.0`` (default) is
-        the parameter-free Ladder — no calibration needed. Reserved for
-        DP-grade noise calibration later; must be ``>= 0``.
+        Width of the noise band added to the release threshold. ``0.0``
+        (default) is the parameter-free Ladder, which needs no calibration.
+        Reserved for differential-privacy-grade noise calibration; must be
+        ``>= 0``.
     """
 
     enabled: bool = field(
@@ -226,81 +233,78 @@ def _default_ladder_config() -> LadderConfig:
 
 @dataclass(frozen=True, slots=True)
 class OverfittingConfig:
-    """Anti-overfitting controls: the train/holdout board split + leakage gate.
+    """Anti-overfitting controls: the train/holdout board split and the leakage gate.
 
-    Part of the frozen evaluation contract: it is modelled as a field of
-    :class:`ScoringWeights` (and therefore folds into the contract hash
-    automatically through the existing scoring canonicalizer), so changing
-    any knob — or the one-time default-on rollout — rolls the epoch,
-    exactly as retuning ``promote_margin`` does. A run that splits a holdout
-    out of the board, and confirms promotions against it, selects champions
-    under a different rule than one that does not, which is the
-    contract-roll rationale.
+    A field of :class:`ScoringWeights`, so it folds into the contract hash
+    through the scoring canonicalizer and a change to any field rolls the
+    epoch. A run that holds a slice of the board out and confirms
+    promotions against it selects champions under a different rule from one
+    that does not.
 
-    Every field is default-on with a safe auto-degrade: a board too small
-    to split (fewer than :attr:`min_board_size_for_split` entries, and no
-    explicit ``holdout`` tag) yields an *empty* holdout, and the whole
-    machine collapses to the pre-split behaviour byte-for-byte.
+    Every field is on by default with a safe degrade: a board too small to
+    split (fewer than :attr:`min_board_size_for_split` entries and no
+    explicit ``holdout`` tag) yields an empty holdout, and the loop then
+    behaves as if no split were configured.
+
+    Each field entry below is served to the tournament builder as the
+    knob's help text.
 
     Fields
     ------
     enabled:
-        Master switch for the train/holdout split. ``True`` by default.
-        When ``False``, no holdout is ever derived (an explicit
-        ``holdout`` tag still wins — see :func:`zicato.board.split.split_board`)
-        and the loop behaves exactly as it did before this phase.
+        Switches the train/holdout split on. On by default. When off, no
+        holdout is derived (an explicit ``holdout`` tag on a board entry
+        still holds that entry out; see
+        :func:`zicato.board.split.split_board`) and the loop behaves as if
+        the guard did not exist.
     holdout_fraction:
-        Target fraction of the board to hold out when the split is derived
-        by hash (no explicit ``holdout`` tag). A deterministic, id-stable
-        threshold selects approximately this fraction. Range ``(0, 1)``.
+        Target share of the board to hold out when the split is derived by
+        hash (no explicit ``holdout`` tag). A deterministic, id-stable
+        threshold selects about this share. A larger holdout guards harder
+        against overfitting, costs more confirmation runs, and shrinks the
+        train field. Must lie strictly between 0 and 1.
     min_board_size_for_split:
-        Smallest board size at which a hash-derived split is attempted.
-        Below this the holdout is empty (degrade to the default behaviour) so a
-        small board is never starved of train entries. An explicit
-        ``holdout`` tag overrides this floor.
+        Smallest board at which a hash-derived split is attempted. Below it
+        the holdout is empty, so a small board is never starved of train
+        entries. An explicit ``holdout`` tag overrides this floor.
     restrict_proposer_visibility:
-        When ``True`` (default), the proposer prompt is sanitised at the
-        render boundary: per-entry identities in the detector patterns are
-        aggregated to counts/rates, and experiment-memory ``Δscalar`` is
-        coarsened to ``improved``/``flat``/``regressed`` buckets. Turning
-        it off restores the verbatim rendering byte-for-byte.
+        When on (default), the proposer prompt is sanitised where it is
+        rendered: per-entry identities in the detector patterns are
+        aggregated to counts and rates, and experiment-memory score deltas
+        are coarsened to ``improved``, ``flat`` and ``regressed`` bands, so
+        the proposer cannot memorise individual board entries. Off restores
+        the verbatim rendering.
     ladder:
-        The Ladder/Thresholdout governor over the holdout query
-        (:class:`LadderConfig`; OVERFITTING.md §4 / §12 #2). Default-on;
-        a no-op when the holdout is empty.
+        The Ladder governor over holdout queries (:class:`LadderConfig`).
+        On by default; inert while the holdout is empty.
     rotate_holdout:
-        When ``True`` (default), the hash-derived holdout *rotates* across
-        epochs (OVERFITTING.md §7 / §12 #6): the epoch id is folded into the
-        id-hash at the split call sites so a different ~``holdout_fraction``
-        slice is held out each epoch — no fixed slice is mined forever.
-        Stable *within* an epoch (the seed is the epoch id). When ``False``
-        the unseeded split is used (the same slice every epoch). The
-        rotation is an epoch-local derivation: it does NOT change the
-        contract hash for an unchanged board — only this flag itself
-        participates in the hash. An explicit ``holdout`` tag is never
-        rotated.
+        When on (default), the hash-derived holdout rotates across epochs:
+        the epoch id seeds the split, so a different slice of about
+        ``holdout_fraction`` is held out each epoch and no fixed slice is
+        mined forever. The slice is stable within an epoch. Off uses the
+        unseeded split, the same slice every epoch. The rotation is derived
+        per epoch and does not change the contract hash for an unchanged
+        board; only this flag itself is hashed. An explicit ``holdout`` tag
+        is never rotated.
     max_generations_per_contract:
-        Optional cadence ceiling (OVERFITTING.md §9 / §12 #6, cross-ref
-        SELECTION-THEORY.md §5 optimal-stopping horizon). When set, the loop
-        surfaces a board-refresh *recommendation* (a health finding / logged
-        signal) once a contract has been mined for this many generations —
-        a cue that the contract should be refreshed (the operator rolls).
-        ``None`` (default) imposes no ceiling. This never forces a surprising
-        auto epoch-roll; it only recommends. Must be ``>= 1`` when set.
+        Optional cadence ceiling (OVERFITTING.md §9). When set, the loop
+        raises a board-refresh recommendation (a health finding and a
+        logged signal) once a contract has been mined for this many
+        generations, as a cue for the operator to roll the contract. Unset
+        (default) sets no ceiling. The ceiling never forces an epoch roll;
+        it only recommends one. Must be ``>= 1`` when set.
     random_baseline_every_n:
-        Opt-in random-baseline challenger cadence (OVERFITTING.md §12 #7 —
-        the placebo arm). When ``> 0``, every Nth round the orchestrator
-        fields ONE additional challenger whose patch is a
-        semantics-preserving no-op (the mutation point's current value
-        re-emitted unchanged), hypothesis clearly marked as the baseline
-        arm. The gate MUST reject it — identical trees leave no
-        improvement to clear the margin — so a PROMOTED baseline is the
-        alarm: the loop emits a CRITICAL ``placebo_promoted`` health
-        finding (gate discrimination is broken; recent "wins" are
-        suspect). ``0`` (default) fields no baseline and the loop is
-        byte-identical. Like ``diff_complexity_weight``, the field is
-        omitted from the contract canonical form at its default so
-        existing epochs never roll retroactively. Must be ``>= 0``.
+        Opt-in placebo arm (OVERFITTING.md §12). When ``> 0``, every Nth
+        round the orchestrator fields one extra challenger whose patch
+        changes nothing (the mutation point's current value re-emitted),
+        with a hypothesis marked as the baseline arm. The gate must reject
+        it, since identical trees leave no improvement to clear the margin;
+        a promoted baseline is the alarm that gate discrimination is broken
+        and recent wins are suspect, and the loop then raises a critical
+        ``placebo_promoted`` health finding. Costs one extra challenger
+        every Nth round. ``0`` (default) fields no baseline. Omitted from
+        the contract canonical form at its default, so a contract that
+        never sets it keeps its hash. Must be ``>= 0``.
     """
 
     enabled: bool = field(default=True, metadata=_knob(builder_op="set_holdout"))
@@ -356,208 +360,169 @@ def _default_overfitting_config() -> OverfittingConfig:
 
 @dataclass(frozen=True, slots=True)
 class ProposerQualityConfig:
-    """Proposer-quality levers: best-of-N sampling + a self-critique pass.
+    """Proposer-quality levers: best-of-N sampling, self-critique, and the opt-in channels.
 
-    Part of the frozen evaluation contract — modelled as a field of
-    :class:`ScoringWeights` so it folds into the contract hash through the
-    existing scoring canonicalizer (it recurses into nested frozen
-    dataclasses), exactly like :class:`OverfittingConfig` and
-    :class:`TournamentStructure`. Changing any knob rolls the epoch, which is
-    correct: a proposer that samples N candidates and self-critiques proposes
-    *differently* than one that samples once.
+    A field of :class:`ScoringWeights`, so it folds into the contract hash
+    and a change to any field rolls the epoch: a proposer that samples N
+    candidates and self-critiques proposes differently from one that
+    samples once.
 
-    The DEFAULT samples a slate: :attr:`best_of_n` ``= 3`` — three candidate
-    experiments per propose-step with the self-critique pass selecting the
-    best (the top proposal-quality lever; a valid-but-mediocre single sample
-    was never reconsidered). Pin ``"proposer_quality": {"best_of_n": 1}`` for
-    the historical single-sample, no-critique proposer (scripted / mock
-    proposers do). Changing the value rolls the epoch, like every contract
-    field. See ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`` §4.1.
+    The default samples a slate of three (:attr:`best_of_n`) and lets the
+    self-critique pass select the best. Pin ``"proposer_quality":
+    {"best_of_n": 1}`` for a single-sample proposer with no critique
+    (scripted and mock proposers do). See
+    ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`` §4.1.
 
-    Overfitting discipline (LOAD-BEARING): the self-critique pass sees ONLY
-    the SAME restricted prompt context the proposer itself sees (the
-    train-slice patterns, the banded experiment memory, the bucketed
-    failure-mode profile) — NEVER the holdout, never a per-entry identity.
-    The critic is inside the same overfitting-visibility envelope as the
-    proposer (OVERFITTING.md §11); it cannot widen what the proposer is
-    allowed to learn about the board.
+    Overfitting discipline: the self-critique pass sees only the restricted
+    prompt context the proposer itself sees (the train-slice patterns, the
+    banded experiment memory, the bucketed failure-mode profile) and sees
+    neither the holdout nor any per-entry identity. The critic sits inside the same
+    visibility envelope as the proposer (OVERFITTING.md §11) and cannot
+    widen what the proposer may learn about the board.
+
+    Each field entry below is served to the tournament builder as the
+    knob's help text.
 
     Fields
     ------
     best_of_n:
-        How many candidate experiments to sample per propose-step before
-        the critique pass picks the best. ``3`` (default) samples a slate;
-        ``1`` is the historical single sample with no critique. Must be
-        ``>= 1``. Each sample is an independent inner ``propose`` (the LLM's
-        own sampling supplies the variety, and each slate slot carries a
-        distinct edit-class hint — see
-        :data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`); a candidate that
-        the inner proposer cannot produce simply narrows the slate, and an
-        empty slate falls back to a final inner ``propose`` so the step never
-        silently yields nothing.
+        How many candidate experiments each propose step samples before
+        the critique pass picks one. ``3`` (default) samples a slate; ``1``
+        is a single sample with no critique. Each sample is one propose
+        call to the proposer, so the cost meter prices the slate. Each
+        slate slot carries a distinct edit-class hint
+        (:data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`); a candidate
+        the inner proposer cannot produce narrows the slate, and an empty
+        slate falls back to one final propose call so the step never
+        yields nothing. Must be ``>= 1``.
     critique_enabled:
-        When ``True`` (default) and ``best_of_n > 1``, a single cheap
-        evaluation-LLM self-critique pass scores the sampled candidates
-        against a quality bar (grounded in a tool call? targets a real
-        failure mode? minimal diff?) and selects the best. When ``False``,
-        best-of-N still samples ``best_of_n`` candidates but the selection
-        falls back to the deterministic built-in heuristic (smallest diff
-        that targets an observed failure mode) — no extra LLM call. With
-        ``best_of_n == 1`` this flag is inert (no critique ever runs).
+        When on (default) and ``best_of_n > 1``, one cheap evaluation-model
+        pass scores the sampled candidates against a quality bar (grounded
+        in a tool call, targets a real failure mode, minimal diff) and
+        selects the best. When off, best-of-N still samples ``best_of_n``
+        candidates and the selection falls back to the built-in heuristic
+        (the smallest diff that targets an observed failure mode), with no
+        extra model call. Inert at ``best_of_n == 1``.
     screen_entries:
-        Opt-in pre-tournament candidate screening (tryouts). When ``> 0``
-        AND ``best_of_n > 1``, each best-of-N slate candidate is RUN on a
-        small rotating panel of this many TRAIN board entries before the
-        selection pass — VETO-FIRST semantics: the screen only
-        disqualifies catastrophic regressions (a confirmed pass-flip on a
-        champion-passing entry, or a budget abort); it never ranks, and
-        the critic/heuristic still chooses among the survivors. ``0``
-        (default) is OFF — the orchestrator does not even construct a
-        screen callable, so the propose path is byte-identical. With
-        ``best_of_n == 1`` the knob is inert (there is no slate to
-        screen). Like ``random_baseline_every_n``, the field is omitted
-        from the contract canonical form at its default so existing
-        epochs never roll retroactively; a non-zero value rolls the
-        epoch, which is correct — a proposer whose slate is screened
-        selects differently. Must be ``>= 0``. See
-        :mod:`zicato.epoch.screen`.
+        Opt-in pre-tournament screening of the slate. When ``> 0`` and
+        ``best_of_n > 1``, each slate candidate runs on a small rotating
+        panel of this many train board entries before selection. The
+        screen only vetoes: a confirmed catastrophic regression (a
+        pass-flip on an entry the champion passes, or a budget abort)
+        disqualifies the candidate, and the critic or heuristic still
+        chooses among the survivors. It costs ``best_of_n × screen_entries``
+        extra runs per propose step. ``0`` (default) runs no screen; new
+        workspaces scaffold ``2``. Inert at ``best_of_n == 1``. Omitted
+        from the contract canonical form at its default; a non-zero value
+        rolls the epoch, since a proposer whose slate is screened selects
+        differently. Must be ``>= 0``. See :mod:`zicato.epoch.screen`.
 
-        The screen-informed revise pass RIDES this knob; there is no
-        separate lever. When a screened slate ends all-vetoed, the
-        wrapper takes exactly one feedback-informed re-sample before
-        degrading to critic-over-all. An all-vetoed slate with no revise
-        wastes the whole propose step on a known-vetoed candidate, so
-        the single re-sample is the cheapest possible recovery — and a
-        contract that opted into paying for the screen has already
-        accepted that propose-step cost class. See
-        :meth:`zicato.proposer.best_of_n.BestOfNProposerAgent`.
+        A screen-informed revise pass rides this knob. When every slate
+        candidate is vetoed, the proposer takes one feedback-informed
+        re-sample before degrading to the critic over the whole slate, so
+        the propose step is not spent on a known-vetoed candidate. See
+        :class:`zicato.proposer.best_of_n.BestOfNProposerAgent`.
     screen_veto_only:
-        When ``True``, the screen's measurements feed NOTHING but the
-        veto: the critic prompt carries no ``## Screen measurements``
-        block and the deterministic heuristic ignores the panel scalar
-        tiebreak — the screen can only disqualify, never nudge the
-        ordering. ``False`` (default) lets the survivors' banded panel
-        counts advise the selection as a late tiebreak. Inert while
-        ``screen_entries == 0``. Omitted-at-default from the contract
-        canonical form, exactly like ``screen_entries``.
+        When on, the screen's measurements feed nothing but the veto: the
+        critic prompt carries no screen-measurement block and the heuristic
+        ignores the panel-scalar tiebreak. Selection then stays blind to
+        the tryout measurements, which are biased by the selection they
+        inform, while catastrophic regressions are still caught. Off
+        (default) lets the survivors' banded panel counts advise the
+        selection as a late tiebreak. Inert while ``screen_entries == 0``.
+        Omitted from the contract canonical form at its default.
     process_exemplars:
-        Opt-in drift-anchored process-exemplar channel
+        Opt-in process-exemplar channel
         (``docs/design/PROCESS-EXEMPLARS.md``). When ``> 0``, each round
-        the orchestrator extracts (best-effort) up to this many
-        mechanically-REDACTED event windows from the champion's
-        TRAIN-slice ``events.jsonl`` files — one per detected pattern,
-        ±3 events around an anchor drift — and splices them into the
-        proposer prompt after the failure-mode profile. The proposer can
-        then see HOW a detected failure unfolds — the wandering plan step,
-        the looping tool call — without learning WHICH board entry it
-        unfolded on: a window carries no entry ids, no task text and no
-        model outputs, and the doc's §3 redaction rules are enforced in code
-        rather than by an LLM.
-
-        ``0`` (default) is OFF — no extraction runs and the
-        proposer prompt is byte-identical. Unlike ``screen_entries``
-        this knob is NOT set by the scaffold: the screen is
-        evaluation-side, while exemplars widen the proposer-visibility
-        channel (OVERFITTING.md §11), so the operator opts in explicitly,
-        under the doc's §5 harm-detection runbook. Omitted
-        from the contract canonical form at its 0 default so existing
-        epochs never roll retroactively; a non-zero cap rolls the epoch,
-        which is correct — a proposer shown process windows proposes
-        under a different rule. Must be ``>= 0``.
+        the orchestrator extracts up to this many redacted event windows
+        from the champion's train-slice event logs, one per detected
+        pattern and three events either side of an anchor drift, and
+        splices them into the proposer prompt after the failure-mode
+        profile. The proposer then sees how a detected failure unfolds (a
+        wandering plan step, a looping tool call) without learning which
+        board entry it unfolded on. A window carries no entry ids, no task
+        text and no model outputs, and the redaction rules of that
+        document's §3 are enforced in code. Read-side only, so free on the
+        cost meter. The channel widens what the proposer can see, so the
+        scaffold does not set it; enable it under the harm-detection
+        runbook of that document's §5: watch the ``generalization_gap``
+        finding and set the cap back to ``0`` if the gap widens while
+        train improves. ``0`` (default) extracts nothing. Omitted from the
+        contract canonical form at its default; a non-zero cap rolls the
+        epoch. Must be ``>= 0``.
     recombine:
-        Opt-in mechanical recombination slot. When ``True`` AND
-        ``best_of_n > 1``, the orchestrator builds one recombination pair
-        per round, drawn from the current reign's REJECTED, complementary,
-        disjoint-patch challengers. When a pair is found, the last best-of-N
-        slot MINTS the union of the two patch sets instead of sampling the
-        LLM, and a non-vetoed mint is CHOSEN with
-        ``selection_mode="recombined"``. One winner can then capture two
-        complementary fixes a parsimony-biased selector would each discount.
-        INERT unless ``best_of_n > 1`` (a single-sample proposer
-        has no slate slot to mint into) — and cost-neutral: the mint
-        REPLACES the slot's evaluation propose call, never adds one.
-        ``False`` (default) is OFF — no pair is ever built and the propose
-        path is byte-identical. Omitted from the contract canonical form at
-        its ``False`` default so existing epochs never roll retroactively;
-        ``True`` rolls the epoch, which is correct — a proposer whose slate
-        can recombine rejected fixes proposes under a different rule. See
-        :mod:`zicato.epoch.recombine` / :mod:`zicato.proposer.recombine`.
+        Opt-in recombination slot. When on and ``best_of_n > 1``, the
+        orchestrator builds one recombination pair per round from the
+        current reign's rejected challengers whose patches are
+        complementary and disjoint. When a pair is found, the last slate
+        slot mints the union of the two patch sets instead of sampling the
+        proposer, and a non-vetoed mint is chosen with
+        ``selection_mode="recombined"``, so one winner can capture two
+        fixes a parsimony-biased selector would each discount.
+        Cost-neutral: the mint replaces the slot's propose call. Inert at
+        ``best_of_n == 1``. Off (default) builds no pair. Omitted from the
+        contract canonical form at its default; on rolls the epoch. See
+        :mod:`zicato.epoch.recombine` and :mod:`zicato.proposer.recombine`.
     genealogy:
-        Opt-in genealogy channel (``docs/design/PROPOSER.md`` §2.7).
-        When ``> 0``, each round the orchestrator samples up to this many
-        candidate-LINEAGE items from the current reign's durable records:
-        PARENTS (the champion's own promoted patch history) and INSPIRATIONS
-        (diverse rejected reign candidates chosen by mutation-id-set
-        dissimilarity). Each carries the proposer-authored core idea, a
-        capped diff excerpt, and a BANDED whole-candidate outcome. Splicing
-        those into the prompt lets the LLM evolve IN CONTEXT — extend a
-        winning line, or re-frame a rejected one. It is the in-context
-        analogue of the mechanical recombination slot, and it reaches even
-        the pure-drift-side pairs that slot cannot see. Envelope-safe by
-        construction: it carries candidate genealogy, never board data — no
-        entry ids, no per-entry results, no exact deltas (banded through the
-        same ``_bucket_scalar_delta`` vocabulary as the experiment memory),
-        nothing holdout-derived. The sampler is a pure, DETERMINISTIC
-        function (no RNG). ``0`` (default) is OFF — no sampling runs and the
-        proposer prompt is byte-identical. Like ``process_exemplars`` this
-        widens the proposer-visibility channel, so it is NOT set by the
-        scaffold; the operator opts in explicitly. Omitted from the
-        contract canonical form at its 0 default so existing epochs never
-        roll retroactively; a non-zero count rolls the epoch, which is
-        correct — a proposer shown candidate genealogy proposes under a
-        different rule. Read-side only (the cost meter is untouched). Must be
-        ``>= 0``. See :mod:`zicato.proposer.genealogy`.
+        Opt-in genealogy channel (``docs/design/PROPOSER.md`` §2.7). When
+        ``> 0``, each round the orchestrator samples up to this many
+        candidate-lineage items from the current reign's records: parents
+        (the champion's own promoted patch history) and inspirations
+        (rejected reign candidates chosen for dissimilar mutation-id
+        sets). Each carries the proposer's own core idea, a capped diff
+        excerpt, and a banded whole-candidate outcome (improved, flat or
+        regressed). Spliced into the prompt, they let the proposer extend a
+        winning line or re-frame a rejected one: the in-context
+        counterpart of the recombination slot, reaching the pairs that
+        slot cannot see. The channel carries candidate genealogy and never
+        board data: no entry ids, no per-entry results, no exact deltas,
+        nothing derived from the holdout. The sampler is deterministic.
+        Read-side only, so free on the cost meter. Like
+        ``process_exemplars`` it widens what the proposer can see, so the
+        scaffold does not set it. ``0`` (default) samples nothing. Omitted
+        from the contract canonical form at its default; a non-zero count
+        rolls the epoch. Must be ``>= 0``. See
+        :mod:`zicato.proposer.genealogy`.
     calibration_feedback:
         Opt-in critic-calibration channel (``docs/design/PROPOSER.md``
-        §2.8). When ``> 0``, each round the orchestrator summarizes the
-        current reign's PREDICTION CALIBRATION: how the proposer's own
-        falsifiable movement predictions landed against realized outcomes,
-        joining the durable records with the prediction-accuracy grader
-        (:func:`zicato.tournament.detail.hypothesis_ledger`, the
-        ``/api/hypothesis-accuracy`` feed). The summary spliced into the
-        prompt carries per-claim-type hit / miss / unresolved COUNTS, the
-        overall calibration fraction, and up to this many RECENT graded
-        claims (claim text, banded realized outcome, hit or miss). A
-        proposer shown its own
-        miss pattern hypothesizes more honestly. Envelope-safe by construction:
-        claim text is proposer-authored, realized outcomes render BANDED
-        through the same ``_bucket_scalar_delta`` vocabulary as the experiment
-        memory, and the grade is a whole-hypothesis verdict from aggregate
-        COUNTS — no entry ids, no per-entry results, no exact deltas, nothing
-        holdout-derived (the grader scores whole-candidate movement
-        aggregates). The sampler is a pure, DETERMINISTIC function (no RNG).
-        ``0`` (default) is OFF — no sampling runs and the proposer prompt is
-        byte-identical. Like ``genealogy`` this widens the
-        proposer-visibility channel, so it is NOT set by the scaffold; the
-        operator opts in explicitly. Omitted from the contract canonical form
-        at its 0 default so existing epochs never roll retroactively; a
-        non-zero count rolls the epoch, which is correct — a proposer shown its
-        own calibration proposes under a different rule. Read-side only (the
-        cost meter is untouched). Must be ``>= 0``. See
+        §2.8). When ``> 0``, each round the orchestrator summarises how
+        the proposer's own falsifiable movement predictions landed against
+        realised outcomes, from the durable records and the
+        prediction-accuracy grader
+        (:func:`zicato.tournament.detail.hypothesis_ledger`). The summary
+        spliced into the prompt carries hit, miss and unresolved counts per
+        claim type, the overall calibration fraction, and up to this many
+        recent graded claims (claim text, banded realised outcome, hit or
+        miss). A proposer shown its own miss pattern hypothesises more
+        honestly. The channel carries the proposer's own claim text and
+        aggregate counts and never board data: outcomes are banded, grades
+        come from whole-candidate aggregates, and nothing is derived from
+        the holdout. The sampler is deterministic. Read-side only, so free
+        on the cost meter; like ``genealogy`` it widens what the proposer
+        can see, so the scaffold does not set it. ``0`` (default) samples
+        nothing. Omitted from the contract canonical form at its default;
+        a non-zero count rolls the epoch. Must be ``>= 0``. See
         :mod:`zicato.proposer.calibration`.
     recombine_merge:
-        How the recombination slot COMPOSES the union once the selector has
-        picked a pair (``docs/design/PROPOSER.md`` §2.6.1). ``"mechanical"``
-        (default) MINTS the concatenation of the two disjoint patch sets with
-        NO LLM call — REQUIRES a disjoint pair (the applier is last-wins on a
-        duplicate target). ``"llm"`` instead issues ONE evaluation merge call
-        (the depth refinement role) whose response flows through the normal
-        proposal parse/validate path, and RELAXES the disjointness predicate
-        for pair SELECTION so two REJECTED fixes that OVERLAP on a mutation
-        target can be merged (the model resolves the overlap — overlap then
-        becomes a ranking penalty, never a filter). Meaningful only when
-        ``recombine`` is ``True`` AND ``best_of_n > 1``; a ``"llm"`` value set
-        with ``recombine`` off is accepted-and-inert (the dependent-knob house
-        style, like ``screen_veto_only`` without ``screen_entries``). Cost:
-        ``"mechanical"`` spends ``best_of_n − 1`` propose calls (the mint is
-        free); ``"llm"`` spends ``best_of_n`` on the happy path (the merge
-        call SUBSTITUTES the slot's own sample call) — a rare parse/validate
-        degrade adds the one fallback sample on top (``best_of_n + 1`` for
-        that round). Omitted from the contract canonical form at its
-        ``"mechanical"`` default (no retroactive roll); ``"llm"`` rolls the
-        epoch — a slate that can compose an LLM merge proposes under a
-        different rule. Must be ``"mechanical"`` or ``"llm"``. See
-        :mod:`zicato.epoch.recombine` / :mod:`zicato.proposer.recombine`.
+        How the recombination slot composes the union once a pair is
+        picked (``docs/design/PROPOSER.md`` §2.6.1). ``"mechanical"``
+        (default) mints the concatenation of two disjoint patch sets with
+        no model call, and requires a disjoint pair because the applier
+        keeps the last write to a duplicated target. ``"llm"`` issues one
+        merge call to the evaluation model, whose response flows through
+        the normal proposal parse and validation. It also relaxes the
+        disjointness rule for pair selection, so two rejected fixes that
+        overlap on a mutation target can be merged; the overlap becomes a
+        ranking penalty rather than a filter. Meaningful only when
+        ``recombine`` is on and ``best_of_n > 1``; ``"llm"`` with
+        ``recombine`` off is accepted and inert. Cost: ``"mechanical"``
+        spends ``best_of_n − 1`` propose calls, since the mint is free;
+        ``"llm"`` spends ``best_of_n``, the merge call taking the slot's
+        own sample call, plus one fallback sample in the rare round where
+        the merge fails to parse or validate. Omitted from the contract
+        canonical form at its default; ``"llm"`` rolls the epoch. Must be
+        ``"mechanical"`` or ``"llm"``. See :mod:`zicato.epoch.recombine`
+        and :mod:`zicato.proposer.recombine`.
     """
 
     best_of_n: int = field(
@@ -634,31 +599,29 @@ def _default_proposer_quality_config() -> ProposerQualityConfig:
 
 @dataclass(frozen=True, slots=True)
 class ExperimentMemoryConfig:
-    """Experiment-memory scoping: what settled history the proposer sees.
+    """Experiment-memory scoping: which settled history the proposer sees.
 
-    Part of the frozen evaluation contract — a field of
-    :class:`ScoringWeights`, like :class:`OverfittingConfig` — because
-    changing what history the proposer reads selects champions under a
-    different rule (EXPERIMENT-MEMORY.md §3.4). The field is
-    omitted-at-default from the contract canonicalizer
-    (``epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS``), so a
-    contract that never sets it hashes byte-identically to one that
-    predates it; a non-default value rolls the epoch normally.
+    A field of :class:`ScoringWeights`, like :class:`OverfittingConfig`,
+    because a change to what history the proposer reads selects champions
+    under a different rule (EXPERIMENT-MEMORY.md §3.4). Omitted from the
+    contract canonical form at its default, so a contract that never sets
+    it keeps its hash; a non-default value rolls the epoch.
+
+    Each field entry below is served to the tournament builder as the
+    knob's help text.
 
     Fields
     ------
     cross_epoch:
-        Opt-in cross-epoch transfer (EXPERIMENT-MEMORY.md §3.4 / §5.2).
-        ``False`` (default): the experiment-memory digest is same-epoch
-        only — byte-identical to the shipped behaviour. ``True``: settled
-        experiments from PRIOR epochs of the same workspace that share
-        the current epoch's ``contract_hash`` are appended to the digest,
-        marked ``same_contract=False``, with their ``scalar_score_delta``
-        omitted (the number does not transfer), rendered in a clearly
-        separated block, and admitted only into the budget left after
-        every same-epoch entry — same-epoch history always keeps priority
-        in the cap. Experiments under a DIFFERENT contract hash are never
-        surfaced regardless of this knob.
+        Opt-in cross-epoch transfer (EXPERIMENT-MEMORY.md §3.4 and §5.2).
+        Off (default) keeps the experiment-memory digest to the current
+        epoch. On appends settled experiments from earlier epochs of the
+        same workspace that share the current epoch's contract hash,
+        marked ``same_contract=False`` and with their score delta omitted,
+        since the number does not transfer. They render in a separate
+        block and are admitted only into the budget left after every
+        same-epoch entry, so same-epoch history keeps priority in the cap. Experiments under
+        a different contract hash are never surfaced.
     """
 
     cross_epoch: bool = field(
@@ -688,18 +651,26 @@ class ExperimentalConfig:
     default, so a contract that names none of them keeps its hash and one
     that enables a flag rolls the epoch.
 
+    Each field entry below is served to the tournament builder as the
+    knob's help text.
+
     Fields
     ------
     tournament_structures:
-        Admits the structures in
-        :data:`zicato.core.tournament.EXPERIMENTAL_TOURNAMENT_STRUCTURES`
-        (``single_elim``, ``double_elim``, ``swiss``) as the contract's
-        ``tournament.structure``. ``False`` (default): a contract naming
-        one of them is refused at load, by the builder, and by the strategy
-        registry, each with the message
+        Admits single elimination, double elimination and Swiss pairing
+        (:data:`zicato.core.tournament.EXPERIMENTAL_TOURNAMENT_STRUCTURES`)
+        as the contract's ``tournament.structure``. Each pairs challengers
+        against each other, so a candidate's fate depends on its draw; the
+        second life a losers' bracket buys is what ``replicates`` already
+        buys, and Swiss pairing is racing without the escalating board
+        slice. None has a measured case at a field of two to four
+        candidates under an expensive, noisy evaluator. Off (default): a
+        contract naming one of the three is refused at load, by the
+        builder, and by the strategy registry, each with the message
         :func:`zicato.core.tournament.experimental_structure_refusal`
-        renders. ``True``: the three resolve like ``gauntlet`` and
-        ``racing``.
+        renders, and turning the flag off while the structure is one of
+        the three is refused the same way. On: the three resolve like
+        ``gauntlet`` and ``racing``.
     """
 
     tournament_structures: bool = field(
@@ -801,253 +772,303 @@ class ScoringWeights:
     """Tunable weights that turn a :class:`LossProfile` into a scalar.
 
     A single :class:`ScoringWeights` instance is frozen for the lifetime
-    of an epoch. Changing weights starts a new epoch — generations across
+    of an epoch. Changing weights starts a new epoch; generations in
     different epochs are not directly comparable.
+
+    Each field entry below is served to the tournament builder as the
+    knob's help text (:func:`zicato.builder.knob_help.knob_help` reads
+    this section), so an entry is written for the operator who reads it
+    there.
 
     Fields
     ------
     pass_weight:
-        Coefficient on the ``(1 - pass_rate)`` term. The pass/miss term is
-        the scalar's ONE non-namespace term: it has its own denominator
-        (expectation-bearing entries rather than every entry), its own
-        monotonicity mechanism (:attr:`pass_rate_monotonicity_scope`), and
-        its own transform seam (:attr:`pass_transform`). Every MEASURED
-        channel — drift, judges, failures, runtime, cost, latency, rubric,
-        output, schema — rides :attr:`namespace_weights` instead.
+        Coefficient on the ``(1 - pass_rate)`` miss term. The pass/miss
+        term is the scalar's one term outside the namespace map: it has
+        its own denominator (the entries that carry expectations rather
+        than every entry), its own monotonicity rule
+        (:attr:`pass_rate_monotonicity_scope`) and its own transform
+        (:attr:`pass_transform`). Every measured channel (drift, judges,
+        failures, runtime, cost, latency, rubric, output, schema) rides
+        :attr:`namespace_weights` instead.
     severity_weights:
         Per-severity multipliers applied inside the drift-loss
-        aggregation. Keys are lowercase severity strings; missing keys
-        default to ``0.0`` (the aggregator treats unknown severities as
-        non-scoring rather than panicking).
+        aggregation: how much a drift observation of each severity costs a
+        challenger. Keys are lowercase severity names; a severity with no
+        entry scores at ``0.0`` rather than failing. The contract holds
+        the whole mapping, so a change to one severity writes the mapping
+        with the other severities as they are.
     per_kind_weights:
-        Optional per-drift-kind multipliers. Stacks multiplicatively
-        with :attr:`severity_weights`. Empty mapping = uniform weighting
-        across kinds.
+        Optional per-drift-kind multipliers, keyed by drift kind. They
+        stack multiplicatively with :attr:`severity_weights`; a kind with
+        no entry weighs ``1.0``, and an empty mapping weighs every kind
+        alike. Custom-judge drift is scored in the ``judge:`` channel
+        through :attr:`per_judge_weights`, so an entry for ``custom`` is
+        refused.
     per_judge_weights:
-        Optional per-custom-judge multipliers, keyed on the stable
-        ``judge_name`` (the value a judge implementation sets on its
-        ``name`` attribute). A custom judge emits drift under the
-        single ``"custom"`` drift kind, so :attr:`per_kind_weights`
-        cannot tell two custom judges apart — ``per_judge_weights``
-        is the per-judge analogue. It stacks multiplicatively with
-        :attr:`severity_weights` exactly the way :attr:`per_kind_weights`
-        does for first-class kinds. A custom judge with no entry here
-        scores at :attr:`default_judge_weight` rather than crashing —
-        mirroring how an unknown kind falls back to ``1.0`` under
-        :attr:`per_kind_weights`. Empty mapping = every custom judge
-        scores at the default.
-
-        This is the WITHIN-CHANNEL shape of the ``judge:`` namespace
-        (each judge's weighted loss becomes a ``judge:<name>`` metric),
-        so retiring one judge is ``per_judge_weights: {name: 0.0}`` while
-        retiring the whole channel is
-        ``namespace_weights: {"judge:": 0.0}``.
+        Optional per-judge multipliers, keyed on the stable ``judge_name``
+        a judge implementation sets on its ``name`` attribute. Every
+        custom judge emits drift under the single ``custom`` drift kind,
+        so :attr:`per_kind_weights` cannot tell two custom judges apart;
+        this mapping is the per-judge counterpart and stacks
+        multiplicatively with :attr:`severity_weights` the same way. A
+        judge with no entry scores at :attr:`default_judge_weight`. Each
+        judge's weighted loss becomes a ``judge:<name>`` metric inside the
+        ``judge:`` namespace, so retiring one judge is
+        ``per_judge_weights: {name: 0.0}`` and retiring the whole channel
+        is ``namespace_weights: {"judge:": 0.0}``.
     default_judge_weight:
-        Fallback multiplier for a custom judge whose ``judge_name`` is
-        absent from :attr:`per_judge_weights`. Defaults to ``1.0`` so an
-        unconfigured custom judge contributes on the same footing as a
-        first-class drift kind with no ``per_kind_weights`` entry.
+        The multiplier for a judge whose ``judge_name`` is absent from
+        :attr:`per_judge_weights`. ``1.0`` by default, so an unconfigured
+        judge contributes on the same footing as a drift kind with no
+        :attr:`per_kind_weights` entry.
     plan_revision_weight:
-        Coefficient on :attr:`LossProfile.plan_revisions`. Defaults to
-        ``0.5`` — plan revisions are signal but less so than drift.
+        Coefficient on :attr:`LossProfile.plan_revisions`, the count of
+        times the system under test rewrote its own plan during a run.
+        ``0.5`` by default: plan revisions are signal, but weaker signal
+        than drift.
     task_failure_weight:
-        Multiplier on :attr:`LossProfile.task_failure_ratio` inside the
-        ``failure:`` channel (the ``failure:tasks`` member). Defaults to
-        ``10.0`` — pure failures matter.
+        Multiplier on :attr:`LossProfile.task_failure_ratio`, the share of
+        a run's started tasks that failed, charged in the ``failure:``
+        channel as ``failure:tasks``. ``10.0`` by default, large against a
+        single drift observation, because an outright failure matters
+        more.
     not_completed_weight:
-        Fixed magnitude charged in the ``failure:`` channel (the
-        ``failure:not_completed`` member) for a run that did not complete:
-        killed, crashed, harness-exception, emulator-leak-aborted, or
-        wall-clock exhausted. Defaults to ``50.0``, an ABSOLUTE magnitude
-        rather than a multiple of :attr:`severity_weights`, so retuning
-        severities cannot silently rescale what a crash costs. Without it
-        a run that crashes instantly (empty events file, zero drift
-        counts) would earn the BEST possible score and a challenger could
-        win a tournament by failing fast.
+        Fixed magnitude charged in the ``failure:`` channel (as
+        ``failure:not_completed``) for a run that did not complete:
+        killed, crashed, a harness exception, an emulator-leak abort, or an
+        exhausted wall-clock budget. ``50.0`` by default. An absolute
+        magnitude rather than a multiple of :attr:`severity_weights`, so
+        retuning severities cannot silently rescale what a crash costs.
+        Without it a run that crashed at once (an empty events file, zero
+        drift) would earn the best possible score and a challenger could
+        win by failing fast.
     diff_complexity_weight:
-        Coefficient on the challenger's diff complexity — an opt-in
-        parsimony / MDL term (OVERFITTING.md §5 / §12 #4). When ``> 0`` the
-        scalar gains a ``diff_complexity`` component equal to
-        ``diff_complexity_weight * (added + removed + patches)``, where the
-        diff size comes from the challenger experiment's patch records (see
-        :func:`zicato.scoring.diff_complexity.diff_size`). A shorter-
-        description edit provably overfits the board less, so penalising diff
-        size biases the optimiser toward the smaller, more general edit.
-        Defaults to ``0.0`` — when ``0.0`` (or when no diff size is available,
-        e.g. the champion side has no challenger experiment) the term is
-        EXACTLY absent: it is not added to the scalar rather than surfaced as a
-        component, and the scalar / contract hash / every golden are
-        byte-identical to a contract without this field. The contract
-        canonicalizer omits the field from the scoring hash at the default so
-        an unset contract does not roll its epoch; setting it ``> 0`` adds the
-        key and rolls the epoch like any other weight change.
-
-        CALIBRATION (issue #120): the diff size measures the real line delta
-        against the parent's content rather than the size of the whole
-        replacement, so an edit against a ``kind="file"`` mutation point
-        scores roughly an order of magnitude lower than a whole-file charge
-        would give it — a re-emit that changes nothing scores ``0`` rather
-        than one unit per line of the file. A weight tuned against
-        whole-file charging is therefore far too weak here; re-tune it
-        against a measured round.
+        Opt-in parsimony term (OVERFITTING.md §5). When ``> 0`` the scalar
+        gains a ``diff_complexity`` component equal to this weight times
+        ``added + removed + patches``, the diff size read from the
+        challenger's patch records
+        (:func:`zicato.scoring.diff_complexity.diff_size`). A shorter edit
+        overfits the board less, so penalising diff size biases selection
+        toward the smaller, more general edit. ``0.0`` (default) leaves
+        the term absent: it is not added to the scalar, and the scalar,
+        the contract hash and every recorded outcome are byte-identical to
+        a contract without the field. The contract canonical form omits
+        the field at the default, so setting it ``> 0`` rolls the epoch
+        like any other weight change. Applies on the full
+        champion-versus-challenger promotion path only; fast-mode and
+        multi-challenger matchup scoring carry no diff term. Calibration:
+        the diff size counts changed lines against the parent's content
+        rather than the size of the whole replacement. An edit to a
+        whole-file mutation point therefore scores about an order of
+        magnitude lower than a whole-file charge would, and a re-emit that
+        changes nothing scores ``0``; tune the weight against a measured
+        round.
     diff_complexity_ceiling:
-        The parsimony CEILING that pairs with :attr:`diff_complexity_weight`
-        (OVERFITTING.md §5 / §12 #4 — the ceiling half of the diff-complexity
-        regularizer). While the weight *dampens* an oversized diff by adding a
-        loss term, the ceiling is a HARD gate rule: a challenger whose diff
-        complexity (``added + removed + patches`` — the same
-        :func:`zicato.scoring.diff_complexity.diff_complexity` measure the loss
-        term reads) EXCEEDS the ceiling is REJECTED outright, regardless of how
-        strongly it improved. The rejection reason is honest and specific
-        (``"diff_complexity_ceiling: diff complexity 14 exceeds ceiling 10"``),
-        so the experiment record + the round-log ``gate_evaluated`` rule name
-        why. Defaults to ``0.0`` = OFF: the ceiling is never consulted, no
-        candidate is rejected on it, and the scalar / contract hash / every
-        golden are byte-identical to a contract without this field (the
-        contract canonicalizer omits the field at the default). Applies on the
-        full A/B promotion path only — the same path the challenger diff size
-        is threaded on — so like the loss term it does not touch fast-mode or
-        multi-challenger matchup scoring. Any value ``<= 0`` is treated as OFF.
-        Reads the SAME measure as the weight, so the calibration note above
-        applies here too: the measure counts changed lines rather than
-        whole-file re-emits, so a ceiling tuned against whole-file re-emits
-        admits far larger edits than intended (issue #120).
+        The parsimony ceiling paired with :attr:`diff_complexity_weight`
+        (OVERFITTING.md §5). Where the weight dampens an oversized diff
+        with a loss term, the ceiling is a gate rule: a challenger whose
+        diff complexity (``added + removed + patches``, the same measure
+        the loss term reads) exceeds it is rejected outright, however much
+        it improved. The rejection reason names both numbers
+        (``diff_complexity_ceiling: diff complexity 14 exceeds ceiling
+        10``) in the experiment record and the round log. ``0.0``
+        (default) turns the ceiling off: it is never consulted, and the
+        contract canonical form omits the field. Any value ``<= 0`` is
+        off. Applies on the full promotion path only, like the weight, and
+        reads the same changed-line measure, so a ceiling tuned against
+        whole-file re-emits admits far larger edits than intended.
     promote_margin:
-        Minimum scalar-score improvement the child generation must show
-        over the parent to be promoted. Acts as a regression-noise
-        threshold. Calibrated against the TRAIN slice — see
+        Minimum scalar improvement (champion loss minus challenger loss) a
+        challenger must show to be promoted. A larger margin demands a
+        more decisive win and resists noise; ``0`` promotes on any
+        improvement. Without the evidence gate the margin must clear the
+        measured same-versus-same noise floor, which the builder's
+        preflight measures. Calibrated against the train slice; see
         :attr:`holdout_margin` for why the holdout needs its own bound.
+        Must be ``>= 0``.
     holdout_margin:
-        The scalar tolerance the HOLDOUT confirmation applies, or ``None``
-        (the default) to fall back to :attr:`promote_margin`.
+        The scalar tolerance the holdout confirmation applies, or unset
+        (the default) to reuse :attr:`promote_margin`.
 
-        A single margin serving both uses is pulled in opposite directions.
-        The scalar-margin rule wants it SMALL enough that a real
-        train-measured win clears it; the holdout confirmation wants it
-        LARGE enough to absorb the holdout slice's own quantization. A slice
-        of N entries moves its scalar in ``1/N`` steps, and the holdout is
-        the smaller slice by construction (``holdout_fraction`` defaults to
-        0.3), so its steps are the COARSER ones. On the default-produced
-        12-train / 6-holdout split a two-entry train win needs
-        ``margin <= 2/12`` while tolerating one holdout entry regressing
-        needs ``margin >= 1/6`` — the same number, so the feasible window is
-        a single point that float rounding then closes. Separating the two
-        bounds is what makes such a board promotable at all.
+        One margin serving both uses is pulled in opposite directions. The
+        train rule wants it small enough that a real train-measured win
+        clears it; the holdout confirmation wants it large enough to
+        absorb the holdout slice's own quantisation. A slice of N entries
+        moves its scalar in steps of ``1/N``, and the holdout is the
+        smaller slice (``holdout_fraction`` defaults to 0.3), so its steps
+        are the coarser ones. On the default 12-train, 6-holdout split, a
+        two-entry train win needs ``margin <= 2/12`` while tolerating one
+        regressed holdout entry needs ``margin >= 1/6``: the same number,
+        so the feasible window is a single point that float rounding
+        closes. Separate bounds make such a board promotable.
 
-        For bounds that mean the same thing on both slices, set
-        ``holdout_margin ≈ promote_margin × N_train / N_holdout`` (on the
-        default split, roughly twice ``promote_margin``). ``None`` keeps the
-        historical single-knob behaviour exactly, so the contract canonical
-        form — and every existing epoch's hash — is unmoved.
+        For bounds that mean the same on both slices, set
+        ``holdout_margin ≈ promote_margin × N_train / N_holdout`` (about
+        twice ``promote_margin`` on the default split). Unset keeps the
+        single-knob behaviour and the contract canonical form omits the
+        field, so the hash is unmoved.
 
-        Scoped to the holdout CONFIRMATION and nothing else. It does NOT
-        move the Ladder's release threshold
-        (:func:`zicato.tournament.ladder.effective_threshold`), which gates a
-        TRAIN-measured improvement and where a raised bar would withhold the
-        query — leaving the train promote to stand unconfirmed. Widen that
-        band with :attr:`LadderConfig.threshold` if you mean to.
+        Scoped to the holdout confirmation alone. It does not move the
+        Ladder's release threshold
+        (:func:`zicato.tournament.ladder.effective_threshold`), which
+        gates a train-measured improvement and where a raised bar would
+        withhold the query and leave the train promote unconfirmed; widen
+        that band with :attr:`LadderConfig.threshold`.
     holdout_entry_regression_budget:
         How many holdout entries may regress before the holdout
-        confirmation rejects. ``0`` (the default) is a zero-tolerance
-        rule: any regressing holdout entry blocks confirmation.
+        confirmation rejects. ``0`` (default) is zero tolerance: any
+        regressing holdout entry blocks confirmation.
 
-        The gate's own doctrine is that the holdout CONFIRMS rather than
-        re-decides — a train-measured win "must merely not regress" there.
-        The pass-rate monotonicity rule the confirmation reuses carries only
-        a float-noise tolerance (``1e-9`` aggregate / ``0.02`` per-entry),
-        which on a 6-entry noisy slice means a single entry flipping
-        pass→fail rejects at EVERY margin: no ``holdout_margin`` can rescue
-        it, because the rejection never came from the scalar bound. This
-        budget is the knob that rule never had. It applies under both
-        :attr:`pass_rate_monotonicity_scope` values — per-entry it allows up
-        to N regressed entries, aggregate it widens the mean-score tolerance
-        by ``N / (SCORED holdout entries)``, which is exactly the movement N
-        flips would produce on that slice (the scored count is ``mean_score``'s
-        own denominator, so one budget unit means one entry either way).
-
-        Deliberately holdout-only: the TRAIN side keeps its zero-tolerance
-        rule, so this cannot loosen the gate's primary decision.
+        The holdout confirms rather than re-decides: a train-measured win
+        must merely not regress there. The pass-rate monotonicity rule the
+        confirmation reuses carries only a float-noise tolerance (``1e-9``
+        aggregate, ``0.02`` per entry). On a six-entry noisy slice a single
+        entry flipping from pass to fail therefore rejects at every margin,
+        and no ``holdout_margin`` can rescue it, because the rejection
+        never came from the scalar bound. This budget is the tolerance
+        that rule lacks. It applies under both
+        :attr:`pass_rate_monotonicity_scope` values: per entry it allows
+        up to N regressed entries; in aggregate it widens the mean-score
+        tolerance by ``N / (scored holdout entries)``, the movement N flips
+        would produce on that slice. Holdout-only: the train side keeps
+        zero tolerance, so this cannot loosen the gate's primary decision.
+        Must be ``>= 0``.
     pass_rate_monotonicity:
-        When ``True`` (default), a pass-rate regression rejects the child
-        regardless of drift-side improvement. The stricter half of the
-        tournament gate; operators can flip to ``False`` for experimental
-        epochs where they expect non-monotone exploration. The on/off
-        switch only — :attr:`pass_rate_monotonicity_scope` selects WHICH
-        movement counts as a regression.
+        When on (default), a pass-rate regression rejects the challenger
+        whatever the drift-side improvement: every expectation the
+        champion passed must still pass. This guards against trading a
+        hard pass away for an average-loss gain, and is the stricter half
+        of the tournament gate. Off admits non-monotone exploration in an
+        experimental epoch. The on/off switch only;
+        :attr:`pass_rate_monotonicity_scope` selects which movement counts
+        as a regression.
     pass_rate_monotonicity_scope:
-        Granularity of the pass-rate monotonicity check when
-        :attr:`pass_rate_monotonicity` is on (see
-        :data:`PassRateMonotonicityScope`). ``"per_entry"`` (default,
-        back-compatible) rejects when ANY champion-passed entry flips to
-        fail — the right policy for invariant / regression-suite boards.
-        ``"aggregate"`` rejects only when the OVERALL pass-rate drops below
-        the champion's (modulo a small float-noise tolerance) — the right
-        policy for sampled evaluation boards where individual pass/fail is
-        noisy and a strictly-better challenger should not be vetoed by a
-        single entry flip. There is no ``"off"`` value: disable the check
+        Granularity of the pass-rate check while
+        :attr:`pass_rate_monotonicity` is on
+        (:data:`PassRateMonotonicityScope`). ``"per_entry"`` (default)
+        rejects when any entry the champion passed flips to fail, the
+        right policy for invariant and regression-suite boards.
+        ``"aggregate"`` rejects only when the overall pass rate drops below
+        the champion's beyond a small float-noise tolerance, the right
+        policy for sampled boards where one noisy flip should not veto a
+        better challenger. There is no ``"off"`` value; disable the check
         with ``pass_rate_monotonicity=False``.
     regression_gate_enabled:
-        When ``True``, the tournament runner shells out to the
-        snapshot's own test suite BEFORE evaluating the scoring gate.
-        A non-passing suite hard-rejects the candidate regardless of
-        drift_loss / pass_rate movement. Defaults to ``False`` for
-        backwards compatibility with epochs whose snapshots do not
-        ship a regression suite.
+        When on, the tournament runner runs the snapshot's own test suite
+        before evaluating the scoring gate, and a failing or timed-out
+        suite rejects the candidate whatever its scalar movement. Off by
+        default; turn it on only for a system under test whose snapshot
+        ships a suite.
     regression_test_command:
-        The argv used to invoke the regression suite. Defaults to a
-        plain pytest invocation; operators with non-pytest suites can
-        override (e.g. ``("python", "-m", "unittest", "discover")``).
+        The command line that invokes the regression suite, as an
+        argument list. ``pytest tests/ -q`` by default; a non-pytest suite
+        names its own command, such as ``python -m unittest discover``.
     regression_timeout_s:
-        Wall-clock seconds the regression subprocess is allowed before
-        the runner kills it. A timeout counts as a regression failure.
+        Wall-clock seconds the regression subprocess may take before the
+        runner kills it. A timeout counts as a regression failure. Must be
+        ``>= 1``.
     namespace_weights:
-        Per-namespace coefficients used by the multi-objective scalar —
-        the ONE map every measured channel rides. Keys are namespace
-        prefixes (with the trailing colon, e.g. ``"drift:"``). The sign of
-        each coefficient codifies the namespace's "worse" direction:
+        Per-namespace coefficients of the multi-objective scalar, the one
+        map every measured channel rides. Keys are namespace prefixes with
+        the trailing colon (``"drift:"``). The sign of each coefficient
+        states the namespace's worse direction:
 
-        * Positive → higher value is worse (drift, judges, failures,
+        * Positive: a higher value is worse (drift, judges, failures,
           runtime, cost, latency, schema). Added to the scalar as
-          ``weight * mean``.
-        * Negative → higher value is better (rubric). The negation
-          flips the metric into a loss so the scalar stays
-          lower-is-better.
-        * Zero → namespace excluded from the scalar; tracked but not
-          optimised (default for ``"output:"`` and ``"runtime:"``).
+          ``weight × mean``.
+        * Negative: a higher value is better (rubric). The negation turns
+          the metric into a loss so the scalar stays lower-is-better.
+        * Zero: the namespace is tracked and left out of the scalar (the
+          default for ``"output:"`` and ``"runtime:"``).
 
-        An explicit mapping REPLACES the defaults wholesale rather than
+        An explicit mapping replaces the defaults as a whole rather than
         merging with them, and a namespace it omits scores at ``0.0``.
-        ``"failure:"`` is therefore required to be present and strictly
-        positive (see :meth:`__post_init__`): a contract must not be able
-        to make crashing free, by omission or by assignment.
-
-        See :func:`_default_namespace_weights` for the shipped values.
+        ``"failure:"`` must be present and strictly positive, because that
+        channel carries the task-failure and not-completed terms and a
+        contract must not be able to make crashing free. See
+        :func:`_default_namespace_weights` for the shipped values.
     namespace_monotonicity:
-        Per-namespace strict-monotonicity flags. When a namespace's
-        flag is ``True``, the promote gate rejects any child whose
-        per-namespace aggregate has moved in the namespace's "worse"
-        direction (as defined by the sign in
-        :attr:`namespace_weights`) by more than the namespace's
-        tolerance — even when the combined scalar improves. Namespaces
-        whose flag is missing or ``False`` are not gated this way.
+        Per-namespace strict-monotonicity flags. When a namespace's flag
+        is on, the promote gate rejects a challenger whose per-namespace
+        aggregate moved in that namespace's worse direction (the sign in
+        :attr:`namespace_weights`) by more than the namespace's tolerance,
+        even when the combined scalar improved. A namespace whose flag is
+        missing or off is not gated this way. The shipped defaults gate
+        ``rubric:`` and ``schema:``.
+    tournament_structure:
+        The per-epoch tournament structure and its parameters
+        (:class:`TournamentStructure`): ``gauntlet`` runs one challenger
+        against the champion, ``racing`` a field of challengers over an
+        escalating board slice; the structures behind
+        :attr:`experimental` need that block's opt-in. Changing the
+        structure or any parameter rolls the epoch.
+    telemetry_dialect:
+        Which producer reduces a run's raw telemetry into the loss profile
+        the scalar scores (TELEMETRY-DIALECTS.md). ``"goldfive"``
+        (default) reads the full drift-instrument event stream;
+        ``"adk_events"`` reduces a generic agent event-log JSONL, with no
+        in-process drift instruments and no custom process-judge drift;
+        ``"transcript"`` is the floor, predicates and in-run judges only,
+        with a drift term of zero. A contract input: changing it selects
+        champions under a different measurement rule and rolls the epoch.
+        Omitted from the contract canonical form at its default. An
+        unknown name is refused at load.
+    block_on_containment_violation:
+        When on, the orchestrator re-checks diff containment before it
+        finalises a gate-decided promotion: every file outside the
+        registered mutable trees must be byte-identical between parent and
+        child, the rule the supervisor attests out of band. A violating
+        child is rejected with a ``containment_violation`` reason instead
+        of being promoted with an alarm. Off (default) keeps the alarm-only
+        posture. An unreadable snapshot skips the check rather than
+        quarantining a candidate, and an explicit operator force-promote
+        is never blocked; the override is recorded. Omitted from the
+        contract canonical form at its default.
+    block_on_gate_contradiction:
+        When on, the orchestrator re-derives the gate's scalar rule
+        (``delta_scalar <= -promote_margin``) immediately before it
+        finalises a gate-decided promotion and refuses the promotion on a
+        contradiction. Off (default) persists the promotion and leaves the
+        supervisor's out-of-band scan to raise the alarm. A promotion with
+        no usable scalar evidence is skipped rather than refused, and an
+        explicit operator force-promote is not re-checked. Omitted from
+        the contract canonical form at its default.
+    goldfive:
+        The optional goldfive integration block: its detector, judge,
+        steering, endpoint and wrapped-call settings, as one JSON object.
+        Absent (the default) unless the selected adapter declares the
+        integration; an explicit block binds all of that behaviour to the
+        epoch, and any change to it rolls the epoch.
+    mutation_surface:
+        The mutation-site file types declared beyond the built-in syntax
+        table (MUTATION-SURFACE.md §2.5): ``{suffix: {"leaders": [...],
+        "trailers": [...]}}``, where the leaders are the comment lead-ins
+        a marker may be written under and the trailers the comment
+        closers. The built-ins are ``.md``, ``.markdown``, ``.txt``,
+        ``.yaml``, ``.yml`` and ``.toml``; ``.py`` is reserved, and the
+        table governs the text pass only. The table decides which files
+        are enumerable at all, hence what the proposer may rewrite, so it
+        is a contract input: declaring or removing a type rolls the epoch,
+        and the empty default is omitted from the canonical form.
+        Validated by ``markers.syntax_table_from_config`` when installed or
+        set through the builder.
     pass_transform:
-        Optional declarative transform (a single
+        Optional declarative transform (one
         :data:`zicato.scoring.transforms.TransformSpec`,
-        ``{"op": ..., ...params}``) reshaping the scalar's pass/miss
-        term ``(1 - mean_score)`` at Seam 2 — the declarative replacement
-        for the retired ``pass_exponent`` field (a stray ``pass_exponent``
-        config key is now rejected at load rather than silently dropped). ``None``
-        (default) is NEUTRAL = ``linear`` = the plain linear miss term.
-        Validated fail-fast in :meth:`__post_init__`.
+        ``{"op": ..., ...params}``) reshaping the scalar's pass/miss term
+        ``(1 - mean_score)`` where that term is formed. Unset (default)
+        keeps the plain linear miss term. A ``pass_exponent`` key is
+        rejected at load; write ``{"op": "pow", "exponent": 2.0}`` for
+        that curve. Validated at construction.
     drift_kind_aggregation:
-        Optional per-drift-kind declarative transforms
-        (``{kind: TransformSpec}``) reshaping how each kind's count
-        aggregates into the per-run drift loss at Seam 1. This is how a
-        diminishing-returns rule for ``looping_reasoning`` is opted into,
-        per contract, rather than applied unconditionally. An absent kind
-        entry is
-        NEUTRAL = ``linear`` = ``severity × kind_weight × count``.
-        Validated fail-fast in :meth:`__post_init__`.
+        Optional per-drift-kind declarative transforms (``{kind:
+        TransformSpec}``) reshaping how each kind's count aggregates into
+        the per-run drift loss. A diminishing-returns rule for
+        ``looping_reasoning`` is opted into here, per contract
+        (``{"looping_reasoning": {"op": "harmonic"}}``). A kind with no
+        entry aggregates linearly as ``severity × kind_weight × count``.
+        Validated at construction.
     """
 
     pass_weight: float = field(
@@ -1079,13 +1100,8 @@ class ScoringWeights:
     not_completed_weight: float = field(
         default=50.0, metadata=_knob(builder_op="set_weights", constraint=KnobConstraint())
     )
-    # Opt-in parsimony / MDL term (OVERFITTING.md §5 / §12 #4). DEFAULT 0.0 ⇒
-    # the diff-complexity term is exactly absent and the scalar / contract hash
-    # / every golden are byte-identical to a contract without this field (the
-    # contract canonicalizer omits it at the default — see
-    # ``epoch/contract.py::scoring_to_canon``). Set ``> 0`` to fold a
-    # ``diff_complexity_weight * (added + removed + patches)`` component into the
-    # challenger's scalar so a shorter-description edit is preferred.
+    # Omitted at the default so the parity goldens and every existing contract
+    # hash hold (``epoch/contract.py::scoring_to_canon``).
     diff_complexity_weight: float = field(
         default=0.0,
         metadata=_knob(
@@ -1094,13 +1110,6 @@ class ScoringWeights:
             constraint=KnobConstraint(minimum=0),
         ),
     )
-    # Parsimony CEILING (OVERFITTING.md §5 / §12 #4 — the ceiling half of the
-    # diff-complexity regularizer, paired with the loss-term weight above).
-    # DEFAULT 0.0 ⇒ OFF: the gate never consults it and the scalar / contract
-    # hash / every golden are byte-identical (the canonicalizer omits it at the
-    # default). Set ``> 0`` to REJECT any challenger whose diff complexity
-    # (``added + removed + patches``) exceeds the ceiling — a hard gate rule,
-    # not a loss nudge. Any value ``<= 0`` is treated as OFF.
     diff_complexity_ceiling: float = field(
         default=0.0,
         metadata=_knob(
@@ -1118,14 +1127,8 @@ class ScoringWeights:
         default=0.01,
         metadata=_knob(builder_op="set_gate", constraint=KnobConstraint(minimum=0)),
     )
-    # The holdout confirmation's OWN bounds (issue #118). ``promote_margin``
-    # was calibrated against the train slice and reused verbatim on the
-    # holdout, whose 1/N quantization is coarser; the two uses then pull one
-    # knob in opposite directions and the feasible window can be empty. Both
-    # fields are additive, and their defaults change nothing:
-    # ``holdout_margin=None`` falls back to ``promote_margin``, and a budget
-    # of 0 is the zero-tolerance per-entry rule. The canonicalizer omits both at their
-    # default so no existing epoch's contract hash moves.
+    # The holdout confirmation's own bounds. Both are inert at their default
+    # and omitted from the canonical form there, so no contract hash moves.
     holdout_margin: float | None = field(
         default=None,
         metadata=_knob(omit_at_default=True, builder_op="set_gate"),
@@ -1169,10 +1172,6 @@ class ScoringWeights:
         default_factory=_default_namespace_monotonicity,
         metadata=_knob(builder_op="set_gate"),
     )
-    # Per-epoch tournament structure (gauntlet by default). Modelled here
-    # so it factors into the contract hash through the existing scoring
-    # canonicalizer with zero new plumbing: changing the structure or any
-    # param rolls the epoch. See :class:`TournamentStructure`.
     tournament_structure: TournamentStructure = field(
         default_factory=_default_tournament_structure,
         metadata=_knob(builder_op="set_structure", builder_arg="structure"),
@@ -1214,8 +1213,6 @@ class ScoringWeights:
         default_factory=_default_experimental_config,
         metadata=_knob(omit_at_default=True),
     )
-    # Goldfive settings are absent unless the selected adapter declares that
-    # integration; an explicit block then binds all behavior to the epoch.
     goldfive: Mapping[str, Any] | None = field(
         default=None,
         metadata=_knob(
@@ -1288,21 +1285,9 @@ class ScoringWeights:
     # class). ``scalar_fn`` is Seam 2 — it runs in the orchestrator.
     drift_reducer: str = ""
     scalar_fn: str = ""
-    # Telemetry dialect — the PRODUCER that turns a run's raw telemetry into
-    # the LossProfile inputs (TELEMETRY-DIALECTS.md). ``"goldfive"`` (default,
-    # the most powerful — the full drift-instrument stream) leaves every path
-    # byte-identical; ``"adk_events"`` reduces a generic agent event-log JSONL;
-    # ``"transcript"`` is the predicate/judge-only floor with a structurally
-    # zero drift term. Part of the evaluation contract — changing it selects
-    # champions under a different measurement rule and rolls the epoch — and it
-    # is threaded to BOTH the orchestrator and the killable worker through the
-    # SAME field-enumerating serde that carries ``drift_reducer`` across the
-    # worker boundary (no new plumbing). Omitted from the contract canonical
-    # form at its ``"goldfive"`` default (``epoch/contract.py::
-    # _SCORING_OMIT_AT_DEFAULT_FIELDS``) so existing epochs never roll
-    # retroactively; a non-default dialect rolls the epoch normally. Validated
-    # fail-fast in ``__post_init__`` (an unknown name is a genuine config error,
-    # the "refuse" half of the warn-or-refuse story).
+    # Threaded to both the orchestrator and the killable worker through the
+    # same field-enumerating serde that carries ``drift_reducer`` across the
+    # worker boundary, so the two never score under different dialects.
     telemetry_dialect: str = field(
         default=DIALECT_GOLDFIVE,
         metadata=_knob(
@@ -1312,52 +1297,21 @@ class ScoringWeights:
             constraint=KnobConstraint(choices=tuple(sorted(KNOWN_TELEMETRY_DIALECTS))),
         ),
     )
-    # Opt-in INTEGRITY BLOCKING modes (both default OFF — the alarm-only
-    # posture of the supervisor's integrity notary is the shipped baseline).
-    # Both are omitted from the contract canonical form at their default
-    # (``epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS``) so existing
-    # epochs never roll retroactively; opting in rolls the epoch normally.
-    #
-    # ``block_on_containment_violation``: before finalizing a GATE-DECIDED
-    # promotion, the orchestrator re-checks diff containment on the same
-    # rule surface the Rust supervisor attests out-of-band
-    # (``crates/supervisor/src/diff_containment.rs``): every file OUTSIDE
-    # the registered mutable trees must be byte-identical parent↔child.
-    # When ON, a violating child is REJECTED with a clear
-    # ``containment_violation`` reason instead of promoted-with-alarm.
-    # Fail-open like the supervisor: an unreadable snapshot skips the
-    # check (never a false quarantine). An explicit operator
-    # force-promote is NOT blocked — the override is recorded provenance,
-    # never silent.
+    # The two integrity blocking modes share the containment rule with the
+    # supervisor (``crates/supervisor/src/diff_containment.rs``) and the gate
+    # rule with its ``promotion_gate.rs check_row``; both stay alarm-only at
+    # their default.
     block_on_containment_violation: bool = field(
         default=False,
         metadata=_knob(omit_at_default=True, builder_op="set_gate"),
     )
-    # ``block_on_gate_contradiction``: immediately before finalizing a
-    # GATE-DECIDED promotion, re-derive the gate's scalar rule
-    # (``delta_scalar <= -promote_margin`` — the supervisor's
-    # ``promotion_gate.rs check_row`` semantics, applied pre-persist) and
-    # REFUSE the promotion on contradiction. When OFF (default) a
-    # contradiction persists unchanged and the supervisor's
-    # out-of-band scan raises the alarm. An explicit operator
-    # force-promote is NOT re-checked (same rationale as above); a
-    # promotion with no usable scalar evidence is skipped (fail-open,
-    # mirroring ``check_row``'s SkippedNoEvidence).
     block_on_gate_contradiction: bool = field(
         default=False,
         metadata=_knob(omit_at_default=True, builder_op="set_gate"),
     )
-    # The mutation-site file-type envelope, declared rather than released
-    # (MUTATION-SURFACE.md §2.5): ``{suffix: {"leaders": [...], "trailers":
-    # [...]}}``, folded over the built-in syntax table
-    # (``zicato.mutation.markers.BUILTIN_SYNTAXES``). The table decides which
-    # files are enumerable AT ALL, hence what the proposer may rewrite, hence
-    # comparability — so it is contract: editing it rolls the epoch, and the
-    # empty default (every workspace shipped so far) is omitted from the
-    # canonical form, leaving those hashes byte-identical. ``.py`` is
-    # reserved; the table governs the text pass only. Validated by
-    # ``markers.syntax_table_from_config`` at install / builder-op time — the
-    # ONE validator, never a second copy here (core must not import mutation).
+    # Folded over ``zicato.mutation.markers.BUILTIN_SYNTAXES`` and validated
+    # by ``markers.syntax_table_from_config`` alone: core must not import
+    # mutation, so no second validator lives here.
     mutation_surface: Mapping[str, Mapping[str, Any]] = field(
         default_factory=dict,
         metadata=_knob(omit_at_default=True, builder_op="set_mutation_surface"),

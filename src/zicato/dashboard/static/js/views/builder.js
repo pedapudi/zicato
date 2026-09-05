@@ -393,6 +393,19 @@ function renderCenter(host) {
   });
 }
 
+// The info popover content for one contract knob. `key` is the knob's
+// contract path (`pass_weight`, `overfitting.ladder.budget`); the help
+// paragraphs and the default come from `/builder/config` `knob_help`, which
+// the server reads from the scoring configuration's field docstrings, so no
+// copy of that text lives here. `extra.title` overrides the popover title
+// (a mapping row names its key); `extra.note` adds a sentence about this
+// form's own control that the contract docstring cannot carry.
+function knobInfo(key, extra) {
+  const served = (_config && _config.knob_help && _config.knob_help[key]) || {};
+  const o = extra || {};
+  return { title: o.title || key, def: served.default, body: served.help, note: o.note };
+}
+
 // A labelled control row with an info popover (ⓘ) beside the label.
 function controlRow(labelText, info, control) {
   return el('div', { class: 'dn-bld-row' }, [
@@ -511,10 +524,7 @@ function structureSection(d) {
 function experimentalSection(d) {
   return section('Experimental',
     el('p', { class: 'dn-lede', text: 'Features without a measured case. Each stays here until a measurement sweep graduates it; enabling one is a contract edit — it rolls the epoch.' }),
-    controlRow('Experimental tournament structures', {
-      title: 'experimental.tournament_structures', def: 'off',
-      body: 'Admits single elimination, double elimination and Swiss pairing as the structure. Each pairs challengers against each other, so a candidate\'s fate depends on its draw; the second life a losers\' bracket buys is what replicates already buys, and Swiss is racing without the escalating board slice. None has a measured case at a field of two to four candidates under an expensive, noisy evaluator. Turning the flag off while the structure is one of the three is refused.',
-    }, checkInput(experimentalStructuresOn(d), 'Experimental tournament structures', 'admit single_elim, double_elim and swiss as the structure',
+    controlRow('Experimental tournament structures', knobInfo('experimental.tournament_structures'), checkInput(experimentalStructuresOn(d), 'Experimental tournament structures', 'admit single_elim, double_elim and swiss as the structure',
       (on) => runOp('set_experimental', { tournament_structures: on }))));
 }
 
@@ -572,20 +582,14 @@ function fieldSection(d) {
     if (!isFinite(n) || n < 0) return;
     runOp('set_screening', { entries: Math.round(n) });
   });
-  rows.push(controlRow('Candidate screen entries', {
-    title: 'Candidate screen entries', def: '0 (off); scaffold 2',
-    body: 'Pre-tournament tryout: each best-of-N slate candidate runs this many rotating champion-passing train entries BEFORE selection, and a confirmed catastrophic regression (pass-flip or budget blow-out) is vetoed. Veto-first — the screen disqualifies, it never ranks; the critic chooses among survivors. Costs proposes × best_of_n × entries extra runs per round; inert when best_of_n is 1.',
-  }, screen));
+  rows.push(controlRow('Candidate screen entries', knobInfo('proposer_quality.screen_entries'), screen));
   const vetoOnly = el('input', { class: 'dn-bld-check', type: 'checkbox', 'aria-label': 'Screen veto-only' });
   if (pq.screen_veto_only) vetoOnly.setAttribute('checked', 'checked');
   vetoOnly.addEventListener('change', () => {
     const on = vetoOnly.checked != null ? vetoOnly.checked : (vetoOnly.getAttribute('checked') != null);
     runOp('set_screening', { veto_only: !!on });
   });
-  rows.push(controlRow('Screen veto-only', {
-    title: 'Screen veto-only', def: 'off',
-    body: 'When on, the screen may only disqualify: its panel counts feed neither the critic prompt nor the heuristic tiebreak. Keeps selection blind to the (selection-biased) tryout measurements while still catching catastrophic regressions.',
-  }, el('label', { class: 'dn-bld-checkwrap' }, [vetoOnly, el('span', { text: 'veto only — no selection tiebreak' })])));
+  rows.push(controlRow('Screen veto-only', knobInfo('proposer_quality.screen_veto_only'), el('label', { class: 'dn-bld-checkwrap' }, [vetoOnly, el('span', { text: 'veto only — no selection tiebreak' })])));
   return section('Field & noise', ...rows);
 }
 
@@ -644,10 +648,7 @@ function boardSection(d) {
   return section('Board & holdout',
     el('p', { class: 'dn-lede', text: 'The evaluation board and its train / holdout split. The winning challenger is re-scored on the holdout slice before it can promote.' }),
     replacedNotice(),
-    controlRow('Holdout fraction', {
-      title: 'Holdout fraction', def: '0.2',
-      body: 'Fraction of the board hash-partitioned into the holdout slice (when no explicit per-entry holdout tags are set). A larger holdout guards harder against overfitting but costs more confirm runs and shrinks the train field.',
-    }, frac),
+    controlRow('Holdout fraction', knobInfo('overfitting.holdout_fraction'), frac),
     el('div', { class: 'dn-bld-splitstrip', role: 'img', 'aria-label': `train ${trainSet.size} · holdout ${holdSet.size}` }, [
       el('span', { class: 'dn-bld-split-train', style: `flex:${Math.max(1, trainSet.size)}`, text: `train ${trainSet.size}` }),
       el('span', { class: 'dn-bld-split-hold', style: `flex:${Math.max(0.001, holdSet.size)}`, text: `holdout ${holdSet.size}` }),
@@ -1177,61 +1178,35 @@ function overfittingSection(d) {
   const of = ((d.scoring || {}).overfitting) || {};
   const ladder = of.ladder || {};
   const rows = [
-    controlRow('Overfitting guard', {
-      title: 'overfitting.enabled', def: 'on',
-      body: 'Master switch for the train/holdout machinery. Off, no holdout is ever derived (an explicit per-entry holdout tag still wins) and the loop behaves as if the guard never existed.',
-    }, checkInput(of.enabled !== false, 'Overfitting guard enabled', 'train/holdout split on',
+    controlRow('Overfitting guard', knobInfo('overfitting.enabled'), checkInput(of.enabled !== false, 'Overfitting guard enabled', 'train/holdout split on',
       (on) => runOp('set_holdout', { enabled: on }))),
-    controlRow('Split floor (min board size)', {
-      title: 'min_board_size_for_split', def: '6',
-      body: 'The smallest board at which the hash-derived holdout is attempted. Below it the holdout is empty (small boards are never starved of train entries); an explicit per-entry holdout tag overrides the floor.',
-    }, numInput(of.min_board_size_for_split != null ? of.min_board_size_for_split : 6,
+    controlRow('Split floor (min board size)', knobInfo('overfitting.min_board_size_for_split'), numInput(of.min_board_size_for_split != null ? of.min_board_size_for_split : 6,
       { min: '0', step: '1', 'aria-label': 'Min board size for split' },
       (n) => runOp('set_holdout', { min_board_size_for_split: n }), { int: true })),
-    controlRow('Rotate holdout', {
-      title: 'rotate_holdout', def: 'on',
-      body: 'Rotates the hash-derived holdout slice each epoch (the epoch id seeds the split), so no fixed slice is mined forever. Stable within an epoch; an explicit holdout tag is never rotated.',
-    }, checkInput(of.rotate_holdout !== false, 'Rotate holdout', 'rotate the holdout slice each epoch',
+    controlRow('Rotate holdout', knobInfo('overfitting.rotate_holdout'), checkInput(of.rotate_holdout !== false, 'Rotate holdout', 'rotate the holdout slice each epoch',
       (on) => runOp('set_holdout', { rotate_holdout: on }))),
-    controlRow('Max generations per contract', {
-      title: 'max_generations_per_contract', def: '0 (no ceiling)',
-      body: 'The board-refresh ceiling: after this many generations settle under ONE contract hash, the loop stops proposing against the stale board until the operator rolls the contract — a hard cap on how long a board is mined before it must be refreshed. ASYMMETRY: the op reserves None for "leave unchanged", so this form always sends an explicit integer, and 0 CLEARS the ceiling (unlimited generations). Set 0 to remove any cap; a positive value to impose one.',
-    }, numInput(of.max_generations_per_contract != null ? of.max_generations_per_contract : 0,
+    controlRow('Max generations per contract', knobInfo('overfitting.max_generations_per_contract', {
+      note: 'This field shows an unset ceiling as 0, and 0 clears it.',
+    }), numInput(of.max_generations_per_contract != null ? of.max_generations_per_contract : 0,
       { min: '0', step: '1', 'aria-label': 'Max generations per contract' },
       (n) => runOp('set_holdout', { max_generations_per_contract: n }), { int: true })),
-    controlRow('Restrict proposer visibility', {
-      title: 'restrict_proposer_visibility', def: 'on',
-      body: 'Sanitises the proposer prompt at the render boundary: per-entry identities aggregate to counts/rates and experiment-memory deltas coarsen to improved/flat/regressed bands, so the proposer cannot memorise individual board entries.',
-    }, checkInput(of.restrict_proposer_visibility !== false, 'Restrict proposer visibility',
+    controlRow('Restrict proposer visibility', knobInfo('overfitting.restrict_proposer_visibility'), checkInput(of.restrict_proposer_visibility !== false, 'Restrict proposer visibility',
       'band / aggregate what the proposer sees',
       (on) => runOp('set_holdout', { restrict_proposer_visibility: on }))),
-    controlRow('Placebo cadence (rounds)', {
-      title: 'random_baseline_every_n', def: '0 (off)',
-      body: 'Every Nth round, field ONE extra challenger whose patch is a semantics-preserving no-op. The gate MUST reject it — a promoted placebo is the alarm that gate discrimination is broken and recent wins are suspect. The gate-discrimination control arm; costs one extra challenger per N rounds.',
-    }, numInput(of.random_baseline_every_n != null ? of.random_baseline_every_n : 0,
+    controlRow('Placebo cadence (rounds)', knobInfo('overfitting.random_baseline_every_n'), numInput(of.random_baseline_every_n != null ? of.random_baseline_every_n : 0,
       { min: '0', step: '1', 'aria-label': 'Random baseline every N rounds' },
       (n) => runOp('set_holdout', { random_baseline_every_n: n }), { int: true })),
-    controlRow('Ladder governor', {
-      title: 'ladder.enabled', def: 'on',
-      body: 'The Ladder/Thresholdout governor over the holdout query: a new holdout signal is released only when the train-measured improvement clears the threshold, and each query charges a finite per-epoch budget. What keeps a reused holdout valid under an adaptive proposer.',
-    }, checkInput(ladder.enabled !== false, 'Ladder governor enabled', 'Ladder/Thresholdout holdout governor',
+    controlRow('Ladder governor', knobInfo('overfitting.ladder.enabled'), checkInput(ladder.enabled !== false, 'Ladder governor enabled', 'Ladder/Thresholdout holdout governor',
       (on) => runOp('set_holdout', { ladder: { enabled: on } }))),
-    controlRow('Ladder release threshold', {
-      title: 'ladder.threshold', def: 'auto (derive from promote_margin)',
-      body: 'The TRAIN-improvement bar the Ladder release rule applies before a holdout signal is released at all. Auto derives it from promote_margin so the Ladder reuses the gate\'s own noise threshold; pin a float to widen the band independently. Distinct from holdout_margin, which bounds the confirmation AFTER release — raising this one WITHHOLDS the query instead, leaving a train promote unconfirmed. The op reads null in the ladder mapping as the real "auto" value, so a NEGATIVE value here posts that reset; -1 is the shown auto state.',
-    }, numInput(ladder.threshold != null ? ladder.threshold : -1,
+    controlRow('Ladder release threshold', knobInfo('overfitting.ladder.threshold', {
+      note: 'This field shows an unset threshold as -1, and a negative value unsets it.',
+    }), numInput(ladder.threshold != null ? ladder.threshold : -1,
       { min: '-1', step: '0.01', 'aria-label': 'Ladder release threshold' },
       (n) => runOp('set_holdout', { ladder: { threshold: n < 0 ? null : n } }))),
-    controlRow('Ladder query budget', {
-      title: 'ladder.budget', def: '16',
-      body: 'Per-epoch holdout-query budget. Each round that consults the holdout charges one; exhausted, no further holdout signals are released (the loop degrades to champion-stands). The finite budget is what keeps a reused holdout statistically valid under an adaptive proposer.',
-    }, numInput(ladder.budget != null ? ladder.budget : 16,
+    controlRow('Ladder query budget', knobInfo('overfitting.ladder.budget'), numInput(ladder.budget != null ? ladder.budget : 16,
       { min: '0', step: '1', 'aria-label': 'Ladder budget' },
       (n) => runOp('set_holdout', { ladder: { budget: n } }), { int: true })),
-    controlRow('Ladder noise scale', {
-      title: 'ladder.noise_scale', def: '0 (parameter-free Ladder)',
-      body: 'Width of the noise band added to the Ladder release threshold. 0 is the parameter-free Ladder; reserved for DP-grade noise calibration.',
-    }, numInput(ladder.noise_scale != null ? ladder.noise_scale : 0,
+    controlRow('Ladder noise scale', knobInfo('overfitting.ladder.noise_scale'), numInput(ladder.noise_scale != null ? ladder.noise_scale : 0,
       { min: '0', step: '0.01', 'aria-label': 'Ladder noise scale' },
       (n) => runOp('set_holdout', { ladder: { noise_scale: n } }))),
   ];
@@ -1312,54 +1287,29 @@ function weightsSection(d) {
   const ns = sc.namespace_weights || {};
   const vocab = (_config && _config.vocab) || {};
   const rows = [
-    controlRow('Telemetry dialect', {
-      title: 'telemetry_dialect', def: 'goldfive',
-      body: 'The PRODUCER that reduces a run\'s raw telemetry into the LossProfile the scalar scores. goldfive consumes the full drift-instrument stream; adk_events reduces a generic agent event-log JSONL (no in-process drift instruments, no custom process-judge drift); transcript is the predicate/judge-only floor with a structurally zero drift term. A contract field — changing it selects champions under a different measurement rule and rolls the epoch.',
-    }, telemetryDialectControl(sc)),
-    controlRow('Optional Goldfive integration', {
-      title: 'goldfive', def: 'absent until explicitly enabled',
-      body: 'Typed detector, judge, steering, endpoint, and wrapped-call settings. Enable with fixed defaults, edit the JSON object, or remove the integration. Any change rolls the epoch.',
-    }, goldfiveConfigControl(sc)),
-    controlRow('Pass weight', {
-      title: 'pass_weight', def: '1.0',
-      body: 'Coefficient on the (1 − pass_rate) miss term of the scalar.',
-    }, numInput(sc.pass_weight != null ? sc.pass_weight : 1,
+    controlRow('Telemetry dialect', knobInfo('telemetry_dialect'), telemetryDialectControl(sc)),
+    controlRow('Optional Goldfive integration', knobInfo('goldfive', {
+      note: 'Enable writes the block with fixed defaults; Save writes the edited JSON object; Remove clears the block.',
+    }), goldfiveConfigControl(sc)),
+    controlRow('Pass weight', knobInfo('pass_weight'), numInput(sc.pass_weight != null ? sc.pass_weight : 1,
       { step: '0.1', 'aria-label': 'Pass weight' },
       (n) => runOp('set_weights', { pass_weight: n }))),
-    controlRow('Default judge weight', {
-      title: 'default_judge_weight', def: '1.0',
-      body: 'The weight a process judge folds into the loss with when it is not named in per_judge_weights. The baseline every judge inherits.',
-    }, numInput(sc.default_judge_weight != null ? sc.default_judge_weight : 1,
+    controlRow('Default judge weight', knobInfo('default_judge_weight'), numInput(sc.default_judge_weight != null ? sc.default_judge_weight : 1,
       { step: '0.1', 'aria-label': 'Default judge weight' },
       (n) => runOp('set_weights', { default_judge_weight: n }))),
-    controlRow('Plan-revision weight', {
-      title: 'plan_revision_weight', def: '0.5',
-      body: 'Coefficient on the plan-revision drift term (how much the agent rewrote its own plan mid-run) in the scalar.',
-    }, numInput(sc.plan_revision_weight != null ? sc.plan_revision_weight : 0.5,
+    controlRow('Plan-revision weight', knobInfo('plan_revision_weight'), numInput(sc.plan_revision_weight != null ? sc.plan_revision_weight : 0.5,
       { step: '0.1', 'aria-label': 'Plan revision weight' },
       (n) => runOp('set_weights', { plan_revision_weight: n }))),
-    controlRow('Task-failure weight', {
-      title: 'task_failure_weight', def: '10.0',
-      body: 'Multiplier on the fraction of a run\'s started tasks that failed, inside the failure: channel. Pure failures matter, so it is large relative to a single drift observation.',
-    }, numInput(sc.task_failure_weight != null ? sc.task_failure_weight : 10,
+    controlRow('Task-failure weight', knobInfo('task_failure_weight'), numInput(sc.task_failure_weight != null ? sc.task_failure_weight : 10,
       { step: '0.5', 'aria-label': 'Task failure weight' },
       (n) => runOp('set_weights', { task_failure_weight: n }))),
-    controlRow('Not-completed weight', {
-      title: 'not_completed_weight', def: '50.0',
-      body: 'What a run that did not complete — killed, crashed, wall-clock exhausted — costs in the failure: channel. An absolute magnitude, so retuning severities never rescales it. Without it a challenger could win by failing fast.',
-    }, numInput(sc.not_completed_weight != null ? sc.not_completed_weight : 50,
+    controlRow('Not-completed weight', knobInfo('not_completed_weight'), numInput(sc.not_completed_weight != null ? sc.not_completed_weight : 50,
       { step: '1', 'aria-label': 'Not completed weight' },
       (n) => runOp('set_weights', { not_completed_weight: n }))),
-    controlRow('Diff-complexity weight', {
-      title: 'diff_complexity_weight', def: '0 (term absent)',
-      body: 'Opt-in MDL/parsimony coefficient: adds weight × (added + removed + patches) to the challenger scalar, biasing selection toward the smaller, more general edit (a shorter-description edit provably overfits the board less). 0 keeps the term exactly absent. Applies on the full gauntlet A/B path only (racing/swiss/elim matchups score without a diff term).',
-    }, numInput(sc.diff_complexity_weight != null ? sc.diff_complexity_weight : 0,
+    controlRow('Diff-complexity weight', knobInfo('diff_complexity_weight'), numInput(sc.diff_complexity_weight != null ? sc.diff_complexity_weight : 0,
       { min: '0', step: '0.001', 'aria-label': 'Diff complexity weight' },
       (n) => runOp('set_namespace_weights', { diff_complexity_weight: n }))),
-    controlRow('Diff-complexity ceiling', {
-      title: 'diff_complexity_ceiling', def: '0 (off)',
-      body: 'Opt-in parsimony CEILING paired with the weight above: a hard gate rule that REJECTS any challenger whose diff complexity (added + removed + patches) exceeds this value, regardless of how much it improved. 0 keeps the ceiling off (never consulted). Applies on the full gauntlet A/B path only, like the weight above.',
-    }, numInput(sc.diff_complexity_ceiling != null ? sc.diff_complexity_ceiling : 0,
+    controlRow('Diff-complexity ceiling', knobInfo('diff_complexity_ceiling'), numInput(sc.diff_complexity_ceiling != null ? sc.diff_complexity_ceiling : 0,
       { min: '0', step: '1', 'aria-label': 'Diff complexity ceiling' },
       (n) => runOp('set_namespace_weights', { diff_complexity_ceiling: n }))),
   ];
@@ -1371,10 +1321,7 @@ function weightsSection(d) {
     def: 1, step: '0.1',
     labelFor: (k) => 'Severity ' + k,
     ariaFor: (k) => 'Severity weight ' + k,
-    infoFor: (k) => ({
-      title: 'severity_weights["' + k + '"]', def: '1.0',
-      body: 'Multiplier on every drift observation of ' + k + ' severity before it folds into the loss. Raises or lowers how much a ' + k + '-severity finding costs a challenger. Edits post the whole severity_weights mapping.',
-    }),
+    infoFor: (k) => knobInfo('severity_weights', { title: 'severity_weights["' + k + '"]' }),
   }, (mapping) => runOp('set_weights', { severity_weights: mapping }));
 
   // ── per_kind_weights — FIXED rows from vocab.kinds (→ set_weights) ───────
@@ -1384,10 +1331,7 @@ function weightsSection(d) {
     def: 1, step: '0.1',
     labelFor: (k) => 'Kind ' + k,
     ariaFor: (k) => 'Per-kind weight ' + k,
-    infoFor: (k) => ({
-      title: 'per_kind_weights["' + k + '"]', def: '1.0',
-      body: 'Weight on every ' + k + ' board entry\'s contribution to the aggregate loss (1.0 = neutral). Lets one entry kind pull harder on selection. Edits post the whole per_kind_weights mapping.',
-    }),
+    infoFor: (k) => knobInfo('per_kind_weights', { title: 'per_kind_weights["' + k + '"]' }),
   }, (mapping) => runOp('set_weights', { per_kind_weights: mapping }));
 
   // ── per_judge_weights — rows SEEDED from the judges declared on the board
@@ -1409,9 +1353,9 @@ function weightsSection(d) {
     def: 1, step: '0.1',
     labelFor: (k) => 'Judge ' + k,
     ariaFor: (k) => 'Per-judge weight ' + k,
-    infoFor: (k) => ({
-      title: 'per_judge_weights["' + k + '"]', def: 'default_judge_weight',
-      body: 'The weight the ' + k + ' process judge folds into the loss with, overriding default_judge_weight for this judge. Seeded from the judges declared on the board. Edits post the whole per_judge_weights mapping.',
+    infoFor: (k) => knobInfo('per_judge_weights', {
+      title: 'per_judge_weights["' + k + '"]',
+      note: 'The rows are the judges the board declares; the row below adds any other judge name.',
     }),
   }, (mapping) => runOp('set_weights', { per_judge_weights: mapping }));
   judgeRows.push(addKeyNumRow({
@@ -1426,10 +1370,9 @@ function weightsSection(d) {
 
   // ── namespace_weights — existing rows + the NAMESPACE ADD-KEY row ────────
   const nsKeys = Object.keys(ns);
-  const nsRows = nsKeys.map((key) => controlRow('Namespace ' + key, {
-    title: 'namespace_weights["' + key + '"]', def: String(ns[key]),
-    body: 'Signed coefficient turning this namespace\'s per-run mean into a scalar component. EVERY measured channel rides this map — drift:, judge:, failure:, runtime: included — so this is where a whole channel is turned up, down, or off. Positive = higher is worse (drift, cost, schema); negative = higher is better (rubric — negation keeps the scalar lower-is-better); zero = tracked but unscored. failure: must stay above zero: a contract cannot make crashing free.',
-  }, numInput(ns[key], { step: '0.001', 'aria-label': 'Namespace weight ' + key }, (n) => {
+  const nsRows = nsKeys.map((key) => controlRow('Namespace ' + key, knobInfo('namespace_weights', {
+    title: 'namespace_weights["' + key + '"]',
+  }), numInput(ns[key], { step: '0.001', 'aria-label': 'Namespace weight ' + key }, (n) => {
     const next = Object.assign({}, ns);
     next[key] = n;
     runOp('set_namespace_weights', { namespace_weights: next });
@@ -1542,11 +1485,10 @@ function mutationSurfacePanel(sc) {
       delete next[suffix];
       post(next);
     });
-    return controlRow(suffix, {
+    return controlRow(suffix, knobInfo('mutation_surface', {
       title: 'mutation_surface[' + suffix + ']',
-      def: 'declared',
-      body: 'Leaders ' + (tokens(entry.leaders) || '—') + '; trailers ' + (tokens(entry.trailers) || '—') + '. Removing the file type narrows the surface and rolls the epoch.',
-    }, drop);
+      note: 'Leaders ' + (tokens(entry.leaders) || '—') + '; trailers ' + (tokens(entry.trailers) || '—') + '.',
+    }), drop);
   });
   const suffixIn = el('input', { class: 'dn-bld-text', type: 'text', placeholder: '.ts', 'aria-label': 'File suffix' });
   const leadersIn = el('input', { class: 'dn-bld-text', type: 'text', placeholder: '//, /*', 'aria-label': 'Comment leaders' });
@@ -1582,49 +1524,27 @@ function proposerSection(d) {
     el('p', { class: 'dn-lede', text: 'How each challenger is proposed: the proposal runtime this workspace declares, steered by this epoch\'s brief and the skills of its proposer directory — plus the proposer-quality levers (best-of-N slate, self-critique, cross-epoch memory). Changing the proposer directory or any lever is a contract edit — it rolls the epoch.' }),
     proposerPicker(d),
     briefEditor(d),
-    controlRow('Best-of-N slate', {
-      title: 'best_of_n', def: '3',
-      body: 'How many candidate experiments each propose-step samples before the critique pass picks one. 1 is the historical single sample (no critique). Each extra sample is an evaluation propose call, priced on the cost meter; the screen (Field & noise) then tries the slate out.',
-    }, numInput(pq.best_of_n != null ? pq.best_of_n : 3,
+    controlRow('Best-of-N slate', knobInfo('proposer_quality.best_of_n'), numInput(pq.best_of_n != null ? pq.best_of_n : 3,
       { min: '1', step: '1', 'aria-label': 'Best of N' },
       (n) => runOp('set_proposer_quality', { best_of_n: n }), { int: true })),
-    controlRow('Self-critique', {
-      title: 'critique_enabled', def: 'on',
-      body: 'A single cheap evaluation-LLM pass scores the sampled slate against a quality bar (grounded? targets a real failure mode? minimal diff?) and selects the best. Off, selection falls back to the deterministic smallest-relevant-diff heuristic — no extra LLM call. Inert at best_of_n 1.',
-    }, checkInput(pq.critique_enabled !== false, 'Critique enabled', 'evaluation self-critique selects from the slate',
+    controlRow('Self-critique', knobInfo('proposer_quality.critique_enabled'), checkInput(pq.critique_enabled !== false, 'Critique enabled', 'evaluation self-critique selects from the slate',
       (on) => runOp('set_proposer_quality', { critique_enabled: on }))),
-    controlRow('Process exemplars', {
-      title: 'process_exemplars', def: '0 (off)',
-      body: 'Opt-in: show the proposer up to N mechanically-REDACTED event windows per round (how a detected failure unfolds — no entry ids, no task text, no model outputs). Read-side only — free on the cost meter — but it widens the proposer-visibility channel, so enable it only under the harm-detection runbook in PROCESS-EXEMPLARS.md §5 (watch the generalization_gap finding; set back to 0 if it widens while train improves).',
-    }, numInput(pq.process_exemplars != null ? pq.process_exemplars : 0,
+    controlRow('Process exemplars', knobInfo('proposer_quality.process_exemplars'), numInput(pq.process_exemplars != null ? pq.process_exemplars : 0,
       { min: '0', step: '1', 'aria-label': 'Process exemplars' },
       (n) => runOp('set_proposer_quality', { process_exemplars: n }), { int: true })),
-    controlRow('Recombination slot', {
-      title: 'recombine', def: 'off',
-      body: 'Opt-in: when best-of-N > 1, the last slate slot mints the patch union of two rejected complementary challengers instead of sampling the LLM — so a single winner can capture two fixes a parsimony-biased selector would each discount. Requires best_of_n > 1 to have any effect; cost-neutral (the mint replaces that slot\'s propose call, never adds one). Inert at best_of_n 1.',
-    }, checkInput(!!pq.recombine, 'Recombination slot', 'mint the union of two rejected complementary fixes into the last slate slot',
+    controlRow('Recombination slot', knobInfo('proposer_quality.recombine'), checkInput(!!pq.recombine, 'Recombination slot', 'mint the union of two rejected complementary fixes into the last slate slot',
       (on) => runOp('set_proposer_quality', { recombine: on }))),
-    controlRow('LLM-guided merge', {
-      title: 'recombine_merge', def: 'mechanical',
-      body: 'How the recombination slot composes the union. Off (mechanical): the last slot mints the concatenation of two DISJOINT patch sets with no LLM call — cost-neutral (best_of_n − 1 calls). On (llm): the slot issues ONE merge call instead, and disjointness RELAXES so two rejected fixes that OVERLAP on a mutation point can be merged (the model resolves the overlap a blind concatenation would drop) — the merge substitutes the slot\'s own sample call, so it costs exactly a recombine-off round. Only meaningful with the recombination slot on; on rolls the epoch.',
-    }, checkInput(pq.recombine_merge === 'llm', 'LLM-guided merge', 'compose the union with an LLM merge call (relaxes disjointness for overlapping pairs) instead of a mechanical patch concatenation',
+    controlRow('LLM-guided merge', knobInfo('proposer_quality.recombine_merge', {
+      note: 'On sets llm; off sets mechanical.',
+    }), checkInput(pq.recombine_merge === 'llm', 'LLM-guided merge', 'compose the union with an LLM merge call (relaxes disjointness for overlapping pairs) instead of a mechanical patch concatenation',
       (on) => runOp('set_proposer_quality', { recombine_merge: on ? 'llm' : 'mechanical' }))),
-    controlRow('Genealogy channel', {
-      title: 'genealogy', def: '0 (off)',
-      body: 'Opt-in: show the proposer up to N candidate-lineage items per round — the champion\'s promoted patch history (build on what worked) plus diverse rejected reign candidates (re-frame a different idea), each with a BANDED outcome (improved / flat / regressed) and a capped excerpt of the proposer\'s own diff. Lets the proposer evolve IN CONTEXT (the in-context analogue of the recombination slot). Envelope-safe — candidate genealogy, never board data: no entry ids, no per-entry results, no exact deltas, nothing holdout-derived. Read-side only — free on the cost meter. Non-zero rolls the epoch.',
-    }, numInput(pq.genealogy != null ? pq.genealogy : 0,
+    controlRow('Genealogy channel', knobInfo('proposer_quality.genealogy'), numInput(pq.genealogy != null ? pq.genealogy : 0,
       { min: '0', step: '1', 'aria-label': 'Genealogy' },
       (n) => runOp('set_proposer_quality', { genealogy: n }), { int: true })),
-    controlRow('Calibration feedback', {
-      title: 'calibration_feedback', def: '0 (off)',
-      body: 'Opt-in: show the proposer up to N of its own RECENT graded hypotheses per round — how its falsifiable movement predictions landed against realized outcomes. Renders per-claim-type hit / miss / unresolved counts, the overall calibration fraction (its own self-accuracy), and each recent claim as its core idea + a BANDED outcome (improved / flat / regressed) + hit/miss. A proposer shown its own miss pattern hypothesizes more honestly. Envelope-safe — the proposer\'s own claim text + aggregate counts, never board data: no entry ids, no per-entry results, no exact deltas, nothing holdout-derived. Read-side only — free on the cost meter. Non-zero rolls the epoch.',
-    }, numInput(pq.calibration_feedback != null ? pq.calibration_feedback : 0,
+    controlRow('Calibration feedback', knobInfo('proposer_quality.calibration_feedback'), numInput(pq.calibration_feedback != null ? pq.calibration_feedback : 0,
       { min: '0', step: '1', 'aria-label': 'Calibration feedback' },
       (n) => runOp('set_proposer_quality', { calibration_feedback: n }), { int: true })),
-    controlRow('Cross-epoch memory', {
-      title: 'experiment_memory.cross_epoch', def: 'off',
-      body: 'Opts settled experiments from PRIOR epochs that share the current contract hash into the proposer\'s digest — banded, clearly separated, and only in the budget left after same-epoch history. Different-contract experiments are never surfaced.',
-    }, checkInput(!!em.cross_epoch, 'Cross-epoch experiment memory', 'surface settled prior-epoch experiments (same contract hash)',
+    controlRow('Cross-epoch memory', knobInfo('experiment_memory.cross_epoch'), checkInput(!!em.cross_epoch, 'Cross-epoch experiment memory', 'surface settled prior-epoch experiments (same contract hash)',
       (on) => runOp('set_experiment_memory', { cross_epoch: on }))),
     mutationSurfacePanel(d.scoring || {}),
     el('div', { class: 'dn-bld-panel' }, [
@@ -1651,10 +1571,9 @@ function proposerSection(d) {
 // wholesale). Closes the namespace_monotonicity GUI gap.
 function namespaceMonoPanel(sc) {
   const cur = sc.namespace_monotonicity || {};
-  const rows = Object.keys(cur).map((key) => controlRow('Namespace ' + key, {
-    title: 'namespace_monotonicity["' + key + '"]', def: String(!!cur[key]),
-    body: 'When on, the ' + key + ' namespace\'s per-run mean may not regress on a promotion (a strict-monotonicity gate scoped to this namespace). Edits post the whole namespace_monotonicity mapping.',
-  }, checkInput(!!cur[key], 'Namespace monotonicity ' + key, key + ' may not regress', (on) => {
+  const rows = Object.keys(cur).map((key) => controlRow('Namespace ' + key, knobInfo('namespace_monotonicity', {
+    title: 'namespace_monotonicity["' + key + '"]',
+  }), checkInput(!!cur[key], 'Namespace monotonicity ' + key, key + ' may not regress', (on) => {
     const next = Object.assign({}, cur);
     next[key] = on;
     runOp('set_gate', { namespace_monotonicity: next });
@@ -1725,54 +1644,28 @@ function gateSection(d) {
   });
   return section('Promote gate',
     el('p', { class: 'dn-lede', text: 'What a challenger must clear to dethrone the champion and promote.' }),
-    controlRow('Promote margin', {
-      title: 'Promote margin', def: '0.0',
-      body: 'The minimum scalar improvement (champion loss − challenger loss) a challenger must clear to promote. A larger margin demands a more decisive win and resists noise; 0 promotes on any improvement. Must clear the measured A/A noise floor when the evidence gate is off — run the preflight (Review) to measure it.',
-    }, margin),
-    controlRow('Holdout margin', {
-      title: 'holdout_margin', def: 'auto (reuse promote_margin)',
-      body: 'The scalar tolerance the HOLDOUT confirmation applies, separate from the train-side promote margin. The holdout is the smaller slice by construction, so its scalar moves in coarser 1/N steps and needs the WIDER bound: roughly promote_margin x N_train / N_holdout (about twice promote_margin on the default 0.3 split). ASYMMETRY: the op reserves None for "leave unchanged", so a NEGATIVE value here resets the field to auto (reuse promote_margin); -1 is the shown auto state.',
-    }, numInput(sc.holdout_margin != null ? sc.holdout_margin : -1,
+    controlRow('Promote margin', knobInfo('promote_margin'), margin),
+    controlRow('Holdout margin', knobInfo('holdout_margin', {
+      note: 'This field shows an unset margin as -1, and a negative value unsets it.',
+    }), numInput(sc.holdout_margin != null ? sc.holdout_margin : -1,
       { min: '-1', step: '0.01', 'aria-label': 'Holdout margin' },
       (n) => runOp('set_gate', { holdout_margin: n }))),
-    controlRow('Holdout entry regression budget', {
-      title: 'holdout_entry_regression_budget', def: '0 (zero tolerance)',
-      body: 'How many holdout entries may regress before the confirmation rejects. 0 is the historical zero-tolerance rule; on a small noisy holdout ONE entry flipping pass to fail rejects at every margin, because that rejection never came from the scalar bound — this is the knob that rule never had. Holdout-only: the train side keeps zero tolerance.',
-    }, numInput(sc.holdout_entry_regression_budget != null ? sc.holdout_entry_regression_budget : 0,
+    controlRow('Holdout entry regression budget', knobInfo('holdout_entry_regression_budget'), numInput(sc.holdout_entry_regression_budget != null ? sc.holdout_entry_regression_budget : 0,
       { min: '0', step: '1', 'aria-label': 'Holdout entry regression budget' },
       (n) => runOp('set_gate', { holdout_entry_regression_budget: n }), { int: true })),
-    controlRow('Pass-rate monotonicity', {
-      title: 'Pass-rate monotonicity', def: 'off',
-      body: 'When on, a challenger may not regress the board pass-rate even if its weighted loss improves — every predicate the champion passed must still pass. Guards against trading a hard-pass away for an average-loss gain.',
-    }, el('label', { class: 'dn-bld-checkwrap' }, [mono, el('span', { text: 'require non-regressing pass-rate' })])),
-    controlRow('Monotonicity scope', {
-      title: 'pass_rate_monotonicity_scope', def: 'per_entry',
-      body: 'Granularity of the pass-rate check when it is on. per_entry rejects if ANY champion-passed entry flips to fail (right for invariant / regression-suite boards); aggregate rejects only when the overall pass-rate drops (right for sampled boards where one noisy flip should not veto a strictly-better challenger).',
-    }, scope),
+    controlRow('Pass-rate monotonicity', knobInfo('pass_rate_monotonicity'), el('label', { class: 'dn-bld-checkwrap' }, [mono, el('span', { text: 'require non-regressing pass-rate' })])),
+    controlRow('Monotonicity scope', knobInfo('pass_rate_monotonicity_scope'), scope),
     namespaceMonoPanel(sc),
-    controlRow('Block on containment violation', {
-      title: 'block_on_containment_violation', def: 'off (alarm-only)',
-      body: 'Before finalizing a gate-decided promotion, re-check diff containment (files outside the mutable trees must be byte-identical) and REJECT a violating child instead of promoting with an alarm. Fail-open on an unreadable snapshot; an explicit operator force-promote is never blocked.',
-    }, checkInput(!!sc.block_on_containment_violation, 'Block on containment violation', 'reject instead of alarm',
+    controlRow('Block on containment violation', knobInfo('block_on_containment_violation'), checkInput(!!sc.block_on_containment_violation, 'Block on containment violation', 'reject instead of alarm',
       (on) => runOp('set_gate', { block_on_containment_violation: on }))),
-    controlRow('Block on gate contradiction', {
-      title: 'block_on_gate_contradiction', def: 'off (alarm-only)',
-      body: 'Re-derive the gate\'s scalar rule immediately before finalizing a promotion and REFUSE on contradiction (instead of persisting and letting the supervisor\'s out-of-band scan raise the alarm). Fail-open when there is no usable scalar evidence.',
-    }, checkInput(!!sc.block_on_gate_contradiction, 'Block on gate contradiction', 'refuse contradictory promotions',
+    controlRow('Block on gate contradiction', knobInfo('block_on_gate_contradiction'), checkInput(!!sc.block_on_gate_contradiction, 'Block on gate contradiction', 'refuse contradictory promotions',
       (on) => runOp('set_gate', { block_on_gate_contradiction: on }))),
-    controlRow('Regression-suite gate', {
-      title: 'regression_gate_enabled', def: 'off',
-      body: 'Run the snapshot\'s own test suite BEFORE the scoring gate; a non-passing (or timed-out) suite hard-rejects the candidate regardless of scalar movement. Needs the snapshot to actually ship a suite.',
-    }, checkInput(!!sc.regression_gate_enabled, 'Regression gate enabled', 'run the snapshot test suite as a pre-gate',
+    controlRow('Regression-suite gate', knobInfo('regression_gate_enabled'), checkInput(!!sc.regression_gate_enabled, 'Regression gate enabled', 'run the snapshot test suite as a pre-gate',
       (on) => runOp('set_gate', { regression_gate_enabled: on }))),
-    controlRow('Regression command', {
-      title: 'regression_test_command', def: 'pytest tests/ -q',
-      body: 'The argv used to invoke the regression suite (whitespace-split). Override for non-pytest suites, e.g. "python -m unittest discover".',
-    }, regCmd),
-    controlRow('Regression timeout (s)', {
-      title: 'regression_timeout_s', def: '600',
-      body: 'Wall-clock seconds the regression subprocess may take before it is killed; a timeout counts as a regression failure.',
-    }, numInput(sc.regression_timeout_s != null ? sc.regression_timeout_s : 600,
+    controlRow('Regression command', knobInfo('regression_test_command', {
+      note: 'The command is split on whitespace.',
+    }), regCmd),
+    controlRow('Regression timeout (s)', knobInfo('regression_timeout_s'), numInput(sc.regression_timeout_s != null ? sc.regression_timeout_s : 600,
       { min: '1', step: '1', 'aria-label': 'Regression timeout seconds' },
       (n) => runOp('set_gate', { regression_timeout_s: n }), { int: true })));
 }
