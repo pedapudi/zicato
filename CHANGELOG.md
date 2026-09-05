@@ -1,5 +1,46 @@
 # Changelog
 
+### One glossary defines every term a user surface uses
+
+`docs/design/VOCABULARY.md` is the one place a zicato term is defined. It
+carries an entry for every word the console and the `--help` text use,
+including the ones the earlier glossary left to context: champion,
+challenger, scalar, gate, field, rung, contract, workspace, board unit,
+replicate, noise floor, best-of-N, screening, field diversity, settlement
+receipt, placebo arm, evidence gate, Pareto frontier, round log, proposer
+scorecard, generation store, board reflection, system under test,
+detectable effect, discrimination, regression gate, dead letter,
+calibration, trajectory, Copeland score, resolver, and false promotion.
+Each entry gives the idea in plain words, then the term, then an
+instance, and is checked against the module that implements it. Where
+the word *gate* names one of several mechanisms, the entry uses the
+qualified name and the `Gate` entry tells them apart.
+
+The developer guide's quick-reference table links every term to its
+glossary entry and keeps only the symbol and file that own it, so the
+two cross-reference rather than overlap. `tests/test_vocabulary_glossary.py`
+checks that every row resolves to a heading, that the terms user
+surfaces use each have an entry, and that the glossary's own links
+resolve.
+
+Four `--help` sentences read as the implementation's vocabulary rather
+than the operator's. `zicato init` describes the scaffolded contract as
+a racing tournament over four challengers with two replicates per duel
+and the evidence gate enabled; `zicato board audit` reports the spread
+of scalar differences between draws as the noise floor; `zicato epoch
+rounds` defines each round status in words; and `zicato evolve --mode`
+says what a board unit is before it says how the cache treats it. The
+CLI help golden is recaptured for those four commands and nothing else.
+
+`SELECTION-THEORY.md` describes the resolver layer as it exists: the
+`resolver` param accepts `copeland` and `ranked_pairs`, the Condorcet
+check and the Smith-set prune are stages inside both rather than
+selectable values, and Schulze and maximal lotteries are not implemented.
+`TOURNAMENT.md` §4.6 derives the tournament-cost view from the `runs`
+table's `runtime_ms` and `aborted` columns, which is what the served view
+reads; the index declares no per-tournament cost column, and model calls
+are not counted per tournament.
+
 ### The round log records which candidate won, and why
 
 A best-of-N slate ends in one choice, and the round log recorded that choice as

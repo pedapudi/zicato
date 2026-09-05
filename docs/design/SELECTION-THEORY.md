@@ -7,13 +7,23 @@
 > knob — layered underneath the five existing structures rather than
 > becoming new top-level structures.
 >
-> Most of that recommendation is now in the build. Both knobs are read
-> from the params block (`src/zicato/selection/standings_ext.py`), the
-> Ranked-Pairs resolver behind a Smith-set prune is
-> `src/zicato/selection/resolve.py`, and the Bradley-Terry and
-> Plackett-Luce fits are `src/zicato/selection/rating.py`. Both are
-> opt-in and default off. The maximal-lottery resolver (§8) and the
-> console renderings (§10) are unbuilt; each section says so in place.
+> What is implemented. `read_resolver` and `read_rating` in
+> `src/zicato/selection/standings_ext.py` read the two knobs from the
+> params block. The `resolver` knob accepts `copeland` and
+> `ranked_pairs`; the `rating` knob accepts `bradley_terry`; any other
+> value, or an absent knob, leaves the structure's own leader pick in
+> place. Both knobs re-order only the internal leader pick and never
+> touch the gate. `resolve_leader` in `src/zicato/selection/resolve.py`
+> runs a Condorcet check and a Smith-set prune ahead of whichever
+> resolver is selected; neither stage is a selectable value. The
+> Bradley–Terry and Plackett–Luce fits are
+> `src/zicato/selection/rating.py`, and the same fit drives the opt-in
+> evidence gate (`src/zicato/selection/evidence_gate.py`) and the
+> index's display rating.
+>
+> What is not implemented. Schulze (§5.3) and maximal lotteries (§6)
+> have no resolver value and no implementation under `src/`, and the
+> console renderings (§10) are unbuilt. Each section says so in place.
 
 This is the companion to two shipped docs:
 
@@ -102,7 +112,7 @@ earn its keep.
 
 ---
 
-## 3. Set solutions (polynomial — candidates to BUILD or already shipped)
+## 3. Set solutions (polynomial)
 
 A *tournament solution* maps a duel matrix to a **set** of acceptable
 winners. All of the following are polynomial-time and therefore tractable
@@ -124,9 +134,10 @@ usually *has* a Condorcet winner: one challenger that beats all
 others. The whole point of a resolver is to behave gracefully when it
 does *not*.
 
-**Verdict.** **BUILD (implicitly).** Not a method to select — it is the
-fast path every resolver below already collapses to. Check for it first
-(O(n²)); if present, skip the resolver entirely.
+**Verdict.** **Implemented as a stage.** `condorcet_check` runs first
+inside `resolve_leader` and, when a Condorcet winner exists, returns it
+before either selectable resolver runs. It is a stage of every
+resolution rather than a `resolver` value.
 
 ### 3.2 Smith set (top cycle)
 
@@ -145,8 +156,10 @@ it is provably dominated and need not be considered for promotion. This
 shrinks the field a downstream resolver must reason about, often to a
 single element.
 
-**Verdict.** **BUILD (as a front-end prune).** Run it first, O(n²); pass
-only the Smith set to the resolver. Recommendation §8 below.
+**Verdict.** **Implemented as a stage.** `smith_set` runs inside
+`resolve_leader` after the Condorcet check and before either selectable
+resolver, which then reads only the pruned field. It is a stage of every
+resolution rather than a `resolver` value.
 
 ### 3.3 Schwartz set (GETCHA / top set)
 
@@ -182,9 +195,11 @@ count as one. In a small noisy field that throws away most of the signal,
 and it is sensitive to clones (adding near-duplicate weak candidates can
 shift the count).
 
-**Verdict.** **ALREADY BUILT (swiss).** Keep it as the cheapest baseline
-resolver, but it is dominated by the margin-aware methods (§5) for
-zicato's loss-gap-rich regime.
+**Verdict.** **Implemented.** `copeland` is one of the two accepted
+`resolver` values (`copeland_order` in `resolve.py`, wins minus losses
+over the net matrix), and the swiss standings order by Copeland score
+without any knob. It is the cheapest baseline and is dominated by the
+margin-aware methods (§5) for zicato's loss-gap-rich regime.
 
 ### 3.5 Uncovered set (Landau set)
 
@@ -219,7 +234,7 @@ keeps the margins. So the bipartisan set is the margin-blind special case
 of the randomized method we actually want.
 
 **Verdict.** **SKIP in favor of its weighted form.** Maximal lotteries
-(§6) generalize it and use zicato's margins.
+(§6) generalize it and use zicato's margins; neither is implemented.
 
 ---
 
@@ -333,8 +348,10 @@ cleanly onto zicato's journal and dashboard idiom. Every resolution
 reads as "the most-separated duels were trusted, and the duels that
 would have closed a cycle were skipped."
 
-**Verdict.** **BUILD — top recommendation.** This is the endorsed default
-resolver (§8).
+**Verdict.** **Implemented.** `ranked_pairs` is the second accepted
+`resolver` value (`ranked_pairs` in `resolve.py`, with the lock/skip
+trace). It is the endorsed resolver (§8), and it is opt-in: the knob's
+absence keeps each structure's own leader pick.
 
 ### 5.3 Schulze (beatpath)
 
@@ -354,8 +371,9 @@ directly human-legible than a beatpath-strength matrix, and zicato values
 an explainable promotion proposal. Schulze is the natural second choice
 if a beatpath formulation ever proves more convenient.
 
-**Verdict.** **BUILD-CAPABLE (second choice).** Offer as an alternate
-`resolver` value; default to Ranked Pairs for auditability.
+**Verdict.** **Not implemented.** No `resolver` value selects Schulze.
+It is the second choice should an alternate value be added; Ranked
+Pairs stays the recommendation for auditability.
 
 ---
 
@@ -384,8 +402,10 @@ exists, it is *safe* to apply unconditionally, and it differs from the
 deterministic resolvers only on residual cycles, which is the only place
 randomness is wanted.
 
-**Verdict.** **BUILD — for residual cycles only** (§8). Reach for it only
-*after* replication has failed to break the cycle.
+**Verdict.** **Not implemented.** There is no `maximal_lottery` resolver
+value and no implementation under `src/`. §8 keeps it as the remaining
+recommendation, for residual cycles only, after replication has failed
+to break the cycle.
 
 ---
 
@@ -420,9 +440,10 @@ concrete schedule. The model also handles the small noisy field: with a
 half-dozen contestants and a handful of replicates each, the
 maximum-likelihood fit is stable and the intervals are meaningful.
 
-**Verdict.** **BUILD — the rating recommendation** (§8). Drives
-replication budgeting; its point estimates also give a clean
-margin-bearing ranking that feeds the §5 resolvers.
+**Verdict.** **Implemented** (§8). `rating: bradley_terry` orders a
+structure's standings by the fit, the evidence gate reads the same fit
+for its confidence intervals and its replication schedule, and the index
+re-fits it for display.
 
 > **Status — implemented: the rating fold, as a Plackett–Luce
 > generalisation.** The batch maximum-likelihood fit
@@ -506,9 +527,9 @@ simultaneous contestants) board runs.
 
 Ranked, with the operating rule woven through. Each entry is a
 `tournament.params` knob (§9) layered on a round-robin or Swiss
-scheduler rather than a new top-level structure. The first two are in
-the build and default off; the maximal lottery is unbuilt, with no
-implementation anywhere in `src/`.
+scheduler rather than a new top-level structure. Items 1, 2, and 4 are
+implemented and default off; item 3, the maximal lottery, is unbuilt,
+with no implementation anywhere in `src/`.
 
 1. **Ranked Pairs (Tideman) as the winner-resolution layer over
    swiss/round-robin.** Deterministic, Condorcet-consistent, margin-aware,
@@ -547,7 +568,7 @@ owns promotion**, so the protected-incumbent invariant
 The endorsed methods are **resolvers and a rating model**, layered on the
 existing schedulers rather than added as new structures. The surface is
 two optional keys in the `tournament.params` block, read by
-`resolver_token` and `rating_token` in
+`read_resolver` and `read_rating` in
 `src/zicato/selection/standings_ext.py`:
 
 ```jsonc
@@ -557,29 +578,34 @@ two optional keys in the `tournament.params` block, read by
   "params": {
     "field_size": 6,
     "replicates": 2,
-    "resolver": "ranked_pairs",    // none | copeland | ranked_pairs | maximal_lottery
-                                   //   copeland == today's swiss behaviour
+    "resolver": "ranked_pairs",    // none | copeland | ranked_pairs
+                                   //   copeland = the swiss standings order
     "rating": "bradley_terry"      // none | bradley_terry
-                                   //   when set, CI overlap drives extra replication
+                                   //   when set, standings order by fitted strength
   }
 }
 ```
 
-- `resolver` selects the §5/§6 winner-resolution layer; `copeland` is the
-  current swiss behaviour (the backwards-compatible default), so adding
-  the knob changes nothing until an operator opts in.
-- `rating` selects the §7 backbone; `none` is today's behaviour.
-- The Smith-set prune (§8) would run unconditionally inside any
-  non-`none` resolver: it is a cheap correctness and speed step rather
-  than an operator choice.
+- `resolver` selects the §5 winner-resolution layer for the internal
+  leader pick; the accepted values are `copeland` and `ranked_pairs`.
+  An absent knob keeps each structure's own leader pick, so adding the
+  knob changes nothing until an operator opts in.
+- `rating` selects the §7 fit for the internal standings order; the
+  accepted value is `bradley_terry`. An absent knob keeps each
+  structure's own order. Confidence-interval-driven replication is the
+  evidence gate's schedule (§7.1), which `promote_confidence_threshold`
+  enables; this knob does not.
+- The Condorcet check and the Smith-set prune (§8) run unconditionally
+  inside `resolve_leader` for either resolver: they are a cheap
+  correctness and speed step rather than an operator choice.
 - **The champion-gate, the contract-hash treatment, and the
-  `SelectionStrategy` seam are all unchanged.** A resolver/rating choice
-  would fold into the contract hash in the same way as the existing params
-  do (it changes *what a promotion means*), and would roll the epoch on
+  `SelectionStrategy` interface are all unchanged.** A resolver or rating
+  choice folds into the contract hash in the same way as the existing
+  params do (it changes *what a promotion means*) and rolls the epoch on
   change — same rationale as
   [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) §4.1.
 
-Both keys are read by `resolver_token` and `rating_token` in
+Both keys are read by `read_resolver` and `read_rating` in
 `src/zicato/selection/standings_ext.py`, and both default off when the
 params block omits them.
 
@@ -611,7 +637,7 @@ red = lost, size = |loss-margin|. The diagonal carries each contestant's
 own loss tick. **Unplayed pairings** (racing/elim never run them) render
 as faint hatch — honest about coverage. Every solution concept below is an
 **overlay or derived small-multiple on this one grid**, switched via the
-⌘K palette (`resolve with: Copeland · Ranked Pairs · maximal lottery`).
+⌘K palette (`resolve with: Copeland · Ranked Pairs`).
 
 ```
         chmp  c1   c2   c3   c4
@@ -637,7 +663,8 @@ as faint hatch — honest about coverage. Every solution concept below is an
 
 ### 10.3 Bipartisan set + maximal lotteries — the probability lollipop
 
-These share the zero-sum-game Nash mixed strategy, so **one figure covers
+This figure depends on the maximal-lottery resolver, which is not
+implemented (§6). These share the zero-sum-game Nash mixed strategy, so **one figure covers
 both**: a horizontal **lollipop dot-plot** where length = each
 contestant's probability mass in the optimal lottery. The *support* (the
 non-zero lollipops) **is** the bipartisan set. A Condorcet winner is
@@ -718,21 +745,21 @@ asserted**.
 
 | Method | Family | Tractable? | Condorcet-consistent? | zicato verdict |
 |---|---|---|---|---|
-| Condorcet winner | set (fast path) | P (O(n²)) | — (it *is* the winner) | BUILD (check first) |
-| Smith set (top cycle) | set | P (O(n²)) | yes (= winner if one) | **BUILD — front prune** |
+| Condorcet winner | set (fast path) | P (O(n²)) | — (it *is* the winner) | Implemented as the first stage of `resolve_leader` |
+| Smith set (top cycle) | set | P (O(n²)) | yes (= winner if one) | Implemented as the prune stage of `resolve_leader` |
 | Schwartz set | set | P | yes | SKIP (= Smith under continuous loss) |
-| Copeland | set / count | P (O(n²)) | yes | **ALREADY BUILT (swiss)**; margin-blind |
+| Copeland | set / count | P (O(n²)) | yes | Implemented (`resolver: copeland`; the swiss standings order); margin-blind |
 | Uncovered (Landau) set | set | P | yes | SKIP (low marginal value, margin-blind) |
-| Bipartisan set | set (LP) | P | yes | SKIP (margin-blind; use maximal lotteries) |
+| Bipartisan set | set (LP) | P | yes | SKIP (margin-blind; maximal lotteries would supersede it) |
 | Slater | set / ranking | **NP-hard** | yes | SKIP |
 | Banks | set | **NP-hard** (membership) | yes | SKIP |
 | TEQ | set | **NP-hard** + lost stability | yes | **SKIP, emphatically** |
 | Minimal Covering Set | set | **NP-hard** | yes | SKIP |
 | Kemeny–Young | ranking | **NP-hard** | yes | SKIP at scale |
-| **Ranked Pairs (Tideman)** | ranking | **P** | **yes** | **BUILD — top resolver** |
-| Schulze (beatpath) | ranking | P (O(n³)) | yes | BUILD-capable (2nd choice) |
-| Maximal lotteries | randomized | P (LP) | yes (degrades to it) | **BUILD — residual cycles** |
-| **Bradley–Terry** | rating | P (convex MLE) | — (a rating rather than a rule) | **BUILD — rating backbone** |
+| **Ranked Pairs (Tideman)** | ranking | **P** | **yes** | **Implemented** (`resolver: ranked_pairs`); the endorsed resolver |
+| Schulze (beatpath) | ranking | P (O(n³)) | yes | Not implemented (2nd choice) |
+| Maximal lotteries | randomized | P (LP) | yes (degrades to it) | Not implemented; recommended for residual cycles |
+| **Bradley–Terry** | rating | P (convex MLE) | — (a rating rather than a rule) | **Implemented** (`rating: bradley_terry`; the evidence gate; the index display rating) |
 | Elo | rating | trivial (online) | — | SKIP (dominated by Bradley–Terry) |
 | TrueSkill | rating | tractable | — | SKIP (over-engineered for pairwise batch) |
 

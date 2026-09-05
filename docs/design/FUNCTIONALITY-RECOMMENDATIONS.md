@@ -435,8 +435,9 @@ lacks. Five rules govern its use in zicato:
 ### The rating and resolution layer, in five steps (under the schedulers; gate and gauntlet untouched)
 
 - **The configuration seam.** Two opt-in `TournamentStructure.params` keys:
-  `resolver` (`none|copeland|ranked_pairs|maximal_lottery`, defaulting to
-  current behaviour) and `rating` (`none|bradley_terry|elo`, default `none`).
+  `resolver` (`none|copeland|ranked_pairs`, defaulting to each
+  structure's own leader pick) and `rating` (`none|bradley_terry`, default
+  `none`).
   Params already fold into the contract hash, so a change rolls the epoch with
   no new plumbing. Add the additive index columns. **(SHIPPED:** the `rating`
   knob, the additive columns, and the `resolver` knob for `copeland` and

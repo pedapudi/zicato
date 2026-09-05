@@ -220,9 +220,10 @@ def audit_cmd(
     """Measure the evaluation's A/A noise floor and record it on the epoch.
 
     Runs the current champion against ITSELF --runs times (fresh draws
-    through the same board-unit workers every duel uses) and reports the
-    delta_scalar spread — the smallest difference the board can actually
-    resolve. The measured floor is persisted onto the epoch record
+    through the same workers every tournament duel uses) and reports the
+    spread of the scalar differences between draws: the noise floor, the
+    smallest difference the board can resolve. The measured floor is
+    persisted onto the epoch record
     (config.json's noise_floor field) so `zicato evolve` can warn when
     promote_margin is below it while the evidence gate is off.
     """

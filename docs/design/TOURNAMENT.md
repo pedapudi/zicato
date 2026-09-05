@@ -575,20 +575,29 @@ resisting improvement, and can put it in the proposer brief's
 
 ### 4.6 Tournament cost
 
-What the competition is *costing*. Per round and per epoch, from
-the `tournaments` table's `wall_clock_seconds` and
-`aux_llm_calls` columns ([ANALYTICAL-INDEX.md §3.8](ANALYTICAL-INDEX.md#38-tournaments)):
+What the competition is *costing*, in wall-clock time and board runs.
+The index declares no per-tournament cost column. The view reads the
+`runs` table, which carries one row per board run with its `runtime_ms`
+and `aborted` flag
+([ANALYTICAL-INDEX.md §3.5](ANALYTICAL-INDEX.md#35-runs)), and joins
+each run to its challenger generation's decision in `experiments`. For
+every
+challenger generation in the epoch the view sums `runtime_ms` and
+counts runs and aborted runs; the epoch total divides its runtime by
+the number of promoted challengers to give the cost per promotion. The
+reader is `tournament_cost` (`src/zicato/tournament/detail.py`), served
+as `GET /api/epoch/{id}/cost`:
 
 ```
 Tournament cost — epoch 2026-05-15_e1
 
-  round   wall-clock   aux LLM calls   board runs
-  ─────   ──────────   ─────────────   ──────────
-  r1      00:06:51     3               2
-  r2      00:07:12     4               2
-  r3      00:05:40     3               2  (champion runs cached → 1)
+  challenger   decision    wall-clock   board runs   aborted
+  ──────────   ────────    ──────────   ──────────   ───────
+  v1           promoted    00:06:51     18           0
+  v2           rejected    00:07:12     18           0
+  v3           promoted    00:05:40     9            0   (champion runs cached)
   ...
-  epoch total:  00:38:20   ·   21 aux calls   ·   ~9 board runs
+  epoch total:  00:38:20   ·   81 board runs   ·   00:12:47 per promotion
 ```
 
 Cost is the operator's budget gauge: it answers "how much have I
@@ -597,10 +606,16 @@ optimization trajectory, "what is each point of score
 improvement costing me?". Fast mode (see
 [SCORING.md §7](SCORING.md#7-fast-mode-and-the-tournament)) shows
 up here directly — a `mode = fast` round runs one board pass, not
-two, and the cost column shows the saving.
+two, and the run count shows the saving.
+
+Model calls are not counted per tournament. Where the adapter reports
+token counts, they reach the index as `cost:` namespace metrics in
+`metric_counts` ([SCORING.md §2.4](SCORING.md#24-the-runtime-channel-and-the-adapter-supplied-ones)),
+and the per-round token ledger is a runtime budget rather than a
+persisted cost record.
 
 > **Bounding the cost up front (racing's grind guard).** Where the cost
-> column is the *retrospective* gauge, the `racing` structure also offers a
+> view is the *retrospective* gauge, the `racing` structure also offers a
 > *prospective* cap: opt-in `matchup_budget_seconds` /
 > `final_rung_budget_seconds` params bound a duel's total board-unit
 > wall-clock, with the final rung — the full-board × replicates × both-sides
@@ -609,9 +624,9 @@ two, and the cost column shows the saving.
 > ([RUNTIME.md](RUNTIME.md), `src/zicato/_tournament_worker.py`); see
 > [TOURNAMENT-STRUCTURES.md §3.5](TOURNAMENT-STRUCTURES.md#35-racing-the-endorsed-bracket-shaped-option).
 > The builder's live cost meter, in turn, estimates per-round board-runs from
-> the **per-structure default replicates** (swiss / single-elim / double-elim
-> = 2, gauntlet / racing = 1) rather than a flat `1`, so the projected cost
-> matches the schedule a structure actually runs
+> each structure's **default replicates** (gauntlet, swiss, single-elim and
+> double-elim = 2, racing = 1) rather than a flat `1`, so the projected cost
+> matches the schedule a structure runs
 > ([TOURNAMENT-STRUCTURES.md §3](TOURNAMENT-STRUCTURES.md#3-the-five-concrete-strategies)).
 
 ## 5. The harmonograf split
