@@ -22,6 +22,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
+import zicato
 from zicato.epoch.round_integrity import (
     CALL_BOUNDARY_PREFIXES,
     HARD_INFRA_MARKERS,
@@ -463,14 +464,18 @@ def test_call_boundary_prefixes_match_the_real_emitters(tmp_path: Path) -> None:
         # proposer.py — the aux-call boundary, both exception paths.
         f"evaluation LLM call raised {ConnectionError.__name__}: connection refused",
         "evaluation LLM call timed out after 120.0s",
-        # adk_agent.py — the ADK agent-run boundary.
-        "proposer agent run raised PermissionDenied: 403 Forbidden",
+        # foe_agent.py — the episode boundary of the sole proposer runtime,
+        # both the launch failure and the runtime failure.
+        "the proposal episode could not start: ConnectionRefusedError: connection refused",
+        "the proposal episode failed: PermissionDenied: 403 Forbidden",
     )
     for template in real_templates:
         assert template.lower().startswith(CALL_BOUNDARY_PREFIXES), template
 
     # And the eligible ones that name hard infra really do classify void.
-    for index, template in enumerate((real_templates[0], real_templates[2]), start=1):
+    for index, template in enumerate(
+        (real_templates[0], real_templates[2], real_templates[3]), start=1
+    ):
         _write(
             tmp_path,
             index,
@@ -494,6 +499,46 @@ def test_call_boundary_prefixes_match_the_real_emitters(tmp_path: Path) -> None:
         ],
     )
     assert round_integrity(tmp_path, EPOCH, 3).infra_markers == ()
+
+
+#: Prefixes kept for logs written before their emitter was removed. This
+#: module reads durable round logs, so a template outlives the code that
+#: wrote it. Both below belong to the ADK proposer that Foe replaced as the
+#: sole runtime; nothing in the tree emits either any more.
+RETIRED_CALL_BOUNDARY_PREFIXES = frozenset(
+    {
+        "evaluation llm call timed out ",
+        "proposer agent run raised ",
+    }
+)
+
+
+def test_every_call_boundary_prefix_is_live_or_declared_retired() -> None:
+    """The direction the template-pinning test above cannot check.
+
+    Pinning templates against the tuple catches a rename that drops a
+    template. It does not catch the reverse -- a prefix left in the tuple
+    after its emitter is deleted -- and that drift is what made three of
+    these prefixes describe code the tree no longer contains. A retired
+    prefix is legitimate, because historical logs still carry its prose, but
+    it must be declared rather than merely surviving unnoticed.
+    """
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in Path(zicato.__file__).parent.rglob("*.py")
+        if path.name != "round_integrity.py"
+    ).lower()
+    for prefix in CALL_BOUNDARY_PREFIXES:
+        if prefix in RETIRED_CALL_BOUNDARY_PREFIXES:
+            assert prefix not in source, (
+                f"{prefix!r} is declared retired but something still emits it; "
+                "drop it from RETIRED_CALL_BOUNDARY_PREFIXES"
+            )
+            continue
+        assert prefix in source, (
+            f"nothing emits {prefix!r} any more; either restore the emitter or "
+            "declare the prefix retired in RETIRED_CALL_BOUNDARY_PREFIXES"
+        )
 
 
 def test_infra_tokens_in_a_validation_finding_never_void_a_round(tmp_path: Path) -> None:

@@ -232,24 +232,6 @@ async def _persist_rejected_round(
     from zicato.runtime import progress_log  # noqa: PLC0415
     from zicato.workspace import generation_round_number  # noqa: PLC0415
 
-    if proposer_retries_exhausted and infrastructure_outage(validation_errors):
-        # The round measured nothing: every attempt died on the transport,
-        # so there is no proposal to judge and no generation to journal.
-        # Recording a rejection here would burn a generation id and write an
-        # experiment blaming the proposer for an outage. Defer instead --
-        # the same decision the tournament side reaches when its runs hit the
-        # endpoint-outage threshold -- and leave the round un-outcomed so a
-        # resume re-proposes cleanly once the endpoint is back.
-        return _deferred_infra_proposer_outage(
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            parent_id=parent_id,
-            next_id=next_id,
-            attempts=validation_errors,
-            round_index=round_index,
-            beater=beater,
-            round_log=round_log,
-        )
     write_experiment(workspace_root, epoch_id, next_id, experiment)
     if proposer_retries_exhausted:
         rejection_reason = "proposer_retries_exhausted: " + "; ".join(validation_errors)
@@ -324,71 +306,40 @@ async def _persist_rejected_round(
     )
 
 
-#: Substrings that mark a proposal attempt as INFRASTRUCTURE-failed rather
-#: than proposal-failed. Deliberately narrow and about the transport, not
-#: about content: a refused credential, an unreachable or overloaded
-#: endpoint, a severed connection. A model that answered and answered badly
-#: is not here, and must keep rejecting the round as it always has.
-#:
-#: Matched case-insensitively against the proposer's per-attempt trail,
-#: which carries the transport's own message verbatim.
-_INFRA_FAILURE_MARKERS: tuple[str, ...] = (
-    "reauthentication is needed",
-    "refresheror",
-    "refresh error",
-    "invalid_grant",
-    "could not automatically determine credentials",
-    "default credentials were not found",
-    "permission denied on resource project",
-    "http 401",
-    "http 403",
-    "http 429",
-    "http 500",
-    "http 502",
-    "http 503",
-    "http 504",
-    "connection refused",
-    "connection reset",
-    "connection aborted",
-    "temporary failure in name resolution",
-    "name or service not known",
-    "read timed out",
-    "timed out",
-)
-
-
-def _is_infrastructure_failure(attempt: str) -> bool:
-    """Whether one proposal attempt failed for a transport reason."""
-    lowered = attempt.lower()
-    return any(marker in lowered for marker in _INFRA_FAILURE_MARKERS)
-
-
 def infrastructure_outage(attempts: Sequence[str]) -> bool:
     """Whether EVERY proposal attempt this round failed on infrastructure.
 
-    All of them, not any: one slot losing its connection while the others
-    proposed badly is still a round about the proposals. A round where the
-    whole trail is transport failures measured nothing, and recording it as
-    a rejection attributes an outage to the proposer -- it burns a
-    generation id and journals an experiment whose stated cause ("failed
-    parsing or post-apply validation") never happened.
+    Each attempt is judged by :func:`zicato.epoch.round_integrity
+    .is_hard_infra_error`, which owns the transport-failure vocabulary and
+    the call-boundary anchor that keeps it off text the model or the child
+    snapshot authored. Deciding it here with a second vocabulary would let
+    the same round be deferred as an outage live and read back as a proposer
+    failure from its durable log.
 
-    Empty trail is NOT an outage: there is nothing to say it was one, and
+    The rule is over every attempt rather than any one of them: one slot
+    losing its connection while the others proposed badly leaves a round that
+    is still about the proposals. A round whose whole
+    trail is transport failures measured nothing, and recording it as a
+    rejection attributes an outage to the proposer -- it burns a generation
+    id and journals an experiment whose stated cause ("failed parsing or
+    post-apply validation") never happened.
+
+    An empty trail is NOT an outage: there is nothing to say it was one, and
     the caller's existing rejection path is the honest default.
     """
+    from zicato.epoch.round_integrity import is_hard_infra_error  # noqa: PLC0415
+
     attempts = list(attempts)
-    return bool(attempts) and all(_is_infrastructure_failure(a) for a in attempts)
+    return bool(attempts) and all(is_hard_infra_error(a) for a in attempts)
 
 
-
-
-def _deferred_infra_proposer_outage(
+def deferred_infra_proposer_outage(
     *,
     workspace_root: Path,
     epoch_id: str,
     parent_id: str,
     next_id: str,
-    attempts: list[str],
+    attempts: Sequence[str],
     round_index: int,
     beater: HeartbeatBeater | None,
     round_log: _RoundLogEmitter | None,

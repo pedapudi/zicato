@@ -231,6 +231,9 @@ HARD_INFRA_MARKERS: frozenset[str] = frozenset(
         "api key",
         "api_key",
         "invalid_api_key",
+        # google-auth renders an expired refresh token as a bare OAuth error
+        # code with no reason phrase beside it.
+        "invalid_grant",
         "permission denied",
         "permission_denied",
         "access denied",
@@ -298,10 +301,22 @@ HARD_INFRA_MARKERS: frozenset[str] = frozenset(
 #: it is an acceptance rather than a void — so keep this tuple in lockstep with the
 #: emitters. Pinned by ``test_epoch_round_integrity.py`` against the real
 #: templates, which is the check that actually catches a rename.
+#:
+#: A template stays here after its emitter is retired. This module is a
+#: reader over durable round logs, so logs written before a proposer was
+#: removed still carry its prose and must still classify. ``evaluation llm
+#: call timed out `` and ``proposer agent run raised `` have no live
+#: emitter — both belong to the ADK proposer that Foe replaced as the sole
+#: runtime — and are kept so those logs stay readable.
+#: ``test_epoch_round_integrity.py`` requires every other prefix to be found
+#: in the tree, which is what stops a retired template from passing as a
+#: live one.
 CALL_BOUNDARY_PREFIXES: tuple[str, ...] = (
     "evaluation llm call raised ",
     "evaluation llm call timed out ",
     "proposer agent run raised ",
+    "the proposal episode could not start: ",
+    "the proposal episode failed: ",
 )
 
 #: The best-of-N SLATE-SLOT tag that can sit in front of a call-boundary
@@ -471,30 +486,49 @@ def _is_call_boundary(text: str) -> bool:
     return _SLOT_PREFIX.sub("", text.lower(), count=1).startswith(CALL_BOUNDARY_PREFIXES)
 
 
+def is_hard_infra_error(
+    text: str,
+    *,
+    infra_markers: frozenset[str] = HARD_INFRA_MARKERS,
+) -> bool:
+    """Whether ONE proposal-attempt error names a hard infrastructure failure.
+
+    Two conditions, and both are load-bearing. The error must be a
+    CALL-BOUNDARY error (:data:`CALL_BOUNDARY_PREFIXES`, with
+    :data:`_SLOT_PREFIX` stripped first), because a post-response content
+    rejection quotes model output, mutation ids, and child-snapshot validator
+    findings into its text — scanning one for infra tokens reports the
+    challenger's own words back as an endpoint outage. It must then contain a
+    marker, matched as a case-insensitive substring.
+
+    Public because two subsystems decide the same question and must not
+    answer it differently: this module classifies a finished round's
+    integrity from its durable log, and
+    :func:`zicato.evolve.persist.infrastructure_outage` decides live whether
+    a round that produced no proposal measured anything at all. A second
+    vocabulary would let a round be deferred as an outage and then read back
+    as a proposer failure, or the reverse.
+    """
+    if not _is_call_boundary(text):
+        return False
+    lowered = _SLOT_PREFIX.sub("", text.lower(), count=1)
+    return any(marker in lowered for marker in infra_markers)
+
+
 def _matched_markers(
     texts: tuple[str, ...],
     infra_markers: frozenset[str],
 ) -> tuple[str, ...]:
     """Return, verbatim and de-duplicated, the ``texts`` naming hard infra.
 
-    Only CALL-BOUNDARY errors are eligible — see
-    :data:`CALL_BOUNDARY_PREFIXES`, and :data:`_SLOT_PREFIX` for the one
-    zicato-authored tag that may precede one. A post-response content
-    rejection quotes model output, mutation ids, and child-snapshot validator
-    findings into its text, so scanning it for infra tokens reports the
-    challenger's own words back as an endpoint outage.
-
-    Among eligible errors, matching is case-insensitive substring
-    containment; the ORIGINAL string is what comes back — slot tag and all —
-    because the operator needs the endpoint's own words and the slot they came
-    from, rather than the token that happened to match.
+    Eligibility and matching are :func:`is_hard_infra_error`'s. The ORIGINAL
+    string is what comes back — slot tag and all — because the operator needs
+    the endpoint's own words and the slot they came from, rather than the
+    token that happened to match.
     """
     out: list[str] = []
     for text in texts:
-        if not _is_call_boundary(text):
-            continue
-        lowered = _SLOT_PREFIX.sub("", text.lower(), count=1)
-        if any(marker in lowered for marker in infra_markers) and text not in out:
+        if is_hard_infra_error(text, infra_markers=infra_markers) and text not in out:
             out.append(text)
     return tuple(out)
 
@@ -936,6 +970,7 @@ def render_round_integrity(report: EpochRoundIntegrity) -> str:
 __all__ = [
     "CALL_BOUNDARY_PREFIXES",
     "HARD_INFRA_MARKERS",
+    "is_hard_infra_error",
     "RoundStatus",
     "RoundIntegrity",
     "EpochRoundIntegrity",
