@@ -434,19 +434,10 @@ def _outcome_from_dict(recorded: Any) -> OutcomeRecord | None:
         scalar_score_delta=float(d.get("scalar_score_delta", 0.0)),
         # One reader of the on-disk spellings, shared with the classifier
         # the dashboard serves, so the same bytes cannot resolve to two
-        # different decisions.
-        #
-        # A record naming no decision at all reads back as REJECTED.
-        # ``OutcomeRecord.tournament_decision`` is declared non-optional,
-        # so the type has no way to say "settled, decision unknown" and
-        # this decoder must pick one of the three. Rejection is the safe
-        # pick — it never crowns a generation the tournament did not
-        # crown. It is also lossy: readers that must tell an undecided
-        # experiment from a rejected one take the stored body instead.
-        # Issue #446 measures what making the field optional would cost.
-        tournament_decision=_as_decision(
-            TournamentDecision.REJECTED if decision_token is None else decision_token
-        ),
+        # different decisions. A record naming no decision reads back as
+        # ``None``, the same answer the classifier gives for that body;
+        # an unrecognised string token is kept verbatim.
+        tournament_decision=None if decision_token is None else _as_decision(decision_token),
         rejection_reason=str(d.get("rejection_reason", "")),
         metric_movements=metric_movements,
         structure=str(d.get("structure", "gauntlet")),

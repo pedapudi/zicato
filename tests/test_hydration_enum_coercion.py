@@ -128,11 +128,11 @@ def test_journal_read_experiment_yields_enum_member(
     assert loaded == in_process
 
 
-def test_journal_outcome_from_dict_absent_decision_defaults_to_rejected() -> None:
-    """The historical ``"rejected"`` default now arrives as the member."""
+def test_journal_outcome_from_dict_absent_decision_reads_as_none() -> None:
+    """A body naming no decision hydrates with ``tournament_decision`` unset."""
     hydrated = _outcome_from_dict({})
     assert hydrated is not None
-    assert hydrated.tournament_decision is TournamentDecision.REJECTED
+    assert hydrated.tournament_decision is None
 
 
 @pytest.mark.parametrize("token", ["bogus", "deferred_infra", ""])
@@ -158,13 +158,13 @@ def test_journal_outcome_from_dict_keeps_unrecognised_token(token: str) -> None:
     [None, 3, 1.5, ["promoted"], {"a": 1}, b"promoted"],
     ids=["null", "int", "float", "list", "dict", "bytes"],
 )
-def test_journal_outcome_from_dict_non_string_decision_reads_as_rejected(value: Any) -> None:
+def test_journal_outcome_from_dict_non_string_decision_reads_as_none(value: Any) -> None:
     """A structurally wrong value is not a decision token, and never raises.
 
     ``recorded_decision_token`` accepts a string and nothing else, so a
     decision key holding a number, a container or bytes carries no token
     at all and the record reads back under the same rule as a record
-    naming no decision: REJECTED. The unhashable cases are the ones worth
+    naming no decision: ``None``. The unhashable cases are the ones worth
     pinning — a value that cannot be looked up in the enum must not
     surface as an uncaught ``TypeError`` out of a read path that cannot
     otherwise fail, and must not be carried into a field the dataclass
@@ -172,7 +172,7 @@ def test_journal_outcome_from_dict_non_string_decision_reads_as_rejected(value: 
     """
     hydrated = _outcome_from_dict({"tournament_decision": value})
     assert hydrated is not None
-    assert hydrated.tournament_decision is TournamentDecision.REJECTED
+    assert hydrated.tournament_decision is None
 
 
 # ---------------------------------------------------------------------------

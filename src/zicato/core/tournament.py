@@ -78,8 +78,10 @@ def recorded_decision_token(outcome: Any) -> str | None:
     The token is returned exactly as recorded: unstripped, uncased, and
     never widened into a verdict the record does not carry. Mapping a
     token onto the canonical ``promoted`` / ``rejected`` / ``deferred``
-    vocabulary is a separate step, and what a caller does with ``None``
-    is the caller's policy — the two readers differ there deliberately.
+    vocabulary is a separate step. Both readers carry ``None`` through
+    unchanged: the typed record stores it in
+    :attr:`~zicato.core.experiment.OutcomeRecord.tournament_decision`
+    and the classifier returns it.
     """
     if isinstance(outcome, str):
         return outcome

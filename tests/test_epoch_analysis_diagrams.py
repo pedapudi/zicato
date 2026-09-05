@@ -277,6 +277,26 @@ def test_trajectory_table_marks_pending_outcomes() -> None:
     assert "pending" in pending_row
 
 
+def test_trajectory_table_marks_outcome_without_decision_pending() -> None:
+    """An outcome that recorded no decision renders like a missing outcome."""
+    gens = [
+        _baseline_gen("v0"),
+        _child_gen("v1", "v0", promoted=False),
+    ]
+    exps = [
+        make_experiment(
+            generation_id="v1",
+            parent_generation_id="v0",
+            hypothesis=make_hypothesis_spec(core_idea="Undecided experiment."),
+            outcome=make_outcome_record(tournament_decision=None),
+        ),
+    ]
+    out = render_trajectory_table(gens, exps)
+    row = next(ln for ln in out.splitlines() if ln.startswith("| v1"))
+    assert "pending" in row
+    assert "None" not in row
+
+
 def test_trajectory_table_empty() -> None:
     out = render_trajectory_table([], [])
     assert "no generations" in out

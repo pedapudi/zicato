@@ -423,7 +423,7 @@ def _load_one_generation(
     is_baseline = not parent or parent == gen_id
 
     if outcome is not None:
-        decision = str(outcome.tournament_decision) or "pending"
+        decision = str(outcome.tournament_decision or "pending")
         rejection_reason = outcome.rejection_reason
         scalar_delta = outcome.scalar_score_delta
         drift_delta = outcome.drift_loss_delta

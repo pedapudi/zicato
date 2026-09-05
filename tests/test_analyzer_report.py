@@ -213,6 +213,41 @@ def epoch_workspace(tmp_path: Path) -> tuple[Path, str]:
 # ---------------------------------------------------------------------------
 
 
+def test_data_gather_renders_outcome_without_decision_as_pending(
+    epoch_workspace: tuple[Path, str],
+) -> None:
+    """An outcome that recorded no decision reads ``pending``, as a missing outcome does.
+
+    The view is text the report renders, so the field must carry the
+    word and never the spelling of an absent value.
+    """
+    ws, epoch = epoch_workspace
+    _write(
+        ws / "epochs" / epoch / "generations" / "v3" / "experiment.json",
+        {
+            "id": "exp-v3",
+            "epoch_id": epoch,
+            "generation_id": "v3",
+            "parent_generation_id": "v1",
+            "proposed_at": "2026-05-18T04:00:00Z",
+            "hypothesis": {"core_idea": "shorten the closing slide", "modulating": ["sys_prompt"]},
+            "patch_ids": [],
+            "outcome": {
+                "ran_at": "2026-05-18T04:30:00Z",
+                "drift_movements": [],
+                "pass_rate_delta": 0.0,
+                "drift_loss_delta": 0.0,
+                "scalar_score_delta": 0.0,
+            },
+        },
+    )
+    data = gather_epoch_report_data(ws, epoch)
+    views = {g.generation_id: g for g in data.generations}
+    assert views["v3"].decision == "pending"
+    assert data.promoted == 1
+    assert data.rejected == 1
+
+
 def test_data_gather_counts(epoch_workspace: tuple[Path, str]) -> None:
     ws, epoch = epoch_workspace
     data = gather_epoch_report_data(ws, epoch)

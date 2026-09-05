@@ -503,6 +503,9 @@ def _upsert_experiment(conn: sqlite3.Connection, experiment: Experiment) -> None
     hyp = experiment.hypothesis
     outcome = experiment.outcome
     if outcome is not None:
+        # An outcome recording no decision writes NULL, the same value an
+        # absent outcome writes, so the settled-only readers in
+        # ``index/query.py`` skip it rather than count it as a loss.
         decision: str | None = outcome.tournament_decision
         rejection_reason: str | None = outcome.rejection_reason
         scalar_delta: float | None = outcome.scalar_score_delta
