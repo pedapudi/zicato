@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.workspace import replicate_index_from_run_id
-from zicato.query import gate_view as _gate_view
 from zicato.query._sqlite import (
     _opt_json,
     _opt_str,
@@ -22,7 +21,6 @@ from zicato.query._sqlite import (
 from zicato.query.board_scan import iter_board_rows
 from zicato.query.epoch_view import (
     _parse_board,
-    build_epoch_view,
     build_epochs_summary,
 )
 from zicato.query.eval_view import facet_scores_for_generation, facets_by_entry
@@ -55,7 +53,6 @@ from zicato.query.tournament_view import (
     _opt_score,
     _read_gen_score,
     _tournament_id_for,
-    build_bracket,
 )
 from zicato.workspace import judge_loss_rows
 from zicato.workspace.config_io import read_workspace_config
@@ -974,24 +971,25 @@ def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
 def build_environment(
     paths: WorkspacePaths, run_log_limit: int = RUN_LOG_DEFAULT_LIMIT
 ) -> dict[str, Any]:
-    """One coalesced snapshot of the whole instantiated zicato environment.
+    """The one read the console refreshes its state from, for ``GET /api/environment``.
 
-    ``GET /api/environment`` returns this. It folds together every
-    cross-view feed the dashboard needs — the epoch contract, the live
-    and resolved tournaments, the generation lineage, active runs, loop
-    health, the heartbeat, and the run-log tail — so the front-end can
-    refresh the entire environment view with ONE request per change
-    instead of fanning out to six endpoints many times a second.
+    The client fetches this once per change signal and folds every
+    component into its state, so the payload carries only what the client
+    keeps. Those components are the workspace identity, the current epoch
+    id, the per-epoch goal summary, the active tournament, the generation
+    lineage, the active runs, the heartbeat, the liveness verdict, the lock,
+    and the run-log tail. The epoch contract, the bracket, the score
+    trajectory and the health report are served by their own routes, which
+    a view reads when it renders.
 
     ``epochs`` is a lightweight per-epoch summary list -- ``{epoch_id,
     goal}`` -- so the Overview's epochs table can show what each epoch
     is trying to accomplish without a per-epoch ``/api/epoch`` fetch.
 
-    ``workspace`` is now a structured identity block (see
+    ``workspace`` is a structured identity block (see
     :func:`build_workspace_identity`) so the workspace view can render
     entrypoint / source roots / contract paths / mutation-point count
-    without a second fetch. A caller that expects a plain string still
-    finds the root path on ``workspace.root``.
+    without a second fetch; the root path is ``workspace.root``.
 
     Every component degrades independently: a missing or unreadable
     input becomes an empty / ``None`` value, never an exception, so this
@@ -1001,33 +999,16 @@ def build_environment(
     # port / build) and is supplied by the /api/health route handler,
     # not this reader — it is intentionally absent from the environment
     # payload. ``heartbeat`` is the orchestrator's runtime heartbeat.
-    #
-    # ONE lineage walk for the whole payload. Two fields need the generations
-    # feed — ``generations`` serves it verbatim and ``score_trajectory`` reads
-    # its order. The walk reads a JSON file per generation, so building it
-    # twice measured as the single largest cost in this reader (cProfile:
-    # 84% of build_environment, ncalls=2).
-    generations = build_lineage_view(paths)
-    epoch_id = read_current_epoch(paths)
-    epoch_generations = {
-        "generations": [
-            node
-            for node in generations.get("generations", [])
-            if isinstance(node, dict) and node.get("epoch_id") == epoch_id
-        ]
-    }
     return {
         "workspace": build_workspace_identity(paths),
-        "epoch_id": epoch_id,
-        "epoch": build_epoch_view(paths, lineage_view=epoch_generations),
+        "epoch_id": read_current_epoch(paths),
         "epochs": build_epochs_summary(paths),
         "active_tournament": read_active_tournament_dict(paths),
-        "tournaments": build_bracket(paths),
-        # SERVED verbatim (the environment feed) — the rating triple stays.
-        "generations": generations,
-        "score_trajectory": _gate_view.build_score_trajectory(paths, lineage=generations),
+        # The lineage walk reads a JSON file per generation and is the
+        # largest cost in this reader; the feed is served verbatim, rating
+        # triple included.
+        "generations": build_lineage_view(paths),
         "active_runs": read_active_runs_view(paths),
-        "health_report": _gate_view.build_health_report(paths),
         "heartbeat": read_heartbeat_dict(paths),
         # The served tri-state (runtime_view.derive_liveness) — the one
         # answer to "is anything running?", so the environment feed and

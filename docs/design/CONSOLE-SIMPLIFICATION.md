@@ -4,9 +4,9 @@ This document is a proposal written on 2026-09-05. It describes intended changes
 to the console (the browser dashboard served by `zicato dashboard`) and the
 measurements behind them. Every number is taken at commit `74ed7514` of
 `main` with the command shown beside it, so a maintainer can re-run the
-measurement after any change. Proposal §3.4 is implemented and ends with a
-sentence stating the state the code is in; the other proposals are not
-implemented.
+measurement after any change. Proposals §3.2 and §3.4 are implemented and
+each ends with a sentence stating the state the code is in; the other
+proposals are not implemented.
 
 The proposal is about the size and shape of the console's implementation.
 Every proposal keeps the constraints the console already carries:
@@ -490,6 +490,13 @@ finds one production read; the node suite and `tests/test_dashboard_server.py`
 run after the change confirm it. The TUI does not read `/api/environment`.
 
 **Depends on.** Nothing.
+
+**State.** Implemented. `build_environment` serves the ten kept components,
+`AppState` holds no `bracket`, `scoreTrajectory`, `healthReport` or
+`epochDef` field, and `views/publication.js` resolves the epoch id from its
+own `D.epoch` read. `tests/test_dashboard_server.py` pins the four keys
+absent and `static/test/core.test.mjs` pins that folding them changes no
+state.
 
 ### 3.3 Draw one elimination figure
 

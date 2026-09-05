@@ -46,25 +46,19 @@ export class AppState {
     this.activeTournament = null;
     this.pastTournaments = [];
 
-    // /api/tournaments — the gauntlet bracket.
-    this.bracket = null;
-    // (matchupDetail / driftMovements / selectedMatchup DELETED — they cached
-    // `/api/tournaments/{gen}` + `/api/drift-movements/{gen}` on every SSE beat
-    // and no view ever read them. See core/api.js for the full record.)
+    // The bracket, the health report, the score trajectory and the epoch
+    // contract are not state: a view reads each through the cached
+    // per-route accessor in data.js when it renders, so the beat payload
+    // does not carry them. (The same holds for the per-matchup detail and
+    // drift movements; see core/api.js.)
     // board entry whose inline conversation diff is open.
     this.selectedEntry = null;
     // generation id whose tournament is selected in the picker.
     this.selectedTournament = null;
 
-    // /api/health-report — loop-health panel source.
-    this.healthReport = null;
-
     // /api/lineage — generations + experiments.
     this.lineage = { generations: [], experiments: [] };
     this.experiments = [];
-
-    // /api/score-trajectory — environment-wide evolution curve.
-    this.scoreTrajectory = { points: [] };
 
     // run-log tail + append cursor.
     this.logLines = [];
@@ -77,9 +71,8 @@ export class AppState {
     this.service = { version: '—', port: '—', build: '—' };
 
 
-    // header epoch summary + full epoch contract.
+    // header epoch summary; `id` follows the served `epoch_id`.
     this.epoch = { id: '—', generation: '—', round: '—', startedAt: null };
-    this.epochDef = null;
     // Lightweight per-epoch summary list — [{ epoch_id, goal }] — from
     // the /api/environment `epochs` key. Lets the Overview's epochs
     // table annotate each row with the epoch's goal without a
@@ -183,23 +176,15 @@ export class AppState {
     if (snap.active_runs) this.activeRuns = snap.active_runs;
     if ('active_tournament' in snap) this.activeTournament = snap.active_tournament;
     if (Array.isArray(snap.past_tournaments)) this.pastTournaments = snap.past_tournaments;
-    if (snap.bracket && typeof snap.bracket === 'object') this.bracket = snap.bracket;
-    if (snap.tournaments && typeof snap.tournaments === 'object') this.bracket = snap.tournaments;
-    if (snap.health_report && typeof snap.health_report === 'object') {
-      this.healthReport = snap.health_report;
-    }
     if (snap.lineage) this.lineage = snap.lineage;
     if (snap.generations) this.lineage = snap.generations;
     if (snap.experiments) this.experiments = snap.experiments;
-    if (snap.score_trajectory && Array.isArray(snap.score_trajectory.points)) {
-      this.scoreTrajectory = snap.score_trajectory;
-    }
     if (snap.service) Object.assign(this.service, snap.service);
     if (snap.health) this.setHealth(snap.health);
     if (snap.run_log) this.setLogTail(snap.run_log);
     if (snap.workspace) this.workspace = snap.workspace;
     if (Array.isArray(snap.epochs)) this.epochs = snap.epochs;
-    this._foldEpoch(snap.epoch);
+    if (snap.epoch_id) this.epoch.id = snap.epoch_id;
     if (snap.epoch_summary && typeof snap.epoch_summary === 'object') {
       Object.assign(this.epoch, snap.epoch_summary);
     }
@@ -216,47 +201,15 @@ export class AppState {
     if (env.heartbeat) this.setHeartbeat(env.heartbeat);
     if (env.liveness && typeof env.liveness === 'object') this.liveness = env.liveness;
     if ('active_tournament' in env) this.activeTournament = env.active_tournament;
-    if (env.tournaments && typeof env.tournaments === 'object') {
-      this.bracket = env.tournaments;
-    }
     if (env.generations && typeof env.generations === 'object') {
       this.lineage = env.generations;
     }
-    if (env.score_trajectory && Array.isArray(env.score_trajectory.points)) {
-      this.scoreTrajectory = env.score_trajectory;
-    }
     if (Array.isArray(env.active_runs)) this.activeRuns = env.active_runs;
-    if (env.health_report && typeof env.health_report === 'object') {
-      this.healthReport = env.health_report;
-    }
     if (env.run_log) this.setLogTail(env.run_log);
     if (env.workspace) this.workspace = env.workspace;
     if (Array.isArray(env.epochs)) this.epochs = env.epochs;
-    this._foldEpoch(env.epoch);
+    if (env.epoch_id) this.epoch.id = env.epoch_id;
     this._changed();
-  }
-
-  // The environment / snapshot `epoch` key is the full contract object.
-  _foldEpoch(epoch) {
-    if (!epoch || typeof epoch !== 'object') return;
-    if ('epoch_id' in epoch || 'board' in epoch || 'brief' in epoch || 'rubric' in epoch) {
-      this.epochDef = epoch;
-      if (epoch.epoch_id) this.epoch.id = epoch.epoch_id;
-    } else {
-      Object.assign(this.epoch, epoch);
-    }
-  }
-
-  setEpochDef(def) {
-    if (def && typeof def === 'object') {
-      this.epochDef = def;
-      if (def.epoch_id) this.epoch.id = def.epoch_id;
-      this._changed();
-    }
-  }
-
-  setBracket(bracket) {
-    if (bracket && typeof bracket === 'object') { this.bracket = bracket; this._changed(); }
   }
 
   // /api/health — footer service identity.
@@ -303,10 +256,6 @@ export class AppState {
     if (tail.cursor != null) this.logCursor = tail.cursor;
     if (appended.length) bus.emit('log:appended', { events: appended });
     return appended;
-  }
-
-  setHealthReport(report) {
-    if (report && typeof report === 'object') { this.healthReport = report; this._changed(); }
   }
 
   // -- selectors ---------------------------------------------------

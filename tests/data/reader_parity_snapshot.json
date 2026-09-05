@@ -223,103 +223,6 @@
   "environment": {
     "active_runs": [],
     "active_tournament": null,
-    "epoch": {
-      "analysis_html_available": false,
-      "analysis_html_inline": "",
-      "analysis_md": "",
-      "board": [
-        {
-          "budget_s": null,
-          "entry_id": "t1",
-          "expectation_kind": "rubric",
-          "input_preview": "Say hello.",
-          "kind": "single_turn",
-          "tags": [
-            "smoke"
-          ],
-          "weight": 1.0
-        },
-        {
-          "budget_s": null,
-          "entry_id": "t2",
-          "expectation_kind": "predicate",
-          "input_preview": "Say goodbye.",
-          "kind": "single_turn",
-          "tags": [],
-          "weight": 2.0
-        }
-      ],
-      "board_split": {
-        "configured": false,
-        "enabled": false,
-        "entries": [
-          {
-            "entry_id": "t1",
-            "slice": "train",
-            "weight": 1.0
-          },
-          {
-            "entry_id": "t2",
-            "slice": "train",
-            "weight": 2.0
-          }
-        ],
-        "holdout_count": 0,
-        "holdout_fraction": 0.0,
-        "holdout_tags": [],
-        "total": 2,
-        "train_count": 2
-      },
-      "brief": "# Brief e0\n\n## Goal\n\nName sorts first, created last — the bug mirror.\n",
-      "closed": false,
-      "contract_hash": "hash-e0",
-      "created_at": "2026-03-01T00:00:00Z",
-      "current_champion": "v0",
-      "delta_scalar_summary": {
-        "champion_spine": null,
-        "gross": -0.05
-      },
-      "epoch_id": "e0",
-      "experiments": [
-        {
-          "decision": "baseline",
-          "decision_label": "seed (v0)",
-          "generation_id": "v0",
-          "hypothesis": {
-            "summary": "hyp e0 v0"
-          },
-          "outcome": {
-            "decision": "promoted",
-            "scalar_score_delta": -0.05
-          },
-          "parent_generation_id": null,
-          "patches": {},
-          "promoted": true,
-          "proposed_at": "2026-03-01T00:00:00Z"
-        }
-      ],
-      "goal": "Name sorts first, created last — the bug mirror.",
-      "harness": {
-        "entrypoint": "pkg.module:agent",
-        "mutable_trees": [
-          "src/pkg"
-        ]
-      },
-      "holdout": null,
-      "journal": "",
-      "mutations": [],
-      "scoring": {
-        "pass_weight": 1.0,
-        "tournament": {
-          "params": {},
-          "structure": "gauntlet"
-        }
-      },
-      "tournament": {
-        "params": {},
-        "structure": "gauntlet"
-      }
-    },
     "epoch_id": "e0",
     "epochs": [
       {
@@ -376,11 +279,6 @@
         }
       ]
     },
-    "health_report": {
-      "epoch_id": "e0",
-      "findings": [],
-      "healthy": true
-    },
     "heartbeat": null,
     "liveness": {
       "state": "settled"
@@ -390,26 +288,6 @@
       "cursor": null,
       "events": [],
       "events_path": null
-    },
-    "score_trajectory": {
-      "epoch_id": "e0",
-      "note": "index not built; run zicato repair index",
-      "points": [
-        {
-          "created_at": "2026-03-01T00:00:00Z",
-          "entry_count": 0,
-          "generation_id": "v0",
-          "parent_generation_id": null,
-          "promoted": true,
-          "scalar": null
-        }
-      ]
-    },
-    "tournaments": {
-      "champion_lineage": [],
-      "epoch_id": "e0",
-      "matchups": [],
-      "note": "index not built; run zicato repair index"
     },
     "workspace": {
       "adk_entrypoint": "pkg.module:agent",

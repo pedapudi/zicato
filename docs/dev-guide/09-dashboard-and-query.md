@@ -39,7 +39,7 @@
 > | DQ12 | validate an id before it touches the workspace | **An id path param is validated by `_is_safe_id` before it touches the workspace.** A malformed coordinate degrades to the empty shape at HTTP 200 — never a 500, never a traversal. |
 > | DQ13 | every JSON GET has a declared contract | **Every JSON GET has a declared query contract.** `query.contracts.ENDPOINT_PAYLOADS` is the exhaustive inventory. |
 > | DQ14 | lineage owns topology | **Lineage owns topology.** `lineage.json` alone supplies parent and tri-state promotion; experiment outcomes are journal detail. |
-> | DQ15 | composite readers share walks | **Composite readers share walks.** `build_environment` performs one lineage walk and hands its scoped feed to the epoch and trajectory builders. |
+> | DQ15 | composite readers share walks | **Composite readers share walks.** `build_round_timeline` performs one lineage walk and hands its scoped feed to the trajectory builder; `build_environment` walks the lineage once and serves the feed verbatim. |
 
 ---
 

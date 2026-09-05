@@ -122,4 +122,26 @@ test('A3: data.contractDiff is deleted (superseded by the /api/workspace ledger)
     'the dead /api/contract-diff fetcher is gone; views/home.js reads ws.ledger instead');
 });
 
+// --- the beat payload carries only what the client folds into state.
+
+test('applyEnvironment folds no bracket, trajectory, health report or epoch contract', () => {
+  for (const field of ['bracket', 'scoreTrajectory', 'healthReport', 'epochDef']) {
+    assert(!(field in state), `AppState declares no ${field} field`);
+  }
+  state.applyEnvironment({
+    epoch_id: 'e9',
+    epoch: { epoch_id: 'e9', board: [] },
+    tournaments: { champion_lineage: ['v0'], matchups: [] },
+    score_trajectory: { points: [{ generation_id: 'v0' }] },
+    health_report: { verdict: 'ok' },
+  });
+  assertEqual(state.epoch.id, 'e9', 'the served epoch_id names the current epoch');
+  for (const field of ['bracket', 'scoreTrajectory', 'healthReport', 'epochDef']) {
+    assert(!(field in state), `folding ${field}'s payload key creates no ${field} field`);
+  }
+  assertEqual(typeof state.setBracket, 'undefined', 'no bracket mutator');
+  assertEqual(typeof state.setHealthReport, 'undefined', 'no health-report mutator');
+  assertEqual(typeof state.setEpochDef, 'undefined', 'no epoch-contract mutator');
+});
+
 await run();

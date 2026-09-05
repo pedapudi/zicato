@@ -85,7 +85,7 @@ export async function render(host, ctx, params) {
   let epochId = (params && params.epochId) || null;
   if (!epochId) {
     const ep = await D.epoch();
-    epochId = (ep && ep.epoch_id) || (state.epochDef && state.epochDef.epoch_id) || null;
+    epochId = (ep && ep.epoch_id) || null;
   }
   if (!epochId) {
     gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Epoch publication' }), empty('No epoch selected.')]);

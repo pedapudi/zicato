@@ -41,22 +41,20 @@ static/
 
 `GET /api/environment` returns ONE coalesced read. Every component
 degrades independently — a missing input is `null`/`[]`, never an
-exception. Shape (as produced by `state_reader.build_environment`):
+exception. It carries only what the client folds into state (§3); the
+epoch contract, the bracket, the score trajectory and the health report
+are served by their own routes, which a view reads through `data.js`
+when it renders. Shape (as produced by `query.judge_view.build_environment`):
 
 ```jsonc
 {
-  "workspace": "/abs/path/.zicato",
+  "workspace": { "root": "/abs/path/.zicato", ... },  // build_workspace_identity
   "epoch_id": "2026-05-18_presn" | null,
-  "epoch": { ...epoch contract... },          // build_epoch_view
   "epochs": [ { "epoch_id": str, "goal": str|null } ],  // per-epoch goal summary
   "active_tournament": { ...tournament... } | null,
-  "tournaments": { "epoch_id", "champion_lineage":[genId], "matchups":[...] },
   "generations": { "generations":[...], "experiments":[...] },
-  "score_trajectory": { "epoch_id", "points":[{generation_id,
-        parent_generation_id, promoted, scalar, entry_count, created_at}] },
   "active_runs": [ { ..., progress:0..1|null, elapsed_seconds, budget_seconds,
                       adk_session_id:str } ],
-  "health_report": { ...loop health... },
   "heartbeat": { generation_id, round_index, last_heartbeat,
         round_started_at, started_at, harmonograf_url?,
         harmonograf_persistent? } | null,
@@ -86,7 +84,8 @@ The drill-down / lazy endpoints (unchanged):
   `/api/matchup-grid/...` instead (§3).
 - `GET /api/drift-movements/{gen}` — drift-kind movements. **No client
   reads it**; operator surface only.
-- `GET /api/score-trajectory` — same shape as `environment.score_trajectory`.
+- `GET /api/score-trajectory` — `{ epoch_id, points:[{generation_id,
+  parent_generation_id, promoted, scalar, entry_count, created_at}] }`.
 - `GET /api/files...`, `GET /api/mutations/...` — the patch-diff and
   mutation-surface panes.
 - `GET /api/conversation/{run}` — the run_id-keyed transcript
@@ -309,15 +308,11 @@ state.heartbeat                         — merged heartbeat record
 state.activeRuns []                     — active run records
 state.activeTournament | null
 state.pastTournaments []
-state.bracket                           — { champion_lineage, matchups }
 state.selectedEntry   | null
-state.healthReport
 state.lineage         { generations, experiments }
-state.scoreTrajectory { points: [] }
 state.logTail         { events:[] }   logCursor   logEventsPath
 state.health                          — dashboard-service identity
 state.epoch           { id, generation, round, startedAt }
-state.epochDef        — full epoch contract
 state.epochs          — per-epoch goal summary [ { epoch_id, goal } ]
 state.workspace
 state.files / state.mutations         — file + mutation pane scratch state
@@ -478,9 +473,9 @@ Each module under `js/views/` exports `render(host, ctx, params)`.
   workspace level rather than inside an epoch, because the streams are
   per-invocation.
 
-**Where the epoch panes get their data.** `state.epochDef` is populated
-from `GET /api/epoch` and the `epoch` key on `/api/environment`, both
-built by `build_epoch_view`. It exposes `experiments` (per-generation
+**Where the epoch panes get their data.** The epoch contract is read
+from `GET /api/epoch` (`D.epoch`, cached per epoch), built by
+`build_epoch_view`. It exposes `experiments` (per-generation
 records carrying the raw `hypothesis`, `outcome`, and `patches` keyed by
 mutation id), `brief`, `journal`, `analysis_md`, and the contract
 blocks. One experiment record's shape:
