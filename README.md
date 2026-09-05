@@ -103,6 +103,11 @@ For wiring your own system under test rather than editing the example, the
 `zicato-bootstrap` skill ([`skills/zicato-bootstrap/SKILL.md`](skills/zicato-bootstrap/SKILL.md))
 walks through adapter registration, model engines, and the mutable surface.
 
+For what the words in that table mean — epoch, generation, round, contract,
+champion, holdout — open [`docs/atlas/index.html`](docs/atlas/index.html) in a
+browser. It maps the vocabulary onto the five parts of a round and walks
+through the ones the loop turns on.
+
 ## Where this fits
 
 | Layer | Owner | Cadence |
