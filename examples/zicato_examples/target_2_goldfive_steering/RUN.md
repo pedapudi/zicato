@@ -148,11 +148,26 @@ adversarial board and is rejected.
 Two rounds against the seeded baseline:
 
 ```
+# `evolve` takes no model options: an engine naming a `call_llm` dotted
+# path is how these deterministic mocks reach the two roles.
+python - <<'PYEOF'
+import json, pathlib
+mocks = "zicato_examples.target_2_goldfive_steering.mocks"
+cfg_path = pathlib.Path(".zicato/config.json")
+cfg = json.loads(cfg_path.read_text())
+cfg["models"] = {
+    "engines": {
+        "target": {"call_llm": f"{mocks}:target_llm"},
+        "evaluation": {"call_llm": f"{mocks}:aux_llm"},
+    },
+    "roles": {},
+}
+cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
+PYEOF
+
 python -m zicato.cli evolve --workspace .zicato \
     --rounds 2 \
-    --mode full \
-    --harness-call-llm zicato_examples.target_2_goldfive_steering.mocks:target_llm \
-    --auxiliary-call-llm zicato_examples.target_2_goldfive_steering.mocks:aux_llm
+    --mode full
 ```
 
 What happens, step by step:

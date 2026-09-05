@@ -414,10 +414,10 @@ output, so every candidate scores the same.
   handed. This is the first live evidence that the propose step generates
   signal.
 - **Preconditions:**
-  - a serving endpoint wired through the `--harness-call-llm` and
-    `--auxiliary-call-llm` dotted callables. The convergence example's own
-    harness stays deterministic and only the proposer and evaluation side goes
-    live, which isolates the proposer as the single changed variable;
+  - a serving endpoint named by the workspace's `target` and `evaluation`
+    model engines. The convergence example's own harness stays deterministic
+    and only the proposer and evaluation side goes live, which isolates the
+    proposer as the single changed variable;
   - the workspace bootstrapped as
     `examples/zicato_examples/target_0_convergence/RUN.md` steps 1–4 specify
     (init, adapter block, contract publish, and a `zicato inspect mutations`
@@ -429,9 +429,7 @@ output, so every candidate scores the same.
   zicato init --workspace .zicato
   # …RUN.md steps 2–3 (adapter block, board/scoring/brief publish)…
   zicato inspect mutations --workspace .zicato          # expect: style_rules only
-  zicato evolve --workspace .zicato --rounds 3 --mode full \
-      --harness-call-llm  zicato_examples.target_0_convergence.mocks:target_llm \
-      --auxiliary-call-llm <live aux dotted path>
+  zicato evolve --workspace .zicato --rounds 3 --mode full
   # report the printed Dashboard: http://127.0.0.1:7892 URL immediately
   zicato epoch close --workspace .zicato
   ```
@@ -491,8 +489,7 @@ output, so every candidate scores the same.
   ```bash
   zicato board preflight --workspace .zicato   # gate: verdict ok
   zicato board audit --workspace .zicato       # persist the live floor
-  zicato evolve --workspace .zicato --rounds <N> \
-      --harness-call-llm <live> --auxiliary-call-llm <live>
+  zicato evolve --workspace .zicato --rounds <N>
   # dashboard URL reported; watch the picky-stakeholder entry specifically
   ```
 
@@ -579,8 +576,7 @@ output, so every candidate scores the same.
 
   ```bash
   # publish the racing contract (or set via the builder), then:
-  zicato evolve --workspace .zicato --rounds <N> \
-      --harness-call-llm <live> --auxiliary-call-llm <live>
+  zicato evolve --workspace .zicato --rounds <N>
   # dashboard URL reported; the racing ladder + evidence cockpit are the views to watch
   ```
 
@@ -615,7 +611,7 @@ output, so every candidate scores the same.
 
   ```bash
   # arm A: screening on (scaffold default); arm B: screen_entries: 0
-  zicato evolve --workspace .zicato --rounds <N> --harness-call-llm <live> --auxiliary-call-llm <live>
+  zicato evolve --workspace .zicato --rounds <N>
   ```
 
 - **What to measure:** per-arm — accepted improvements (released, confirmed

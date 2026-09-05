@@ -83,6 +83,16 @@ cfg["adapter"] = {
 # The shell substitutes \$EX before python runs (unquoted heredoc).
 cfg["mutable_trees"] = ["$EX/agent"]
 cfg["source_roots"] = ["$EX/agent"]
+# Which callable each model role runs on is a property of the
+# workspace; an engine naming a call_llm dotted path is the offline
+# form. `zicato evolve` takes no model options.
+cfg["models"] = {
+    "engines": {
+        "target": {"call_llm": "zicato_examples.target_0_convergence.mocks:target_llm"},
+        "evaluation": {"call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm"},
+    },
+    "roles": {},
+}
 contract = dict(cfg.get("contract") or {})
 contract["proposer_path"] = "$EX/proposer"
 cfg["contract"] = contract
@@ -113,10 +123,7 @@ $PY -m zicato.cli inspect mutations --workspace .zicato
 #    (the negative control), v3 PROMOTED (2.4 → 1.2 — the exact floor).
 #    evolve launches the dashboard and prints its URL (e.g.
 #    Dashboard: http://127.0.0.1:7892) — watch the bracket live.
-$PY -m zicato.cli evolve --workspace .zicato \
-    --rounds 3 --mode full \
-    --harness-call-llm   zicato_examples.target_0_convergence.mocks:target_llm \
-    --auxiliary-call-llm zicato_examples.target_0_convergence.mocks:aux_llm
+$PY -m zicato.cli evolve --workspace .zicato --rounds 3 --mode full
 
 # 6. Close the epoch to produce analysis.md / analysis.html.
 $PY -m zicato.cli epoch close --workspace .zicato
@@ -137,8 +144,8 @@ $PY -m zicato.cli epoch close --workspace .zicato
 [`scoring.effective.json`](./scoring.effective.json) is the same
 contract under a **racing** tournament (`field_size: 4`,
 `replicates: 2`) with the Bradley–Terry evidence pre-gate enabled
-(`promote_confidence_threshold: 0.8`). Use
-`mocks:racing_aux_llm` as the evaluation callable. It serves four
+(`promote_confidence_threshold: 0.8`). Point the `evaluation` engine at
+`zicato_examples.target_0_convergence.mocks:racing_aux_llm`. It serves four
 distinct experiments per round whose defect-token sets form a strict
 superset chain, so the rung cuts are deterministic and the best arm
 (only `verbose-prose` left, scalar `1.2`) survives to be crowned.
@@ -171,10 +178,7 @@ EOF
 
 # One racing round: four distinct challengers race off v0; the best arm
 # (v2, scalar 1.2) survives every rung and is PROMOTED at the floor.
-$PY -m zicato.cli evolve --workspace .zicato \
-    --rounds 1 --mode full \
-    --harness-call-llm   zicato_examples.target_0_convergence.mocks:target_llm \
-    --auxiliary-call-llm zicato_examples.target_0_convergence.mocks:racing_aux_llm
+$PY -m zicato.cli evolve --workspace .zicato --rounds 1 --mode full
 ```
 
 ## Deferred: the live variant

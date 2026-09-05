@@ -1269,9 +1269,9 @@ zicato board preflight --workspace .zicato --runs 2 \
 zicato inspect mutations --workspace .zicato
 
 # GATED: only after §6.0 explicit operator go-ahead -----------------------
-zicato evolve --workspace .zicato --rounds 3 \
-    --harness-call-llm   <operator target endpoint dotted path> \
-    --auxiliary-call-llm <operator evaluation endpoint dotted path>
+# The two endpoints reach the loop as the workspace's `target` and
+# `evaluation` model engines; `evolve` takes no model options.
+zicato evolve --workspace .zicato --rounds 3
 # evolve prints:  Dashboard: http://127.0.0.1:7892   (RECORD this exact URL
 # into the run record's dashboard_url; watch the bracket live)
 

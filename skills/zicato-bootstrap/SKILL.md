@@ -9,6 +9,11 @@ Get a workspace from nothing to a confirmed artifact tree using deterministic
 mocks. No real model calls, no budget spent. Once this passes, an operator can
 swap in real LLMs with `skills/zicato-evolve`.
 
+This is the path for wiring a system under test the operator already has. To
+see the same seven artifacts already wired and running first, `zicato init
+--example` scaffolds a complete project that needs no model and no endpoint;
+the README's quickstart runs it end to end.
+
 Always invoke the CLI from the project's `.venv` (`.venv/bin/zicato ...` or
 `.venv/bin/python -m zicato.cli ...`). Use `uv sync --all-extras` to install —
 never bare `uv sync` (it strips the dev extras, incl. pytest/ruff/mypy). The hard rules cited here live in
@@ -114,9 +119,10 @@ overrides. A dotted `call_llm` engine is the advanced text-only/offline form;
 it is not interchangeable with a native tool runtime or process-owned model
 session.
 
-The low-level `--harness-call-llm` and `--auxiliary-call-llm` flags remain
-useful for deterministic smoke tests and library integrations. When used,
-they must resolve to different Python objects.
+`zicato evolve` takes no model options. An engine may name a `call_llm`
+dotted path instead of a `model`, which is how a deterministic smoke test or
+a library integration supplies its own callable; the `target` and
+`evaluation` engines must then resolve to different Python objects.
 
 If a text backend exposes separate private-reasoning and answer channels, its
 module-level callable may opt into `zicato.reasoning.reasoning_aware_call_llm`.
@@ -161,11 +167,24 @@ $PY -m zicato.cli epoch new t1_smoke --workspace .zicato \
     --board "$OLDPWD/$EX/board.jsonl" \
     --brief "$OLDPWD/$EX/rubric.md" \
     --scoring "$OLDPWD/$EX/scoring.json"
+# `evolve` takes no model options: an engine naming a `call_llm`
+# dotted path is how these deterministic mocks reach the two roles.
+$PY - <<'PYEOF'
+import json, pathlib
+cfg_path = pathlib.Path(".zicato/config.json")
+cfg = json.loads(cfg_path.read_text())
+cfg["models"] = {
+    "engines": {
+        "target": {"call_llm": "zicato_examples.target_1_presentation.mocks:target_llm"},
+        "evaluation": {"call_llm": "zicato_examples.target_1_presentation.mocks:aux_llm"},
+    },
+    "roles": {},
+}
+cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
+PYEOF
 $PY -m zicato.cli inspect mutations --workspace .zicato   # lists the example's mutable ids
 $PY -m zicato.cli evolve --workspace .zicato \
-    --rounds 1 --mode full --no-dashboard \
-    --harness-call-llm   zicato_examples.target_1_presentation.mocks:target_llm \
-    --auxiliary-call-llm zicato_examples.target_1_presentation.mocks:aux_llm
+    --rounds 1 --mode full --no-dashboard
 ```
 
 `epoch new` is shown explicitly here; `evolve` will auto-open/auto-roll epochs
