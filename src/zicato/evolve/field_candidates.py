@@ -38,7 +38,12 @@ from zicato.evolve.dashboard_projection import (
 from zicato.evolve.decision_support import _field_failure_summary
 from zicato.evolve.generation_phase import FieldRound
 from zicato.evolve.lifecycle_services import _now_iso
-from zicato.evolve.persist import _persist_rejected_round, _rejected_proposer_experiment
+from zicato.evolve.persist import (
+    _persist_rejected_round,
+    _rejected_proposer_experiment,
+    deferred_infra_proposer_outage,
+    infrastructure_outage,
+)
 from zicato.evolve.propose_apply import (
     _AppliedChallenger,
     _mint_placebo_challenger,
@@ -143,6 +148,34 @@ def _publish_proposing_slot(
     )
 
 
+def _transport_only_field_trail(
+    rejections: tuple[CandidateRejection, ...],
+) -> list[str] | None:
+    """The field's whole attempt trail when EVERY slot died on the transport.
+
+    ``None`` — the round is about its proposals and must keep rejecting —
+    whenever any slot leaves evidence that is not a transport failure. Two
+    shapes qualify: a slot the endpoint answered, whose attempt trail names a
+    parse or post-apply-validation failure the round can judge; and a slot
+    that carries no :class:`~zicato.proposer.proposer.ProposerError` at all,
+    which failed before it accumulated an attempt trail and so says nothing
+    about the endpoint either way.
+
+    Returning the trail rather than a bare flag is what lets the deferral
+    quote the endpoint's own words: nothing else survives the round, because
+    no experiment is written.
+    """
+    from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
+
+    trail: list[str] = []
+    for rejection in rejections:
+        error = rejection.proposer_error
+        if not isinstance(error, ProposerError):
+            return None
+        trail.extend(error.attempts)
+    return trail if infrastructure_outage(trail) else None
+
+
 async def _settle_field_that_produced_nothing(
     field_round: FieldRound,
     *,
@@ -152,7 +185,14 @@ async def _settle_field_that_produced_nothing(
 ) -> EvolveRoundOutcome:
     """Settle a round whose every candidate slot failed to apply.
 
-    A single slot that exhausted its proposer retries carries a
+    A field whose whole attempt trail is transport failures did not measure
+    anything, so it DEFERS rather than rejects (see
+    :func:`_transport_only_field_trail`).  That is checked first and for
+    every field shape, because the harm is the same at any size: a rejection
+    the endpoint caused counts toward the consecutive-rejection breaker and
+    reads back as evidence about the proposer.
+
+    Otherwise a single slot that exhausted its proposer retries carries a
     :class:`~zicato.proposer.proposer.ProposerError` with its attempt trail,
     so it settles through the shared validation-rejection tail and keeps that
     trail.  Every other exhausted field records a rejection-shaped outcome
@@ -161,6 +201,26 @@ async def _settle_field_that_produced_nothing(
     """
 
     parent_id = field_round.parent_id
+    transport_trail = _transport_only_field_trail(rejections)
+    if transport_trail is not None:
+        # Publish the slots first: the deferral writes no experiment and no
+        # generation, so the forming field is the only surface that shows
+        # what each slot hit.
+        _publish_proposing_field(
+            field_round,
+            tournament_id=f"tourn_{field_round.epoch_id}_{base_id}",
+            field_status=field_status,
+        )
+        return deferred_infra_proposer_outage(
+            workspace_root=field_round.workspace_root,
+            epoch_id=field_round.epoch_id,
+            parent_id=parent_id,
+            next_id=base_id,
+            attempts=transport_trail,
+            round_index=field_round.round_index,
+            beater=field_round.beater,
+            round_log=field_round.round_log,
+        )
     if field_round.field_size == 1 and rejections:
         from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
 
