@@ -3,7 +3,10 @@
 A run's behaviour is decided by knobs that arrive from four places: the
 dataclass field defaults, the workspace ``config.json``, the CLI flags a
 command pins for the process, and the host itself — the worker ceiling is
-derived from the usable CPU count when nothing pins it. Reading an effective
+derived from the usable CPU count when nothing pins it. The tournament's
+replicate count has three tiers of its own, the frozen contract, the epoch's
+measured noise floor, and the structure's default, and the loop records it
+under :data:`TOURNAMENT_REPLICATES_KEY` once the floor is known. Reading an effective
 value back off a running system meant re-deriving that composition by hand,
 and a ceiling nobody wrote down is indistinguishable, from the outside, from
 one an operator chose.
@@ -28,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.types import RuntimeConfig
+from zicato.selection.replicates import REPLICATE_SOURCE_TIERS
 
 #: The knob is at the default its dataclass field declares.
 SOURCE_DEFAULT = "default"
@@ -38,13 +42,20 @@ SOURCE_PINNED_FLAG = "pinned CLI flag"
 #: The value was derived from the host's usable CPU count.
 SOURCE_HOST_CPU_COUNT = "host CPU count"
 
-#: Every tier a recorded setting can name.
+#: Every tier a recorded setting can name. The last three belong to the
+#: tournament's replicate count (:mod:`zicato.selection.replicates`): the
+#: frozen contract, the measured noise floor, or the structure's default.
 SOURCE_TIERS: tuple[str, ...] = (
     SOURCE_DEFAULT,
     SOURCE_WORKSPACE,
     SOURCE_PINNED_FLAG,
     SOURCE_HOST_CPU_COUNT,
+    *REPLICATE_SOURCE_TIERS,
 )
+
+#: The key under which the replicate count in effect is recorded. The loop
+#: adds it once the epoch's floor is known, after the runtime knobs.
+TOURNAMENT_REPLICATES_KEY = "tournament.replicates"
 
 #: The :class:`~zicato.core.types.RuntimeConfig` fields this record reports.
 #: Each is a knob the workspace ``config.json`` ``runtime`` block can set
@@ -106,7 +117,7 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
-def _entry(value: Any, source: str) -> dict[str, Any]:
+def recorded_setting(value: Any, source: str) -> dict[str, Any]:
     """One recorded setting: what it is, and which tier decided it."""
     return {"value": _jsonable(value), "source": source}
 
@@ -149,16 +160,20 @@ def effective_settings(
         pinned_here = pinned.get(section.name, {})
         for knob in fields(block):
             source = SOURCE_PINNED_FLAG if knob.name in pinned_here else SOURCE_DEFAULT
-            settings[f"{section.name}.{knob.name}"] = _entry(getattr(block, knob.name), source)
+            settings[f"{section.name}.{knob.name}"] = recorded_setting(
+                getattr(block, knob.name), source
+            )
 
     for name in RECORDED_RUNTIME_KNOBS:
         source = SOURCE_WORKSPACE if name in runtime_block else SOURCE_DEFAULT
-        settings[f"runtime.{name}"] = _entry(getattr(config, name), source)
+        settings[f"runtime.{name}"] = recorded_setting(getattr(config, name), source)
 
     value, source = resolve_parallelism(runtime_block)
-    settings["runtime.parallelism"] = _entry(value, source)
+    settings["runtime.parallelism"] = recorded_setting(value, source)
 
     limit, permits_source = resolve_host_worker_permits(runtime_block)
-    settings["runtime.host_worker_permits"] = _entry(effective_permit_count(limit), permits_source)
+    settings["runtime.host_worker_permits"] = recorded_setting(
+        effective_permit_count(limit), permits_source
+    )
 
     return settings

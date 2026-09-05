@@ -657,7 +657,7 @@ def test_mde_ladder_degrades_honestly() -> None:
 
 def test_health_mde_uses_floor_and_replicates(tmp_path: Path) -> None:
     _seed(tmp_path)
-    # Add a tournament block so the epoch's realised replicate count is 6.
+    # Add a tournament block so the epoch's pinned replicate count is 6.
     edir = tmp_path / "epochs" / EPOCH
     scoring = json.loads((edir / "scoring.json").read_text(encoding="utf-8"))
     scoring["tournament"] = {"structure": "gauntlet", "params": {"replicates": 6}}
@@ -669,14 +669,38 @@ def test_health_mde_uses_floor_and_replicates(tmp_path: Path) -> None:
     assert mde["usable"] is True
     assert abs(mde["mde"] - 0.06 * 1.7939) < 1e-4
     assert "t_{α/2,df}" in mde["formula"]
+    assert mde["replicates_source"] == "contract scoring.json"
+    # The seeded record carries no delta_std, so the ladder names the range it fell back to.
+    assert mde["floor_statistic"] == "max_abs_delta"
 
 
-def test_health_mde_defaults_to_single_replicate(tmp_path: Path) -> None:
-    _seed(tmp_path)  # no tournament block → replicates defaults to 1 → n<2 note.
+def test_health_mde_reads_the_structure_default_when_nothing_pins_it(tmp_path: Path) -> None:
+    _seed(tmp_path)  # no tournament block: the gauntlet default of 2 is in effect.
     h = ev.build_eval_health(_paths(tmp_path), EPOCH)
-    assert h["mde"]["replicates"] == 1
-    assert h["mde"]["usable"] is False
-    assert "at least 2 replicates" in h["mde"]["note"]
+    assert h["mde"]["replicates"] == 2
+    assert h["mde"]["replicates_source"] == "structure default"
+    assert h["mde"]["usable"] is True and h["mde"]["df"] == 2
+
+
+def test_health_mde_sizes_replicates_from_delta_std_when_the_contract_pins_none(
+    tmp_path: Path,
+) -> None:
+    from zicato.tournament.detectable_effect import replicates_for_margin
+
+    _seed(tmp_path)
+    edir = tmp_path / "epochs" / EPOCH
+    config = json.loads((edir / "config.json").read_text(encoding="utf-8"))
+    config["noise_floor"]["delta_std"] = 0.02
+    (edir / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    scoring = json.loads((edir / "scoring.json").read_text(encoding="utf-8"))
+    scoring["promote_margin"] = 0.05
+    (edir / "scoring.json").write_text(json.dumps(scoring), encoding="utf-8")
+    mde = ev.build_eval_health(_paths(tmp_path), EPOCH)["mde"]
+    # The ladder reads delta_std, the draw-count-stable statistic, over the range.
+    assert mde["floor"] == 0.02 and mde["floor_statistic"] == "delta_std"
+    assert mde["replicates"] == replicates_for_margin(0.02, 0.05) == 4
+    assert mde["replicates_source"] == "derived from the noise floor"
+    assert mde["usable"] is True and mde["mde"] <= 0.05
 
 
 def test_health_noisiest_and_runtime_rankings(tmp_path: Path) -> None:

@@ -29,7 +29,11 @@ from zicato.evolve.round_context import (
 from zicato.runtime.control_consumer import (
     claim_skip_round,
 )
-from zicato.runtime.effective_settings import effective_settings
+from zicato.runtime.effective_settings import (
+    TOURNAMENT_REPLICATES_KEY,
+    effective_settings,
+    recorded_setting,
+)
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.resume import ResumePlan
 from zicato.util.best_effort import best_effort
@@ -54,6 +58,7 @@ from zicato.evolve.round_baseline import (
 from zicato.evolve.round_prepare import (
     _maybe_calibrate_noise_floor,
     _maybe_contract_preflight,
+    _resolve_replicates_in_effect,
     _warn_margin_below_noise_floor,
 )
 from zicato.evolve.round_reporting import (
@@ -264,14 +269,14 @@ async def evolve_once(
     # beater carries the map forward on every later bump. Best-effort, like
     # every other observability write on this path: composing a report must
     # never fail a round.
+    run_settings: dict[str, dict[str, Any]] = {}
     if beater is not None:
         with best_effort(
             "effective-settings record",
             on_error=lambda exc: log.debug("effective-settings record skipped: %s", exc),
         ):
-            beater.update(
-                settings=effective_settings(config, workspace_config.get("runtime", {}) or {})
-            )
+            run_settings = effective_settings(config, workspace_config.get("runtime", {}) or {})
+            beater.update(settings=run_settings)
     # Per-round token budget: mint a FRESH ledger for this round and
     # rebind it onto the config, so every runner seam that already receives
     # the config — the full/fast board-unit schedulers, the candidate
@@ -439,6 +444,26 @@ async def evolve_once(
     # hard-refuses; the per-round health report carries the matching finding.
     if round_index == 0:
         _warn_margin_below_noise_floor(workspace_root, resolved_epoch_id)
+
+    # --- 2c. Replicates in effect -------------------------------------------
+    # The count every duel of this epoch runs: the contract's pinned value,
+    # else the smallest count whose minimum detectable effect at the floor
+    # persisted above is within promote_margin, else the structure's default.
+    # Resolved after the floor is known and stamped onto the effective-settings
+    # record with its source; the strategy below resolves the same count. A
+    # derived count is a runtime record and never enters the contract.
+    replicate_setting = _resolve_replicates_in_effect(
+        workspace_root, resolved_epoch_id, tournament_spec, log_once=round_index == 0
+    )
+    if beater is not None:
+        with best_effort(
+            "effective-settings record",
+            on_error=lambda exc: log.debug("effective-settings record skipped: %s", exc),
+        ):
+            run_settings[TOURNAMENT_REPLICATES_KEY] = recorded_setting(
+                replicate_setting.replicates, replicate_setting.source
+            )
+            beater.update(settings=run_settings)
 
     # --- 3. Mutations ---
     mutations = enumerate_mutations(
@@ -611,6 +636,8 @@ async def evolve_once(
     strategy = make_strategy(
         tournament_spec,
         board_ids=[e.id for e in train_board],
+        replicates=replicate_setting.replicates,
+        noise_floor_delta_std=replicate_setting.delta_std,
     )
     prepared = generation_phase.PreparedRound(
         workspace_root=workspace_root,

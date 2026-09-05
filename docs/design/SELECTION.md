@@ -930,6 +930,54 @@ race, and still apply the winner's-curse confirmation at *final
 promotion*. The two stances are opposite on purpose: eliminate
 liberally, crown conservatively.
 
+### 9.1 The measured noise floor sizes the replicate count and the racing cuts
+
+The replication lever has a measured input. The A/A calibration
+(`src/zicato/tournament/calibration.py`) persists `noise_floor.delta_std`
+on the epoch record: the standard deviation of one duel's `delta_scalar`
+when the champion meets itself, a statistic that sharpens rather than
+grows as calibration draws accumulate. The two-sample minimum detectable
+effect (`src/zicato/tournament/detectable_effect.py`),
+`MDE = (t_{α/2,df} + t_{β,df}) · sd · √(2/n)` with `df = 2(n−1)` at α 0.05
+and power 0.80, states the smallest difference `n` replicates resolve at
+that floor. Its inverse, `replicates_for_margin`, returns the smallest
+count whose effect is within `promote_margin`, up to a cap of 32
+(`REPLICATE_SIZING_CAP`, the evidence gate's scaffolded replicate budget).
+
+**The replicate count in effect.** At epoch open, once the floor is
+persisted, `resolve_replicates` (`src/zicato/selection/replicates.py`)
+attributes the count to one of three tiers. The contract's
+`params["replicates"]` wins when pinned. Otherwise the floor sizes the
+count against the margin, or the structure's default applies when that is
+larger. Without a usable floor the structure's default applies. The loop
+records the count and its tier under
+`tournament.replicates` in the heartbeat's effective-settings record, logs
+it once per invocation, and hands it to `make_strategy`, which injects it as
+`params["replicates"]` only when the contract pins none. A pinned count
+runs unchanged; when its detectable effect exceeds the margin, the round-0
+log states both numbers. A margin no count up to the cap resolves leaves
+the default in force and says so: the margin is the quantity to change
+there rather than the replicate count, and the margin check of §3.2 already
+recommends the value. The derived count is a runtime record and never
+enters the contract, so the contract hash does not move.
+
+**Racing cuts within resolution.** With a floor on the epoch,
+`make_strategy` also injects `params["noise_floor_delta_std"]`, and each
+racing rung computes the gap its own sample resolves. Taking the `M` board
+entries as independent, equally weighted units of one full-board scalar,
+one entry-replicate has deviation `delta_std · √(M/2)`, and a rung that
+scores `m` entries at `r` replicates holds `m·r` units per arm. A candidate
+whose scalar trails the last survivor's by less than the detectable effect
+at that sample advances with the survivors, and the next rung's larger
+slice resolves it. A rung that cuts nobody still advances, because the
+escalation is the added sample. The final rung, on the full board, ranks
+the survivors and sends the best to the champion gate. Without a floor the
+cut is by rank alone.
+
+The instrument-health panel serves the same ladder over the same
+`delta_std` and names the tier the replicate count came from
+([EVAL-VIEW.md §4](EVAL-VIEW.md#4-statistical-honesty-rules-the-views-must-obey)).
+
 ---
 
 ## 10. Configurable per-epoch tournament structures

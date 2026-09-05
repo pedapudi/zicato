@@ -219,10 +219,14 @@ the board (`board.jsonl` via `_parse_board`, `epoch_view.py:56`) and
 with the board-status approximation.
 
 ### 2.5 The noise floor and the inputs to the detectable-effect ladder
-The scalar floor is `noise_floor.max_abs_delta` on `config.json`
-(`margin_below_floor`, `calibration.py:233`). The minimum-detectable-effect
-ladder (§4) is computed from that floor and the epoch's realised replicate
-count, and adds no persistence.
+The margin check reads `noise_floor.max_abs_delta` on `config.json`
+(`margin_below_floor`, `calibration.py`). The minimum-detectable-effect
+ladder (§4) reads `noise_floor.delta_std`, the draw-count-stable statistic,
+and falls back to the range only for a record that carries none; it names
+which one it read. Its replicate count is the count in effect for the
+epoch: `zicato.selection.replicates.resolve_replicates` derives it from the
+contract, the floor, or the structure default, and the ladder serves it
+with its source. The ladder adds no persistence.
 
 ### 2.6 Reflection findings
 Redundancy clusters and judge findings come from the reflection readers
@@ -407,12 +411,16 @@ scheduling, or Pareto admission.
    single red cell as truth.
 3. **The minimum-detectable-effect ladder states its formula and its n.**
    Use the CAMPAIGN.md §3 two-sample form:
-   `MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n)`, with `sd ≈ floor`
-   (`noise_floor.max_abs_delta`) and `n` = the epoch's realised per-arm
-   replicate count. At `n=6, df=10, α=.05` this is **≈ 1.79·floor**
-   (**≈ 1.55·floor** at α=.10) — the numbers CAMPAIGN.md §3 pins. The panel
-   prints the formula, the measured floor, and the `n` it used, never a bare
-   minimum-detectable-effect figure on its own.
+   `MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n)`, with `sd` = the floor's
+   `delta_std` and `n` = the replicate count in effect (the contract's
+   pinned value, the count derived from the floor, or the structure
+   default). At `n=6,
+   df=10, α=.05` this is **≈ 1.79·sd** (**≈ 1.55·sd** at α=.10) — the
+   numbers CAMPAIGN.md §3 pins. The one implementation is
+   `zicato.tournament.detectable_effect.minimum_detectable_effect`, which the
+   run also inverts to size the count. The panel prints the formula, the
+   measured floor and which statistic it is, and the `n` it used with its
+   source, rather than a bare minimum-detectable-effect figure on its own.
 4. **No fabricated numbers.** Absent calibration ⇒ `flip_rate_measured:
    false` and the view prints **"flip rate unmeasured"**, NEVER `0.0`.
    Absent floor ⇒ the ladder says "floor unmeasured" rather than printing a
@@ -493,7 +501,7 @@ Upgrade `src/zicato/dashboard/static/js/views/board.js` to render
 ### The instrument-quality panel
 Recommend-only; every finding links into `reflect` / `builder`.
 - The **measured floor** and the **live minimum-detectable-effect ladder**
-  (§4.3).
+  (§4.3), with the replicate count in effect and the tier that set it.
 - **Ranked noisy evals** — entries by descending `flip_rate`.
 - **DEAD evals** — zero discrimination across the reign's settled matchups
   (§2.3): an entry that never separated any two candidates, read from the

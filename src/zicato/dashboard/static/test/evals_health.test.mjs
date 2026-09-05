@@ -24,10 +24,12 @@ function textOf(node) { return node.textContent || ''; }
 const H_FULL = {
   found: true,
   mde: {
-    floor_measured: true, floor: 0.06, replicates: 6, usable: true,
+    floor_measured: true, floor: 0.06, floor_statistic: 'delta_std', replicates: 6,
+    replicates_source: 'contract scoring.json', usable: true,
     formula_n: 6, df: 10, mde: 0.10764, mde_relaxed: 0.09324,
     alpha: 0.05, alpha_relaxed: 0.1, power: 0.8,
-    formula: 'MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd ≈ floor,  df = 2·(n−1)', note: null,
+    formula: "MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd = the floor's delta_std,  df = 2·(n−1)",
+    note: null,
   },
   noisiest: [
     { entry_id: 'entryA', flip_rate: 1 / 3, slice: 'train', calibration_runs: 6 },
@@ -95,6 +97,8 @@ test('renderEvalHealth: the strip states the floor, the n, and the formula', () 
   const t = textOf(node);
   assert(t.includes('noise floor'), 'labels the noise floor');
   assert(t.includes('replicates (n)'), 'labels the replicate count');
+  assert(t.includes('contract scoring.json'), 'names the tier that set the replicate count');
+  assert(t.includes('delta_std'), 'names the floor statistic the ladder read');
   assert(t.includes('MDE'), 'shows the MDE');
   assert(t.includes('df=10'), 'the formula line states df');
   assert(allByClass(node, 'dn-stat').length >= 4, 'the strip uses the dn-stat idiom (floor/n/two MDE rungs)');

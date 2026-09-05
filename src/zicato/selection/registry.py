@@ -61,6 +61,9 @@ def default_replicates_for(structure: str) -> int:
 def make_strategy(
     spec: TournamentStructure,
     board_ids: Sequence[str] | None = None,
+    *,
+    replicates: int | None = None,
+    noise_floor_delta_std: float | None = None,
 ) -> SelectionStrategy:
     """Construct a fresh strategy for one tournament resolution.
 
@@ -78,6 +81,19 @@ def make_strategy(
         without the operator having to list every id on the CLI, while
         leaving board-agnostic structures (gauntlet, single/double-elim,
         swiss) untouched — they simply ignore the param.
+    replicates:
+        The replicate count in effect for the epoch
+        (:func:`zicato.selection.replicates.resolve_replicates`), injected
+        as ``params["replicates"]`` only when the spec pins none, so a
+        pinned contract count is never overridden. ``None`` leaves the
+        strategy to its own default.
+    noise_floor_delta_std:
+        The epoch's measured A/A ``delta_std`` when the floor carries a
+        usable one, injected as ``params["noise_floor_delta_std"]``. Racing
+        resolves its rung cuts from it
+        (:class:`zicato.selection.strategies.racing.RacingStrategy`); the
+        other structures ignore it. ``None`` injects nothing, and racing
+        then cuts by rank alone.
 
     Raises
     ------
@@ -99,6 +115,10 @@ def make_strategy(
     # did not pin a subset. Explicit ``params["board_ids"]`` always wins.
     if board_ids is not None and "board_ids" not in params:
         params["board_ids"] = tuple(str(x) for x in board_ids)
+    if replicates is not None and "replicates" not in params:
+        params["replicates"] = int(replicates)
+    if noise_floor_delta_std is not None and "noise_floor_delta_std" not in params:
+        params["noise_floor_delta_std"] = float(noise_floor_delta_std)
     return cls(params)
 
 

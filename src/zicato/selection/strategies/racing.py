@@ -8,6 +8,14 @@ Elimination is by RANK within the rung (best-arm identification) rather than the
 gate — the gate is applied only at the FINAL rung, on the full board, to
 the last survivor.
 
+When the epoch carries a measured A/A noise floor
+(``params["noise_floor_delta_std"]``, injected by
+:func:`zicato.selection.make_strategy`), a rung cuts only what its own
+sample resolves: a candidate whose gap to the cut line is below the minimum
+detectable effect at the rung's sample advances with the survivors, and the
+next rung's larger slice resolves it. Without a floor the cut is by rank
+alone.
+
 This is the one bracket-shaped structure SELECTION.md endorses for
 zicato's regime: replication is intrinsic (escalating board slices =
 escalating sample). Maps to successive halving / ASHA (§2③).
@@ -25,6 +33,7 @@ a misconfiguration degrades gracefully rather than erroring.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 from collections.abc import Sequence
 from typing import Any
@@ -41,6 +50,9 @@ from zicato.selection.strategy import (
     _param_opt_float,
     pending_match_record,
 )
+from zicato.tournament.detectable_effect import minimum_detectable_effect
+
+log = logging.getLogger("zicato.selection.racing")
 
 #: The nested-prefix schedule: each rung takes a prefix of the authored
 #: JSONL order, and each prefix contains the one before it. The default for
@@ -123,6 +135,10 @@ class RacingStrategy(ChampionGateStrategy):
         self._matchup_budget_s = _param_opt_float(self.params, "matchup_budget_seconds")
         final_budget = _param_opt_float(self.params, "final_rung_budget_seconds")
         self._final_budget_s = final_budget if final_budget is not None else self._matchup_budget_s
+        # The epoch's measured A/A ``delta_std`` (absent, null, or non-positive
+        # means no floor): the dispersion of one full-board duel's difference,
+        # from which each rung derives what its slice can resolve.
+        self._noise_delta_std = _param_opt_float(self.params, "noise_floor_delta_std")
 
         self._rung = 0
         self._alive: list[Contestant] = []
@@ -173,6 +189,27 @@ class RacingStrategy(ChampionGateStrategy):
         # A rung is final when the slice is the full board or only one
         # challenger remains.
         return self._rung_fraction() >= 1.0 or len(self._alive) <= 1
+
+    def _rung_detectable_gap(self) -> float | None:
+        """The smallest scalar gap this rung's sample can resolve, or ``None``.
+
+        The floor's ``delta_std`` is the deviation of the difference of two
+        full-board scalars. Taking the ``M`` board entries as independent,
+        equally weighted units of one full-board scalar, one entry-replicate
+        has deviation ``delta_std · √(M/2)``, and a rung that scores ``m``
+        entries at ``r`` replicates holds ``m·r`` such units per arm. The
+        two-sample minimum detectable effect at that sample is the gap; a
+        smaller one is inside the rung's noise. ``None`` without a floor, on
+        an empty board, or when the sample is below two units per arm.
+        """
+        if self._noise_delta_std is None:
+            return None
+        total = len(self._board_ids)
+        size = self._rung_board_size()
+        if total == 0 or size == 0:
+            return None
+        unit_sd = self._noise_delta_std * math.sqrt(total / 2.0)
+        return minimum_detectable_effect(unit_sd, size * self._replicates)
 
     # -- scheduling --------------------------------------------------------
 
@@ -285,6 +322,24 @@ class RacingStrategy(ChampionGateStrategy):
             key=lambda c: (self._rung_scalars.get(c.generation_id, float("inf")), c.generation_id),
         )
         keep_n = max(1, int(math.floor(len(ranked) / self._eta)))
+        # A candidate the rung's sample cannot separate from the last
+        # survivor advances too: the next rung's larger slice resolves it.
+        gap = self._rung_detectable_gap()
+        if gap is not None and keep_n < len(ranked):
+            line = self._rung_scalars.get(ranked[keep_n - 1].generation_id, float("inf"))
+            while keep_n < len(ranked):
+                scalar = self._rung_scalars.get(ranked[keep_n].generation_id, float("inf"))
+                if scalar - line >= gap:
+                    break
+                log.info(
+                    "racing rung %d: %s trails the cut line by %.6g, below the %.6g the "
+                    "rung's sample resolves; it advances",
+                    self._rung,
+                    ranked[keep_n].generation_id,
+                    scalar - line,
+                    gap,
+                )
+                keep_n += 1
         survivors = ranked[:keep_n]
         cut = ranked[keep_n:]
         for c in cut:

@@ -738,11 +738,11 @@ rule generalises:
 > batch, on the same endpoint, from a contrast that is null by construction.**
 
 An A/A contrast borrowed from another run, another board, or another epoch is
-not this quantity. Neither is `noise_floor.max_abs_delta` from `zicato board preflight`. That is a
+not this quantity. Neither is the `noise_floor` record from `zicato board preflight`. That is a
 *board-entry* A/A floor (`epoch/preflight.py`, persisted by
 `epoch/lifecycle.set_epoch_noise_floor`), and it remains the right instrument for
-the pre-flight go/no-go and for the per-entry minimum-detectable-effect (MDE)
-ladder below. It is not the arm-contrast scale the decision rules gate on. **Two different
+the pre-flight go/no-go (its range, `max_abs_delta`) and for the minimum-detectable-effect (MDE)
+ladder below (its `delta_std`). It is not the arm-contrast scale the decision rules gate on. **Two different
 floors, two different jobs; never substitute one for the other.**
 
 ### 3.3 The two validity gates, pre-registered

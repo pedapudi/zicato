@@ -474,6 +474,41 @@ def test_racing_records_cut_and_survivors() -> None:
     assert any(m.cut for m in rung_records)
 
 
+def test_racing_rung_keeps_a_candidate_inside_the_rungs_noise() -> None:
+    # A four-entry board raced at a 25% slice and two replicates. Rung 0
+    # scores one entry twice per candidate; with a floor of delta_std 0.01
+    # the rung resolves gaps of about 0.0875, rung 1 (two entries) about
+    # 0.0335 — the shared formula says what each rung can tell apart.
+    from zicato.tournament.detectable_effect import minimum_detectable_effect
+
+    delta_std = 0.01
+    s = make_strategy(
+        _racing_spec(board_fraction=0.25, replicates=2), noise_floor_delta_std=delta_std
+    )
+    champ = _champion("v0")
+    challengers = [_challenger(f"v{i}") for i in (1, 2, 3, 4)]
+    # v2 trails the cut line (v3) by 0.05: inside rung 0's noise, outside rung 1's.
+    scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.30, "v3": 0.25, "v4": 0.20}
+    dec = _run_strategy(s, champ, challengers, scalars)
+    unit_sd = delta_std * (4 / 2) ** 0.5
+    rung0_gap = minimum_detectable_effect(unit_sd, 1 * 2)
+    rung1_gap = minimum_detectable_effect(unit_sd, 2 * 2)
+    assert rung0_gap is not None and rung1_gap is not None
+    assert rung1_gap < 0.05 < rung0_gap
+    rung0, rung1 = (m for r in s.rounds() for m in r.matches if m.match_id in ("rung0", "rung1"))
+    assert rung0.survivors == ("v4", "v3", "v2") and rung0.cut == ("v1",)
+    assert rung1.survivors == ("v4",) and rung1.cut == ("v3", "v2")
+    assert dec.promoted_generation_id == "v4"
+
+
+def test_racing_without_a_floor_cuts_by_rank_alone() -> None:
+    s = make_strategy(_racing_spec(board_fraction=0.25, replicates=2))
+    scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.30, "v3": 0.25, "v4": 0.20}
+    _run_strategy(s, _champion("v0"), [_challenger(f"v{i}") for i in (1, 2, 3, 4)], scalars)
+    (rung0,) = (m for r in s.rounds() for m in r.matches if m.match_id == "rung0")
+    assert rung0.survivors == ("v4", "v3") and rung0.cut == ("v2", "v1")
+
+
 def test_racing_defaults_board_ids_to_epoch_board_when_absent() -> None:
     # No board_ids in the spec params: make_strategy injects the epoch's
     # full board, so the rungs slice it (CLI-flag form works out of the box).

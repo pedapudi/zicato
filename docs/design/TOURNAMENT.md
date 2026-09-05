@@ -629,6 +629,16 @@ persisted cost record.
 > matches the schedule a structure runs
 > ([TOURNAMENT-STRUCTURES.md §3](TOURNAMENT-STRUCTURES.md#3-the-five-concrete-strategies)).
 
+> **The replicate count at run time.** The count a duel runs is resolved
+> at epoch open from three tiers. The contract's pinned `replicates` wins.
+> Otherwise the count is the smallest one whose minimum detectable effect
+> at the epoch's measured noise floor is within `promote_margin`, or the
+> structure default when that is larger; without a usable floor the
+> structure default applies. The heartbeat's
+> effective-settings record (`/api/config`, key `tournament.replicates`)
+> names the count and the tier that set it; see
+> [SELECTION.md §9.1](SELECTION.md#91-the-measured-noise-floor-sizes-the-replicate-count-and-the-racing-cuts).
+
 ## 5. The harmonograf split
 
 zicato and harmonograf both render a "view of a run", and the
