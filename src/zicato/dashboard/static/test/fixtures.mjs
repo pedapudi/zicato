@@ -4,8 +4,8 @@
 // dynamically importing this module, so the js/ module imports below only
 // ever evaluate against an installed DOM (same order as the monolith).
 
-import { roundTimelineFromFixtures, racingFieldFromFixtures, racingFieldFromBracket, attachElimStates } from './mock_server.mjs';
-export { roundTimelineFromFixtures, racingFieldFromFixtures, racingFieldFromBracket };
+import { recorded, recordedRoutes, elimCase, elimPayload } from './recorded.mjs';
+export { recorded, recordedRoutes, elimCase, elimPayload };
 
 export const router = await import('../js/router.js');
 export const svg = await import('../js/svg.js');
@@ -40,7 +40,20 @@ export function freshHb(hb) {
 }
 
 
+// The server-side joins and per-candidate reads of the console workspace
+// (tests/_console_scenarios.py build_console_workspace), whose ids, scalars
+// and decisions are the ones the hand-written entries below describe. The
+// epoch-level reads stay hand-written here so a suite can override them by
+// their unscoped path.
+const EPOCH_LEVEL = /^\/api\/(epoch|lineage|score-trajectory|tournaments|calibration-trend|workspace|health-report)(\?|$)/;
+export function consoleJoins() {
+  const out = {};
+  for (const [url, body] of Object.entries(recordedRoutes('console'))) if (!EPOCH_LEVEL.test(url)) out[url] = body;
+  return out;
+}
+
 export const FIXTURE = {
+  ...consoleJoins(),
   '/api/epoch': {
     epoch_id: EPOCH_ID, closed: false, goal: 'Make the presentation agent crisper.',
     // the REIGNING champion — the server-stamped pointer the views read
@@ -384,90 +397,8 @@ export function reflectionFixtureMap(opts) {
 // `/api/epoch?epoch=<id>` etc.; for a single-epoch fixture (every existing
 // test) `<id>` is the current epoch, so the scoped read is byte-identical to
 // the base — the fallback serves it from the base fixture, unchanged.
-// The per-entry A/B grid the dashboard service derives from the two sides' loss
-// files (query/tournament_view.build_matchup_grid). Derived here from the two
-// per-entry fixtures by the same rules, so a fixture map does not have to
-// hand-write a grid that is already implied by the rows it declares:
-//
-//   * one row per entry either side ran, sorted by entry id;
-//   * `verdict` / `won_by` / `decided_by` resolve on the first channel that
-//     SEPARATES the two sides — score (higher better), then the pass predicate,
-//     then drift (lower better); a tie falls through to the next channel;
-//   * `drift_present` is true when either side recorded a non-zero drift loss.
-//
-// A per-entry fixture row may declare `score_replicates` / `score_se` to pin the
-// replicate spread; absent, the grid reports the single draw the row itself is.
-function matchupGridFromFixtures(F, epochId, championId, challengerId) {
-  const sideOf = (gen) => {
-    const pe = lookupFixture(F, `/api/generation/${epochId}/${gen}/per-entry`);
-    const out = new Map();
-    if (pe && Array.isArray(pe.entries)) for (const r of pe.entries) out.set(r.entry_id, r);
-    return out;
-  };
-  const parent = sideOf(championId);
-  const child = sideOf(challengerId);
-  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-  const ids = [...new Set([...parent.keys(), ...child.keys()])].sort();
-  const entry_grid = ids.map((id) => {
-    const p = parent.get(id) || null;
-    const c = child.get(id) || null;
-    const pd = p ? num(p.drift_loss) : null;
-    const cd = c ? num(c.drift_loss) : null;
-    const ps = p ? num(p.score) : null;
-    const cs = c ? num(c.score) : null;
-    const pb = p && typeof p.pass_fail === 'boolean' ? p.pass_fail : null;
-    const cb = c && typeof c.pass_fail === 'boolean' ? c.pass_fail : null;
-    const channels = [
-      ['score', ps, cs],
-      ['pass', pb == null ? null : (pb ? 1 : 0), cb == null ? null : (cb ? 1 : 0)],
-      ['drift', pd == null ? null : -pd, cd == null ? null : -cd],
-    ];
-    let verdict = 'flat', won_by = null, decided_by = null;
-    for (const [name, pr, cr] of channels) {
-      if (pr == null || cr == null) continue;
-      if (decided_by == null) decided_by = name;   // the channel it was READ on
-      if (cr === pr) continue;                     // a tie separates nothing
-      decided_by = name;
-      if (cr > pr) { verdict = 'improved'; won_by = challengerId; }
-      else { verdict = 'regressed'; won_by = championId; }
-      break;
-    }
-    return {
-      entry_id: id,
-      parent_drift_loss: pd, child_drift_loss: cd,
-      parent_pass: pb, child_pass: cb,
-      parent_score: ps, child_score: cs,
-      parent_metrics: (p && p.metrics) || null, child_metrics: (c && c.metrics) || null,
-      delta: pd != null && cd != null ? cd - pd : null,
-      delta_score: ps != null && cs != null ? cs - ps : null,
-      score_replicates: c && typeof c.score_replicates === 'number' ? c.score_replicates : (cs != null ? 1 : 0),
-      score_se: c ? num(c.score_se) : null,
-      verdict, won_by, decided_by,
-    };
-  });
-  return {
-    epoch_id: epochId, champion: championId, challenger: challengerId,
-    entry_grid, scalar: null, source: 'loss_files',
-    drift_present: entry_grid.some((r) => (r.parent_drift_loss != null && r.parent_drift_loss !== 0)
-      || (r.child_drift_loss != null && r.child_drift_loss !== 0)),
-  };
-}
-
 export function lookupFixture(F, path) {
   if (Object.prototype.hasOwnProperty.call(F, path)) return F[path];
-  // The two SERVED joins (round timeline + racing field) are derived from the
-  // granular fixtures by the MOCK SERVER (mirroring the Python readers), so a
-  // fixture map does not have to hand-write them — exactly like the real
-  // dashboard service derives them from the same underlying records. An
-  // EXPLICIT fixture (above) always wins.
-  let m = /^\/api\/epoch\/([^/?]+)\/round-timeline$/.exec(path);
-  if (m) return roundTimelineFromFixtures(F, decodeURIComponent(m[1]));
-  m = /^\/api\/epoch\/([^/?]+)\/racing-field$/.exec(path);
-  if (m) return racingFieldFromFixtures(F, decodeURIComponent(m[1]));
-  m = /^\/api\/matchup-grid\/([^/?]+)\/([^/?]+)\/([^/?]+)$/.exec(path);
-  if (m) {
-    return matchupGridFromFixtures(F, decodeURIComponent(m[1]), decodeURIComponent(m[2]), decodeURIComponent(m[3]));
-  }
   const q = path.indexOf('?');
   if (q >= 0) {
     const base = path.slice(0, q);
@@ -559,7 +490,8 @@ export function mountLiveShell(initialHash) {
   return root;
 }
 
-// mock single-elim structure payload (§3.2 shape)
+// The single-elimination structure record the model tests read; its rounds are
+// the `single_elim_semifinals` elimination case.
 export const SE_STRUCT = {
   epoch_id: EPOCH_ID, tournament_id: 'tourn_e0_se', structure: 'single_elim',
   structure_params: { seed_order: 'scalar' },
@@ -615,24 +547,13 @@ export const RACING_STRUCT = {
   source: 'index',
 };
 
-export function structFixture(structure, payload, tournamentId) {
-  // PLAY THE SERVER: the real /api/tournaments + /api/tournament-structure
-  // payloads carry the served ELIM MODEL (attach_elim_states — sorted rounds
-  // + bracket_side/loser + gen_states); the fixture attaches it through the
-  // mock mirror so the views render exactly what the server serves.
-  const served = attachElimStates({ ...payload, structure });
-  const gens = payload.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: EPOCH_ID, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: c.role === 'champion' }));
-  const F = {
-    '/api/epoch': { epoch_id: EPOCH_ID, closed: false, goal: 'g', current_champion: 'v0', tournament: { structure, params: payload.structure_params },
-      experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id, outcome: { decision: g.promoted ? 'baseline' : 'rejected' }, decision: g.promoted ? 'baseline' : 'rejected', promoted: false })), board: [] },
-    '/api/lineage': { generations: gens },
-    '/api/score-trajectory': { points: gens.map((g, i) => ({ generation_id: g.generation_id, scalar: 70 + i })) },
-    '/api/tournaments': { epoch_id: EPOCH_ID, structure, structure_params: payload.structure_params, champion_lineage: ['v0'],
-      matchups: [{ champion: 'v0', challenger: 'v1', decision: 'rejected', delta_scalar: 1 }],
-      tournaments: [{ tournament_id: tournamentId, structure, structure_params: payload.structure_params, competitors: payload.competitors, rounds: served.rounds, ...(served.gen_states ? { gen_states: served.gen_states } : {}), standings: payload.standings }] },
-    [`/api/tournament-structure/${EPOCH_ID}/${tournamentId}`]: served,
-  };
-  return F;
+// The recorded responses of one structure workspace (tests/_console_scenarios.py):
+// `single_elim`, `double_elim`, `swiss`, `swiss_proposing`, `swiss_all_rejected`,
+// `swiss_all_applied`, `swiss_rated`, `racing_field`, `racing_round_settled` or
+// `racing_round_live`, each over the shared epoch. The structure records carry
+// the served elimination model, exactly as the routes serve them.
+export function structureFixture(workspace) {
+  return recordedRoutes(workspace);
 }
 
 export function installFixtureMap(F) {
@@ -710,34 +631,8 @@ export function liveElimField(extra) {
   }, extra || {});
 }
 
+// The epoch id of the recorded racing ladder (racingLadderFixture).
 export const RC_EPOCH = '2026-06-01_e0';
-
-// the four per-challenger racing records, verbatim from the brief's live epoch.
-export const RACING_PER_CHALLENGER = [
-  { tournament_id: `${RC_EPOCH}:v0->v1`, structure: 'racing', competitors: ['v0', 'v1'], standings: [],
-    rounds: [{ match_id: 'rung0_m0', opponent: 'v0', won: false, delta_scalar: 25.0 }] },
-  { tournament_id: `${RC_EPOCH}:v0->v2`, structure: 'racing', competitors: ['v0', 'v2'], standings: [],
-    rounds: [{ match_id: 'rung0_m1', opponent: 'v0', won: false, delta_scalar: 3.3 }] },
-  { tournament_id: `${RC_EPOCH}:v0->v3`, structure: 'racing', competitors: ['v0', 'v3'], standings: [],
-    rounds: [
-      { match_id: 'rung0_m2', opponent: 'v0', won: true, delta_scalar: -0.16 },
-      { match_id: 'rung1_m0', opponent: 'v0', won: false, delta_scalar: 1.0 },
-      { match_id: 'racing-final', opponent: 'v0', won: true, delta_scalar: -32.19 },
-    ] },
-  { tournament_id: `${RC_EPOCH}:v0->v4`, structure: 'racing', competitors: ['v0', 'v4'], standings: [],
-    rounds: [
-      { match_id: 'rung0_m3', opponent: 'v0', won: false, delta_scalar: 0.002 },
-      { match_id: 'rung1_m1', opponent: 'v0', won: false, delta_scalar: 1.25 },
-    ] },
-];
-
-export const RACING_TOURNAMENTS = {
-  epoch_id: RC_EPOCH, structure: 'racing',
-  structure_params: { eta: 2, board_fraction: 0.25 },
-  champion_lineage: ['v0', 'v3'],
-  matchups: RACING_PER_CHALLENGER.map((t) => ({ champion: 'v0', challenger: t.tournament_id.split('->')[1], decision: t.tournament_id.endsWith('v3') ? 'promoted' : 'rejected', delta_scalar: 1 })),
-  tournaments: RACING_PER_CHALLENGER,
-};
 
 export const HERO_EPOCH = '2026-06-02_e3';
 
@@ -746,57 +641,19 @@ export const TWO_EP_OLD = '2026-06-01_e0';
 
 export const TWO_EP_NEW = '2026-06-02_e1';
 
+// The cross-epoch workspace (tests/_console_scenarios.py build_two_epochs_workspace):
+// a closed racing epoch whose field reached v4 beside a newer epoch whose
+// generation ids collide with it. The unscoped `/api/epoch` answers for the
+// viewed epoch, as the server would with that epoch current.
 export function twoEpochFixture(viewedEpoch, opts) {
   const o = opts || {};
-  // the WHOLE-workspace lineage — both epochs, with COLLIDING ids (both have v0..).
-  const lineage = [
-    { generation_id: 'v0', epoch_id: TWO_EP_OLD, parent_generation_id: '', promoted: true },
-    { generation_id: 'v1', epoch_id: TWO_EP_OLD, parent_generation_id: 'v0', promoted: false },
-    { generation_id: 'v2', epoch_id: TWO_EP_OLD, parent_generation_id: 'v0', promoted: false },
-    { generation_id: 'v3', epoch_id: TWO_EP_OLD, parent_generation_id: 'v0', promoted: false },
-    { generation_id: 'v4', epoch_id: TWO_EP_OLD, parent_generation_id: 'v0', promoted: true },
-    { generation_id: 'v0', epoch_id: TWO_EP_NEW, parent_generation_id: '', promoted: true },
-    { generation_id: 'v1', epoch_id: TWO_EP_NEW, parent_generation_id: 'v0', promoted: false },
-    { generation_id: 'v2', epoch_id: TWO_EP_NEW, parent_generation_id: 'v0', promoted: false },
-  ];
-  // per-entry profiles for BOTH epochs (so a leak would also leak loss columns).
-  const perEntry = {};
-  for (const g of lineage) {
-    perEntry[`/api/generation/${g.epoch_id}/${g.generation_id}/per-entry`] = {
-      epoch_id: g.epoch_id, generation_id: g.generation_id,
-      entries: [{ entry_id: 'waffles_single', run_id: `r_${g.epoch_id}_${g.generation_id}`, drift_loss: 50, pass_fail: false }],
-    };
-  }
-  const F = {
-    '/api/epoch': {
-      epoch_id: viewedEpoch, closed: viewedEpoch === TWO_EP_OLD, goal: 'g',
-      tournament: { structure: 'racing', params: { eta: 2, board_fraction: 0.25 } },
-      // ep.experiments is also epoch-scoped to the VIEWED epoch (the API returns
-      // the contract for the current epoch) — used as the fallback path.
-      experiments: lineage.filter((g) => g.epoch_id === viewedEpoch).map((g) => ({
-        generation_id: g.generation_id, parent_generation_id: g.parent_generation_id,
-        outcome: { decision: g.promoted ? 'baseline' : 'rejected' },
-      })),
-      board: [{ entry_id: 'waffles_single', kind: 'single_turn', budget_s: 180, weight: 1 }],
-    },
-    '/api/lineage': { generations: lineage },
-    '/api/score-trajectory': { points: lineage.filter((g) => g.epoch_id === viewedEpoch).map((g, i) => ({ generation_id: g.generation_id, scalar: 50 + i })) },
-    // the COMPLETED tournaments record carries ONLY e0's racing ladder (per the
-    // per-challenger shape) — e1 has none yet.
-    '/api/tournaments': {
-      epoch_id: TWO_EP_OLD, structure: 'racing', structure_params: { eta: 2, board_fraction: 0.25 },
-      champion_lineage: ['v0', 'v4'],
-      matchups: [],
-      tournaments: [
-        { tournament_id: `${TWO_EP_OLD}:v0->v1`, structure: 'racing', competitors: ['v0', 'v1'], standings: [], rounds: [{ match_id: 'rung0_m0', opponent: 'v0', won: false, delta_scalar: 3 }] },
-        { tournament_id: `${TWO_EP_OLD}:v0->v4`, structure: 'racing', competitors: ['v0', 'v4'], standings: [], rounds: [
-          { match_id: 'rung0_m3', opponent: 'v0', won: true, delta_scalar: -1 },
-          { match_id: 'racing-final', opponent: 'v0', won: true, delta_scalar: -5 },
-        ] },
-      ],
-    },
-  };
+  const F = recordedRoutes('two_epochs');
+  F['/api/epoch'] = F[`/api/epoch?epoch=${viewedEpoch}`];
   if (o.activeTournament) F['/api/active-tournament'] = o.activeTournament;
-  Object.assign(F, perEntry);
   return F;
+}
+
+// The recorded responses of the shared racing epoch (build_racing_ladder_workspace).
+export function racingLadderFixture() {
+  return recordedRoutes('racing_ladder');
 }

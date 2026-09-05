@@ -13,7 +13,7 @@ const {
   router, svg, data, tree, coreState, rounds,
   hovercard, live, STRUCT, EPOCH_ID, FIXTURE, installFetch,
   freshState, allByClass, svgsByClass, hasScrollWrapperAncestor, SE_STRUCT, SWISS_STRUCT,
-  RACING_STRUCT, structFixture, installFixtureMap,
+  RACING_STRUCT, structureFixture, recorded, installFixtureMap,
 } = await import('./fixtures.mjs');
 
 // ====================================================================
@@ -40,7 +40,7 @@ test('structure helpers: label + non-gauntlet detection', () => {
 
 test('structure: single-elim renders a fit-to-width RADIAL bracket (elimRadial spokes + standings)', async () => {
   freshState();
-  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  installFixtureMap(structureFixture('single_elim'));
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -71,13 +71,7 @@ test('structure: single-elim renders a fit-to-width RADIAL bracket (elimRadial s
 
 test('structure: double-elim renders the RADIAL bracket with the losers’ bracket on the lower arc', async () => {
   freshState();
-  const DE = JSON.parse(JSON.stringify(SE_STRUCT));
-  DE.structure = 'double_elim';
-  DE.structure_params = { grand_final_reset: true };
-  DE.rounds.push({ round_index: 2, label: 'LB Round 1', matches: [
-    { match_id: 'LB-R0-0', competitors: ['v0', 'v2'], winner: 'v0', decision: 'rejected', delta_scalar: 0.02, bracket_slot: 'LB-R0-0', bye: false },
-  ] });
-  installFixtureMap(structFixture('double_elim', DE, 'tourn_e0_de'));
+  installFixtureMap(structureFixture('double_elim'));
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -98,7 +92,7 @@ test('structure: double-elim renders the RADIAL bracket with the losers’ brack
 
 test('structure: swiss renders the standings LADDER hero + per-round pairings', async () => {
   freshState();
-  installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  installFixtureMap(structureFixture('swiss'));
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -121,12 +115,8 @@ test('structure: swiss renders the standings LADDER hero + per-round pairings', 
 
 test('structure: the "Proposed field" section renders applied ✓ / rejected ✗ + reasons from field_status', async () => {
   freshState();
-  const payload = JSON.parse(JSON.stringify(SWISS_STRUCT));
-  payload.field_status = [
-    { generation_id: 'v1', status: 'applied', reason: '', seed: 2 },
-    { generation_id: 'v2', status: 'rejected', reason: 'proposer returned invalid JSON', seed: 3 },
-  ];
-  installFixtureMap(structFixture('swiss', payload, 'tourn_e0_sw'));
+  // three proposals: v1 and v3 applied, v2 rejected before it could race.
+  installFixtureMap(structureFixture('swiss_proposing'));
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -134,12 +124,12 @@ test('structure: the "Proposed field" section renders applied ✓ / rejected ✗
   const tracker = allByClass(host, 'dn-prop-tracker')[0];
   assert(tracker, 'the "Proposed field" tracker rendered');
   const head = allByClass(host, 'dn-prop-head')[0];
-  assert(head && head.textContent.includes('2 proposed') && head.textContent.includes('1 applied'),
-    'the headline reads "2 proposed · 1 applied"');
-  // one applied row (✓) and one rejected row (✗).
+  assert(head && head.textContent.includes('3 proposed') && head.textContent.includes('2 applied'),
+    'the headline reads "3 proposed · 2 applied"');
+  // two applied rows (✓) and one rejected row (✗).
   const okRows = allByClass(host, 'dn-prop-row-ok');
   const badRows = allByClass(host, 'dn-prop-row-bad');
-  assertEqual(okRows.length, 1, 'one applied row');
+  assertEqual(okRows.length, 2, 'two applied rows');
   assertEqual(badRows.length, 1, 'one rejected row');
   assert(okRows[0].textContent.includes('✓') && okRows[0].textContent.includes('v1'), 'the applied row shows ✓ + v1');
   assert(badRows[0].textContent.includes('✗') && badRows[0].textContent.includes('v2'), 'the rejected row shows ✗ + v2');
@@ -236,19 +226,13 @@ test('proposingDigest: re-stamps on an attempt-count / reason change, stable on 
     'a proposing → rejected transition (with a reason) re-stamps the digest');
 });
 
-test('structure: a completed field where ALL challengers rejected reads "0 applied — all rejected", not empty', async () => {
-  freshState();
-  const payload = JSON.parse(JSON.stringify(SWISS_STRUCT));
-  payload.field_status = [
-    { generation_id: 'v1', status: 'rejected', reason: 'empty response', seed: 2 },
-    { generation_id: 'v2', status: 'rejected', reason: 'post-apply validation failed', seed: 3 },
-    { generation_id: 'v3', status: 'rejected', reason: 'mutation_id no longer resolves', seed: 4 },
-    { generation_id: 'v4', status: 'rejected', reason: 'empty response', seed: 5 },
-  ];
-  installFixtureMap(structFixture('swiss', payload, 'tourn_e0_sw'));
-  const gens = await import('../js/views/gens.js');
+test('structure: a round whose challengers were ALL rejected reads "0 applied — all rejected", not empty', () => {
+  // A field under three competitors is never written to the index, so such a
+  // round exists only on the runtime envelope, whose field status the live
+  // hero hands to the shared proposing tracker.
+  const envelope = structureFixture('swiss_all_rejected')['/api/active-tournament'];
   const host = document.createElement('div');
-  await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  host.appendChild(svg.proposingTracker({ fieldStatus: data.fieldStatus(envelope), onCompetitor() {} }));
   const head = allByClass(host, 'dn-prop-head')[0];
   assert(head, 'the headline rendered');
   assert(head.textContent.includes('4 proposed') && head.textContent.includes('0 applied'),
@@ -262,7 +246,7 @@ test('structure: a completed field where ALL challengers rejected reads "0 appli
 test('structure: an absent field_status renders NO "Proposed field" section (back-compat)', async () => {
   freshState();
   // SWISS_STRUCT carries no field_status → no tracker section.
-  installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  installFixtureMap(structureFixture('swiss'));
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -271,15 +255,10 @@ test('structure: an absent field_status renders NO "Proposed field" section (bac
 
 test('structure: a COMPLETED, all-applied field renders NO "Proposed field" section (it would just be an empty one-liner)', async () => {
   freshState();
-  const payload = JSON.parse(JSON.stringify(SWISS_STRUCT));
   // every proposal applied + the run is complete (no live flag) → the ladder
   // already shows the field, so the lone section is omitted rather than left
   // reading as an empty "N proposed · N applied" line.
-  payload.field_status = [
-    { generation_id: 'v1', status: 'applied', reason: '', seed: 2 },
-    { generation_id: 'v2', status: 'applied', reason: '', seed: 3 },
-  ];
-  installFixtureMap(structFixture('swiss', payload, 'tourn_e0_sw'));
+  installFixtureMap(structureFixture('swiss_all_applied'));
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -316,7 +295,7 @@ test('data.fieldStatus / fieldStatusSummary: normalize + roll up the proposing f
 
 test('structure: racing renders a fit-to-width survival funnel with cuts + board fractions', async () => {
   freshState();
-  installFixtureMap(structFixture('racing', RACING_STRUCT, 'tourn_e0_rc'));
+  installFixtureMap(structureFixture('racing_field'));
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -340,57 +319,15 @@ test('structure: racing renders a fit-to-width survival funnel with cuts + board
 // ONE shared resolver (resolveNonGauntletSt) so they CANNOT diverge; this pins
 // LIVE and asserts that live and recorded converge.
 
-// the per-round FIELD record the orchestrator opens at round start: it lists the
-// competitor field + proposing status but carries EMPTY rounds/standings
-// (`state="in_progress"`). This is the shape that reproduces the empty round.
-const RACING_FIELD_EMPTY = {
-  tournament_id: '2026-05-30_e0:field:v1', epoch_id: EPOCH_ID, structure: 'racing',
-  structure_params: { board_fraction: 0.5, eta: 2, field_size: 4 },
-  competitors: [
-    { generation_id: 'v0', seed: 1, role: 'champion' }, { generation_id: 'v1', seed: 2, role: 'challenger' },
-    { generation_id: 'v2', seed: 3, role: 'challenger' }, { generation_id: 'v3', seed: 4, role: 'challenger' },
-  ],
-  rounds: [], standings: [], field_status: [], state: 'in_progress', source: 'index',
-};
-// the LIVE active-tournament envelope DOES carry the populated rungs (stage_index
-// stages, survivors/cut) — the in-flight source the round view must read.
-const RACING_LIVE_AT = {
-  epoch_id: EPOCH_ID, structure: 'racing', phase: 'tournament:round_0:running',
-  structure_params: { board_fraction: 0.5, eta: 2, field_size: 4 },
-  competitors: RACING_FIELD_EMPTY.competitors,
-  rounds: [
-    { stage_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v0', 'v1', 'v2', 'v3'], survivors: ['v1', 'v2'], cut: ['v3'], board_fraction: 0.5 }] },
-    { stage_index: 1, label: 'Rung 1', matches: [{ match_id: 'rung1', competitors: ['v1', 'v2'], survivors: ['v1'], cut: ['v2'], board_fraction: 1.0 }] },
-  ],
-  standings: [
-    { generation_id: 'v1', rank: 1, scalar: 40.0, status: 'alive' },
-    { generation_id: 'v0', rank: 2, scalar: 54.0, status: 'alive', role: 'champion' },
-  ],
-};
-
+// The racing round in flight and settled (tests/_console_scenarios.py
+// build_racing_round_live_workspace / build_racing_round_settled_workspace):
+// in flight, the field record is the empty one the runner opens the round with
+// and only the runtime envelope carries the rungs; settled, the field record
+// carries them.
 function racingRoundFixture({ live }) {
-  const gens = RACING_FIELD_EMPTY.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: EPOCH_ID, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: c.role === 'champion', round_index: 0 }));
-  // SETTLED: the field record + the per-tournament structure record carry the
-  // resolved rungs (the orchestrator's settle upsert). LIVE: both stay
-  // empty (the in_progress shape) so the ONLY rung source is the live envelope.
-  const settledRounds = live ? [] : RACING_LIVE_AT.rounds.map((r) => ({ ...r, round_index: r.stage_index }));
-  const settledStandings = live ? [] : RACING_LIVE_AT.standings;
-  const fieldRec = { ...RACING_FIELD_EMPTY, rounds: settledRounds, standings: settledStandings, state: live ? 'in_progress' : 'settled' };
-  const structRec = { ...fieldRec, source: 'index' };
-  const F = {
-    '/api/epoch': { epoch_id: EPOCH_ID, closed: !live, goal: 'g', current_champion: 'v0', tournament: { structure: 'racing', params: RACING_FIELD_EMPTY.structure_params },
-      experiments: gens.map((g) => ({ generation_id: g.generation_id, parent_generation_id: g.parent_generation_id, outcome: { decision: g.promoted ? 'baseline' : 'pending' }, decision: g.promoted ? 'baseline' : 'pending', promoted: null, round_index: 0 })), board: [] },
-    '/api/lineage': { generations: gens },
-    '/api/score-trajectory': { points: live ? [] : [{ generation_id: 'v0', scalar: 54.0 }, { generation_id: 'v1', scalar: 40.0 }] },
-    '/api/tournaments': { epoch_id: EPOCH_ID, structure: 'racing', structure_params: RACING_FIELD_EMPTY.structure_params, champion_lineage: ['v0'],
-      matchups: [], tournaments: [fieldRec] },
-    [`/api/tournament-structure/${EPOCH_ID}/${fieldRec.tournament_id}`]: structRec,
-  };
-  // LIVE: the views fetch the in-flight topology fresh from /api/active-tournament
-  // (the only source carrying the rungs while the field record is still empty).
-  if (live) F['/api/active-tournament'] = RACING_LIVE_AT;
-  return F;
+  return structureFixture(live ? 'racing_round_live' : 'racing_round_settled');
 }
+const RACING_LIVE_AT = structureFixture('racing_round_live')['/api/active-tournament'];
 
 // helper: render a view and read whether the racing rung figures are present.
 async function renderRacingView(view, params, { live }) {
@@ -398,7 +335,7 @@ async function renderRacingView(view, params, { live }) {
   installFixtureMap(racingRoundFixture({ live }));
   if (live) {
     coreState.state.activeTournament = RACING_LIVE_AT;
-    coreState.state.heartbeat = { phase: 'tournament:round_0:running', epoch_id: EPOCH_ID, ts: Date.now() };
+    coreState.state.heartbeat = { phase: RACING_LIVE_AT.phase, epoch_id: EPOCH_ID, ts: Date.now() };
     coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'run_v1' }];
   } else {
     coreState.state.activeTournament = null;
@@ -528,7 +465,7 @@ test('REGRESSION (view-divergence): the EPOCH swiss + single_elim overviews buil
   // SWISS settled: the per-tournament record carries the rounds; the epoch
   // overview must build the swiss bump/bars from it (not an empty strip).
   freshState();
-  installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  installFixtureMap(structureFixture('swiss'));
   const epochMod = await import('../js/views/epoch.js');
   let host = document.createElement('div');
   await epochMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -536,7 +473,7 @@ test('REGRESSION (view-divergence): the EPOCH swiss + single_elim overviews buil
   assert(!host.textContent.includes('not a gauntlet'), 'SETTLED swiss: no negative placeholder');
   // SINGLE-ELIM settled: the epoch overview builds the radial bracket from the record.
   freshState();
-  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  installFixtureMap(structureFixture('single_elim'));
   host = document.createElement('div');
   await epochMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(svgsByClass(host, 'dn-elimradial')[0], 'SETTLED single_elim: the epoch overview builds the radial bracket from the recorded rounds');
@@ -578,40 +515,14 @@ test('REGRESSION (view-divergence): the CANDIDATE racing dossier builds field pa
 // (scalar_components) + its per-board slice, which exists for any structure; the
 // helper below enriches a structFixture with exactly that per-candidate data.
 
-// Enrich a structFixture so the viewed challenger v1 (parent v0) carries the
-// SETTLED per-candidate data a radar needs under ANY structure: a per-entry
-// slice with pass_fail (the pass-rate axis) + a champion per-entry slice (so the
-// dumbbell pairs) + a settled v0→v1 gate with scalar_components for BOTH sides
-// (the per-judge axes). Identical per-candidate payload regardless of structure,
-// so the only thing varying across the tests is the tournament structure.
-function radarStructFixture(structure, payload, tournamentId) {
-  const F = structFixture(structure, payload, tournamentId);
-  F[`/api/generation/${EPOCH_ID}/v0/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v0', entries: [
-    { entry_id: 'waffles_single', run_id: 'run_v0_w', drift_loss: 60.5, pass_fail: false, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-    { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v0_p', drift_loss: 70.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-  ] };
-  F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v1', entries: [
-    { entry_id: 'waffles_single', run_id: 'run_v1_w', drift_loss: 55.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-    { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v1_p', drift_loss: 66.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-  ] };
-  F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'promoted', delta_scalar: -4.5, delta_pass_rate: 0.5,
-    reason: 'challenger improved', rules: [
-      { id: 'scalar_margin', label: 'Scalar margin', status: 'pass', fired: false, detail: '70.94 → 66.44 (needs ≤ -0.01)' },
-      { id: 'pass_rate_monotonicity', label: 'Pass-rate monotonicity', status: 'pass', fired: false },
-      { id: 'namespace_monotonicity', label: 'Namespace monotonicity', status: 'pass', fired: false },
-    ],
-    // BOTH sides decomposed across ≥2 components → the radar forms ≥3 axes
-    // (scalar-inverse + pass-rate + each per-judge component).
-    scalar_components: { champion: { drift: 68.5, schema: 1.43 }, challenger: { drift: 60.0, schema: 1.0 } } };
-  return F;
-}
-
-// Drive the candidate dossier for challenger v1 under `structure` + assert the
-// radar silhouette renders (folded into its width-capped side pane), names ≥3
-// real axes (not numeric indices), and is plottable (≥3 hover-able vertices).
-async function assertRadarRendersFor(structure, payload, tournamentId) {
+// Drive the candidate dossier for challenger v1 of a recorded structure
+// workspace (each records v1's per-board slice and its gate against v0, so the
+// radar has its scalar, pass-rate and drift axes) + assert the radar silhouette
+// renders (folded into its width-capped side pane), names ≥3 real axes (not
+// numeric indices), and is plottable (≥3 hover-able vertices).
+async function assertRadarRendersFor(structure) {
   freshState();
-  installFixtureMap(radarStructFixture(structure, payload, tournamentId));
+  installFixtureMap(structureFixture(structure));
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
@@ -639,18 +550,15 @@ test('candidate dossier: the RADAR is UNIVERSAL — it renders for gauntlet', as
 });
 
 test('candidate dossier: the RADAR is UNIVERSAL — it renders for single_elim', async () => {
-  await assertRadarRendersFor('single_elim', SE_STRUCT, 'tourn_e0_se');
+  await assertRadarRendersFor('single_elim');
 });
 
 test('candidate dossier: the RADAR is UNIVERSAL — it renders for double_elim', async () => {
-  const DE = JSON.parse(JSON.stringify(SE_STRUCT));
-  DE.structure = 'double_elim';
-  DE.structure_params = { grand_final_reset: true };
-  await assertRadarRendersFor('double_elim', DE, 'tourn_e0_de');
+  await assertRadarRendersFor('double_elim');
 });
 
 test('candidate dossier: the RADAR is UNIVERSAL — it renders for swiss', async () => {
-  await assertRadarRendersFor('swiss', SWISS_STRUCT, 'tourn_e0_sw');
+  await assertRadarRendersFor('swiss');
 });
 
 test('candidate dossier: the RADAR is UNIVERSAL — a SETTLED racer shows the radar ALONGSIDE the field-relative panels', async () => {
@@ -661,23 +569,7 @@ test('candidate dossier: the RADAR is UNIVERSAL — a SETTLED racer shows the ra
   // Built from the SETTLED racing field record (its rungs reconstruct the field)
   // enriched with v1's settled gate + per-board slice (so the radar is plottable).
   freshState();
-  const F = racingRoundFixture({ live: false });
-  F[`/api/generation/${EPOCH_ID}/v0/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v0', entries: [
-    { entry_id: 'b0', run_id: 'run_v0_b0', drift_loss: 60.5, pass_fail: false, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-    { entry_id: 'b1', run_id: 'run_v0_b1', drift_loss: 70.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-  ] };
-  F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v1', entries: [
-    { entry_id: 'b0', run_id: 'run_v1_b0', drift_loss: 38.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-    { entry_id: 'b1', run_id: 'run_v1_b1', drift_loss: 42.0, pass_fail: true, runtime_ms: 180000, wall_clock_budget_exceeded: false },
-  ] };
-  F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'promoted', delta_scalar: -14.0, delta_pass_rate: 0.5,
-    reason: 'challenger improved', rules: [
-      { id: 'scalar_margin', label: 'Scalar margin', status: 'pass', fired: false, detail: '54.0 → 40.0 (needs ≤ -0.01)' },
-      { id: 'pass_rate_monotonicity', label: 'Pass-rate monotonicity', status: 'pass', fired: false },
-      { id: 'namespace_monotonicity', label: 'Namespace monotonicity', status: 'pass', fired: false },
-    ],
-    scalar_components: { champion: { drift: 53.0, schema: 1.4 }, challenger: { drift: 39.0, schema: 1.0 } } };
-  installFixtureMap(F);
+  installFixtureMap(racingRoundFixture({ live: false }));
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
@@ -698,7 +590,7 @@ test('candidate dossier: the RADAR is UNIVERSAL — a SETTLED racer shows the ra
 
 test('candidate dossier: a no-op heartbeat over a NON-GAUNTLET (swiss) dossier WITH a radar churns NO DOM (digest-gated, anti-flash)', async () => {
   freshState();
-  installFixtureMap(radarStructFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  installFixtureMap(structureFixture('swiss'));
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
@@ -734,7 +626,7 @@ test('structure: a missing structure payload degrades gracefully (no throw, hone
 
 test('structure: the epoch view shows the structure pill from the epoch tournament block', async () => {
   freshState();
-  installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  installFixtureMap(structureFixture('swiss'));
   const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -746,7 +638,7 @@ test('structure: the epoch view shows the structure pill from the epoch tourname
 
 test('epoch timeline (swiss): the round episode embeds the standings BUMP chart + ranked Copeland bar + gate verdict — "not a gauntlet" is GONE', async () => {
   freshState();
-  installFixtureMap(structFixture('swiss', SWISS_STRUCT, 'tourn_e0_sw'));
+  installFixtureMap(structureFixture('swiss'));
   const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -777,7 +669,7 @@ test('epoch timeline (swiss): the round episode embeds the standings BUMP chart 
 
 test('epoch timeline (single-elim): the elim episode embeds the RADIAL bracket (elim parity), NOT the mini-bracket', async () => {
   freshState();
-  installFixtureMap(structFixture('single_elim', SE_STRUCT, 'tourn_e0_se'));
+  installFixtureMap(structureFixture('single_elim'));
   const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
@@ -795,14 +687,8 @@ test('epoch timeline (single-elim): the elim episode embeds the RADIAL bracket (
 
 test('epoch timeline (no data): the timeline renders an honest empty — NEVER the negative "not a gauntlet" placeholder', async () => {
   freshState();
-  // a swiss epoch with NO tournament records yet (mid-proposing / not run).
-  const F = {
-    '/api/epoch': { epoch_id: EPOCH_ID, closed: false, goal: 'g', tournament: { structure: 'swiss', params: { rounds: 3 } }, experiments: [], board: [] },
-    '/api/lineage': { generations: [] },
-    '/api/score-trajectory': { points: [] },
-    '/api/tournaments': { epoch_id: EPOCH_ID, structure: 'swiss', champion_lineage: [], matchups: [], tournaments: [] },
-  };
-  installFixtureMap(F);
+  // a swiss epoch with NO generations yet (mid-proposing / not run).
+  installFixtureMap(structureFixture('swiss_empty'));
   const epoch = await import('../js/views/epoch.js');
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });

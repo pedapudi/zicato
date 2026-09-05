@@ -1,0 +1,2755 @@
+{
+  "double_elim_crowned": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Winners' bracket",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v2"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v3",
+              "v4"
+            ],
+            "winner": "v3",
+            "bracket_slot": "WB-R0-1",
+            "loser": "v4"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Winners' bracket",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v1",
+              "v3"
+            ],
+            "winner": "v1",
+            "bracket_slot": "WB-R1-0",
+            "loser": "v3"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 2,
+        "label": "Losers' bracket",
+        "matches": [
+          {
+            "match_id": "LB-R2-0",
+            "competitors": [
+              "v2",
+              "v4"
+            ],
+            "winner": "v2",
+            "bracket_slot": "LB-R2-0",
+            "loser": "v4"
+          }
+        ],
+        "bracket_side": "LB"
+      },
+      {
+        "round_index": 3,
+        "label": "Losers' bracket",
+        "matches": [
+          {
+            "match_id": "LB-R3-0",
+            "competitors": [
+              "v2",
+              "v3"
+            ],
+            "winner": "v2",
+            "bracket_slot": "LB-R3-0",
+            "loser": "v3"
+          }
+        ],
+        "bracket_side": "LB"
+      },
+      {
+        "round_index": 4,
+        "label": "Grand final",
+        "matches": [
+          {
+            "match_id": "GF",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "winner": "v1",
+            "decision": "promoted",
+            "bracket_slot": "GF",
+            "loser": "v0"
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1,
+          4
+        ],
+        "advanced_rounds": [
+          0,
+          1,
+          4
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB",
+          "4": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0,
+          2,
+          3
+        ],
+        "advanced_rounds": [
+          2,
+          3
+        ],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "2": "LB",
+          "3": "LB"
+        },
+        "lb_entry_round": 2,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0,
+          1,
+          3
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [
+          1,
+          3
+        ],
+        "eliminated_at_round": 3,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB",
+          "3": "LB"
+        },
+        "lb_entry_round": 3,
+        "projected": null
+      },
+      {
+        "generation_id": "v4",
+        "played_rounds": [
+          0,
+          2
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0,
+          2
+        ],
+        "eliminated_at_round": 2,
+        "side_by_round": {
+          "0": "WB",
+          "2": "LB"
+        },
+        "lb_entry_round": 2,
+        "projected": null
+      },
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          4
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          4
+        ],
+        "eliminated_at_round": 4,
+        "side_by_round": {
+          "4": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "double_elim_grand_final_pending": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Winners' bracket",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v2"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v3",
+              "v4"
+            ],
+            "winner": "v3",
+            "bracket_slot": "WB-R0-1",
+            "loser": "v4"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Winners' bracket",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v1",
+              "v3"
+            ],
+            "winner": "v1",
+            "bracket_slot": "WB-R1-0",
+            "loser": "v3"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 2,
+        "label": "Losers' bracket",
+        "matches": [
+          {
+            "match_id": "LB-R2-0",
+            "competitors": [
+              "v2",
+              "v4"
+            ],
+            "winner": "v2",
+            "bracket_slot": "LB-R2-0",
+            "loser": "v4"
+          }
+        ],
+        "bracket_side": "LB"
+      },
+      {
+        "round_index": 3,
+        "label": "Losers' bracket",
+        "matches": [
+          {
+            "match_id": "LB-R3-0",
+            "competitors": [
+              "v2",
+              "v3"
+            ],
+            "winner": "v2",
+            "bracket_slot": "LB-R3-0",
+            "loser": "v3"
+          }
+        ],
+        "bracket_side": "LB"
+      },
+      {
+        "round_index": 4,
+        "label": "Grand final",
+        "matches": [
+          {
+            "match_id": "GF",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "bracket_slot": "GF",
+            "pending": true,
+            "loser": null
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1,
+          4
+        ],
+        "advanced_rounds": [
+          0,
+          1
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB",
+          "4": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0,
+          2,
+          3
+        ],
+        "advanced_rounds": [
+          2,
+          3
+        ],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "2": "LB",
+          "3": "LB"
+        },
+        "lb_entry_round": 2,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0,
+          1,
+          3
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [
+          1,
+          3
+        ],
+        "eliminated_at_round": 3,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB",
+          "3": "LB"
+        },
+        "lb_entry_round": 3,
+        "projected": null
+      },
+      {
+        "generation_id": "v4",
+        "played_rounds": [
+          0,
+          2
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0,
+          2
+        ],
+        "eliminated_at_round": 2,
+        "side_by_round": {
+          "0": "WB",
+          "2": "LB"
+        },
+        "lb_entry_round": 2,
+        "projected": null
+      },
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          4
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "4": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "double_elim_losers_round": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Semifinal",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v0",
+              "v3"
+            ],
+            "winner": "v0",
+            "decision": "rejected",
+            "delta_scalar": 0.05,
+            "bracket_slot": "WB-R0-0",
+            "bye": false,
+            "loser": "v3"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "decision": "promoted",
+            "delta_scalar": -0.12,
+            "bracket_slot": "WB-R0-1",
+            "bye": false,
+            "loser": "v2"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "winner": "v1",
+            "decision": "promoted",
+            "delta_scalar": -0.08,
+            "bracket_slot": "WB-R1-0",
+            "bye": false,
+            "loser": "v0"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 2,
+        "label": "LB Round 1",
+        "matches": [
+          {
+            "match_id": "LB-R0-0",
+            "competitors": [
+              "v0",
+              "v2"
+            ],
+            "winner": "v0",
+            "decision": "rejected",
+            "bracket_slot": "LB-R0-0",
+            "bye": false,
+            "loser": "v2"
+          }
+        ],
+        "bracket_side": "LB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          0,
+          1,
+          2
+        ],
+        "advanced_rounds": [
+          0,
+          2
+        ],
+        "lost_rounds": [
+          1
+        ],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB",
+          "2": "LB"
+        },
+        "lb_entry_round": 2,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0,
+          1
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0,
+          2
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0,
+          2
+        ],
+        "eliminated_at_round": 2,
+        "side_by_round": {
+          "0": "WB",
+          "2": "LB"
+        },
+        "lb_entry_round": 2,
+        "projected": null
+      }
+    ]
+  },
+  "double_elim_losers_round_record": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Semifinal",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v0",
+              "v3"
+            ],
+            "winner": "v0",
+            "decision": "rejected",
+            "delta_scalar": 0.05,
+            "bracket_slot": "WB-R0-0",
+            "bye": false,
+            "loser": "v3"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "decision": "promoted",
+            "delta_scalar": -0.12,
+            "bracket_slot": "WB-R0-1",
+            "bye": false,
+            "loser": "v2"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "winner": "v1",
+            "decision": "promoted",
+            "delta_scalar": -0.08,
+            "bracket_slot": "WB-R1-0",
+            "bye": false,
+            "loser": "v0"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 2,
+        "label": "LB Round 1",
+        "matches": [
+          {
+            "match_id": "LB-R0-0",
+            "competitors": [
+              "v0",
+              "v2"
+            ],
+            "winner": "v0",
+            "decision": "rejected",
+            "delta_scalar": 0.02,
+            "bracket_slot": "LB-R0-0",
+            "bye": false,
+            "loser": "v2"
+          }
+        ],
+        "bracket_side": "LB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          0,
+          1,
+          2
+        ],
+        "advanced_rounds": [
+          0,
+          2
+        ],
+        "lost_rounds": [
+          1
+        ],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB",
+          "2": "LB"
+        },
+        "lb_entry_round": 2,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0,
+          1
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0,
+          2
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0,
+          2
+        ],
+        "eliminated_at_round": 2,
+        "side_by_round": {
+          "0": "WB",
+          "2": "LB"
+        },
+        "lb_entry_round": 2,
+        "projected": null
+      }
+    ]
+  },
+  "double_elim_three_drops": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "R0",
+        "matches": [
+          {
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v2"
+          },
+          {
+            "competitors": [
+              "v3",
+              "v4"
+            ],
+            "winner": "v3",
+            "bracket_slot": "WB-R0-1",
+            "loser": "v4"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "R1",
+        "matches": [
+          {
+            "competitors": [
+              "v1",
+              "v3"
+            ],
+            "winner": "v1",
+            "bracket_slot": "WB-R1-0",
+            "loser": "v3"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 2,
+        "label": "LB2",
+        "matches": [
+          {
+            "competitors": [
+              "v2",
+              "v4"
+            ],
+            "winner": "v2",
+            "bracket_slot": "LB-R2-0",
+            "loser": "v4"
+          }
+        ],
+        "bracket_side": "LB"
+      },
+      {
+        "round_index": 3,
+        "label": "LB3",
+        "matches": [
+          {
+            "competitors": [
+              "v2",
+              "v3"
+            ],
+            "winner": "v2",
+            "bracket_slot": "LB-R3-0",
+            "loser": "v3"
+          }
+        ],
+        "bracket_side": "LB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0,
+          1
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0,
+          2,
+          3
+        ],
+        "advanced_rounds": [
+          2,
+          3
+        ],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "2": "LB",
+          "3": "LB"
+        },
+        "lb_entry_round": 2,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0,
+          1,
+          3
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [
+          1,
+          3
+        ],
+        "eliminated_at_round": 3,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB",
+          "3": "LB"
+        },
+        "lb_entry_round": 3,
+        "projected": null
+      },
+      {
+        "generation_id": "v4",
+        "played_rounds": [
+          0,
+          2
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0,
+          2
+        ],
+        "eliminated_at_round": 2,
+        "side_by_round": {
+          "0": "WB",
+          "2": "LB"
+        },
+        "lb_entry_round": 2,
+        "projected": null
+      }
+    ]
+  },
+  "duplicate_pending_match": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Round 1",
+        "matches": [
+          {
+            "competitors": [
+              "v5",
+              "v6"
+            ],
+            "winner": "v5",
+            "decision": "win",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v6"
+          },
+          {
+            "competitors": [
+              "v7",
+              "v8"
+            ],
+            "winner": "v7",
+            "decision": "win",
+            "bracket_slot": "WB-R0-1",
+            "loser": "v8"
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v5",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v6",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v7",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v8",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "eight_seed_round": {
+    "rounds": [
+      {
+        "label": "R0",
+        "round_index": 0,
+        "matches": [
+          {
+            "match_id": "m0",
+            "competitors": [
+              "genaaaaa",
+              "genbbbbb"
+            ],
+            "winner": "genaaaaa",
+            "loser": "genbbbbb"
+          },
+          {
+            "match_id": "m2",
+            "competitors": [
+              "genccccc",
+              "genddddd"
+            ],
+            "winner": "genccccc",
+            "loser": "genddddd"
+          },
+          {
+            "match_id": "m4",
+            "competitors": [
+              "geneeeee",
+              "genfffff"
+            ],
+            "winner": "geneeeee",
+            "loser": "genfffff"
+          },
+          {
+            "match_id": "m6",
+            "competitors": [
+              "genggggg",
+              "genhhhhh"
+            ],
+            "winner": "genggggg",
+            "loser": "genhhhhh"
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "genaaaaa",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "genbbbbb",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "genccccc",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "genddddd",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "geneeeee",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "genfffff",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "genggggg",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "genhhhhh",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "final_pending": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Semifinal",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v0",
+              "v3"
+            ],
+            "winner": "v0",
+            "decision": "win",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v3"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "decision": "win",
+            "bracket_slot": "WB-R0-1",
+            "loser": "v2"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "bracket_slot": "WB-R1-0",
+            "pending": true,
+            "loser": null
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "final_pending_envelope": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Semifinal",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v0",
+              "v3"
+            ],
+            "winner": "v0",
+            "decision": "win",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v3"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "decision": "win",
+            "bracket_slot": "WB-R0-1",
+            "loser": "v2"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "bracket_slot": "WB-R1-0",
+            "pending": true,
+            "projected": {
+              "v1": {
+                "scalar": 9.8,
+                "boards_done": 6,
+                "boards_total": 8
+              },
+              "v0": {
+                "scalar": 10,
+                "boards_done": 6,
+                "boards_total": 8
+              }
+            },
+            "loser": null
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": {
+          "scalar": 10,
+          "boards_done": 6,
+          "boards_total": 8
+        }
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": {
+          "scalar": 9.8,
+          "boards_done": 6,
+          "boards_total": 8
+        }
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "lone_final_crowned": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "winner": "v1",
+            "decision": "promoted",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v0"
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "lone_final_pending": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "winner": "",
+            "bracket_slot": "WB-R0-0",
+            "pending": true,
+            "loser": null
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "lone_match_pending": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Round 1",
+        "matches": [
+          {
+            "competitors": [
+              "v12",
+              "v13"
+            ],
+            "winner": null,
+            "pending": true,
+            "bracket_slot": "WB-R0-0",
+            "loser": null
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v12",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v13",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "losers_bracket_drop": {
+    "rounds": [
+      {
+        "label": "R0",
+        "round_index": 0,
+        "matches": [
+          {
+            "match_id": "m0",
+            "competitors": [
+              "v1",
+              "v3"
+            ],
+            "winner": "v1",
+            "loser": "v3"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "label": "LB1",
+        "round_index": 1,
+        "matches": [
+          {
+            "match_id": "m1",
+            "bracket_slot": "LB1",
+            "competitors": [
+              "v3",
+              "v2"
+            ],
+            "winner": "v2",
+            "loser": "v3"
+          }
+        ],
+        "bracket_side": "LB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0,
+          1
+        ],
+        "eliminated_at_round": 1,
+        "side_by_round": {
+          "0": "WB",
+          "1": "LB"
+        },
+        "lb_entry_round": 1,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          1
+        ],
+        "advanced_rounds": [
+          1
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "1": "LB"
+        },
+        "lb_entry_round": 1,
+        "projected": null
+      }
+    ]
+  },
+  "semifinal_in_flight": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Semifinal",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v0",
+              "v3"
+            ],
+            "winner": "v0",
+            "decision": "win",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v3"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "bracket_slot": "WB-R0-1",
+            "loser": null
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "bracket_slot": "WB-R1-0",
+            "loser": null
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "semifinals_and_final_settled": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Semifinal",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v0",
+              "v3"
+            ],
+            "winner": "v0",
+            "decision": "win",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v3"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "decision": "win",
+            "bracket_slot": "WB-R0-1",
+            "loser": "v2"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "winner": "v1",
+            "decision": "promoted",
+            "bracket_slot": "WB-R1-0",
+            "loser": "v0"
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [
+          1
+        ],
+        "eliminated_at_round": 1,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0,
+          1
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "semifinals_undecided": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Semifinal",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v0",
+              "v3"
+            ],
+            "bracket_slot": "WB-R0-0",
+            "loser": null
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "bracket_slot": "WB-R0-1",
+            "loser": null
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "single_elim_bye_stands": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Round 1",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v2"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v3"
+            ],
+            "winner": "v3",
+            "bye": true,
+            "bracket_slot": "WB-R0-1",
+            "loser": null
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Round 2",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v1",
+              "v3"
+            ],
+            "winner": "v3",
+            "bracket_slot": "WB-R1-0",
+            "loser": "v1"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 2,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "final",
+            "competitors": [
+              "v0",
+              "v3"
+            ],
+            "winner": "v0",
+            "decision": "rejected",
+            "bracket_slot": "final",
+            "loser": "v3"
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [
+          1
+        ],
+        "eliminated_at_round": 1,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0,
+          1,
+          2
+        ],
+        "advanced_rounds": [
+          0,
+          1
+        ],
+        "lost_rounds": [
+          2
+        ],
+        "eliminated_at_round": 2,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB",
+          "2": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          2
+        ],
+        "advanced_rounds": [
+          2
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "2": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "single_elim_final_pending": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Round 1",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v2"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "final",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "winner": null,
+            "pending": true,
+            "bracket_slot": "final",
+            "loser": null
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          1
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "single_elim_four_crowned": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Round 1",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v2"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v3",
+              "v4"
+            ],
+            "winner": "v3",
+            "bracket_slot": "WB-R0-1",
+            "loser": "v4"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Round 2",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v1",
+              "v3"
+            ],
+            "winner": "v1",
+            "bracket_slot": "WB-R1-0",
+            "loser": "v3"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 2,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "final",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "winner": "v1",
+            "decision": "promoted",
+            "bracket_slot": "final",
+            "loser": "v0"
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1,
+          2
+        ],
+        "advanced_rounds": [
+          0,
+          1,
+          2
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB",
+          "2": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [
+          1
+        ],
+        "eliminated_at_round": 1,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v4",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          2
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          2
+        ],
+        "eliminated_at_round": 2,
+        "side_by_round": {
+          "2": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "single_elim_semifinals": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Semifinal",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v0",
+              "v3"
+            ],
+            "winner": "v0",
+            "decision": "rejected",
+            "delta_scalar": 0.05,
+            "bracket_slot": "WB-R0-0",
+            "bye": false,
+            "loser": "v3"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "decision": "promoted",
+            "delta_scalar": -0.12,
+            "bracket_slot": "WB-R0-1",
+            "bye": false,
+            "loser": "v2"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "winner": "v1",
+            "decision": "promoted",
+            "delta_scalar": -0.08,
+            "bracket_slot": "WB-R1-0",
+            "bye": false,
+            "loser": "v0"
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [
+          1
+        ],
+        "eliminated_at_round": 1,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0,
+          1
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "single_elim_semifinals_decided": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Semifinal",
+        "matches": [
+          {
+            "match_id": "WB-R0-0",
+            "competitors": [
+              "v0",
+              "v3"
+            ],
+            "winner": "v0",
+            "decision": "win",
+            "delta_scalar": -1.2,
+            "bracket_slot": "WB-R0-0",
+            "loser": "v3"
+          },
+          {
+            "match_id": "WB-R0-1",
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "decision": "win",
+            "delta_scalar": -0.8,
+            "bracket_slot": "WB-R0-1",
+            "loser": "v2"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Final",
+        "matches": [
+          {
+            "match_id": "WB-R1-0",
+            "competitors": [
+              "v0",
+              "v1"
+            ],
+            "winner": "v1",
+            "decision": "promoted",
+            "delta_scalar": -2,
+            "bracket_slot": "WB-R1-0",
+            "loser": "v0"
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [
+          1
+        ],
+        "eliminated_at_round": 1,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0,
+          1
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  },
+  "three_rounds_v3_crowned": {
+    "rounds": [
+      {
+        "round_index": 0,
+        "label": "Round 1",
+        "matches": [
+          {
+            "competitors": [
+              "v1",
+              "v2"
+            ],
+            "winner": "v1",
+            "decision": "win",
+            "bracket_slot": "WB-R0-0",
+            "loser": "v2"
+          },
+          {
+            "competitors": [
+              "v3",
+              "v1"
+            ],
+            "winner": "v3",
+            "decision": "win",
+            "bracket_slot": "WB-R0-1",
+            "loser": "v1"
+          }
+        ],
+        "bracket_side": "WB"
+      },
+      {
+        "round_index": 1,
+        "label": "Final",
+        "matches": [
+          {
+            "competitors": [
+              "v3",
+              "v0"
+            ],
+            "winner": "v3",
+            "decision": "win",
+            "bracket_slot": "WB-R1-0",
+            "loser": "v0"
+          }
+        ],
+        "bracket_side": "WB"
+      }
+    ],
+    "gen_states": [
+      {
+        "generation_id": "v1",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [
+          0
+        ],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v2",
+        "played_rounds": [
+          0
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          0
+        ],
+        "eliminated_at_round": 0,
+        "side_by_round": {
+          "0": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v3",
+        "played_rounds": [
+          0,
+          1
+        ],
+        "advanced_rounds": [
+          0,
+          1
+        ],
+        "lost_rounds": [],
+        "eliminated_at_round": null,
+        "side_by_round": {
+          "0": "WB",
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      },
+      {
+        "generation_id": "v0",
+        "played_rounds": [
+          1
+        ],
+        "advanced_rounds": [],
+        "lost_rounds": [
+          1
+        ],
+        "eliminated_at_round": 1,
+        "side_by_round": {
+          "1": "WB"
+        },
+        "lb_entry_round": null,
+        "projected": null
+      }
+    ]
+  }
+}

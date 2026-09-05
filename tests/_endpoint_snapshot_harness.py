@@ -21,16 +21,29 @@ diff. Re-capture it only when a route's response is meant to change:
 
     ZICATO_ENDPOINT_SNAPSHOT_UPDATE=1 uv run pytest -q \\
         tests/test_dashboard_endpoint_table.py
+
+The same capture serves the browser suite's fixtures. Each workspace in
+:data:`RECORDED_WORKSPACES` is a tree the browser fixture maps describe
+(:mod:`tests._console_scenarios`), probed over the routes a view fetches;
+its labels are prefixed with the workspace name. The URL behind every label
+is written to ``tests/data/endpoint_route_probes.json`` beside the snapshot,
+and ``static/test/recorded.mjs`` joins the two so a browser test serves a
+recorded body under the URL the view requests.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from starlette.testclient import TestClient
 
+from tests import _console_scenarios as scenarios
+from tests._console_scenarios import CONSOLE_EPOCH, build_console_workspace
 from tests._reader_parity_harness import build_fixture_workspace
 from zicato.dashboard.server import create_app
 
@@ -166,6 +179,266 @@ ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     ("mutation_detail/rejected", f"/api/mutations/e1/{REJECTED}"),
 )
 
+
+@dataclass(frozen=True)
+class RecordedWorkspace:
+    """One workspace the browser suite describes, and the routes recorded over it.
+
+    ``name`` prefixes every label in the snapshot (``console/gate/v0/v1``);
+    ``build`` writes the tree under a directory and returns its root; ``probes``
+    are ``(label, url)`` pairs, each url the exact request a browser view
+    makes, query string included, so the recording is keyed by what the view
+    fetches.
+    """
+
+    name: str
+    build: Callable[[Path], Path]
+    probes: tuple[tuple[str, str], ...]
+
+
+def _console_probes() -> tuple[tuple[str, str], ...]:
+    """The routes the console's views fetch over the shared fixture epoch."""
+    e = CONSOLE_EPOCH
+    probes: list[tuple[str, str]] = [
+        ("epoch", f"/api/epoch?epoch={e}"),
+        ("lineage", f"/api/lineage?epoch={e}"),
+        ("score_trajectory", f"/api/score-trajectory?epoch={e}"),
+        ("tournaments", f"/api/tournaments?epoch={e}"),
+        ("calibration_trend", f"/api/calibration-trend?epoch={e}"),
+        ("workspace", "/api/workspace"),
+        ("health_report", "/api/health-report"),
+        ("round_timeline", f"/api/epoch/{e}/round-timeline"),
+        ("racing_field", f"/api/epoch/{e}/racing-field"),
+        ("experiments_ledger", f"/api/epoch/{e}/experiments-ledger"),
+    ]
+    for gen in ("v0", "v1", "v2"):
+        probes.append((f"per_entry/{gen}", f"/api/generation/{e}/{gen}/per-entry"))
+    for gen in ("v1", "v2"):
+        probes += [
+            (f"gate/v0/{gen}", f"/api/round/{e}/v0/{gen}/gate"),
+            (f"per_judge_comparison/v0/{gen}", f"/api/round/{e}/v0/{gen}/per-judge-comparison"),
+            (f"matchup_grid/v0/{gen}", f"/api/matchup-grid/{e}/v0/{gen}"),
+            (f"hypothesis_accuracy/{gen}", f"/api/hypothesis-accuracy/{e}/{gen}"),
+            (f"episode_export/{gen}", f"/api/generation/{e}/{gen}/episode-export"),
+        ]
+    for gen, entry in (("v1", "waffles_single"), ("v0", "waffles_single")):
+        probes += [
+            (f"run_header/{gen}/{entry}", f"/api/run/{e}/{gen}/{entry}/header"),
+            (f"run_expectations/{gen}/{entry}", f"/api/run/{e}/{gen}/{entry}/expectations"),
+            (f"per_judge_for_entry/{gen}/{entry}", f"/api/run/{e}/{gen}/{entry}/per-judge"),
+        ]
+    return tuple(probes)
+
+
+def _epoch_probes(
+    epoch_id: str, *, fields: tuple[str, ...] = (), contract: bool = True
+) -> tuple[tuple[str, str], ...]:
+    """The epoch-level reads every view makes, plus one structure read per field.
+
+    ``contract`` adds the epoch contract and the racing field; a scenario the
+    suite reads only the round model of leaves them out.
+    """
+    e = epoch_id
+    probes = [
+        ("lineage", f"/api/lineage?epoch={e}"),
+        ("score_trajectory", f"/api/score-trajectory?epoch={e}"),
+        ("tournaments", f"/api/tournaments?epoch={e}"),
+        ("round_timeline", f"/api/epoch/{e}/round-timeline"),
+    ]
+    if contract:
+        probes = [
+            ("epoch", f"/api/epoch?epoch={e}"),
+            *probes,
+            ("racing_field", f"/api/epoch/{e}/racing-field"),
+        ]
+    # The browser encodes the id's separators, so the probe is keyed the way
+    # the view requests it.
+    probes += [
+        (
+            f"tournament_structure/{first}",
+            f"/api/tournament-structure/{e}/{quote(f'{e}:field:{first}', safe='')}",
+        )
+        for first in fields
+    ]
+    return tuple(probes)
+
+
+def _candidate_probes(epoch_id: str, *pairs: tuple[str, str]) -> tuple[tuple[str, str], ...]:
+    """The per-candidate reads for ``(champion, challenger)`` pairs."""
+    e = epoch_id
+    probes: list[tuple[str, str]] = []
+    for champion, challenger in pairs:
+        probes += [
+            (f"per_entry/{champion}", f"/api/generation/{e}/{champion}/per-entry"),
+            (f"per_entry/{challenger}", f"/api/generation/{e}/{challenger}/per-entry"),
+            (f"gate/{champion}/{challenger}", f"/api/round/{e}/{champion}/{challenger}/gate"),
+            (
+                f"matchup_grid/{champion}/{challenger}",
+                f"/api/matchup-grid/{e}/{champion}/{challenger}",
+            ),
+        ]
+    return tuple(dict(probes).items())
+
+
+#: The workspaces the browser suite reads recordings of, in capture order.
+RECORDED_WORKSPACES: tuple[RecordedWorkspace, ...] = (
+    RecordedWorkspace("console", build_console_workspace, _console_probes()),
+    RecordedWorkspace(
+        "racing_ladder",
+        scenarios.build_racing_ladder_workspace,
+        _epoch_probes(scenarios.RACING_EPOCH)
+        + _candidate_probes(scenarios.RACING_EPOCH, ("v0", "v3")),
+    ),
+    RecordedWorkspace(
+        "racing_no_records",
+        scenarios.build_racing_no_records_workspace,
+        _epoch_probes(scenarios.RACING_EPOCH),
+    ),
+    RecordedWorkspace(
+        "many_rounds",
+        scenarios.build_many_rounds_workspace,
+        _epoch_probes(scenarios.MANY_ROUNDS_EPOCH, contract=False),
+    ),
+    RecordedWorkspace(
+        "two_epochs",
+        scenarios.build_two_epochs_workspace,
+        (("epoch", "/api/epoch"), ("lineage", "/api/lineage"))
+        + tuple(
+            (f"{prefix}/{label}", url)
+            for prefix, epoch in (
+                ("older", scenarios.OLDER_EPOCH),
+                ("newer", scenarios.NEWER_EPOCH),
+            )
+            for label, url in _epoch_probes(epoch)
+        ),
+    ),
+    RecordedWorkspace(
+        "racing_round_settled",
+        scenarios.build_racing_round_settled_workspace,
+        _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
+        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1")),
+    ),
+    RecordedWorkspace(
+        "racing_round_live",
+        scenarios.build_racing_round_live_workspace,
+        _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
+        + (("active_tournament", "/api/active-tournament"),),
+    ),
+    RecordedWorkspace(
+        "single_elim",
+        scenarios.build_single_elim_workspace,
+        _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
+        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1")),
+    ),
+    RecordedWorkspace(
+        "swiss",
+        scenarios.build_swiss_workspace,
+        _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
+        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1")),
+    ),
+    RecordedWorkspace(
+        "double_elim",
+        scenarios.build_double_elim_workspace,
+        _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
+        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1")),
+    ),
+    RecordedWorkspace(
+        "swiss_proposing",
+        scenarios.build_swiss_proposing_workspace,
+        _epoch_probes(CONSOLE_EPOCH, fields=("v1",)),
+    ),
+    RecordedWorkspace(
+        "swiss_all_rejected",
+        scenarios.build_swiss_all_rejected_workspace,
+        _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
+        + (("active_tournament", "/api/active-tournament"),),
+    ),
+    RecordedWorkspace(
+        "swiss_all_applied",
+        scenarios.build_swiss_all_applied_workspace,
+        _epoch_probes(CONSOLE_EPOCH, fields=("v1",)),
+    ),
+    RecordedWorkspace(
+        "swiss_rated",
+        scenarios.build_swiss_rated_workspace,
+        _epoch_probes(CONSOLE_EPOCH, fields=("v1",)),
+    ),
+    RecordedWorkspace(
+        "racing_field",
+        scenarios.build_racing_field_workspace,
+        _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
+        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1")),
+    ),
+    RecordedWorkspace(
+        "field_count",
+        scenarios.build_field_count_workspace,
+        _epoch_probes(scenarios.FIELD_COUNT_EPOCH, contract=False),
+    ),
+    RecordedWorkspace(
+        "gauntlet_one_round",
+        scenarios.build_gauntlet_one_round_workspace,
+        _epoch_probes(CONSOLE_EPOCH, contract=False),
+    ),
+    RecordedWorkspace(
+        "swiss_empty", scenarios.build_swiss_empty_workspace, _epoch_probes(CONSOLE_EPOCH)
+    ),
+    RecordedWorkspace(
+        "model_round_stamps",
+        scenarios.build_model_round_stamps_workspace,
+        _epoch_probes(scenarios.MODEL_EPOCH, contract=False),
+    ),
+    RecordedWorkspace(
+        "model_field_records",
+        scenarios.build_model_field_records_workspace,
+        _epoch_probes(scenarios.MODEL_EPOCH, contract=False),
+    ),
+    RecordedWorkspace(
+        "model_matchups",
+        scenarios.build_model_matchups_workspace,
+        _epoch_probes(scenarios.MODEL_EPOCH, contract=False),
+    ),
+    RecordedWorkspace(
+        "model_settled_round",
+        scenarios.build_model_settled_round_workspace,
+        _epoch_probes(scenarios.MODEL_EPOCH, contract=False),
+    ),
+    RecordedWorkspace(
+        "model_promoted_pair",
+        scenarios.build_model_promoted_pair_workspace,
+        _epoch_probes(scenarios.MODEL_EPOCH, contract=False),
+    ),
+    RecordedWorkspace(
+        "model_recorded_round",
+        scenarios.build_model_recorded_round_workspace,
+        _epoch_probes(scenarios.MODEL_EPOCH, contract=False),
+    ),
+    RecordedWorkspace(
+        "model_seed_only",
+        scenarios.build_model_seed_only_workspace,
+        _epoch_probes(scenarios.MODEL_EPOCH, contract=False),
+    ),
+    RecordedWorkspace(
+        "model_champion_modes",
+        scenarios.build_model_champion_modes_workspace,
+        _epoch_probes(scenarios.MODEL_EPOCH, contract=False),
+    ),
+    RecordedWorkspace(
+        "model_waterfall",
+        scenarios.build_model_waterfall_workspace,
+        _epoch_probes(scenarios.MODEL_EPOCH, contract=False),
+    ),
+)
+
+
+def probe_urls() -> dict[str, str]:
+    """Every recorded label and the URL it was asked for, in snapshot order."""
+    urls = dict(ROUTE_PROBES)
+    for recorded in RECORDED_WORKSPACES:
+        for label, url in recorded.probes:
+            urls[f"{recorded.name}/{label}"] = url
+    return urls
+
+
 #: Keys whose value is read-time wall-clock noise rather than fixture data.
 #: Replaced by a constant before comparison, the same masking the reader
 #: parity harness applies.
@@ -194,18 +467,36 @@ def capture_route_snapshot(tmp_path: Path, static_dir: Path) -> dict[str, Any]:
     body keeps the order the handler emitted its keys in, so a reordering
     is a diff rather than a silent pass.
     """
-    ws = build_fixture_workspace(tmp_path)
-    root = str(ws)
     out: dict[str, Any] = {}
+    _record(out, build_fixture_workspace(tmp_path), static_dir, ROUTE_PROBES, prefix="")
+    for recorded in RECORDED_WORKSPACES:
+        _record(
+            out,
+            recorded.build(tmp_path / recorded.name),
+            static_dir,
+            recorded.probes,
+            prefix=f"{recorded.name}/",
+        )
+    return out
+
+
+def _record(
+    out: dict[str, Any],
+    ws: Path,
+    static_dir: Path,
+    probes: tuple[tuple[str, str], ...],
+    *,
+    prefix: str,
+) -> None:
+    root = str(ws)
     with TestClient(create_app(ws, static_dir, read_only=True)) as client:
-        for label, url in ROUTE_PROBES:
+        for label, url in probes:
             response = client.get(url)
             try:
                 body = json.loads(response.text)
             except json.JSONDecodeError:
                 body = response.text
-            out[label] = {"status": response.status_code, "body": _mask(body, root)}
-    return out
+            out[prefix + label] = {"status": response.status_code, "body": _mask(body, root)}
 
 
 def snapshot_text(snapshot: dict[str, Any]) -> str:

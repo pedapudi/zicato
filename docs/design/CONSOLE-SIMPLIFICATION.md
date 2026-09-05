@@ -8,10 +8,9 @@ behind them. The numbers in §1, §2.5, §2.6 and §2.8 are taken at commit
 (§6) at commit `7a93f6a3`, the last commit before the stylesheet deletion of
 §3.7 and the model move of §3.9. The subcommand is named beside each table,
 so a maintainer can re-run the measurement after any change. Proposals
-§3.2, §3.3, §3.4, §3.5, §3.6, §3.7 and §3.9 and the export deletions of
+§3.2, §3.3, §3.4, §3.5, §3.6, §3.7, §3.8 and §3.9 and the export deletions of
 §2.2 are implemented, and each ends with a sentence stating the state the
-code is in (§3.3 in its decision paragraph); §3.1 and §3.8 are not
-implemented.
+code is in (§3.3 in its decision paragraph); §3.1 is not implemented.
 
 The proposal is about the size and shape of the console's implementation.
 Every proposal keeps the constraints the console already carries:
@@ -700,6 +699,16 @@ suites cannot drift from each other.
 
 **Depends on.** Nothing; it lowers the cost of §3.1 and of every later
 route change.
+
+**State.** Implemented. `static/test/recorded.mjs` serves the responses
+`tests/data/endpoint_route_snapshot.json` records over the workspaces
+`tests/_console_scenarios.py` writes, keyed by the URL in
+`tests/data/endpoint_route_probes.json`, and the elimination folds a suite
+draws come from `tests/data/elim_states_served.json`, recorded over the round
+lists `tests/data/elim_states_cases.json` declares. `mock_server.mjs` is
+deleted, and the fixture module derives no served join: the round timeline,
+the racing field, the matchup grid and the elimination model a browser test
+renders are each a recorded server response.
 
 ### 3.9 Move the tournament model builders out of the structure view
 

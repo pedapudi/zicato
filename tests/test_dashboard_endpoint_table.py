@@ -33,6 +33,7 @@ import zicato.dashboard.endpoints as endpoints_module
 from tests._endpoint_snapshot_harness import (
     ROUTE_PROBES,
     capture_route_snapshot,
+    probe_urls,
     snapshot_text,
 )
 from zicato.dashboard.endpoints import (
@@ -47,6 +48,9 @@ from zicato.dashboard.server import create_app
 from zicato.query.contracts import ENDPOINT_PAYLOADS
 
 _GOLDEN = Path(__file__).parent / "data" / "endpoint_route_snapshot.json"
+#: The URL behind every label of the golden, which the browser suite's
+#: recorded-fixture loader (``static/test/recorded.mjs``) keys its maps by.
+_PROBES_GOLDEN = Path(__file__).parent / "data" / "endpoint_route_probes.json"
 
 #: The stand-in a rendered degrade puts in place of each path coordinate. It
 #: never reaches a workspace — the degrade is the response a rejected
@@ -92,6 +96,16 @@ def test_table_driven_routes_serve_the_recorded_responses(tmp_path: Path, static
         assert json.dumps(snapshot[label]) == json.dumps(
             golden[label]
         ), f"{label} no longer serves its recorded response"
+
+
+def test_the_probe_table_is_recorded_beside_the_snapshot() -> None:
+    """Every label's URL is on disk, so the browser suite keys recordings by route."""
+    urls = probe_urls()
+    if os.environ.get("ZICATO_ENDPOINT_SNAPSHOT_UPDATE") == "1":
+        _PROBES_GOLDEN.write_text(
+            json.dumps(urls, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    assert json.loads(_PROBES_GOLDEN.read_text(encoding="utf-8")) == urls
 
 
 def test_every_table_route_is_probed(tmp_path: Path, static_dir: Path) -> None:

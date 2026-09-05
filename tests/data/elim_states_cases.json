@@ -1,0 +1,1026 @@
+{
+  "double_elim_crowned": [
+    {
+      "round_index": 0,
+      "label": "Winners' bracket",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v3",
+            "v4"
+          ],
+          "winner": "v3",
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Winners' bracket",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v1",
+            "v3"
+          ],
+          "winner": "v1",
+          "bracket_slot": "WB-R1-0"
+        }
+      ]
+    },
+    {
+      "round_index": 2,
+      "label": "Losers' bracket",
+      "matches": [
+        {
+          "match_id": "LB-R2-0",
+          "competitors": [
+            "v2",
+            "v4"
+          ],
+          "winner": "v2",
+          "bracket_slot": "LB-R2-0"
+        }
+      ]
+    },
+    {
+      "round_index": 3,
+      "label": "Losers' bracket",
+      "matches": [
+        {
+          "match_id": "LB-R3-0",
+          "competitors": [
+            "v2",
+            "v3"
+          ],
+          "winner": "v2",
+          "bracket_slot": "LB-R3-0"
+        }
+      ]
+    },
+    {
+      "round_index": 4,
+      "label": "Grand final",
+      "matches": [
+        {
+          "match_id": "GF",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "winner": "v1",
+          "decision": "promoted",
+          "bracket_slot": "GF"
+        }
+      ]
+    }
+  ],
+  "double_elim_grand_final_pending": [
+    {
+      "round_index": 0,
+      "label": "Winners' bracket",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v3",
+            "v4"
+          ],
+          "winner": "v3",
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Winners' bracket",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v1",
+            "v3"
+          ],
+          "winner": "v1",
+          "bracket_slot": "WB-R1-0"
+        }
+      ]
+    },
+    {
+      "round_index": 2,
+      "label": "Losers' bracket",
+      "matches": [
+        {
+          "match_id": "LB-R2-0",
+          "competitors": [
+            "v2",
+            "v4"
+          ],
+          "winner": "v2",
+          "bracket_slot": "LB-R2-0"
+        }
+      ]
+    },
+    {
+      "round_index": 3,
+      "label": "Losers' bracket",
+      "matches": [
+        {
+          "match_id": "LB-R3-0",
+          "competitors": [
+            "v2",
+            "v3"
+          ],
+          "winner": "v2",
+          "bracket_slot": "LB-R3-0"
+        }
+      ]
+    },
+    {
+      "round_index": 4,
+      "label": "Grand final",
+      "matches": [
+        {
+          "match_id": "GF",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "bracket_slot": "GF",
+          "pending": true
+        }
+      ]
+    }
+  ],
+  "double_elim_losers_round": [
+    {
+      "round_index": 0,
+      "label": "Semifinal",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v0",
+            "v3"
+          ],
+          "winner": "v0",
+          "decision": "rejected",
+          "delta_scalar": 0.05,
+          "bracket_slot": "WB-R0-0",
+          "bye": false
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "decision": "promoted",
+          "delta_scalar": -0.12,
+          "bracket_slot": "WB-R0-1",
+          "bye": false
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "winner": "v1",
+          "decision": "promoted",
+          "delta_scalar": -0.08,
+          "bracket_slot": "WB-R1-0",
+          "bye": false
+        }
+      ]
+    },
+    {
+      "round_index": 2,
+      "label": "LB Round 1",
+      "matches": [
+        {
+          "match_id": "LB-R0-0",
+          "competitors": [
+            "v0",
+            "v2"
+          ],
+          "winner": "v0",
+          "decision": "rejected",
+          "bracket_slot": "LB-R0-0",
+          "bye": false
+        }
+      ]
+    }
+  ],
+  "double_elim_losers_round_record": [
+    {
+      "round_index": 0,
+      "label": "Semifinal",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v0",
+            "v3"
+          ],
+          "winner": "v0",
+          "decision": "rejected",
+          "delta_scalar": 0.05,
+          "bracket_slot": "WB-R0-0",
+          "bye": false
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "decision": "promoted",
+          "delta_scalar": -0.12,
+          "bracket_slot": "WB-R0-1",
+          "bye": false
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "winner": "v1",
+          "decision": "promoted",
+          "delta_scalar": -0.08,
+          "bracket_slot": "WB-R1-0",
+          "bye": false
+        }
+      ]
+    },
+    {
+      "round_index": 2,
+      "label": "LB Round 1",
+      "matches": [
+        {
+          "match_id": "LB-R0-0",
+          "competitors": [
+            "v0",
+            "v2"
+          ],
+          "winner": "v0",
+          "decision": "rejected",
+          "delta_scalar": 0.02,
+          "bracket_slot": "LB-R0-0",
+          "bye": false
+        }
+      ]
+    }
+  ],
+  "double_elim_three_drops": [
+    {
+      "round_index": 0,
+      "label": "R0",
+      "matches": [
+        {
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "competitors": [
+            "v3",
+            "v4"
+          ],
+          "winner": "v3",
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "R1",
+      "matches": [
+        {
+          "competitors": [
+            "v1",
+            "v3"
+          ],
+          "winner": "v1",
+          "bracket_slot": "WB-R1-0"
+        }
+      ]
+    },
+    {
+      "round_index": 2,
+      "label": "LB2",
+      "matches": [
+        {
+          "competitors": [
+            "v2",
+            "v4"
+          ],
+          "winner": "v2",
+          "bracket_slot": "LB-R2-0"
+        }
+      ]
+    },
+    {
+      "round_index": 3,
+      "label": "LB3",
+      "matches": [
+        {
+          "competitors": [
+            "v2",
+            "v3"
+          ],
+          "winner": "v2",
+          "bracket_slot": "LB-R3-0"
+        }
+      ]
+    }
+  ],
+  "duplicate_pending_match": [
+    {
+      "round_index": 0,
+      "label": "Round 1",
+      "matches": [
+        {
+          "competitors": [
+            "v5",
+            "v6"
+          ],
+          "winner": null,
+          "pending": true,
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "competitors": [
+            "v5",
+            "v6"
+          ],
+          "winner": "v5",
+          "decision": "win",
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "competitors": [
+            "v7",
+            "v8"
+          ],
+          "winner": "v7",
+          "decision": "win",
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    }
+  ],
+  "eight_seed_round": [
+    {
+      "label": "R0",
+      "round_index": 0,
+      "matches": [
+        {
+          "match_id": "m0",
+          "competitors": [
+            "genaaaaa",
+            "genbbbbb"
+          ],
+          "winner": "genaaaaa"
+        },
+        {
+          "match_id": "m2",
+          "competitors": [
+            "genccccc",
+            "genddddd"
+          ],
+          "winner": "genccccc"
+        },
+        {
+          "match_id": "m4",
+          "competitors": [
+            "geneeeee",
+            "genfffff"
+          ],
+          "winner": "geneeeee"
+        },
+        {
+          "match_id": "m6",
+          "competitors": [
+            "genggggg",
+            "genhhhhh"
+          ],
+          "winner": "genggggg"
+        }
+      ]
+    }
+  ],
+  "final_pending": [
+    {
+      "round_index": 0,
+      "label": "Semifinal",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v0",
+            "v3"
+          ],
+          "winner": "v0",
+          "decision": "win",
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "decision": "win",
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "bracket_slot": "WB-R1-0",
+          "pending": true
+        }
+      ]
+    }
+  ],
+  "final_pending_envelope": [
+    {
+      "round_index": 0,
+      "label": "Semifinal",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v0",
+            "v3"
+          ],
+          "winner": "v0",
+          "decision": "win",
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "decision": "win",
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "bracket_slot": "WB-R1-0",
+          "pending": true,
+          "projected": {
+            "v1": {
+              "scalar": 9.8,
+              "boards_done": 6,
+              "boards_total": 8
+            },
+            "v0": {
+              "scalar": 10,
+              "boards_done": 6,
+              "boards_total": 8
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "lone_final_crowned": [
+    {
+      "round_index": 0,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "winner": "v1",
+          "decision": "promoted",
+          "bracket_slot": "WB-R0-0"
+        }
+      ]
+    }
+  ],
+  "lone_final_pending": [
+    {
+      "round_index": 0,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "winner": "",
+          "bracket_slot": "WB-R0-0",
+          "pending": true
+        }
+      ]
+    }
+  ],
+  "lone_match_pending": [
+    {
+      "round_index": 0,
+      "label": "Round 1",
+      "matches": [
+        {
+          "competitors": [
+            "v12",
+            "v13"
+          ],
+          "winner": null,
+          "pending": true,
+          "bracket_slot": "WB-R0-0"
+        }
+      ]
+    }
+  ],
+  "losers_bracket_drop": [
+    {
+      "label": "R0",
+      "round_index": 0,
+      "matches": [
+        {
+          "match_id": "m0",
+          "competitors": [
+            "v1",
+            "v3"
+          ],
+          "winner": "v1"
+        }
+      ]
+    },
+    {
+      "label": "LB1",
+      "round_index": 1,
+      "matches": [
+        {
+          "match_id": "m1",
+          "bracket_slot": "LB1",
+          "competitors": [
+            "v3",
+            "v2"
+          ],
+          "winner": "v2"
+        }
+      ]
+    }
+  ],
+  "semifinal_in_flight": [
+    {
+      "round_index": 0,
+      "label": "Semifinal",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v0",
+            "v3"
+          ],
+          "winner": "v0",
+          "decision": "win",
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "bracket_slot": "WB-R1-0"
+        }
+      ]
+    }
+  ],
+  "semifinals_and_final_settled": [
+    {
+      "round_index": 0,
+      "label": "Semifinal",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v0",
+            "v3"
+          ],
+          "winner": "v0",
+          "decision": "win",
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "decision": "win",
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "winner": "v1",
+          "decision": "promoted",
+          "bracket_slot": "WB-R1-0"
+        }
+      ]
+    }
+  ],
+  "semifinals_undecided": [
+    {
+      "round_index": 0,
+      "label": "Semifinal",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v0",
+            "v3"
+          ],
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    }
+  ],
+  "single_elim_bye_stands": [
+    {
+      "round_index": 0,
+      "label": "Round 1",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v3"
+          ],
+          "winner": "v3",
+          "bye": true,
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Round 2",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v1",
+            "v3"
+          ],
+          "winner": "v3",
+          "bracket_slot": "WB-R1-0"
+        }
+      ]
+    },
+    {
+      "round_index": 2,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "final",
+          "competitors": [
+            "v0",
+            "v3"
+          ],
+          "winner": "v0",
+          "decision": "rejected",
+          "bracket_slot": "final"
+        }
+      ]
+    }
+  ],
+  "single_elim_final_pending": [
+    {
+      "round_index": 0,
+      "label": "Round 1",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "bracket_slot": "WB-R0-0"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "final",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "winner": null,
+          "pending": true,
+          "bracket_slot": "final"
+        }
+      ]
+    }
+  ],
+  "single_elim_four_crowned": [
+    {
+      "round_index": 0,
+      "label": "Round 1",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v3",
+            "v4"
+          ],
+          "winner": "v3",
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Round 2",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v1",
+            "v3"
+          ],
+          "winner": "v1",
+          "bracket_slot": "WB-R1-0"
+        }
+      ]
+    },
+    {
+      "round_index": 2,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "final",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "winner": "v1",
+          "decision": "promoted",
+          "bracket_slot": "final"
+        }
+      ]
+    }
+  ],
+  "single_elim_semifinals": [
+    {
+      "round_index": 0,
+      "label": "Semifinal",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v0",
+            "v3"
+          ],
+          "winner": "v0",
+          "decision": "rejected",
+          "delta_scalar": 0.05,
+          "bracket_slot": "WB-R0-0",
+          "bye": false
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "decision": "promoted",
+          "delta_scalar": -0.12,
+          "bracket_slot": "WB-R0-1",
+          "bye": false
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "winner": "v1",
+          "decision": "promoted",
+          "delta_scalar": -0.08,
+          "bracket_slot": "WB-R1-0",
+          "bye": false
+        }
+      ]
+    }
+  ],
+  "single_elim_semifinals_decided": [
+    {
+      "round_index": 0,
+      "label": "Semifinal",
+      "matches": [
+        {
+          "match_id": "WB-R0-0",
+          "competitors": [
+            "v0",
+            "v3"
+          ],
+          "winner": "v0",
+          "decision": "win",
+          "delta_scalar": -1.2,
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "match_id": "WB-R0-1",
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "decision": "win",
+          "delta_scalar": -0.8,
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Final",
+      "matches": [
+        {
+          "match_id": "WB-R1-0",
+          "competitors": [
+            "v0",
+            "v1"
+          ],
+          "winner": "v1",
+          "decision": "promoted",
+          "delta_scalar": -2,
+          "bracket_slot": "WB-R1-0"
+        }
+      ]
+    }
+  ],
+  "three_rounds_v3_crowned": [
+    {
+      "round_index": 0,
+      "label": "Round 1",
+      "matches": [
+        {
+          "competitors": [
+            "v1",
+            "v2"
+          ],
+          "winner": "v1",
+          "decision": "win",
+          "bracket_slot": "WB-R0-0"
+        },
+        {
+          "competitors": [
+            "v3",
+            "v1"
+          ],
+          "winner": "v3",
+          "decision": "win",
+          "bracket_slot": "WB-R0-1"
+        }
+      ]
+    },
+    {
+      "round_index": 1,
+      "label": "Final",
+      "matches": [
+        {
+          "competitors": [
+            "v3",
+            "v0"
+          ],
+          "winner": "v3",
+          "decision": "win",
+          "bracket_slot": "WB-R1-0"
+        }
+      ]
+    }
+  ]
+}

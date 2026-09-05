@@ -17,11 +17,19 @@ phantom-✕ guards). These tests pin the SERVER fold that replaced it:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from zicato.query.tournament_view import attach_elim_states, derive_elim_states
 
 _FIXTURE = Path(__file__).parent / "data" / "elim_states_fixture.json"
+#: The elimination round lists the browser suite draws, by name, and what the
+#: fold serves for each. The browser suite reads both files through
+#: ``static/test/recorded.mjs``, so a bracket a test renders carries the
+#: model the server serves for it. Re-record the served file with
+#: ``ZICATO_ENDPOINT_SNAPSHOT_UPDATE=1`` when the fold is meant to change.
+_CASES = Path(__file__).parent / "data" / "elim_states_cases.json"
+_SERVED = Path(__file__).parent / "data" / "elim_states_served.json"
 
 
 def _match(slot: str, comps: list[str], winner: str | None = None, **kw: object) -> dict:
@@ -54,6 +62,22 @@ def test_shared_fixture_malformed_competitors_case() -> None:
     case = fixture["malformed_competitors_case"]
     got = derive_elim_states(case["input_rounds"])
     assert got == case["expected"]
+
+
+def test_every_browser_case_serves_its_recorded_model() -> None:
+    """Each declared round list folds to the model on disk, byte for byte."""
+    cases = json.loads(_CASES.read_text(encoding="utf-8"))
+    served = {name: derive_elim_states(rounds) for name, rounds in cases.items()}
+    if os.environ.get("ZICATO_ENDPOINT_SNAPSHOT_UPDATE") == "1":
+        _SERVED.write_text(
+            json.dumps(served, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    recorded = json.loads(_SERVED.read_text(encoding="utf-8"))
+    assert sorted(recorded) == sorted(served), "the case set changed"
+    for name in served:
+        assert json.dumps(served[name]) == json.dumps(
+            recorded[name]
+        ), f"{name} no longer folds to its recorded model"
 
 
 # ---------------------------------------------------------------------------

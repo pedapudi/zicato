@@ -26,7 +26,7 @@
 // LiveController) with inline fixtures — no live run, no network.
 
 import { installDom, test, run, assert, assertEqual } from './harness.mjs';
-const mock = await import('./mock_server.mjs');
+import { elimPayload } from './recorded.mjs';
 
 installDom();
 
@@ -81,8 +81,7 @@ function serialize(node) {
 // Render the single-round structure figure for a payload + return the figure host
 // (a div containing all sections). Drives the REAL renderStructure dispatch.
 function renderSingleRound(payload, liveFlag) {
-  // PLAY THE SERVER: a served structure payload carries the elim model.
-  const st = STRUCT.normalizeStructure(mock.attachElimStates({ ...payload }), !!liveFlag);
+  const st = STRUCT.normalizeStructure({ ...payload }, !!liveFlag);
   const host = document.createElement('div');
   for (const n of STRUCT.renderStructure(st, CTX, EPOCH)) if (n) host.appendChild(n);
   return host;
@@ -90,8 +89,7 @@ function renderSingleRound(payload, liveFlag) {
 
 // Drive a LiveController one tick + return its structure-figure host node.
 function heroFigure(controller, { activeTournament, heartbeat, activeRuns }) {
-  // PLAY THE SERVER: /api/active-tournament carries the served elim model.
-  const served = activeTournament ? mock.attachElimStates({ ...activeTournament }) : activeTournament;
+  const served = activeTournament ? { ...activeTournament } : activeTournament;
   controller.update({
     status: { running: true, structure: served && served.structure },
     heartbeat, activeRuns: activeRuns || [], activeTournament: served,
@@ -308,34 +306,22 @@ test('gauntlet — the live hero renders the field-bars mini (the default-struct
 // SINGLE-ELIM — the radial bracket (single-round PRIMARY + hero).
 // ===========================================================================
 
-const ELIM_SETTLED = {
+// The elimination records carry the served model of their case (recorded.mjs).
+const ELIM_SETTLED = elimPayload('semifinals_and_final_settled', {
   structure: 'single_elim', phase: 'completed', epoch_id: EPOCH,
   champion_lineage: ['v0', 'v1'],
   competitors: [
     { generation_id: 'v0', role: 'champion' }, { generation_id: 'v1' }, { generation_id: 'v2' }, { generation_id: 'v3' },
   ],
-  rounds: [
-    { round_index: 0, label: 'Semifinal', matches: [
-      { match_id: 'WB-R0-0', competitors: ['v0', 'v3'], winner: 'v0', decision: 'win', bracket_slot: 'WB-R0-0' },
-      { match_id: 'WB-R0-1', competitors: ['v1', 'v2'], winner: 'v1', decision: 'win', bracket_slot: 'WB-R0-1' },
-    ] },
-    { round_index: 1, label: 'Final', matches: [
-      { match_id: 'WB-R1-0', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'WB-R1-0' },
-    ] },
-  ],
   standings: [],
-};
+});
 
+// The final is in flight: `final_pending` carries no verdict on it, and
+// `final_pending_envelope` adds the projected standings of both sides.
 function elimLive(stage) {
   const r = JSON.parse(JSON.stringify(ELIM_SETTLED));
-  r.structure = 'single_elim'; r.phase = 'running';
-  // the final is in flight: no winner/decision yet.
-  const fin = r.rounds[1].matches[0];
-  delete fin.winner; delete fin.decision; fin.pending = true;
-  if (stage === 'projected') {
-    fin.projected = { v1: { scalar: 9.8, boards_done: 6, boards_total: 8 }, v0: { scalar: 10.0, boards_done: 6, boards_total: 8 } };
-  }
-  return r;
+  r.phase = 'running';
+  return elimPayload(stage === 'projected' ? 'final_pending_envelope' : 'final_pending', r);
 }
 
 test('single-elim — single-round radial renders each lifecycle stage (in-flight semifinal cut → live final → settled crown)', () => {
@@ -371,39 +357,20 @@ test('single-elim — live hero renders the radial mini + emits the ✕ eliminat
 // DOUBLE-ELIM — the radial bracket in double mode (single-round PRIMARY + hero).
 // ===========================================================================
 
-const DELIM_SETTLED = {
+const DELIM_SETTLED = elimPayload('double_elim_crowned', {
   structure: 'double_elim', phase: 'completed', epoch_id: EPOCH,
   champion_lineage: ['v0', 'v1'],
   competitors: [
     { generation_id: 'v0', role: 'champion' }, { generation_id: 'v1' }, { generation_id: 'v2' }, { generation_id: 'v3' }, { generation_id: 'v4' },
   ],
-  rounds: [
-    { round_index: 0, label: "Winners' bracket", matches: [
-      { match_id: 'WB-R0-0', competitors: ['v1', 'v2'], winner: 'v1', bracket_slot: 'WB-R0-0' },
-      { match_id: 'WB-R0-1', competitors: ['v3', 'v4'], winner: 'v3', bracket_slot: 'WB-R0-1' },
-    ] },
-    { round_index: 1, label: "Winners' bracket", matches: [
-      { match_id: 'WB-R1-0', competitors: ['v1', 'v3'], winner: 'v1', bracket_slot: 'WB-R1-0' },
-    ] },
-    { round_index: 2, label: "Losers' bracket", matches: [
-      { match_id: 'LB-R2-0', competitors: ['v2', 'v4'], winner: 'v2', bracket_slot: 'LB-R2-0' },
-    ] },
-    { round_index: 3, label: "Losers' bracket", matches: [
-      { match_id: 'LB-R3-0', competitors: ['v2', 'v3'], winner: 'v2', bracket_slot: 'LB-R3-0' },
-    ] },
-    { round_index: 4, label: 'Grand final', matches: [
-      { match_id: 'GF', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', bracket_slot: 'GF' },
-    ] },
-  ],
   standings: [],
-};
+});
 
+// The grand final is in flight.
 function delimLive() {
   const r = JSON.parse(JSON.stringify(DELIM_SETTLED));
   r.phase = 'running';
-  const gf = r.rounds[4].matches[0];
-  delete gf.winner; delete gf.decision; gf.pending = true;
-  return r;
+  return elimPayload('double_elim_grand_final_pending', r);
 }
 
 test('double-elim — the single-round radial renders the WB→LB transfer arc + the live GF as pending, with no figure toggle', () => {

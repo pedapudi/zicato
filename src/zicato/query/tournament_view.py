@@ -922,7 +922,7 @@ def build_matchup_grid(
             names |= set(parent_components)
         if isinstance(child_components, dict):
             names |= set(child_components)
-        for name in names:
+        for name in sorted(names):  # one order on every read; a set's order varies
             pv = parent_components.get(name) if isinstance(parent_components, dict) else None
             cv = child_components.get(name) if isinstance(child_components, dict) else None
             pv = pv if isinstance(pv, int | float) else 0.0

@@ -11,7 +11,7 @@ installDom();
 const {
   router, svg, ui, shell, data, tree,
   compare, coreState, bus, rounds, dag, live,
-  roundTimelineFromFixtures, EPOCH_ID, FIXTURE, lookupFixture, installFetch, freshState,
+  recorded, EPOCH_ID, FIXTURE, lookupFixture, installFetch, freshState,
   allByClass, svgsByClass, mountLiveShell, installFixtureMap,
 } = await import('./fixtures.mjs');
 
@@ -1664,13 +1664,10 @@ test('under-render: a NEW candidate folded into AppState repaints the tree (no h
     if (base === '/api/epoch') return { ok: true, json: async () => liveEpoch };
     if (base === '/api/tournaments') return { ok: true, json: async () => liveBracket };
     if (base === '/api/score-trajectory') return { ok: true, json: async () => ({ points: [] }) };
-    // the SERVED round timeline derives from THIS test's live fixtures (the
-    // global FIXTURE's rounds must not leak into the flat under-render epoch).
-    const mTl = /^\/api\/epoch\/([^/?]+)\/round-timeline$/.exec(path);
-    if (mTl) {
-      const F = { '/api/lineage': liveLineage, '/api/epoch': liveEpoch,
-        '/api/tournaments': liveBracket, '/api/score-trajectory': { points: [] } };
-      return { ok: true, json: async () => roundTimelineFromFixtures(F, decodeURIComponent(mTl[1])) };
+    // the round timeline recorded over the flat one-round epoch (the shared
+    // FIXTURE's two rounds must not reach the under-render epoch).
+    if (/^\/api\/epoch\/[^/?]+\/round-timeline$/.test(path)) {
+      return { ok: true, json: async () => recorded('gauntlet_one_round/round_timeline') };
     }
     const v = lookupFixture(FIXTURE, path);
     if (v !== undefined) return { ok: true, json: async () => v };
@@ -1924,7 +1921,9 @@ const CMP_FIXTURE = {
 
 function withJudgeComparison(cmp) {
   const F = Object.assign({}, FIXTURE);
-  if (cmp !== null) F[`/api/round/${EPOCH_ID}/v0/v1/per-judge-comparison`] = cmp;
+  const key = `/api/round/${EPOCH_ID}/v0/v1/per-judge-comparison`;
+  if (cmp !== null) F[key] = cmp;
+  else delete F[key];
   return F;
 }
 
