@@ -50,7 +50,7 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 469,916 | +61,255 |
+| Total | 408,661 | 469,918 | +61,257 |
 | Production | 197,702 | 204,089 | +6,387 |
 | Production logic | 110,276 | 113,500 | +3,224 |
 
@@ -304,3 +304,4 @@ dropped rows named.
 | One glossary defines every term a user surface uses (total) | 469,764 | +152 | 469,916 | Issue #393: `tests/test_vocabulary_glossary.py` is new, 144 lines, and pins the glossary's alphabetical order and internal links, the closed list of terms the console and the `--help` text use, and every quick-reference row's link into the glossary. The CLI help golden grows by 3 lines where four reworded docstrings wrap differently, and the four docstrings add 5 between them. The glossary, the developer guide, `SELECTION-THEORY.md`, and the `TOURNAMENT.md` cost section (issue #453) are Markdown and enter no count. |
 | One glossary defines every term a user surface uses (production) | 204,084 | +5 | 204,089 | Issue #393: the four click docstrings that are the `--help` text of `zicato init`, `zicato board audit`, `zicato epoch rounds`, and `zicato evolve --mode`, reworded so each explains itself in the glossary's words rather than the implementation's; `epoch.py` gains 2 lines and the other three 1 each. |
 | One glossary defines every term a user surface uses (production logic) | 113,499 | +1 | 113,500 | Issue #393: the `--mode` option's help string in `cli/commands/evolve.py` is an executable string literal and grows from 8 lines to 9 when reworded; the other three docstrings are prose and reach no logic count. |
+| Six atlas definitions corrected against the source (total) | 469,916 | +2 | 469,918 | Issue #393: six entries in `docs/atlas/index.html` disagreed with the code. Corrected: the trajectory record is the scalar path of the promoted lineage with a plateau flag; a Copeland score counts duels won, a bye included, with no half-points; calibration names both the critic-calibration channel and the A/A noise-floor step; best-of-N chooses by critique and screening only vetoes; the gate applies three rules; the Pareto record keeps the candidates no other candidate dominates. The two added lines are in the figure paragraph that places the trajectory strip in the Traces view. |
