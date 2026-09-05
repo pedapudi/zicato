@@ -21,7 +21,6 @@ from click.testing import CliRunner
 from zicato.core.epoch import Generation
 from zicato.core.experiment import Experiment, HypothesisSpec
 from zicato.core.types import Patch
-from zicato.dashboard.mutations import FROM_RECORDS, SPANS_CAPTION
 from zicato.epoch.gc import (
     STORAGE_GC_KEY,
     maybe_prune_on_epoch_close,
@@ -30,6 +29,7 @@ from zicato.epoch.gc import (
 from zicato.epoch.genstore import GenerationStore, default_generation_store
 from zicato.epoch.journal import read_experiment, write_experiment, write_seed_experiment
 from zicato.epoch.lineage import append_to_lineage, load_lineage
+from zicato.query.mutation_view import FROM_RECORDS, SPANS_CAPTION
 
 EPOCH = "e1"
 
@@ -273,14 +273,14 @@ def test_git_backend_removes_tag_and_worktree(tmp_path: Path) -> None:
 
 
 def test_dashboard_views_degrade_gracefully_for_pruned_generation(workspace: Path) -> None:
-    from zicato.dashboard.filetree import (
+    from zicato.query import WorkspacePaths
+    from zicato.query.file_view import (
         build_file_index,
         build_generation_diff,
         build_generation_patches,
         build_generation_tree,
         read_generation_file,
     )
-    from zicato.query import WorkspacePaths
 
     _seed_lineage(workspace)
     prune_generations(workspace, EPOCH, keep_promoted_only=True, dry_run=False)
@@ -340,8 +340,8 @@ def test_dashboard_mutation_index_survives_pruned_generations(workspace: Path) -
     The generation LIST behind that attribution is now record-backed too
     (issue #194 §6), which is what makes the two backends agree here.
     """
-    from zicato.dashboard.mutations import build_mutation_index
     from zicato.query import WorkspacePaths
+    from zicato.query.mutation_view import build_mutation_index
 
     _seed_lineage(workspace)
     prune_generations(workspace, EPOCH, keep_promoted_only=True, dry_run=False)

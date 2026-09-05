@@ -12,7 +12,8 @@ coordinate the fixture holds, and one with a coordinate the route's guard
 rejects, which is what exercises the canned
 degrade shape. Routes taking an optional ``?epoch=`` scope get a third probe
 with a malformed scope, so the degrade the scope rejection serves is pinned
-too.
+too, and the one route taking a required query parameter gets a third probe
+without it.
 
 The golden is captured from the code that predates the table and compared
 after it, so a route whose status, body, or key order moved shows up as a
@@ -148,6 +149,21 @@ ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     ("reflection_trace/rejected", f"/api/reflection/r1/trace/{REJECTED}"),
     ("suggestion_provenance", "/api/reflection/r1/suggestion/s1/provenance"),
     ("suggestion_provenance/rejected", f"/api/reflection/r1/suggestion/{REJECTED}/provenance"),
+    # -- generation files and the mutation surface ---------------------
+    ("files_index", "/api/files"),
+    ("files_tree", "/api/files/e1/v0/tree"),
+    ("files_tree/rejected", f"/api/files/e1/{REJECTED}/tree"),
+    ("files_content", "/api/files/e1/v0/content?path=agent.py"),
+    ("files_content/rejected", f"/api/files/e1/{REJECTED}/content?path=agent.py"),
+    ("files_content/no-path", "/api/files/e1/v0/content"),
+    ("files_patches", "/api/files/e1/v1/patches"),
+    ("files_patches/rejected", f"/api/files/e1/{REJECTED}/patches"),
+    ("files_diff", "/api/files/e1/v1/diff"),
+    ("files_diff/rejected", f"/api/files/e1/{REJECTED}/diff"),
+    ("mutation_index", "/api/mutations/e1"),
+    ("mutation_index/rejected", f"/api/mutations/{REJECTED}"),
+    ("mutation_detail", "/api/mutations/e1/instr"),
+    ("mutation_detail/rejected", f"/api/mutations/e1/{REJECTED}"),
 )
 
 #: Keys whose value is read-time wall-clock noise rather than fixture data.

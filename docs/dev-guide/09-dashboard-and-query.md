@@ -39,7 +39,7 @@
 > | DQ12 | validate an id before it touches the workspace | **An id path param is validated by `_is_safe_id` before it touches the workspace.** A malformed coordinate degrades to the empty shape at HTTP 200 — never a 500, never a traversal. |
 > | DQ13 | every JSON GET has a declared contract | **Every JSON GET has a declared query contract.** `query.contracts.ENDPOINT_PAYLOADS` is the exhaustive inventory. |
 > | DQ14 | lineage owns topology | **Lineage owns topology.** `lineage.json` alone supplies parent and tri-state promotion; experiment outcomes are journal detail. |
-> | DQ15 | composite readers share walks | **Composite readers share walks.** `build_environment` performs one lineage walk and hands its scoped feed to the epoch and trajectory builders. |
+> | DQ15 | composite readers share walks | **Composite readers share walks.** `build_round_timeline` performs one lineage walk and hands its scoped feed to the trajectory builder; `build_environment` walks the lineage once and serves the feed verbatim. |
 
 ---
 
@@ -60,6 +60,8 @@ server + the JS). Nothing in the library knows the driver exists.
 | `src/zicato/query/loop_view.py` | `build_optimization_trajectory` (the uncertainty-honest verdict), `build_tournament_cost`, `build_round_pipeline` + `PIPELINE_STEPS` (the server-owned stepper projection) | 435 lines |
 | `src/zicato/query/racing_view.py` | `build_racing_field` — the racing ladder joined server-side out of the per-challenger records | 301 lines |
 | `src/zicato/query/rounds_view.py` | `build_round_timeline` — the round spine and loss-floor waterfall joined server-side across four endpoints' worth of records | 329 lines |
+| `src/zicato/query/file_view.py` | `build_file_index`, `build_generation_tree`, `read_generation_file`, `build_generation_patches`, `build_generation_diff` — a generation's source tree, one file of it, its patch set, and its diff against its parent, read through the `GenerationStore` protocol; when a tree is gone the diff carries the patched spans reconstructed from records, with `provenance` saying so | 550 lines |
+| `src/zicato/query/mutation_view.py` | `build_mutation_index`, `build_mutation_detail`, `reconstructed_spans` — an epoch's mutation surface from the `v0` tree or, when the tree is gone, from the frozen `mutations.json`, and one site's content in every generation whose patch touched it | 805 lines |
 | `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record), `entry_candidate_matrix` (reflection-independent, off the index loss tables) — the Instrument-lens feed (BOARD-REFLECTION.md R4). Index-first, file-fallback; the x-ray reads `result.json` / `judge_io` rather than re-running the adjudicator's events-preview reconstruction | ~430 lines |
 | `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_environment`'s epoch slice, `_current_champion` (reigning spine end), `build_workspace_view`, `compute_board_split` | 35 KB |
 | `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view`, `build_drift_movements` | 56 KB |
@@ -992,8 +994,8 @@ built by one factory:
 — `src/zicato/dashboard/endpoints.py`, `READ_ENDPOINTS`
 
 A row states the route, the reader behind it (called as
-`reader(paths, *coordinates)`, so `params` is written in the reader's
-argument order), what the route serves, the degrade a rejected coordinate
+`reader(paths, *coordinates)`, so `params`, and `query` after it, are written
+in the reader's argument order), what the route serves, the degrade a rejected coordinate
 answers with and at which status, how the optional `?epoch=` scope is
 handled, and whether the read blocks on files hard enough to need the
 threadpool. Nothing else varies between these routes, so nothing else is in
@@ -1009,15 +1011,15 @@ so the route and the reader cannot drift apart.
 
 `make_endpoints(paths, *, read_only, started)` composes the table with the
 five hand-written surfaces — the reads whose query parameters shape the
-response, the two epoch documents served as markdown and HTML, the file
-browser, the transcripts, and the control POSTs:
+response, the two epoch documents served as markdown and HTML, the proposal
+episode export, the transcripts, and the control POSTs:
 
 ```python
     handlers: dict[str, Any] = {}
     handlers.update(_make_read_endpoints(paths))
     handlers.update(_make_state_endpoints(paths, read_only=read_only, started=started))
     handlers.update(_make_epoch_document_endpoints(paths))
-    handlers.update(_make_files_endpoints(paths))
+    handlers.update(_make_proposal_episode_endpoints(paths))
     handlers.update(_make_conversation_endpoints(paths))
     handlers.update(_make_control_endpoints(paths, read_only=read_only))
     return handlers
@@ -1029,8 +1031,14 @@ function names as keys.
 
 > ⛔ Put a new read route that calls one reader in the table rather than in
 > a factory. The hand-written factories are for a route whose handler needs
-> a second reader, a query parameter that changes the response, or a media
-> type other than JSON.
+> a second reader, a query parameter that changes the response beyond naming
+> a coordinate (a row's `query` field carries one that only names a
+> coordinate, as `/api/files/{epoch_id}/{generation_id}/content` takes
+> `?path=`), or a media type other than JSON. The route module imports
+> nothing of `zicato` beyond `zicato.query`, and
+> `tests/test_dashboard_endpoint_table.py` holds every GET route outside a
+> declared hand-written set to being a table row, so the dashboard package
+> holds no workspace reader.
 
 `tests/test_dashboard_endpoint_table.py` enforces three things about the
 table: every row's path has an `ENDPOINT_PAYLOADS` entry and every declared

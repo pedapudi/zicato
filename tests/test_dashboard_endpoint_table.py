@@ -19,6 +19,7 @@ have to hold for that to be safe, and each is a test here:
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import types
@@ -28,6 +29,7 @@ from typing import Any, Union, get_args, get_origin, get_type_hints
 import pytest
 from starlette.routing import Match, Route
 
+import zicato.dashboard.endpoints as endpoints_module
 from tests._endpoint_snapshot_harness import (
     ROUTE_PROBES,
     capture_route_snapshot,
@@ -179,7 +181,7 @@ def test_each_degrade_satisfies_its_payload_contract(entry: ReadEndpoint) -> Non
     """
     degrade = entry.degrade
     assert degrade is not None
-    body = degrade(None, {name: _SAMPLE_COORDINATE for name in entry.params})  # type: ignore[arg-type]
+    body = degrade(None, {name: _SAMPLE_COORDINATE for name in entry.coordinates})  # type: ignore[arg-type]
     assert isinstance(body, dict)
     declared = get_type_hints(ENDPOINT_PAYLOADS[entry.path])
     for field, value in body.items():
@@ -196,3 +198,69 @@ def test_an_ignored_epoch_scope_carries_no_coordinates() -> None:
     for entry in READ_ENDPOINTS:
         if entry.epoch_scope == SCOPE_IGNORE_MALFORMED_EPOCH:
             assert not entry.params, f"{entry.path} mixes an ignored scope with coordinates"
+
+
+# ---------------------------------------------------------------------------
+# The dashboard package holds no reader
+# ---------------------------------------------------------------------------
+
+#: The GET routes under ``/api/`` that stay hand-written: each parses a query
+#: parameter that shapes the response, serves a media type other than JSON, or
+#: composes more than one reader. Every other read route is a table row, so a
+#: new read route lands here only by being added to this set on purpose.
+HAND_WRITTEN_GET_ROUTES = frozenset(
+    {
+        "/api/conversation/{run_id}",
+        "/api/environment",
+        "/api/epoch/{epoch_id}/analysis.html",
+        "/api/epoch/{epoch_id}/journal.md",
+        "/api/generation/{epoch_id}/{generation_id}/episode-export",
+        "/api/generation/{epoch_id}/{generation_id}/episode-export.html",
+        "/api/health",
+        "/api/logs",
+        "/api/matchup/{entry_id}/conversations",
+        "/api/run-log",
+        "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript",
+        "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript/delta",
+        "/api/search",
+    }
+)
+
+
+def test_every_other_get_route_is_a_table_row(tmp_path: Path, static_dir: Path) -> None:
+    """The hand-written GET routes are the declared set, no more and no fewer."""
+    table = {entry.path for entry in READ_ENDPOINTS}
+    hand_written = {
+        route.path
+        for route in _routes(tmp_path, static_dir)
+        if "GET" in (route.methods or ()) and route.path.startswith("/api/")
+    } - table
+    assert hand_written == HAND_WRITTEN_GET_ROUTES
+
+
+def test_every_table_reader_is_a_query_function() -> None:
+    for entry in READ_ENDPOINTS:
+        module = entry.reader.__module__
+        assert module.startswith("zicato.query"), f"{entry.path} reads through {module}"
+
+
+def test_the_route_module_reaches_the_workspace_only_through_the_query_layer() -> None:
+    """Every ``zicato`` import in the route module, at any depth, is a query import.
+
+    The route handlers hold no reader: the workspace is read by
+    :mod:`zicato.query` and nothing else, so a console served from another
+    distribution needs only that package's read surface.
+    """
+    source = Path(endpoints_module.__file__).read_text(encoding="utf-8")
+    imported: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module)
+        elif isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+    outside = sorted(
+        name
+        for name in imported
+        if name.startswith("zicato") and not (name == "zicato" or name.startswith("zicato.query"))
+    )
+    assert outside == [], f"the route module imports beyond the query layer: {outside}"

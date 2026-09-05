@@ -777,18 +777,20 @@ def test_environment_endpoint_consolidates_feeds(client: TestClient) -> None:
     for key in (
         "workspace",
         "epoch_id",
-        "epoch",
         "epochs",
         "active_tournament",
-        "tournaments",
         "generations",
         "active_runs",
-        "health_report",
         "heartbeat",
+        "liveness",
+        "lock",
         "run_log",
         "generated_at",
     ):
         assert key in body, f"/api/environment missing {key}"
+    # What the client reads through its own route is not built per beat.
+    for key in ("epoch", "tournaments", "score_trajectory", "health_report"):
+        assert key not in body, f"/api/environment carries {key}, which no client folds"
     # Statuses inside the consolidated read are normalized too.
     by_side = {(e["entry_id"], e["side"]): e for e in body["active_tournament"]["entries"]}
     assert by_side[("waffles_single", "parent")]["status"] == "done"
@@ -1357,17 +1359,18 @@ def test_epoch_analysis_html_endpoint_invalid_id(client: TestClient) -> None:
     assert r.status_code in (400, 404)
 
 
-def test_environment_epoch_includes_new_fields(client: TestClient, workspace: Path) -> None:
-    """The consolidated /api/environment carries the new epoch fields."""
+def test_epoch_view_carries_experiments_journal_and_analysis(
+    client: TestClient, workspace: Path
+) -> None:
+    """``/api/epoch`` serves the experiments list, the journal and the analysis."""
     epoch_id = "2026-05-16_e0"
     epoch_dir = workspace / "epochs" / epoch_id
     _write(epoch_dir / "journal.md", "# Journal\n\n## round 1\n")
     _write(epoch_dir / "analysis.md", "# Analysis\n\n## summary\n")
 
-    r = client.get("/api/environment")
+    r = client.get("/api/epoch")
     assert r.status_code == 200
-    body = r.json()
-    epoch = body.get("epoch", {})
+    epoch = r.json()
     assert "experiments" in epoch, "epoch must include experiments list"
     assert isinstance(epoch["experiments"], list)
     assert "journal" in epoch, "epoch must include journal text"
@@ -2371,16 +2374,6 @@ def test_score_trajectory_endpoint(client: TestClient) -> None:
     assert points["v0"]["promoted"] is True
     assert points["v1"]["promoted"] is False
     assert points["v0"]["entry_count"] == 1
-
-
-def test_score_trajectory_in_environment_payload(client: TestClient) -> None:
-    """The consolidated /api/environment carries the score trajectory."""
-    r = client.get("/api/environment")
-    assert r.status_code == 200
-    body = r.json()
-    assert "score_trajectory" in body
-    assert isinstance(body["score_trajectory"]["points"], list)
-    assert len(body["score_trajectory"]["points"]) == 2
 
 
 # ---------------------------------------------------------------------------

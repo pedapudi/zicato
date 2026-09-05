@@ -1,4 +1,4 @@
-"""Tests for the dashboard mutation-site browser — :mod:`zicato.dashboard.mutations`.
+"""Tests for the mutation-site reader — :mod:`zicato.query.mutation_view`.
 
 The mutation-site browser extends the Files view: it lists every
 ``# zicato:mutable`` annotated span in an epoch's ``v0`` baseline and,
@@ -23,11 +23,11 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.core.types import Experiment, HypothesisSpec, Patch
-from zicato.dashboard.mutations import RECORDS_CAPTION, UNREACHABLE_CAPTION
 from zicato.dashboard.server import create_app
 from zicato.epoch.genstore import DirectoryGenerationStore
 from zicato.epoch.journal import write_experiment
 from zicato.mutation.enumerator import enumerate_mutations
+from zicato.query.mutation_view import RECORDS_CAPTION, UNREACHABLE_CAPTION
 
 
 def _write(path: Path, body: str) -> None:
@@ -506,8 +506,8 @@ def test_records_path_reports_the_site_file_relative(pruned_workspace: Path) -> 
     recorded = json.loads((moved / "epochs" / "e1" / "mutations.json").read_text())
     assert str(recorded[0]["file"]).startswith(str(pruned_workspace))  # stale, by design
 
-    from zicato.dashboard.mutations import build_mutation_index
     from zicato.query import WorkspacePaths
+    from zicato.query.mutation_view import build_mutation_index
 
     body = build_mutation_index(WorkspacePaths(moved), "e1")
     assert {m["file"] for m in body["mutations"]} == {"agent/prompts.py"}

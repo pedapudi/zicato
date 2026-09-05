@@ -63,9 +63,9 @@ def test_epoch_experiments_are_read_in_round_number_order(tmp_path: Path) -> Non
 def test_dashboard_views_list_generations_in_round_number_order(tmp_path: Path) -> None:
     """The mutation browser's generation columns and the file-tree view's
     per-epoch generation list both read left to right as the epoch ran."""
-    from zicato.dashboard.filetree import build_file_index
-    from zicato.dashboard.mutations import _generation_ids, recorded_generation_ids
     from zicato.query import WorkspacePaths
+    from zicato.query.file_view import build_file_index
+    from zicato.query.mutation_view import _generation_ids, recorded_generation_ids
 
     workspace = tmp_path / ".zicato"
     _make_generations(workspace, "e0")

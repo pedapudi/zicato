@@ -1,8 +1,8 @@
-"""File-tree and file-browser views for the dashboard.
+"""Readers of a generation's source tree, file content, patch set and diff.
 
-This module backs the dashboard's **Files** view: a tree of every
+These readers serve the console's **Files** view: a tree of every
 generation's source, every generation's applied patch set, with a
-file-content browser. It reads through the
+file-content browser. They read through the
 :class:`~zicato.epoch.genstore.GenerationStore` seam — so it works
 **unchanged** for both storage backends. For a directory-snapshot
 workspace it browses the ``generations/vN/snapshot/`` trees; for a
@@ -18,8 +18,8 @@ generations live as commits rather than directories. Routing every read
 through :func:`zicato.epoch.genstore.default_generation_store` keeps the
 dashboard backend-agnostic by construction.
 
-Endpoints (wired in :mod:`zicato.dashboard.server`)
----------------------------------------------------
+Routes (rows of :data:`zicato.dashboard.endpoints.READ_ENDPOINTS`)
+------------------------------------------------------------------
 * ``GET /api/files`` → :func:`build_file_index` — every epoch and its
   generations, each generation's tree node count and patch count.
 * ``GET /api/files/{epoch}/{generation}/tree`` →
@@ -50,7 +50,10 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from zicato.dashboard.mutations import (
+from zicato.epoch._storage import RecordError
+from zicato.epoch.genstore import GenerationStore, default_generation_store
+from zicato.epoch.journal import patch_body, read_generation_patches
+from zicato.query.mutation_view import (
     FROM_RECORDS,
     FROM_SNAPSHOT,
     SPANS_CAPTION,
@@ -58,11 +61,7 @@ from zicato.dashboard.mutations import (
     reconstructed_spans,
     recorded_generation_ids,
 )
-from zicato.epoch._storage import RecordError
-from zicato.epoch.genstore import GenerationStore, default_generation_store
-from zicato.epoch.journal import patch_body, read_generation_patches
-from zicato.query import WorkspacePaths
-from zicato.query.paths import list_epoch_ids
+from zicato.query.paths import WorkspacePaths, list_epoch_ids
 from zicato.storage import workspace_backend
 from zicato.workspace import generation_round_number, natural_key
 
@@ -466,7 +465,7 @@ def build_generation_diff(
 
     Once a tree is gone the whole-file diff is not recoverable, but the
     spans the generation's patches touched are: the response then carries
-    :func:`zicato.dashboard.mutations.reconstructed_spans` entries,
+    :func:`zicato.query.mutation_view.reconstructed_spans` entries,
     ``provenance: "records"`` and the caption the view renders. Two
     conditions take that path — the generation's own tree is missing, or
     the tree of the parent it was RECORDED as derived from is. The second

@@ -33,7 +33,6 @@ from zicato.cli.commands.repair_generation_source_backend import (
     repair_generation_source_backend_cmd,
 )
 from zicato.core.types import Experiment, HypothesisSpec, Patch
-from zicato.dashboard.mutations import SPANS_UNREACHABLE_CAPTION
 from zicato.dashboard.server import create_app
 from zicato.epoch.genstore import (
     GENERATION_SOURCE_BACKEND_KEY,
@@ -42,6 +41,7 @@ from zicato.epoch.genstore import (
     generation_source_evidence,
 )
 from zicato.epoch.journal import write_experiment
+from zicato.query.mutation_view import SPANS_UNREACHABLE_CAPTION
 
 _REPAIR_COMMAND = "zicato repair generation-source-backend"
 

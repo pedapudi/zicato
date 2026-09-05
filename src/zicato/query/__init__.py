@@ -37,6 +37,13 @@ from zicato.query.events_index import (
     build_workspace_view,
 )
 from zicato.query.execution_plan import build_execution_plan
+from zicato.query.file_view import (
+    build_file_index,
+    build_generation_diff,
+    build_generation_patches,
+    build_generation_tree,
+    read_generation_file,
+)
 from zicato.query.gate_view import (
     build_drift_movements,
     build_gate_breakdown,
@@ -78,6 +85,7 @@ from zicato.query.loop_view import (
     build_optimization_trajectory,
     build_tournament_cost,
 )
+from zicato.query.mutation_view import build_mutation_detail, build_mutation_index
 from zicato.query.paths import (
     WorkspacePaths,
     read_current_epoch,
@@ -143,7 +151,11 @@ __all__ = [
     "build_execution_plan",
     "build_expectation_outcomes_for_run",
     "build_experiments_ledger",
+    "build_file_index",
     "build_gate_breakdown",
+    "build_generation_diff",
+    "build_generation_patches",
+    "build_generation_tree",
     "build_health_report",
     "build_hypothesis_accuracy",
     "build_judge_roster",
@@ -155,6 +167,8 @@ __all__ = [
     "build_matchup_conversations",
     "build_matchup_detail",
     "build_matchup_grid",
+    "build_mutation_detail",
+    "build_mutation_index",
     "build_optimization_trajectory",
     "build_per_entry_for_generation",
     "build_per_judge_comparison",
@@ -194,6 +208,7 @@ __all__ = [
     "read_epoch_analysis_html",
     "read_epoch_journal",
     "read_epoch_journal_md",
+    "read_generation_file",
     "read_heartbeat_dict",
     "read_proposal_episode_export",
     "resolve_conversation",

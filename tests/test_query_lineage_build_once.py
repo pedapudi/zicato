@@ -5,9 +5,9 @@ generation directory, so it is the most expensive thing the read model does —
 cProfile attributed 84% of ``build_environment`` to it, at ``ncalls=2``. Two
 independent builds were happening:
 
-1. ``build_environment`` served the ``generations`` feed from one walk and
-   ``score_trajectory`` from another, because ``build_score_trajectory`` built
-   its own. It now accepts a ``lineage`` the caller already has.
+1. ``build_environment`` serves the ``generations`` feed from one walk and
+   builds nothing else from the lineage; ``build_score_trajectory`` accepts a
+   ``lineage`` the caller already has, for the readers that serve both.
 2. ``build_score_trajectory`` walked EVERY epoch and then filtered down to one,
    even though ``build_lineage_view`` takes an ``epoch_id`` that scopes the walk.
 
@@ -134,9 +134,8 @@ def _count_walks(monkeypatch) -> list[tuple[str | None, bool]]:
 def test_environment_walks_the_lineage_once(layout: WorkspaceLayout, monkeypatch) -> None:
     """THE pin: /api/environment builds the lineage exactly ONCE.
 
-    A future edit that drops the hand-off and lets build_score_trajectory
-    build its own feed again doubles the most expensive read in the payload,
-    and fails here.
+    A second walk — a component added to the payload that builds its own
+    feed — doubles the most expensive read in the payload, and fails here.
     """
     calls = _count_walks(monkeypatch)
     build_environment(WorkspacePaths(layout.root))

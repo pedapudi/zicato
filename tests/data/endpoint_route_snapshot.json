@@ -2294,5 +2294,150 @@
       },
       "episodes": []
     }
+  },
+  "files_index": {
+    "status": 200,
+    "body": {
+      "epochs": [
+        {
+          "epoch_id": "e1",
+          "generations": [
+            {
+              "generation_id": "v0",
+              "file_count": 0,
+              "patch_count": 0,
+              "has_tree": false
+            },
+            {
+              "generation_id": "v1",
+              "file_count": 0,
+              "patch_count": 0,
+              "has_tree": false
+            }
+          ]
+        },
+        {
+          "epoch_id": "e2",
+          "generations": []
+        },
+        {
+          "epoch_id": "e0",
+          "generations": [
+            {
+              "generation_id": "v0",
+              "file_count": 0,
+              "patch_count": 0,
+              "has_tree": false
+            }
+          ]
+        }
+      ],
+      "error": "workspace <ws>: config.json must define 'generation_source_backend' as 'git' or 'directory'. Set it with: zicato repair generation-source-backend --workspace <ws> --backend <git|directory>"
+    }
+  },
+  "files_tree": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v0",
+      "entries": [],
+      "error": "no source tree for e1/v0 — this workspace has no generation source store, so no tree is reachable: workspace <ws>: config.json must define 'generation_source_backend' as 'git' or 'directory'. Set it with: zicato repair generation-source-backend --workspace <ws> --backend <git|directory>. The records survive: the patch set at /api/files/e1/v0/patches, the patched spans at /api/files/e1/v0/diff, the site surface at /api/mutations/e1."
+    }
+  },
+  "files_tree/rejected": {
+    "status": 400,
+    "body": {
+      "error": "invalid epoch or generation id",
+      "entries": []
+    }
+  },
+  "files_content": {
+    "status": 200,
+    "body": {
+      "path": "agent.py",
+      "error": "workspace <ws>: config.json must define 'generation_source_backend' as 'git' or 'directory'. Set it with: zicato repair generation-source-backend --workspace <ws> --backend <git|directory>"
+    }
+  },
+  "files_content/rejected": {
+    "status": 400,
+    "body": {
+      "error": "invalid epoch or generation id"
+    }
+  },
+  "files_content/no-path": {
+    "status": 400,
+    "body": {
+      "error": "missing 'path' query param"
+    }
+  },
+  "files_patches": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v1",
+      "patches": []
+    }
+  },
+  "files_patches/rejected": {
+    "status": 400,
+    "body": {
+      "error": "invalid epoch or generation id",
+      "patches": []
+    }
+  },
+  "files_diff": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v1",
+      "parent_generation_id": "v0",
+      "files": [],
+      "provenance": "records",
+      "provenance_note": "snapshot unreachable · patch-touched spans reconstructed",
+      "error": "no source tree for e1/v1 — this workspace has no generation source store, so no tree is reachable: workspace <ws>: config.json must define 'generation_source_backend' as 'git' or 'directory'. Set it with: zicato repair generation-source-backend --workspace <ws> --backend <git|directory>. The records survive: the patch set at /api/files/e1/v1/patches, the patched spans at /api/files/e1/v1/diff, the site surface at /api/mutations/e1."
+    }
+  },
+  "files_diff/rejected": {
+    "status": 400,
+    "body": {
+      "error": "invalid epoch or generation id",
+      "files": []
+    }
+  },
+  "mutation_index": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generations": [
+        "v0",
+        "v1"
+      ],
+      "mutations": [],
+      "provenance": "records",
+      "provenance_note": "",
+      "error": "no mutation surface for e1: no v0 source tree and no mutations.json record; workspace <ws>: config.json must define 'generation_source_backend' as 'git' or 'directory'. Set it with: zicato repair generation-source-backend --workspace <ws> --backend <git|directory>"
+    }
+  },
+  "mutation_index/rejected": {
+    "status": 400,
+    "body": {
+      "error": "invalid epoch id",
+      "mutations": []
+    }
+  },
+  "mutation_detail": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "mutation_id": "instr",
+      "provenance": "records",
+      "error": "no mutation surface for e1: no v0 source tree and no mutations.json record; workspace <ws>: config.json must define 'generation_source_backend' as 'git' or 'directory'. Set it with: zicato repair generation-source-backend --workspace <ws> --backend <git|directory>"
+    }
+  },
+  "mutation_detail/rejected": {
+    "status": 400,
+    "body": {
+      "error": "invalid epoch or mutation id"
+    }
   }
 }
