@@ -27,7 +27,7 @@ import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 installDom();
 
 const svg = await import('../js/svg.js');
-const structure = await import('../js/views/structure.js');
+const structure = await import('../js/tournament_model.js');
 const mock = await import('./mock_server.mjs');
 
 // ---- SVG geometry readers ------------------------------------------------

@@ -27,7 +27,7 @@ installDom();
 
 const candidate = await import('../js/views/candidate.js');
 const svg = await import('../js/svg.js');
-const structure = await import('../js/views/structure.js');
+const structure = { ...await import('../js/tournament_model.js'), ...await import('../js/views/structure.js') };
 
 const CTX = { href: (v, p) => '#' + v + '/' + (p && p.gen || ''), navigate: () => {} };
 function mountNodes(nodes) {

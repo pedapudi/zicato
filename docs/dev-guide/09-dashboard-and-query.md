@@ -1862,7 +1862,7 @@ review should question.
 > listed, never forced into a subtle render break. The geometry/null-semantics
 > `svg.js` helpers deferred for exactly that reason (`champBench`, `gateOf`,
 > `progressSubBar`, `scalarOf`+padded-extent, the edge-clamp→`edgeText`/`fitInto`
-> migration, `structure.js`'s `gateState` machine) are the standing worked
+> migration, `tournament_model.js`'s `gateState` machine) are the standing worked
 > example: `champId` alone is `o.championId ? …` at some sites and
 > `o.championId != null ? …` at others — a single helper would silently
 > mis-handle a `'0'`/`0` id.

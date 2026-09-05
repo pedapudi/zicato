@@ -40,7 +40,7 @@ import {
   racingModel, swissModel, elimModel, gauntletModel, gauntletModelDigest, normalizeStructure,
   buildLiveRacingModel, buildLiveSwissModel, buildLiveElimModel, buildLiveModel,
   liveMatchBlocks, liveMatchBlocksDigest,
-} from './views/structure.js';
+} from './tournament_model.js';
 
 // ── tournament-level progress ────────────────────────────────────────
 //
@@ -1116,7 +1116,7 @@ export class LiveController {
   //   gauntlet    → gauntletFieldBars({ mini, responsive })   (the wave-vs-standard hero)
   //   swiss       → swissLadder({ responsive })               (no mini mode in the builder)
   //
-  // The model is reused from views/structure.js (buildLive*Model + the *Model
+  // The model is reused from tournament_model.js (buildLive*Model + the *Model
   // helpers + championScalarOf) so the hero mini stays byte-consistent with the
   // full figure through all four lifecycle states (queued / in-flight via
   // live_progress / projected / settled, converging once settled). The digest the

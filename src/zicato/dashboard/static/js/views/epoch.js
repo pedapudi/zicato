@@ -13,7 +13,8 @@ import * as svg from '../svg.js';
 import { livenessFor, epochIsLive } from '../livestatus.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens, chip, dataTable, figCaption,
   loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from '../ui.js';
-import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from './structure.js';
+import { structurePill } from './structure.js';
+import { isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from '../tournament_model.js';
 import { roundsFromTimeline, roundModelDigest, waterfallSteps } from '../rounds.js';
 import { boardStatusModel, boardStatusDigest, renderBoardStatus } from './boardstatus.js';
 import { buildExperimentsLedger, ledgerDigest } from './ledger.js';

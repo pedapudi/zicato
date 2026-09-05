@@ -361,7 +361,7 @@ test('THE ACCEPTANCE CASE: transport state surfaces ONLY when broken', () => {
 // ── 6. an interrupted run's topology is evidence rather than noise ──────
 
 test('resolver: an interrupted run keeps its topology, in the PAST tense', async () => {
-  const STRUCT = await import('../js/views/structure.js');
+  const STRUCT = await import('../js/tournament_model.js');
   // A racing envelope with real rungs — the only record this round ever left,
   // because it was killed before any tournament record was committed.
   const envelope = {
@@ -386,7 +386,7 @@ test('resolver: an interrupted run keeps its topology, in the PAST tense', async
 });
 
 test('figures: an interrupted racing ladder reads "never decided", never "deciding…"', async () => {
-  const STRUCT = await import('../js/views/structure.js');
+  const STRUCT = await import('../js/tournament_model.js');
   const st = {
     structure: 'racing', live: false, interrupted: true,
     competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v7' }],

@@ -22,7 +22,7 @@ export const rounds = await import('../js/rounds.js');
 export const dag = await import('../js/dag.js');
 export const hovercard = await import('../js/hovercard.js');
 export const live = await import('../js/live.js');
-export const STRUCT = await import('../js/views/structure.js');
+export const STRUCT = { ...await import('../js/tournament_model.js'), ...await import('../js/views/structure.js') };
 
 export const EPOCH_ID = '2026-05-30_e0';
 

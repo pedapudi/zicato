@@ -28,7 +28,8 @@ import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest, coreIdeaLine } from '../ui.js';
-import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from './structure.js';
+import { renderStructure, structurePill } from './structure.js';
+import { structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from '../tournament_model.js';
 // `epochIsLive` composes the clock and the epoch scope, and every present-tense
 // claim in this view consumes it: the projected scalars, the PROJ badges and
 // progress bars, the in-flight round and its "racing" / "deciding…" pills, and

@@ -22,7 +22,7 @@ import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 installDom();
 
 const ui = await import('../js/ui.js');
-const STRUCT = await import('../js/views/structure.js');
+const STRUCT = { ...await import('../js/tournament_model.js'), ...await import('../js/views/structure.js') };
 const router = await import('../js/router.js');
 
 function classOf(node) { return (node && node.getAttribute && node.getAttribute('class')) || ''; }
