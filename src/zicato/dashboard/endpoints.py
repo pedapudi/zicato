@@ -41,7 +41,9 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from zicato import query
 from zicato.query import WorkspacePaths
-from zicato.query.eval_view import _empty_dossier, _empty_health, _empty_matrix
+from zicato.query.candidate_view import _empty_dossier
+from zicato.query.eval_view import _empty_dossier as _empty_eval_dossier
+from zicato.query.eval_view import _empty_health, _empty_matrix
 from zicato.query.judge_roster import _empty_judge_roster
 from zicato.query.trace_view import _empty_provenance
 from zicato.query.transcript_reconstruction import reconstruct_transcript
@@ -102,6 +104,8 @@ COORDINATE_GUARDS: Final[Mapping[str, Callable[[str], bool]]] = {
     # A file path inside a generation tree: any non-empty value. Traversal is
     # refused by the generation store, which answers with an ``error`` field.
     "path": bool,
+    # An optional board entry: absent (the empty string) or a safe id.
+    "entry": lambda value: value == "" or _is_safe_id(value),
 }
 
 
@@ -616,7 +620,22 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         reader=query.build_eval_dossier,
         serves="One board entry's instrument-quality dossier.",
         params=("epoch_id", "entry_id"),
-        degrade=lambda _paths, c: _empty_dossier(c["epoch_id"], c["entry_id"]),
+        degrade=lambda _paths, c: _empty_eval_dossier(c["epoch_id"], c["entry_id"]),
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/candidate/{generation_id}",
+        reader=query.build_candidate_dossier,
+        serves=(
+            "One candidate's dossier: its per-board results against the "
+            "champion, the gate that decided its round and the gates it "
+            "defended, the proposer's prediction scorecard, the proposal "
+            "episode, the board drill-down ``?entry=`` names, and the racing "
+            "field on a racing epoch — the reads the candidate page joins."
+        ),
+        params=("epoch_id", "generation_id"),
+        query=("entry",),
+        degrade=lambda _paths, c: _empty_dossier(c["epoch_id"], c["generation_id"]),
         off_event_loop=True,
     ),
     ReadEndpoint(

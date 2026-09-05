@@ -11,6 +11,7 @@
 //      is dead / there is no session.
 
 import { installDom, test, run, assert, assertEqual } from './harness.mjs';
+import { recorded } from './recorded.mjs';
 
 installDom();
 
@@ -22,6 +23,11 @@ const data = await import('../js/data.js');
 const EPOCH_ID = 'crisper-presentations';
 const HG_URL = 'http://127.0.0.1:42017';
 const ADK_SID = 'adk-sess-abc123';
+// the session the recorded drill-down of v1's waffles_single run carries.
+const RECORDED_SID = 'sess-v1-waffles';
+// The URL the candidate page fetches one candidate's dossier from.
+const dossierUrl = (epochId, gen, entry) => `/api/epoch/${epochId}/candidate/${gen}` + (entry ? `?entry=${entry}` : '');
+
 
 // --- state helpers ---------------------------------------------------------
 
@@ -254,8 +260,8 @@ FIX[`/api/generation/${EPOCH_ID}/v1/per-entry`] = { epoch_id: EPOCH_ID, generati
   { entry_id: 'waffles_single', run_id: 'run_v1_waffles', drift_loss: 62.0, pass_fail: false, runtime_ms: 180000 },
 ] };
 FIX[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'rejected', delta_scalar: 5.0, rules: [] };
-FIX[`/api/run/${EPOCH_ID}/v1/waffles_single/expectations`] = { outcomes: [] };
-FIX[`/api/run/${EPOCH_ID}/v1/waffles_single/per-judge`] = { judges: [] };
+// the drill-down's dossier, recorded with the run's ADK session id.
+FIX[dossierUrl(EPOCH_ID, 'v1', 'waffles_single')] = recorded('console/candidate/v1/waffles_single');
 // The run HEADER carries the adk_session_id the harmonograf link keys on.
 FIX[`/api/run/${EPOCH_ID}/v1/waffles_single/header`] = {
   epoch_id: EPOCH_ID, generation_id: 'v1', entry_id: 'waffles_single',
@@ -289,7 +295,7 @@ test('candidate view: the per-run harmonograf execution link RENDERS for a live 
   assert(links.length >= 1, 'a harmonograf link rendered on the live candidate drill-down');
   const exec = links.find((a) => (a.getAttribute('href') || '').includes('/#/session/'));
   assert(exec, 'the execution link deep-links a /#/session/ route');
-  assertEqual(exec.getAttribute('href'), `${HG_URL}/#/session/${encodeURIComponent(ADK_SID)}`,
+  assertEqual(exec.getAttribute('href'), `${HG_URL}/#/session/${encodeURIComponent(RECORDED_SID)}`,
     'the href targets the run’s ADK session');
   assertEqual(exec.getAttribute('target'), '_blank', 'opens in a new tab');
 });
@@ -328,7 +334,7 @@ test('candidate view: the per-run link RENDERS against a persistent (post-mortem
   assert(links.length >= 1, 'a harmonograf link rendered against the persistent server');
   const exec = links.find((a) => (a.getAttribute('href') || '').includes('/#/session/'));
   assert(exec, 'the persisted-session execution link deep-links a /#/session/ route');
-  assertEqual(exec.getAttribute('href'), `${HG_URL}/#/session/${encodeURIComponent(ADK_SID)}`,
+  assertEqual(exec.getAttribute('href'), `${HG_URL}/#/session/${encodeURIComponent(RECORDED_SID)}`,
     'the href targets the persisted run’s ADK session');
 });
 

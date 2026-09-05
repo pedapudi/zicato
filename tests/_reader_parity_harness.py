@@ -289,6 +289,10 @@ def capture_snapshot(ws: Path) -> dict[str, Any]:
     # Matchup grid + gate breakdown take (epoch, champion, challenger).
     snap["matchup_grid::e1::v0::v1"] = sr.build_matchup_grid(paths, "e1", "v0", "v1")
     snap["gate_breakdown::e1::v0::v1"] = sr.build_gate_breakdown(paths, "e1", "v0", "v1")
+    # The candidate dossier joins the per-candidate readers above; pinned for
+    # the challenger with its board drill-down and for the seed.
+    snap["candidate_dossier::e1::v1::t1"] = sr.build_candidate_dossier(paths, "e1", "v1", "t1")
+    snap["candidate_dossier::e1::v0"] = sr.build_candidate_dossier(paths, "e1", "v0")
 
     # Mask wall-clock noise + the per-run tmp workspace path so the snapshot
     # is reproducible across the capture/compare boundary (the golden is

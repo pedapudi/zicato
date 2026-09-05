@@ -530,6 +530,13 @@ model itself needs defensive guards against phantom eliminations, because an
 under-specified payload leaves it guessing; serving the model removes the
 reason for the whole guard family at once (12-bug-casebook.md, case 12).
 
+The candidate page's per-candidate reads are one such join as well:
+`query.build_candidate_dossier` (`src/zicato/query/candidate_view.py`) calls
+the per-entry, scorecard, episode, grid, gate, comparison, drill-down and
+racing-field readers and serves the result on
+`/api/epoch/{epoch_id}/candidate/{generation_id}`, so `views/candidate.js`
+reads one payload per candidate and recomputes no verdict.
+
 The node suite derives none of these joins either. `static/test/recorded.mjs`
 serves the responses `tests/data/endpoint_route_snapshot.json` records over
 the workspaces `tests/_console_scenarios.py` writes, keyed by the URL in
@@ -2471,7 +2478,8 @@ rewrites `tests/data/endpoint_route_snapshot.json`,
 `tests/data/elim_states_served.json`, and `static/test/recorded.mjs` serves
 the new bodies to the suite. A shape the recorded workspaces do not cover is
 added as a scenario in `tests/_console_scenarios.py` with its probes in
-`tests/_endpoint_snapshot_harness.py`, never hand-written in the suite.
+`tests/_endpoint_snapshot_harness.py`, rather than written by hand in the
+suite.
 
 **Step 4 — Update the goldens.** If the payload is captured by a parity
 golden (the MOCK-GOLDEN gate freezes `gen_score.json` / `experiment.json` /

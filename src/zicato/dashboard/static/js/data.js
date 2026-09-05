@@ -376,17 +376,10 @@ export function perEntry(epochId, genId) {
 export function evalMatrix(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/evals`);
 }
-// Whether one candidate's proposal episode has Foe's static page — the
+// Foe's static page for the episode that proposed one candidate — the
 // self-contained HTML the round renders beside the episode's log when the
-// episode settles. `export_available` decides whether the proposal header
-// links `episodeExportHref()` below or captions `command` instead. Rides the
-// `/api/generation/` invalidateLive prefix, so a page written by a round in
-// flight appears on the next bust.
-export function episodeExport(epochId, genId) {
-  return cachedJson(`/api/generation/${enc(epochId)}/${enc(genId)}/episode-export`);
-}
-// Where that page is served. Opened in a new tab rather than fetched: it is a
-// whole document with its own script, styles and fonts inlined.
+// episode settles. The dossier's `episode_export.export_available` says
+// whether the page exists; the proposal header links this href when it does.
 export function episodeExportHref(epochId, genId) {
   return `/api/generation/${enc(epochId)}/${enc(genId)}/episode-export.html`;
 }
@@ -547,32 +540,23 @@ export function judgeRoster(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/judge-roster`);
 }
 
+// ONE candidate's dossier (build_candidate_dossier): the per-board results
+// against the champion, the gate that decided its round and the gates it
+// defended, the prediction scorecard, the proposal episode, the drill-down of
+// `entryId` when given, and the racing field on a racing epoch — the reads the
+// candidate page joins, served as one payload. Cached per (epoch, gen, entry);
+// absent reads as null so the page paints its honest empty state.
+export function candidateDossier(epochId, genId, entryId) {
+  const base = `/api/epoch/${enc(epochId)}/candidate/${enc(genId)}`;
+  return cachedJson(entryId ? `${base}?entry=${enc(entryId)}` : base);
+}
+
 // The promote-gate decomposition for one round.
 export function gate(epochId, championId, challengerId) {
   return cachedJson(`/api/round/${enc(epochId)}/${enc(championId)}/${enc(challengerId)}/gate`);
 }
 
-// WHICH JUDGE DECIDED THE ROUND — the per-judge champion-vs-challenger
-// comparison for ONE round (build_per_judge_comparison): `{judges:
-// [{judge_name, champion_weighted_loss, challenger_weighted_loss, delta}],
-// primary_driver}`. The gate payload names its own primary driver; this read
-// carries the FULL per-judge ledger the driver was picked from, so the operator
-// can see the runner-up pressures rather than one name. Round-scoped and
-// immutable once settled → the same cached, failure-tolerant class as gate()
-// (same cache lifetime, same null-degrade): a never-indexed workspace / the
-// Rust supervisor reads null and the panel is simply omitted.
-export function perJudgeComparison(epochId, championId, challengerId) {
-  return cachedJson(`/api/round/${enc(epochId)}/${enc(championId)}/${enc(challengerId)}/per-judge-comparison`);
-}
 
-// The proposer's PREDICTION-ACCURACY scorecard for ONE generation — predicted
-// vs realised movements + the calibration fraction (build_hypothesis_accuracy).
-// DIAGNOSTIC: this never feeds the promote gate. Absent / malformed reads as a
-// 200 empty scorecard, so the dossier paints an honest "no claims" rather than
-// throwing.
-export function hypothesisAccuracy(epochId, genId) {
-  return cachedJson(`/api/hypothesis-accuracy/${enc(epochId)}/${enc(genId)}`);
-}
 // The per-generation calibration TREND across one epoch's lineage — the score
 // fraction over generations + a trend sign (build_calibration_trend). Scoped to
 // a NAMED epoch with `?epoch=<id>`, the current epoch when omitted. DIAGNOSTIC
@@ -581,19 +565,6 @@ export function calibrationTrend(epochId) {
   return cachedJson(epochId != null ? `/api/calibration-trend?epoch=${enc(epochId)}` : '/api/calibration-trend');
 }
 
-// One entry's expectation outcomes + per-judge losses (keyed by board entry).
-export function expectations(epochId, genId, entryId) {
-  return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/expectations`);
-}
-export function perJudgeForRun(epochId, genId, entryId) {
-  return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/per-judge`);
-}
-// Per-run header (runtime/tokens/turns/...) AND the run's adk_session_id —
-// the latter is what the harmonograf deep-link keys its session view on
-// (the per-entry index rows do not carry it; this loss.json-backed read does).
-export function runHeader(epochId, genId, entryId) {
-  return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/header`);
-}
 
 // Back-compat run_id-keyed transcript read. Resolution is now gen×entry-FIRST
 // on the backend: when the caller knows the run's coordinates (the panes

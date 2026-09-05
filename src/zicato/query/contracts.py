@@ -167,6 +167,7 @@ ENDPOINT_PAYLOADS.update(
             "/api/environment",
             "/api/epoch",
             "/api/epoch/{epoch_id}/analysis",
+            "/api/epoch/{epoch_id}/candidate/{generation_id}",
             "/api/epoch/{epoch_id}/cost",
             "/api/epoch/{epoch_id}/eval-health",
             "/api/epoch/{epoch_id}/eval/{entry_id}",

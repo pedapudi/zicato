@@ -1468,6 +1468,312 @@
       "note": "no such epoch / entry"
     }
   },
+  "candidate_dossier": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v1",
+      "found": true,
+      "champion": "v0",
+      "parent": "v0",
+      "structure": "gauntlet",
+      "per_entry": {
+        "epoch_id": "e1",
+        "generation_id": "v1",
+        "tournament_id": "e1:v0->v1",
+        "mean_score": null,
+        "drift_present": false,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": []
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "e1",
+        "generation_id": "v1",
+        "claims": [],
+        "score": {
+          "hits": 0,
+          "total": 0,
+          "fraction": null,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "",
+          "observed": null
+        }
+      },
+      "episode_export": {
+        "epoch_id": "e1",
+        "generation_id": "v1",
+        "slot": null,
+        "episode_log": "",
+        "export_available": false,
+        "command": ""
+      },
+      "matchup_grid": {
+        "epoch_id": "e1",
+        "champion": "v0",
+        "challenger": "v1",
+        "entry_grid": [
+          {
+            "entry_id": "t1",
+            "parent_drift_loss": 0.3,
+            "child_drift_loss": 0.31,
+            "parent_pass": true,
+            "child_pass": true,
+            "parent_score": 0.9,
+            "child_score": 0.9,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 0.010000000000000009,
+            "delta_score": 0.0,
+            "score_replicates": 1,
+            "score_se": null,
+            "verdict": "regressed",
+            "won_by": "v0",
+            "decided_by": "drift"
+          },
+          {
+            "entry_id": "t2",
+            "parent_drift_loss": 0.3,
+            "child_drift_loss": 0.31,
+            "parent_pass": true,
+            "child_pass": true,
+            "parent_score": 0.9,
+            "child_score": 0.9,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 0.010000000000000009,
+            "delta_score": 0.0,
+            "score_replicates": 1,
+            "score_se": null,
+            "verdict": "regressed",
+            "won_by": "v0",
+            "decided_by": "drift"
+          }
+        ],
+        "scalar": {
+          "parent": 0.5,
+          "child": 0.49,
+          "delta": -0.010000000000000009
+        },
+        "drift_present": true,
+        "source": "loss_files"
+      },
+      "comparison": {
+        "entries": {
+          "t1": {
+            "delta_score": 0.0,
+            "champion_score": 0.9,
+            "candidate_score": 0.9,
+            "score_se": null,
+            "score_replicates": 1,
+            "champion_drift_loss": 0.3,
+            "decided_by": "drift"
+          },
+          "t2": {
+            "delta_score": 0.0,
+            "champion_score": 0.9,
+            "candidate_score": 0.9,
+            "score_se": null,
+            "score_replicates": 1,
+            "champion_drift_loss": 0.3,
+            "decided_by": "drift"
+          }
+        },
+        "champion_sigma": 0.6,
+        "candidate_sigma": 0.62,
+        "delta_sigma": 0.020000000000000018,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v1",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "e1",
+            "champion": "v0",
+            "challenger": "v1",
+            "decision": "promoted",
+            "reason": "",
+            "deciding_rule": null,
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": -0.010000000000000009,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 0.5,
+            "challenger_scalar": 0.49,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "pass",
+                "detail": "0.50 → 0.49 (-0.01; needs ≤ -0.01)",
+                "fired": false
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "pass",
+                "detail": "all preserved",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "unknown",
+                "detail": "namespace aggregates not recorded",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": null,
+              "challenger": null
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": null,
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "e1",
+            "champion": "v0",
+            "challenger": "v1",
+            "judges": [],
+            "primary_driver": null
+          }
+        }
+      ],
+      "drilldown": {
+        "entry_id": "t1",
+        "expectations": {
+          "epoch_id": "e1",
+          "generation_id": "v1",
+          "entry_id": "t1",
+          "outcomes": []
+        },
+        "judges": {
+          "run_id": "e1-v1-t1",
+          "judges": []
+        },
+        "header": {
+          "epoch_id": "e1",
+          "generation_id": "v1",
+          "entry_id": "t1",
+          "drift_loss": 0.31,
+          "pass_fail": true,
+          "runtime_ms": null,
+          "tokens_spent": null,
+          "output_chars": null,
+          "turns_completed": null,
+          "plan_revisions": null,
+          "wall_clock_budget_exceeded": null,
+          "run_id": "e1-v1-t1",
+          "adk_session_id": null
+        }
+      },
+      "racing_field": null
+    }
+  },
+  "candidate_dossier/rejected-generation": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "bad~id",
+      "found": false,
+      "champion": null,
+      "parent": null,
+      "structure": "gauntlet",
+      "per_entry": null,
+      "hypothesis_accuracy": null,
+      "episode_export": null,
+      "matchup_grid": null,
+      "comparison": null,
+      "gates": [],
+      "drilldown": null,
+      "racing_field": null
+    }
+  },
+  "candidate_dossier/rejected-entry": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v1",
+      "found": false,
+      "champion": null,
+      "parent": null,
+      "structure": "gauntlet",
+      "per_entry": null,
+      "hypothesis_accuracy": null,
+      "episode_export": null,
+      "matchup_grid": null,
+      "comparison": null,
+      "gates": [],
+      "drilldown": null,
+      "racing_field": null
+    }
+  },
   "eval_health": {
     "status": 200,
     "body": {
@@ -3814,6 +4120,3081 @@
       ]
     }
   },
+  "console/candidate/v0": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v0",
+      "found": true,
+      "champion": "v0",
+      "parent": null,
+      "structure": "gauntlet",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v0",
+        "tournament_id": null,
+        "mean_score": 0.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "picky_stakeholder_emulated",
+            "run_id": "run_v0_picky",
+            "generation_id": "v0",
+            "drift_loss": 105.5,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 360000,
+            "wall_clock_budget_exceeded": true,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          },
+          {
+            "entry_id": "waffles_single",
+            "run_id": "run_v0_waffles",
+            "generation_id": "v0",
+            "drift_loss": 60.5,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 180000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": null,
+      "episode_export": null,
+      "matchup_grid": null,
+      "comparison": {
+        "entries": {},
+        "champion_sigma": null,
+        "candidate_sigma": 166.0,
+        "delta_sigma": null,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v1",
+          "role": "champion",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 75.710000 (champion 70.940000 -> challenger 146.650000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 75.71000000000001,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.94,
+            "challenger_scalar": 146.65,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 68.5,
+                "schema": 1.43
+              },
+              "challenger": {
+                "drift": 145.64,
+                "schema": 0.0
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": {
+              "judge": "incorporates_feedback",
+              "delta": 24.0
+            },
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "judges": [
+              {
+                "judge_name": "incorporates_feedback",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 34.0,
+                "delta": 24.0
+              },
+              {
+                "judge_name": "omission",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 10.0,
+                "delta": 0.0
+              }
+            ],
+            "primary_driver": "incorporates_feedback"
+          }
+        },
+        {
+          "champion": "v0",
+          "challenger": "v2",
+          "role": "champion",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v2",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 1.510000 (champion 70.940000 -> challenger 72.450000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 1.5100000000000051,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.94,
+            "challenger_scalar": 72.45,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 68.5,
+                "schema": 1.43
+              },
+              "challenger": {
+                "drift": 71.0,
+                "schema": 1.45
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": {
+              "judge": "omission",
+              "delta": -6.0
+            },
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v2",
+            "judges": [
+              {
+                "judge_name": "incorporates_feedback",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 12.0,
+                "delta": 2.0
+              },
+              {
+                "judge_name": "omission",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 4.0,
+                "delta": -6.0
+              }
+            ],
+            "primary_driver": "omission"
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": null
+    }
+  },
+  "console/candidate/v1": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v1",
+      "found": true,
+      "champion": "v0",
+      "parent": "v0",
+      "structure": "gauntlet",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "tournament_id": "2026-05-30_e0:v0->v1",
+        "mean_score": 0.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "picky_stakeholder_emulated",
+            "run_id": "run_v1_picky",
+            "generation_id": "v1",
+            "drift_loss": 642.5,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 360000,
+            "wall_clock_budget_exceeded": true,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          },
+          {
+            "entry_id": "waffles_single",
+            "run_id": "run_v1_waffles",
+            "generation_id": "v1",
+            "drift_loss": 60.5,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 180000,
+            "wall_clock_budget_exceeded": true,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "claims": [
+          {
+            "target": "omission",
+            "kind": "drift",
+            "predicted_direction": "decrease",
+            "predicted_magnitude": "small",
+            "from_rate": 0.5,
+            "to_rate": 0.75,
+            "observed_direction": "increase",
+            "signed_error": 0.25,
+            "hypothesis_match": false,
+            "unpredicted": false,
+            "note": ""
+          }
+        ],
+        "score": {
+          "hits": 0,
+          "total": 1,
+          "fraction": 0.0,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.00 to +0.10",
+          "observed": 0.0
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "slot": null,
+        "episode_log": "",
+        "export_available": false,
+        "command": ""
+      },
+      "matchup_grid": {
+        "epoch_id": "2026-05-30_e0",
+        "champion": "v0",
+        "challenger": "v1",
+        "entry_grid": [
+          {
+            "entry_id": "picky_stakeholder_emulated",
+            "parent_drift_loss": 105.5,
+            "child_drift_loss": 642.5,
+            "parent_pass": false,
+            "child_pass": false,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 537.0,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "regressed",
+            "won_by": "v0",
+            "decided_by": "drift"
+          },
+          {
+            "entry_id": "waffles_single",
+            "parent_drift_loss": 60.5,
+            "child_drift_loss": 60.5,
+            "parent_pass": false,
+            "child_pass": false,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 0.0,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "flat",
+            "won_by": null,
+            "decided_by": "pass",
+            "parent_session_id": "sess-v0-waffles",
+            "child_session_id": "sess-v1-waffles"
+          }
+        ],
+        "scalar": {
+          "parent": 70.94,
+          "child": 146.65,
+          "delta": 75.71000000000001,
+          "mean_score": {
+            "parent": 0.0,
+            "child": 0.0,
+            "delta": 0.0
+          },
+          "components": {
+            "drift": 77.13999999999999,
+            "schema": -1.43
+          }
+        },
+        "drift_present": true,
+        "source": "loss_files"
+      },
+      "comparison": {
+        "entries": {
+          "picky_stakeholder_emulated": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 105.5,
+            "decided_by": "drift"
+          },
+          "waffles_single": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 60.5,
+            "decided_by": "pass"
+          }
+        },
+        "champion_sigma": 166.0,
+        "candidate_sigma": 703.0,
+        "delta_sigma": 537.0,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v1",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 75.710000 (champion 70.940000 -> challenger 146.650000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 75.71000000000001,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.94,
+            "challenger_scalar": 146.65,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 68.5,
+                "schema": 1.43
+              },
+              "challenger": {
+                "drift": 145.64,
+                "schema": 0.0
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": {
+              "judge": "incorporates_feedback",
+              "delta": 24.0
+            },
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "judges": [
+              {
+                "judge_name": "incorporates_feedback",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 34.0,
+                "delta": 24.0
+              },
+              {
+                "judge_name": "omission",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 10.0,
+                "delta": 0.0
+              }
+            ],
+            "primary_driver": "incorporates_feedback"
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": null
+    }
+  },
+  "console/candidate/v2": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v2",
+      "found": true,
+      "champion": "v0",
+      "parent": "v0",
+      "structure": "gauntlet",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v2",
+        "tournament_id": "2026-05-30_e0:v0->v2",
+        "mean_score": 0.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "waffles_single",
+            "run_id": "run_v2_waffles",
+            "generation_id": "v2",
+            "drift_loss": 61.0,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 180000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v2",
+        "claims": [
+          {
+            "target": "omission",
+            "kind": "drift",
+            "predicted_direction": "decrease",
+            "predicted_magnitude": "small",
+            "from_rate": 0.5,
+            "to_rate": 0.4,
+            "observed_direction": "decrease",
+            "signed_error": -0.09999999999999998,
+            "hypothesis_match": true,
+            "unpredicted": false,
+            "note": ""
+          }
+        ],
+        "score": {
+          "hits": 1,
+          "total": 1,
+          "fraction": 1.0,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.00 to +0.10",
+          "observed": 0.0
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v2",
+        "slot": null,
+        "episode_log": "",
+        "export_available": false,
+        "command": ""
+      },
+      "matchup_grid": {
+        "epoch_id": "2026-05-30_e0",
+        "champion": "v0",
+        "challenger": "v2",
+        "entry_grid": [
+          {
+            "entry_id": "picky_stakeholder_emulated",
+            "parent_drift_loss": 105.5,
+            "child_drift_loss": null,
+            "parent_pass": false,
+            "child_pass": null,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": null,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "flat",
+            "won_by": null,
+            "decided_by": null
+          },
+          {
+            "entry_id": "waffles_single",
+            "parent_drift_loss": 60.5,
+            "child_drift_loss": 61.0,
+            "parent_pass": false,
+            "child_pass": false,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 0.5,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "regressed",
+            "won_by": "v0",
+            "decided_by": "drift",
+            "parent_session_id": "sess-v0-waffles",
+            "child_session_id": "sess-v2-waffles"
+          }
+        ],
+        "scalar": {
+          "parent": 70.94,
+          "child": 72.45,
+          "delta": 1.5100000000000051,
+          "mean_score": {
+            "parent": 0.0,
+            "child": 0.0,
+            "delta": 0.0
+          },
+          "components": {
+            "drift": 2.5,
+            "schema": 0.020000000000000018
+          }
+        },
+        "drift_present": true,
+        "source": "loss_files"
+      },
+      "comparison": {
+        "entries": {
+          "picky_stakeholder_emulated": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 105.5,
+            "decided_by": null
+          },
+          "waffles_single": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 60.5,
+            "decided_by": "drift"
+          }
+        },
+        "champion_sigma": 60.5,
+        "candidate_sigma": 61.0,
+        "delta_sigma": 0.5,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v2",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v2",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 1.510000 (champion 70.940000 -> challenger 72.450000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 1.5100000000000051,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.94,
+            "challenger_scalar": 72.45,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 68.5,
+                "schema": 1.43
+              },
+              "challenger": {
+                "drift": 71.0,
+                "schema": 1.45
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": {
+              "judge": "omission",
+              "delta": -6.0
+            },
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v2",
+            "judges": [
+              {
+                "judge_name": "incorporates_feedback",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 12.0,
+                "delta": 2.0
+              },
+              {
+                "judge_name": "omission",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 4.0,
+                "delta": -6.0
+              }
+            ],
+            "primary_driver": "omission"
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": null
+    }
+  },
+  "console/candidate/v1/waffles_single": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v1",
+      "found": true,
+      "champion": "v0",
+      "parent": "v0",
+      "structure": "gauntlet",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "tournament_id": "2026-05-30_e0:v0->v1",
+        "mean_score": 0.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "picky_stakeholder_emulated",
+            "run_id": "run_v1_picky",
+            "generation_id": "v1",
+            "drift_loss": 642.5,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 360000,
+            "wall_clock_budget_exceeded": true,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          },
+          {
+            "entry_id": "waffles_single",
+            "run_id": "run_v1_waffles",
+            "generation_id": "v1",
+            "drift_loss": 60.5,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 180000,
+            "wall_clock_budget_exceeded": true,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "claims": [
+          {
+            "target": "omission",
+            "kind": "drift",
+            "predicted_direction": "decrease",
+            "predicted_magnitude": "small",
+            "from_rate": 0.5,
+            "to_rate": 0.75,
+            "observed_direction": "increase",
+            "signed_error": 0.25,
+            "hypothesis_match": false,
+            "unpredicted": false,
+            "note": ""
+          }
+        ],
+        "score": {
+          "hits": 0,
+          "total": 1,
+          "fraction": 0.0,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.00 to +0.10",
+          "observed": 0.0
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "slot": null,
+        "episode_log": "",
+        "export_available": false,
+        "command": ""
+      },
+      "matchup_grid": {
+        "epoch_id": "2026-05-30_e0",
+        "champion": "v0",
+        "challenger": "v1",
+        "entry_grid": [
+          {
+            "entry_id": "picky_stakeholder_emulated",
+            "parent_drift_loss": 105.5,
+            "child_drift_loss": 642.5,
+            "parent_pass": false,
+            "child_pass": false,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 537.0,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "regressed",
+            "won_by": "v0",
+            "decided_by": "drift"
+          },
+          {
+            "entry_id": "waffles_single",
+            "parent_drift_loss": 60.5,
+            "child_drift_loss": 60.5,
+            "parent_pass": false,
+            "child_pass": false,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 0.0,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "flat",
+            "won_by": null,
+            "decided_by": "pass",
+            "parent_session_id": "sess-v0-waffles",
+            "child_session_id": "sess-v1-waffles"
+          }
+        ],
+        "scalar": {
+          "parent": 70.94,
+          "child": 146.65,
+          "delta": 75.71000000000001,
+          "mean_score": {
+            "parent": 0.0,
+            "child": 0.0,
+            "delta": 0.0
+          },
+          "components": {
+            "drift": 77.13999999999999,
+            "schema": -1.43
+          }
+        },
+        "drift_present": true,
+        "source": "loss_files"
+      },
+      "comparison": {
+        "entries": {
+          "picky_stakeholder_emulated": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 105.5,
+            "decided_by": "drift"
+          },
+          "waffles_single": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 60.5,
+            "decided_by": "pass"
+          }
+        },
+        "champion_sigma": 166.0,
+        "candidate_sigma": 703.0,
+        "delta_sigma": 537.0,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v1",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 75.710000 (champion 70.940000 -> challenger 146.650000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 75.71000000000001,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.94,
+            "challenger_scalar": 146.65,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 68.5,
+                "schema": 1.43
+              },
+              "challenger": {
+                "drift": 145.64,
+                "schema": 0.0
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": {
+              "judge": "incorporates_feedback",
+              "delta": 24.0
+            },
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "judges": [
+              {
+                "judge_name": "incorporates_feedback",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 34.0,
+                "delta": 24.0
+              },
+              {
+                "judge_name": "omission",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 10.0,
+                "delta": 0.0
+              }
+            ],
+            "primary_driver": "incorporates_feedback"
+          }
+        }
+      ],
+      "drilldown": {
+        "entry_id": "waffles_single",
+        "expectations": {
+          "epoch_id": "2026-05-30_e0",
+          "generation_id": "v1",
+          "entry_id": "waffles_single",
+          "outcomes": []
+        },
+        "judges": {
+          "run_id": "run_v1_waffles",
+          "judges": [
+            {
+              "judge_name": "incorporates_feedback",
+              "weighted_loss": 34.0,
+              "raw_loss": 34.0,
+              "weight": 1.0
+            },
+            {
+              "judge_name": "omission",
+              "weighted_loss": 4.0,
+              "raw_loss": 4.0,
+              "weight": 1.0
+            }
+          ]
+        },
+        "header": {
+          "epoch_id": "2026-05-30_e0",
+          "generation_id": "v1",
+          "entry_id": "waffles_single",
+          "drift_loss": 60.5,
+          "pass_fail": false,
+          "runtime_ms": 180000,
+          "tokens_spent": 0,
+          "output_chars": 0,
+          "turns_completed": null,
+          "plan_revisions": 0,
+          "wall_clock_budget_exceeded": true,
+          "run_id": "run_v1_waffles",
+          "adk_session_id": "sess-v1-waffles"
+        }
+      },
+      "racing_field": null
+    }
+  },
+  "cached_champion/candidate/v0": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v0",
+      "found": true,
+      "champion": "v0",
+      "parent": null,
+      "structure": "gauntlet",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v0",
+        "tournament_id": null,
+        "mean_score": 0.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "picky_stakeholder_emulated",
+            "run_id": "run_v0_picky",
+            "generation_id": "v0",
+            "drift_loss": 105.5,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 360000,
+            "wall_clock_budget_exceeded": true,
+            "match_id": null,
+            "rung": null,
+            "cached": true,
+            "source_epoch": "2026-05-29_e0",
+            "source_run": "run_prior_picky",
+            "facets": []
+          },
+          {
+            "entry_id": "waffles_single",
+            "run_id": "run_v0_waffles",
+            "generation_id": "v0",
+            "drift_loss": 60.5,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 180000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": true,
+            "source_epoch": "2026-05-29_e0",
+            "source_run": "run_prior_waffles",
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": null,
+      "episode_export": null,
+      "matchup_grid": null,
+      "comparison": {
+        "entries": {},
+        "champion_sigma": null,
+        "candidate_sigma": 166.0,
+        "delta_sigma": null,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v1",
+          "role": "champion",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 75.710000 (champion 70.940000 -> challenger 146.650000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 75.71000000000001,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.94,
+            "challenger_scalar": 146.65,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 68.5,
+                "schema": 1.43
+              },
+              "challenger": {
+                "drift": 145.64,
+                "schema": 0.0
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": {
+              "judge": "incorporates_feedback",
+              "delta": 24.0
+            },
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "judges": [
+              {
+                "judge_name": "incorporates_feedback",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 34.0,
+                "delta": 24.0
+              },
+              {
+                "judge_name": "omission",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 10.0,
+                "delta": 0.0
+              }
+            ],
+            "primary_driver": "incorporates_feedback"
+          }
+        },
+        {
+          "champion": "v0",
+          "challenger": "v2",
+          "role": "champion",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v2",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 1.510000 (champion 70.940000 -> challenger 72.450000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 1.5100000000000051,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.94,
+            "challenger_scalar": 72.45,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 68.5,
+                "schema": 1.43
+              },
+              "challenger": {
+                "drift": 71.0,
+                "schema": 1.45
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": {
+              "judge": "omission",
+              "delta": -6.0
+            },
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v2",
+            "judges": [
+              {
+                "judge_name": "incorporates_feedback",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 12.0,
+                "delta": 2.0
+              },
+              {
+                "judge_name": "omission",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 4.0,
+                "delta": -6.0
+              }
+            ],
+            "primary_driver": "omission"
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": null
+    }
+  },
+  "episodes/candidate/v1": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v1",
+      "found": true,
+      "champion": "v0",
+      "parent": "v0",
+      "structure": "gauntlet",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "tournament_id": "2026-05-30_e0:v0->v1",
+        "mean_score": 0.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "picky_stakeholder_emulated",
+            "run_id": "run_v1_picky",
+            "generation_id": "v1",
+            "drift_loss": 642.5,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 360000,
+            "wall_clock_budget_exceeded": true,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          },
+          {
+            "entry_id": "waffles_single",
+            "run_id": "run_v1_waffles",
+            "generation_id": "v1",
+            "drift_loss": 60.5,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 180000,
+            "wall_clock_budget_exceeded": true,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "claims": [
+          {
+            "target": "omission",
+            "kind": "drift",
+            "predicted_direction": "decrease",
+            "predicted_magnitude": "small",
+            "from_rate": 0.5,
+            "to_rate": 0.75,
+            "observed_direction": "increase",
+            "signed_error": 0.25,
+            "hypothesis_match": false,
+            "unpredicted": false,
+            "note": ""
+          }
+        ],
+        "score": {
+          "hits": 0,
+          "total": 1,
+          "fraction": 0.0,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.00 to +0.10",
+          "observed": 0.0
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "slot": null,
+        "episode_log": "<ws>/epochs/2026-05-30_e0/episodes/v1/episode.jsonl",
+        "export_available": true,
+        "command": "foe view <ws>/epochs/2026-05-30_e0/episodes/v1"
+      },
+      "matchup_grid": {
+        "epoch_id": "2026-05-30_e0",
+        "champion": "v0",
+        "challenger": "v1",
+        "entry_grid": [
+          {
+            "entry_id": "picky_stakeholder_emulated",
+            "parent_drift_loss": 105.5,
+            "child_drift_loss": 642.5,
+            "parent_pass": false,
+            "child_pass": false,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 537.0,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "regressed",
+            "won_by": "v0",
+            "decided_by": "drift"
+          },
+          {
+            "entry_id": "waffles_single",
+            "parent_drift_loss": 60.5,
+            "child_drift_loss": 60.5,
+            "parent_pass": false,
+            "child_pass": false,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 0.0,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "flat",
+            "won_by": null,
+            "decided_by": "pass",
+            "parent_session_id": "sess-v0-waffles",
+            "child_session_id": "sess-v1-waffles"
+          }
+        ],
+        "scalar": {
+          "parent": 70.94,
+          "child": 146.65,
+          "delta": 75.71000000000001,
+          "mean_score": {
+            "parent": 0.0,
+            "child": 0.0,
+            "delta": 0.0
+          },
+          "components": {
+            "drift": 77.13999999999999,
+            "schema": -1.43
+          }
+        },
+        "drift_present": true,
+        "source": "loss_files"
+      },
+      "comparison": {
+        "entries": {
+          "picky_stakeholder_emulated": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 105.5,
+            "decided_by": "drift"
+          },
+          "waffles_single": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 60.5,
+            "decided_by": "pass"
+          }
+        },
+        "champion_sigma": 166.0,
+        "candidate_sigma": 703.0,
+        "delta_sigma": 537.0,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v1",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 75.710000 (champion 70.940000 -> challenger 146.650000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 75.71000000000001,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.94,
+            "challenger_scalar": 146.65,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.94 → 146.65 (+75.71; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 68.5,
+                "schema": 1.43
+              },
+              "challenger": {
+                "drift": 145.64,
+                "schema": 0.0
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": {
+              "judge": "incorporates_feedback",
+              "delta": 24.0
+            },
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "judges": [
+              {
+                "judge_name": "incorporates_feedback",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 34.0,
+                "delta": 24.0
+              },
+              {
+                "judge_name": "omission",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 10.0,
+                "delta": 0.0
+              }
+            ],
+            "primary_driver": "incorporates_feedback"
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": null
+    }
+  },
+  "episodes/candidate/v2": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v2",
+      "found": true,
+      "champion": "v0",
+      "parent": "v0",
+      "structure": "gauntlet",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v2",
+        "tournament_id": "2026-05-30_e0:v0->v2",
+        "mean_score": 0.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "waffles_single",
+            "run_id": "run_v2_waffles",
+            "generation_id": "v2",
+            "drift_loss": 61.0,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 180000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v2",
+        "claims": [
+          {
+            "target": "omission",
+            "kind": "drift",
+            "predicted_direction": "decrease",
+            "predicted_magnitude": "small",
+            "from_rate": 0.5,
+            "to_rate": 0.4,
+            "observed_direction": "decrease",
+            "signed_error": -0.09999999999999998,
+            "hypothesis_match": true,
+            "unpredicted": false,
+            "note": ""
+          }
+        ],
+        "score": {
+          "hits": 1,
+          "total": 1,
+          "fraction": 1.0,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.00 to +0.10",
+          "observed": 0.0
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v2",
+        "slot": null,
+        "episode_log": "<ws>/epochs/2026-05-30_e0/episodes/v2/episode.jsonl",
+        "export_available": false,
+        "command": "foe view <ws>/epochs/2026-05-30_e0/episodes/v2"
+      },
+      "matchup_grid": {
+        "epoch_id": "2026-05-30_e0",
+        "champion": "v0",
+        "challenger": "v2",
+        "entry_grid": [
+          {
+            "entry_id": "picky_stakeholder_emulated",
+            "parent_drift_loss": 105.5,
+            "child_drift_loss": null,
+            "parent_pass": false,
+            "child_pass": null,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": null,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "flat",
+            "won_by": null,
+            "decided_by": null
+          },
+          {
+            "entry_id": "waffles_single",
+            "parent_drift_loss": 60.5,
+            "child_drift_loss": 61.0,
+            "parent_pass": false,
+            "child_pass": false,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 0.5,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "regressed",
+            "won_by": "v0",
+            "decided_by": "drift",
+            "parent_session_id": "sess-v0-waffles",
+            "child_session_id": "sess-v2-waffles"
+          }
+        ],
+        "scalar": {
+          "parent": 70.94,
+          "child": 72.45,
+          "delta": 1.5100000000000051,
+          "mean_score": {
+            "parent": 0.0,
+            "child": 0.0,
+            "delta": 0.0
+          },
+          "components": {
+            "drift": 2.5,
+            "schema": 0.020000000000000018
+          }
+        },
+        "drift_present": true,
+        "source": "loss_files"
+      },
+      "comparison": {
+        "entries": {
+          "picky_stakeholder_emulated": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 105.5,
+            "decided_by": null
+          },
+          "waffles_single": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 60.5,
+            "decided_by": "drift"
+          }
+        },
+        "champion_sigma": 60.5,
+        "candidate_sigma": 61.0,
+        "delta_sigma": 0.5,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v2",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v2",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 1.510000 (champion 70.940000 -> challenger 72.450000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 1.5100000000000051,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.94,
+            "challenger_scalar": 72.45,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.94 → 72.45 (+1.51; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 68.5,
+                "schema": 1.43
+              },
+              "challenger": {
+                "drift": 71.0,
+                "schema": 1.45
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": {
+              "judge": "omission",
+              "delta": -6.0
+            },
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v2",
+            "judges": [
+              {
+                "judge_name": "incorporates_feedback",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 12.0,
+                "delta": 2.0
+              },
+              {
+                "judge_name": "omission",
+                "champion_weighted_loss": 10.0,
+                "challenger_weighted_loss": 4.0,
+                "delta": -6.0
+              }
+            ],
+            "primary_driver": "omission"
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": null
+    }
+  },
+  "identity/epoch": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-08-01_identity",
+      "contract_hash": "hash-identity",
+      "created_at": "2026-08-01T00:00:00Z",
+      "closed": true,
+      "harness": {
+        "entrypoint": "agent.coordinator:app",
+        "mutable_trees": [
+          "agent"
+        ]
+      },
+      "board": [
+        {
+          "entry_id": "b1",
+          "kind": "single_turn",
+          "input_preview": "Task b1.",
+          "expectation_kind": "predicate",
+          "budget_s": null,
+          "weight": 1.0,
+          "tags": []
+        },
+        {
+          "entry_id": "b2",
+          "kind": "single_turn",
+          "input_preview": "Task b2.",
+          "expectation_kind": "predicate",
+          "budget_s": null,
+          "weight": 1.0,
+          "tags": []
+        },
+        {
+          "entry_id": "b3",
+          "kind": "single_turn",
+          "input_preview": "Task b3.",
+          "expectation_kind": "predicate",
+          "budget_s": null,
+          "weight": 1.0,
+          "tags": []
+        },
+        {
+          "entry_id": "q3_metrics_outline",
+          "kind": "single_turn",
+          "input_preview": "Task q3_metrics_outline.",
+          "expectation_kind": "predicate",
+          "budget_s": null,
+          "weight": 1.0,
+          "tags": []
+        }
+      ],
+      "brief": "# Brief\n\n## Goal\n\nIdentity.\n",
+      "scoring": {
+        "promote_margin": 0.02,
+        "pass_rate_monotonicity": true,
+        "tournament": {
+          "structure": "gauntlet",
+          "params": {}
+        }
+      },
+      "board_split": {
+        "configured": false,
+        "enabled": false,
+        "holdout_fraction": 0.0,
+        "holdout_tags": [],
+        "entries": [
+          {
+            "entry_id": "b1",
+            "slice": "train",
+            "weight": 1.0
+          },
+          {
+            "entry_id": "b2",
+            "slice": "train",
+            "weight": 1.0
+          },
+          {
+            "entry_id": "b3",
+            "slice": "train",
+            "weight": 1.0
+          },
+          {
+            "entry_id": "q3_metrics_outline",
+            "slice": "train",
+            "weight": 1.0
+          }
+        ],
+        "train_count": 4,
+        "holdout_count": 0,
+        "total": 4
+      },
+      "tournament": {
+        "structure": "gauntlet",
+        "params": {}
+      },
+      "mutations": [],
+      "experiments": [
+        {
+          "generation_id": "v0",
+          "parent_generation_id": null,
+          "proposed_at": "2026-08-01T00:00:00Z",
+          "patches": {},
+          "decision": "baseline",
+          "promoted": true,
+          "decision_label": "seed (v0)"
+        },
+        {
+          "epoch_id": "2026-08-01_identity",
+          "format_version": 1,
+          "generation_id": "v2",
+          "hypothesis": {
+            "core_idea": "Name the audience up front and demand a slide outline before prose",
+            "expected_drift_movements": [
+              {
+                "direction": "decrease",
+                "kind": "off_topic",
+                "magnitude": "medium"
+              }
+            ],
+            "expected_metric_movements": [],
+            "expected_pass_rate_delta": "+0.10 to +0.20",
+            "modulating": [
+              "prompt.system",
+              "agent.temperature"
+            ],
+            "risks": "A longer prompt may crowd out the task description.",
+            "why": "The judge flags narrative drift whenever the agent starts writing paragraphs first."
+          },
+          "id": "exp_2026-08-01_identity_v2",
+          "outcome": {
+            "champion_eval_mode": "full",
+            "drift_loss_delta": -0.03,
+            "drift_movements": [
+              {
+                "from_rate": 0.5,
+                "hypothesis_match": true,
+                "kind": "off_topic",
+                "note": "",
+                "to_rate": 0.3
+              }
+            ],
+            "eliminated_in_round": null,
+            "evidence": null,
+            "final_rank": null,
+            "generalization_gap": null,
+            "holdout": null,
+            "holdout_loss": null,
+            "match_record": [],
+            "metric_movements": [],
+            "operator_override": false,
+            "operator_override_reason": "",
+            "pass_rate_delta": -0.25,
+            "ran_at": "2026-08-01T01:00:00Z",
+            "rejection_reason": "pass_rate_regressed",
+            "scalar_score_delta": -0.03,
+            "structure": "gauntlet",
+            "tournament_decision": "rejected",
+            "train_loss": null
+          },
+          "parent_generation_id": "v0",
+          "patch_ids": [
+            "p1",
+            "p2"
+          ],
+          "proposed_at": "2026-08-01T00:30:00Z",
+          "round_index": 0,
+          "patches": {
+            "prompt.system": {
+              "id": "p1",
+              "mutation_id": "prompt.system",
+              "op": "replace",
+              "new_content": "a\nb\nc",
+              "new_numeric": null,
+              "new_enum": null,
+              "rationale": "Lead with the audience."
+            },
+            "agent.temperature": {
+              "id": "p2",
+              "mutation_id": "agent.temperature",
+              "op": "set_numeric",
+              "new_content": null,
+              "new_numeric": 0.3,
+              "new_enum": null,
+              "rationale": "Steadier prose."
+            }
+          },
+          "decision": "rejected",
+          "promoted": false,
+          "decision_label": "rejected"
+        }
+      ],
+      "current_champion": "v0",
+      "holdout": null,
+      "delta_scalar_summary": {
+        "champion_spine": null,
+        "gross": -0.03
+      },
+      "journal": "",
+      "goal": "Identity.",
+      "analysis_md": "",
+      "analysis_html_available": false,
+      "analysis_html_inline": ""
+    }
+  },
+  "identity/lineage": {
+    "status": 200,
+    "body": {
+      "generations": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-08-01_identity",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-08-01T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1558.6151292645534,
+          "elo_se": 159.73639641300883,
+          "elo_games": 1
+        },
+        {
+          "generation_id": "v2",
+          "epoch_id": "2026-08-01_identity",
+          "parent_generation_id": "v0",
+          "promoted": false,
+          "created_at": "2026-08-01T00:30:00Z",
+          "decision": "rejected",
+          "decision_label": "rejected",
+          "round_index": 0,
+          "elo": 1441.3848707354466,
+          "elo_se": 159.73639641300883,
+          "elo_games": 1
+        }
+      ]
+    }
+  },
+  "identity/score_trajectory": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-08-01_identity",
+      "points": [
+        {
+          "generation_id": "v0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "scalar": 0.65,
+          "entry_count": 4,
+          "created_at": "2026-08-01T00:00:00Z"
+        },
+        {
+          "generation_id": "v2",
+          "parent_generation_id": "v0",
+          "promoted": false,
+          "scalar": 0.65,
+          "entry_count": 4,
+          "created_at": "2026-08-01T00:30:00Z"
+        }
+      ]
+    }
+  },
+  "identity/tournaments": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-08-01_identity",
+      "structure": "gauntlet",
+      "structure_params": {},
+      "champion_lineage": [
+        "v0"
+      ],
+      "matchups": [
+        {
+          "champion": "v0",
+          "challenger": "v2",
+          "decision": "rejected",
+          "delta_scalar": -0.03,
+          "rejection_reason": "pass_rate_regressed",
+          "hypothesis_core_idea": "Name the audience up front and demand a slide outline before prose",
+          "ran_at": "2026-08-01T01:00:00Z"
+        }
+      ],
+      "tournaments": [
+        {
+          "tournament_id": "2026-08-01_identity:v0->v2",
+          "structure": "gauntlet",
+          "structure_params": {},
+          "competitors": [
+            "v0",
+            "v2"
+          ],
+          "rounds": [],
+          "standings": [],
+          "champion": {
+            "id": "v0",
+            "scalar": null,
+            "eval_mode": "full",
+            "run_ref": "epochs/2026-08-01_identity/generations/v0"
+          }
+        }
+      ]
+    }
+  },
+  "identity/round_timeline": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-08-01_identity",
+      "structure": "gauntlet",
+      "source": "round_index",
+      "rounds": [
+        {
+          "round_index": 0,
+          "champion": {
+            "id": "v0",
+            "scalar": 0.65,
+            "eval_mode": "full",
+            "run_ref": "epochs/2026-08-01_identity/generations/v0",
+            "from_record": true
+          },
+          "challengers": [
+            {
+              "id": "v2",
+              "scalar": 0.65,
+              "promoted": false
+            }
+          ],
+          "structure": "gauntlet",
+          "gate": {
+            "kind": "held",
+            "gen": null
+          },
+          "tournament_id": "2026-08-01_identity:v0->v2",
+          "tournament": {
+            "tournament_id": "2026-08-01_identity:v0->v2",
+            "structure": "gauntlet",
+            "structure_params": {},
+            "competitors": [
+              "v0",
+              "v2"
+            ],
+            "rounds": [],
+            "standings": [],
+            "champion": {
+              "id": "v0",
+              "scalar": null,
+              "eval_mode": "full",
+              "run_ref": "epochs/2026-08-01_identity/generations/v0"
+            }
+          },
+          "source": "round_index"
+        }
+      ],
+      "waterfall": [
+        {
+          "round_index": 0,
+          "from": 0.65,
+          "to": 0.65,
+          "delta": 0.0,
+          "promoted": false,
+          "gen": null
+        }
+      ]
+    }
+  },
+  "identity/racing_field": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-08-01_identity",
+      "present": false
+    }
+  },
+  "identity/candidate/v2": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-08-01_identity",
+      "generation_id": "v2",
+      "found": true,
+      "champion": "v0",
+      "parent": "v0",
+      "structure": "gauntlet",
+      "per_entry": {
+        "epoch_id": "2026-08-01_identity",
+        "generation_id": "v2",
+        "tournament_id": "2026-08-01_identity:v0->v2",
+        "mean_score": 0.75,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "b1",
+            "run_id": "run_v2_b1",
+            "generation_id": "v2",
+            "drift_loss": 0.5,
+            "pass_fail": true,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          },
+          {
+            "entry_id": "b2",
+            "run_id": "run_v2_b2",
+            "generation_id": "v2",
+            "drift_loss": 0.6,
+            "pass_fail": true,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          },
+          {
+            "entry_id": "b3",
+            "run_id": "run_v2_b3",
+            "generation_id": "v2",
+            "drift_loss": 0.7,
+            "pass_fail": true,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          },
+          {
+            "entry_id": "q3_metrics_outline",
+            "run_id": "run_v2_q3_metrics_outline",
+            "generation_id": "v2",
+            "drift_loss": 0.8,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-08-01_identity",
+        "generation_id": "v2",
+        "claims": [
+          {
+            "target": "off_topic",
+            "kind": "drift",
+            "predicted_direction": "decrease",
+            "predicted_magnitude": "medium",
+            "from_rate": 0.5,
+            "to_rate": 0.3,
+            "observed_direction": "decrease",
+            "signed_error": -0.2,
+            "hypothesis_match": true,
+            "unpredicted": false,
+            "note": ""
+          }
+        ],
+        "score": {
+          "hits": 1,
+          "total": 1,
+          "fraction": 1.0,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.10 to +0.20",
+          "observed": -0.25
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-08-01_identity",
+        "generation_id": "v2",
+        "slot": null,
+        "episode_log": "",
+        "export_available": false,
+        "command": ""
+      },
+      "matchup_grid": {
+        "epoch_id": "2026-08-01_identity",
+        "champion": "v0",
+        "challenger": "v2",
+        "entry_grid": [
+          {
+            "entry_id": "b1",
+            "parent_drift_loss": 0.5,
+            "child_drift_loss": 0.5,
+            "parent_pass": true,
+            "child_pass": true,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 0.0,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "flat",
+            "won_by": null,
+            "decided_by": "pass"
+          },
+          {
+            "entry_id": "b2",
+            "parent_drift_loss": 0.6,
+            "child_drift_loss": 0.6,
+            "parent_pass": true,
+            "child_pass": true,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 0.0,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "flat",
+            "won_by": null,
+            "decided_by": "pass"
+          },
+          {
+            "entry_id": "b3",
+            "parent_drift_loss": 0.7,
+            "child_drift_loss": 0.7,
+            "parent_pass": true,
+            "child_pass": true,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 0.0,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "flat",
+            "won_by": null,
+            "decided_by": "pass"
+          },
+          {
+            "entry_id": "q3_metrics_outline",
+            "parent_drift_loss": 0.8,
+            "child_drift_loss": 0.8,
+            "parent_pass": true,
+            "child_pass": false,
+            "parent_score": null,
+            "child_score": null,
+            "parent_metrics": null,
+            "child_metrics": null,
+            "delta": 0.0,
+            "delta_score": null,
+            "score_replicates": 0,
+            "score_se": null,
+            "verdict": "regressed",
+            "won_by": "v0",
+            "decided_by": "pass"
+          }
+        ],
+        "scalar": {
+          "parent": 0.72,
+          "child": 0.69,
+          "delta": -0.030000000000000027,
+          "mean_score": {
+            "parent": 1.0,
+            "child": 0.75,
+            "delta": -0.25
+          },
+          "components": {
+            "drift": -0.029999999999999916,
+            "schema": 0.0
+          }
+        },
+        "drift_present": true,
+        "source": "loss_files"
+      },
+      "comparison": {
+        "entries": {
+          "b1": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 0.5,
+            "decided_by": "pass"
+          },
+          "b2": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 0.6,
+            "decided_by": "pass"
+          },
+          "b3": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 0.7,
+            "decided_by": "pass"
+          },
+          "q3_metrics_outline": {
+            "delta_score": null,
+            "champion_score": null,
+            "candidate_score": null,
+            "score_se": null,
+            "score_replicates": 0,
+            "champion_drift_loss": 0.8,
+            "decided_by": "pass"
+          }
+        },
+        "champion_sigma": 2.6,
+        "candidate_sigma": 2.6,
+        "delta_sigma": 0.0,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v2",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-08-01_identity",
+            "champion": "v0",
+            "challenger": "v2",
+            "decision": "rejected",
+            "reason": "pass-rate regression on entries: q3_metrics_outline",
+            "deciding_rule": "pass_rate_monotonicity",
+            "margin": 0.02,
+            "regressed_predicate": "q3_metrics_outline",
+            "regressed_namespace": null,
+            "delta_scalar": -0.030000000000000027,
+            "delta_pass_rate": -0.25,
+            "champion_scalar": 0.72,
+            "challenger_scalar": 0.69,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "pass",
+                "detail": "0.72 → 0.69 (-0.03; needs ≤ -0.02)",
+                "fired": false
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "fail",
+                "detail": "regressed: q3_metrics_outline",
+                "fired": true
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 0.7,
+                "schema": 0.02
+              },
+              "challenger": {
+                "drift": 0.67,
+                "schema": 0.02
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": null,
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-08-01_identity",
+            "champion": "v0",
+            "challenger": "v2",
+            "judges": [],
+            "primary_driver": null
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": null
+    }
+  },
   "racing_ladder/epoch": {
     "status": 200,
     "body": {
@@ -4905,6 +8286,273 @@
       "scalar": null,
       "drift_present": true,
       "source": "loss_files"
+    }
+  },
+  "racing_ladder/candidate/v3": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-06-01_e0",
+      "generation_id": "v3",
+      "found": true,
+      "champion": "v3",
+      "parent": "v0",
+      "structure": "racing",
+      "per_entry": {
+        "epoch_id": "2026-06-01_e0",
+        "generation_id": "v3",
+        "tournament_id": "2026-06-01_e0:v0->v3",
+        "mean_score": null,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "q3_metrics_outline",
+            "run_id": "run_2026-06-01_e0_v3_q3_metrics_outline",
+            "generation_id": "v3",
+            "drift_loss": 63.5,
+            "pass_fail": false,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": "racing-final",
+            "rung": "final",
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-06-01_e0",
+        "generation_id": "v3",
+        "claims": [],
+        "score": {
+          "hits": 0,
+          "total": 0,
+          "fraction": null,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.00 to +0.10",
+          "observed": 0.0
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-06-01_e0",
+        "generation_id": "v3",
+        "slot": null,
+        "episode_log": "",
+        "export_available": false,
+        "command": ""
+      },
+      "matchup_grid": null,
+      "comparison": {
+        "entries": {},
+        "champion_sigma": null,
+        "candidate_sigma": 63.5,
+        "delta_sigma": null,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v3",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-06-01_e0",
+            "champion": "v0",
+            "challenger": "v3",
+            "decision": "deferred",
+            "reason": "",
+            "deciding_rule": null,
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": null,
+            "delta_pass_rate": null,
+            "champion_scalar": null,
+            "challenger_scalar": null,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "unknown",
+                "detail": "champion or challenger aggregate not found",
+                "fired": false
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "unknown",
+                "detail": "aggregates not found",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "unknown",
+                "detail": "aggregates not found",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": null,
+              "challenger": null
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": null,
+              "challenger": null
+            },
+            "primary_driver": null,
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-06-01_e0",
+            "champion": "v0",
+            "challenger": "v3",
+            "judges": [],
+            "primary_driver": null
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": {
+        "epoch_id": "2026-06-01_e0",
+        "present": true,
+        "structure": "racing",
+        "structure_params": {
+          "eta": 2,
+          "board_fraction": 0.25
+        },
+        "competitors": [
+          {
+            "generation_id": "v0",
+            "seed": 1,
+            "role": "champion"
+          },
+          {
+            "generation_id": "v1",
+            "seed": 2,
+            "role": "challenger"
+          },
+          {
+            "generation_id": "v2",
+            "seed": 3,
+            "role": "challenger"
+          },
+          {
+            "generation_id": "v3",
+            "seed": 4,
+            "role": "challenger"
+          },
+          {
+            "generation_id": "v4",
+            "seed": 5,
+            "role": "challenger"
+          }
+        ],
+        "rounds": [
+          {
+            "stage_index": 0,
+            "label": "Rung 0",
+            "matches": [
+              {
+                "match_id": "rung0",
+                "competitors": [
+                  "v1",
+                  "v2",
+                  "v3",
+                  "v4"
+                ],
+                "survivors": [
+                  "v3",
+                  "v4"
+                ],
+                "cut": [
+                  "v1",
+                  "v2"
+                ],
+                "board_fraction": 0.25,
+                "deltas": {
+                  "v1": 25.0,
+                  "v2": 3.3,
+                  "v3": -0.16,
+                  "v4": 0.002
+                }
+              }
+            ]
+          },
+          {
+            "stage_index": 1,
+            "label": "Rung 1",
+            "matches": [
+              {
+                "match_id": "rung1",
+                "competitors": [
+                  "v3",
+                  "v4"
+                ],
+                "survivors": [
+                  "v3"
+                ],
+                "cut": [
+                  "v4"
+                ],
+                "board_fraction": 0.5,
+                "deltas": {
+                  "v3": 1.0,
+                  "v4": 1.25
+                }
+              }
+            ]
+          },
+          {
+            "stage_index": 2,
+            "label": "Champion gate",
+            "matches": [
+              {
+                "match_id": "racing-final",
+                "competitors": [
+                  "v0",
+                  "v3"
+                ],
+                "winner": "v3",
+                "decision": "promoted",
+                "delta_scalar": -32.19,
+                "board_fraction": 1.0
+              }
+            ]
+          }
+        ],
+        "standings": [],
+        "champion_lineage": [
+          "v0",
+          "v3"
+        ],
+        "source": "reconstructed"
+      }
     }
   },
   "racing_no_records/epoch": {
@@ -8866,6 +12514,313 @@
       "source": "loss_files"
     }
   },
+  "racing_round_settled/candidate/v1": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v1",
+      "found": true,
+      "champion": "v1",
+      "parent": "v0",
+      "structure": "racing",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "tournament_id": "2026-05-30_e0:v0->v1",
+        "mean_score": 1.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "b0",
+            "run_id": "run_2026-05-30_e0_v1_b0",
+            "generation_id": "v1",
+            "drift_loss": 40.0,
+            "pass_fail": true,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "claims": [],
+        "score": {
+          "hits": 0,
+          "total": 0,
+          "fraction": null,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.00 to +0.10",
+          "observed": 0.0
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "slot": null,
+        "episode_log": "",
+        "export_available": false,
+        "command": ""
+      },
+      "matchup_grid": null,
+      "comparison": {
+        "entries": {},
+        "champion_sigma": null,
+        "candidate_sigma": 40.0,
+        "delta_sigma": null,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v1",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "decision": "promoted",
+            "reason": "",
+            "deciding_rule": null,
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": -14.0,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 54.0,
+            "challenger_scalar": 40.0,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "pass",
+                "detail": "54.00 → 40.00 (-14.00; needs ≤ -0.01)",
+                "fired": false
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "pass",
+                "detail": "all preserved",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "unknown",
+                "detail": "namespace aggregates not recorded",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 54.0
+              },
+              "challenger": {
+                "drift": 40.0
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": null,
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "judges": [],
+            "primary_driver": null
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": {
+        "epoch_id": "2026-05-30_e0",
+        "present": true,
+        "structure": "racing",
+        "structure_params": {
+          "board_fraction": 0.5,
+          "eta": 2,
+          "field_size": 4
+        },
+        "competitors": [
+          {
+            "generation_id": "v0",
+            "seed": 1,
+            "role": "champion"
+          },
+          {
+            "generation_id": "v1",
+            "seed": 2,
+            "role": "challenger"
+          },
+          {
+            "generation_id": "v2",
+            "seed": 3,
+            "role": "challenger"
+          },
+          {
+            "generation_id": "v3",
+            "seed": 4,
+            "role": "challenger"
+          }
+        ],
+        "rounds": [
+          {
+            "stage_index": 0,
+            "label": "Rung 0",
+            "matches": [
+              {
+                "match_id": "rung0",
+                "competitors": [
+                  "v0",
+                  "v1",
+                  "v2",
+                  "v3"
+                ],
+                "survivors": [
+                  "v1",
+                  "v2"
+                ],
+                "cut": [
+                  "v3"
+                ],
+                "board_fraction": 0.5
+              }
+            ]
+          },
+          {
+            "stage_index": 1,
+            "label": "Rung 1",
+            "matches": [
+              {
+                "match_id": "rung1",
+                "competitors": [
+                  "v1",
+                  "v2"
+                ],
+                "survivors": [
+                  "v1"
+                ],
+                "cut": [
+                  "v2"
+                ],
+                "board_fraction": 1.0
+              }
+            ]
+          },
+          {
+            "stage_index": 2,
+            "label": "Champion gate",
+            "matches": [
+              {
+                "match_id": "racing-final",
+                "competitors": [
+                  "v0",
+                  "v1"
+                ],
+                "winner": "v1",
+                "decision": "promoted",
+                "board_fraction": 1.0
+              }
+            ]
+          }
+        ],
+        "standings": [
+          {
+            "generation_id": "v1",
+            "rank": 1,
+            "scalar": 40.0,
+            "status": "alive"
+          },
+          {
+            "generation_id": "v0",
+            "rank": 2,
+            "scalar": 54.0,
+            "status": "alive",
+            "role": "champion"
+          }
+        ],
+        "champion_lineage": [
+          "v0",
+          "v1"
+        ],
+        "source": "reconstructed"
+      }
+    }
+  },
   "racing_round_live/epoch": {
     "status": 200,
     "body": {
@@ -10713,6 +14668,201 @@
       "source": "loss_files"
     }
   },
+  "single_elim/candidate/v1": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v1",
+      "found": true,
+      "champion": "v1",
+      "parent": "v0",
+      "structure": "single_elim",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "tournament_id": "2026-05-30_e0:v0->v1",
+        "mean_score": 1.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "b1",
+            "run_id": "run_2026-05-30_e0_v1_b1",
+            "generation_id": "v1",
+            "drift_loss": 71.0,
+            "pass_fail": true,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "claims": [],
+        "score": {
+          "hits": 0,
+          "total": 0,
+          "fraction": null,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.00 to +0.10",
+          "observed": 0.0
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "slot": null,
+        "episode_log": "",
+        "export_available": false,
+        "command": ""
+      },
+      "matchup_grid": null,
+      "comparison": {
+        "entries": {},
+        "champion_sigma": null,
+        "candidate_sigma": 71.0,
+        "delta_sigma": null,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v1",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 1.0,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.0,
+            "challenger_scalar": 71.0,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 70.0
+              },
+              "challenger": {
+                "drift": 71.0
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": null,
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "judges": [],
+            "primary_driver": null
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": null
+    }
+  },
   "swiss/epoch": {
     "status": 200,
     "body": {
@@ -11556,6 +15706,201 @@
       },
       "drift_present": true,
       "source": "loss_files"
+    }
+  },
+  "swiss/candidate/v1": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v1",
+      "found": true,
+      "champion": "v1",
+      "parent": "v0",
+      "structure": "swiss",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "tournament_id": "2026-05-30_e0:v0->v1",
+        "mean_score": 1.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "b1",
+            "run_id": "run_2026-05-30_e0_v1_b1",
+            "generation_id": "v1",
+            "drift_loss": 71.0,
+            "pass_fail": true,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "claims": [],
+        "score": {
+          "hits": 0,
+          "total": 0,
+          "fraction": null,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.00 to +0.10",
+          "observed": 0.0
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "slot": null,
+        "episode_log": "",
+        "export_available": false,
+        "command": ""
+      },
+      "matchup_grid": null,
+      "comparison": {
+        "entries": {},
+        "champion_sigma": null,
+        "candidate_sigma": 71.0,
+        "delta_sigma": null,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v1",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 1.0,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.0,
+            "challenger_scalar": 71.0,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 70.0
+              },
+              "challenger": {
+                "drift": 71.0
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": null,
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "judges": [],
+            "primary_driver": null
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": null
     }
   },
   "double_elim/epoch": {
@@ -12882,6 +17227,201 @@
       },
       "drift_present": true,
       "source": "loss_files"
+    }
+  },
+  "double_elim/candidate/v1": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v1",
+      "found": true,
+      "champion": "v1",
+      "parent": "v0",
+      "structure": "double_elim",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "tournament_id": "2026-05-30_e0:v0->v1",
+        "mean_score": 1.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "b1",
+            "run_id": "run_2026-05-30_e0_v1_b1",
+            "generation_id": "v1",
+            "drift_loss": 71.0,
+            "pass_fail": true,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "claims": [],
+        "score": {
+          "hits": 0,
+          "total": 0,
+          "fraction": null,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.00 to +0.10",
+          "observed": 0.0
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "slot": null,
+        "episode_log": "",
+        "export_available": false,
+        "command": ""
+      },
+      "matchup_grid": null,
+      "comparison": {
+        "entries": {},
+        "champion_sigma": null,
+        "candidate_sigma": 71.0,
+        "delta_sigma": null,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v1",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 1.0,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.0,
+            "challenger_scalar": 71.0,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 70.0
+              },
+              "challenger": {
+                "drift": 71.0
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": null,
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "judges": [],
+            "primary_driver": null
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": null
     }
   },
   "swiss_proposing/epoch": {
@@ -16913,6 +21453,314 @@
       },
       "drift_present": true,
       "source": "loss_files"
+    }
+  },
+  "racing_field/candidate/v1": {
+    "status": 200,
+    "body": {
+      "epoch_id": "2026-05-30_e0",
+      "generation_id": "v1",
+      "found": true,
+      "champion": "v1",
+      "parent": "v0",
+      "structure": "racing",
+      "per_entry": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "tournament_id": "2026-05-30_e0:v0->v1",
+        "mean_score": 1.0,
+        "drift_present": true,
+        "facet_scores": {
+          "facets": {},
+          "overall": null
+        },
+        "entries": [
+          {
+            "entry_id": "b1",
+            "run_id": "run_2026-05-30_e0_v1_b1",
+            "generation_id": "v1",
+            "drift_loss": 71.0,
+            "pass_fail": true,
+            "score": null,
+            "metrics": null,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": false,
+            "match_id": null,
+            "rung": null,
+            "cached": false,
+            "source_epoch": null,
+            "source_run": null,
+            "facets": []
+          }
+        ]
+      },
+      "hypothesis_accuracy": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "claims": [],
+        "score": {
+          "hits": 0,
+          "total": 0,
+          "fraction": null,
+          "brier": null
+        },
+        "pass_rate": {
+          "predicted": "+0.00 to +0.10",
+          "observed": 0.0
+        }
+      },
+      "episode_export": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "slot": null,
+        "episode_log": "",
+        "export_available": false,
+        "command": ""
+      },
+      "matchup_grid": null,
+      "comparison": {
+        "entries": {},
+        "champion_sigma": null,
+        "candidate_sigma": 71.0,
+        "delta_sigma": null,
+        "drift_present": true
+      },
+      "gates": [
+        {
+          "champion": "v0",
+          "challenger": "v1",
+          "role": "challenger",
+          "gate": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "decision": "rejected",
+            "reason": "challenger regressed: loss rose by 1.000000 (champion 70.000000 -> challenger 71.000000); a promotion needs the loss to drop by at least 0.010000",
+            "deciding_rule": "scalar_margin",
+            "margin": 0.01,
+            "regressed_predicate": null,
+            "regressed_namespace": null,
+            "delta_scalar": 1.0,
+            "delta_pass_rate": 0.0,
+            "champion_scalar": 70.0,
+            "challenger_scalar": 71.0,
+            "live": null,
+            "rules": [
+              {
+                "id": "regression_suite",
+                "label": "Regression suite",
+                "status": "skipped",
+                "detail": "disabled",
+                "fired": false
+              },
+              {
+                "id": "scalar_margin",
+                "label": "Scalar margin",
+                "status": "fail",
+                "detail": "70.00 → 71.00 (+1.00; needs ≤ -0.01)",
+                "fired": true
+              },
+              {
+                "id": "pass_rate_monotonicity",
+                "label": "Pass-rate monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              },
+              {
+                "id": "namespace_monotonicity",
+                "label": "Namespace monotonicity",
+                "status": "not_reached",
+                "detail": "not reached (an earlier rule fired)",
+                "fired": false
+              }
+            ],
+            "scalar_components": {
+              "champion": {
+                "drift": 70.0
+              },
+              "challenger": {
+                "drift": 71.0
+              }
+            },
+            "scalar_decomposition": {
+              "present": false,
+              "fail_open": false,
+              "champion": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              },
+              "challenger": {
+                "scalar": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                },
+                "drift": {
+                  "present": false,
+                  "kind": "builtin",
+                  "source": "built-in formula",
+                  "transforms": [],
+                  "fail_open": false,
+                  "fallback_reason": null,
+                  "raw": null
+                }
+              }
+            },
+            "primary_driver": null,
+            "rating": {
+              "present": false
+            },
+            "override": {
+              "present": false,
+              "action": null,
+              "reason": null
+            }
+          },
+          "judge_comparison": {
+            "epoch_id": "2026-05-30_e0",
+            "champion": "v0",
+            "challenger": "v1",
+            "judges": [],
+            "primary_driver": null
+          }
+        }
+      ],
+      "drilldown": null,
+      "racing_field": {
+        "epoch_id": "2026-05-30_e0",
+        "present": true,
+        "structure": "racing",
+        "structure_params": {
+          "rungs": [
+            {
+              "fraction": 0.5,
+              "keep": 0.5
+            },
+            {
+              "fraction": 1.0,
+              "keep": 0.5
+            }
+          ]
+        },
+        "competitors": [
+          {
+            "generation_id": "v0",
+            "seed": 1,
+            "role": "champion"
+          },
+          {
+            "generation_id": "v1",
+            "seed": 2,
+            "role": "challenger"
+          },
+          {
+            "generation_id": "v2",
+            "seed": 3,
+            "role": "challenger"
+          },
+          {
+            "generation_id": "v3",
+            "seed": 4,
+            "role": "challenger"
+          }
+        ],
+        "rounds": [
+          {
+            "round_index": 0,
+            "label": "Rung 1",
+            "matches": [
+              {
+                "match_id": "rung1",
+                "competitors": [
+                  "v0",
+                  "v1",
+                  "v2",
+                  "v3"
+                ],
+                "survivors": [
+                  "v0",
+                  "v1"
+                ],
+                "cut": [
+                  "v2",
+                  "v3"
+                ],
+                "board_fraction": 0.5
+              }
+            ]
+          },
+          {
+            "round_index": 1,
+            "label": "Rung 2",
+            "matches": [
+              {
+                "match_id": "rung2",
+                "competitors": [
+                  "v0",
+                  "v1"
+                ],
+                "survivors": [
+                  "v1"
+                ],
+                "cut": [
+                  "v0"
+                ],
+                "board_fraction": 1.0
+              }
+            ]
+          },
+          {
+            "stage_index": 2,
+            "label": "Champion gate",
+            "matches": [
+              {
+                "match_id": "racing-final",
+                "competitors": [
+                  "v0",
+                  "v1"
+                ],
+                "winner": "v1",
+                "decision": "promoted",
+                "board_fraction": 1.0
+              }
+            ]
+          }
+        ],
+        "standings": [
+          {
+            "generation_id": "v1",
+            "rank": 1,
+            "scalar": 0.39,
+            "status": "champion"
+          }
+        ],
+        "champion_lineage": [
+          "v0",
+          "v1"
+        ],
+        "source": "reconstructed"
+      }
     }
   },
   "field_count/lineage": {

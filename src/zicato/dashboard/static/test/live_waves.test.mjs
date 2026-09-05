@@ -14,6 +14,7 @@ const {
   rounds, dag, live, STRUCT, EPOCH_ID, freshHb,
   freshState, allByClass, svgsByClass, mountLiveShell, SE_STRUCT, RACING_STRUCT,
   installFixtureMap, liveRacingField, liveElimField, HERO_EPOCH, recordedRoutes,
+  recorded, dossierUrl, FIXTURE,
 } = await import('./fixtures.mjs');
 
 // ====================================================================
@@ -386,27 +387,15 @@ test('standings table (LIVE elim): a mid-run champion/eliminated standing is NOT
 
 test('cached champion: per-entry cached/source_epoch surfaces a "cached · from <epoch>" badge + a fast eval-mode tag (no "no entries scored")', async () => {
   freshState();
-  const CC_EPOCH = '2026-06-02_cc';
-  const F = {
-    '/api/epoch': { epoch_id: CC_EPOCH, closed: true, goal: 'g',
-      tournament: { structure: 'racing', params: {} },
-      experiments: [{ generation_id: 'v0', parent_generation_id: '', outcome: { decision: 'baseline' } }], board: [] },
-    '/api/lineage': { generations: [
-      { generation_id: 'v0', epoch_id: CC_EPOCH, parent_generation_id: '', promoted: true },
-    ] },
-    '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 50 }] },
-    '/api/tournaments': { epoch_id: CC_EPOCH, champion_lineage: ['v0'], matchups: [], tournaments: [] },
-    // the champion v0's per-board results are CACHED from a prior epoch.
-    [`/api/generation/${CC_EPOCH}/v0/per-entry`]: { entries: [
-      { entry_id: 'b0', run_id: 'r0', drift_loss: 40, pass_fail: true, cached: true, source_epoch: '2026-06-01_e0', source_run: 'run_prior' },
-    ] },
-  };
+  // the champion v0's per-board results were REUSED from a prior epoch (the
+  // cached_champion workspace records the fast-mode rows).
+  const F = { ...FIXTURE, [dossierUrl(EPOCH_ID, 'v0')]: recorded('cached_champion/candidate/v0') };
   installFixtureMap(F);
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
-  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: CC_EPOCH, gen: 'v0' });
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v0' });
   assert(/cached/i.test(host.textContent), 'a cached champion shows a "cached" badge');
-  assert(/2026-06-01_e0/.test(host.textContent), 'the badge names the source epoch');
+  assert(/2026-05-29_e0/.test(host.textContent), 'the badge names the source epoch');
   assert(/fast — champion reused/.test(host.textContent), 'a fast-mode header tag reads "fast — champion reused"');
   assert(!/no per-entry scores|no board entries scored/i.test(host.textContent),
     'a cached champion does NOT read "no board entries scored"');

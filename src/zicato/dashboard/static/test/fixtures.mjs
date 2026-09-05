@@ -52,6 +52,26 @@ export function consoleJoins() {
   return out;
 }
 
+// The URL the candidate page fetches one candidate's dossier from.
+export function dossierUrl(epochId, gen, entry) {
+  const base = `/api/epoch/${epochId}/candidate/${gen}`;
+  return entry ? `${base}?entry=${entry}` : base;
+}
+
+// The shared fixture map with one recorded dossier of the console workspace
+// (`gen`, with the `entry` drill-down when given) replaced by a copy
+// `patch(dossier)` has edited in place. A test that pins how a panel renders
+// one served field (a fail-open decomposition, a re-weighted judge, a facet
+// slice) varies that field on the recorded payload rather than writing a
+// dossier by hand; a shape the recordings never carry is added as a
+// scenario workspace instead.
+export function dossierVariant(gen, entry, patch) {
+  const url = dossierUrl(EPOCH_ID, gen, entry);
+  const dossier = recorded(`console/candidate/${gen}${entry ? '/' + entry : ''}`);
+  if (patch) patch(dossier);
+  return { ...FIXTURE, [url]: dossier };
+}
+
 export const FIXTURE = {
   ...consoleJoins(),
   '/api/epoch': {

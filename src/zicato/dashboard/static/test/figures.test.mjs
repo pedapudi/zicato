@@ -10,7 +10,7 @@ installDom();
 
 const {
   router, svg, ui, data, tree, svgEl,
-  rounds, dag, hovercard, live, recorded, recordedRoutes, elimCase, structureFixture, EPOCH_ID,
+  rounds, dag, hovercard, live, recorded, recordedRoutes, elimCase, structureFixture, dossierVariant, dossierUrl, EPOCH_ID,
   FIXTURE, installFetch, freshState, allByClass, readCssAsync, readCss,
   svgsByClass, SE_STRUCT, structFixture, installFixtureMap,
 } = await import('./fixtures.mjs');
@@ -858,19 +858,29 @@ test('#18 ui.scoreFmt: finite score formats; absent score reads "—"', () => {
 
 // A scored fixture: v1 carries a CONTINUOUS score + precision/recall on
 // waffles_single and a BOOL-ONLY entry on picky (no score / metrics).
+// The recorded v1 dossier with waffles_single scored on both sides (the
+// champion's row of the comparison too) and picky_stakeholder_emulated
+// bool-only, so the per-board figure carries one scored row and one ✓/✗ row.
 function scoredFixture() {
-  const F = { ...FIXTURE };
+  const F = dossierVariant('v1', null, (d) => {
+    d.per_entry.mean_score = 0.71;
+    for (const e of d.per_entry.entries) {
+      if (e.entry_id !== 'waffles_single') continue;
+      e.pass_fail = true; e.wall_clock_budget_exceeded = false;
+      e.score = 0.81; e.metrics = { precision: 0.88, recall: 0.74 };
+    }
+    Object.assign(d.comparison.entries.waffles_single, { delta_score: 0.19, champion_score: 0.62, candidate_score: 0.81, score_replicates: 1 });
+  });
+  // the board view reads the per-entry rows of both sides.
   F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = {
     epoch_id: EPOCH_ID, generation_id: 'v1', mean_score: 0.71, entries: [
       { entry_id: 'waffles_single', run_id: 'run_v1_waffles', drift_loss: 60.5, pass_fail: true,
         runtime_ms: 180000, wall_clock_budget_exceeded: false,
         score: 0.81, metrics: { precision: 0.88, recall: 0.74 } },
-      // bool-only entry: no score / metrics — must keep the pass/fail display.
       { entry_id: 'picky_stakeholder_emulated', run_id: 'run_v1_picky', drift_loss: 105.5,
         pass_fail: false, runtime_ms: 360000, wall_clock_budget_exceeded: false },
     ],
   };
-  // champion v0 also has a scored waffles + a bool-only picky.
   F[`/api/generation/${EPOCH_ID}/v0/per-entry`] = {
     epoch_id: EPOCH_ID, generation_id: 'v0', mean_score: 0.62, entries: [
       { entry_id: 'waffles_single', run_id: 'run_v0_waffles', drift_loss: 70.0, pass_fail: true,
@@ -956,8 +966,9 @@ test('#18 candidate digest: a CHANGED score repaints (the score is folded into t
   // move ONLY the score (drift_loss / pass unchanged) → the digest must flip.
   freshState();
   const F2 = scoredFixture();
-  F2[`/api/generation/${EPOCH_ID}/v1/per-entry`].entries[0].score = 0.42;
-  F2[`/api/generation/${EPOCH_ID}/v1/per-entry`].entries[0].metrics = { precision: 0.40, recall: 0.45 };
+  const scored = F2[dossierUrl(EPOCH_ID, 'v1')].per_entry.entries.find((e) => e.entry_id === 'waffles_single');
+  scored.score = 0.42;
+  scored.metrics = { precision: 0.40, recall: 0.45 };
   installFixtureMap(F2);
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
   assert(host.getAttribute('data-t-digest') !== digest1, 'a moved score flips the digest (a real repaint, no flashing bug)');

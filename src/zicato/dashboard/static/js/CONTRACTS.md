@@ -137,6 +137,16 @@ The drill-down / lazy endpoints (unchanged):
 - `GET /api/search` — **no client and no CLI command read it.** Consuming
   it requires a search affordance in the chrome and a results route; the
   console has neither.
+- `GET /api/epoch/{epoch}/candidate/{gen}[?entry=<id>]` — one candidate's
+  dossier (`D.candidateDossier()`), the one read the candidate page makes
+  per candidate shown: `per_entry`, `hypothesis_accuracy`, `episode_export`,
+  `matchup_grid` against the reigning champion, the `comparison` projected
+  from it (per-entry champion figures and the like-for-like drift sums),
+  `gates` (each `{champion, challenger, role, gate, judge_comparison}` — the
+  candidate's own round as `challenger`, then each round it defended as
+  `champion`), the `drilldown` of `?entry=` (`expectations`, `judges`,
+  `header`) and `racing_field` on a racing epoch. Every field is what the
+  granular route for it serves; the server joins, the page renders.
 - `GET /api/matchup-grid/{epoch}/{champion}/{challenger}` — the
   per-entry A/B grid for a **completed** matchup, read straight off the
   persisted per-run loss files (NOT the SQLite index). `/api/tournaments/{gen}`
@@ -209,10 +219,11 @@ The drill-down / lazy endpoints (unchanged):
 
   The renderers are the epoch publication (`js/views/publication.js`)
   and the candidate dossier (`js/views/candidate.js`, which feeds the
-  lifecycle figure in `js/dag.js`). The dossier reads
-  ONE grid for its champion comparison — it does not fetch the
-  champion's per-entry rows to join and slice them itself. A malformed
-  coordinate degrades to an empty grid (HTTP 200), never a 500.
+  lifecycle figure in `js/dag.js`). The dossier receives its grid inside
+  the candidate payload (`/api/epoch/{epoch}/candidate/{gen}`) — it does
+  not fetch the champion's per-entry rows to join and slice them itself. A
+  malformed coordinate degrades to an empty grid at HTTP 200 rather than a
+  500.
 - `GET /api/generation/{epoch}/{generation}/per-entry` also carries
   `drift_present` — the same flag, scoped to one generation: true when
   any of its runs recorded a drift event or a non-zero drift loss. The

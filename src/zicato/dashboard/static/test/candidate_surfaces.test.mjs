@@ -12,7 +12,7 @@ const {
   router, svg, ui, shell, data, tree,
   compare, coreState, bus, rounds, dag, live,
   recorded, EPOCH_ID, FIXTURE, lookupFixture, installFetch, freshState,
-  allByClass, svgsByClass, mountLiveShell, installFixtureMap,
+  allByClass, svgsByClass, mountLiveShell, installFixtureMap, dossierVariant, dossierUrl,
 } = await import('./fixtures.mjs');
 
 // ---- router: hierarchical path + the compare (cmp) target ----------
@@ -128,12 +128,22 @@ test('candidate view: the promote gate is ON the candidate page, stacked, no ove
 
 // ---- #19: scalar-provenance decomposition on the gate panel -------------
 
+// The scalar-provenance decomposition of a round whose challenger's pass term
+// was reshaped by a pow transform and its drift by a harmonic drift transform,
+// with the champion on the built-in formula.
+const TRANSFORMED_DECOMPOSITION = { present: true, fail_open: false,
+  champion: { scalar: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null },
+              drift: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null } },
+  challenger: { scalar: { present: true, kind: 'transform', source: 'pow(2.0)', transforms: [{ kind: 'pass', op: 'pow(2.0)' }], fail_open: false, fallback_reason: null },
+                drift: { present: true, kind: 'transform', source: 'drift transform', transforms: [{ kind: 'looping_reasoning', op: 'harmonic' }], fail_open: false, fallback_reason: null } } };
+
 test('#19 candidate gate: the scalar decomposition names the transform that shaped each side', async () => {
-  freshState(); installFetch();
+  freshState();
+  installFixtureMap(dossierVariant('v1', null, (d) => { d.gates[0].gate.scalar_decomposition = TRANSFORMED_DECOMPOSITION; }));
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
-  // the decomposition block rendered (the v0/v1 gate fixture carries transforms).
+  // the decomposition block rendered (the gate carries transforms).
   const decomp = allByClass(host, 'dn-scalar-decomp')[0];
   assert(decomp, 'the scalar-provenance decomposition rendered when a transform fired');
   assert(decomp.textContent.includes('Scalar provenance'), 'the decomposition is headed');
@@ -148,17 +158,14 @@ test('#19 candidate gate: the scalar decomposition names the transform that shap
 
 test('#19 candidate gate: a FAIL-OPEN plugin is flagged prominently (banner + caution row)', async () => {
   freshState();
-  const F = { ...FIXTURE };
-  // Override the v0/v1 gate so the challenger's Seam-2 plugin FAILED OPEN.
-  F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = {
-    ...FIXTURE[`/api/round/${EPOCH_ID}/v0/v1/gate`],
-    scalar_decomposition: { present: true, fail_open: true,
+  // The v0/v1 gate with the challenger's scalar plugin FAILED OPEN.
+  installFixtureMap(dossierVariant('v1', null, (d) => {
+    d.gates[0].gate.scalar_decomposition = { present: true, fail_open: true,
       champion: { scalar: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null },
                   drift: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null } },
       challenger: { scalar: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: true, fallback_reason: 'raised ValueError' },
-                    drift: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null } } },
-  };
-  installFixtureMap(F);
+                    drift: { present: true, kind: 'builtin', source: 'built-in formula', transforms: [], fail_open: false, fallback_reason: null } } };
+  }));
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
@@ -174,11 +181,8 @@ test('#19 candidate gate: a FAIL-OPEN plugin is flagged prominently (banner + ca
 
 test('#19 candidate gate: a pre-#19 / built-in round renders NO decomposition (back-compat clean)', async () => {
   freshState();
-  const F = { ...FIXTURE };
   // A gate payload carrying no scalar_decomposition key at all.
-  const { scalar_decomposition: _drop, ...noProv } = FIXTURE[`/api/round/${EPOCH_ID}/v0/v1/gate`];
-  F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = noProv;
-  installFixtureMap(F);
+  installFixtureMap(dossierVariant('v1', null, (d) => { delete d.gates[0].gate.scalar_decomposition; }));
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
@@ -285,39 +289,33 @@ test('candidate view: the dossier reads as one organized layout — coordinated 
 // and a "settled comparisons appear once boards finish" affordance, with the
 // settled dumbbell/gate comparisons gated on landed data.
 test('candidate view (RACING): an in-flight candidate ghosts a PROJECTED radar + surfaces the racing affordance (not a bare dossier)', async () => {
-  freshState(); installFetch();
-  // an in-flight racer v3 (champion v0) with NO settled scalar yet — only a live
-  // PROJECTED standing — but a recorded gate (scalar_components) so the silhouette
+  freshState();
+  // v1 racing in flight (champion v0) with NO settled scalar yet — only a live
+  // PROJECTED standing — but a gate with scalar_components so the silhouette
   // forms ≥3 axes and can ghost. Per-entry has ONE landed board (pass_fail) so a
   // pass-rate axis lands too; the rest stream.
-  const F = { ...FIXTURE };
-  F['/api/epoch'] = { ...FIXTURE['/api/epoch'],
-    tournament: { structure: 'racing', params: {} },
-    experiments: [...FIXTURE['/api/epoch'].experiments, { generation_id: 'v3', parent_generation_id: 'v0', outcome: {}, decision: null, promoted: null }] };
-  F['/api/lineage'] = { generations: [...FIXTURE['/api/lineage'].generations,
-    { generation_id: 'v3', epoch_id: EPOCH_ID, parent_generation_id: 'v0', promoted: false }] };
-  // v3 is NOT in the score-trajectory → no settled scalar (it is racing).
-  F[`/api/generation/${EPOCH_ID}/v3/per-entry`] = { epoch_id: EPOCH_ID, generation_id: 'v3', entries: [
-    { entry_id: 'waffles_single', run_id: 'run_v3_waffles', drift_loss: 58.0, pass_fail: true, runtime_ms: 120000, wall_clock_budget_exceeded: false },
-  ] };
-  F[`/api/round/${EPOCH_ID}/v0/v3/gate`] = { decision: 'pending', delta_scalar: -2.0, delta_pass_rate: 0.5,
-    rules: [{ id: 'scalar_margin', label: 'Scalar margin', status: 'not_reached', fired: false }],
-    scalar_components: { champion: { drift: 68.5, schema: 1.43 }, challenger: { drift: 60.0, schema: 1.0 } } };
-  globalThis.fetch = async (path) => {
-    const v = lookupFixture(F, path);
-    if (v !== undefined) return { ok: true, json: async () => v };
-    return { ok: false, status: 404, json: async () => ({ error: 'nf' }) };
-  };
+  const F = dossierVariant('v1', null, (d) => {
+    d.per_entry.entries = [
+      { entry_id: 'waffles_single', run_id: 'run_v1_waffles', generation_id: 'v1', drift_loss: 58.0, pass_fail: true, score: null, metrics: null, runtime_ms: 120000, wall_clock_budget_exceeded: false, match_id: null, rung: null, cached: false, source_epoch: null, source_run: null, facets: [] },
+    ];
+    d.gates[0].gate = { ...d.gates[0].gate, decision: 'pending', deciding_rule: null, delta_scalar: -2.0, delta_pass_rate: 0.5,
+      rules: [{ id: 'scalar_margin', label: 'Scalar margin', status: 'not_reached', fired: false }],
+      scalar_components: { champion: { drift: 68.5, schema: 1.43 }, challenger: { drift: 60.0, schema: 1.0 } } };
+  });
+  F['/api/epoch'] = { ...FIXTURE['/api/epoch'], tournament: { structure: 'racing', params: {} } };
+  // v1 is NOT in the score-trajectory → no settled scalar (it is racing).
+  F['/api/score-trajectory'] = { points: [{ generation_id: 'v0', scalar: 70.94 }, { generation_id: 'v2', scalar: 72.45 }] };
+  installFixtureMap(F);
   // the LIVE active tournament (racing) for THIS epoch with a projected standing
-  // for v3 — boards still streaming (3 of 8 scored).
+  // for v1 — boards still streaming (3 of 8 scored).
   coreState.state.activeTournament = { epoch_id: EPOCH_ID, structure: 'racing',
-    projected: { v3: { scalar: 60.0, boards_done: 3, boards_total: 8 } } };
+    projected: { v1: { scalar: 60.0, boards_done: 3, boards_total: 8 } } };
   coreState.state.heartbeat = { phase: 'tournament:running', epoch_id: EPOCH_ID, ts: Date.now() };
-  coreState.state.activeRuns = [{ generation_id: 'v3', entry_id: 'picky_stakeholder_emulated', run_id: 'run_v3_picky' }];
+  coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'picky_stakeholder_emulated', run_id: 'run_v1_picky' }];
   try {
     const candidate = await import('../js/views/candidate.js');
     const host = document.createElement('div');
-    await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v3' });
+    await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
     // the radar still renders (the projected silhouette), GHOSTED via dn-proj.
     const radar = svgsByClass(host, 'dn-radar')[0];
     assert(radar, 'a projected radar silhouette renders for the in-flight candidate (not omitted)');
@@ -1720,12 +1718,9 @@ test('under-render: a NEW candidate folded into AppState repaints the tree (no h
 
 // The base fixture carries no facet_scores; this adds them to v1.
 function withFacets(facets, overall) {
-  const F = { ...FIXTURE };
-  F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = {
-    ...FIXTURE[`/api/generation/${EPOCH_ID}/v1/per-entry`],
-    facet_scores: { facets, overall: overall === undefined ? null : overall },
-  };
-  return F;
+  return dossierVariant('v1', null, (d) => {
+    d.per_entry.facet_scores = { facets, overall: overall === undefined ? null : overall };
+  });
 }
 
 const OVERALL = { scalar: 0.69, mean_score: 0.61, scored_count: 3, entry_count: 4 };
@@ -1920,11 +1915,7 @@ const CMP_FIXTURE = {
 };
 
 function withJudgeComparison(cmp) {
-  const F = Object.assign({}, FIXTURE);
-  const key = `/api/round/${EPOCH_ID}/v0/v1/per-judge-comparison`;
-  if (cmp !== null) F[key] = cmp;
-  else delete F[key];
-  return F;
+  return dossierVariant('v1', null, (d) => { d.gates[0].judge_comparison = cmp; });
 }
 
 test('A5 · perJudgeComparisonBlock: renders the full per-judge ledger and FLAGS the server’s primary driver', () => {
@@ -2035,10 +2026,10 @@ const RACING_FIELD = {
 };
 
 function racingFixture() {
-  const F = Object.assign({}, FIXTURE);
+  const F = dossierVariant('v1', null, (d) => { d.racing_field = RACING_FIELD; });
+  F[dossierUrl(EPOCH_ID, 'v2')] = Object.assign(recorded('console/candidate/v2'), { racing_field: RACING_FIELD });
   F['/api/epoch'] = RACING_EPOCH;
   F[`/api/epoch?epoch=${EPOCH_ID}`] = RACING_EPOCH;
-  F[`/api/epoch/${EPOCH_ID}/racing-field`] = RACING_FIELD;
   return F;
 }
 
@@ -2080,11 +2071,11 @@ const PER_JUDGE = {
 };
 
 function drillFixture(perJudge) {
-  const F = Object.assign({}, FIXTURE);
-  F[`/api/run/${EPOCH_ID}/v1/${DRILL_ENTRY}/per-judge`] = perJudge;
-  F[`/api/run/${EPOCH_ID}/v1/${DRILL_ENTRY}/expectations`] = { outcomes: [] };
-  F[`/api/run/${EPOCH_ID}/v1/${DRILL_ENTRY}/header`] = { adk_session_id: '' };
-  return F;
+  return dossierVariant('v1', DRILL_ENTRY, (d) => {
+    d.drilldown.judges = perJudge;
+    d.drilldown.expectations = { outcomes: [] };
+    d.drilldown.header = { adk_session_id: '' };
+  });
 }
 
 test('A17 · the per-entry drill renders RAW and WEIGHT beside the weighted loss', async () => {

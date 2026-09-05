@@ -20,7 +20,7 @@ import { installDom, test, run, assert, assertEqual, assertDeep } from './harnes
 
 installDom();
 
-const { router, EPOCH_ID, freshState, allByClass, installFixtureMap } = await import('./fixtures.mjs');
+const { router, EPOCH_ID, freshState, allByClass, installFixtureMap, dossierUrl, recorded } = await import('./fixtures.mjs');
 const cand = await import('../js/views/candidate.js');
 
 const LOG = '/w/.zicato/epochs/' + EPOCH_ID + '/episodes/v2/episode.jsonl';
@@ -113,7 +113,10 @@ function dossierFixture(episodeExport) {
     '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 0.72 }] },
   };
   for (const g of gens) F[`/api/generation/${EPOCH_ID}/${g.generation_id}/per-entry`] = { entries: [] };
-  if (episodeExport) F[`/api/generation/${EPOCH_ID}/v2/episode-export`] = episodeExport;
+  // the dossier of v2 with the episode export the caller names; a null
+  // export is the unserved read.
+  F[dossierUrl(EPOCH_ID, 'v2')] = Object.assign(recorded('episodes/candidate/v2'), { episode_export: episodeExport });
+  F[dossierUrl(EPOCH_ID, 'v0')] = recorded('console/candidate/v0');
   return F;
 }
 

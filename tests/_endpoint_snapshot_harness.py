@@ -115,6 +115,9 @@ ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     ("eval_dossier", "/api/epoch/e1/eval/t1"),
     ("eval_dossier/rejected-epoch", f"/api/epoch/{REJECTED}/eval/t1"),
     ("eval_dossier/rejected-entry", f"/api/epoch/e1/eval/{REJECTED}"),
+    ("candidate_dossier", "/api/epoch/e1/candidate/v1?entry=t1"),
+    ("candidate_dossier/rejected-generation", f"/api/epoch/e1/candidate/{REJECTED}"),
+    ("candidate_dossier/rejected-entry", f"/api/epoch/e1/candidate/v1?entry={REJECTED}"),
     ("eval_health", "/api/epoch/e1/eval-health"),
     ("eval_health/rejected", f"/api/epoch/{REJECTED}/eval-health"),
     ("judge_roster", "/api/epoch/e1/judge-roster"),
@@ -227,7 +230,18 @@ def _console_probes() -> tuple[tuple[str, str], ...]:
             (f"run_expectations/{gen}/{entry}", f"/api/run/{e}/{gen}/{entry}/expectations"),
             (f"per_judge_for_entry/{gen}/{entry}", f"/api/run/{e}/{gen}/{entry}/per-judge"),
         ]
+    probes += list(_dossier_probes(e, "v0", "v1", "v2"))
+    probes.append(
+        ("candidate/v1/waffles_single", f"/api/epoch/{e}/candidate/v1?entry=waffles_single")
+    )
     return tuple(probes)
+
+
+def _dossier_probes(epoch_id: str, *generations: str) -> tuple[tuple[str, str], ...]:
+    """The candidate dossier of each generation, the one read the candidate page makes."""
+    return tuple(
+        (f"candidate/{gen}", f"/api/epoch/{epoch_id}/candidate/{gen}") for gen in generations
+    )
 
 
 def _epoch_probes(
@@ -284,10 +298,24 @@ def _candidate_probes(epoch_id: str, *pairs: tuple[str, str]) -> tuple[tuple[str
 RECORDED_WORKSPACES: tuple[RecordedWorkspace, ...] = (
     RecordedWorkspace("console", build_console_workspace, _console_probes()),
     RecordedWorkspace(
+        "cached_champion",
+        scenarios.build_cached_champion_workspace,
+        _dossier_probes(CONSOLE_EPOCH, "v0"),
+    ),
+    RecordedWorkspace(
+        "episodes", scenarios.build_episodes_workspace, _dossier_probes(CONSOLE_EPOCH, "v1", "v2")
+    ),
+    RecordedWorkspace(
+        "identity",
+        scenarios.build_identity_workspace,
+        _epoch_probes(scenarios.IDENTITY_EPOCH) + _dossier_probes(scenarios.IDENTITY_EPOCH, "v2"),
+    ),
+    RecordedWorkspace(
         "racing_ladder",
         scenarios.build_racing_ladder_workspace,
         _epoch_probes(scenarios.RACING_EPOCH)
-        + _candidate_probes(scenarios.RACING_EPOCH, ("v0", "v3")),
+        + _candidate_probes(scenarios.RACING_EPOCH, ("v0", "v3"))
+        + _dossier_probes(scenarios.RACING_EPOCH, "v3"),
     ),
     RecordedWorkspace(
         "racing_no_records",
@@ -316,7 +344,8 @@ RECORDED_WORKSPACES: tuple[RecordedWorkspace, ...] = (
         "racing_round_settled",
         scenarios.build_racing_round_settled_workspace,
         _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
-        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1")),
+        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1"))
+        + _dossier_probes(CONSOLE_EPOCH, "v1"),
     ),
     RecordedWorkspace(
         "racing_round_live",
@@ -328,19 +357,22 @@ RECORDED_WORKSPACES: tuple[RecordedWorkspace, ...] = (
         "single_elim",
         scenarios.build_single_elim_workspace,
         _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
-        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1")),
+        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1"))
+        + _dossier_probes(CONSOLE_EPOCH, "v1"),
     ),
     RecordedWorkspace(
         "swiss",
         scenarios.build_swiss_workspace,
         _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
-        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1")),
+        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1"))
+        + _dossier_probes(CONSOLE_EPOCH, "v1"),
     ),
     RecordedWorkspace(
         "double_elim",
         scenarios.build_double_elim_workspace,
         _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
-        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1")),
+        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1"))
+        + _dossier_probes(CONSOLE_EPOCH, "v1"),
     ),
     RecordedWorkspace(
         "swiss_proposing",
@@ -367,7 +399,8 @@ RECORDED_WORKSPACES: tuple[RecordedWorkspace, ...] = (
         "racing_field",
         scenarios.build_racing_field_workspace,
         _epoch_probes(CONSOLE_EPOCH, fields=("v1",))
-        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1")),
+        + _candidate_probes(CONSOLE_EPOCH, ("v0", "v1"))
+        + _dossier_probes(CONSOLE_EPOCH, "v1"),
     ),
     RecordedWorkspace(
         "field_count",

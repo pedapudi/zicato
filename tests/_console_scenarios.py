@@ -31,6 +31,7 @@ from tests._workspace_support import (
     write_generation,
     write_json,
     write_lineage,
+    write_text,
     write_workspace_config,
 )
 from zicato.core.experiment import (
@@ -50,6 +51,9 @@ from zicato.workspace import WorkspaceLayout
 
 #: The epoch id the shared browser fixture map (``fixtures.mjs``) names.
 CONSOLE_EPOCH = "2026-05-30_e0"
+
+#: The epoch a fast-mode champion's per-board results were reused from.
+CACHED_SOURCE_EPOCH = "2026-05-29_e0"
 
 #: The two board entries of the shared browser fixture: one single-turn task
 #: with a predicate expectation and one emulated multi-turn task.
@@ -103,8 +107,13 @@ def _run(
     match_id: str = "",
     adk_session_id: str = "",
     score: float | None = None,
+    cached_from: tuple[str, str] | None = None,
 ) -> None:
-    """Write one board run's ``loss.json`` through the reducer's writer."""
+    """Write one board run's ``loss.json`` through the reducer's writer.
+
+    ``cached_from`` is ``(source_epoch, source_run)`` for a result a fast-mode
+    round reused rather than re-ran.
+    """
     profile = LossProfile(
         run_id=run_id,
         entry_id=entry_id,
@@ -122,6 +131,9 @@ def _run(
         per_judge_loss=tuple(judges),
         adk_session_id=adk_session_id,
         score=score,
+        cached=cached_from is not None,
+        source_epoch=cached_from[0] if cached_from else "",
+        source_run=cached_from[1] if cached_from else "",
     )
     write_loss_profile(profile, layout.loss(epoch_id, generation_id, entry_id))
 
@@ -237,7 +249,9 @@ def _lineage_epoch(
 # ---------------------------------------------------------------------------
 
 
-def build_console_workspace(tmp_path: Path) -> Path:
+def build_console_workspace(
+    tmp_path: Path, *, cached_champion: bool = False, episodes: bool = False
+) -> Path:
     """The gauntlet workspace the shared browser fixture map describes.
 
     Epoch ``2026-05-30_e0`` holds the seed ``v0`` and two rejected
@@ -246,6 +260,11 @@ def build_console_workspace(tmp_path: Path) -> Path:
     (72.45, +1.51). ``v0`` and ``v1`` ran both board entries; ``v2`` ran
     the single-turn entry only. Judge losses on the single-turn entry
     make ``incorporates_feedback`` the judge that decided ``v1``'s round.
+
+    ``cached_champion`` marks the champion's two runs as reused from an
+    earlier epoch, the way a fast-mode round records them. ``episodes`` adds
+    the proposal episodes: ``v1`` has its log and the page rendered from it,
+    ``v2`` has its log alone.
     """
     layout = workspace(tmp_path)
     write_workspace_config(layout, _workspace_config(), indent=2)
@@ -335,6 +354,11 @@ def build_console_workspace(tmp_path: Path) -> Path:
         ),
     )
 
+    def reused(gen: str, entry: str) -> tuple[str, str] | None:
+        if cached_champion and gen == "v0":
+            return (CACHED_SOURCE_EPOCH, f"run_prior_{entry}")
+        return None
+
     def waffles(gen: str, drift: float, *, exceeded: bool, feedback: float) -> None:
         _run(
             layout,
@@ -348,6 +372,7 @@ def build_console_workspace(tmp_path: Path) -> Path:
             wall_clock_budget_exceeded=exceeded,
             judges=(_judge("incorporates_feedback", feedback), _judge("omission", 4.0)),
             adk_session_id=f"sess-{gen}-waffles",
+            cached_from=reused(gen, "waffles"),
         )
 
     def picky(gen: str, drift: float) -> None:
@@ -362,6 +387,7 @@ def build_console_workspace(tmp_path: Path) -> Path:
             runtime_ms=360000,
             wall_clock_budget_exceeded=True,
             judges=(_judge("omission", 6.0),),
+            cached_from=reused(gen, "picky"),
         )
 
     waffles("v0", 60.5, exceeded=False, feedback=10.0)
@@ -420,8 +446,31 @@ def build_console_workspace(tmp_path: Path) -> Path:
         },
         indent=2,
     )
+    if episodes:
+        for gen, with_page in (("v1", True), ("v2", False)):
+            directory = layout.proposal_episode_dir(CONSOLE_EPOCH, gen)
+            directory.mkdir(parents=True, exist_ok=True)
+            write_text(
+                directory / "episode.jsonl",
+                '{"seq": 0, "type": "episode/start", "time": 0, "data": {"model": "m"}}\n',
+            )
+            if with_page:
+                write_text(
+                    layout.proposal_episode_export(CONSOLE_EPOCH, gen),
+                    "<!doctype html><title>episode</title>\n",
+                )
     rebuild_index(layout.root)
     return layout.root
+
+
+def build_cached_champion_workspace(tmp_path: Path) -> Path:
+    """The console workspace with the champion's results reused from an earlier epoch."""
+    return build_console_workspace(tmp_path, cached_champion=True)
+
+
+def build_episodes_workspace(tmp_path: Path) -> Path:
+    """The console workspace with the proposal episodes of v1 (with a page) and v2."""
+    return build_console_workspace(tmp_path, episodes=True)
 
 
 # ---------------------------------------------------------------------------
@@ -707,6 +756,10 @@ FIELD_COUNT_EPOCH = "2026-06-02_fn"
 
 #: The epoch id the round-model fixtures of the figures suite name.
 MODEL_EPOCH = "e-model"
+
+#: The epoch of the candidate-identity fixture: one challenger whose scalar
+#: clears the margin but which fails a board entry the champion passed.
+IDENTITY_EPOCH = "2026-08-01_identity"
 
 
 def _racing_match(match_id: str, won: bool, delta: float) -> MatchOutcome:
@@ -1641,6 +1694,157 @@ def build_gauntlet_one_round_workspace(tmp_path: Path) -> Path:
     )
 
 
+def build_identity_workspace(tmp_path: Path) -> Path:
+    """The candidate-identity fixture: a scalar improvement refused for a regressed entry.
+
+    ``v2`` proposes to name the audience and demand an outline, and improves
+    the scalar from 0.72 to 0.69 (clearing the 0.02 margin), but fails
+    ``q3_metrics_outline``, which the champion passed, so the pass-rate
+    monotonicity rule rejects it.
+    """
+    layout = workspace(tmp_path)
+    write_workspace_config(layout, _workspace_config(), indent=2)
+    entries = ("b1", "b2", "b3", "q3_metrics_outline")
+    write_epoch(
+        layout,
+        IDENTITY_EPOCH,
+        config={
+            "id": IDENTITY_EPOCH,
+            "created_at": "2026-08-01T00:00:00Z",
+            "closed": True,
+            "goal": "Identity.",
+            "contract_hash": "hash-identity",
+        },
+        brief="# Brief\n\n## Goal\n\nIdentity.\n",
+        scoring={
+            "promote_margin": 0.02,
+            "pass_rate_monotonicity": True,
+            "tournament": {"structure": "gauntlet", "params": {}},
+        },
+        board=[
+            {"board_meta": True, "disable_drift": False},
+            *(
+                {
+                    "id": e,
+                    "kind": "single_turn",
+                    "input": f"Task {e}.",
+                    "expectation": {"kind": "predicate", "spec": "ok"},
+                    "weight": 1.0,
+                }
+                for e in entries
+            ),
+        ],
+        indent=2,
+    )
+    set_current_epoch(layout, IDENTITY_EPOCH, newline=True)
+    _seed(layout, IDENTITY_EPOCH, "2026-08-01T00:00:00Z")
+    write_experiment(
+        layout.root,
+        IDENTITY_EPOCH,
+        "v2",
+        Experiment(
+            id=f"exp_{IDENTITY_EPOCH}_v2",
+            epoch_id=IDENTITY_EPOCH,
+            generation_id="v2",
+            parent_generation_id="v0",
+            proposed_at="2026-08-01T00:30:00Z",
+            hypothesis=HypothesisSpec(
+                core_idea="Name the audience up front and demand a slide outline before prose",
+                modulating=("prompt.system", "agent.temperature"),
+                why=(
+                    "The judge flags narrative drift whenever the agent starts "
+                    "writing paragraphs first."
+                ),
+                expected_drift_movements=(
+                    ExpectedDriftMovement(
+                        kind="off_topic", direction="decrease", magnitude="medium"
+                    ),
+                ),
+                expected_pass_rate_delta="+0.10 to +0.20",
+                risks="A longer prompt may crowd out the task description.",
+            ),
+            patches=(
+                Patch(
+                    id="p1",
+                    mutation_id="prompt.system",
+                    op="replace",
+                    new_content="a\nb\nc",
+                    new_numeric=None,
+                    new_enum=None,
+                    rationale="Lead with the audience.",
+                ),
+                Patch(
+                    id="p2",
+                    mutation_id="agent.temperature",
+                    op="set_numeric",
+                    new_content=None,
+                    new_numeric=0.3,
+                    new_enum=None,
+                    rationale="Steadier prose.",
+                ),
+            ),
+            outcome=OutcomeRecord(
+                ran_at="2026-08-01T01:00:00Z",
+                drift_movements=(
+                    DriftMovementActual(
+                        kind="off_topic", from_rate=0.5, to_rate=0.3, hypothesis_match=True
+                    ),
+                ),
+                pass_rate_delta=-0.25,
+                drift_loss_delta=-0.03,
+                scalar_score_delta=-0.03,
+                tournament_decision="rejected",
+                rejection_reason="pass_rate_regressed",
+            ),
+            round_index=0,
+        ),
+    )
+    for gen, failing in (("v0", ()), ("v2", ("q3_metrics_outline",))):
+        for i, entry in enumerate(entries):
+            _run(
+                layout,
+                IDENTITY_EPOCH,
+                gen,
+                entry,
+                run_id=f"run_{gen}_{entry}",
+                drift_loss=0.5 + 0.1 * i,
+                pass_fail=entry not in failing,
+                runtime_ms=1000,
+            )
+        _gen_score(
+            layout,
+            IDENTITY_EPOCH,
+            gen,
+            scalar=0.72 if gen == "v0" else 0.69,
+            pass_rate=1.0 if gen == "v0" else 0.75,
+            components={"drift": 0.7 if gen == "v0" else 0.67, "schema": 0.02},
+            per_entry={
+                entry: {
+                    "drift_loss": 0.5 + 0.1 * i,
+                    "failure": 0.0,
+                    "pass_fail": entry not in failing,
+                    "score": None,
+                }
+                for i, entry in enumerate(entries)
+            },
+        )
+    write_lineage(
+        layout,
+        {
+            "epochs": [
+                _lineage_epoch(
+                    IDENTITY_EPOCH,
+                    [("v0", None, True), ("v2", "v0", False)],
+                    "2026-08-01T00:00:00Z",
+                )
+            ]
+        },
+        indent=2,
+    )
+    rebuild_index(layout.root)
+    return layout.root
+
+
 def build_field_count_workspace(tmp_path: Path) -> Path:
     """A swiss epoch with two scored challengers and one unscored orphan, v9.
 
@@ -1903,15 +2107,19 @@ __all__ = [
     "CONSOLE_BOARD",
     "CONSOLE_EPOCH",
     "FIELD_COUNT_EPOCH",
+    "IDENTITY_EPOCH",
     "MANY_ROUNDS_EPOCH",
     "MODEL_EPOCH",
     "NEWER_EPOCH",
     "OLDER_EPOCH",
     "RACING_EPOCH",
+    "build_cached_champion_workspace",
     "build_console_workspace",
     "build_double_elim_workspace",
+    "build_episodes_workspace",
     "build_field_count_workspace",
     "build_gauntlet_one_round_workspace",
+    "build_identity_workspace",
     "build_many_rounds_workspace",
     "build_model_champion_modes_workspace",
     "build_model_field_records_workspace",

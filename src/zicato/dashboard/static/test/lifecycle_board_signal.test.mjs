@@ -203,7 +203,7 @@ test('the whole figure stays hovercard-wired (no native <title> regressions)', (
 // regression here would reintroduce a client-side definition of "the same board
 // slice", which is how a Σ and a gate come to disagree.
 
-test('candidate dossier: the champion comparison is FETCHED as a matchup grid, never re-joined client-side', async () => {
+test('candidate dossier: the champion comparison arrives on the served dossier, never re-joined client-side', async () => {
   freshState();
   const seen = [];
   installFetch();
@@ -213,13 +213,11 @@ test('candidate dossier: the champion comparison is FETCHED as a matchup grid, n
     const candidate = await import('../js/views/candidate.js');
     const host = document.createElement('div');
     await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
-    const perEntry = seen.filter((p) => /\/per-entry$/.test(p));
-    const own = perEntry.filter((p) => p.includes('/v1/per-entry'));
-    const champion = perEntry.filter((p) => p.includes('/v0/per-entry'));
-    assert(own.length >= 1, 'the dossier still reads its OWN per-entry rows');
-    assertEqual(champion.length, 0, 'it does NOT read the champion’s per-entry rows to join them itself');
-    assert(seen.some((p) => p.startsWith(`/api/matchup-grid/${EPOCH_ID}/v0/v1`)),
-      'the champion comparison comes from the served matchup grid instead');
+    assertEqual(seen.filter((p) => p === `/api/epoch/${EPOCH_ID}/candidate/v1`).length, 1,
+      'the page reads its candidate dossier once');
+    assertEqual(seen.filter((p) => /\/per-entry$/.test(p)).length, 0, 'it reads no per-entry rows of its own or the champion’s');
+    assertEqual(seen.filter((p) => p.startsWith('/api/matchup-grid/')).length, 0,
+      'the champion comparison rides the dossier rather than a separate grid read');
   } finally {
     globalThis.fetch = inner;
   }
