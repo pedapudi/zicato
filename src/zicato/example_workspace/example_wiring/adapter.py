@@ -48,8 +48,8 @@ def read_style_tokens(generation_root: Path) -> list[str]:
     """Return the style tokens ``STYLE_RULES`` holds in one snapshot.
 
     Parses the assignment rather than importing the module: the snapshot
-    is a copy of the tree on disk, and parsing it reads exactly the bytes
-    under evaluation with no import-cache question. A snapshot whose
+    is a copy of the tree on disk, and parsing it reads the bytes under
+    evaluation themselves, with no import-cache question. A snapshot whose
     policy is missing or unparseable yields no tokens, which scores as a
     note with every feature present.
     """
@@ -76,7 +76,7 @@ def compose_note(prompt: str, tokens: list[str]) -> str:
     """Compose the note the policy in ``tokens`` describes.
 
     Every feature is present unless a token suppresses it, so each token
-    the proposer removes flips exactly one board entry from fail to pass.
+    the proposer removes flips a single board entry from fail to pass.
     """
     parts = [f"NOTE: {prompt}".strip()]
     if "skip-citations" not in tokens:

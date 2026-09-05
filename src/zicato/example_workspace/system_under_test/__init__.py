@@ -7,10 +7,10 @@ generation's board score is a function of this one string.
 
 Four rules are seeded. ``plain-language`` is one the writer is meant to
 follow and the adapter ignores. The other three each suppress a feature
-of the note, failing exactly one board entry:
+of the note, and each one fails a single board entry:
 
-* ``verbose-prose`` appends a filler paragraph, so the note is no longer
-  concise.
+* ``verbose-prose`` appends a filler paragraph, pushing the note past the
+  conciseness budget.
 * ``omit-summary`` drops the ``SUMMARY:`` line.
 * ``skip-citations`` drops the ``[source: ...]`` citation.
 

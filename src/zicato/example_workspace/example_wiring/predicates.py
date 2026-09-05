@@ -7,10 +7,10 @@ hand a predicate an empty output, and a grader that raises turns a
 measurable failure into an unmeasurable one.
 
 Each predicate here checks one feature the style policy either produces
-or suppresses, so every token the proposer removes moves exactly one
-entry from fail to pass and the board can tell a partial fix from a
-complete one. A board whose entries all pass, or all fail, measures
-nothing — it cannot rank two candidates.
+or suppresses, so every token the proposer removes moves one entry from
+fail to pass and the board can tell a partial fix from a complete one. A
+board whose entries all pass, or all fail, measures nothing — it cannot
+rank two candidates.
 
 These are the operator's contract. The loop never rewrites them.
 """

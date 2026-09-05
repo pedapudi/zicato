@@ -53,7 +53,7 @@ DEFECTS: tuple[tuple[str, str], ...] = (
 )
 
 #: Proposed once the seeded defects are gone. It suppresses nothing, so
-#: it scores exactly as the champion does and the gate rejects it.
+#: it ties the champion's score and the gate rejects it.
 INERT_TOKEN = "active-voice"
 
 
@@ -128,9 +128,9 @@ class OneDefectPerRound:
             )
             pass_rate_delta = "0.00"
 
-        # ``new_content`` is the new VALUE, not the new line. The applier
+        # ``new_content`` is the string the policy becomes. The applier
         # replaces the string-literal node and quotes plain prose itself,
-        # so a patch says what the policy should now be.
+        # so the assignment around the literal survives the edit.
         patch = Patch(
             id=uuid.uuid4().hex,
             mutation_id=POLICY_MUTATION_ID,

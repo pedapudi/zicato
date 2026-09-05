@@ -62,7 +62,7 @@ def example_paths(project_root: Path) -> list[Path]:
 def copy_example_project(project_root: Path) -> None:
     """Copy the example tree into ``project_root``, clobbering nothing.
 
-    A destination that already exists is left exactly as it is, so running
+    A destination that already exists is left untouched, so running
     ``--example`` in a project holding real files cannot destroy them.
     ``scoring.json`` is not copied here: the workspace initializer owns
     that file's location and its never-clobber rule, and writing it in two

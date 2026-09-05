@@ -7,7 +7,7 @@ run`` takes the independent adjudicator. Each of those is an option the
 operator typed, so a bad path is a usage error and belongs in click's
 formatting rather than a traceback.
 
-``zicato evolve`` is deliberately not in that list: which callable a
+``zicato evolve`` is not in that list, by design: which callable a
 model role runs on is a property of the workspace, declared once under
 ``models.engines`` in ``config.json`` and resolved by
 :func:`zicato.runtime_factory.resolve_role_call_llm`.

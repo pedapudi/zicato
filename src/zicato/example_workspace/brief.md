@@ -30,7 +30,7 @@ measuring anything.
 ## What is already known to be wrong
 
 The seeded policy carries three rules that each suppress something the
-board grades. Removing any one of them should turn exactly one board
-entry from fail to pass and leave the others where they are. Say which
+board grades. Removing any one of them should turn one board entry from
+fail to pass and leave every other entry where it is. Say which
 entry you expect to move before the round runs — a prediction made
 afterwards costs nothing and proves nothing.
