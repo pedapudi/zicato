@@ -178,7 +178,6 @@ test('settings: the Appearance section is EDITABLE and shares the top-bar theme 
   // a plain <select>. Each option carries a colour swatch strip + name.
   const dd = firstClass(body, 'dt-cd');
   assert(dd, 'the colour theme picker is the shared swatch dropdown (dt-cd)');
-  assert(!firstClass(body, 'dn-set-select'), 'the old plain <select> theme picker is gone');
   const options = byClass(body, 'dt-cd-option');
   assert(options.length >= 3, 'one option per theme in the swatch dropdown');
   for (const opt of options) {

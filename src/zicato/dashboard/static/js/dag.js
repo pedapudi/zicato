@@ -156,7 +156,7 @@ function perRunStack(e, x, cy, o, maxRight, channel) {
 // The CANDIDATE RUNG-PROGRESSION strip: a small left→right path through the
 // tournament the candidate ran — rung 0 → rung 1 → racing-final — each stage
 // carrying its Δ-vs-champion and a won/cut verdict. Always available from the
-// candidate's tournament-structure record (reconstructed in views/structure.js),
+// candidate's tournament-structure record (reconstructed in tournament_model.js),
 // it relates a board run to the rounds/rungs even when the per-run records carry
 // NO rung tags. Returns a detached <svg> (fit-to-width). `spec.stages` is an
 // ordered array of { label, kind:'rung'|'final', delta, verdict:'won'|'cut'|… }.

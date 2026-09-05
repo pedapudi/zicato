@@ -26,7 +26,7 @@ import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
 installDom();
 
-const STRUCT = await import('../js/views/structure.js');
+const STRUCT = { ...await import('../js/tournament_model.js'), ...await import('../js/views/structure.js') };
 const svg = await import('../js/svg.js');
 const live = await import('../js/live.js');
 

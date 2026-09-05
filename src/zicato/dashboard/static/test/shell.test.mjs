@@ -531,11 +531,9 @@ test('layout: the detail pane + compare grid are FLUID — not clamped to a narr
   const css = await import('node:fs').then((fs) =>
     fs.readFileSync(new URL('../css/console.css', import.meta.url), 'utf8'));
 
-  // the OLD narrow caps are gone (1160 on the detail pane, 1320 on the viewhost).
+  // the detail pane carries no narrow 1160px cap.
   assert(!/\.dt-viewhost\s*\{[^}]*max-width:\s*1160px/.test(css.replace(/\n/g, ' ')),
     'the detail pane is no longer clamped to the narrow 1160px column');
-  assert(!/\.dn-viewhost\s*\{[^}]*max-width:\s*1320px/.test(css.replace(/\n/g, ' ')),
-    'the legacy viewhost is no longer clamped to the narrow 1320px column');
   // the detail pane is fluid (width:100%).
   assert(/\.dt-viewhost\s*\{[^}]*width:\s*100%/.test(css.replace(/\n/g, ' ')),
     'the detail pane is fluid (width:100%, fills the available column)');

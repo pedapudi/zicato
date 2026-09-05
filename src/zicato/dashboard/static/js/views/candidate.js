@@ -32,7 +32,7 @@ import { attachHovercard } from '../hovercard.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
 import { gatedSwap, section, subhead, empty, stat, verdictPill, pill, overrideChip, overrideDigest, decisionOf, densityTokens, prText, metricsDigest, truncate, hovercardBody, dataTable, deltaCell, ratingModel, ratingTripleDigest } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
-import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest, normalizeStructure } from './structure.js';
+import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest, normalizeStructure } from '../tournament_model.js';
 import { roundsFromTimeline, reignModel } from '../rounds.js';
 import {
   harmonografIsLive,
@@ -2923,7 +2923,7 @@ function entryDrilldown(ctx, epochId, genId, entryId, row, exps, judges, header)
 // carry `match_id` (e.g. `rung0_m2`, `racing-final`, `round1_m2`, `g0`) and a
 // pre-formatted `rung` (e.g. "rung 0"); we read those rather than re-deriving
 // what the backend formatted. The same scheme `reconstructRacing` reads in
-// views/structure.js: `rungN_*` → rung N, `racing-final` → the champion gate.
+// tournament_model.js: `rungN_*` → rung N, `racing-final` → the champion gate.
 //   • racing : "rung 0" / "rung 1"; `racing-final` → "champion-gate".
 //   • gauntlet: `roundN`/`gN` → "round N".
 //   • swiss  : `roundN_mM` / `swiss_rN_mM` → "round N · match M".

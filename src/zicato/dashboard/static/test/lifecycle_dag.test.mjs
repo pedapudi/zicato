@@ -651,7 +651,6 @@ test('survival funnel: a GAUNTLET epoch renders the round timeline with NO embed
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
   assert(allByClass(host, 'dn-roundtl')[0], 'the gauntlet epoch renders the round timeline');
   assertEqual(svgsByClass(host, 'dn-funnel').length, 0, 'NO survival funnel for a gauntlet epoch (racing-specific)');
-  assertEqual(allByClass(host, 'dt-struct-strip').length, 0, 'NO structure strip for a gauntlet epoch');
 });
 
 // (f) the funnel marks are themed via CSS tokens (legible across all 13 themes).

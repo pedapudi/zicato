@@ -25,7 +25,7 @@ import * as facets from '../facets.js';
 import { buildTurnNode, dedupConsecutiveTurns, reconcileTurns } from '../turns.js';
 import { mountConversationPane } from '../convo.js';
 import { unitLiveness, hasActiveRunFor } from '../unit_liveness.js';
-import { runProgressRatio } from './structure.js';
+import { runProgressRatio } from '../tournament_model.js';
 
 // The transcript turn vocabulary now lives in js/turns.js so the live follow
 // pane can share it without importing back through this view. Re-exported

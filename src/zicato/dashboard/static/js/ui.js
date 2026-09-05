@@ -795,12 +795,6 @@ export function ratingTripleDigest(src) {
   return m ? [m.elo, m.se, m.games, m.provisional] : null;
 }
 
-// A themed link/button (the E bug fix: the "open full transcript" link must be
-// a properly styled themed control, never an unstyled anchor).
-export function linkButton(text, hrefStr, attrs) {
-  return el('a', Object.assign({ class: 'dn-linkbtn', href: hrefStr }, attrs || {}), [text]);
-}
-
 // ---- tiny markdown → DOM (GFM tables render — fix #3) ---------------
 //
 // Renders a SAFE subset to DOM nodes — headings, paragraphs, ordered + bullet

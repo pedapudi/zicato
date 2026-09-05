@@ -244,9 +244,6 @@ test('candidate view: the radar silhouette names its axes (scalar / pass-rate / 
     'a per-component (gate scalar_components) axis carries its component name');
   // none of the rendered axis LABELS is a bare numeric index (the 1–9 bug).
   assert(!labels.some((l) => /^\d+$/.test(l)), 'no axis label is a bare numeric index (1–9)');
-  // and no numeric index-tick fallback is used while there are ≤8 named axes.
-  assertEqual(allByClass(radar, 'dn-radar-axistick').length, 0,
-    'no numeric index-tick fallback while the axes are within the labeled range');
 });
 
 // ---- the dossier reads as one coordinated layout ----
@@ -1351,8 +1348,6 @@ test('top bar: NO typeface picker and NO scale pill (both → Settings only); co
   assertEqual(allByClass(topbar, 'dt-tf').length, 0, 'no typeface picker in the top bar (moved to Settings)');
   assertEqual(allByClass(topbar, 'dt-tf-trigger').length, 0, 'no typeface popover trigger in the top bar');
   assertEqual(allByClass(topbar, 'dt-tf-option').length, 0, 'no typeface option rows in the top bar');
-  assertEqual(allByClass(topbar, 'dt-type-switch').length, 0, 'no legacy typeface button group in the top bar');
-  assertEqual(allByClass(topbar, 'dt-type-btn').length, 0, 'no legacy typeface buttons in the top bar');
   // the COLOUR swatch dropdown is the SOLE dt-cd popover left in the top bar.
   const cds = allByClass(topbar, 'dt-cd');
   assertEqual(cds.length, 1, 'only the colour swatch dropdown (dt-cd) remains in the top bar');

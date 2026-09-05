@@ -7,8 +7,6 @@ import { svgEl, el } from './core/dom.js';
 import { attachHovercard } from './hovercard.js';
 import * as M from './matrix.js';
 
-export const NS = 'http://www.w3.org/2000/svg';
-
 // ── CROWN GLYPHS — the SINGLE source of truth (CONSOLE-IV §9) ─────────
 //
 // The rule, defined ONCE so it cannot drift across files again:
@@ -1231,7 +1229,7 @@ export function pairedSlopegraph(opts) {
 //   responsive|fitWidth, mini|compact   // mini drops the rail names + headers
 // }   gateState ∈ crowned|stands|deciding|pending (absent ⇒ inferred).
 //
-// A stable per-model digest is the CALLER's (views/structure.js structureDigest,
+// A stable per-model digest is the CALLER's (tournament_model.js structureDigest,
 // which serialises the SAME rung model) — every field this body draws is already
 // model-derived, so no new digest field is needed.
 export function survivalFunnel(opts) {

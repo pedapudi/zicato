@@ -195,8 +195,8 @@ gauntlet's single spine by default, and for any other structure it
 renders that structure's own shape — a single-elimination tree, a Swiss
 standings table, a racing rung-ladder — from the same per-matchup
 records (`isNonGauntlet` and the per-structure models in
-`src/zicato/dashboard/static/js/views/structure.js`, consumed by
-`views/epoch.js`). The persisted-record shape that
+`src/zicato/dashboard/static/js/tournament_model.js`, rendered by
+`views/structure.js` and consumed by `views/epoch.js`). The persisted-record shape that
 backs the bracket is owned by the data-model design (see
 `TOURNAMENT-STRUCTURES.md` §"The interface agreed with the data-model design").
 

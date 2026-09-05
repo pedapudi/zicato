@@ -31,7 +31,7 @@ const mock = await import('./mock_server.mjs');
 installDom();
 
 const svg = await import('../js/svg.js');
-const STRUCT = await import('../js/views/structure.js');
+const STRUCT = { ...await import('../js/tournament_model.js'), ...await import('../js/views/structure.js') };
 const ui = await import('../js/ui.js');
 const live = await import('../js/live.js');
 

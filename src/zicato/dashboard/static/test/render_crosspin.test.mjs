@@ -21,7 +21,7 @@ installDom();
 
 const ui = await import('../js/ui.js');
 const svg = await import('../js/svg.js');
-const structure = await import('../js/views/structure.js');
+const structure = await import('../js/tournament_model.js');
 const { AppState } = await import('../js/core/state.js');
 
 const here = dirname(fileURLToPath(import.meta.url));

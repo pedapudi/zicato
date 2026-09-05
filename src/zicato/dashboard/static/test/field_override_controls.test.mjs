@@ -24,7 +24,7 @@ import { installDom, test, run, assert, assertEqual, makeEvent } from './harness
 installDom();
 
 const ui = await import('../js/ui.js');
-const STRUCT = await import('../js/views/structure.js');
+const STRUCT = { ...await import('../js/tournament_model.js'), ...await import('../js/views/structure.js') };
 const router = await import('../js/router.js');
 const { state } = await import('../js/core/state.js');
 

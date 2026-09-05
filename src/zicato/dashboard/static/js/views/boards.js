@@ -14,7 +14,7 @@ import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { section, empty, stat, densityTokens, renderView, figCaption, ENTRY_KIND_LABEL } from '../ui.js';
-import { inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from './structure.js';
+import { inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from '../tournament_model.js';
 import { livenessFor } from '../livestatus.js';
 
 // The trellis sort key over the entry-kind vocabulary
