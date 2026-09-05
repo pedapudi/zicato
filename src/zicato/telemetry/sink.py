@@ -283,6 +283,7 @@ def _make_harmonograf_sink(
     *,
     grpc_target: str | None = None,
     metadata: dict[str, str] | None = None,
+    identity_root: Path | None = None,
 ) -> Any | None:
     """Build a goldfive-compatible harmonograf sink for ``url``.
 
@@ -301,6 +302,10 @@ def _make_harmonograf_sink(
     :func:`resolve_harmonograf_grpc_target` (which prefers the
     ``ZICATO_HARMONOGRAF_GRPC`` env, falling back to scheme-stripping the
     web ``url`` for an external harmonograf).
+
+    ``identity_root`` selects the persistent client registry. Tests supply
+    a temporary directory; ``None`` uses the client's platform default.
+    Per-unit ``metadata`` travels on registration envelopes only.
     """
     try:
         from harmonograf_client import Client, HarmonografSink  # noqa: PLC0415
@@ -316,7 +321,15 @@ def _make_harmonograf_sink(
     try:
         target = grpc_target if grpc_target else resolve_harmonograf_grpc_target(url)
         client_kwargs: dict[str, Any] = {"name": "zicato", "server_addr": target}
+        if identity_root is not None:
+            client_kwargs["identity_root"] = str(identity_root)
         if metadata:
+            from harmonograf_client.identity import load_or_create  # noqa: PLC0415
+
+            # Unit labels belong to the registration envelope. Passing an
+            # existing identity prevents Client from persisting those labels.
+            identity = load_or_create("zicato", root=identity_root)
+            client_kwargs["agent_id"] = identity.agent_id
             client_kwargs["metadata"] = metadata
         client = Client(**client_kwargs)
         return HarmonografSink(client)
@@ -337,6 +350,7 @@ def make_run_sinks(
     entry_id: str,
     *,
     workspace_config: dict[str, Any] | None = None,
+    identity_root: Path | None = None,
 ) -> list[Any]:
     """Return the LIST of EventSinks to attach for one run.
 
@@ -344,6 +358,7 @@ def make_run_sinks(
     (when goldfive is installed). When a harmonograf URL is resolvable
     via :func:`resolve_harmonograf_url`, a harmonograf sink is appended
     so operators can watch the run live in the harmonograf console.
+    ``identity_root`` selects the client registry independently of the workspace.
 
     The harmonograf attachment is strictly best-effort: a missing
     ``harmonograf_client`` package, or a failure constructing the sink,
@@ -368,7 +383,7 @@ def make_run_sinks(
     if url:
         # The grpc target resolution prefers ZICATO_HARMONOGRAF_GRPC (the
         # auto-launched native gRPC port) over deriving from the web URL.
-        harmonograf_sink = _make_harmonograf_sink(url)
+        harmonograf_sink = _make_harmonograf_sink(url, identity_root=identity_root)
         if harmonograf_sink is not None:
             sinks.append(harmonograf_sink)
     return sinks

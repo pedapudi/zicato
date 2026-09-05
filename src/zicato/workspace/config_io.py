@@ -36,6 +36,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from zicato.storage import atomic_write_text
+
 CONFIG_FILENAME = "config.json"
 LINEAGE_FILENAME = "lineage.json"
 
@@ -174,17 +176,19 @@ def read_workspace_config(workspace_root: Path) -> WorkspaceConfig:
 def write_workspace_config(workspace_root: Path, config: dict[str, Any]) -> None:
     """Atomically write ``config.json`` under ``workspace_root``.
 
-    The workspace directory must already exist. Writes through a
-    temp-and-rename so a partial write never leaves the file truncated.
+    The workspace directory must already exist. Configuration files use
+    sorted, indented JSON with a trailing newline and mode 0666 subject
+    to the process umask. Callers own any compound read-modify-write lock.
     """
     if not workspace_root.exists():
         raise FileNotFoundError(
             f"workspace {workspace_root!s} does not exist; run `zicato init` first"
         )
-    target = _config_path(workspace_root)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    tmp.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
-    tmp.replace(target)
+    atomic_write_text(
+        _config_path(workspace_root),
+        json.dumps(config, indent=2, sort_keys=True) + "\n",
+        mode=0o666,
+    )
 
 
 def workspace_is_initialized(workspace_root: Path) -> bool:

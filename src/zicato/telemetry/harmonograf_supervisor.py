@@ -806,7 +806,9 @@ def meta_loop_session_id(evolve_started_at_iso: str) -> str:
     return _sanitize_agent_name(f"zicato-meta-loop-{evolve_started_at_iso}")
 
 
-def build_meta_loop_sink(harmonograf_url: str, session_id: str) -> Awaitable[Any] | Any | None:
+def build_meta_loop_sink(
+    harmonograf_url: str, session_id: str, *, identity_root: Path | None = None
+) -> Awaitable[Any] | Any | None:
     """Construct a harmonograf sink scoped to the meta-loop session.
 
     Mirrors :func:`zicato.telemetry.sink._make_harmonograf_sink` but for
@@ -830,6 +832,8 @@ def build_meta_loop_sink(harmonograf_url: str, session_id: str) -> Awaitable[Any
     session_id:
         The stable meta-loop session id from
         :func:`meta_loop_session_id`.
+    identity_root:
+        Client identity registry. Tests supply a temporary directory.
     """
     if not harmonograf_url:
         return None
@@ -860,7 +864,10 @@ def build_meta_loop_sink(harmonograf_url: str, session_id: str) -> Awaitable[Any
         # one stable session on the harmonograf timeline (rather than
         # scattering across per-run sessions). Pass the already-sanitized
         # ``session_id`` through — it satisfies the same name regex.
-        client = Client(name=client_name, server_addr=target, session_id=session_id)
+        identity_kwargs = {"identity_root": str(identity_root)} if identity_root else {}
+        client = Client(
+            name=client_name, server_addr=target, session_id=session_id, **identity_kwargs
+        )
         return HarmonografSink(client)
     except Exception as exc:  # noqa: BLE001 — never hard-fail
         log.warning(

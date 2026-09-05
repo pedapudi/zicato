@@ -711,6 +711,7 @@ def build_meta_loop_emitter(
     harmonograf_url: str,
     evolve_started_at_iso: str,
     jsonl_filename: str = "meta_loop_events.jsonl",
+    identity_root: Path | None = None,
 ) -> MetaLoopEmitter:
     """Construct the per-evolve emitter with JSONL + optional harmonograf sinks.
 
@@ -744,6 +745,8 @@ def build_meta_loop_emitter(
     jsonl_filename:
         Name of the JSONL file under ``<workspace>/.zicato/runtime/``.
         Defaults to ``meta_loop_events.jsonl``.
+    identity_root:
+        Client identity registry. Tests supply a temporary directory.
 
     Returns
     -------
@@ -785,7 +788,7 @@ def build_meta_loop_emitter(
     # WARNING logged, so we only add non-None returns.
     if harmonograf_url:
         try:
-            sink = build_meta_loop_sink(harmonograf_url, session_id)
+            sink = build_meta_loop_sink(harmonograf_url, session_id, identity_root=identity_root)
             if sink is not None:
                 sinks.append(sink)
         except Exception as exc:  # noqa: BLE001 — additive sink only

@@ -1195,7 +1195,7 @@ did not.
 `tools/parity.sh` selects a lane with `pytest -k <lane name>`, so no lane
 name may be a substring of another. The lane table lives in
 `tools/parity/lib/mock_evolve_capture.py`; adding a lane there and a
-`_mock_golden_lane` line in `tools/parity.sh` is the whole wiring — plus,
+entry in the gate table in `tools/parity.sh` is the wiring — plus,
 for a structure the example does not yet declare, a `scoring.<structure>.json`
 beside the others in the example directory.
 
@@ -1245,11 +1245,10 @@ changes a real field will still surface as a diff.
 
 ### 11.7.7 MYPY
 
-A count rather than a golden. `mypy src/zicato/` must produce no MORE
-`error:` lines than the committed baseline (a refactor should REDUCE it).
-**Update:** `--update` writes the current count as the new baseline — do this
-only when you have LEGITIMATELY reduced errors, never to paper over a
-regression.
+`uv run mypy src/zicato/` must finish with exit status zero. A checker that
+cannot start, rejects its arguments, or terminates abnormally fails the gate
+even when its output contains no type-error diagnostics. This gate has no
+golden baseline; `--update` also requires successful completion.
 
 ### 11.7.8 Never bake a sibling change into a golden
 

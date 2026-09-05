@@ -38,6 +38,7 @@ from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS
 from zicato.core.types import MutationPoint, Patch, Pattern, PriorExperiment, ProposerSkill
 from zicato.proposer.calibration import CalibrationSummary
 from zicato.proposer.genealogy import GenealogyItem
+from zicato.proposer.pattern_feedback import PatternFeedback
 from zicato.proposer.recombine import RecombinationPair
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
@@ -53,81 +54,28 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only import
 _MUTATION_CONTENT_LIMIT_CHARS = 8000
 
 
-#: Detector ``detail`` keys that leak per-entry IDENTITY to the proposer —
-#: the precise information an adversarial optimizer needs to special-case a
-#: named board entry (OVERFITTING.md §1.3, §11.2-3). When the proposer's
-#: visibility is restricted, these keys are removed from the rendered
-#: ``detail`` and replaced by a board-wide count/rate that steers a
-#: *general* fix without naming the entry. ``affected_entry_ids`` is a
-#: comma-joined id list; ``entry_id`` / ``task_id`` / ``agent`` are single
-#: named identities. Everything else (rates, counts, thresholds) is already
-#: aggregate and renders verbatim.
-_LEAKY_DETAIL_KEYS: frozenset[str] = frozenset(
-    {"affected_entry_ids", "entry_id", "task_id", "agent"}
-)
-
-
-def _aggregate_pattern_detail(detail: dict[str, str]) -> list[str]:
-    """Sanitize a pattern ``detail`` dict at the render boundary.
-
-    Drops every per-entry IDENTITY key (:data:`_LEAKY_DETAIL_KEYS`) and, in
-    its place, appends a single aggregate ``entries_affected=N`` count when
-    an entry-id list was present — enough to tell the proposer *how many*
-    entries a pattern touches (so it can size a general fix) without ever
-    naming *which*. The remaining non-leaky keys (rates, counts,
-    thresholds) pass through unchanged.
-
-    No exact failing input strings reach the prompt: the detectors never
-    put raw inputs in ``detail`` (they carry ids, counts, rates), so
-    stripping the id keys leaves only aggregates — there is no input string
-    to withhold here.
-    """
-    kept = {k: v for k, v in detail.items() if k not in _LEAKY_DETAIL_KEYS}
-    parts = [f"{k}={v}" for k, v in sorted(kept.items())]
-    # Surface a board-wide count derived from a verbatim entry-id list, when
-    # one was present, so "how broad is this pattern" survives the
-    # aggregation while "which named entries" does not.
-    raw_ids = detail.get("affected_entry_ids")
-    if raw_ids:
-        n = len([piece for piece in raw_ids.split(",") if piece.strip()])
-        parts.append(f"entries_affected={n}")
-    return parts
-
-
 def render_pattern_block(patterns: Iterable[Pattern], *, restrict: bool = False) -> str:
-    """Render the list of patterns into the user-prompt block.
+    """Render detector findings under the request's explicit visibility policy.
 
-    Empty pattern lists render as a one-line "(no patterns)" notice so
-    the model sees an explicit signal rather than a blank section.
-
-    When ``restrict`` is ``True`` (the default-on
-    :attr:`~zicato.core.types.OverfittingConfig.restrict_proposer_visibility`
-    posture), the per-entry IDENTITY keys in each pattern's ``detail`` are
-    aggregated to counts/rates via :func:`_aggregate_pattern_detail` so the
-    proposer cannot special-case a named board entry — the cheapest strike
-    at adversarial Goodhart (OVERFITTING.md §11). When ``restrict`` is
-    ``False`` the ``detail`` dict renders verbatim, byte-for-byte as before
-    this lever existed.
+    Restricted requests project numeric evidence into :class:`PatternFeedback`.
+    Unrestricted requests retain diagnostic summaries, ids, and detail verbatim.
     """
-
     lines: list[str] = []
-    items = list(patterns)
-    if not items:
-        return "(no patterns detected in the current generation)"
-    for p in items:
-        affected = ", ".join(p.affected_mutation_ids) if p.affected_mutation_ids else "—"
+    for pattern in patterns:
         if restrict:
-            detail_parts = _aggregate_pattern_detail(dict(p.detail))
-        else:
-            detail_parts = [f"{k}={v}" for k, v in sorted(p.detail.items())]
-        detail = "; ".join(detail_parts) if detail_parts else "—"
+            lines.append(PatternFeedback.from_pattern(pattern).render())
+            continue
+        affected = ", ".join(pattern.affected_mutation_ids) or "—"
+        detail = "; ".join(f"{key}={value}" for key, value in sorted(pattern.detail.items())) or "—"
         lines.append(
-            f"- id={p.id} kind={p.kind} severity={p.severity}\n"
-            f"  summary: {p.summary}\n"
+            f"- id={pattern.id} kind={pattern.kind} severity={pattern.severity}\n"
+            f"  summary: {pattern.summary}\n"
             f"  detail: {detail}\n"
             f"  affected_mutation_ids: {affected}"
         )
-    return "\n".join(lines)
+    if restrict:
+        lines.sort()  # Detector order can depend on private entry and task identities.
+    return "\n".join(lines) or "(no patterns detected in the current generation)"
 
 
 def _render_content(content: str) -> str:

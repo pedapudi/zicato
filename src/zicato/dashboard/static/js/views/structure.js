@@ -658,4 +658,3 @@ function linkGen(gen, ctx, epochId) {
   if (!gen) return el('span', { class: 'dn-faint', text: 'bye' });
   return el('a', { class: 'dn-linkbtn dn-mono', href: ctx.href('candidate', { epochId, gen }), text: String(gen) });
 }
-

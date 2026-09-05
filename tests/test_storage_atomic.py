@@ -1,19 +1,17 @@
-"""Tests for :mod:`zicato.storage._atomic` — durability upgrades.
-
-The directory-fsync upgrade cannot be power-loss-tested from userspace;
-these tests pin the BEHAVIOURAL contract instead: writes and claims
-still land correctly, the parent directory really is fsynced (observed
-via monkeypatch), and a directory that cannot be fsynced degrades
-silently rather than failing the write.
-"""
+"""Record replacement preserves complete payloads across races and failures."""
 
 from __future__ import annotations
 
 import os
+import stat
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, current_thread
+from uuid import UUID
 
 import pytest
 
+import zicato.storage._atomic as atomic_helpers
 from zicato.storage._atomic import (
     atomic_claim,
     atomic_write_json,
@@ -68,30 +66,147 @@ def test_atomic_write_json_roundtrip(tmp_path: Path) -> None:
     assert read_json(target) == {"a": 1, "b": 2}
 
 
-def test_atomic_write_fsyncs_the_parent_directory(
+def test_atomic_write_completes_short_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """After the rename, the PARENT DIRECTORY fd is fsynced.
+    real_write = os.write
 
-    The rename's durability depends on the directory entry reaching
-    disk; this observes the fsync call against a directory fd (an fd
-    whose ``os.fstat`` mode is a directory) landing after the write.
-    """
-    synced_dirs: list[Path] = []
-    real_fsync = os.fsync
+    def short_write(fd: int, content: bytes) -> int:
+        return real_write(fd, content[:3])
 
-    def spying_fsync(fd: int) -> None:
-        import stat
+    monkeypatch.setattr(os, "write", short_write)
+    target = tmp_path / "state.json"
+    payload = '{"message": "complete résumé"}'
+    atomic_write_text(target, payload)
+    assert target.read_text(encoding="utf-8") == payload
+    assert list(tmp_path.iterdir()) == [target]
 
+
+def test_atomic_write_retries_a_temporary_name_collision_without_truncation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "state.json"
+    identifiers = iter([UUID(int=0), UUID(int=1)])
+    other_temporary = tmp_path / f"state.json.{UUID(int=0).hex}.tmp"
+    other_temporary.write_text("another operation", encoding="utf-8")
+    monkeypatch.setattr(atomic_helpers, "uuid4", lambda: next(identifiers))
+
+    atomic_write_text(target, "replacement")
+
+    assert target.read_text(encoding="utf-8") == "replacement"
+    assert other_temporary.read_text(encoding="utf-8") == "another operation"
+    assert set(tmp_path.iterdir()) == {target, other_temporary}
+
+
+@pytest.mark.parametrize("failure", ["write", "zero_write", "fsync", "replace"])
+def test_atomic_write_failure_preserves_committed_file_and_other_temporary_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    target = tmp_path / "state.json"
+    target.write_text("committed", encoding="utf-8")
+    other_temporary = tmp_path / "state.json.tmp"
+    other_temporary.write_text("another operation", encoding="utf-8")
+    real_write = os.write
+    written = False
+
+    def failing_write(fd: int, content: bytes) -> int:
+        nonlocal written
+        if failure == "zero_write":
+            return 0
+        if written:
+            raise OSError("injected write failure")
+        written = True
+        return real_write(fd, content[:2])
+
+    def fail(*args: object) -> None:
+        raise OSError("injected publication failure")
+
+    if failure in {"write", "zero_write"}:
+        monkeypatch.setattr(os, "write", failing_write)
+    else:
+        monkeypatch.setattr(os, failure, fail)
+
+    with pytest.raises(OSError):
+        atomic_write_text(target, "replacement")
+
+    assert target.read_text(encoding="utf-8") == "committed"
+    assert other_temporary.read_text(encoding="utf-8") == "another operation"
+    assert set(tmp_path.iterdir()) == {target, other_temporary}
+
+
+def test_competing_atomic_writers_publish_complete_payloads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Read after each rename while the other writer still owns an open file."""
+    target = tmp_path / "state.json"
+    target.write_text("committed", encoding="utf-8")
+    first_ready, second_open = Event(), Event()
+    publish_first, write_second = Event(), Event()
+    real_write, real_replace = os.write, os.replace
+
+    def controlled_write(fd: int, content: bytes) -> int:
+        if current_thread().name == "record-writer_1":
+            second_open.set()
+            assert write_second.wait(5), "second writer was not released"
+        return real_write(fd, content)
+
+    def controlled_replace(source: Path, destination: Path) -> None:
+        if current_thread().name == "record-writer_0":
+            first_ready.set()
+            assert publish_first.wait(5), "first writer was not released"
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "write", controlled_write)
+    monkeypatch.setattr(os, "replace", controlled_replace)
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="record-writer") as workers:
+        first = workers.submit(atomic_write_text, target, '{"writer": "first"}')
+        try:
+            assert first_ready.wait(5), "first writer did not reach replacement"
+            second = workers.submit(atomic_write_text, target, '{"writer": "second"}')
+            assert second_open.wait(5), "second writer did not open its temporary file"
+            assert target.read_text(encoding="utf-8") == "committed"
+            publish_first.set()
+            first.result(timeout=5)
+            first_publication = target.read_text(encoding="utf-8")
+            write_second.set()
+            second_error = second.exception(timeout=5)
+        finally:
+            publish_first.set()
+            write_second.set()
+
+    assert first_publication == '{"writer": "first"}'
+    assert second_error is None
+    assert target.read_text(encoding="utf-8") == '{"writer": "second"}'
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_atomic_write_synchronization_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "state.json"
+    target.write_text("committed", encoding="utf-8")
+    calls: list[str] = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def observed_fsync(fd: int) -> None:
         if stat.S_ISDIR(os.fstat(fd).st_mode):
-            synced_dirs.append(_fd_path(fd))
+            calls.append("directory sync")
+            assert _fd_path(fd).resolve() == target.parent.resolve()
+            assert target.read_text(encoding="utf-8") == "replacement"
+        else:
+            calls.append("file sync")
+            assert _fd_path(fd).read_text(encoding="utf-8") == "replacement"
+            assert target.read_text(encoding="utf-8") == "committed"
         real_fsync(fd)
 
-    monkeypatch.setattr(os, "fsync", spying_fsync)
-    target = tmp_path / "sub" / "state.json"
-    atomic_write_text(target, "payload")
-    assert target.read_text(encoding="utf-8") == "payload"
-    assert target.parent.resolve() in [p.resolve() for p in synced_dirs]
+    def observed_replace(source: Path, destination: Path) -> None:
+        calls.append("replace")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "fsync", observed_fsync)
+    monkeypatch.setattr(os, "replace", observed_replace)
+    atomic_write_text(target, "replacement")
+    assert calls == ["file sync", "replace", "directory sync"]
 
 
 def test_atomic_write_survives_unfsyncable_directory(

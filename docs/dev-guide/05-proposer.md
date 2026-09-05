@@ -48,7 +48,7 @@
 | `src/zicato/proposer/foe_scratch.py` | The disposable working copy, and the projection that reads it back as a patch set over the declared mutation points | — |
 | `src/zicato/proposer/external.py` | The seam that NAMES an implementation and HASHES it — `external_proposer_config`, `resolve_external_spec` | — |
 | `src/zicato/proposer/proposer.py` | The four episode outcomes (`ProposerError`, `ProposerBlocked`, `ProposerExhausted`) and `ExperimentValidator` | — |
-| `src/zicato/proposer/prompts.py` | Every block renderer; ALL banding/aggregation happens here (`_aggregate_pattern_detail`, `_bucket_scalar_delta`, `_band_rate`, `_band_quality`, …) | — |
+| `src/zicato/proposer/prompts.py` | Block renderers and visibility policy; restricted patterns use the numeric projection in `pattern_feedback.py` | — |
 | `src/zicato/proposer/structured.py` | `EXPERIMENT_JSON_SCHEMA`, `parse_experiment_json` (two-pass validation), `extract_json_object` (5-stage salvage), `ExperimentParseError`, `PostApplyValidationError` | 880 lines |
 | `src/zicato/proposer/best_of_n.py` | `BestOfNProposerAgent` (slate sampling, screen, revise, critique, heuristic, `_mount_chosen`), `CandidateScreenResult`, `ScreenRunner`, `wrap_with_proposer_quality` | 1743 lines |
 | `src/zicato/proposer/hints.py` | `EDIT_CLASS_HINTS`, `FAILURE_MODE_HINTS`, `hint_for_slot`, `dominant_failure_mode` — the per-slot slate diversifier | 256 lines |
@@ -254,7 +254,7 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `epoch_id` | `str` | orchestrator (resolved epoch) | prompt-independent: lineage coordinate for the minted `Experiment`; tools context; insights lookup | MACHINERY (never rendered into the prompt body) |
 | `parent_generation_id` | `str` | orchestrator (current champion) | `Experiment.parent_generation_id`; `_resolve_generation_root` for the tools; meta-loop events | MACHINERY |
 | `new_generation_id` | `str` | orchestrator (`_next_generation_id`, or the resume plan's reused id) | `Experiment.generation_id`; `Experiment.id = f"exp_{epoch}_{gen}"` | MACHINERY |
-| `patterns` | `tuple[Pattern, ...]` | orchestrator: `detect_patterns` over the **TRAIN slice only** | `render_pattern_block` (prompt), `_targets_observed_failure` (best-of-N heuristic), exemplar anchors | SANITIZED under `restrict_visibility` (identity keys stripped → `entries_affected=N`); **train-only** |
+| `patterns` | `tuple[Pattern, ...]` | orchestrator: `detect_patterns` over the **TRAIN slice only** | `render_pattern_block` (prompt), `_targets_observed_failure` (best-of-N heuristic), exemplar anchors | Under `restrict_visibility`, only declared measurements, severity, known metric labels, and mutation references render; **train-only** |
 | `mutations` | `tuple[MutationPoint, ...]` | orchestrator: `enumerate_mutations` over the adapter's mutable trees | `render_mutation_block` (prompt), `parse_experiment_json` cross-checks, the tool context (`mutation_usage`'s id check, `validate_patches`' pre-image guard) | IDENTITY-FREE (code spans, unrelated to the board split) |
 | `brief_text` | `str` | orchestrator: `load_brief(brief.md).text` | `instruction_sections` → the episode's `70-brief` section (spliced verbatim) | IDENTITY-FREE (operator-authored) |
 | `current_loss_summary` | `str` | orchestrator: `_render_loss_summary(TRAIN losses)` — one line: `drift_loss_mean=… over N runs, pass_rate=…` | user prompt `## Current loss summary` | AGGREGATED (board-wide means only; train-only) |
@@ -1683,8 +1683,8 @@ the flag because there is nothing to reveal even when it is off.
 
 | Forbidden material | Why | Where it is stopped |
 |---|---|---|
-| **Board entry ids** | the unit of special-casing: a named entry can be memorized and gamed | `_LEAKY_DETAIL_KEYS = {affected_entry_ids, entry_id, task_id, agent}` stripped by `_aggregate_pattern_detail`; the exemplar window-local anonymization and identity scrub (ids never emitted, scrubbed from free text); screen reasons counts-only; memory digest carries generation ids, never entry ids |
-| **Task / question text** | the input to memorize | detectors never put raw inputs in `detail`; the exemplar field allowlist drops `run_started.goal_summary` ("goal_summary IS the task prompt") and the identity scrub removes quotations of it |
+| **Board entry ids** | the unit of special-casing: a named entry can be memorized and gamed | `PatternFeedback.from_pattern` projects declared numeric fields and discards diagnostic ids, summaries, and unknown detail keys; the exemplar window-local anonymization and identity scrub (ids never emitted, scrubbed from free text); screen reasons counts-only; memory digest carries generation ids, never entry ids |
+| **Task / question text** | the input to memorize | restricted pattern summaries are constructed from declared measurements; the exemplar field allowlist drops `run_started.goal_summary` ("goal_summary IS the task prompt") and the identity scrub removes quotations of it |
 | **Model outputs** | answers to copy | the exemplar field allowlist (`run_completed` / `task_completed` / `task_progress` summaries "ARE model output"); outcome marginals carry rates only |
 | **Anything holdout** | the holdout exists to detect memorization; showing it defeats the design | the orchestrator computes EVERY proposer input from the TRAIN slice (`split_board` + `rotation_seed`, step 4 of `evolve_once`); the exemplar extractor intersects pattern-named entries with `train_entry_ids` and "cannot widen the slice it is given"; `select_screen_entries` is handed the train board only |
 | **Raw per-entry outcomes** (which entry passed/failed, per-entry scores) | the response surface to climb entry-by-entry | losses reach the proposer only through aggregates: the one-line loss summary, the banded failure profile, pattern counts |
@@ -1697,7 +1697,7 @@ enforcing code, and the test that pins it.
 
 | Channel | Reaches the prompt as | Transformation | Enforcing code | Test |
 |---|---|---|---|---|
-| Detector **patterns** | kind, severity, summary, sanitized detail, affected **mutation** ids | identity detail keys dropped; `entries_affected=N` count substituted for the id list | `render_pattern_block(restrict=True)` → `_aggregate_pattern_detail` (`src/zicato/proposer/prompts.py`) | `tests/test_proposer_prompts.py` |
+| Detector **patterns** | declared kind, severity, measurements, known metric labels, affected **mutation** ids | typed numeric projection; summaries constructed from permitted fields; diagnostic ids and text omitted; entries counted; findings sorted by rendered content | `render_pattern_block(restrict=True)` → `PatternFeedback.from_pattern` (`src/zicato/proposer/pattern_feedback.py`) | `tests/test_proposer_prompts.py`, `tests/test_proposer_best_of_n.py`; real outputs from every built-in detector |
 | **Experiment memory** | per-experiment verdict + bucketed Δscalar + targeted ids + core idea | `Δscalar=improved/flat/regressed` under restrict; cross-contract entries carry NO delta at all | `_render_prior_experiment_line(restrict=…)`, `_bucket_scalar_delta` | `tests/test_proposer_prior_experiments_block.py` |
 | **Failure-mode profile** | banded recall/precision decomposition, banded failure-mode rates, banded pass-rate/score | every number through `_band_rate` / `_band_quality`; summary object carries marginal rates only (no id/question/output token) | `render_failure_mode_profile` + `aggregate_outcome_marginals` (`src/zicato/analyzer/outcome_marginals.py`) | `tests/test_outcome_marginals.py`, `tests/test_proposer_prompts.py` |
 | **Operator outcome-marginals hook** | extra named banded rates (`- <name>: ~N% of runs`) | `run_operator_summarizer` sanitizes: numeric-only values, names filtered — the operator hook's output "cannot leak" | `src/zicato/analyzer/outcome_marginals.py::run_operator_summarizer` | `tests/test_outcome_marginals.py` |
@@ -1819,9 +1819,9 @@ grep -n "def render_" src/zicato/proposer/prompts.py
 #    of holdout_ids are the gate/ladder/tournament paths, never proposer-side)
 grep -rn "holdout_ids\|_holdout" src/zicato/proposer/ src/zicato/analyzer/
 
-# 3. Did a detector start putting raw input text into Pattern.detail?
-#    (details must stay ids/counts/rates — the strip relies on it)
-grep -rn "detail\[" src/zicato/patterns/detectors.py
+# 3. Does each declared feedback field contain only measurements?
+#    Diagnostic text stays in Pattern; restricted requests use this projection.
+grep -n "_FIELDS\|from_pattern" src/zicato/proposer/pattern_feedback.py
 
 # 4. Any new f-string interpolating entry ids near prompt assembly?
 grep -rn "entry_id\|entry.id" src/zicato/proposer/ | grep -v test
@@ -2213,9 +2213,9 @@ touches. (Full definitions: `src/zicato/core/patterns.py`,
 
 | Field | Meaning | Envelope note |
 |---|---|---|
-| `id`, `kind`, `severity` | detector identity + class + weight | identity-free |
-| `summary` | one human line | detectors keep it aggregate |
-| `detail` | `dict[str, str]` of structured evidence | MAY carry `affected_entry_ids` / `entry_id` / `task_id` / `agent` — the keys `_aggregate_pattern_detail` strips under restrict |
+| `id`, `kind`, `severity` | diagnostic identity, detector class, severity | restricted feedback omits the id and permits declared kinds and severities |
+| `summary` | diagnostic description for operators | may identify entries, tasks, or agents; restricted feedback constructs its own summary |
+| `detail` | `dict[str, str]` of structured evidence | may carry identities; only numeric fields declared in `pattern_feedback.py` and known metric labels enter restricted requests |
 | `affected_mutation_ids` | the manifest ids the detector suspects | drives `_targets_observed_failure` + the exemplar anchor narrowing |
 
 **`MutationPoint`** — one valid patch target:

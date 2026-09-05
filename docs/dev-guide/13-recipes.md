@@ -261,7 +261,7 @@ gates.
 | `src/zicato/patterns/detectors.py` | `detect_<name>(inp) -> list[Pattern]` | the detector |
 | `src/zicato/patterns/detectors.py` | `ALL_DETECTORS` | register it |
 | `src/zicato/patterns/__init__.py` | re-export | package surface |
-| `src/zicato/proposer/prompts.py` | `_LEAKY_DETAIL_KEYS` | banding, IF your detail carries identity |
+| `src/zicato/proposer/pattern_feedback.py` | `_FIELDS`, `PatternFeedback` | declare permitted numeric fields and an identity-free summary |
 | `tests/test_patterns_detectors.py` | test | pin it |
 
 **Steps.**
@@ -283,36 +283,25 @@ gates.
    `ALL_DETECTORS + get_all_detectors()`. `detect_patterns(inp)` runs each and
    **dedupes by `Pattern.id`** (first wins), so a stable id matters.
 4. **Export it** from `src/zicato/patterns/__init__.py`.
-5. **Respect the visibility envelope — the critical step.** Before a pattern
-   reaches the proposer, `render_pattern_block(patterns, restrict=...)` in
-   `proposer/prompts.py` routes its `detail` through `_aggregate_pattern_detail`
-   when `restrict` is on (driven by
-   `OverfittingConfig.restrict_proposer_visibility`). That function strips the
-   keys in `_LEAKY_DETAIL_KEYS` and replaces them with an `entries_affected=N`
-   count:
-
-   ```python
-   # src/zicato/proposer/prompts.py
-   _LEAKY_DETAIL_KEYS = frozenset({"affected_entry_ids", "entry_id", "task_id", "agent"})
-   ```
-
-   If your detector puts a NEW identity-bearing key in `detail` (say
-   `"failing_task"`), you MUST add it to `_LEAKY_DETAIL_KEYS`, or that identity
-   leaks straight to the proposer under restrict.
-6. **Test it** in `tests/test_patterns_detectors.py`: a fixture that produces the
-   pattern (assert `kind`/`severity`/`detail`), a fixture that does not, and — if
-   you added a detail key — an assertion that `render_pattern_block(...,
-   restrict=True)` strips it.
+5. **Declare restricted feedback.** The request renderer projects each finding
+   through `PatternFeedback.from_pattern` when
+   `OverfittingConfig.restrict_proposer_visibility` is enabled. Declare the
+   detector kind, summary label, count fields, and real-valued fields in
+   `proposer/pattern_feedback.py`. Only finite nonnegative measurements pass.
+   Diagnostic ids, summaries, unknown detail keys, and custom metric labels
+   remain available to operators through the original `Pattern` record.
+   Unknown detector kinds render a generic finding and an affected-entry count.
+6. **Test the detector and its request.** Cover positive and negative detector
+   cases. Serialize fixture events when the detector reads events. Render the
+   real finding through a restricted request and assert that distinctive entry,
+   task, agent, and run identities are absent. Assert that useful measurements
+   survive and that unrestricted diagnostics retain identifying evidence.
 
 **Traps.**
 
-- ⚠️ **A new identity-bearing `detail` key that is not in `_LEAKY_DETAIL_KEYS`
-  leaks the board to the proposer.** This is the restricted-visibility envelope
-  (01-orientation.md §4; 05-proposer.md §"The channel-author's checklist"). The
-  leak is SILENT — the prompt is only ever read by the model, and nothing else in CI
-  reads it — so the adversarial banding test is not optional. Plant an entry id
-  in your detail and assert it does not survive `render_pattern_block(...,
-  restrict=True)`.
+- **A numeric field name does not prove its value is numeric.** The projection
+  parses every declared value and rejects invalid values. Construct summaries
+  from those measurements; forwarding diagnostic text bypasses the restriction.
 - ⚠️ **Detectors are deterministic pure functions.** No RNG/clock — a pattern is
   re-presented across rounds, and non-determinism leaks new information each time
   it is re-rendered.
@@ -1018,8 +1007,8 @@ a different class of break.
    uv run ruff format --check .
    ```
 
-3. **Typecheck.** mypy is strict; the error count is itself a parity gate (it
-   must not get worse):
+3. **Typecheck.** Strict type checking must complete successfully. The parity
+   script also reports checker execution failures:
 
    ```bash
    uv run mypy src/zicato/
@@ -1116,7 +1105,7 @@ golden under `tools/parity/golden/` (only after you have justified the update).
    | `CLI-HELP` | `zicato --help` + every subcommand `--help` | a command, flag, default, or help string |
    | `REINDEX-DUMP` | the SQLite index rebuilt from a fixture workspace | the index schema or an ingest projection |
    | `MOCK-GOLDEN…` | a deterministic no-live-LLM mock evolve, one gate per (structure, mode, round count) lane | the loop's decision path, event ordering, or scoring — the gate name says which configuration moved |
-   | `MYPY` | the mypy error count vs. the committed baseline | types (the count must not get WORSE) |
+   | `MYPY` | successful type-checker completion | types or checker execution; fix the failure before proceeding |
    | `PYTEST` | the full suite | anything |
 
 2. **Decide legitimate-update vs regression.** Settle whether you intended to
@@ -1149,10 +1138,9 @@ golden under `tools/parity/golden/` (only after you have justified the update).
   `ZICATO_PARITY_UPDATE=1` makes ANY red go green — that is the danger. Always
   `git diff tools/parity/golden/` and confirm each line. A blind re-capture
   converts a caught regression into a committed one.
-- ⚠️ **`MYPY` red means the error count got WORSE; it does not mean mypy is
-  clean.** The gate is a ratchet against the committed baseline. Do not "fix" it
-  by adding `# type: ignore` unless the ignore is warranted (and `warn_unused_
-  ignores` will flag a stale one).
+- **A failed `MYPY` gate requires successful type checking.** Inspect both
+  diagnostics and the reported exit status. Do not add `# type: ignore` unless
+  the ignore is warranted; `warn_unused_ignores` flags a stale one.
 - ⚠️ **A moved statistical golden is the same trap as a widened test bound.** If
   `MOCK-GOLDEN` shows a decision that flipped, the loop's BEHAVIOUR changed.
   Either your change is wrong, or the new behaviour is honest and the commit

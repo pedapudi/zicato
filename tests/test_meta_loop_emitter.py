@@ -197,7 +197,8 @@ def test_build_meta_loop_emitter_with_harmonograf_url_attaches_extra_sink(
 
     stub_sink = _CapturingSink()
 
-    def _stub_build(url: str, sid: str) -> Any:
+    def _stub_build(url: str, sid: str, *, identity_root: Path | None = None) -> Any:
+        assert identity_root == tmp_path / "identities"
         return stub_sink
 
     # Patch the in-module lookup the factory uses.
@@ -210,6 +211,7 @@ def test_build_meta_loop_emitter_with_harmonograf_url_attaches_extra_sink(
         tmp_path,
         harmonograf_url="http://127.0.0.1:9999",
         evolve_started_at_iso="2026-05-28T05:01:00+00:00",
+        identity_root=tmp_path / "identities",
     )
     assert stub_sink in emitter.sinks
 

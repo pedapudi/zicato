@@ -214,12 +214,11 @@ _IDENTITY_ROOT = "/zicato/identity"
 
 @dataclass(frozen=True, slots=True)
 class ProposalEvidence:
-    """This round's redacted evidence, in the order the task presents it.
+    """Training evidence for proposal and critique requests.
 
-    Every field is a rendered block or an already-banded value assembled
-    by the caller from the TRAIN slice. Nothing here is read from the
-    board and nothing can be holdout-derived, because no field is a board
-    entry: they are counts, rates, bands and the operator's own text.
+    Callers supply the training slice. The shared renderer projects diagnostic
+    patterns and bands experiment history according to ``restrict_visibility``;
+    other channels arrive as rendered blocks or aggregate values.
     """
 
     loss_summary: str = ""

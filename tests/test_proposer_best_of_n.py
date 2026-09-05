@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._pattern_feedback_support import private_detector_patterns
 from zicato.core.types import (
     Experiment,
     HypothesisSpec,
@@ -392,7 +393,7 @@ async def test_a_heuristic_pick_records_no_rationale() -> None:
 
 
 @pytest.mark.asyncio
-async def test_critic_prompt_uses_restricted_visibility() -> None:
+async def test_critic_prompt_uses_restricted_visibility(tmp_path: Path) -> None:
     """When ``restrict_visibility`` is on, the per-entry pattern identities in
     the critic's context are aggregated to counts — the critic never sees a
     raw per-entry id (the same envelope the proposer is held to)."""
@@ -400,22 +401,12 @@ async def test_critic_prompt_uses_restricted_visibility() -> None:
     cand1 = _experiment(core_idea="one", mutation_id="writer__sp", new_content="b")
     inner = _ScriptedInnerAgent([cand0, cand1])
     critic = _CapturingCriticLLM("0")
-    # A pattern whose detail carries a per-entry id list — under restrict the
-    # renderer aggregates it to a count, so the raw id must not appear.
-    leaky_pattern = Pattern(
-        id="pat_leak",
-        kind="metric_frequency",
-        summary="off_topic across entries",
-        # The detector emits this as a comma-joined id string; under
-        # ``restrict_visibility`` the renderer aggregates it to a count.
-        detail={"affected_entry_ids": "secret_entry_42,secret_entry_7"},
-        affected_mutation_ids=("router__sp",),
-        severity="warning",
-    )
+    patterns = await private_detector_patterns(tmp_path)
     agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=2))
-    await agent.propose(_context(critic, patterns=(leaky_pattern,), restrict=True))
+    await agent.propose(_context(critic, patterns=patterns, restrict=True))
     prompt = critic.user_prompts[0]
-    assert "secret_entry_42" not in prompt
+    assert "private" not in prompt
+    assert "drift_count=6" in prompt
     # The critic prompt explicitly frames itself as the restricted view.
     assert "no held-out data" in prompt
 

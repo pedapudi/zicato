@@ -58,8 +58,7 @@
 #                  a four-challenger double-elimination field under --mode
 #                  full: winners' bracket, losers' bracket, grand final,
 #                  then the champion gate.
-#   MYPY           the mypy error count is not worse than the committed
-#                  baseline (a refactor should reduce it).
+#   MYPY           type checking must complete successfully.
 #
 # Usage
 # -----
@@ -68,13 +67,27 @@
 #   bash tools/parity.sh --only PYTEST   # run a gate (repeatable, or A,B)
 #   bash tools/parity.sh --skip PYTEST   # skip a gate (repeatable, or A,B)
 #
-# Exit code is 0 only if every selected gate passed.
+# Exit code is 0 only if a nonempty selection completed successfully.
 
 set -u -o pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GOLDEN_DIR="$REPO_ROOT/tools/parity/golden"
 LIB="$REPO_ROOT/tools/parity/lib"
+
+# A capture name after ':' selects a single deterministic fixture. This table
+# owns gate names, their default order, and each mock capture's selection.
+GATES=(
+  PYTEST CONTRACT-HASH CLI-HELP REINDEX-DUMP
+  MOCK-GOLDEN:racing_full
+  MOCK-GOLDEN-GAUNTLET:gauntlet_full
+  MOCK-GOLDEN-GAUNTLET-FAST:gauntlet_fast
+  MOCK-GOLDEN-RACING-FAST:racing_fast
+  MOCK-GOLDEN-TWO-ROUND-RACING:two_round_racing
+  MOCK-GOLDEN-SWISS:swiss_full
+  MOCK-GOLDEN-SINGLE-ELIM:single_elim_full
+  MOCK-GOLDEN-DOUBLE-ELIM:double_elim_full
+  MYPY
+)
 
 UPDATE=0
 ONLY=()
@@ -82,136 +95,106 @@ SKIP=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --update) UPDATE=1; shift ;;
-    # Split a comma list without an unquoted expansion: an unquoted $() is
-    # subject to pathname expansion, so `--only '*'` would glob the cwd.
-    --only) IFS=',' read -r -a _vals <<< "$2"; ONLY+=(${_vals[@]+"${_vals[@]}"}); shift 2 ;;
-    --skip) IFS=',' read -r -a _vals <<< "$2"; SKIP+=(${_vals[@]+"${_vals[@]}"}); shift 2 ;;
+    --only|--skip)
+      option="$1"
+      if [ $# -lt 2 ] || [[ "$2" == --* ]]; then
+        echo "$option requires a gate name or comma-separated list" >&2
+        exit 2
+      fi
+      case "$2" in
+        ''|,*|*,|*,,*) echo "$option contains an empty gate name" >&2; exit 2 ;;
+      esac
+      IFS=',' read -r -a values <<< "$2"
+      if [ "$option" = --only ]; then ONLY+=("${values[@]}"); else SKIP+=("${values[@]}"); fi
+      shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
 
-# Single-process pytest: the suite's default addopts is `-n auto`; the
-# golden-capture gates must run serially in one interpreter.
-PYTEST_SERIAL=(uv run pytest -n0 -q)
-
-RESULTS=()  # "GATE\tPASS|FAIL"
-OVERALL=0
+# The guarded expansions also support empty arrays under Bash 3.2 with nounset.
+for requested in ${ONLY[@]+"${ONLY[@]}"} ${SKIP[@]+"${SKIP[@]}"}; do
+  found=0
+  for entry in "${GATES[@]}"; do
+    [ "${entry%%:*}" = "$requested" ] && found=1
+  done
+  if [ "$found" -eq 0 ]; then
+    echo "unknown gate: $requested" >&2
+    exit 2
+  fi
+done
 
 _selected() {
-  local gate="$1"
+  local gate="$1" name found=0
   if [ ${#ONLY[@]} -gt 0 ]; then
-    local found=0
-    for g in ${ONLY[@]+"${ONLY[@]}"}; do [ "$g" = "$gate" ] && found=1; done
-    [ $found -eq 1 ] || return 1
+    for name in ${ONLY[@]+"${ONLY[@]}"}; do [ "$name" = "$gate" ] && found=1; done
+    [ "$found" -eq 1 ] || return 1
   fi
-  for g in ${SKIP[@]+"${SKIP[@]}"}; do [ "$g" = "$gate" ] && return 1; done
+  for name in ${SKIP[@]+"${SKIP[@]}"}; do [ "$name" = "$gate" ] && return 1; done
   return 0
 }
 
-_record() {
-  local gate="$1" status="$2"
-  RESULTS+=("$gate"$'\t'"$status")
-  [ "$status" = "PASS" ] || OVERALL=1
+SELECTED=()
+for entry in "${GATES[@]}"; do
+  _selected "${entry%%:*}" && SELECTED+=("$entry")
+done
+if [ ${#SELECTED[@]} -eq 0 ]; then
+  echo "no gates selected" >&2
+  exit 2
+fi
+printf 'Selected gates: %s' "${SELECTED[0]%%:*}"
+for entry in "${SELECTED[@]:1}"; do printf ', %s' "${entry%%:*}"; done
+printf '\n'
+
+# Golden captures run serially in one interpreter; the full suite uses its
+# configured worker count and includes the required statistical tests.
+PYTEST_SERIAL=(uv run pytest -n0 -q)
+_run_gate() {
+  local entry="$1" gate="${1%%:*}"
+  local update_args=() env_args=()
+  if [ "$UPDATE" -eq 1 ]; then
+    update_args=(--update)
+    env_args=(env ZICATO_PARITY_UPDATE=1)
+  fi
+  case "$gate" in
+    PYTEST) uv run pytest -q -m "not node and not cascade_oc" ;;
+    CONTRACT-HASH) uv run python "$LIB/contract_hash.py" ${update_args[@]+"${update_args[@]}"} ;;
+    CLI-HELP) uv run python "$LIB/cli_help.py" ${update_args[@]+"${update_args[@]}"} ;;
+    REINDEX-DUMP) ${env_args[@]+"${env_args[@]}"} "${PYTEST_SERIAL[@]}" "$LIB/test_reindex_golden.py" ;;
+    MOCK-GOLDEN*) ${env_args[@]+"${env_args[@]}"} "${PYTEST_SERIAL[@]}" "$LIB/test_mock_golden.py" -k "${entry#*:}" ;;
+    MYPY) uv run mypy src/zicato/ ;;
+    *) echo "gate has no command: $gate" >&2; return 2 ;;
+  esac
 }
 
 _banner() { printf '\n========== %s ==========\n' "$1"; }
-
+RESULTS=()
+OVERALL=0
 cd "$REPO_ROOT" || exit 2
-
-# --- PYTEST -----------------------------------------------------------------
-if _selected PYTEST; then
-  _banner "PYTEST (full suite, both tiers — behavioral backbone)"
-  if uv run pytest -q -m "not node and not cascade_oc"; then
-    _record PYTEST PASS
-  else
-    _record PYTEST FAIL
-  fi
-fi
-
-# --- CONTRACT-HASH ----------------------------------------------------------
-if _selected CONTRACT-HASH; then
-  _banner "CONTRACT-HASH"
-  ARG=""; [ "$UPDATE" = "1" ] && ARG="--update"
-  if uv run python "$LIB/contract_hash.py" $ARG; then _record CONTRACT-HASH PASS; else _record CONTRACT-HASH FAIL; fi
-fi
-
-# --- CLI-HELP ---------------------------------------------------------------
-if _selected CLI-HELP; then
-  _banner "CLI-HELP"
-  ARG=""; [ "$UPDATE" = "1" ] && ARG="--update"
-  if uv run python "$LIB/cli_help.py" $ARG; then _record CLI-HELP PASS; else _record CLI-HELP FAIL; fi
-fi
-
-# --- REINDEX-DUMP -----------------------------------------------------------
-if _selected REINDEX-DUMP; then
-  _banner "REINDEX-DUMP"
-  if [ "$UPDATE" = "1" ]; then
-    if ZICATO_PARITY_UPDATE=1 "${PYTEST_SERIAL[@]}" "$LIB/test_reindex_golden.py"; then _record REINDEX-DUMP PASS; else _record REINDEX-DUMP FAIL; fi
-  else
-    if "${PYTEST_SERIAL[@]}" "$LIB/test_reindex_golden.py"; then _record REINDEX-DUMP PASS; else _record REINDEX-DUMP FAIL; fi
-  fi
-fi
-
-# --- MOCK-GOLDEN (one gate per capture lane) --------------------------------
-# Each lane is one (tournament structure, runtime mode) pair with its own
-# golden. They are separate gates because they execute different production
-# branches, so a single combined verdict would not say which configuration
-# moved. The selector is the lane name, matched by pytest -k; no lane name
-# is a substring of another (see the lane table).
-_mock_golden_lane() {
-  local gate="$1" lane="$2"
-  _selected "$gate" || return 0
+for entry in "${SELECTED[@]}"; do
+  gate="${entry%%:*}"
   _banner "$gate"
-  local env_prefix=()
-  [ "$UPDATE" = "1" ] && env_prefix=(env ZICATO_PARITY_UPDATE=1)
-  if "${env_prefix[@]}" "${PYTEST_SERIAL[@]}" "$LIB/test_mock_golden.py" -k "$lane"; then
-    _record "$gate" PASS
+  if _run_gate "$entry"; then
+    RESULTS+=("$gate"$'\t'"PASS")
   else
-    _record "$gate" FAIL
+    status=$?
+    echo "$gate failed with exit status $status" >&2
+    RESULTS+=("$gate"$'\t'"FAIL")
+    OVERALL=1
   fi
-}
+done
 
-_mock_golden_lane MOCK-GOLDEN racing_full
-_mock_golden_lane MOCK-GOLDEN-GAUNTLET gauntlet_full
-_mock_golden_lane MOCK-GOLDEN-GAUNTLET-FAST gauntlet_fast
-_mock_golden_lane MOCK-GOLDEN-RACING-FAST racing_fast
-_mock_golden_lane MOCK-GOLDEN-TWO-ROUND-RACING two_round_racing
-_mock_golden_lane MOCK-GOLDEN-SWISS swiss_full
-_mock_golden_lane MOCK-GOLDEN-SINGLE-ELIM single_elim_full
-_mock_golden_lane MOCK-GOLDEN-DOUBLE-ELIM double_elim_full
-
-# --- MYPY -------------------------------------------------------------------
-if _selected MYPY; then
-  _banner "MYPY (not-worse-than-baseline)"
-  BASELINE_FILE="$GOLDEN_DIR/mypy_baseline.txt"
-  MYPY_OUT="$(uv run mypy src/zicato/ 2>&1)"
-  echo "$MYPY_OUT" | tail -3
-  # Count "error:" lines; `Success: no issues` ⇒ 0.
-  CURRENT="$(printf '%s\n' "$MYPY_OUT" | grep -c ': error:')"
-  if [ "$UPDATE" = "1" ]; then
-    printf '%s\n' "$CURRENT" > "$BASELINE_FILE"
-    echo "wrote mypy baseline = $CURRENT"
-    _record MYPY PASS
-  else
-    BASELINE="$(cat "$BASELINE_FILE" 2>/dev/null || echo 0)"
-    echo "mypy errors: current=$CURRENT baseline=$BASELINE"
-    if [ "$CURRENT" -le "$BASELINE" ]; then _record MYPY PASS; else _record MYPY FAIL; fi
-  fi
-fi
-
-# --- VERDICT ----------------------------------------------------------------
 _banner "PARITY VERDICT"
-for r in ${RESULTS[@]+"${RESULTS[@]}"}; do
-  gate="${r%%$'\t'*}"; status="${r##*$'\t'}"
-  if [ "$status" = "PASS" ]; then
+for result in "${RESULTS[@]}"; do
+  gate="${result%%$'\t'*}"; status="${result##*$'\t'}"
+  if [ "$status" = PASS ]; then
     printf '  \033[32mPASS\033[0m  %s\n' "$gate"
   else
     printf '  \033[31mFAIL\033[0m  %s\n' "$gate"
   fi
 done
-if [ "$OVERALL" = "0" ]; then
-  printf '\n\033[32mPARITY: GREEN — behavior preserved.\033[0m\n'
+if [ "$OVERALL" -eq 0 ]; then
+  printf '\n\033[32mPARITY: GREEN — all selected gates passed.\033[0m\n'
 else
-  printf '\n\033[31mPARITY: RED — a gate failed; behavior moved.\033[0m\n'
+  printf '\n\033[31mPARITY: RED — a selected gate failed.\033[0m\n'
 fi
 exit "$OVERALL"
