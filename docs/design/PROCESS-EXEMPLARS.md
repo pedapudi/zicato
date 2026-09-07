@@ -2,7 +2,7 @@
 
 > **Status.** Implemented. The channel comprises the extractor
 > (`zicato/analyzer/process_exemplars.py`), the opt-in contract knob
-> (`ProposerQualityConfig.process_exemplars`, default **0 = off**,
+> (`ExperimentalConfig.process_exemplars`, default **0 = off**,
 > omit-at-default), and the prompt block in both proposer engines. This
 > channel touches the overfitting boundary (OVERFITTING.md §11), so the
 > redaction rules below are the normative contract: **every rule maps to a
@@ -189,9 +189,9 @@ the knob only under this protocol:
 1. **Baseline.** Note the champion's current train/holdout losses and the
    absence (or level) of any `generalization_gap` finding in the round
    health report.
-2. **Enable.** Set `"proposer_quality": {"process_exemplars": 2}` in the
+2. **Enable.** Set `"experimental": {"process_exemplars": 2}` in the
    contract (the epoch rolls — expected). Keep the placebo arm on
-   (`overfitting.random_baseline_every_n`, e.g. 5) so gate discrimination
+   (`experimental.random_baseline_every_n`, e.g. 5) so gate discrimination
    stays independently monitored.
 3. **Watch two alarms, every round:**
    - the **`generalization_gap`** health finding
@@ -220,7 +220,7 @@ silently.
 - **Extractor:** `zicato/analyzer/process_exemplars.py` —
   `ProcessExemplar` (frozen) + `extract_process_exemplars(...)`; every
   §3 rule is its own function with its own test.
-- **Contract:** `ProposerQualityConfig.process_exemplars: int = 0`
+- **Contract:** `ExperimentalConfig.process_exemplars: int = 0`
   (0 = off; a positive value is the per-round cap), validated `>= 0`,
   listed in `_SCORING_OMIT_AT_DEFAULT_FIELDS`, **not** set by the scaffold.
 - **Threading:** the orchestrator extracts **best-effort** (an extraction

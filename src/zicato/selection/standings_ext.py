@@ -106,7 +106,8 @@ def audit_matrix(audit: Sequence[MatchupResult]) -> MarginMatrix:
     Each audited duel contributes one :class:`~zicato.selection.resolve.Duel`
     from its lower-scalar winner to the loser, with margin ``|delta_scalar|``.
     :func:`~zicato.selection.resolve.build_matrix` nets replicated /
-    conflicting verdicts per pairing.
+    conflicting verdicts per pairing. Tied observations retain both contestant
+    identities with zero margin, establishing no winning edge.
     """
     duels: list[Duel] = []
     for r in audit:
@@ -118,6 +119,9 @@ def audit_matrix(audit: Sequence[MatchupResult]) -> MarginMatrix:
             duels.append(Duel(winner=r.right_id, loser=r.left_id, margin=margin))
         elif delta > 0.0:
             duels.append(Duel(winner=r.left_id, loser=r.right_id, margin=margin))
+        elif delta == 0.0:
+            # Preserve observed contestants without inventing a winning edge.
+            duels.append(Duel(winner=r.left_id, loser=r.right_id, margin=0.0))
     return build_matrix(duels)
 
 
@@ -142,7 +146,7 @@ def resolver_leader(audit: Sequence[MatchupResult], resolver: str) -> str | None
     Builds the net margin matrix and runs the selected resolver
     (Smith-prune + Ranked Pairs, or Copeland) through
     :func:`~zicato.selection.resolve.resolve_leader`. ``None`` when the audit
-    yields no resolvable field.
+    contains no pairwise observations.
     """
     matrix = audit_matrix(audit)
     if not matrix.ids:

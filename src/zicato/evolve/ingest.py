@@ -107,7 +107,7 @@ def _load_prior_experiments(
     canonical; an empty digest simply omits the prompt section.
 
     ``cross_epoch`` is the contract's opt-in
-    ``experiment_memory.cross_epoch`` knob (EXPERIMENT-MEMORY.md §3.4):
+    ``experimental.cross_epoch_memory`` knob (EXPERIMENT-MEMORY.md §3.4):
     when set, settled experiments from prior epochs under the SAME
     contract hash fill the cap-budget the same-epoch entries leave, as
     ``same_contract=False`` entries.

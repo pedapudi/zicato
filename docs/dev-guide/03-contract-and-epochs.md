@@ -743,30 +743,24 @@ epoch) only when set to a non-default value. `scoring_to_canon` implements it
                 continue
 ```
 
-The registered fields (`_SCORING_OMIT_AT_DEFAULT_FIELDS`,
-`src/zicato/epoch/contract.py`):
+Fields carrying `omit_at_default` metadata are omitted recursively. The
+`experimental` block is omitted while its whole value equals
+`ExperimentalConfig()`. Examples include:
 
-| Field | Lives on | Default | What it opts into |
+| Field | Owner | Default | Behavior when enabled |
 |---|---|---|---|
-| `diff_complexity_weight` | `ScoringWeights` | `0.0` | the MDL / parsimony scalar term |
-| `experiment_memory` | `ScoringWeights` | `ExperimentMemoryConfig()` | cross-epoch experiment memory |
-| `random_baseline_every_n` | `OverfittingConfig` (nested) | `0` | the placebo / random-baseline arm |
-| `block_on_containment_violation` | `ScoringWeights` | `False` | integrity BLOCKING (vs alarm-only) |
-| `block_on_gate_contradiction` | `ScoringWeights` | `False` | gate-contradiction BLOCKING |
-| `screen_entries` | `ProposerQualityConfig` (nested) | `0` | pre-tournament candidate screening |
-| `screen_veto_only` | `ProposerQualityConfig` (nested) | `False` | screen veto-only (no tiebreak feed) |
-| `process_exemplars` | `ProposerQualityConfig` (nested) | `0` | the redacted process-exemplar channel |
-| `mutation_surface` | `ScoringWeights` | `{}` | file types beyond the built-in mutation-site envelope (MUTATION-SURFACE.md §2.5) |
+| `experimental` | `ScoringWeights` | `ExperimentalConfig()` | Optional features awaiting qualification |
+| `diff_complexity_weight` | `ExperimentalConfig` | `0.0` | Edit-complexity penalty |
+| `cross_epoch_memory` | `ExperimentalConfig` | `False` | Prior-epoch experiment history |
+| `screen_entries` | `ProposerQualityConfig` | `0` | Pre-tournament screening |
+| `block_on_containment_violation` | `ScoringWeights` | `False` | Reject a candidate after a containment violation |
 
-Note the **nested** entries: `random_baseline_every_n`, `screen_entries`,
-`screen_veto_only`, and `process_exemplars` live on nested config dataclasses,
-not on `ScoringWeights` directly. The omit check works for them because
-`scoring_to_canon` recurses into nested dataclasses and applies the SAME
-`_SCORING_OMIT_AT_DEFAULT_FIELDS` name check at every depth — the field NAME is
-what is matched, wherever it sits. A comparison for the nested block is by
-value against its `default_factory()` instance (an all-default
-`ExperimentMemoryConfig` compares equal and is omitted; any opt-in differs and
-rolls).
+Authored feature settings use their declared location under `experimental`.
+Supplying a former location raises a migration error. Archived records use
+`historical_scoring_weights_from_dict`; relocated fields retain their recorded
+meaning without rewriting the file. Selected-epoch verification uses
+`compute_recorded_contract_hash` to preserve the original canonical locations.
+The ordinary `compute_contract_hash` validates authored configuration.
 
 **What it buys:** byte-stable hashes across zicato upgrades — an epoch created
 before a field existed hashes byte-for-byte identically to one that explicitly
@@ -1473,7 +1467,7 @@ screen is scaffolded and the process-exemplar channel is not.
      screen is evaluation-side, while exemplars widen the proposer-visibility
      channel, so the operator opts in under the harm-detection runbook in
      `docs/design/PROCESS-EXEMPLARS.md` §5
-     (`ProposerQualityConfig.process_exemplars` docstring). It defaults `0` and
+     (`ExperimentalConfig.process_exemplars` docstring). It defaults `0` and
      the scaffold leaves it `0`.
    In both cases the in-code default stays OFF; only the scaffold — what a
    freshly created workspace's `scoring.json` spells out — differs. If your knob

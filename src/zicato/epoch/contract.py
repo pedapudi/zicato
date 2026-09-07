@@ -40,7 +40,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from zicato.core.adapter_config import (
     DriverImportContext,
@@ -450,6 +450,38 @@ def canonical_scoring_json(text: str) -> str:
     return json.dumps(scoring_contract_to_canon(weights), sort_keys=True)
 
 
+def _canon_recorded_scoring(scoring_path: Path) -> str:
+    """Retain recorded scoring identity while runtime decoding migrates its meaning.
+
+    Frozen records containing the retired increment hashed both the increment
+    and the unmodified threshold. Restore those values only in this read path;
+    authored contracts must use the admitted schema.
+    """
+    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
+
+    raw = json.loads(scoring_path.read_text(encoding="utf-8"))
+    weights = historical_scoring_weights_from_dict(raw)
+    canon = cast("dict[str, Any]", scoring_contract_to_canon(weights))
+    overfitting = raw.get("overfitting")
+    ladder = overfitting.get("ladder") if isinstance(overfitting, Mapping) else None
+    if isinstance(ladder, Mapping) and "noise_scale" in ladder:
+        target = canon["overfitting"]
+        assert isinstance(target, dict)
+        target = target["ladder"]
+        assert isinstance(target, dict)
+        threshold = ladder.get("threshold")
+        target["threshold"] = None if threshold is None else float(threshold)
+        target["noise_scale"] = float(ladder["noise_scale"])
+    tournament = raw.get("tournament")
+    params = tournament.get("params") if isinstance(tournament, Mapping) else None
+    if isinstance(params, Mapping):
+        # Historical strategy parameters hashed their supplied disabled tokens.
+        canon["tournament_structure"]["params"].update(
+            {key: params[key] for key in ("rating", "resolver") if key in params}
+        )
+    return json.dumps(canon, sort_keys=True)
+
+
 #: ``ScoringWeights`` fields that carry a dotted-spec pointing at an operator
 #: GRADING plugin (resolved by the shared importer). The canonicalizer expands
 #: each into ``{"spec": ..., "source_sha256": ...}`` via
@@ -492,11 +524,12 @@ def scoring_to_canon(weights: object) -> dict[str, object]:
     for f in fields(weights):  # type: ignore[arg-type]
         value = getattr(weights, f.name)
         if f.name in _SCORING_OMIT_AT_DEFAULT_FIELDS:
-            # Resolve the field's default (plain default, or default_factory)
-            # and skip the key entirely while the value matches it, so the
-            # canonical form is byte-identical to a pre-field contract.
-            if f.default is not MISSING:
-                default_value: object = f.default
+            # Omission is a persisted-format rule. An authored default may
+            # change while the value omitted from archived identity stays fixed.
+            if "canonical_default" in f.metadata:
+                default_value: object = f.metadata["canonical_default"]
+            elif f.default is not MISSING:
+                default_value = f.default
             elif f.default_factory is not MISSING:
                 default_value = f.default_factory()
             else:
@@ -526,7 +559,29 @@ def scoring_to_canon(weights: object) -> dict[str, object]:
 
 def scoring_contract_to_canon(weights: object) -> dict[str, object]:
     """Add system-owned evaluator identity to typed scoring configuration."""
-    out = scoring_to_canon(weights)
+    from dataclasses import fields
+
+    out = cast("dict[str, Any]", scoring_to_canon(weights))
+    features = getattr(weights, "experimental", None)
+    if features is not None:
+        values = out.pop("experimental", {})
+        for declared in fields(features):
+            path = declared.metadata.get("recorded_path")
+            if path is None:
+                if declared.name in values:
+                    out.setdefault("experimental", {})[declared.name] = values[declared.name]
+                continue
+            if declared.name not in values and declared.name != "max_generations_per_contract":
+                continue
+            parts = path.split(".")
+            if parts[0] == "tournament":
+                parts[0] = "tournament_structure"
+            target = out
+            for part in parts[:-1]:
+                target = target.setdefault(part, {})
+            target[parts[-1]] = _canon_value(getattr(features, declared.name))
+        # Editor grouping and retired settings do not change existing hash bytes.
+        out["overfitting"]["ladder"]["noise_scale"] = 0.0
     if getattr(weights, "goldfive", None) is None:
         return out
     from zicato.integrations.goldfive import normalize_config  # noqa: PLC0415
@@ -857,10 +912,21 @@ def _compute_contract_hash(
     for that component (so a board-less workspace still hashes
     deterministically) — a warning is logged when that happens.
     """
+    return _hash_contract(inputs, _canon_scoring(inputs.scoring_path), proposer_spec)
+
+
+def compute_recorded_contract_hash(
+    inputs: ContractInputs, *, proposer_spec: ProposerSpec | None = None
+) -> str:
+    """Hash saved settings through the same stable representation as authored settings."""
+    return _hash_contract(inputs, _canon_recorded_scoring(inputs.scoring_path), proposer_spec)
+
+
+def _hash_contract(inputs: ContractInputs, scoring: str, proposer_spec: ProposerSpec | None) -> str:
     components = [
         _canon_board(inputs.board_path),
         _canon_brief(inputs.brief_path),
-        _canon_scoring(inputs.scoring_path),
+        scoring,
         _canon_evaluator_revision(),
         _canon_adapter(inputs),
         _canon_mutable_trees(

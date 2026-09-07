@@ -27,6 +27,7 @@ import pytest
 
 from zicato.core.board import BoardEntry, Expectation, ExpectationKind
 from zicato.core.scoring_config import ScoringWeights
+from zicato.core.tournament import TournamentStructure
 from zicato.reflection.findings import derive_findings
 from zicato.reflection.practices import check_promotion_hygiene
 from zicato.tournament import calibration as cal
@@ -171,7 +172,9 @@ def test_the_practice_check_renders_the_domain_assessment(
         for i in range(6)
     ]
     check = check_promotion_hygiene(
-        weights=ScoringWeights(promote_margin=MARGIN),
+        weights=ScoringWeights(
+            promote_margin=MARGIN, tournament_structure=TournamentStructure.gauntlet()
+        ),
         experiments=[{"generation_id": "g1", "outcome": {"tournament_decision": "promoted"}}],
         board_entries=board,
         noise_floor=FLOOR,

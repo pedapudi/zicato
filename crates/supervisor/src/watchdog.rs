@@ -859,10 +859,23 @@ fn run_processes_gone(run: &crate::state::ActiveRun) -> bool {
 
 /// One locked snapshot of orphan ownership, shared by its pending escalations.
 struct OrphanBatch {
-    _guard: File,
+    _guard: WorkspaceGuard,
     paths: WorkspacePaths,
     heartbeat: Option<crate::state::Heartbeat>,
     runs: Vec<crate::state::ActiveRun>,
+}
+
+struct WorkspaceGuard(File);
+
+impl Drop for WorkspaceGuard {
+    fn drop(&mut self) {
+        // A child can inherit the open file description during process creation.
+        // Closing our descriptor alone would leave its lock held by that child.
+        // SAFETY: this guard owns a valid descriptor until File is dropped.
+        if unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) } != 0 {
+            warn!(error = %std::io::Error::last_os_error(), "workspace unlock failed");
+        }
+    }
 }
 
 impl OrphanBatch {
@@ -880,6 +893,7 @@ impl OrphanBatch {
         if unsafe { libc::flock(guard.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return None;
         }
+        let guard = WorkspaceGuard(guard);
         if metadata_writer_may_be_live(paths) {
             return None;
         }
@@ -1320,6 +1334,34 @@ mod tests {
             failures.is_empty(),
             "valid or unproven ownership was reaped: {failures:?}"
         );
+    }
+
+    #[test]
+    fn orphan_cleanup_releases_lock_while_a_duplicate_descriptor_remains_open() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = WorkspacePaths::new(root.path().into());
+        publish_run(
+            &paths,
+            &ActiveRun {
+                run_id: "orphan".into(),
+                pid: Some(99_999_998),
+                pid_start_time: Some(1.0),
+                producer_pid: Some(99_999_999),
+                producer_start_time: Some(1.0),
+                ..Default::default()
+            },
+        );
+        let batch = OrphanBatch::acquire(&paths).expect("orphan cleanup acquires the lock");
+        // A descriptor inherited during process creation refers to this same
+        // open file description until the child closes it or executes.
+        let duplicate = batch._guard.0.try_clone().unwrap();
+        assert!(writer_guard(&paths).is_none());
+        drop(batch);
+        assert!(
+            writer_guard(&paths).is_some(),
+            "completed cleanup must release its lock even while a duplicate stays open"
+        );
+        drop(duplicate);
     }
 
     #[tokio::test]

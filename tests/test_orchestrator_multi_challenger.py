@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from tests._contract_pins import experimental_for, pin_deterministic
+from tests._contract_pins import deterministic_weights, experimental_for, pin_deterministic
 
 # Reuse the fully-mocked harness from the gauntlet orchestrator tests.
 from tests._foe_support import stand_in_proposer_block
@@ -474,7 +474,12 @@ def test_gauntlet_does_not_take_multi_path(monkeypatch: pytest.MonkeyPatch, tmp_
     — proving the dispatch only diverts when the field is wider."""
     from tests._orchestrator_harness import bootstrap_workspace
 
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=0.01, tournament_structure=TournamentStructure(structure="gauntlet")
+        ),
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,

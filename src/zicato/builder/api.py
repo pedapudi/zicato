@@ -91,8 +91,6 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             min_board_size_for_split=_opt_int(args, "min_board_size_for_split"),
             rotate_holdout=_opt_bool(args, "rotate_holdout"),
             restrict_proposer_visibility=_opt_bool(args, "restrict_proposer_visibility"),
-            random_baseline_every_n=_opt_int(args, "random_baseline_every_n"),
-            max_generations_per_contract=_opt_int(args, "max_generations_per_contract"),
             ladder=args.get("ladder"),
         )
     if op == "set_proposer":
@@ -128,25 +126,29 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
         return ops.set_namespace_weights(
             draft,
             namespace_weights=args.get("namespace_weights"),
-            diff_complexity_weight=_opt_float(args, "diff_complexity_weight"),
-            diff_complexity_ceiling=_opt_float(args, "diff_complexity_ceiling"),
         )
     if op == "set_proposer_quality":
         return ops.set_proposer_quality(
             draft,
             best_of_n=_opt_int(args, "best_of_n"),
             critique_enabled=_opt_bool(args, "critique_enabled"),
-            process_exemplars=_opt_int(args, "process_exemplars"),
-            recombine=_opt_bool(args, "recombine"),
-            genealogy=_opt_int(args, "genealogy"),
-            calibration_feedback=_opt_int(args, "calibration_feedback"),
-            recombine_merge=_opt_str(args, "recombine_merge"),
         )
-    if op == "set_experiment_memory":
-        return ops.set_experiment_memory(draft, cross_epoch=_opt_bool(args, "cross_epoch"))
     if op == "set_experimental":
         return ops.set_experimental(
-            draft, tournament_structures=_opt_bool(args, "tournament_structures")
+            draft,
+            tournament_structures=_opt_bool(args, "tournament_structures"),
+            process_exemplars=_opt_int(args, "process_exemplars"),
+            recombine=_opt_bool(args, "recombine"),
+            recombine_merge=_opt_str(args, "recombine_merge"),
+            genealogy=_opt_int(args, "genealogy"),
+            calibration_feedback=_opt_int(args, "calibration_feedback"),
+            random_baseline_every_n=_opt_int(args, "random_baseline_every_n"),
+            max_generations_per_contract=_opt_int(args, "max_generations_per_contract"),
+            diff_complexity_weight=_opt_float(args, "diff_complexity_weight"),
+            diff_complexity_ceiling=_opt_float(args, "diff_complexity_ceiling"),
+            cross_epoch_memory=_opt_bool(args, "cross_epoch_memory"),
+            standing_rating=_opt_str(args, "standing_rating"),
+            resolver=_opt_str(args, "resolver"),
         )
     if op == "set_goldfive":
         if "config" not in args:

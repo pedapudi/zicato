@@ -24,9 +24,9 @@ from zicato.workspace_loader import scoring_weights_from_dict
         ),
         pytest.param(
             lambda: ScoringWeights(
-                overfitting=OverfittingConfig(ladder=LadderConfig(noise_scale=math.inf))
+                overfitting=OverfittingConfig(ladder=LadderConfig(threshold=math.inf))
             ),
-            id="ladder-noise-scale",
+            id="ladder-threshold",
         ),
         pytest.param(
             lambda: ScoringWeights(namespace_weights={"drift:": math.inf, "failure:": 1.0}),

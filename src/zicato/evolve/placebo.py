@@ -1,7 +1,7 @@
 """Random-baseline (placebo) challenger — OVERFITTING.md #7's control arm.
 
 A/B methodology's placebo: every Nth round
-(``overfitting.random_baseline_every_n``, default off) the orchestrator
+(``experimental.random_baseline_every_n``, default off) the orchestrator
 fields ONE additional challenger whose patch is a **semantics-preserving
 no-op** — the FIRST enumerated mutation point's current value re-emitted
 unchanged. The baseline tree behaves identically to the champion, so under

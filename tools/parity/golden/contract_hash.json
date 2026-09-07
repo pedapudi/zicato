@@ -6,9 +6,9 @@
     "evaluator_revision": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
     "mutable_trees": "d4f0bc5a29de06b510f9aa428f1eedba926012b591fef7a518e776a7c9bd1824",
     "proposer": "f7f723a0732e61425942cbeed48c69712a0fe503f72ee76ec8b19445879dc833",
-    "scoring": "5564775cb446b594be543cc3b8c994e49fde11edbd81ac6b8964fead8578af53"
+    "scoring": "af4aa7401e792563bc34c292a678a0d1321b5b39a94d8fde6611edc7e06aafdc"
   },
-  "contract_hash": "ae7336ac8a7dba108066d0da3af67404a0c568c12928fe0c6efd407b4a0a5384",
+  "contract_hash": "6351f5eb3a0c27f58ac49dff837c909580615824de23d194fab565dcb5e16302",
   "entrypoint": "zicato_examples.target_1_presentation.agent:root_agent",
   "fixture": "target_1_presentation",
   "mutable_trees": [

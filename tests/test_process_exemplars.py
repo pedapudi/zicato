@@ -31,7 +31,7 @@ from zicato.analyzer.process_exemplars import (
     extract_process_exemplars,
 )
 from zicato.core import Pattern
-from zicato.core.types import ProposerQualityConfig
+from zicato.core.types import ExperimentalConfig, ProposerQualityConfig
 from zicato.core.workspace import events_jsonl_path
 
 # ---------------------------------------------------------------------------
@@ -515,10 +515,10 @@ def test_patterns_without_event_footprint_are_skipped(tmp_path: Path) -> None:
 
 
 def test_process_exemplars_knob_validates_non_negative() -> None:
-    assert ProposerQualityConfig().process_exemplars == 0
-    assert ProposerQualityConfig(process_exemplars=2).process_exemplars == 2
+    assert ExperimentalConfig().process_exemplars == 0
+    assert ExperimentalConfig(process_exemplars=2).process_exemplars == 2
     with pytest.raises(ValueError, match="process_exemplars"):
-        ProposerQualityConfig(process_exemplars=-1)
+        ExperimentalConfig(process_exemplars=-1)
 
 
 def test_contract_hash_stable_at_default_and_rolls_on_opt_in() -> None:
@@ -529,16 +529,22 @@ def test_contract_hash_stable_at_default_and_rolls_on_opt_in() -> None:
 
     base = scoring_to_canon(ScoringWeights())
     pinned = scoring_to_canon(
-        ScoringWeights(proposer_quality=ProposerQualityConfig(process_exemplars=0))
+        ScoringWeights(
+            proposer_quality=ProposerQualityConfig(),
+            experimental=ExperimentalConfig(process_exemplars=0),
+        )
     )
     assert base == pinned
     assert "process_exemplars" not in json.dumps(base)
 
     opted = scoring_to_canon(
-        ScoringWeights(proposer_quality=ProposerQualityConfig(process_exemplars=2))
+        ScoringWeights(
+            proposer_quality=ProposerQualityConfig(),
+            experimental=ExperimentalConfig(process_exemplars=2),
+        )
     )
     assert opted != base
-    assert json.loads(json.dumps(opted))["proposer_quality"]["process_exemplars"] == 2
+    assert json.loads(json.dumps(opted))["experimental"]["process_exemplars"] == 2
 
 
 def test_scaffold_does_not_enable_process_exemplars() -> None:
@@ -548,7 +554,7 @@ def test_scaffold_does_not_enable_process_exemplars() -> None:
 
     weights = recommended_scaffold_weights()
     assert weights.proposer_quality.screen_entries > 0
-    assert weights.proposer_quality.process_exemplars == 0
+    assert weights.experimental.process_exemplars == 0
 
 
 def test_exemplar_types_are_frozen_and_hashable() -> None:
@@ -712,19 +718,19 @@ def test_the_episode_task_carries_the_context_s_process_exemplars() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_builder_set_proposer_quality_gains_the_knob() -> None:
+def test_builder_set_experimental_gains_the_knob() -> None:
     from zicato.contract_draft.draft import TournamentDraft
-    from zicato.contract_draft.operations import set_proposer_quality
+    from zicato.contract_draft.operations import set_experimental
 
     draft = TournamentDraft()
-    patch = set_proposer_quality(draft, process_exemplars=2)
+    patch = set_experimental(draft, process_exemplars=2)
     assert patch.changed["process_exemplars"] == {"from": 0, "to": 2}
-    assert draft.scoring.proposer_quality.process_exemplars == 2
+    assert draft.scoring.experimental.process_exemplars == 2
     # No-op when unchanged; validation mirrors the dataclass.
-    patch2 = set_proposer_quality(draft, process_exemplars=2)
+    patch2 = set_experimental(draft, process_exemplars=2)
     assert patch2.changed == {}
     with pytest.raises(ValueError, match="process_exemplars"):
-        set_proposer_quality(draft, process_exemplars=-1)
+        set_experimental(draft, process_exemplars=-1)
 
 
 # ---------------------------------------------------------------------------

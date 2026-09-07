@@ -232,6 +232,7 @@ def dataclass_schema(cls: type[Any]) -> dict[str, Any]:
             schema["default"] = _json_value(item.default)
         elif item.default_factory is not MISSING:
             schema["default"] = _json_value(item.default_factory())
+        _project_nested_defaults(schema)
         properties[key] = schema
     return {
         "type": "object",
@@ -239,6 +240,16 @@ def dataclass_schema(cls: type[Any]) -> dict[str, Any]:
         "required": required,
         "additionalProperties": False,
     }
+
+
+def _project_nested_defaults(schema: dict[str, Any]) -> None:
+    """Describe nested defaults from their owning field's resolved factory."""
+    default = schema.get("default")
+    if isinstance(default, Mapping):
+        for key, child in schema.get("properties", {}).items():
+            if key in default:
+                child["default"] = default[key]
+                _project_nested_defaults(child)
 
 
 def _type_schema(annotation: Any) -> dict[str, Any]:

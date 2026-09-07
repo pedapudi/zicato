@@ -66,12 +66,13 @@ recipe **before** you start; if there isn't one, the closest is your template.
 
 ## 3. Complete verification (full detail: `11-testing.md §11.11`)
 
-Use `make check-fast` while iterating and `make check` before proposing a
-merge. The shared executable plan in `tools/verify.py` runs each required
-check once. Its Python selections include the known-answer and statistical
-oracles; parity owns the independent golden comparisons. A failing required
-check blocks the merge. A change after validation requires checking the
-revision proposed for merge.
+Use `make check-fast` or the relevant test file during implementation.
+Before merge, require one complete successful CI run on the proposed source.
+`tools/verify.py` defines the required checks for both CI and local use.
+Run the equivalent `make check` locally when CI is unavailable or a diagnosis
+requires it; do not require both complete runs. Required checks include the
+statistical tests, tests of complete execution, independent reference results,
+all languages, packaging, and static checks. Every required result must pass.
 
 Run the attribution scan described in `01-orientation.md §G1` before
 publishing prose, commits or pull requests.
@@ -107,10 +108,9 @@ test (that adversarial test is exactly what would have caught bugs #6 and #8).
 ## 5. Your first hour
 
 ```bash
-uv sync --all-extras                                    # G2
-uv run pytest tests/ -q                                  # confirm a green default tier
-uv run pytest tests/test_convergence_known_answer.py -q # watch the loop converge (the oracle)
-# then read: docs/dev-guide/00-INDEX.md → 01-orientation.md → the chapter for your task
+uv sync --all-extras  # prepare the virtual environment when needed
+make check-fast      # select checks for the changes under review
+# Read docs/dev-guide/00-INDEX.md and the chapter relevant to the task.
 ```
 
 The operator workflows (running the loop, designing boards, tuning scoring) live

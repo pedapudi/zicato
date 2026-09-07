@@ -42,6 +42,35 @@ from zicato.analyzer.report_sections import (
 )
 from zicato.core.workspace import analysis_path
 
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_methodology_reports_retained_experimental_proposer_settings(
+    epoch_workspace: tuple[Path, str], historical: bool
+) -> None:
+    workspace, epoch = epoch_workspace
+    quality = {"best_of_n": 3, "screen_entries": 2}
+    experimental = {
+        "process_exemplars": 4,
+        "genealogy": 5,
+        "recombine": True,
+        "recombine_merge": "mechanical",
+    }
+    scoring = (
+        {"proposer_quality": {**quality, **experimental}}
+        if historical
+        else {"proposer_quality": quality, "experimental": experimental}
+    )
+    path = workspace / "epochs" / epoch / "scoring.json"
+    path.write_text(json.dumps(scoring))
+    original = path.read_bytes()
+    rendered = render_methodology_section(gather_epoch_report_data(workspace, epoch))
+    assert "| process exemplars | 4 |" in rendered
+    assert "| genealogy channel | 5 |" in rendered
+    assert "| recombination | on · `mechanical` merge |" in rendered
+    assert "| pre-tournament screen | 2 entries · veto+advise |" in rendered
+    assert path.read_bytes() == original
+
+
 # ---------------------------------------------------------------------------
 # Fixture workspace
 # ---------------------------------------------------------------------------

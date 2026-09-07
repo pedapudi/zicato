@@ -53,18 +53,13 @@ def _query(
 
 
 def test_threshold_none_uses_promote_margin() -> None:
-    cfg = LadderConfig(threshold=None, noise_scale=0.0)
+    cfg = LadderConfig(threshold=None)
     assert effective_threshold(cfg, _weights(promote_margin=0.1)) == pytest.approx(0.1)
 
 
 def test_threshold_explicit_overrides_promote_margin() -> None:
     cfg = LadderConfig(threshold=0.25)
     assert effective_threshold(cfg, _weights(promote_margin=0.1)) == pytest.approx(0.25)
-
-
-def test_threshold_adds_noise_band() -> None:
-    cfg = LadderConfig(threshold=None, noise_scale=0.05)
-    assert effective_threshold(cfg, _weights(promote_margin=0.1)) == pytest.approx(0.15)
 
 
 def test_threshold_ignores_the_holdout_margin() -> None:
@@ -79,9 +74,6 @@ def test_threshold_ignores_the_holdout_margin() -> None:
     """
     weights = ScoringWeights(promote_margin=0.1, holdout_margin=0.2)
     assert effective_threshold(LadderConfig(threshold=None), weights) == pytest.approx(0.1)
-    assert effective_threshold(
-        LadderConfig(threshold=None, noise_scale=0.05), weights
-    ) == pytest.approx(0.15)
     assert effective_threshold(LadderConfig(threshold=0.3), weights) == pytest.approx(
         0.3
     ), "an explicit LadderConfig.threshold still pins the bar"
@@ -333,11 +325,6 @@ def test_ladder_config_rejects_negative_budget() -> None:
 def test_ladder_config_rejects_negative_threshold() -> None:
     with pytest.raises(ValueError, match="threshold"):
         LadderConfig(threshold=-0.1)
-
-
-def test_ladder_config_rejects_negative_noise_scale() -> None:
-    with pytest.raises(ValueError, match="noise_scale"):
-        LadderConfig(noise_scale=-1.0)
 
 
 def test_holdout_record_shape() -> None:

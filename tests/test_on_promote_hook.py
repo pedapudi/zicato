@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 
+from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
     bootstrap_workspace,
     install_telemetry_stubs,
@@ -39,6 +40,7 @@ from tests._orchestrator_harness import (
 from tests.test_orchestrator_multi_challenger import (
     _bootstrap_swiss_workspace,
 )
+from zicato.core.types import TournamentStructure
 from zicato.epoch.settlement_receipt import field_settlement_intent_path
 from zicato.evolve.promote_hook import ON_PROMOTE_TIMEOUT_SECONDS, fire_on_promote
 from zicato.health.diagnostics import assess_loop_health, detect_on_promote_hook_failed
@@ -487,7 +489,12 @@ def test_resume_never_re_fires_a_settled_promotion(
     therefore complete canonical records without repeating a hook that already
     ran, and the next round moves past v1.
     """
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=0.01, tournament_structure=TournamentStructure(structure="gauntlet")
+        ),
+    )
     calls = _install_hooked_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,

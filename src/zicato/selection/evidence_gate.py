@@ -15,7 +15,7 @@ Confirmation can hold that
 promotion while collecting fresh evidence, or finish inconclusive when its
 budget is exhausted. Individual 95% strength intervals remain diagnostics;
 the difference interval determines confirmation. An absent probability
-threshold disables confirmation; workspace scaffolds enable it explicitly.
+threshold disables confirmation; the shared scoring default includes it.
 """
 
 from __future__ import annotations
@@ -26,8 +26,16 @@ from statistics import NormalDist
 from typing import Any, Literal
 
 from zicato.core.measurement import EVIDENCE_REPLICATE_BASE as EVIDENCE_REPLICATE_BASE
-from zicato.core.measurement import MeasurementDraw, validate_measurement_interval
+from zicato.core.measurement import MeasurementDraw
+from zicato.core.tournament import (
+    DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD as DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
+)
+from zicato.core.tournament import DEFAULT_REPLICATE_BUDGET as DEFAULT_REPLICATE_BUDGET
 from zicato.core.tournament import ConfirmationStatus
+from zicato.core.tournament import (
+    read_promote_confidence_threshold as read_promote_confidence_threshold,
+)
+from zicato.core.tournament import read_replicate_budget as read_replicate_budget
 from zicato.selection.rating import RatingFit, fit_bradley_terry, prob_stronger
 from zicato.selection.standings_ext import audit_duels
 from zicato.selection.strategy import MatchupResult
@@ -45,74 +53,10 @@ CI_Z: float = 1.959963984540054
 #: Confirmation divides this tail across planned candidates and refits.
 MIN_PROMOTE_PROBABILITY: float = 0.975
 
-#: Historical fallback when ``promote_confidence_replicates`` is unset:
-#: three fresh paired confirmation draws. Each draw evaluates both contestants;
-#: its execution cost depends on the board. Exhaustion leaves required
-#: confirmation incomplete.
-DEFAULT_REPLICATE_BUDGET: int = 3
-
-#: The probability threshold written by workspace scaffolds. The difference
-#: interval also requires MIN_PROMOTE_PROBABILITY before comparison allocation;
-#: an authored threshold above that minimum makes confirmation stricter.
-DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD: float = 0.8
-
 #: The verdict literal this module emits. ``"rejected"`` is included only so a
 #: caller can pass through a gate-reject unchanged; this module never *produces*
 #: a reject (the guard can only ever hold a promotion, never force one).
 EvidenceDecision = Literal["promoted", "deferred", "rejected", "inconclusive"]
-
-
-def read_promote_confidence_threshold(params: Mapping[str, Any]) -> float | None:
-    """The opt-in ``promote_confidence_threshold``, or ``None`` when absent.
-
-    Reads ``params["promote_confidence_threshold"]`` — the probability bar a
-    promotion must clear under the Bradley--Terry pre-gate: crown only if
-    ``P(theta_child > theta_champion)`` reaches it and the adjusted strength
-    difference interval lies above zero.
-    Absent / explicit ``null`` / ``0`` / non-numeric / outside ``(0, 1)`` ⇒
-    ``None`` (no pre-gate). The gate is OPT-IN — see the module
-    docstring for the measured soundness-vs-power tradeoff; the scaffolded
-    contracts enable it explicitly with an honest replicate budget. Like
-    every guard here, a bad value safely degrades to "no pre-gate".
-
-    Lives in the opaque ``TournamentStructure.params`` map — NOT on
-    :class:`~zicato.core.ScoringWeights` — because an absent param
-    adds nothing to the contract canonical form, so the contract hash (and the
-    whole parity surface) is byte-identical when the operator does not opt in.
-    """
-    raw = params.get("promote_confidence_threshold", None)
-    if raw is None:
-        return None
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    if value <= 0.0 or value >= 1.0:
-        return None
-    return value
-
-
-def read_replicate_budget(params: Mapping[str, Any]) -> int:
-    """The defer→replicate budget for the pre-gate loop.
-
-    Reads ``params["promote_confidence_replicates"]`` — how many extra
-    fresh crowning-pair replicates the driver may spend before the
-    verdict goes terminal (``inconclusive``). Absent / non-integer / negative ⇒
-    :data:`DEFAULT_REPLICATE_BUDGET`. Zero is honoured (defer once, then go
-    inconclusive immediately) so an operator can disable replication while still
-    using the deferred verdict.
-    """
-    raw = params.get("promote_confidence_replicates", None)
-    if raw is None:
-        return DEFAULT_REPLICATE_BUDGET
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return DEFAULT_REPLICATE_BUDGET
-    if value < 0:
-        return DEFAULT_REPLICATE_BUDGET
-    validate_measurement_interval(EVIDENCE_REPLICATE_BASE, value, allow_empty=True)
-    return value
 
 
 @dataclass(frozen=True, slots=True)

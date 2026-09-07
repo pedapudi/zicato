@@ -785,8 +785,8 @@ over the champion clears the threshold:
 Within the band the Ladder **withholds**: it re-reports the previous best
 confirmation (`LadderState.best_confirmed`) and the round's raw holdout result
 does not count. The threshold seeds from the gate's existing `promote_margin`
-(`effective_threshold` = `cfg.threshold or promote_margin`, plus
-`noise_scale`, default 0) — parameter-free by default.
+when `ladder.threshold` is null. An explicit threshold, including zero,
+sets the release bar directly.
 
 **Budget rule.** Every query that consults the holdout charges one unit of the
 per-epoch budget (`LadderConfig.budget`), charged *before* the release
@@ -1828,7 +1828,7 @@ endpoint seam — tests script it; a real evaluation endpoint slots in unchanged
 ## 11. The placebo arm
 
 `src/zicato/evolve/placebo.py` — the control arm of A/B methodology, opt-in
-via `overfitting.random_baseline_every_n` (default 0 = off; omitted from the
+via `experimental.random_baseline_every_n` (default 0 = off; omitted from the
 contract canonical form at the default). Every Nth epoch-cumulative round the
 orchestrator fields ONE extra challenger whose patch is a
 **semantics-preserving no-op**: the first enumerated mutation point's current

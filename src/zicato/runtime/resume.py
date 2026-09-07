@@ -410,7 +410,7 @@ def _configured_field_size(workspace_root: Path, epoch_id: str) -> int:
         return 1
     return make_strategy(
         scoring.tournament_structure,
-        experimental_structures=scoring.experimental.tournament_structures,
+        experimental=scoring.experimental,
     ).field_size()
 
 

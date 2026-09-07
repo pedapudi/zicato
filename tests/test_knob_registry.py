@@ -92,11 +92,14 @@ _FROZEN_OMIT_AT_DEFAULT_FIELDS = frozenset(
         # both at their default keeps every existing epoch's hash where it is.
         "holdout_margin",
         "holdout_entry_regression_budget",
-        "experiment_memory",
         # The opt-ins for features without a measured case (issue #394).
         # Omitted while every flag is off, so a contract naming none of
         # them keeps its hash; a flag turned on rolls the epoch.
         "experimental",
+        "max_generations_per_contract",
+        "cross_epoch_memory",
+        "standing_rating",
+        "resolver",
         "random_baseline_every_n",
         "block_on_containment_violation",
         "block_on_gate_contradiction",
@@ -267,8 +270,8 @@ def test_knob_registry_is_non_empty_and_covers_genealogy() -> None:
     """
     registry = _knob_registry()
     assert registry, "the knob registry derived from field metadata is empty"
-    traced = registry.get("ProposerQualityConfig.genealogy")
-    assert traced == ("set_proposer_quality", "genealogy", ""), (
+    traced = registry.get("ExperimentalConfig.genealogy")
+    assert traced == ("set_experimental", "genealogy", ""), (
         "the genealogy knob (Finding 3's traced example) is missing or mis-mapped "
         f"in the metadata-derived registry: {traced!r}"
     )
@@ -298,7 +301,6 @@ _NO_BUILDER_OP_KNOBS = {
     # the same thing.
     "ScoringWeights.overfitting": "container — its fields carry the ops",
     "ScoringWeights.proposer_quality": "container — its fields carry the ops",
-    "ScoringWeights.experiment_memory": "container — its fields carry the ops",
     "ScoringWeights.experimental": "container — its fields carry the ops",
     # Dotted CALLABLE specs (``pkg.mod:fn``) resolved by the same importer
     # predicates / judges use. A GUI field that names arbitrary importable
@@ -424,8 +426,8 @@ _INADMISSIBLE_VALUES: dict[tuple[type, str], object] = {
     (ScoringWeights, "plan_revision_weight"): float("nan"),
     (ScoringWeights, "task_failure_weight"): float("nan"),
     (ScoringWeights, "not_completed_weight"): float("nan"),
-    (ScoringWeights, "diff_complexity_weight"): -1.0,
-    (ScoringWeights, "diff_complexity_ceiling"): -1.0,
+    (ExperimentalConfig, "diff_complexity_weight"): -1.0,
+    (ExperimentalConfig, "diff_complexity_ceiling"): -1.0,
     (ScoringWeights, "promote_margin"): -0.05,
     (ScoringWeights, "holdout_margin"): float("nan"),
     (ScoringWeights, "holdout_entry_regression_budget"): -1,
@@ -436,17 +438,16 @@ _INADMISSIBLE_VALUES: dict[tuple[type, str], object] = {
     (OverfittingConfig, "holdout_fraction"): 0.0,
     # Not ``0``: ``set_holdout`` reserves that as the token that CLEARS the
     # ceiling, since ``None`` there already means "leave unchanged".
-    (OverfittingConfig, "max_generations_per_contract"): -1,
-    (OverfittingConfig, "random_baseline_every_n"): -1,
+    (ExperimentalConfig, "max_generations_per_contract"): -1,
+    (ExperimentalConfig, "random_baseline_every_n"): -1,
     (LadderConfig, "threshold"): -0.5,
     (LadderConfig, "budget"): -1,
-    (LadderConfig, "noise_scale"): -0.1,
     (ProposerQualityConfig, "best_of_n"): 0,
     (ProposerQualityConfig, "screen_entries"): -1,
-    (ProposerQualityConfig, "process_exemplars"): -1,
-    (ProposerQualityConfig, "genealogy"): -1,
-    (ProposerQualityConfig, "calibration_feedback"): -1,
-    (ProposerQualityConfig, "recombine_merge"): "union",
+    (ExperimentalConfig, "process_exemplars"): -1,
+    (ExperimentalConfig, "genealogy"): -1,
+    (ExperimentalConfig, "calibration_feedback"): -1,
+    (ExperimentalConfig, "recombine_merge"): "union",
 }
 
 
@@ -526,6 +527,29 @@ def test_recommended_scaffold_enables_no_experimental_knob() -> None:
         if knob.owner is ExperimentalConfig and getattr(scaffold, knob.name) != knob.default
     ]
     assert not enabled, f"the recommended scaffold enables experimental knob(s) {enabled}"
+
+
+def test_authored_schema_groups_experimental_fields_without_historical_aliases() -> None:
+    from dataclasses import fields
+
+    from zicato.core.configuration import dataclass_schema
+
+    properties = dataclass_schema(ScoringWeights)["properties"]
+    experimental = properties["experimental"]["properties"]
+    assert set(experimental) == {item.name for item in fields(ExperimentalConfig)}
+    assert "experiment_memory" not in properties
+    assert "diff_complexity_weight" not in properties
+    assert "random_baseline_every_n" not in properties["overfitting"]["properties"]
+    ordinary = properties["proposer_quality"]["properties"]
+    assert "process_exemplars" not in ordinary
+    assert {
+        "best_of_n",
+        "critique_enabled",
+        "screen_entries",
+        "screen_veto_only",
+    } <= ordinary.keys()
+    assert experimental["standing_rating"]["enum"] == ["none", "bradley_terry"]
+    assert experimental["resolver"]["enum"] == ["none", "copeland", "ranked_pairs"]
 
 
 def test_promote_margin_may_not_invert_the_gate() -> None:

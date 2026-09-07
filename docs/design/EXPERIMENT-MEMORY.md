@@ -17,7 +17,7 @@
 > accumulates the in-flight siblings. §5 describes that shipped code.
 > **Cross-contract transfer** (§3.4 and §5.2) — a `PriorExperiment` from a
 > different epoch under the *same* `contract_hash`, marked
-> `same_contract=False` — is the opt-in `experiment_memory.cross_epoch`
+> `same_contract=False` — is the opt-in `experimental.cross_epoch_memory`
 > contract knob. With the knob off, its default, the reader stays
 > same-epoch-only and the prompt is byte-identical; see
 > [`query.py`](../../src/zicato/index/query.py)'s
@@ -280,7 +280,7 @@ entry takes only whatever cap-budget the same-epoch entries leave, so
 same-epoch history keeps priority; that is the mechanised form of
 "only when same-epoch history is sparse". The default behaviour is
 **same-epoch only**; cross-contract
-transfer is the opt-in `experiment_memory.cross_epoch` knob on the frozen
+transfer is the opt-in `experimental.cross_epoch_memory` knob on the frozen
 contract (`ScoringWeights.experiment_memory`, omitted-at-default from the
 contract canonical form so existing epochs never roll; opting in rolls
 the epoch). Experiments from a *different* `contract_hash` are never
@@ -416,7 +416,7 @@ Cross-contract transfer (§3.4) rides on the same reader. With
 `experiments` to `epochs` on `contract_hash` and yields
 `same_contract=False` entries with `scalar_score_delta=None`, capped to
 whatever budget the same-epoch entries leave. The operator-facing knob is
-`experiment_memory.cross_epoch` on the frozen contract, threaded through
+`experimental.cross_epoch_memory` on the frozen contract, threaded through
 `_load_prior_experiments` at both the gauntlet and the multi-challenger
 call sites; the renderer gives cross-contract entries their own
 epoch-tagged block after the same-epoch blocks.

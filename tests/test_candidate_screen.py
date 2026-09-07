@@ -593,7 +593,7 @@ def test_round_log_folds_candidate_screened_tally(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_screen_runner_not_built_unless_opted_in(tmp_path: Path) -> None:
+def test_screen_runner_requires_screening_and_multiple_candidates(tmp_path: Path) -> None:
     from zicato.evolve.round_context import _build_candidate_screen_runner
 
     workspace_root, parent = _workspace(tmp_path)
@@ -617,8 +617,8 @@ def test_screen_runner_not_built_unless_opted_in(tmp_path: Path) -> None:
 
     from zicato.core.types import ProposerQualityConfig
 
-    # The code default (screen_entries=0): no closure is even constructed.
-    assert _build(ScoringWeights()) is None
+    # Explicitly disabled screening does not construct a runner.
+    assert _build(ScoringWeights(proposer_quality=ProposerQualityConfig(screen_entries=0))) is None
     # Inert unless best_of_n > 1 — a single sample has no slate to screen.
     assert (
         _build(
@@ -626,8 +626,8 @@ def test_screen_runner_not_built_unless_opted_in(tmp_path: Path) -> None:
         )
         is None
     )
-    # Opted in: a per-round closure exists.
-    runner = _build(ScoringWeights(proposer_quality=ProposerQualityConfig(screen_entries=2)))
+    # Authored defaults screen the proposal slate.
+    runner = _build(ScoringWeights())
     assert runner is not None
 
 

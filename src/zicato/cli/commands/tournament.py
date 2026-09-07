@@ -164,7 +164,7 @@ def tournament_cmd(
     strategy = make_strategy(
         weights.tournament_structure,
         board_ids=[e.id for e in board],
-        experimental_structures=weights.experimental.tournament_structures,
+        experimental=weights.experimental,
     )
     resolved_replicates = replicates if replicates is not None else strategy.replicates()
 

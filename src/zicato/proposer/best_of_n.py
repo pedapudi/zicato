@@ -79,7 +79,7 @@ When the orchestrator threads a per-round
 rejected complementary challengers of the current reign, selected by
 :mod:`zicato.epoch.recombine`), the LAST slate slot COMPOSES their union
 instead of sampling the LLM. Two merge modes (PROPOSER.md §2.6.1),
-chosen by ``proposer_quality.recombine_merge``:
+chosen by ``experimental.recombine_merge``:
 
 * ``"mechanical"`` (default) — a PURE mint of the disjoint patch union
   (:mod:`zicato.proposer.recombine`), NO LLM call — cost-neutral by
@@ -126,10 +126,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
-from zicato.core.types import CallLLM, Experiment, ProposerQualityConfig
+from zicato.core.types import CallLLM, Experiment, ExperimentalConfig, ProposerQualityConfig
 from zicato.proposer.agent import ProposerAgent, ProposerContext
 
 # EDIT_CLASS_HINTS moved to :mod:`zicato.proposer.hints` (its canonical home,
@@ -686,6 +686,7 @@ class BestOfNProposerAgent:
 
     inner: ProposerAgent
     config: ProposerQualityConfig
+    experimental: ExperimentalConfig = field(default_factory=ExperimentalConfig)
     #: Optional generic-wrapper generation and review routes.
     breadth_call_llm: CallLLM | None = None
     depth_call_llm: CallLLM | None = None
@@ -973,7 +974,7 @@ class BestOfNProposerAgent:
                     # to the normal fresh sample below — the identical slot body,
                     # with the slot's normal exploratory hint (a recombination
                     # failure must never narrow the slate).
-                    if self.config.recombine_merge == "llm":
+                    if self.experimental.recombine_merge == "llm":
                         minted, degraded_errors = await self._merge_recombined(slot_ctx)
                     else:
                         minted = await self._mint_recombined(slot_ctx)
@@ -1637,6 +1638,7 @@ def wrap_with_proposer_quality(
     inner: ProposerAgent,
     config: ProposerQualityConfig,
     *,
+    experimental: ExperimentalConfig | None = None,
     breadth_call_llm: CallLLM | None = None,
     depth_call_llm: CallLLM | None = None,
     breadth_model: str | None = None,
@@ -1684,6 +1686,7 @@ def wrap_with_proposer_quality(
     return BestOfNProposerAgent(
         inner=inner,
         config=config,
+        experimental=experimental if experimental is not None else ExperimentalConfig(),
         breadth_call_llm=breadth_call_llm,
         depth_call_llm=depth_call_llm,
         breadth_model=breadth_model,

@@ -205,7 +205,7 @@ knob families carry this, and the copilot should teach them honestly:
   cannot tell signal from noise and recent promotions are suspect. Cheap
   insurance (one amortized duel every N rounds) on any long run.
 - **Process exemplars widen what the proposer may see — opt in with eyes
-  open.** `set_proposer_quality(process_exemplars=N)` shows the proposer up
+  open.** `set_experimental(process_exemplars=N)` shows the proposer up
   to N mechanically-redacted event windows per round (how a detected failure
   *unfolds* — the wandering plan, the looping tool call), extracted from the
   champion's train-slice telemetry. Redaction is enforced in code (no entry
@@ -228,13 +228,13 @@ copilot's tools (conceptual builder surface):
 |---|---|
 | `set_structure` | the tournament structure |
 | `set_param KEY=VALUE` | one structure param (`field_size`, `replicates`, `rounds_n`, `eta`, …) — also the evidence gate (`promote_confidence_threshold`, `promote_confidence_replicates`; value `null` removes a key) |
-| `set_holdout` | the whole anti-overfitting block: the split (fraction and/or `holdout`-tagged ids), the Ladder governor (`ladder: {enabled, threshold, budget, noise_scale}`), `rotate_holdout`, `min_board_size_for_split`, `restrict_proposer_visibility`, the placebo cadence (`random_baseline_every_n`), the refresh ceiling (`max_generations_per_contract`; 0 clears) |
+| `set_holdout` | the split (fraction or holdout-tagged ids), holdout release budget (`ladder: {enabled, threshold, budget}`), rotation, minimum split size, and proposer visibility |
 | `set_proposer` | the proposer dir / tier |
-| `set_proposer_quality` | best-of-N slate size + the self-critique pass (`best_of_n`, `critique_enabled`) + the opt-in redacted process-exemplar channel (`process_exemplars`; 0 = off — see the soundness note above) |
+| `set_proposer_quality` | candidate count and critique (`best_of_n`, `critique_enabled`) |
 | `set_screening` | the pre-tournament candidate screen (`entries`, `veto_only`) — composes with `set_proposer_quality` on the same block |
-| `set_experiment_memory` | cross-epoch experiment-memory transfer (`cross_epoch`) |
+| `set_experimental` | unqualified proposal features, memory (`cross_epoch_memory`), diagnostics, complexity penalties, generation ceiling, standing rating, resolver, and tournament structures |
 | `set_weights` | the loss-shaping weights — the scalars (`pass_weight`, `default_judge_weight`, `plan_revision_weight`, `task_failure_weight`, `not_completed_weight`) and the wholesale mappings (`severity_weights`, `per_kind_weights`, `per_judge_weights`); the per-channel coefficients are `set_namespace_weights`; also surfaced in `zicato-build-board` |
-| `set_namespace_weights` | the multi-objective namespace coefficients + the `diff_complexity_weight` parsimony term |
+| `set_namespace_weights` | the multi-objective namespace coefficients |
 | `set_gate` | `promote_margin`, pass-rate monotonicity (+ its scope), `namespace_monotonicity`, the integrity blocks (`block_on_containment_violation`, `block_on_gate_contradiction`), and the regression-suite pre-gate (`regression_gate_enabled` / `_test_command` / `_timeout_s`) |
 | `edit_board_entry` / `remove_board_entry` / `add_judge` / `remove_judge` / `set_board_meta` / `set_brief` | the board + its meta header + brief (deep craft in `zicato-build-board`); all reachable from the GUI's board editor too — see the note below |
 | `estimate_cost` | (read-only) board-runs-per-round for the current draft, incl. the evidence-gate confirm budget, screen runs, best-of-N evaluation calls, and the placebo line |

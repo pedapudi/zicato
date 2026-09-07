@@ -28,8 +28,8 @@ hand-editing JSON. The GUI authors **every** part of the contract:
   screening.
 - **The board itself** — a full inline board editor (add / edit / delete
   entries per-kind, judges, expectations, the `board_meta` header, paste-JSONL
-  import) plus the train/holdout split and the anti-overfitting knobs,
-  including the `max_generations_per_contract` board-refresh ceiling.
+  import) plus the train/holdout split, rotation, visibility restrictions, and
+  holdout release budget.
 - **The weighted loss** — the scalar coefficients (drift / pass / default-judge
   / plan-revision / runtime), the severity / per-kind / per-judge weight maps
   (per-judge seeded from the board's judges, with add-key rows), and the signed
@@ -38,10 +38,24 @@ hand-editing JSON. The GUI authors **every** part of the contract:
   namespace monotonicity map, the integrity blocks, and the regression pre-gate.
 - **The proposer** — a picker over discovered proposer dirs + the builtin
   default + a free-text path, plus the proposer-quality levers and the brief.
+- **Experimental** — unqualified proposal features, complexity penalties,
+  diagnostic cadence, generation ceiling, cross-epoch memory, standing rating,
+  ranking resolver, and optional tournament structures. Every control edits
+  `scoring.experimental` through `set_experimental`.
 - **Lifecycle** — fork/compare draft slots, reset-to-live, and step-undo.
 
 Every write/lifecycle op has a GUI control (or a documented exception),
 machine-pinned by `tests/test_builder_gui_coverage.py` (§10.7 of the dev-guide).
+
+Candidate count, critique, and screening remain ordinary controls, together
+with configured visibility, containment, and regression safety checks. The
+Experimental section groups features by qualification status. Its evidence
+artifacts, scope, and graduation criteria are maintained in
+[Feature qualification](FEATURE-QUALIFICATION.md). The memory control uses
+`set_experimental(cross_epoch_memory=...)`; there is no separate memory
+operation. The standing-rating and resolver selectors use `none` to disable
+those algorithms, and zero clears the generation ceiling.
+
 
 The defining decision is that **the builder edits a draft, and applying that
 draft rolls the epoch.** A different structure, a different board, a
@@ -206,7 +220,6 @@ entries.
 | `ladder.enabled` | Mediate holdout confirmation through the release rule and query budget. Disabling it runs every available holdout confirmation without Ladder mediation. |
 | `ladder.threshold` | Minimum training improvement required before a new holdout confirmation can affect promotion. An empty value uses `promote_margin`. |
 | `ladder.budget` | Number of adaptive holdout comparisons available in one epoch. The default is 16. |
-| `ladder.noise_scale` | Additional width added to the release threshold. The default `0.0` adds no calibrated noise. |
 
 One query is the complete crowning comparison on the hidden slice. Its board
 entries, replicates, and model calls affect the cost preview but do not consume

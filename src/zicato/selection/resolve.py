@@ -9,8 +9,8 @@ cycles:
 * :func:`condorcet_check` — the O(n²) fast path: a contestant who beats
   *every* other head-to-head is the unambiguous winner; every method below
   collapses to it when it exists.
-* :func:`smith_set` — the smallest dominant set (top cycle); a cheap
-  O(n²) front prune, since the winner can only ever be inside it.
+* :func:`smith_set` — the smallest strict dominating set; an O(n²) prune
+  that retains missing and tied comparisons.
 * :func:`ranked_pairs` — Tideman's margin-sorted lock/skip, with an
   **auditable trace** of exactly which duels were locked and which were
   skipped because they would have closed a cycle.
@@ -131,67 +131,39 @@ def condorcet_check(matrix: MarginMatrix) -> str | None:
 
 
 def smith_set(matrix: MarginMatrix) -> tuple[str, ...]:
-    """The Smith set (top cycle): the smallest dominant set (O(n²)-ish).
+    """Return the smallest strict dominating set in O(n²), preserving input order.
 
-    The smallest non-empty set ``S`` such that every member of ``S`` beats
-    every contestant outside ``S``. When a Condorcet winner exists the Smith
-    set is exactly that one contestant. Used as a **front prune**: any
-    contestant outside the Smith set is provably dominated and need not be
-    considered, which often collapses the field to a single element.
-
-    Returned in the matrix's contestant order (stable). A pairing with no
-    net edge in either direction (an unresolved tie) is treated as "neither
-    beats the other", so neither dominates across it — the conservative
-    reading that keeps both in contention.
+    Every retained contestant must strictly beat every outsider. Missing and
+    tied comparisons therefore keep both contestants in contention. The matrix
+    must be asymmetric, as produced by ``build_matrix``: a pairing has at most
+    one positive direction.
     """
-    ids = list(matrix.ids)
-    n = len(ids)
-    if n == 0:
+    ids = matrix.ids
+    if not ids:
         return ()
 
-    # "Dominates" relation: a dominates b when a beats b and b does not beat
-    # a. Compute the reachability closure, then the Smith set is the unique
-    # top strongly-connected component under the *beats-or-not-beaten-by*
-    # relation. We use the standard definition via the dominance closure:
-    # S is the smallest set closed under "beats" that no outsider beats into.
-    #
-    # Concretely: start from the contestant(s) with the best Copeland-style
-    # standing and grow the set by anyone who beats a current member, until
-    # closed. The smallest such closed dominant set is the Smith set.
-
-    def beats(i: int, j: int) -> bool:
-        return matrix.beats(ids[i], ids[j])
-
-    # Copeland score (wins minus losses) to seed the search from the top.
-    score = [0] * n
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            if beats(i, j):
-                score[i] += 1
-            elif beats(j, i):
-                score[i] -= 1
-
-    order = sorted(range(n), key=lambda i: (-score[i], i))
-    top = order[0]
-
-    # Grow the dominant set: include the seed, then repeatedly add anyone who
-    # beats a member (i.e. is not dominated by the set), until closed. The
-    # Smith set is the smallest set with no incoming "beats" from outside.
-    members = {top}
-    changed = True
-    while changed:
-        changed = False
-        for outsider in range(n):
-            if outsider in members:
-                continue
-            # If the outsider beats any member, it must join (a member does
-            # not dominate it, so the set is not yet dominant).
-            if any(beats(outsider, m) for m in members):
+    # Every member of a strict dominating set has a higher wins-minus-losses
+    # score than every outsider. A maximum-score seed is therefore inside the
+    # smallest such set, even with missing or tied internal comparisons.
+    seed = max(
+        ids,
+        key=lambda candidate: sum(
+            int(matrix.beats(candidate, other)) - int(matrix.beats(other, candidate))
+            for other in ids
+            if other != candidate
+        ),
+    )
+    members = {seed}
+    pending = [seed]
+    while pending:
+        member = pending.pop()
+        for outsider in ids:
+            # An outsider the member cannot beat must join any dominating set
+            # containing that member. Each admitted member is visited once.
+            if outsider not in members and not matrix.beats(member, outsider):
                 members.add(outsider)
-                changed = True
-    return tuple(ids[i] for i in sorted(members))
+                pending.append(outsider)
+    return tuple(gid for gid in ids if gid in members)
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,14 +217,15 @@ def ranked_pairs(matrix: MarginMatrix) -> RankedPairsResult:
 
     Sort every net pairwise verdict by margin, strongest first; lock each
     in that order, **skipping** any that would create a cycle with the
-    edges already locked. The resulting acyclic relation has a unique source
-    — the proposed winner. Deterministic and fully auditable: the returned
+    edges already locked. The resulting acyclic relation may have several
+    sources when comparisons are unresolved. Its deterministic ranking names
+    the proposed winner. The returned
     :class:`RankedPairsResult.trace` records exactly which edges were locked
     and which were skipped.
 
     Condorcet-consistent (it returns the Condorcet winner whenever one
-    exists), margin-aware (the most-separated, least-noisy verdicts are
-    locked first), cloneproof, and monotone. The reference resolver of
+    exists) and margin-aware (larger measured margins are locked first).
+    These properties do not establish empirical effectiveness. The resolver of
     SELECTION-THEORY.md §5.2 / §8 #1.
 
     Ties in margin break by ``(winner_id, loser_id)`` so the lock order — and
@@ -338,8 +311,8 @@ def resolve_leader(matrix: MarginMatrix, resolver: str) -> str | None:
     A thin dispatch the strategies call for their INTERNAL leader selection
     only (never the gate). ``resolver``:
 
-    * ``"ranked_pairs"`` — Smith-prune then Ranked Pairs (the recommended
-      resolver); falls back to the full field if the prune is empty.
+    * ``"ranked_pairs"`` — strict-dominance prune followed by Ranked Pairs;
+      falls back to the full field if the prune is empty.
     * ``"copeland"`` — Copeland order over the (Smith-pruned) field.
 
     Returns the leader id, or ``None`` for an empty field. The Condorcet

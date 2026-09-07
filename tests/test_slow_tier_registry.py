@@ -27,6 +27,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: File -> test name -> the seconds it measured ALONE. Ordered by cost.
 SLOW_TIER: dict[str, dict[str, float]] = {
+    "tests/test_recommended_complete_loop.py": {
+        "test_interrupted_recommended_field_recovers": 42.83,
+        "test_recommended_complete_round": 15.96,
+        "test_partial_application_preserves_confirmation_requirements[measured]": 15.72,
+    },
     "tests/test_gauntlet_evidence_gate_e2e.py": {
         "test_gauntlet_promote_confirmed_by_evidence_gate": 32.6,
     },

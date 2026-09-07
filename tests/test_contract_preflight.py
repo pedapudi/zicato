@@ -377,9 +377,21 @@ def test_deterministic_adapter_ok_verdict(tmp_path: Path) -> None:
     """Floor exactly 0.0, perturbation signal > 0 ⇒ OK, and the degraded
     tree was ephemeral — the lineage carries only v0."""
     workspace, epoch_id = _bootstrap(tmp_path)
-    report, floor = _run_preflight(workspace, epoch_id)
+    progress: list[tuple[int, int]] = []
+    report, floor = _run_preflight(
+        workspace,
+        epoch_id,
+        on_probe=lambda done, total: progress.append((done, total)),
+    )
 
     assert floor.max_abs_delta == 0.0
+    assert report.window_verdict == VERDICT_OK
+    assert report.window_failure is None
+    assert report.noise_floor_max_abs_delta < report.promote_margin < report.signal
+    assert detect_preflight_verdict(report.to_json()) == []
+    assert report.recommended_margin is None, "no measured noise ⇒ nothing to recommend"
+    assert report.drawn_probe_count() == 1
+    assert progress == [(0, 4), (1, 4), (2, 4), (3, 4), (4, 4)]
     assert report.verdict == VERDICT_OK
     assert report.signal > 0.0
     assert report.noise_floor_max_abs_delta == 0.0
@@ -445,6 +457,8 @@ def test_saturating_board_warns(tmp_path: Path) -> None:
     assert report.degraded_scalar == report.champion_scalars[0]
     assert report.signal == 0.0
     assert report.verdict == VERDICT_WARN
+    assert report.window_failure == "empty_window"
+    assert report.window_verdict != VERDICT_REFUSE
     (finding,) = detect_preflight_verdict(report.to_json())
     assert finding.code == "preflight_saturated_contract"
     assert finding.severity == "warning"
@@ -673,49 +687,9 @@ def test_margin_above_the_degradation_signal_warns_but_never_refuses(
     assert "degradation" in finding.summary, "the finding names what was measured"
 
 
-def test_healthy_contract_reports_an_intact_window(tmp_path: Path) -> None:
-    """target_0's shipped margin sits strictly inside the window."""
-    workspace, epoch_id = _bootstrap(tmp_path)
-    report, _floor = _run_preflight(workspace, epoch_id)
-
-    assert report.window_verdict == VERDICT_OK
-    assert report.window_failure is None
-    assert report.noise_floor_max_abs_delta < report.promote_margin < report.signal
-    assert detect_preflight_verdict(report.to_json()) == []
-
-
-def test_saturated_board_reports_an_empty_window_not_a_mis_set_margin(
-    tmp_path: Path,
-) -> None:
-    """``achievable <= noise`` means NO margin is defensible — say that.
-
-    Issue #112 item 3: an operator told "your margin is mis-set" spends a
-    cycle tuning a number that has no valid value on this board.
-    """
-    board = _no_expectation_board(tmp_path)
-    workspace, epoch_id = _bootstrap(tmp_path, board_source=board)
-    report, _floor = _run_preflight(workspace, epoch_id)
-
-    assert report.signal == 0.0
-    assert report.window_failure == "empty_window"
-    # An empty window is NOT re-gated: the signal verdict already carries that
-    # fact (here as saturation), so there is exactly one finding, not two.
-    assert report.window_verdict != VERDICT_REFUSE
-    (finding,) = detect_preflight_verdict(report.to_json())
-    assert finding.code == "preflight_saturated_contract"
-
-
-def test_recommended_margin_rides_along_on_the_record(tmp_path: Path) -> None:
-    """The record carries a margin recommendation from the STABLE statistic.
-
-    A deterministic harness measures no noise, so it recommends nothing rather
-    than a meaningless 0.0; a noisy one recommends 2.5 sigma of ``delta_std``.
-    """
+def test_noisy_measurement_records_recommended_margin(tmp_path: Path) -> None:
+    """The recorded recommendation uses the standard deviation of paired losses."""
     from zicato.tournament.calibration import MARGIN_NOISE_MULTIPLE
-
-    workspace, epoch_id = _bootstrap(tmp_path)
-    report, _floor = _run_preflight(workspace, epoch_id)
-    assert report.recommended_margin is None, "no measured noise ⇒ nothing to recommend"
 
     noisy_workspace, noisy_epoch = _bootstrap(
         tmp_path / "noisy", adapter_block=_noisy_adapter(0.45)
@@ -1104,21 +1078,3 @@ def test_the_preflight_cost_is_named_before_the_first_draw(monkeypatch, caplog) 
     assert "3 A/A draw(s) + up to 2 degraded probe(s) x 6 board entries" in cost
     assert "up to 30 board-entry runs" in cost
     assert "serially" in cost
-
-
-def test_progress_counts_every_a_a_draw_and_every_probe(tmp_path: Path) -> None:
-    """Against the real probe loop: the count covers BOTH measurement stages —
-    K A/A draws then the degraded probes — because each is one pass over the
-    board, and the total is fixed before the first draw is spent."""
-    workspace, epoch_id = _bootstrap(tmp_path)
-    progress: list[tuple[int, int]] = []
-    report, _floor = _run_preflight(
-        workspace,
-        epoch_id,
-        runs=3,
-        on_probe=lambda done, total: progress.append((done, total)),
-    )
-    # target_0 enumerates exactly one mutation point, so the pre-flight's units
-    # are 3 A/A draws + 1 probe, each reported once as it settles.
-    assert report.drawn_probe_count() == 1
-    assert progress == [(0, 4), (1, 4), (2, 4), (3, 4), (4, 4)]

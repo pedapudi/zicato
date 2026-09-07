@@ -22,6 +22,10 @@ from zicato.contract_draft.draft import TournamentDraft
         ("set_namespace_weights", {"namespace_weights": {"judge:": True}}),
         ("set_holdout", {"ladder": {"budget": 2.8}}),
         ("set_holdout", {"ladder": {"enabled": "false"}}),
+        ("set_experimental", {"recombine": True, "process_exemplars": False}),
+        ("set_experimental", {"cross_epoch_memory": "false"}),
+        ("set_experimental", {"max_generations_per_contract": 2.5}),
+        ("set_experimental", {"genealogy": 4, "standing_rating": "unknown"}),
     ],
 )
 def test_rest_and_library_reject_types_before_mutating_draft(operation, arguments):
@@ -49,8 +53,8 @@ def test_explicit_clear_values_and_numeric_json_keep_their_meaning():
     ops.set_gate(draft, holdout_margin=0.5)
     ops.set_gate(draft, holdout_margin=-1)
     assert draft.scoring.holdout_margin is None
-    ops.set_holdout(draft, max_generations_per_contract=4)
-    ops.set_holdout(draft, max_generations_per_contract=0)
-    assert draft.scoring.overfitting.max_generations_per_contract is None
+    ops.set_experimental(draft, max_generations_per_contract=4)
+    ops.set_experimental(draft, max_generations_per_contract=0)
+    assert draft.scoring.experimental.max_generations_per_contract is None
     _dispatch_op(draft, "set_weights", {"per_judge_weights": {"quality": 2}})
     assert draft.scoring.per_judge_weights == {"quality": 2.0}

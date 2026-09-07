@@ -7,7 +7,7 @@ best as historical feedback; that prior result cannot confirm another candidate.
 
 The governor limits feedback but supplies no distribution-free guarantee for
 arbitrary adaptive reuse. Its threshold comes from ``promote_margin`` unless
-configured explicitly; ``noise_scale`` adds a fixed band without random noise.
+configured explicitly. The threshold introduces no random noise.
 This module owns pure decisions. Governance owns durable reservations and maps
 withheld, exhausted, or incomplete confirmation to a deferred promotion.
 An absent holdout disables confirmation. Disabling the governor still requires
@@ -88,7 +88,7 @@ class LadderRelease:
     threshold:
         The effective release threshold this query used (see
         :func:`effective_threshold`: ``LadderConfig.threshold``, else
-        ``promote_margin`` — plus ``noise_scale``).
+        ``promote_margin``).
     state:
         The new per-epoch state to persist (budget charged, best updated).
     """
@@ -101,15 +101,14 @@ class LadderRelease:
 
 
 def effective_threshold(cfg: LadderConfig, weights: ScoringWeights) -> float:
-    """Return the train-side release threshold plus the configured fixed band.
+    """Return the explicit train-side release threshold, or the promotion margin.
 
     An unset threshold uses ``promote_margin`` because release tests the training
     improvement. ``holdout_margin`` controls allowed holdout regression after
     release and is measured on a different board slice. Raising the release
     threshold can defer a challenger; it cannot authorize an unconfirmed one.
     """
-    base = weights.promote_margin if cfg.threshold is None else cfg.threshold
-    return base + cfg.noise_scale
+    return weights.promote_margin if cfg.threshold is None else cfg.threshold
 
 
 def query_holdout(

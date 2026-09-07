@@ -183,18 +183,18 @@ def _write_workspace_config(ws: Path) -> None:
 def _epoch_config(ws: Path, epoch_id: str) -> dict[str, Any]:
     """One epoch's ``config.json`` payload.
 
-    The scoring block is produced by the epoch serializer rather than written
-    by hand, so it stays a valid frozen contract as the scoring dataclass
-    gains fields. The measured noise floor and the persisted pre-flight
-    verdict are present on the rich epoch only: they are what the
+    The historical decoder retains the recorded gauntlet contract with screening
+    disabled; the epoch serializer writes its complete scoring block. Authored
+    defaults therefore cannot change this fixture. The measured noise floor and
+    persisted pre-flight verdict are present on the rich epoch only: they are what the
     margin-versus-noise and pre-flight loop-health detectors read, and the
     second epoch's absence of them pins the silent path.
     """
-    from zicato.core import ScoringWeights
     from zicato.epoch.lifecycle import scoring_to_dict
+    from zicato.workspace_loader import historical_scoring_weights_from_dict
 
     rich = epoch_id == RICH_EPOCH_ID
-    weights = ScoringWeights(promote_margin=0.01 if rich else 0.05)
+    weights = historical_scoring_weights_from_dict({"promote_margin": 0.01 if rich else 0.05})
     return {
         "format_version": 1,
         "id": epoch_id,

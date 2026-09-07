@@ -430,7 +430,7 @@ def _render_process_exemplars_block(
 
     The opt-in half of the proposer failure-signal surface
     (``docs/design/PROCESS-EXEMPLARS.md``): when the contract sets
-    ``proposer_quality.process_exemplars > 0``, extract up to that many
+    ``experimental.process_exemplars > 0``, extract up to that many
     drift-anchored event windows from the CHAMPION's TRAIN-slice
     ``events.jsonl`` files — the same ``parent_id`` + train partition the
     patterns / loss summary / outcome marginals already use — mechanically
@@ -443,7 +443,7 @@ def _render_process_exemplars_block(
     an event footprint, or when extraction fails for any reason:
     best-effort by contract, an exemplar failure must never abort a round.
     """
-    quality = getattr(weights, "proposer_quality", None)
+    quality = getattr(weights, "experimental", None)
     cap = int(getattr(quality, "process_exemplars", 0) or 0)
     if cap <= 0:
         return ""

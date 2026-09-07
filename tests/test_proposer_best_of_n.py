@@ -22,6 +22,7 @@ import pytest
 from tests._pattern_feedback_support import private_detector_patterns
 from zicato.core.types import (
     Experiment,
+    ExperimentalConfig,
     HypothesisSpec,
     MutationPoint,
     Patch,
@@ -1574,7 +1575,8 @@ async def test_llm_merge_mode_is_behaviorally_inert_without_a_pair() -> None:
     ctx = _replace(_context(critic), recombine_pair=None)
     agent = BestOfNProposerAgent(
         inner=inner,
-        config=ProposerQualityConfig(best_of_n=3, recombine_merge="llm"),
+        config=ProposerQualityConfig(best_of_n=3),
+        experimental=ExperimentalConfig(recombine_merge="llm"),
     )
     out = await agent.propose(ctx)
     assert inner.calls == 3  # all slots sampled — no slot was replaced
@@ -2113,7 +2115,8 @@ async def test_swallowed_merge_call_error_reaches_the_log() -> None:
     )
     agent = BestOfNProposerAgent(
         inner=inner,
-        config=ProposerQualityConfig(best_of_n=3, recombine_merge="llm"),
+        config=ProposerQualityConfig(best_of_n=3),
+        experimental=ExperimentalConfig(recombine_merge="llm"),
     )
     out = await agent.propose(ctx)
 

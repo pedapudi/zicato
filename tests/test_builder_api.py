@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from zicato.core.types import ScoringWeights
+from zicato.core.types import ProposerQualityConfig, ScoringWeights, TournamentStructure
 from zicato.dashboard.server import create_app
 from zicato.epoch.lifecycle import new_epoch
 from zicato.workspace.config_io import read_workspace_config, write_workspace_config
@@ -28,7 +28,11 @@ def workspace(tmp_path: Path) -> Path:
     brief = tmp_path / "brief.md"
     brief.write_text("# Brief\n\nsteer\n", encoding="utf-8")
     scoring = tmp_path / "scoring.json"
-    scoring.write_text(json.dumps({"pass_weight": 1.0}), encoding="utf-8")
+    weights = ScoringWeights(
+        tournament_structure=TournamentStructure.gauntlet(),
+        proposer_quality=ProposerQualityConfig(screen_entries=0),
+    )
+    scoring.write_text(json.dumps(weights.to_json()), encoding="utf-8")
     write_workspace_config(
         ws,
         {
@@ -48,7 +52,7 @@ def workspace(tmp_path: Path) -> Path:
         name="alpha",
         board_source=board,
         brief_source=brief,
-        weights=ScoringWeights(),
+        weights=weights,
         entrypoint="pkg.mod:agent",
     )
     return ws
@@ -328,20 +332,26 @@ def test_builder_op_set_board_meta_bad_args_are_400(client: TestClient) -> None:
 
 
 def test_builder_op_float_knobs_are_typed_not_passed_through(client: TestClient) -> None:
-    """Numeric JSON is admitted; strings, booleans, and malformed values are refused."""
+    """JSON numbers are accepted; strings and boolean substitutes are refused."""
 
     def post(op: str, args: dict[str, object]) -> object:
         return client.post("/builder/op", json={"session": "typed", "op": op, "args": args})
 
-    for op, arguments in (
+    for operation, arguments in (
         ("set_gate", {"promote_margin": "0.5"}),
         ("set_holdout", {"fraction": "0.4"}),
         ("set_holdout", {"ladder": {"budget": "8"}}),
     ):
-        assert post(op, arguments).status_code == 400
+        assert post(operation, arguments).status_code == 400
     resp = post("set_gate", {"promote_margin": 0.5})
     assert resp.status_code == 200
     assert resp.json()["draft"]["scoring"]["promote_margin"] == 0.5
+    resp = post("set_holdout", {"fraction": 0.4})
+    assert resp.status_code == 200
+    assert resp.json()["draft"]["scoring"]["overfitting"]["holdout_fraction"] == 0.4
+    resp = post("set_holdout", {"ladder": {"budget": 8}})
+    assert resp.status_code == 200
+    assert resp.json()["draft"]["scoring"]["overfitting"]["ladder"]["budget"] == 8
 
     # Garbage is a field-precise 400, never a 500.
     for op, args, needle in (
@@ -358,19 +368,20 @@ def test_builder_op_float_knobs_are_typed_not_passed_through(client: TestClient)
 
     # threshold is the ONE nullable ladder key (null = auto-derive from
     # promote_margin). A null anywhere else used to reach the dataclass,
-    # where budget/noise_scale raised an uncaught TypeError from their
+    # where budget raised an uncaught TypeError from its
     # comparison validators and `enabled`, having no validator to trip,
     # silently stored None in a bool field.
     resp = post("set_holdout", {"ladder": {"threshold": None}})
     assert resp.status_code == 200
     assert resp.json()["draft"]["scoring"]["overfitting"]["ladder"]["threshold"] is None
-    for key in ("enabled", "budget", "noise_scale"):
+    for key in ("enabled", "budget"):
         resp = post("set_holdout", {"ladder": {key: None}})
         assert resp.status_code == 400, (key, resp.status_code)
         assert f"set_holdout.ladder.{key}: expected" in resp.json()["error"]
 
 
 def test_builder_apply_dry_run(client: TestClient, workspace: Path) -> None:
+    live_before = json.loads((workspace.parent / "scoring.json").read_text(encoding="utf-8"))
     client.post(
         "/builder/op",
         json={"session": "s6", "op": "set_structure", "args": {"structure": "racing"}},
@@ -380,9 +391,8 @@ def test_builder_apply_dry_run(client: TestClient, workspace: Path) -> None:
     body = resp.json()
     assert body["confirmed"] is False
     assert body["rolled"] is False
-    # Nothing written: the live scoring.json still has no tournament block.
     live = json.loads((workspace.parent / "scoring.json").read_text(encoding="utf-8"))
-    assert "tournament" not in live
+    assert live == live_before
 
 
 def test_builder_apply_confirm_writes(client: TestClient, workspace: Path) -> None:
@@ -485,7 +495,6 @@ def test_builder_op_full_knob_dispatch(client: TestClient) -> None:
             "args": {
                 "min_board_size_for_split": 12,
                 "rotate_holdout": False,
-                "random_baseline_every_n": 4,
                 "ladder": {"budget": 6},
             },
         },
@@ -494,7 +503,6 @@ def test_builder_op_full_knob_dispatch(client: TestClient) -> None:
     of = r.json()["draft"]["scoring"]["overfitting"]
     assert of["min_board_size_for_split"] == 12
     assert of["rotate_holdout"] is False
-    assert of["random_baseline_every_n"] == 4
     assert of["ladder"]["budget"] == 6
 
     r = client.post(
@@ -528,34 +536,85 @@ def test_builder_op_full_knob_dispatch(client: TestClient) -> None:
             "op": "set_namespace_weights",
             "args": {
                 "namespace_weights": {"drift:": 1.0, "failure:": 1.0, "rubric:": -2.0},
-                "diff_complexity_weight": 0.005,
             },
         },
     )
     assert r.status_code == 200
     sc = r.json()["draft"]["scoring"]
     assert sc["namespace_weights"] == {"drift:": 1.0, "failure:": 1.0, "rubric:": -2.0}
-    assert sc["diff_complexity_weight"] == 0.005
 
     r = client.post(
         "/builder/op",
         json={
             **s,
             "op": "set_proposer_quality",
-            "args": {"best_of_n": 4, "critique_enabled": False, "recombine": True},
+            "args": {"best_of_n": 4, "critique_enabled": False},
         },
     )
     assert r.status_code == 200
     pq = r.json()["draft"]["scoring"]["proposer_quality"]
     assert pq["best_of_n"] == 4
     assert pq["critique_enabled"] is False
-    assert pq["recombine"] is True
 
     r = client.post(
-        "/builder/op", json={**s, "op": "set_experiment_memory", "args": {"cross_epoch": True}}
+        "/builder/op", json={**s, "op": "set_experimental", "args": {"cross_epoch_memory": True}}
     )
     assert r.status_code == 200
-    assert r.json()["draft"]["scoring"]["experiment_memory"]["cross_epoch"] is True
+    assert r.json()["draft"]["scoring"]["experimental"]["cross_epoch_memory"] is True
+
+
+def test_experimental_edits_share_one_operation_and_keep_ordinary_settings(
+    client: TestClient,
+) -> None:
+    request = {"session": "experimental", "op": "set_experimental", "args": {}}
+    initial = client.post("/builder/op", json=request).json()["draft"]["scoring"]
+    expected = {
+        "tournament_structures": True,
+        "process_exemplars": 2,
+        "recombine": True,
+        "recombine_merge": "llm",
+        "genealogy": 3,
+        "calibration_feedback": 4,
+        "random_baseline_every_n": 5,
+        "max_generations_per_contract": 20,
+        "diff_complexity_weight": 0.01,
+        "diff_complexity_ceiling": 10.0,
+        "cross_epoch_memory": True,
+        "standing_rating": "bradley_terry",
+        "resolver": "ranked_pairs",
+    }
+    response = client.post("/builder/op", json={**request, "args": expected})
+    assert response.status_code == 200
+    scoring = response.json()["draft"]["scoring"]
+    assert scoring.pop("experimental") == expected
+    initial.pop("experimental")
+    assert scoring == initial
+    for operation, args in (
+        ("set_experiment_memory", {"cross_epoch": True}),
+        ("set_proposer_quality", {"recombine": False}),
+        ("set_holdout", {"random_baseline_every_n": 0}),
+        ("set_namespace_weights", {"diff_complexity_weight": 0}),
+        ("set_experimental", {"genealogy": 1, "diff_complexity_ceiling": -1}),
+    ):
+        rejected = client.post("/builder/op", json={**request, "op": operation, "args": args})
+        assert rejected.status_code == 400
+        unchanged = client.post("/builder/op", json=request).json()["draft"]["scoring"]
+        assert unchanged["experimental"] == expected
+    cleared = client.post(
+        "/builder/op",
+        json={
+            **request,
+            "args": {
+                "standing_rating": "none",
+                "resolver": "none",
+                "max_generations_per_contract": 0,
+            },
+        },
+    )
+    assert cleared.status_code == 200
+    experimental = cleared.json()["draft"]["scoring"]["experimental"]
+    assert experimental["standing_rating"] == experimental["resolver"] == "none"
+    assert experimental["max_generations_per_contract"] is None
 
 
 def test_builder_op_knob_dispatch_errors_are_400(client: TestClient) -> None:
@@ -578,51 +637,51 @@ def test_builder_op_knob_dispatch_errors_are_400(client: TestClient) -> None:
     assert r.status_code == 400
 
 
-def test_builder_op_set_proposer_quality_recombine_dispatch(client: TestClient) -> None:
+def test_builder_op_set_experimental_recombine_dispatch(client: TestClient) -> None:
     """The recombine flag round-trips through /builder/op onto the serialized
-    draft; a bad co-arg (best_of_n 0) in the same call still 400s and leaves the
+    draft; a bad co-arg (process_exemplars 0) in the same call still 400s and leaves the
     draft untouched (the op validates before applying — recombine never lands)."""
     s = {"session": "recomb"}
     r = client.post(
         "/builder/op",
-        json={**s, "op": "set_proposer_quality", "args": {"best_of_n": 2, "recombine": True}},
+        json={**s, "op": "set_experimental", "args": {"process_exemplars": 2, "recombine": True}},
     )
     assert r.status_code == 200
-    assert r.json()["draft"]["scoring"]["proposer_quality"]["recombine"] is True
+    assert r.json()["draft"]["scoring"]["experimental"]["recombine"] is True
 
-    # 400 path: an invalid best_of_n co-arg is rejected wholesale — the prior
+    # 400 path: an invalid process_exemplars co-arg is rejected wholesale — the prior
     # recombine value is unchanged (no partial apply).
     r = client.post(
         "/builder/op",
-        json={**s, "op": "set_proposer_quality", "args": {"best_of_n": 0, "recombine": False}},
+        json={**s, "op": "set_experimental", "args": {"process_exemplars": -1, "recombine": False}},
     )
     assert r.status_code == 400
-    r = client.post("/builder/op", json={**s, "op": "set_proposer_quality", "args": {}})
-    assert r.json()["draft"]["scoring"]["proposer_quality"]["recombine"] is True
+    r = client.post("/builder/op", json={**s, "op": "set_experimental", "args": {}})
+    assert r.json()["draft"]["scoring"]["experimental"]["recombine"] is True
 
 
-def test_builder_op_set_proposer_quality_genealogy_dispatch(client: TestClient) -> None:
+def test_builder_op_set_experimental_genealogy_dispatch(client: TestClient) -> None:
     """The genealogy count round-trips through /builder/op onto the serialized
     draft; a negative count 400s and leaves the prior value untouched."""
     s = {"session": "gene"}
     r = client.post(
         "/builder/op",
-        json={**s, "op": "set_proposer_quality", "args": {"genealogy": 4}},
+        json={**s, "op": "set_experimental", "args": {"genealogy": 4}},
     )
     assert r.status_code == 200
-    assert r.json()["draft"]["scoring"]["proposer_quality"]["genealogy"] == 4
+    assert r.json()["draft"]["scoring"]["experimental"]["genealogy"] == 4
 
     # 400 path: a negative genealogy count is rejected wholesale (no partial apply).
     r = client.post(
         "/builder/op",
-        json={**s, "op": "set_proposer_quality", "args": {"genealogy": -1}},
+        json={**s, "op": "set_experimental", "args": {"genealogy": -1}},
     )
     assert r.status_code == 400
-    r = client.post("/builder/op", json={**s, "op": "set_proposer_quality", "args": {}})
-    assert r.json()["draft"]["scoring"]["proposer_quality"]["genealogy"] == 4
+    r = client.post("/builder/op", json={**s, "op": "set_experimental", "args": {}})
+    assert r.json()["draft"]["scoring"]["experimental"]["genealogy"] == 4
 
 
-def test_builder_op_set_proposer_quality_calibration_feedback_dispatch(
+def test_builder_op_set_experimental_calibration_feedback_dispatch(
     client: TestClient,
 ) -> None:
     """The calibration_feedback count round-trips through /builder/op; a negative
@@ -630,18 +689,18 @@ def test_builder_op_set_proposer_quality_calibration_feedback_dispatch(
     s = {"session": "calib"}
     r = client.post(
         "/builder/op",
-        json={**s, "op": "set_proposer_quality", "args": {"calibration_feedback": 5}},
+        json={**s, "op": "set_experimental", "args": {"calibration_feedback": 5}},
     )
     assert r.status_code == 200
-    assert r.json()["draft"]["scoring"]["proposer_quality"]["calibration_feedback"] == 5
+    assert r.json()["draft"]["scoring"]["experimental"]["calibration_feedback"] == 5
 
     r = client.post(
         "/builder/op",
-        json={**s, "op": "set_proposer_quality", "args": {"calibration_feedback": -1}},
+        json={**s, "op": "set_experimental", "args": {"calibration_feedback": -1}},
     )
     assert r.status_code == 400
-    r = client.post("/builder/op", json={**s, "op": "set_proposer_quality", "args": {}})
-    assert r.json()["draft"]["scoring"]["proposer_quality"]["calibration_feedback"] == 5
+    r = client.post("/builder/op", json={**s, "op": "set_experimental", "args": {}})
+    assert r.json()["draft"]["scoring"]["experimental"]["calibration_feedback"] == 5
 
 
 def test_builder_op_set_telemetry_dialect_dispatch(client: TestClient) -> None:
@@ -756,10 +815,12 @@ def test_builder_apply_writes_the_active_slot(client: TestClient, workspace: Pat
     import json as _json
 
     s = {"session": "slotapply"}
+    live_before = _json.loads((workspace.parent / "scoring.json").read_text(encoding="utf-8"))
     client.post("/builder/op", json={**s, "op": "fork", "args": {"name": "to-apply"}})
     client.post("/builder/op", json={**s, "op": "set_structure", "args": {"structure": "racing"}})
-    live_before = _json.loads((workspace.parent / "scoring.json").read_text(encoding="utf-8"))
-    assert "tournament" not in live_before  # forking wrote nothing
+    assert (
+        _json.loads((workspace.parent / "scoring.json").read_text(encoding="utf-8")) == live_before
+    )
     resp = client.post("/builder/apply", json={**s, "confirm": True})
     assert resp.json()["confirmed"] is True
     live = _json.loads((workspace.parent / "scoring.json").read_text(encoding="utf-8"))
@@ -1100,7 +1161,7 @@ def test_builder_config_carries_knob_help_from_the_scoring_docstrings(client: Te
     assert help_map["pass_weight"]["default"] == "1.0"
     assert help_map["pass_weight"]["help"].startswith("Coefficient on the (1 - pass_rate)")
     assert help_map["overfitting.ladder.budget"]["default"] == "16"
-    assert help_map["proposer_quality.recombine_merge"]["default"] == "mechanical"
+    assert help_map["experimental.recombine_merge"]["default"] == "mechanical"
     # served as plain text: no docstring markup reaches the browser.
     assert not any("``" in e["help"] or ":attr:" in e["help"] for e in help_map.values())
 

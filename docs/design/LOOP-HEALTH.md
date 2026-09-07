@@ -316,7 +316,7 @@ generations the holdout itself starts to be overfit
 of the refresh policy ([OVERFITTING.md §7](OVERFITTING.md), item 6 of
 its §12).
 
-**Signal.** `OverfittingConfig.max_generations_per_contract` is a
+**Signal.** `ExperimentalConfig.max_generations_per_contract` is a
 frozen contract field, `None` by default, which imposes no ceiling.
 When the operator sets it, the detector emits one **`info`** finding
 once the number of evaluated generations under the contract reaches

@@ -191,7 +191,7 @@ scoring surface and are owned by SCORING.md; this document describes the
 
 ## 2.6 The mechanical recombination slot
 
-`proposer_quality.recombine` (default OFF) opts in a MECHANICAL merge of two
+`experimental.recombine` (default OFF) opts in a MECHANICAL merge of two
 already-evaluated challengers — no LLM call. The premise is that a single
 champion can only ever discount ONE challenger's fix. So when two REJECTED
 challengers of the current reign each fixed a DISTINCT slice of the board with
@@ -220,7 +220,7 @@ specified in **[dev-guide 05 §5.6.11](../dev-guide/05-proposer.md)**
 
 ### 2.6.1 Merge modes — `mechanical` (default) vs `llm`
 
-`proposer_quality.recombine_merge` (a string, default `"mechanical"`; values
+`experimental.recombine_merge` (a string, default `"mechanical"`; values
 `"mechanical" | "llm"`) chooses HOW the slot composes the union once the
 selector has picked a pair. It is meaningful only when `recombine` is on and
 `best_of_n > 1`. At its `"mechanical"` default it is omitted from the contract
@@ -296,7 +296,7 @@ cap).
 
 ## 2.7 The genealogy channel — in-context evolution, envelope-safe
 
-`proposer_quality.genealogy` (an `int`, default `0` = OFF) opts the proposer
+`experimental.genealogy` (an `int`, default `0` = OFF) opts the proposer
 into an IN-CONTEXT view of the current reign's candidate lineage — the
 zicato analogue of AlphaEvolve's *prompt sampler*, which feeds parent
 programs and their scores back into generation so the LLM evolves in
@@ -418,7 +418,7 @@ specified in **[dev-guide 05 §5.6.13](../dev-guide/05-proposer.md)**
 
 ## 2.8 The critic-calibration channel — feeding prediction accuracy back
 
-`proposer_quality.calibration_feedback` (an `int`, default `0` = OFF) opts the
+`experimental.calibration_feedback` (an `int`, default `0` = OFF) opts the
 proposer into an IN-CONTEXT view of ITS OWN PREDICTION CALIBRATION — how the
 falsifiable movement predictions it wrote in past hypotheses actually landed
 against realized outcomes. The prediction-accuracy grader

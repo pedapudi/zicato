@@ -33,6 +33,7 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
+from zicato.core.types import TournamentStructure
 from zicato.epoch.lifecycle import new_epoch
 
 # ---------------------------------------------------------------------------
@@ -149,7 +150,12 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
     """
     from zicato.epoch.lineage import load_lineage
 
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=0.01, tournament_structure=TournamentStructure(structure="gauntlet")
+        ),
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -297,7 +303,13 @@ def test_evolve_once_rejects_when_the_episode_cannot_repair_its_edit(
     """
     # Every turn writes the same unparseable edit, so the verifier's
     # findings can never be answered.
-    workspace, epoch_id = bootstrap_workspace(tmp_path, break_first=99)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        break_first=99,
+        weights=deterministic_weights(
+            promote_margin=0.01, tournament_structure=TournamentStructure(structure="gauntlet")
+        ),
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -319,7 +331,12 @@ def test_evolve_n_rounds_stops_on_consecutive_rejections(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Three rejections in a row should halt the loop early."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=0.01, tournament_structure=TournamentStructure(structure="gauntlet")
+        ),
+    )
     install_stub_adapter_factory(monkeypatch)
     # Same canned losses → every round rejects.
     install_telemetry_stubs(

@@ -577,7 +577,7 @@ digest is curated rather than a dump. It is capped at
 the remainder"). Each entry is a `PriorExperiment`: core idea, modulating
 ids, decision, banded Δscalar under restricted visibility, and the
 diagnostic `prediction_accuracy`. With
-`experiment_memory.cross_epoch: true` (contract knob, omit-at-default),
+`experimental.cross_epoch_memory: true` (contract knob, omit-at-default),
 settled experiments from PRIOR epochs sharing the current
 `contract_hash` are appended — marked `same_contract=False`, Δscalar
 omitted (the number does not transfer), and admitted only into budget
@@ -878,7 +878,7 @@ contract inputs.
 
 **13b — the placebo arm.** `_maybe_run_placebo_arm_gauntlet` runs one
 EXTRA scheduled duel on the opt-in cadence
-(`overfitting.random_baseline_every_n`): champion vs a
+(`experimental.random_baseline_every_n`): champion vs a
 semantics-preserving no-op copy of itself. It runs BEFORE the health
 assessment so a promoted placebo raises its CRITICAL finding in THIS
 round's report; it never advances the champion.

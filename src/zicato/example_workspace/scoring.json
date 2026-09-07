@@ -11,8 +11,6 @@
   "plan_revision_weight": 0.5,
   "task_failure_weight": 10.0,
   "not_completed_weight": 50.0,
-  "diff_complexity_weight": 0.0,
-  "diff_complexity_ceiling": 0.0,
   "promote_margin": 0.01,
   "holdout_margin": null,
   "holdout_entry_regression_budget": 0,
@@ -53,26 +51,15 @@
     "ladder": {
       "enabled": true,
       "threshold": null,
-      "budget": 16,
-      "noise_scale": 0.0
+      "budget": 16
     },
-    "rotate_holdout": true,
-    "max_generations_per_contract": null,
-    "random_baseline_every_n": 0
+    "rotate_holdout": true
   },
   "proposer_quality": {
     "best_of_n": 1,
     "critique_enabled": false,
     "screen_entries": 0,
-    "screen_veto_only": false,
-    "process_exemplars": 0,
-    "recombine": false,
-    "genealogy": 0,
-    "calibration_feedback": 0,
-    "recombine_merge": "mechanical"
-  },
-  "experiment_memory": {
-    "cross_epoch": false
+    "screen_veto_only": false
   },
   "outcome_summarizer_spec": "",
   "pass_transform": null,
@@ -82,5 +69,17 @@
   "telemetry_dialect": "goldfive",
   "block_on_containment_violation": false,
   "block_on_gate_contradiction": false,
-  "mutation_surface": {}
+  "mutation_surface": {},
+  "experimental": {
+    "diff_complexity_weight": 0.0,
+    "diff_complexity_ceiling": 0.0,
+    "max_generations_per_contract": null,
+    "random_baseline_every_n": 0,
+    "process_exemplars": 0,
+    "recombine": false,
+    "genealogy": 0,
+    "calibration_feedback": 0,
+    "recombine_merge": "mechanical",
+    "cross_epoch_memory": false
+  }
 }

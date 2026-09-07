@@ -612,7 +612,7 @@ async def _maybe_run_placebo_arm_gauntlet(
 
     The random-baseline sanity check (OVERFITTING.md §12 #7) on the
     single-challenger path: when the contract sets
-    ``overfitting.random_baseline_every_n`` and this round's
+    ``experimental.random_baseline_every_n`` and this round's
     epoch-cumulative number is a cadence tick, one EXTRA scheduled duel
     runs after the round — champion vs a semantics-preserving no-op copy
     of itself (id ``{vN}-placebo``, kept off the ``vN`` sequence so round
@@ -627,7 +627,7 @@ async def _maybe_run_placebo_arm_gauntlet(
     from zicato.evolve.placebo import placebo_round_due  # noqa: PLC0415
     from zicato.workspace import generation_round_number  # noqa: PLC0415
 
-    every_n = int(getattr(weights.overfitting, "random_baseline_every_n", 0))
+    every_n = int(getattr(weights.experimental, "random_baseline_every_n", 0))
     round_n = generation_round_number(round_id)
     if not placebo_round_due(every_n, round_n) or not mutations:
         return

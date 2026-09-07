@@ -33,7 +33,7 @@
 > uv run pytest tests/test_decision_procedure_power.py -q   # the operating characteristics
 > ```
 >
-> Recipe 10 is the full verification ladder as a standalone checklist.
+> Recipe 10 defines focused development checks and complete validation before merge.
 
 **Recipe index**
 
@@ -48,7 +48,7 @@
 | 7 | Add an index table / column | 07-runtime-and-durability.md |
 | 8 | Add an epoch-open step | 03-contract-and-epochs.md |
 | 9 | Change the round pipeline safely | 02-architecture.md |
-| 10 | Run the full local verification ladder | 11-testing.md |
+| 10 | Run focused checks and require complete CI validation | 11-testing.md |
 | 11 | Investigate a red parity gate | 11-testing.md |
 | 12 | Debug a failing tournament e2e | 06-tournament-and-selection.md, 07-runtime-and-durability.md |
 | 13 | Safely bump a pinned operating-characteristic number | 04-evaluation-statistics.md |
@@ -982,106 +982,35 @@ are honored best-effort, the pure seams stayed pure, and both oracles pass.
 
 ---
 
-## Recipe 10 — Run the full local verification ladder
+## Recipe 10 — Run focused checks and require complete CI validation
 
-**When to use.** Before you propose ANY commit. This is the pre-commit checklist
-as a standalone, copy-pasteable ladder — run it top to bottom; each rung catches
-a different class of break.
+During implementation, run the checks that exercise the changed behavior.
+`tools/verify.py` defines the required checks and supplies both local commands
+and CI. Keeping the command list there prevents this recipe from requesting
+repeated runs of the same suite.
 
-**Files touched.** None — this recipe runs checks, it does not edit.
+Set up a virtual environment with `uv sync --all-extras` when dependencies need
+preparation. Do not repeat dependency installation before every focused run.
 
-**Steps.**
+```sh
+make check-fast
+uv run pytest tests/test_relevant_behavior.py -q  # replace with the relevant file
+```
 
-1. **Sync the environment — with all extras.** A bare `uv sync` deletes dev
-   tooling (`pytest`, `mypy`, `ruff`, even `uv` itself) from `.venv`. ALWAYS:
+Use a regression test that fails before a correctness fix and passes after it.
+For a testing optimization, verify equivalent assertions and compare execution
+cost under the same conditions. Keep real process or recovery behavior where
+that behavior is the subject of the test.
 
-   ```bash
-   uv sync --all-extras
-   ```
+Before merge, require one complete successful CI run on the proposed source.
+It includes the statistical, complete execution, reference comparison, browser,
+native, packaging, and static checks. A focused local pass does not replace
+that requirement. `make check` runs the equivalent complete plan locally when
+CI is unavailable or a diagnosis requires it; both complete runs are not required.
 
-2. **Lint + format.** Ruff is pinned to the exact version the pre-commit hook
-   uses, so local and hook never diverge:
-
-   ```bash
-   uv run ruff check .
-   uv run ruff format --check .
-   ```
-
-3. **Typecheck.** Strict type checking must complete successfully. The parity
-   script also reports checker execution failures:
-
-   ```bash
-   uv run mypy src/zicato/
-   ```
-
-4. **Import contracts.** The driver boundary and the two cuts inside the
-   library (10-builder-cli-library.md §"The import-linter contracts"):
-
-   ```bash
-   make import-lint
-   ```
-
-5. **The two oracles — however unrelated the change seems:**
-
-   ```bash
-   uv run pytest tests/test_convergence_known_answer.py -q
-   uv run pytest tests/test_decision_procedure_power.py -q
-   ```
-
-6. **The full suite — both tiers.** Fans out across cores via `pytest-xdist`
-   (`-n auto` is the default). The explicit selector is what makes this the
-   FULL suite: a bare `uv run pytest -q` is the default tier alone, which
-   drops the tests measured at 15 s or more on their own.
-
-   ```bash
-   uv run pytest -m "not node and not cascade_oc" -q
-   ```
-
-7. **The parity gates and the node suite (the green-gates rule):**
-
-   ```bash
-   bash tools/parity.sh        # PYTEST, CONTRACT-HASH, CLI-HELP, REINDEX-DUMP, eight MOCK-GOLDEN lanes, MYPY
-   make node-test              # the dashboard JS behaviour suite
-   ```
-
-8. **The supervisor, if you touched the Rust crate:**
-
-   ```bash
-   cargo test -p zicato-supervisor
-   ```
-
-9. **Or run the whole thing in one target.** `make check` is `lint import-lint
-   typecheck test node-test`; the git pre-commit hook additionally runs
-   `end-of-file-fixer`, `trailing-whitespace`, `ruff`, and `ruff-format` on
-   changed files:
-
-   ```bash
-   make check
-   uv run pre-commit run --all-files
-   ```
-
-**Traps.**
-
-- ⚠️ **`uv sync` without `--all-extras` silently removes your test tools.** The
-  next `uv run pytest` fails with a mysterious import error; the fix is to
-  re-sync WITH `--all-extras` (the all-extras sync rule; 01-orientation.md
-  §"Set up"). Always pass the flag.
-- ⚠️ **A green unit-test run hides an integration break.** Steps 5 and 7 exist
-  because unit tests pass while the loop is broken — the next contributor bisects
-  YOUR commit out of a red oracle or a red parity gate. Never skip the oracles
-  on the grounds that a change looks unrelated.
-- ⚠️ **Never start a live model run to "verify."** Verification is the test suite
-  and the deterministic gates — the two oracles run the full loop with mock
-  callables, no live LLM. A live `zicato evolve` requires the operator's explicit
-  go-ahead (the live-run go-ahead rule); it is never part of your local ladder.
-
-**Verify.** The ladder IS the verification. Green top to bottom = ready to
-propose a commit.
-
-**Definition of done.** `uv run ruff check .`, `uv run mypy src/zicato/`,
-`make import-lint`, both oracles, the full pytest suite, `bash
-tools/parity.sh`, and `make node-test` are all green — and, if the Rust crate
-changed, `cargo test -p zicato-supervisor`.
+Use deterministic test responses. Starting a live model evaluation still
+requires explicit operator authorization. Retain full test logs as files and
+report a concise result with the failures that need action.
 
 ---
 

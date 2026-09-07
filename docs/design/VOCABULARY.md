@@ -749,7 +749,7 @@ See [BOARD-FORMAT.md §2.3](BOARD-FORMAT.md#23-multi_turn_emulated).
 
 An optional control challenger whose patch re-emits a mutation point's
 current text unchanged, so the candidate behaves like the champion.
-Every Nth round (`overfitting.random_baseline_every_n`, off by default)
+Every Nth round (`experimental.random_baseline_every_n`, off by default)
 the loop fields one. A working promotion gate must reject it, because no
 improvement can clear `promote_margin` between identical behaviours; a
 promoted placebo raises the critical `placebo_promoted` finding, which
@@ -782,7 +782,7 @@ Windows of a run's event stream, three events either side of an anchor
 drift, that are redacted and shown to the proposer. They come from the
 champion's training-slice runs, so the proposer sees how a failure
 unfolds without seeing which entry it unfolded on. Opt-in through
-`proposer_quality.process_exemplars`. See
+`experimental.process_exemplars`. See
 [PROCESS-EXEMPLARS.md](PROCESS-EXEMPLARS.md).
 
 ## Promotion gate

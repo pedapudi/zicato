@@ -563,7 +563,7 @@ def aggregate_generation_score(
     ``diff_size`` is the OPT-IN parsimony / MDL input: the candidate
     generation's ``{added, removed, patches}`` diff size (see
     :func:`zicato.scoring.diff_complexity.diff_size`). ``None`` (the default)
-    or a contract whose :attr:`~zicato.core.types.ScoringWeights.diff_complexity_weight`
+    or a contract whose :attr:`~zicato.core.types.ExperimentalConfig.diff_complexity_weight`
     is ``0.0`` leaves the result BYTE-IDENTICAL — the ``diff_complexity``
     component is never written and the scalar is unchanged. The runner threads
     it only for the CHALLENGER side; the champion side passes ``None`` so the
@@ -725,7 +725,9 @@ def aggregate_generation_score(
     }
     if len(seeds) == 1 and UNKNOWN_SEED not in seeds:
         agg["base_seed"] = next(iter(seeds))
-    parsimony_active = diff_component is not None or weights.diff_complexity_ceiling > 0.0
+    parsimony_active = (
+        diff_component is not None or weights.experimental.diff_complexity_ceiling > 0.0
+    )
     if parsimony_active and diff_size is not None:
         agg["diff_size"] = dict(diff_size)
     return agg

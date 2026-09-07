@@ -137,7 +137,7 @@ def _build_recombination_pair(
     """Select this round's recombination pair, or ``None`` when OFF.
 
     ``None`` — the DEFAULT — unless the contract opts in with
-    ``proposer_quality.recombine`` AND ``best_of_n > 1`` (a single-sample
+    ``experimental.recombine`` AND ``best_of_n > 1`` (a single-sample
     proposer has no slate slot to mint into): the propose path then carries
     no pair at all and is byte-identical.
 
@@ -170,7 +170,7 @@ def _build_recombination_pair(
     (recombination must never fail a propose step).
     """
     quality = weights.proposer_quality
-    if not getattr(quality, "recombine", False) or quality.best_of_n <= 1:
+    if not weights.experimental.recombine or quality.best_of_n <= 1:
         return None
     try:
         from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
@@ -293,7 +293,7 @@ def _build_recombination_pair(
         # for pair selection so an OVERLAPPING pair (which only an LLM merge
         # can compose) is eligible, while "mechanical" (the default) keeps #7
         # hard and selects only disjoint pairs.
-        merge_mode = getattr(quality, "recombine_merge", "mechanical")
+        merge_mode = weights.experimental.recombine_merge
         pair = rank_pairs(eligible, tried_pairs=frozenset(tried), merge_mode=merge_mode)
         if pair is None:
             return None
@@ -351,7 +351,7 @@ def _build_genealogy_items(
     """Sample this round's genealogy items, or ``()`` when OFF.
 
     ``()`` — the DEFAULT — unless the contract opts in with
-    ``proposer_quality.genealogy > 0``: the propose path then carries no items
+    ``experimental.genealogy > 0``: the propose path then carries no items
     at all and is byte-identical.
 
     The IO half of the genealogy channel, built ONCE per round beside the
@@ -377,7 +377,7 @@ def _build_genealogy_items(
     anywhere → DEBUG log → ``()`` → a byte-identical round (genealogy must
     never fail a propose step).
     """
-    quality = getattr(weights, "proposer_quality", None)
+    quality = getattr(weights, "experimental", None)
     k = int(getattr(quality, "genealogy", 0) or 0)
     if k <= 0:
         return ()
@@ -463,7 +463,7 @@ def _build_calibration_summary(
     """Summarize the reign's prediction calibration, or ``None`` when OFF.
 
     ``None`` — the DEFAULT — unless the contract opts in with
-    ``proposer_quality.calibration_feedback > 0``: the propose path then carries
+    ``experimental.calibration_feedback > 0``: the propose path then carries
     no summary at all and is byte-identical.
 
     The IO half of the critic-calibration channel, built ONCE per round beside
@@ -492,7 +492,7 @@ def _build_calibration_summary(
     ``None`` → a byte-identical round (calibration must never fail a propose
     step).
     """
-    quality = getattr(weights, "proposer_quality", None)
+    quality = getattr(weights, "experimental", None)
     k = int(getattr(quality, "calibration_feedback", 0) or 0)
     if k <= 0:
         return None

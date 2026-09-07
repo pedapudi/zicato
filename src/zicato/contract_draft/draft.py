@@ -165,19 +165,18 @@ class TournamentDraft:
 
         Frozen epoch files describe past evaluations. Drafts use registered live
         paths, including files edited before the first epoch exists. Missing
-        components use the scaffold defaults.
+        components use the shared scoring defaults.
         """
         import json
 
         from zicato.board.jsonl import parse_board_with_meta
         from zicato.contract_draft.publication import capture_contract_source
-        from zicato.core.scoring_config import recommended_scaffold_weights
         from zicato.workspace_loader import scoring_weights_from_dict
 
         source = capture_contract_source(workspace_root)
         scoring_text = source.file("scoring").text
         scoring = (
-            recommended_scaffold_weights()
+            ScoringWeights()
             if scoring_text is None
             else scoring_weights_from_dict(json.loads(scoring_text))
         )

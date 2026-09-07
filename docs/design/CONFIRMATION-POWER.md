@@ -24,7 +24,7 @@ improvements have magnitudes 0.336, 0.672, and 2.016.
 The statistical test configuration averages 32 ordinary draws for selection,
 uses aggregate pass-rate monotonicity, and permits 38 single-draw confirmation
 attempts at threshold 0.8. It has one planned candidate. This configuration is
-distinct from the scaffold's four-candidate, 32-attempt configuration.
+distinct from the shared four-candidate, 32-attempt default.
 
 | Case | Promotions / trials | Total measured board units |
 |---|---:|---:|
@@ -74,7 +74,7 @@ draw outcomes through the finite stopping rule gives:
 These probabilities condition on selection of the pair. Ties consume attempts
 but add no resolved duel. Each paired five-entry draw costs ten board units.
 The table changes only the explicitly stated budget and planned family; it
-does not recommend changing scaffold defaults.
+does not recommend changing the shared defaults.
 
 The sign-based fit discards loss magnitudes. A fixed-look paired-loss test using
 the *known synthetic null distribution* reaches conditional power 0.627620 at

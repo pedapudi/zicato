@@ -240,47 +240,31 @@ def _render_tournament_structure_block(structure: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _render_proposer_config_block(pq: dict[str, object]) -> str:
-    """Render the frozen proposer-quality configuration.
+def _render_proposer_config_block(scoring: dict[str, object]) -> str:
+    """Render retained ordinary and experimental proposer settings.
 
-    Sourced from ``scoring.json``'s nested ``proposer_quality`` block:
-    ``best_of_n`` slate width, the self-critique pass, pre-tournament
-    screening (+ veto-only), redacted process exemplars, the genealogy
-    channel, and recombination (+ its merge mode). Each lever renders its
-    value or an explicit "off"; an epoch that never configured proposer
-    quality renders the built-in defaults notice. The breadth/depth
-    ensemble ROLES are runtime infrastructure (model bindings) rather than part
-    of the per-epoch scoring artifact, so they are noted as not recorded
-    here rather than fabricated.
+    Historical decoding preserves values stored at former field locations.
+    Execution role bindings are absent from the scoring artifact.
     """
-    if not pq:
+    from zicato.workspace_loader import historical_scoring_weights_from_dict
+
+    weights = historical_scoring_weights_from_dict(scoring)
+    if not scoring.get("proposer_quality") and not scoring.get("experimental"):
         return (
             "The proposer ran the built-in defaults: a best-of-3 slate with "
             "the self-critique pass; screening, process exemplars, the "
             "genealogy channel, and recombination all off."
         )
-
-    def _get_int(key: str, default: int) -> int:
-        raw = pq.get(key, default)
-        if isinstance(raw, bool):
-            return int(raw)
-        if isinstance(raw, int | float):
-            return int(raw)
-        if isinstance(raw, str):
-            try:
-                return int(raw)
-            except ValueError:
-                return default
-        return default
-
-    best_of_n = _get_int("best_of_n", 3)
-    critique = bool(pq.get("critique_enabled", True)) and best_of_n > 1
-    screen = _get_int("screen_entries", 0)
-    veto_only = bool(pq.get("screen_veto_only", False))
-    exemplars = _get_int("process_exemplars", 0)
-    genealogy = _get_int("genealogy", 0)
-    recombine = bool(pq.get("recombine", False))
-    merge = str(pq.get("recombine_merge", "mechanical") or "mechanical")
+    quality = weights.proposer_quality
+    experimental = weights.experimental
+    best_of_n = quality.best_of_n
+    critique = quality.critique_enabled and best_of_n > 1
+    screen = quality.screen_entries
+    veto_only = quality.screen_veto_only
+    exemplars = experimental.process_exemplars
+    genealogy = experimental.genealogy
+    recombine = experimental.recombine
+    merge = experimental.recombine_merge
 
     lines: list[str] = []
     lines.append("| proposer lever | setting |")
@@ -393,7 +377,7 @@ def render_methodology_section(data: EpochReportData) -> str:
     parts.append("")
     parts.append("Caption: Proposer-quality configuration frozen for the epoch.")
     parts.append("")
-    parts.append(_render_proposer_config_block(data.proposer_quality))
+    parts.append(_render_proposer_config_block(data.scoring))
     return "\n".join(parts)
 
 

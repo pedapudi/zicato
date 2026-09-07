@@ -138,7 +138,7 @@ def builtin_scalar(
     #4). It is the challenger's ``{added, removed, patches}`` diff size, or
     ``None`` for a side with no challenger experiment. The
     ``diff_complexity`` component is appended LAST — in a fixed position after
-    every namespace — and ONLY when ``weights.diff_complexity_weight > 0.0``
+    every namespace — and ONLY when ``weights.experimental.diff_complexity_weight > 0.0``
     AND ``diff_size`` is not ``None``; otherwise the term is EXACTLY absent (no
     key, no addition), so the default ``diff_complexity_weight == 0.0`` leaves
     the scalar byte-identical to a contract without the field.
@@ -168,7 +168,7 @@ def diff_complexity_component(
     appended scalar term and the surfaced ``scalar_components`` entry can NEVER
     disagree:
 
-    * ``weights.diff_complexity_weight <= 0.0`` (the default ``0.0``) OR
+    * ``weights.experimental.diff_complexity_weight <= 0.0`` (the default ``0.0``) OR
       ``diff_size is None`` ⇒ ``None`` — the term is exactly absent (no
       component key, nothing added to the scalar), the byte-identical-when-off
       contract.
@@ -176,11 +176,11 @@ def diff_complexity_component(
       ``complexity = added + removed + patches`` (see
       :func:`zicato.scoring.diff_complexity.diff_complexity`).
     """
-    if weights.diff_complexity_weight <= 0.0 or diff_size is None:
+    if weights.experimental.diff_complexity_weight <= 0.0 or diff_size is None:
         return None
     from zicato.scoring.diff_complexity import diff_complexity  # noqa: PLC0415
 
-    return weights.diff_complexity_weight * diff_complexity(diff_size)
+    return weights.experimental.diff_complexity_weight * diff_complexity(diff_size)
 
 
 __all__ = [

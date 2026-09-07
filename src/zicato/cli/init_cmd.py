@@ -86,9 +86,9 @@ def initialize_workspace(
     * ``{workspace_root}/lineage.json`` — empty DAG: ``{"epochs": []}``
       (the canonical lineage reader refuses malformed existing records before
       any mutation can discard ancestry)
-    * ``{workspace_root_parent}/scoring.json`` — the FULL recommended
-      effective contract (racing field 4, replicates 2, evidence gate on;
-      see :func:`zicato.core.scoring_config.recommended_scaffold_weights`),
+    * ``{workspace_root_parent}/scoring.json`` — an empty object resolving
+      to the shared scoring defaults. ``inspect config --scaffold --complete``
+      displays every effective setting. The file is
       written only when no ``scoring.json`` exists there yet (never
       clobbered rather than even with ``force`` — it is the operator's live
       contract source, resolved by ``resolve_contract_inputs``). Under
@@ -206,24 +206,19 @@ def initialize_workspace(
 
     write_workspace_config(workspace_root, config)
 
-    # Scaffold the operator's live scoring.json with the FULL effective
-    # contract — every field spelled out (the field-enumerating serializer),
-    # so the recommended noise-aware knobs are visible and editable rather
-    # than implicit. Lives at the default contract-source location
-    # (<workspace_root_parent>/scoring.json). Only written when absent: an
-    # existing contract is the operator's, never overwritten.
+    # Authored omission uses the shared defaults. Complete effective values
+    # remain available through configuration inspection and frozen records.
     scoring_scaffold = project_root / "scoring.json"
     if not scoring_scaffold.exists():
         if example:
             shutil.copyfile(EXAMPLE_ROOT / "scoring.json", scoring_scaffold)
         else:
-            from zicato.core.scoring_config import (  # noqa: PLC0415
-                recommended_scaffold_weights,
+            from zicato.workspace.config_inspection import (  # noqa: PLC0415
+                configuration_scaffold,
             )
-            from zicato.epoch.lifecycle import scoring_to_dict  # noqa: PLC0415
 
             scoring_scaffold.write_text(
-                json.dumps(scoring_to_dict(recommended_scaffold_weights()), indent=2) + "\n"
+                json.dumps(configuration_scaffold()["scoring.json"], indent=2) + "\n"
             )
 
     # Sanity check that the config file is actually on disk now.

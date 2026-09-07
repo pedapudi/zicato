@@ -317,7 +317,7 @@ def _append_placebo_arm(
     the real challengers.
     """
 
-    every_n = int(getattr(field_round.weights.overfitting, "random_baseline_every_n", 0))
+    every_n = field_round.weights.experimental.random_baseline_every_n
     if field_round.field_size <= 1 or base_n is None or not field_round.mutations:
         return
 

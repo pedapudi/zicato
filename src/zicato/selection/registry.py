@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from zicato.core.scoring_config import ExperimentalConfig
 from zicato.core.tournament import experimental_structure_refusal
 from zicato.selection.experimental.double_elim import DoubleEliminationStrategy
 from zicato.selection.experimental.single_elim import SingleEliminationStrategy
@@ -78,7 +79,7 @@ def make_strategy(
     *,
     replicates: int | None = None,
     noise_floor_delta_std: float | None = None,
-    experimental_structures: bool = False,
+    experimental: ExperimentalConfig | None = None,
 ) -> SelectionStrategy:
     """Construct a fresh strategy for one tournament resolution.
 
@@ -109,10 +110,9 @@ def make_strategy(
         (:class:`zicato.selection.strategies.racing.RacingStrategy`); the
         other structures ignore it. ``None`` injects nothing, and racing
         then cuts by rank alone.
-    experimental_structures:
-        The contract's ``experimental.tournament_structures`` flag. When
-        ``True`` a token in :data:`EXPERIMENTAL_STRATEGY_REGISTRY` resolves;
-        when ``False`` (the default) such a token is refused.
+    experimental:
+        The contract's optional structure, standings-rating and leader-resolver
+        settings. An absent config leaves these features inactive.
 
     Raises
     ------
@@ -124,9 +124,14 @@ def make_strategy(
         :class:`~zicato.core.scoring_config.ScoringWeights`; this is the
         defence-in-depth check at construction.)
     """
+    experimental = experimental if experimental is not None else ExperimentalConfig()
+    for key in ("rating", "resolver"):
+        if key in spec.params:
+            field = "standing_rating" if key == "rating" else "resolver"
+            raise ValueError(f"move tournament.params.{key} to experimental.{field}")
     cls = STRATEGY_REGISTRY.get(spec.structure)
     if cls is None and spec.structure in EXPERIMENTAL_STRATEGY_REGISTRY:
-        if not experimental_structures:
+        if not experimental.tournament_structures:
             raise ValueError(experimental_structure_refusal(spec.structure))
         cls = EXPERIMENTAL_STRATEGY_REGISTRY[spec.structure]
     if cls is None:
@@ -136,6 +141,10 @@ def make_strategy(
             f"registered structures are: {valid}"
         )
     params = dict(spec.params)
+    if experimental.standing_rating != "none":
+        params["rating"] = experimental.standing_rating
+    if experimental.resolver != "none":
+        params["resolver"] = experimental.resolver
     # Default ``board_ids`` to the epoch's full board when the operator
     # did not pin a subset. Explicit ``params["board_ids"]`` always wins.
     if board_ids is not None and "board_ids" not in params:

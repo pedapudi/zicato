@@ -33,8 +33,8 @@ genuine three-line change scores about 4; charging a ``kind="file"`` patch
 for EVERY line it re-emits would score that same re-emit 38 instead.
 Both halves of the diff-complexity regularizer read this measure — the
 loss term
-:attr:`~zicato.core.types.ScoringWeights.diff_complexity_weight` and the
-gate's :attr:`~zicato.core.types.ScoringWeights.diff_complexity_ceiling` —
+:attr:`~zicato.core.types.ExperimentalConfig.diff_complexity_weight` and the
+gate's :attr:`~zicato.core.types.ExperimentalConfig.diff_complexity_ceiling` —
 so a weight or ceiling calibrated against whole-file charging is roughly an
 order of magnitude too loose on a whole-file mutation surface, and should
 be re-tuned against a measured round.
@@ -216,7 +216,7 @@ def diff_complexity(diff_size_dict: Mapping[str, int] | None) -> float:
 
     ``complexity = added + removed + patches`` — the MDL description-length
     proxy the diff-complexity scoring term multiplies by
-    :attr:`~zicato.core.types.ScoringWeights.diff_complexity_weight`. The patch
+    :attr:`~zicato.core.types.ExperimentalConfig.diff_complexity_weight`. The patch
     count is folded in (not just the line delta) so an edit spread across more
     patch records is penalised even when each individual replacement is short,
     matching OVERFITTING.md §5's "mutation points touched / characters changed"

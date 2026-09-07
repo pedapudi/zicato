@@ -457,49 +457,24 @@ def test_hash_stable_when_outcome_summarizer_spec_omitted(tmp_path: Path) -> Non
     assert h_omitted == h_explicit_default
 
 
-def test_hash_stable_when_screening_fields_at_default(tmp_path: Path) -> None:
-    # Candidate screening (screen_entries / screen_veto_only on the nested
-    # proposer_quality block) is omit-at-default like random_baseline_every_n:
-    # a contract that predates the fields hashes byte-identically to one that
-    # spells out the OFF defaults — no retroactive roll for existing epochs.
+def test_authored_screening_omission_matches_explicit_recommendation(tmp_path: Path) -> None:
     base = _write_contract(tmp_path)
     base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_omitted = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps(
-            {
-                "pass_weight": 1.0,
-                "proposer_quality": {"screen_entries": 0, "screen_veto_only": False},
-            }
-        )
+        json.dumps({"pass_weight": 1.0, "proposer_quality": {"screen_entries": 2}})
     )
-    h_explicit_default = compute_contract_hash(base)
-    assert h_omitted == h_explicit_default
+    assert h_omitted == compute_contract_hash(base)
 
 
-def test_hash_changes_when_screening_opted_in(tmp_path: Path) -> None:
-    # Opting into screening selects champions under a different rule (a
-    # vetoed candidate never reaches the tournament), so a non-zero
-    # screen_entries — or flipping screen_veto_only — rolls the epoch,
-    # exactly like retuning any other contract weight.
+def test_disabling_screening_changes_the_authored_contract(tmp_path: Path) -> None:
     base = _write_contract(tmp_path)
     base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_default = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"pass_weight": 1.0, "proposer_quality": {"screen_entries": 2}})
+        json.dumps({"pass_weight": 1.0, "proposer_quality": {"screen_entries": 0}})
     )
-    h_on = compute_contract_hash(base)
-    base.scoring_path.write_text(
-        json.dumps(
-            {
-                "pass_weight": 1.0,
-                "proposer_quality": {"screen_entries": 2, "screen_veto_only": True},
-            }
-        )
-    )
-    h_veto_only = compute_contract_hash(base)
-    assert h_default != h_on
-    assert h_on != h_veto_only
+    assert h_default != compute_contract_hash(base)
 
 
 def test_hash_stable_when_experimental_block_at_default(tmp_path: Path) -> None:
@@ -534,7 +509,7 @@ def test_hash_stable_when_recombine_at_default(tmp_path: Path) -> None:
     base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_omitted = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"pass_weight": 1.0, "proposer_quality": {"recombine": False}})
+        json.dumps({"pass_weight": 1.0, "experimental": {"recombine": False}})
     )
     h_explicit_default = compute_contract_hash(base)
     assert h_omitted == h_explicit_default
@@ -548,7 +523,7 @@ def test_hash_changes_when_recombine_opted_in(tmp_path: Path) -> None:
     base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_default = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"pass_weight": 1.0, "proposer_quality": {"recombine": True}})
+        json.dumps({"pass_weight": 1.0, "experimental": {"recombine": True}})
     )
     h_on = compute_contract_hash(base)
     assert h_default != h_on
@@ -594,9 +569,7 @@ def test_hash_stable_when_genealogy_at_default(tmp_path: Path) -> None:
     base = _write_contract(tmp_path)
     base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_omitted = compute_contract_hash(base)
-    base.scoring_path.write_text(
-        json.dumps({"pass_weight": 1.0, "proposer_quality": {"genealogy": 0}})
-    )
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0, "experimental": {"genealogy": 0}}))
     h_explicit_default = compute_contract_hash(base)
     assert h_omitted == h_explicit_default
 
@@ -607,9 +580,7 @@ def test_hash_changes_when_genealogy_opted_in(tmp_path: Path) -> None:
     base = _write_contract(tmp_path)
     base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_default = compute_contract_hash(base)
-    base.scoring_path.write_text(
-        json.dumps({"pass_weight": 1.0, "proposer_quality": {"genealogy": 4}})
-    )
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0, "experimental": {"genealogy": 4}}))
     h_on = compute_contract_hash(base)
     assert h_default != h_on
 
@@ -622,7 +593,7 @@ def test_hash_stable_when_calibration_feedback_at_default(tmp_path: Path) -> Non
     base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_omitted = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"pass_weight": 1.0, "proposer_quality": {"calibration_feedback": 0}})
+        json.dumps({"pass_weight": 1.0, "experimental": {"calibration_feedback": 0}})
     )
     h_explicit_default = compute_contract_hash(base)
     assert h_omitted == h_explicit_default
@@ -635,7 +606,7 @@ def test_hash_changes_when_calibration_feedback_opted_in(tmp_path: Path) -> None
     base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_default = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"pass_weight": 1.0, "proposer_quality": {"calibration_feedback": 5}})
+        json.dumps({"pass_weight": 1.0, "experimental": {"calibration_feedback": 5}})
     )
     h_on = compute_contract_hash(base)
     assert h_default != h_on
@@ -678,10 +649,10 @@ def test_hash_changes_on_max_generations_per_contract_edit(tmp_path: Path) -> No
     # The cadence ceiling (OVERFITTING.md §12 #6) folds into the contract.
     base = _write_contract(tmp_path)
     base.scoring_path.write_text(
-        json.dumps({"overfitting": {"max_generations_per_contract": None}})
+        json.dumps({"experimental": {"max_generations_per_contract": None}})
     )
     h_none = compute_contract_hash(base)
-    base.scoring_path.write_text(json.dumps({"overfitting": {"max_generations_per_contract": 20}}))
+    base.scoring_path.write_text(json.dumps({"experimental": {"max_generations_per_contract": 20}}))
     h_set = compute_contract_hash(base)
     assert h_none != h_set
 
@@ -701,7 +672,6 @@ def test_absent_ladder_block_hashes_as_the_defaults(tmp_path: Path) -> None:
                         "enabled": True,
                         "threshold": None,
                         "budget": 16,
-                        "noise_scale": 0.0,
                     },
                 }
             }

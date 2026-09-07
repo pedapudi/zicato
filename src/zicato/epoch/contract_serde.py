@@ -41,14 +41,17 @@ to the previous hand-written form.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
-from dataclasses import MISSING, fields, is_dataclass
+from dataclasses import MISSING, fields, is_dataclass, replace
 from typing import TYPE_CHECKING, Any, TypeVar, cast, get_args, get_origin
 
 from zicato.core.configuration import dataclass_to_jsonable, persisted_key
 
 if TYPE_CHECKING:
     from dataclasses import Field
+
+    from zicato.core.scoring_config import ScoringWeights
 
 _T = TypeVar("_T")
 
@@ -65,13 +68,10 @@ def historical_dataclass_from_json(cls: type[_T], data: Mapping[str, Any]) -> _T
     * a key present in ``data`` is parsed (coerced to the field's declared
       scalar type, recursed for nested dataclasses, copied for mappings /
       sequences);
-    * a key absent from ``data`` falls back to the field's default — so a
-      ``scoring.json`` written before a field existed loads at that field's
-      default.
-
-    Because absent fields fall back to their declared default and the
-    contract canonicalizer resolves the same defaults, the contract hash
-    for an unchanged on-disk contract is unaffected by this parser.
+    * a key absent from ``data`` uses its persisted historical default when
+      declared, otherwise its constructor default. Historical defaults preserve
+      execution when authored defaults change. Canonical omission metadata
+      separately preserves the recorded identity of those values.
     """
     if not (isinstance(cls, type) and is_dataclass(cls)):
         raise TypeError(f"historical_dataclass_from_json expects a dataclass type, got {cls!r}")
@@ -81,6 +81,12 @@ def historical_dataclass_from_json(cls: type[_T], data: Mapping[str, Any]) -> _T
             continue
         key = persisted_key(f)
         if key not in data:
+            if "historical_default" in f.metadata:
+                kwargs[f.name] = f.metadata["historical_default"]
+                continue
+            if "historical_default_factory" in f.metadata:
+                kwargs[f.name] = f.metadata["historical_default_factory"]()
+                continue
             # Absent ⇒ let the dataclass default fill it in. We only skip
             # the kwarg when the field actually HAS a default; a required
             # field with no default would (correctly) raise on construction.
@@ -89,6 +95,87 @@ def historical_dataclass_from_json(cls: type[_T], data: Mapping[str, Any]) -> _T
         raw = data.get(key)
         kwargs[f.name] = _value_from_jsonable(f.type, raw)
     return cast("_T", cls(**kwargs))
+
+
+def recorded_experimental_values(data: Mapping[str, Any]) -> dict[str, tuple[str, Any]]:
+    """Read feature values stored at their declared historical scoring paths."""
+    from zicato.core.scoring_config import ExperimentalConfig  # noqa: PLC0415
+
+    found = {}
+    for declared in fields(ExperimentalConfig):
+        path = declared.metadata.get("recorded_path")
+        if path is None:
+            continue
+        value: Any = data
+        for part in path.split("."):
+            if not isinstance(value, Mapping) or part not in value:
+                break
+            value = value[part]
+        else:
+            found[declared.name] = (path, value)
+    return found
+
+
+def _relocate_recorded_features(data: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Move archived feature settings into their runtime owner without editing files."""
+    moved = recorded_experimental_values(data)
+    if not moved:
+        return data
+    result = dict(data)
+    raw_experimental = data.get("experimental")
+    experimental = dict(raw_experimental) if isinstance(raw_experimental, Mapping) else {}
+    for name, (path, value) in moved.items():
+        if name in experimental:
+            raise ValueError(f"recorded scoring contains both {path} and experimental.{name}")
+        # Archived strategy parameters accepted a recognized token or disabled
+        # the extension. Preserve that recorded behavior at the typed boundary.
+        if name in {"standing_rating", "resolver"}:
+            token = value.strip().lower() if isinstance(value, str) else "none"
+            choices = (
+                {"bradley_terry"} if name == "standing_rating" else {"copeland", "ranked_pairs"}
+            )
+            value = token if token in choices else "none"
+        experimental[name] = value
+        target = result
+        parts = path.split(".")
+        for part in parts[:-1]:
+            target[part] = dict(target[part])
+            target = target[part]
+        del target[parts[-1]]
+    # The former memory block has no other fields.
+    if "cross_epoch_memory" in moved:
+        result.pop("experiment_memory", None)
+    result["experimental"] = experimental
+    return result
+
+
+def historical_scoring_from_json(data: Mapping[str, Any]) -> ScoringWeights:
+    """Decode recorded scoring, preserving the retired additive release rule.
+
+    The recorded increment was a fixed addition to the release threshold.
+    Resolve it using this record's margin before discarding the retired field.
+    The original mapping remains available for historical identity checks.
+    """
+    from zicato.core.scoring_config import ScoringWeights  # noqa: PLC0415
+
+    weights = historical_dataclass_from_json(ScoringWeights, _relocate_recorded_features(data))
+    overfitting = data.get("overfitting")
+    ladder = overfitting.get("ladder") if isinstance(overfitting, Mapping) else None
+    if not isinstance(ladder, Mapping) or "noise_scale" not in ladder:
+        return weights
+    increment = float(ladder["noise_scale"])
+    if not math.isfinite(increment) or increment < 0:
+        raise ValueError("recorded ladder.noise_scale must be finite and >= 0")
+    if increment == 0:
+        return weights
+    cfg = weights.overfitting.ladder
+    threshold = weights.promote_margin if cfg.threshold is None else cfg.threshold
+    return replace(
+        weights,
+        overfitting=replace(
+            weights.overfitting, ladder=replace(cfg, threshold=threshold + increment)
+        ),
+    )
 
 
 def _has_default(f: Field[Any]) -> bool:

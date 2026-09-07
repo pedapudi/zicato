@@ -246,6 +246,40 @@ stands outside the base, because its single duel IS the champion gate.
 `tests/test_selection_strategies.py` pins the correspondence, so a
 structure added to the registry cannot fork those views again.
 
+### Shared scoring defaults and explicit tournament specifications
+
+Bare `ScoringWeights()` and an empty authored `scoring.json` select racing
+with four candidates, halving factor two, an initial board fraction of 0.4,
+and two ordinary draws per matchup. Candidate screening uses two entries.
+Confirmation permits 32 fresh draws of the selected pair at threshold 0.8.
+The complete specification is owned by the scoring field's default factory;
+`recommended_scaffold_weights()` is a compatibility entry point to those values.
+
+Initialization writes `{}`. `zicato inspect config --scaffold --complete` displays
+all effective settings, and epoch records retain the complete selected values.
+The generated field explanations use the owning factory's resolved values.
+
+| Authored tournament value | Effective specification |
+|---|---|
+| Omitted, `{}`, or `{"structure": "racing"}` | Complete default racing parameters |
+| `{"params": {}}` | Racing with explicit empty parameters; confirmation disabled |
+| `{"structure": "gauntlet"}` | Gauntlet with empty parameters; confirmation disabled |
+| A supplied parameters object | Supplied values retained; omitted structure selects racing |
+
+An authored confirmation threshold with no budget receives the shared budget
+of 32. A historical threshold without a recorded budget retains its three-draw
+fallback; adding a recommendation must not change that recorded execution.
+An explicit screening count of zero disables screening. An explicit confirmation
+threshold of null or zero disables confirmation; budget zero leaves a configured
+requirement incomplete. Historical scoring reads preserve the earlier meaning of
+omitted fields and empty parameters. In particular, omitted historical screening
+remains zero, and omitted historical tournament selection remains gauntlet.
+Canonical omission values are persisted-format metadata, independent of authored
+defaults, so recorded screening values of zero and two retain their identities.
+
+The following table describes fallback behavior for explicit partial tournament
+specifications. These fallbacks do not replace the complete shared scoring default.
+
 > **Param defaults at a glance** (read off the shipped strategy
 > constructors — these are the authoritative defaults the
 > `zicato-design-tournament-structure` skill tabulates):

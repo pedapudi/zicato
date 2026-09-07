@@ -522,10 +522,52 @@ function structureSection(d) {
 }
 
 function experimentalSection(d) {
+  const ex = ((d.scoring || {}).experimental) || {};
+  const rating = el('select', { class: 'dn-bld-num', 'aria-label': 'Standing rating' },
+    [['none', 'Disabled'], ['bradley_terry', 'Bradley–Terry']].map(([value, label]) =>
+      el('option', { value, text: label, selected: value === (ex.standing_rating || 'none') ? '' : null })));
+  rating.addEventListener('change', () => runOp('set_experimental', { standing_rating: rating.value }));
+  const resolver = el('select', { class: 'dn-bld-num', 'aria-label': 'Ranking resolver' },
+    [['none', 'Disabled'], ['copeland', 'Copeland'], ['ranked_pairs', 'Ranked pairs']].map(([value, label]) =>
+      el('option', { value, text: label, selected: value === (ex.resolver || 'none') ? '' : null })));
+  resolver.addEventListener('change', () => runOp('set_experimental', { resolver: resolver.value }));
   return section('Experimental',
-    el('p', { class: 'dn-lede', text: 'Features without a measured case. Each stays here until a measurement sweep graduates it; enabling one is a contract edit — it rolls the epoch.' }),
+    el('p', { class: 'dn-lede', text: 'Features without qualifying improvement evidence. Qualification requires improvement and cost measurements for the intended target. Enabling a feature changes the evaluation contract.' }),
     controlRow('Experimental tournament structures', knobInfo('experimental.tournament_structures'), checkInput(experimentalStructuresOn(d), 'Experimental tournament structures', 'admit single_elim, double_elim and swiss as the structure',
-      (on) => runOp('set_experimental', { tournament_structures: on }))));
+      (on) => runOp('set_experimental', { tournament_structures: on }))),
+    controlRow('Process exemplars', knobInfo('experimental.process_exemplars'), numInput(ex.process_exemplars != null ? ex.process_exemplars : 0,
+      { min: '0', step: '1', 'aria-label': 'Process exemplars' },
+      (n) => runOp('set_experimental', { process_exemplars: n }), { int: true })),
+    controlRow('Recombination slot', knobInfo('experimental.recombine'), checkInput(!!ex.recombine, 'Recombination slot', 'mint the union of two rejected complementary fixes into the last slate slot',
+      (on) => runOp('set_experimental', { recombine: on }))),
+    controlRow('LLM-guided merge', knobInfo('experimental.recombine_merge', {
+      note: 'On sets llm; off sets mechanical.',
+    }), checkInput(ex.recombine_merge === 'llm', 'LLM-guided merge', 'compose the union with an LLM merge call (relaxes disjointness for overlapping pairs) instead of a mechanical patch concatenation',
+      (on) => runOp('set_experimental', { recombine_merge: on ? 'llm' : 'mechanical' }))),
+    controlRow('Genealogy channel', knobInfo('experimental.genealogy'), numInput(ex.genealogy != null ? ex.genealogy : 0,
+      { min: '0', step: '1', 'aria-label': 'Genealogy' },
+      (n) => runOp('set_experimental', { genealogy: n }), { int: true })),
+    controlRow('Calibration feedback', knobInfo('experimental.calibration_feedback'), numInput(ex.calibration_feedback != null ? ex.calibration_feedback : 0,
+      { min: '0', step: '1', 'aria-label': 'Calibration feedback' },
+      (n) => runOp('set_experimental', { calibration_feedback: n }), { int: true })),
+    controlRow('Placebo cadence (rounds)', knobInfo('experimental.random_baseline_every_n'), numInput(ex.random_baseline_every_n != null ? ex.random_baseline_every_n : 0,
+      { min: '0', step: '1', 'aria-label': 'Random baseline every N rounds' },
+      (n) => runOp('set_experimental', { random_baseline_every_n: n }), { int: true })),
+    controlRow('Max generations per contract', knobInfo('experimental.max_generations_per_contract', {
+      note: 'This field shows an unset ceiling as 0, and 0 clears it.',
+    }), numInput(ex.max_generations_per_contract != null ? ex.max_generations_per_contract : 0,
+      { min: '0', step: '1', 'aria-label': 'Max generations per contract' },
+      (n) => runOp('set_experimental', { max_generations_per_contract: n }), { int: true })),
+    controlRow('Diff-complexity weight', knobInfo('experimental.diff_complexity_weight'), numInput(ex.diff_complexity_weight != null ? ex.diff_complexity_weight : 0,
+      { min: '0', step: '0.001', 'aria-label': 'Diff complexity weight' },
+      (n) => runOp('set_experimental', { diff_complexity_weight: n }))),
+    controlRow('Diff-complexity ceiling', knobInfo('experimental.diff_complexity_ceiling'), numInput(ex.diff_complexity_ceiling != null ? ex.diff_complexity_ceiling : 0,
+      { min: '0', step: '1', 'aria-label': 'Diff complexity ceiling' },
+      (n) => runOp('set_experimental', { diff_complexity_ceiling: n }))),
+    controlRow('Cross-epoch memory', knobInfo('experimental.cross_epoch_memory'), checkInput(!!ex.cross_epoch_memory, 'Cross-epoch experiment memory', 'surface settled prior-epoch experiments (same contract hash)',
+      (on) => runOp('set_experimental', { cross_epoch_memory: on }))),
+    controlRow('Standing rating', knobInfo('experimental.standing_rating'), rating),
+    controlRow('Ranking resolver', knobInfo('experimental.resolver'), resolver));
 }
 
 function fieldSection(d) {
@@ -1193,17 +1235,9 @@ function overfittingSection(d) {
       (n) => runOp('set_holdout', { min_board_size_for_split: n }), { int: true })),
     controlRow('Rotate holdout', knobInfo('overfitting.rotate_holdout'), checkInput(of.rotate_holdout !== false, 'Rotate holdout', 'rotate the holdout slice each epoch',
       (on) => runOp('set_holdout', { rotate_holdout: on }))),
-    controlRow('Max generations per contract', knobInfo('overfitting.max_generations_per_contract', {
-      note: 'This field shows an unset ceiling as 0, and 0 clears it.',
-    }), numInput(of.max_generations_per_contract != null ? of.max_generations_per_contract : 0,
-      { min: '0', step: '1', 'aria-label': 'Max generations per contract' },
-      (n) => runOp('set_holdout', { max_generations_per_contract: n }), { int: true })),
     controlRow('Restrict proposer visibility', knobInfo('overfitting.restrict_proposer_visibility'), checkInput(of.restrict_proposer_visibility !== false, 'Restrict proposer visibility',
       'band / aggregate what the proposer sees',
       (on) => runOp('set_holdout', { restrict_proposer_visibility: on }))),
-    controlRow('Placebo cadence (rounds)', knobInfo('overfitting.random_baseline_every_n'), numInput(of.random_baseline_every_n != null ? of.random_baseline_every_n : 0,
-      { min: '0', step: '1', 'aria-label': 'Random baseline every N rounds' },
-      (n) => runOp('set_holdout', { random_baseline_every_n: n }), { int: true })),
     controlRow('Ladder governor', knobInfo('overfitting.ladder.enabled'), checkInput(ladder.enabled !== false, 'Ladder governor enabled', 'Ladder/Thresholdout holdout governor',
       (on) => runOp('set_holdout', { ladder: { enabled: on } }))),
     controlRow('Ladder release threshold', knobInfo('overfitting.ladder.threshold', {
@@ -1214,9 +1248,6 @@ function overfittingSection(d) {
     controlRow('Ladder query budget', knobInfo('overfitting.ladder.budget'), numInput(ladder.budget != null ? ladder.budget : 16,
       { min: '0', step: '1', 'aria-label': 'Ladder budget' },
       (n) => runOp('set_holdout', { ladder: { budget: n } }), { int: true })),
-    controlRow('Ladder noise scale', knobInfo('overfitting.ladder.noise_scale'), numInput(ladder.noise_scale != null ? ladder.noise_scale : 0,
-      { min: '0', step: '0.01', 'aria-label': 'Ladder noise scale' },
-      (n) => runOp('set_holdout', { ladder: { noise_scale: n } }))),
   ];
   return section('Overfitting',
     el('p', { class: 'dn-lede', text: 'Anti-board-memorization: the train/holdout machinery, its Ladder query budget, holdout rotation, what the proposer may see, and the placebo control arm. Every knob is contract — a change rolls the epoch.' }),
@@ -1314,12 +1345,6 @@ function weightsSection(d) {
     controlRow('Not-completed weight', knobInfo('not_completed_weight'), numInput(sc.not_completed_weight != null ? sc.not_completed_weight : 50,
       { step: '1', 'aria-label': 'Not completed weight' },
       (n) => runOp('set_weights', { not_completed_weight: n }))),
-    controlRow('Diff-complexity weight', knobInfo('diff_complexity_weight'), numInput(sc.diff_complexity_weight != null ? sc.diff_complexity_weight : 0,
-      { min: '0', step: '0.001', 'aria-label': 'Diff complexity weight' },
-      (n) => runOp('set_namespace_weights', { diff_complexity_weight: n }))),
-    controlRow('Diff-complexity ceiling', knobInfo('diff_complexity_ceiling'), numInput(sc.diff_complexity_ceiling != null ? sc.diff_complexity_ceiling : 0,
-      { min: '0', step: '1', 'aria-label': 'Diff complexity ceiling' },
-      (n) => runOp('set_namespace_weights', { diff_complexity_ceiling: n }))),
   ];
 
   // ── severity_weights — FIXED rows from vocab.severities (→ set_weights) ──
@@ -1527,9 +1552,8 @@ function proposerSection(d) {
   const p = d.proposer || {};
   const skills = Array.isArray(p.skills) ? p.skills : [];
   const pq = ((d.scoring || {}).proposer_quality) || {};
-  const em = ((d.scoring || {}).experiment_memory) || {};
   return section('Proposer',
-    el('p', { class: 'dn-lede', text: 'How each challenger is proposed: the proposal runtime this workspace declares, steered by this epoch\'s brief and the skills of its proposer directory — plus the proposer-quality levers (best-of-N slate, self-critique, cross-epoch memory). Changing the proposer directory or any lever is a contract edit — it rolls the epoch.' }),
+    el('p', { class: 'dn-lede', text: 'How each challenger is proposed: the proposal runtime this workspace declares, steered by this epoch\'s brief and the skills of its proposer directory — plus candidate count and critique. Changing the proposer directory or any lever is a contract edit — it rolls the epoch.' }),
     proposerPicker(d),
     briefEditor(d),
     controlRow('Best-of-N slate', knobInfo('proposer_quality.best_of_n'), numInput(pq.best_of_n != null ? pq.best_of_n : 3,
@@ -1537,23 +1561,6 @@ function proposerSection(d) {
       (n) => runOp('set_proposer_quality', { best_of_n: n }), { int: true })),
     controlRow('Self-critique', knobInfo('proposer_quality.critique_enabled'), checkInput(pq.critique_enabled !== false, 'Critique enabled', 'evaluation self-critique selects from the slate',
       (on) => runOp('set_proposer_quality', { critique_enabled: on }))),
-    controlRow('Process exemplars', knobInfo('proposer_quality.process_exemplars'), numInput(pq.process_exemplars != null ? pq.process_exemplars : 0,
-      { min: '0', step: '1', 'aria-label': 'Process exemplars' },
-      (n) => runOp('set_proposer_quality', { process_exemplars: n }), { int: true })),
-    controlRow('Recombination slot', knobInfo('proposer_quality.recombine'), checkInput(!!pq.recombine, 'Recombination slot', 'mint the union of two rejected complementary fixes into the last slate slot',
-      (on) => runOp('set_proposer_quality', { recombine: on }))),
-    controlRow('LLM-guided merge', knobInfo('proposer_quality.recombine_merge', {
-      note: 'On sets llm; off sets mechanical.',
-    }), checkInput(pq.recombine_merge === 'llm', 'LLM-guided merge', 'compose the union with an LLM merge call (relaxes disjointness for overlapping pairs) instead of a mechanical patch concatenation',
-      (on) => runOp('set_proposer_quality', { recombine_merge: on ? 'llm' : 'mechanical' }))),
-    controlRow('Genealogy channel', knobInfo('proposer_quality.genealogy'), numInput(pq.genealogy != null ? pq.genealogy : 0,
-      { min: '0', step: '1', 'aria-label': 'Genealogy' },
-      (n) => runOp('set_proposer_quality', { genealogy: n }), { int: true })),
-    controlRow('Calibration feedback', knobInfo('proposer_quality.calibration_feedback'), numInput(pq.calibration_feedback != null ? pq.calibration_feedback : 0,
-      { min: '0', step: '1', 'aria-label': 'Calibration feedback' },
-      (n) => runOp('set_proposer_quality', { calibration_feedback: n }), { int: true })),
-    controlRow('Cross-epoch memory', knobInfo('experiment_memory.cross_epoch'), checkInput(!!em.cross_epoch, 'Cross-epoch experiment memory', 'surface settled prior-epoch experiments (same contract hash)',
-      (on) => runOp('set_experiment_memory', { cross_epoch: on }))),
     mutationSurfacePanel(d.scoring || {}),
     el('div', { class: 'dn-bld-panel' }, [
       el('div', { class: 'dn-bld-kv' }, [

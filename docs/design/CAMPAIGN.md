@@ -1,27 +1,15 @@
 # The live measurement campaign — deciding the scaffold defaults with evidence
 
-> **STATUS — EXECUTED TWICE; THE STANDING ANSWER IS RECORDED BELOW.
-> ANY FURTHER EXECUTION IS GATED ON EXPLICIT OPERATOR GO-AHEAD.**
-> Two valid campaigns have run (see **Results**). Nothing in this document
-> authorizes a third. Every command in §6 is a *plan*; a live `zicato evolve`
-> invocation against a real model endpoint may be started only after the
-> operator gives an explicit go-ahead for that specific arm. That standing
-> requirement — no live model run starts without the operator's explicit
-> go-ahead — is the golden rule the dev-guide indexes as `G3`.
-> The design sections below pre-register the arms, the metrics, the power
-> arithmetic, and the decision rules **before** any new data exists.
-> `tools/cascade_oc.py` and `tests/test_decision_procedure_power.py` apply the
-> same discipline to every statistical claim in the repository: operating
-> characteristics are measured rather than assumed (dev-guide
-> `04-evaluation-statistics.md` §13).
+Two completed feature campaigns are reported below. Their reports qualified no
+treatment. Raw per-cell data and exact source/contract archives are not linked,
+so the recorded aggregates have not been independently recomputed.
 
-**Which parts of this document are a record, and which are a specification.**
-The **Results** section records what two executed runs found; those figures are
-history and do not change. Sections 1 through 5 pre-register the design — the
-arms, the endpoints, the power arithmetic, the decision rules. Sections 6 and 7
-specify the runbook and the reporting contract that any further run must follow.
-Where a pre-registered rule has already been exercised, the measured outcome is
-quoted beside it.
+The Results section preserves the reported numbers. The later sections retain
+the campaign design, execution procedure, and reporting requirements. A future
+qualification study must specify its independent assessment tasks, effect size,
+power, complete cost budget, dependence assumptions, and stopping rule before
+execution. The historical noise summaries alone do not determine that design.
+Live evaluation requires explicit operator authorization for the intended run.
 
 **Reading convention for every number in this document.** A figure marked
 **measured** was produced by one of the two valid runs and is quoted from its
@@ -33,6 +21,14 @@ roughly ten times too optimistic survived to execution (§5).
 ---
 
 ## Results — the standing record
+
+The numerical tables transcribe the [July 31 report](https://github.com/pedapudi/zicato/issues/97#issuecomment-5137548047)
+and [August 2 report](https://github.com/pedapudi/zicato/issues/97#issuecomment-5160275659).
+The reports do not link the raw per-cell files or exact source/contract archives.
+The table values are transcribed results; independent recomputation remains
+pending recovery of those artifacts.
+[The evidence tracker](https://github.com/pedapudi/zicato/issues/97) records the
+missing deliverables and the conditions for any further measurement.
 
 The subject under test is zicato's **generator arsenal**: the proposer-quality
 knobs that ship default-off, together with the two that ship on (§0 lists them
@@ -115,9 +111,9 @@ fail when champion and challenger run identical code gates nothing.
 | Instrument | after the entrypoint-loading fix (#110) | after the follow-up fix wave (#118–#130) |
 | Design | 12 arms × K=12 paired seeds = **144 cells** | **identical by design** |
 
-Run 2's design was held **identical on purpose**, so that any movement between
-the two is attributable to the *instrument* rather than to a redesign. Shared
-design (**measured**, both runs):
+The matched designs support a comparison across campaigns. Differences can
+reflect sampling variability and implementation changes; these records do not
+isolate the contribution of each cause. Shared design (**measured**, both runs):
 
 - **12 arms × K=12 paired seeds = 144 cells**, **3 rounds per cell**.
 - Board: **single-turn, 5 entries**. `promote_margin` **0.20**.
@@ -172,9 +168,10 @@ really there.
 | A5 | breadth/depth roles | −0.0148 | [−0.0518, +0.0223] | 1.000 |
 | A7 | screening + recombination | −0.0162 | [−0.0507, +0.0183] | 1.000 |
 
-**The A/A clone (−0.0144) sits among the arms that point below baseline.** The
-negative signs are noise rather than evidence that the arsenal hurts, and the
-clone's contrast with BASE is what the floor is built from.
+The unchanged-system contrast was −0.0144, alongside several negative treatment
+estimates. These estimates did not establish treatment harm or benefit under
+the qualification rule. The control contrast supplies the reported noise
+summary.
 
 **Run 2** (same adjustment):
 
@@ -190,8 +187,9 @@ clone's contrast with BASE is what the floor is built from.
 | A2 | screening | +0.0028 | [−0.0214, +0.0270] | 1.000 |
 | A3 | mechanical recombination | −0.0027 | [−0.0258, +0.0204] | 1.000 |
 
-**The highest arm in run 2 is the ablation — the arsenal turned further off —
-sitting just under the floor. No arsenal feature beat turning more of it off.**
+The single-candidate ablation had the largest treatment point estimate in the
+second campaign. Its adjusted p-value was 0.537, so that ranking does not
+establish its superiority or qualify a default change.
 
 Holm adjustment is not optional bookkeeping: nine arms sharing one baseline at
 an uncorrected 10% would expect **roughly one spurious graduate**.
@@ -209,10 +207,10 @@ an uncorrected 10% would expect **roughly one spurious graduate**.
 
 Readings that survive both runs:
 
-- **The fix wave did not move the floor.** The noise is a property of the
-  target rather than of the gate arithmetic. What the wave did move: it tightened the
-  sensitivity contrast and halved the promotion rate — consistent with a
-  stricter, better-calibrated gate. **No arm changed status.**
+- The two reported noise summaries were similar. The planted-defect contrast
+  increased and the promotion count decreased, but the records do not isolate
+  implementation effects from sampling variation. No treatment changed its
+  qualification status.
 - **Only the planted-defect arm ever promoted**, in either run — 10 of 12 cells
   in run 1, every other arm 0 of 12. With a healthy champion at
   `promote_margin` 0.20, no arsenal variant produced a challenger that cleared
@@ -220,10 +218,9 @@ Readings that survive both runs:
 - **The planted-defect arm starts from a generation scoring ~0 and climbs back
   toward baseline.** The loop **repairs a maximal planted defect**; what it does
   not do is measurably benefit from any arsenal knob.
-- **The per-arm ordering reshuffled: the LLM-merge recombination arm fell from
-  first to fifth.** Re-running a set of effects drawn from the same null
-  produces that kind of reshuffle, which is independent evidence that the arm's
-  lead in run 1 was noise.
+- Model-assisted recombination moved from the largest treatment point estimate
+  to fifth place. Neither campaign qualified it. The changed ordering does not
+  establish whether its underlying effect is zero.
 
 ### R.5 The integrity failure this campaign found
 
@@ -276,18 +273,22 @@ three were void.
 
 ### R.6 The resolution limit
 
-This campaign **resolves effects ≥ 0.040** on the per-duel `d` scale — roughly
-**26% of the planted-defect signal** (**measured**, run 2; run 1's floor of
-0.0378 is ~35% of its weaker planted-defect signal).
+The reports give contrast-noise summaries of 0.0378 and 0.0400 on the per-duel
+`d` scale. Those values are about 35% and 26% of the respective planted-defect
+contrasts. They summarize estimated uncertainty; they do not establish a
+minimum detectable effect at a specified power.
 
-- **Every "inconclusive" above means *no effect larger than the floor*, never
-  *no effect*.** A feature worth +0.02 would be invisible here.
-- Resolving **~0.023** needs **K ≈ 32** cells per arm (**measured** as the
-  operator's sizing anchor, off run 1's 0.0378 floor). Scaling run 2's 0.0400
-  the same way puts K=32 at **≈0.025** (**derived**) — the two floors bracket
-  it; §3.4 states the arithmetic.
-- **Below ~0.013 the cost stops being affordable** at any K this target can
-  support (**derived**, `0.0400 · √(12/K) = 0.013` ⇒ ≈ 114 cells per arm).
+- Inconclusive means the treatment did not satisfy the qualification rule.
+  Several reported confidence intervals extend above 0.040, so the results
+  cannot exclude every effect above that value. Smaller effects also remain
+  possible.
+- Assuming independent cells with unchanged variance, scaling the first
+  noise summary to 32 cells per arm gives approximately 0.023. Scaling the
+  second gives approximately 0.025. These are uncertainty projections, not
+  effects detectable at a specified power; §3.4 gives the arithmetic.
+- The second summary projects to approximately 0.013 at 114 cells per arm.
+  The reports do not supply a complete cost budget or a power calculation
+  that establishes whether such a study is feasible.
 - Scope bounds, all binding: **one board, one model, three rounds per cell,
   single-turn only.** This says nothing about multi-turn revision robustness,
   nor about interactions beyond the two combined arms actually run.
@@ -310,29 +311,29 @@ This campaign **resolves effects ≥ 0.040** on the per-duel `d` scale — rough
 > independent 144-cell runs** whose sensitivity and specificity both pass on the
 > same data.
 
-What this **settles**: no arsenal feature delivers more than **0.040** in
-per-duel proposal quality on this target. The sweep is *not* underpowered
-against effects that matter — the floor is about a quarter of the
-planted-defect signal.
-
-What this **does not settle**: anything below 0.040, and anything outside the
-R.6 scope bounds.
+The recorded result is that no treatment satisfied the qualification rule.
+The data do not establish an upper bound of 0.040 on every treatment effect,
+and no independent generalization measurement was performed. Default decisions
+must retain these limits and the measurement scope in R.6.
 
 If more compute goes here, the pre-registered spend is **the LLM-merge
 recombination arm alone at K ≈ 32** (floor ≈ 0.023), rather than a re-run of the
 whole sweep. Run 2 placed that arm fifth rather than first, so the spend buys
 another look at an arm with no established lead.
 
-The contract carries this recommendation as a namespace. A feature without
-a measured case sits under the `experimental` block of `scoring.json`, one
-flag per feature and every flag off by default; the recommended scaffold
-sets none of them, and `tests/test_knob_registry.py` pins that. A feature
-graduates when a sweep of this design clears the bar above for it: the
-knob then moves out of the block, which rolls the epoch, and the flag is
-deleted. The block's first member is `experimental.tournament_structures`,
-which admits the single-elimination, double-elimination and Swiss
-tournament structures (SELECTION.md §8). The arsenal knobs this campaign
-measured are candidates for the block.
+Optional prompt channels, recombination, parsimony, refresh controls, and
+alternative standings methods live under `experimental`, together with Swiss
+and elimination structure admission. The
+[feature qualification inventory](FEATURE-QUALIFICATION.md) records their
+status, supporting artifacts, scope, and remaining criteria. It distinguishes
+mathematical correctness, deterministic integration, and empirical qualification.
+
+Recommended settings leave the experimental group inactive and retain screening
+and the candidate slate. Operator-configured safety checks remain ordinary
+policy: their enforcement must be correct independently of optimization benefit.
+Authored migration changes the contract; historical readers preserve recorded
+behavior and identity. Graduation and default selection require the evidence
+above, including each feature's generalization conditions.
 
 ---
 
@@ -351,7 +352,7 @@ the moment it is set to a non-default (`core/scoring_config.py`
 | `proposer_quality.screen_entries` | `0` (OFF; scaffold writes `2`) | yes | board runs `proposes × best_of_n × panel` |
 | `proposer_quality.screen_veto_only` | `False` | yes | none (advisory) |
 | `proposer_quality.process_exemplars` | `0` (OFF) | yes | read-side; cost meter untouched |
-| `proposer_quality.recombine` | `False` (OFF) | yes | **cost-neutral** (mint replaces a propose call) |
+| `proposer_quality.recombine` | `False` (OFF) | yes | Replaces a proposal call; complete cost remains measured |
 | `proposer_quality.recombine_merge` | `"mechanical"` | yes | `"llm"` adds one aux merge call |
 | `proposer_quality.genealogy` | `0` (OFF) | yes | read-side; cost meter untouched |
 | `proposer_quality.calibration_feedback` | `0` (OFF) | yes | read-side; cost meter untouched |
@@ -392,7 +393,7 @@ below records what was expected rather than what the runs found.
 | 4 | **`screen_entries` (currently scaffold-ON=2)** | Vetoes catastrophic candidates *before* the tournament spends on them — but **adds** board runs (`proposes × best_of_n × panel`, §5). Its per-cost effect is ambiguous, which is why it is the scaffold choice most in need of audit. Screen false-veto ≈ flip-rate² under confirm-before-veto (dev-guide §3.1 fact #7) means the veto is *sound*; the open question is whether the extra panel runs buy net throughput. **Measured: the screening arm at −0.0060, then +0.0028 — no signal either way, at a real cost premium.** | **Reverse null**: `screen_entries` stays scaffold-`2` only if it clears §4; otherwise the pre-registered action is to **remove it** from `recommended_scaffold_weights` (scaffold default → `0`). |
 | 5 | **breadth/depth roles** | If breadth explores a wider slate and depth refines the critique/merge, slate quality rises with **no** board-run cost. Second-order: it reshapes *which* candidate wins rather than how many board units run. **Measured: the breadth/depth roles arm at −0.0148, then +0.0155. The lead this arm showed before the entrypoint-loading fix — all three of its seeds against none of BASE's three — is WITHDRAWN (R.1).** | Flip to a scaffolded two-role `models` block if it clears §4 and the per-call cost delta is acceptable. |
 | 6 | **`calibration_feedback`** | Showing the proposer its own hit/miss pattern (`/api/hypothesis-accuracy` grader, `proposer/calibration.py`) plausibly improves **hypothesis calibration** more than raw proposal quality; read-side/free on the cost meter. Same caveat as rank 2: its docstring also flags it as **widening the proposer-visibility channel** and NOT scaffold-set, so its flip bar carries the same generalization-gap + placebo condition. **Measured only inside the read-side in-context stack arm (genealogy plus calibration feedback), at −0.0038 then +0.0044. That arm beat genealogy alone in run 1 (−0.0038 against −0.0129) and lost to it in run 2 (+0.0044 against +0.0244) — a sign flip well inside the floor, so there is no evidence either way about the calibration contribution.** | Flip on if it clears §4 on either the primary endpoint **or** the calibration-fraction endpoint (§3) at no board-run cost. |
-| 7 | **`recombine_merge="llm"`** | Conditional on `recombine`: relaxes disjointness so two *overlapping* rejected fixes can be merged by one aux call. Incremental reach beyond mechanical, at +1 aux call on merge rounds. **Measured: the LLM-merge recombination arm at +0.0195, the largest in run 1, then +0.0098 and fifth. The reshuffle is the evidence that the run-1 lead was noise.** | Flip `recombine_merge` → `"llm"` only if the llm arm beats the mechanical arm (§4), given `recombine` already flipped on. |
+| 7 | **`recombine_merge="llm"`** | Conditional on `recombine`: relaxes disjointness so two *overlapping* rejected fixes can be merged by one aux call. Incremental reach beyond mechanical, at +1 aux call on merge rounds. **Measured: the LLM-merge recombination arm at +0.0195, the largest in run 1, then +0.0098 and fifth. Neither result qualifies the treatment or establishes that its underlying effect is zero.** | Flip `recombine_merge` → `"llm"` only if the llm arm beats the mechanical arm (§4), given `recombine` already flipped on. |
 | 8 | **`process_exemplars`** | Highest-risk: it **widens the proposer-visibility channel** (OVERFITTING.md §11), so its default-flip bar is not just proposal quality but a **clean generalization-gap + placebo record** (dev-guide §12). Opt-in-deliberate under the PROCESS-EXEMPLARS.md §5 harm runbook; NOT scaffold-set. **Measured: the process-exemplars arm at −0.0136, then +0.0047.** | Ranked last for a default flip; evaluated as a **pre-registered extension arm** (§4), never graduated on proposal quality alone. |
 
 ## 2. The arm matrix — treatments plus two mandatory controls
@@ -732,15 +733,12 @@ information.
 floor = 2 × SE( mean d[A/A clone] − mean d[BASE] )
 ```
 
-where the SE is computed on **cell means** (§3.1b). The A/A arm is two
-configurations **identical by construction**, so the spread of that difference
-is the empirical null **on the same scale as the quantity under test**. Anything smaller is
-indistinguishable from running BASE twice.
-
-**Measured: 0.0378 (run 1), 0.0400 (run 2).** The two agree to within their own
-resolution, across a fix wave that changed the gate arithmetic — which is the
-evidence that **the noise is a property of the target rather than of the
-instrument** (R.4).
+The standard error is computed from cell means (§3.1b). The unchanged-system
+control estimates uncertainty on the same endpoint scale as treatment
+comparisons. Its reported summaries were 0.0378 and 0.0400. Their similarity
+does not identify the source of the variance or establish equivalence between
+treatments. Detection power requires the planned effect, sample size, decision
+rule, and dependence assumptions.
 
 The floor is measured in the same batch rather than asserted in advance. The
 rule generalises:
@@ -796,7 +794,10 @@ against an achievable per-round improvement of **~0.10**. **Duel-level reads are
 noise-dominated**, and only the cell-mean aggregate is usable. Per-duel standard
 deviation for non-degraded arms is **~0.12** (**measured**).
 
-**What is answerable, at what price** (**measured**, from the ~0.12 per-duel sd):
+**Historical sizing estimates.** The table below records the planning estimates
+from a per-duel standard deviation of approximately 0.12. It does not account
+for the full cell dependence and multiple-comparison decision rule, so it does
+not establish the power of a future campaign.
 
 | arsenal effect size | duels/arm | cells/arm | 8 arms |
 |---|---|---|---|
@@ -931,33 +932,30 @@ authorize.
 1. **Above the floor:** `ΔE1(arm) ≥ floor`, with the 90% CI on `ΔE1` excluding
    0.
 2. **Survives multiplicity:** `p_holm < 0.10` across the treatment arms.
-3. **Does not cost more than it delivers:** `CPP(arm) ≤ 1.10 · CPP(BASE)`. A
-   read-side knob (`genealogy`, `calibration_feedback`, roles) satisfies the
-   cost condition trivially, because the cost meter is untouched, so its
-   graduation reduces to the floor and multiplicity conditions. **On a target
-   where only the planted-defect arm promotes, cost per promotion is undefined
-   for every treatment arm and the cost condition is reported as
-   `not applicable`, never silently passed.**
+3. **Cost condition:** `CPP(arm) ≤ 1.10 · CPP(BASE)`, using complete proposal
+   and evaluation cost. Extra context can increase token and elapsed-time cost
+   even when the number of board runs is unchanged. When a treatment has no
+   promotions, its cost per promotion is undefined and the condition is reported
+   as `not applicable`; it cannot be treated as passed.
 
 An arm **does not graduate** if any of the three conditions fails.
 
-**"Inconclusive" is a specific claim and must be reported as one:** *no effect
-larger than the floor* — **never** *no effect*. Run 1 called all nine treatments
-inconclusive in this sense; run 2's nine likewise all fail the bar. The closest,
-the ablation at +0.0392 with its CI excluding 0, fails the floor condition by
-sitting just **under** the derived floor of 0.0400 and fails the multiplicity
-condition at Holm p 0.537. A
-report that writes "no effect" where the data says "nothing above 0.040" has
-overclaimed.
+Report an inconclusive treatment as failing the qualification rule, with its
+estimate and interval. Both campaigns classified all nine treatments this way.
+The second campaign's ablation estimate of +0.0392 was below its 0.0400
+threshold and failed the multiplicity condition at adjusted p-value 0.537.
+Neither classification proves absence of an effect or excludes every effect
+above 0.040. An equivalence claim would require its own prespecified margin and
+supporting interval.
 
 **Per-knob specialization (each states the graduation trigger and the flip
 direction a confirmatory read would then authorize):**
 
 - **Mechanical recombination (the `recombine` knob, arm A3):** graduates on the
   bar, and a confirmatory read then flips it to default-`True`. The arm is
-  cost-neutral (the mint replaces a propose call — `estimate_cost` charges it as
-  `best_of_n − 1` propose calls, with no extra board run), so the cost condition
-  is automatic. The mechanistic confirmation the oracle predicts (dev-guide
+  estimated to replace a proposal call without adding a board run.
+  Complete proposal, merge, and evaluation costs must still be measured;
+  that estimate alone cannot satisfy the cost condition. The mechanistic confirmation the oracle predicts (dev-guide
   §1.8) is a promotion count: promotions this arm caught that BASE did not. On
   this target that count was **zero for both**, so the oracle's mechanism is
   unobservable here rather than refuted.
@@ -981,12 +979,12 @@ direction a confirmatory read would then authorize):**
   screening arm failed the bar in both runs**, so that action stands and has not
   been carried out.
 - **Genealogy (arm A1), calibration feedback (its contribution inside arm A6),
-  and the breadth/depth roles (arm A5):** all three are read-side and
-  cost-neutral, so **for the roles** the floor and multiplicity conditions alone
-  decide. `genealogy` and `calibration_feedback` are cost-neutral but **not**
-  risk-neutral: both docstrings flag them, like `process_exemplars`, as widening
-  the proposer-visibility channel, so neither is scaffold-set and neither
-  graduates on the primary endpoint alone. Both carry the extension-arm
+  and the breadth/depth roles (arm A5):** all three change proposal inputs.
+  Their additional context and altered execution can affect token and elapsed
+  cost, which must be included in the cost condition. `genealogy` and
+  `calibration_feedback` also widen the proposer-visibility channel, like
+  `process_exemplars`. Neither is scaffold-set or qualifies on the primary
+  endpoint alone. Both carry the extension-arm
   conditions — `generalization_gap` quiet **and** the placebo arm never
   promoting — because a scaffold flip is the irreversible step those conditions
   guard. `calibration_feedback` may flip on either the primary endpoint **or** a
@@ -1726,9 +1724,11 @@ Send the coordinator, in one message:
 6. **Explicitly: NO decision-making and NO raw dumps.** The §4 decision rules
    are the coordinator's to apply. Do not paste raw `runs.jsonl` — reference it.
 
-**Language discipline for every inconclusive arm:** write *"no effect larger
-than <floor>"*, never *"no effect"* (§4). The distinction is the difference
-between a result and an overclaim.
+For every inconclusive treatment, report that it did not satisfy the stated
+qualification rule, together with its estimate and interval. Do not translate
+that classification into absence of an effect or an upper bound on its size.
+An equivalence claim requires its own prespecified margin and supporting
+interval (§4).
 
 **Progress cadence:** send **one status report per completed ARM** (its per-arm
 row + any anomaly), **not per round**. The A/A + BASE status report additionally

@@ -35,6 +35,7 @@ import zicato.tournament.runner as _runner_mod
 # Capture the GENUINE loss serde at import time, before any test installs the
 # orchestrator telemetry stubs (which shadow zicato.telemetry.reducer in
 # sys.modules with a stub that has no working read/write).
+from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
     bootstrap_workspace,
     install_stub_adapter_factory,
@@ -43,6 +44,7 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
+from zicato.core.types import TournamentStructure
 from zicato.telemetry.reducer import read_loss_profile as _REAL_READ_LOSS
 from zicato.telemetry.reducer import write_loss_profile as _REAL_WRITE_LOSS
 
@@ -89,7 +91,12 @@ def test_resume_reuses_completed_units_without_rerun(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An interrupted v1 tournament resumes; cached units are not re-run."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=0.01, tournament_structure=TournamentStructure(structure="gauntlet")
+        ),
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,

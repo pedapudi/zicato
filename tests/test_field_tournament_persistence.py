@@ -25,7 +25,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from zicato.core.types import TournamentStructure
+from zicato.core.types import ExperimentalConfig, TournamentStructure
 from zicato.core.workspace import field_tournament_path
 from zicato.evolve.dashboard_projection import (
     _open_field_tournament,
@@ -101,7 +101,7 @@ def _settle_swiss(structure: str = "swiss"):
     """
     strategy = make_strategy(
         TournamentStructure(structure=structure, params={"field_size": 4}),
-        experimental_structures=True,
+        experimental=ExperimentalConfig(tournament_structures=True),
     )
     champion = Contestant(generation_id="v0", role="champion")
     challengers = [Contestant(generation_id=f"v{i}", role="challenger") for i in (1, 2, 3, 4)]

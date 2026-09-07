@@ -83,7 +83,7 @@ _WINDOW_RADIUS = 3
 
 #: Default (and conventional) exemplar cap per extraction — matches the
 #: outcome-marginal channel's entry cap. The contract knob
-#: (``ProposerQualityConfig.process_exemplars``) supplies the live value.
+#: (``ExperimentalConfig.process_exemplars``) supplies the live value.
 DEFAULT_EXEMPLAR_CAP = 2
 
 #: The R3 / R4 tunables live with their implementations in

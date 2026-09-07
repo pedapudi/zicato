@@ -19,6 +19,7 @@ from zicato.epoch.contract import ContractInputs, compute_contract_hash
 from zicato.epoch.journal import _outcome_from_dict
 from zicato.runtime.state import ActiveTournament, ActiveTournamentEntry
 from zicato.workspace_loader import (
+    historical_scoring_weights_from_dict,
     overfitting_config_from_dict,
     overfitting_config_to_dict,
     scoring_weights_from_dict,
@@ -37,9 +38,11 @@ def test_absent_tournament_block_defaults_to_gauntlet() -> None:
     assert spec.params == {}
 
 
-def test_scoring_without_tournament_key_is_gauntlet() -> None:
-    w = scoring_weights_from_dict({"pass_weight": 2.0})
+def test_historical_scoring_without_tournament_key_is_gauntlet() -> None:
+    w = historical_scoring_weights_from_dict({"pass_weight": 2.0})
     assert w.tournament_structure.structure == "gauntlet"
+    assert w.tournament_structure.params == {}
+    assert w.proposer_quality.screen_entries == 0
 
 
 def test_scoring_parses_swiss_block_with_params() -> None:
@@ -119,7 +122,6 @@ def test_overfitting_block_round_trips() -> None:
         min_board_size_for_split=10,
         restrict_proposer_visibility=False,
         rotate_holdout=False,
-        max_generations_per_contract=25,
     )
     again = overfitting_config_from_dict(overfitting_config_to_dict(cfg))
     assert again == cfg
@@ -128,15 +130,18 @@ def test_overfitting_block_round_trips() -> None:
 def test_scoring_parses_rotation_and_cadence_knobs() -> None:
     # The §12 #6 knobs (rotate_holdout / max_generations_per_contract) parse
     # and default safely (rotation on, no ceiling) when absent.
-    o = scoring_weights_from_dict(
-        {"overfitting": {"rotate_holdout": False, "max_generations_per_contract": 30}}
-    ).overfitting
-    assert o.rotate_holdout is False
-    assert o.max_generations_per_contract == 30
+    weights = scoring_weights_from_dict(
+        {
+            "overfitting": {"rotate_holdout": False},
+            "experimental": {"max_generations_per_contract": 30},
+        }
+    )
+    assert weights.overfitting.rotate_holdout is False
+    assert weights.experimental.max_generations_per_contract == 30
 
-    default = scoring_weights_from_dict({"overfitting": {"holdout_fraction": 0.3}}).overfitting
-    assert default.rotate_holdout is True
-    assert default.max_generations_per_contract is None
+    default = scoring_weights_from_dict({"overfitting": {"holdout_fraction": 0.3}})
+    assert default.overfitting.rotate_holdout is True
+    assert default.experimental.max_generations_per_contract is None
 
 
 def test_absent_ladder_block_is_default_on() -> None:
@@ -144,7 +149,6 @@ def test_absent_ladder_block_is_default_on() -> None:
     assert cfg.ladder.enabled is True
     assert cfg.ladder.threshold is None
     assert cfg.ladder.budget == 16
-    assert cfg.ladder.noise_scale == 0.0
 
 
 def test_scoring_parses_ladder_block() -> None:
@@ -155,7 +159,6 @@ def test_scoring_parses_ladder_block() -> None:
                     "enabled": False,
                     "threshold": 0.05,
                     "budget": 4,
-                    "noise_scale": 0.02,
                 }
             }
         }
@@ -164,7 +167,6 @@ def test_scoring_parses_ladder_block() -> None:
     assert lad.enabled is False
     assert lad.threshold == 0.05
     assert lad.budget == 4
-    assert lad.noise_scale == 0.02
 
 
 def test_ladder_threshold_null_round_trips_as_none() -> None:
@@ -182,7 +184,7 @@ def test_overfitting_block_round_trips_with_ladder() -> None:
     cfg = OverfittingConfig(
         enabled=False,
         holdout_fraction=0.4,
-        ladder=LadderConfig(enabled=True, threshold=0.07, budget=32, noise_scale=0.01),
+        ladder=LadderConfig(enabled=True, threshold=0.07, budget=32),
     )
     again = overfitting_config_from_dict(overfitting_config_to_dict(cfg))
     assert again == cfg
@@ -229,7 +231,7 @@ _ADMIT: dict[str, Any] = {"experimental": {"tournament_structures": True}}
 
 
 def test_structure_change_moves_contract_hash(tmp_path: Path) -> None:
-    gauntlet = _write_scoring(tmp_path, {"pass_weight": 1.0})
+    gauntlet = _write_scoring(tmp_path, {"tournament": {"structure": "gauntlet"}})
     h_gauntlet = compute_contract_hash(gauntlet)
     swiss = _write_scoring(tmp_path, {"tournament": {"structure": "swiss"}, **_ADMIT})
     h_swiss = compute_contract_hash(swiss)
@@ -246,14 +248,24 @@ def test_param_change_moves_contract_hash(tmp_path: Path) -> None:
     assert compute_contract_hash(four) != compute_contract_hash(six)
 
 
-def test_absent_block_hashes_same_as_explicit_gauntlet(tmp_path: Path) -> None:
-    # An operator's partial doc (no tournament key) and an explicit
-    # fully-defaulted gauntlet block must canonicalize identically — this
-    # is what keeps a stored epoch hash matching a re-derived live hash.
+def test_absent_authored_block_hashes_same_as_explicit_recommended_racing(tmp_path: Path) -> None:
+    # Sparse authored scoring and its expanded defaults select one contract.
     absent = _write_scoring(tmp_path, {"pass_weight": 1.0})
     explicit = _write_scoring(
         tmp_path,
-        {"tournament": {"structure": "gauntlet", "params": {}}},
+        {
+            "tournament": {
+                "structure": "racing",
+                "params": {
+                    "field_size": 4,
+                    "eta": 2,
+                    "board_fraction": 0.4,
+                    "replicates": 2,
+                    "promote_confidence_threshold": 0.8,
+                    "promote_confidence_replicates": 32,
+                },
+            }
+        },
     )
     assert compute_contract_hash(absent) == compute_contract_hash(explicit)
 
@@ -388,5 +400,17 @@ def test_outcome_record_with_structure_fields_round_trips() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_scoring_weights_default_is_gauntlet() -> None:
-    assert ScoringWeights().tournament_structure.structure == "gauntlet"
+def test_scoring_weights_and_authored_defaults_use_recommended_racing() -> None:
+    weights = ScoringWeights()
+    assert weights.tournament_structure.structure == "racing"
+    assert weights.tournament_structure.params == {
+        "field_size": 4,
+        "eta": 2,
+        "board_fraction": 0.4,
+        "replicates": 2,
+        "promote_confidence_threshold": 0.8,
+        "promote_confidence_replicates": 32,
+    }
+    assert scoring_weights_from_dict({"pass_weight": 2.0}).tournament_structure == (
+        weights.tournament_structure
+    )

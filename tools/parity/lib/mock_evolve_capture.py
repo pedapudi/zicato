@@ -300,7 +300,7 @@ def _contract_replicates(scoring_path: Path) -> int:
     return int(
         make_strategy(
             weights.tournament_structure,
-            experimental_structures=weights.experimental.tournament_structures,
+            experimental=weights.experimental,
         ).replicates()
     )
 

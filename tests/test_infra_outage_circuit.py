@@ -34,6 +34,7 @@ from typing import Any
 
 import pytest
 
+from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
     bootstrap_workspace,
     install_stub_adapter_factory,
@@ -42,7 +43,7 @@ from tests._orchestrator_harness import (
     run_evolve_once,
     target_call_llm,
 )
-from zicato.core.types import DriftCount, LossProfile
+from zicato.core.types import DriftCount, LossProfile, TournamentStructure
 from zicato.orchestrator import DEFERRED_INFRA_DECISION, EvolveRoundOutcome
 from zicato.runtime.resume import prepare_resume
 
@@ -105,7 +106,12 @@ def _set_runtime_block(workspace: Path, runtime: dict[str, Any]) -> None:
 def _rig_outage_workspace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, threshold: int | None
 ) -> tuple[Path, str]:
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=0.01, tournament_structure=TournamentStructure(structure="gauntlet")
+        ),
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,

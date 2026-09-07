@@ -1,0 +1,93 @@
+{
+  "block_on_containment_violation": false,
+  "block_on_gate_contradiction": false,
+  "default_judge_weight": 1.0,
+  "diff_complexity_ceiling": 10,
+  "diff_complexity_weight": 0.2,
+  "drift_kind_aggregation": {},
+  "drift_reducer": "",
+  "experiment_memory": {
+    "cross_epoch": true
+  },
+  "experimental": {
+    "tournament_structures": true
+  },
+  "holdout_entry_regression_budget": 0,
+  "holdout_margin": null,
+  "mutation_surface": {},
+  "namespace_monotonicity": {
+    "drift:": false,
+    "rubric:": true,
+    "schema:": true
+  },
+  "namespace_weights": {
+    "cost:": 0.001,
+    "drift:": 1.0,
+    "failure:": 1.0,
+    "judge:": 1.0,
+    "latency:": 0.0001,
+    "output:": 0.0,
+    "rubric:": -1.0,
+    "runtime:": 0.0,
+    "schema:": 5.0
+  },
+  "not_completed_weight": 50.0,
+  "outcome_summarizer_spec": "",
+  "overfitting": {
+    "enabled": true,
+    "holdout_fraction": 0.3,
+    "ladder": {
+      "budget": 2,
+      "enabled": true,
+      "noise_scale": 0.05,
+      "threshold": null
+    },
+    "max_generations_per_contract": 9,
+    "min_board_size_for_split": 6,
+    "random_baseline_every_n": 2,
+    "restrict_proposer_visibility": true,
+    "rotate_holdout": true
+  },
+  "pass_rate_monotonicity": true,
+  "pass_rate_monotonicity_scope": "per_entry",
+  "pass_transform": null,
+  "pass_weight": 1.0,
+  "per_judge_weights": {},
+  "per_kind_weights": {},
+  "plan_revision_weight": 0.5,
+  "promote_margin": 0.1,
+  "proposer_quality": {
+    "best_of_n": 3,
+    "calibration_feedback": 4,
+    "critique_enabled": true,
+    "genealogy": 3,
+    "process_exemplars": 2,
+    "recombine": true,
+    "recombine_merge": "llm",
+    "screen_entries": 0,
+    "screen_veto_only": false
+  },
+  "regression_gate_enabled": false,
+  "regression_test_command": [
+    "pytest",
+    "tests/",
+    "-q"
+  ],
+  "regression_timeout_s": 600,
+  "scalar_fn": "",
+  "severity_weights": {
+    "critical": 10.0,
+    "info": 1.0,
+    "warning": 3.0
+  },
+  "task_failure_weight": 10.0,
+  "telemetry_dialect": "goldfive",
+  "tournament": {
+    "params": {
+      "field_size": 3,
+      "rating": "bradley_terry",
+      "resolver": "ranked_pairs"
+    },
+    "structure": "swiss"
+  }
+}

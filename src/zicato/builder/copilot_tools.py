@@ -224,26 +224,12 @@ def set_holdout(
     min_board_size_for_split: int | None = None,
     rotate_holdout: bool | None = None,
     restrict_proposer_visibility: bool | None = None,
-    random_baseline_every_n: int | None = None,
-    max_generations_per_contract: int | None = None,
     ladder: dict[str, Any] | None = None,
 ) -> str:
-    """Edit the train/holdout split + the full anti-overfitting config.
+    """Edit the holdout split, visibility restriction, rotation, and release budget.
 
-    ``enabled`` / ``fraction`` tune the hash-derived split; ``tags`` sets
-    the explicit per-entry holdout ids. The rest covers the whole
-    overfitting contract: ``min_board_size_for_split`` (the split floor),
-    ``rotate_holdout`` (a fresh ~fraction slice each epoch),
-    ``restrict_proposer_visibility`` (band/aggregate what the proposer
-    sees), ``random_baseline_every_n`` (the PLACEBO cadence — every Nth
-    round fields one no-op challenger the gate MUST reject; a promoted
-    placebo is the gate-discrimination alarm; 0 = off),
-    ``max_generations_per_contract`` (board-refresh recommendation
-    ceiling; 0 clears it), and ``ladder`` — a partial mapping over the
-    Ladder/Thresholdout governor (``enabled`` / ``threshold`` /
-    ``budget`` / ``noise_scale``; ``"threshold": null`` resets to
-    auto-derive from promote_margin). Any subset may be supplied; every
-    change rolls the epoch. Returns the patch + updated cost / warnings.
+    Ladder accepts a partial mapping; a null threshold restores its automatic
+    value. Experimental diagnostics are configured with set_experimental.
     """
     ctx = _active_context()
     try:
@@ -255,8 +241,6 @@ def set_holdout(
             min_board_size_for_split=min_board_size_for_split,
             rotate_holdout=rotate_holdout,
             restrict_proposer_visibility=restrict_proposer_visibility,
-            random_baseline_every_n=random_baseline_every_n,
-            max_generations_per_contract=max_generations_per_contract,
             ladder=ladder,
         )
     except ValueError as exc:
@@ -359,32 +343,11 @@ def set_gate(
     return _result_json(_summary(patch))
 
 
-def set_namespace_weights(
-    namespace_weights: dict[str, float] | None = None,
-    diff_complexity_weight: float | None = None,
-    diff_complexity_ceiling: float | None = None,
-) -> str:
-    """Set the multi-objective namespace coefficients + the parsimony term.
-
-    ``namespace_weights`` replaces the whole per-namespace coefficient
-    mapping (keys keep the trailing colon, e.g. ``"drift:"``; the sign
-    encodes the "worse" direction — positive = higher is worse, negative
-    = higher is better, zero = tracked but unscored).
-    ``diff_complexity_weight`` is the opt-in MDL/parsimony coefficient
-    (0 = exactly absent; must be >= 0 — it biases selection toward the
-    smaller, more general edit). ``diff_complexity_ceiling`` is the paired
-    opt-in parsimony CEILING (0 = OFF; must be >= 0 — a challenger whose
-    diff complexity exceeds it is rejected outright by the gate). Changing
-    any rolls the epoch.
-    """
+def set_namespace_weights(namespace_weights: dict[str, float] | None = None) -> str:
+    """Replace namespace coefficients; positive values make higher loss worse."""
     ctx = _active_context()
     try:
-        patch = ops.set_namespace_weights(
-            ctx.draft(),
-            namespace_weights=namespace_weights,
-            diff_complexity_weight=diff_complexity_weight,
-            diff_complexity_ceiling=diff_complexity_ceiling,
-        )
+        patch = ops.set_namespace_weights(ctx.draft(), namespace_weights=namespace_weights)
     except ValueError as exc:
         return _result_json({"error": str(exc)})
     return _result_json(_summary(patch))
@@ -393,92 +356,59 @@ def set_namespace_weights(
 def set_proposer_quality(
     best_of_n: int | None = None,
     critique_enabled: bool | None = None,
-    process_exemplars: int | None = None,
-    recombine: bool | None = None,
-    genealogy: int | None = None,
-    calibration_feedback: int | None = None,
-    recombine_merge: str | None = None,
 ) -> str:
-    """Set the proposer-quality levers: best-of-N slate + self-critique.
-
-    ``best_of_n`` is how many candidate experiments each propose-step
-    samples before selection (1 = the historical single sample, no
-    critique; must be >= 1); ``critique_enabled`` toggles the evaluation
-    self-critique selection pass (inert at best_of_n 1);
-    ``process_exemplars`` opts the proposer into up to that many REDACTED
-    drift-anchored event windows per round (0 = off, the default; it
-    touches the overfitting boundary — point the operator at
-    docs/design/PROCESS-EXEMPLARS.md §5, the harm-detection runbook,
-    before setting it; read-side only, no cost-meter impact).
-    ``recombine`` opts in the mechanical recombination slot (WS-REC):
-    when True the last best-of-N slot mints the patch union of two
-    rejected complementary challengers instead of sampling the LLM —
-    REQUIRES best_of_n > 1 to have effect, and is cost-neutral (the mint
-    REPLACES that slot's evaluation propose call, never adds one).
-    Flipping it rolls the epoch. ``recombine_merge`` (``"mechanical"``
-    default | ``"llm"``) chooses HOW the slot composes the union:
-    ``"mechanical"`` mints the disjoint patch concatenation with no LLM
-    call; ``"llm"`` issues one merge call (relaxing disjointness so an
-    OVERLAPPING pair the mechanical mint cannot touch can be merged).
-    Meaningful only with recombine on; ``"llm"`` rolls the epoch.
-    ``genealogy`` opts in the genealogy
-    channel (WS-GENE): up to that many candidate-lineage items — the
-    champion's promoted patch history + diverse rejected reign candidates,
-    each with a banded outcome — are spliced into the prompt so the
-    proposer can evolve in context (0 = off, the default; read-side only,
-    no cost-meter impact). ``calibration_feedback`` opts in the
-    critic-calibration channel (WS-CAL): up to that many RECENT graded
-    hypotheses — the proposer's own falsifiable predictions graded against
-    realized outcomes (hit / miss / unresolved counts + the overall
-    calibration fraction + banded per-claim outcomes) — are spliced into
-    the prompt so the proposer sees its OWN miss pattern and predicts more
-    honestly (0 = off, the default; read-side only, no cost-meter impact).
-    The screen (tryout) knobs live on `set_screening` — the ops COMPOSE on
-    the same proposer_quality contract block. Changing any rolls the epoch.
-    Returns the patch + updated cost / warnings.
-    """
+    """Set candidate count and critique; a single candidate bypasses critique."""
     ctx = _active_context()
     try:
         patch = ops.set_proposer_quality(
             ctx.draft(),
             best_of_n=best_of_n,
             critique_enabled=critique_enabled,
-            process_exemplars=process_exemplars,
-            recombine=recombine,
-            genealogy=genealogy,
-            calibration_feedback=calibration_feedback,
-            recombine_merge=recombine_merge,
         )
     except ValueError as exc:
         return _result_json({"error": str(exc)})
     return _result_json(_summary(patch))
 
 
-def set_experiment_memory(cross_epoch: bool | None = None) -> str:
-    """Set the experiment-memory scoping (what settled history the proposer sees).
+def set_experimental(
+    tournament_structures: bool | None = None,
+    process_exemplars: int | None = None,
+    recombine: bool | None = None,
+    recombine_merge: str | None = None,
+    genealogy: int | None = None,
+    calibration_feedback: int | None = None,
+    random_baseline_every_n: int | None = None,
+    max_generations_per_contract: int | None = None,
+    diff_complexity_weight: float | None = None,
+    diff_complexity_ceiling: float | None = None,
+    cross_epoch_memory: bool | None = None,
+    standing_rating: str | None = None,
+    resolver: str | None = None,
+) -> str:
+    """Edit unqualified features in the experimental contract block.
 
-    ``cross_epoch=True`` opts settled experiments from PRIOR epochs that
-    share the current contract hash into the proposer's digest (banded;
-    same-epoch history keeps budget priority); ``False`` (default) is
-    same-epoch-only. A contract change — it rolls the epoch.
-    """
-    ctx = _active_context()
-    patch = ops.set_experiment_memory(ctx.draft(), cross_epoch=cross_epoch)
-    return _result_json(_summary(patch))
-
-
-def set_experimental(tournament_structures: bool | None = None) -> str:
-    """Set the contract's opt-ins for features without a measured case.
-
-    ``tournament_structures=True`` admits ``single_elim``, ``double_elim``
-    and ``swiss`` as the draft's structure; ``False`` (the default) refuses
-    them. A contract change — it rolls the epoch. Turning the flag off
-    while the draft's structure is one of the three is reported as an
-    ``error``.
+    Omitted values leave settings unchanged. Zero clears the generation ceiling;
+    ``"none"`` disables standing rating or the resolver. Every edit changes the
+    evaluation contract. These features require target-specific qualification.
     """
     ctx = _active_context()
     try:
-        patch = ops.set_experimental(ctx.draft(), tournament_structures=tournament_structures)
+        patch = ops.set_experimental(
+            ctx.draft(),
+            tournament_structures=tournament_structures,
+            process_exemplars=process_exemplars,
+            recombine=recombine,
+            recombine_merge=recombine_merge,
+            genealogy=genealogy,
+            calibration_feedback=calibration_feedback,
+            random_baseline_every_n=random_baseline_every_n,
+            max_generations_per_contract=max_generations_per_contract,
+            diff_complexity_weight=diff_complexity_weight,
+            diff_complexity_ceiling=diff_complexity_ceiling,
+            cross_epoch_memory=cross_epoch_memory,
+            standing_rating=standing_rating,
+            resolver=resolver,
+        )
     except ValueError as exc:
         return _result_json({"error": str(exc)})
     return _result_json(_summary(patch))
@@ -883,7 +813,6 @@ DEFAULT_BUILDER_TOOLS = (
     set_gate,
     set_namespace_weights,
     set_proposer_quality,
-    set_experiment_memory,
     set_experimental,
     set_goldfive,
     set_telemetry_dialect,
@@ -921,7 +850,6 @@ __all__ = [
     "set_gate",
     "set_namespace_weights",
     "set_proposer_quality",
-    "set_experiment_memory",
     "set_experimental",
     "set_goldfive",
     "set_telemetry_dialect",

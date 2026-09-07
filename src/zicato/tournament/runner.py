@@ -1118,7 +1118,7 @@ async def run_tournament(
     size (see :func:`zicato.scoring.diff_complexity.diff_size`), threaded by the
     orchestrator from the child experiment's patch records. It folds a
     ``diff_complexity`` component into the CHALLENGER's scalar only when
-    ``weights.diff_complexity_weight > 0``. ``None`` (every caller that does
+    ``weights.experimental.diff_complexity_weight > 0``. ``None`` (every caller that does
     not opt in, and any ``diff_complexity_weight == 0.0`` contract) is
     leaves the term out entirely. The champion side never carries it, so the
     gate compares the challenger's diff against a parsimony-free baseline.
