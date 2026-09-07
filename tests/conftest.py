@@ -111,22 +111,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture(autouse=True)
-def _isolate_config_pins() -> Iterator[None]:
-    """Clear process-pinned config overrides around every test.
-
-    CLI commands (and tests exercising them) pin flag values process-wide
-    via :func:`zicato.config.pin_overrides`; the pins are module-global
-    state and would otherwise leak from one test into the next. Cleared
-    on BOTH sides so a test neither inherits nor bequeaths pins.
-    """
-    from zicato.config import clear_pinned_overrides
-
-    clear_pinned_overrides()
-    yield
-    clear_pinned_overrides()
-
-
-@pytest.fixture(autouse=True)
 def _isolate_mutation_syntax_table() -> Iterator[None]:
     """Restore the built-in mutation syntax table around every test.
 
@@ -171,7 +155,7 @@ def _stub_harmonograf_launch(
 
     ``orchestrator.evolve_n_rounds`` calls
     :func:`zicato.evolve.lifecycle_services._resolve_or_launch_harmonograf`, which — when
-    ``ZICATO_HARMONOGRAF_URL`` is unset — spawns a *real* in-process
+    no explicit or inherited URL exists — spawns a *real* in-process
     harmonograf server and health-polls it (~5s) once per evolve. The
     orchestrator/evolve test suites are about the tournament/lineage loop,
     not the live console; the console is additive and never load-bearing,
@@ -192,7 +176,7 @@ def _stub_harmonograf_launch(
 
     from zicato.evolve import lifecycle_services
 
-    def _no_launch(workspace_root: Path) -> tuple[str, Any]:
+    def _no_launch(workspace_root: Path, config: Any = None) -> tuple[str, Any]:
         del workspace_root
         return "", lifecycle_services._NoopShutdownHandle()
 

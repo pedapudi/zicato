@@ -109,17 +109,14 @@ def test_dashboard_static_dir_flag_threads_to_server_run(
     The flag shadows the ``dashboard.static_dir`` config knob — the
     dashboard serves the named directory instead of the bundled one.
     """
-    import types
+    from zicato.dashboard import server
 
     captured: dict[str, Any] = {}
 
     def _fake_run(**kwargs: Any) -> None:
         captured.update(kwargs)
 
-    fake_server = types.SimpleNamespace(run=_fake_run)
-    fake_pkg = types.SimpleNamespace(server=fake_server)
-    monkeypatch.setitem(__import__("sys").modules, "zicato.dashboard", fake_pkg)
-    monkeypatch.setitem(__import__("sys").modules, "zicato.dashboard.server", fake_server)
+    monkeypatch.setattr(server, "run", _fake_run)
 
     custom = tmp_path / "assets"
     runner = CliRunner()
@@ -134,17 +131,14 @@ def test_dashboard_static_dir_flag_threads_to_server_run(
 def test_dashboard_invokes_server_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """``zicato dashboard`` calls ``dashboard.server.run`` with the
     workspace, host, port and bundled static dir."""
-    import types
+    from zicato.dashboard import server
 
     captured: dict[str, Any] = {}
 
     def _fake_run(**kwargs: Any) -> None:
         captured.update(kwargs)
 
-    fake_server = types.SimpleNamespace(run=_fake_run)
-    fake_pkg = types.SimpleNamespace(server=fake_server)
-    monkeypatch.setitem(__import__("sys").modules, "zicato.dashboard", fake_pkg)
-    monkeypatch.setitem(__import__("sys").modules, "zicato.dashboard.server", fake_server)
+    monkeypatch.setattr(server, "run", _fake_run)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -199,17 +193,12 @@ def _install_evolve_mocks(monkeypatch: pytest.MonkeyPatch) -> list[FakeDashboard
     # branch is exercised deterministically.
     import zicato.cli.commands.evolve as ev
 
-    monkeypatch.setattr(ev, "_resolve_supervisor_binary", lambda: Path("/fake/zicato-supervisor"))
+    monkeypatch.setattr(
+        ev, "_resolve_supervisor_binary", lambda config: Path("/fake/zicato-supervisor")
+    )
+    from tests._cli_support import install_evolve_capture
 
-    async def _fake_evolve_n_rounds(**kwargs: Any) -> list[Any]:
-        stop_reason_out = kwargs.get("stop_reason_out")
-        if stop_reason_out is not None:
-            stop_reason_out.append("completed")
-        return []
-
-    import zicato.orchestrator as orch_mod
-
-    monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
+    install_evolve_capture(monkeypatch, {})
     return spawned
 
 
@@ -308,15 +297,15 @@ def test_evolve_tears_down_both_children_on_error(
 ) -> None:
     """A genuine error path still cleans up BOTH children — only the
     normal-conclusion teardown of the dashboard is suppressed (#5)."""
-    import zicato.orchestrator as orch_mod
     from zicato.cli.commands.evolve import evolve_cmd
+    from zicato.evolve import loop
 
     spawned = _install_evolve_mocks(monkeypatch)
 
     async def _boom(**_kwargs: Any) -> list[Any]:
         raise RuntimeError("contract drifted")
 
-    monkeypatch.setattr(orch_mod, "evolve_n_rounds", _boom)
+    monkeypatch.setattr(loop, "_evolve_n_rounds", _boom)
 
     runner = CliRunner()
     result = runner.invoke(evolve_cmd, _evolve_args())

@@ -42,10 +42,17 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from zicato.core.adapter_config import (
+    DriverImportContext,
+    adapter_declaration,
+    registered_mutable_trees,
+)
 from zicato.core.scoring_config import omit_at_default_fields
+from zicato.driver_imports import driver_import_scope, with_workspace_imports
 from zicato.workspace.config_io import read_workspace_config
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.core.types import ProposerSpec
     from zicato.proposer.external import ExternalProposerConfig
 
 log = logging.getLogger("zicato.epoch.contract")
@@ -77,12 +84,10 @@ class ContractInputs:
         The registered ADK entrypoint string used when a caller constructs
         inputs directly instead of supplying ``adapter_spec``.
     mutable_trees:
-        The registered ``--mutable-tree`` paths. Stored as a tuple of
-        strings; :func:`compute_contract_hash` sorts and *normalizes*
-        them (never filesystem-resolves — the hash must not depend on
-        the process cwd or the checkout's absolute path) so
-        registration order and ``.``/``..``/separator spelling do not
-        matter.
+        Physical source directories that identify mutable implementation
+        modules. Production resolution also captures the authored source names
+        in ``mutable_tree_identities``. Direct callers omitting that field
+        retain normalized path identity because no workspace base is available.
     proposer_path:
         Location of the proposer dir (``proposers/<name>/``) the epoch
         steers with, or ``None`` for the built-in default proposer.
@@ -101,6 +106,9 @@ class ContractInputs:
     #: Validated worker reconstruction spec for the selected harness adapter.
     #: ``None`` uses the direct-construction ADK identity in ``entrypoint``.
     adapter_spec: Mapping[str, Any] | None = None
+    driver_imports: DriverImportContext = DriverImportContext()
+    #: Captured registration identity, separate from physical source locations.
+    mutable_tree_identities: tuple[str, ...] | None = None
     #: Dotted implementations whose module source affects adapter behavior.
     adapter_source_specs: tuple[str, ...] = ()
     #: The operator's declared ``adapter`` block from ``config.json``, or
@@ -430,9 +438,14 @@ def _canon_scoring(scoring_path: Path) -> str:
             scoring_path,
         )
         return ""
+    return canonical_scoring_json(scoring_path.read_text(encoding="utf-8"))
+
+
+def canonical_scoring_json(text: str) -> str:
+    """Canonicalize captured scoring with the same rules as a contract file."""
     from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
-    raw = json.loads(scoring_path.read_text(encoding="utf-8"))
+    raw = json.loads(text)
     weights = scoring_weights_from_dict(raw)
     return json.dumps(scoring_contract_to_canon(weights), sort_keys=True)
 
@@ -613,7 +626,11 @@ def _canon_adapter_document(document: Mapping[str, Any]) -> dict[str, object]:
     their declaration order is a no-op as well.
     """
     canon = {str(key): _canon_value(value) for key, value in document.items()}
-    canon.pop("mutable_trees", None)
+    for key in ("mutable_trees", "import_roots", "stock_grading_confirmed"):
+        canon.pop(key, None)
+    for key, default in (("entrypoint", None), ("factory", None), ("args", []), ("options", {})):
+        if canon.get(key) == default:
+            canon.pop(key, None)
     integrations = canon.get("integrations")
     if isinstance(integrations, list) and all(isinstance(name, str) for name in integrations):
         canon["integrations"] = sorted(integrations)
@@ -732,6 +749,8 @@ def _canon_proposer(
     proposer_path: Path | None,
     external: ExternalProposerConfig | None = None,
     static_checks: tuple[str, ...] = (),
+    *,
+    proposer_spec: ProposerSpec | None = None,
 ) -> str:
     """Canonical form of the proposer: agent identity + skills + tools.
 
@@ -768,7 +787,7 @@ def _canon_proposer(
         resolve_proposer_spec,
     )
 
-    spec = resolve_proposer_spec(proposer_path, external)
+    spec = proposer_spec or resolve_proposer_spec(proposer_path, external)
     skills = sorted(
         (
             {"name": skill.name, "sha256": _sha(normalize_skill_body(skill.body))}
@@ -798,7 +817,17 @@ def _canon_proposer(
 # ---------------------------------------------------------------------------
 
 
-def compute_contract_hash(inputs: ContractInputs) -> str:
+def compute_contract_hash(
+    inputs: ContractInputs, *, proposer_spec: ProposerSpec | None = None
+) -> str:
+    """Hash captured inputs within their declared driver import locations."""
+    with driver_import_scope(inputs.driver_imports):
+        return _compute_contract_hash(inputs, proposer_spec=proposer_spec)
+
+
+def _compute_contract_hash(
+    inputs: ContractInputs, *, proposer_spec: ProposerSpec | None = None
+) -> str:
     """Return the ``sha256`` hex digest of the canonicalized contract.
 
     Canonicalization (so spurious edits don't roll the epoch):
@@ -834,18 +863,33 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
         _canon_scoring(inputs.scoring_path),
         _canon_evaluator_revision(),
         _canon_adapter(inputs),
-        _canon_mutable_trees(inputs.mutable_trees),
+        _canon_mutable_trees(
+            inputs.mutable_tree_identities
+            if inputs.mutable_tree_identities is not None
+            else inputs.mutable_trees
+        ),
         _canon_proposer(
             inputs.proposer_path,
             inputs.external_proposer,
             inputs.proposer_static_checks,
+            proposer_spec=proposer_spec,
         ),
     ]
     joined = _SEP.join(components)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
-def compute_component_hashes(inputs: ContractInputs) -> dict[str, str]:
+def compute_component_hashes(
+    inputs: ContractInputs, *, proposer_spec: ProposerSpec | None = None
+) -> dict[str, str]:
+    """Hash captured inputs within their declared driver import locations."""
+    with driver_import_scope(inputs.driver_imports):
+        return _compute_component_hashes(inputs, proposer_spec=proposer_spec)
+
+
+def _compute_component_hashes(
+    inputs: ContractInputs, *, proposer_spec: ProposerSpec | None = None
+) -> dict[str, str]:
     """Return a per-component ``sha256`` hex digest.
 
     Used by the auto-roll path to report *which* contract component
@@ -859,20 +903,41 @@ def compute_component_hashes(inputs: ContractInputs) -> dict[str, str]:
         "scoring": _sha(_canon_scoring(inputs.scoring_path)),
         "evaluator_revision": _sha(_canon_evaluator_revision()),
         "adapter": _sha(_canon_adapter(inputs)),
-        "mutable_trees": _sha(_canon_mutable_trees(inputs.mutable_trees)),
+        "mutable_trees": _sha(
+            _canon_mutable_trees(
+                inputs.mutable_tree_identities
+                if inputs.mutable_tree_identities is not None
+                else inputs.mutable_trees
+            )
+        ),
         "proposer": _sha(
             _canon_proposer(
-                inputs.proposer_path, inputs.external_proposer, inputs.proposer_static_checks
+                inputs.proposer_path,
+                inputs.external_proposer,
+                inputs.proposer_static_checks,
+                proposer_spec=proposer_spec,
             )
         ),
     }
+
+
+def compute_proposer_hash(inputs: ContractInputs) -> str:
+    """Fingerprint the resolved proposer with the evaluation contract's canonicalizer."""
+    return _sha(
+        _canon_proposer(
+            inputs.proposer_path, inputs.external_proposer, inputs.proposer_static_checks
+        )
+    )
 
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
+@with_workspace_imports
+def resolve_contract_inputs(
+    workspace_root: Path, *, workspace_config: Mapping[str, Any] | None = None
+) -> ContractInputs:
     """Resolve the contract inputs for a workspace from ``config.json``.
 
     Reads ``{workspace_root}/config.json``, then resolves:
@@ -898,10 +963,20 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
         When ``config.json`` is missing. The message suggests running
         ``zicato epoch register``.
     """
+    from zicato.workspace.contract_publication import (
+        assert_contract_publication_complete,  # noqa: PLC0415
+    )
+
+    assert_contract_publication_complete(workspace_root)
     remedy = "run `zicato epoch register` to record the evaluation contract before evolving"
-    loaded = read_workspace_config(workspace_root).require(remedy)
-    config = loaded.raw
-    contract = loaded.contract
+    config = (
+        read_workspace_config(workspace_root).require(remedy).raw
+        if workspace_config is None
+        else workspace_config
+    )
+    contract = config.get("contract", {})
+    if not isinstance(contract, Mapping):
+        raise ValueError("workspace contract must be an object")
     board_path = Path(
         contract.get("board_path") or _default_contract_path(workspace_root, "board.jsonl")
     )
@@ -923,22 +998,13 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
     has_adapter = isinstance(adapter_block, Mapping) or bool(config.get("adk_entrypoint"))
     worker_spec: dict[str, Any] | None
     if has_adapter:
-        adapter = make_adapter_from_config(config)
+        adapter = make_adapter_from_config(config, workspace_root=workspace_root)
+        adapter_block = adapter_declaration(config).document()
         worker_spec = adapter_worker_spec(adapter)
     else:
         worker_spec = None
     entrypoint = str((worker_spec or {}).get("entrypoint") or config.get("adk_entrypoint", ""))
-    nested_trees = (
-        adapter_block.get("mutable_trees") if isinstance(adapter_block, Mapping) else None
-    )
-    raw_trees = (
-        (worker_spec or {}).get("mutable_trees")
-        or nested_trees
-        or config.get("mutable_trees")
-        or config.get("source_roots")
-        or []
-    )
-    mutable_trees = tuple(str(t) for t in raw_trees)
+    mutable_trees = tuple(str(tree) for tree in registered_mutable_trees(config, workspace_root))
     source_specs: list[str] = []
     if isinstance(adapter_block, Mapping) and isinstance(adapter_block.get("factory"), str):
         source_specs.append(str(adapter_block["factory"]))
@@ -976,12 +1042,21 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
         scoring_path=scoring_path,
         entrypoint=entrypoint,
         mutable_trees=mutable_trees,
+        mutable_tree_identities=tuple(
+            str(tree)
+            for tree in (
+                adapter_block["mutable_trees"]
+                if isinstance(adapter_block, Mapping) and "mutable_trees" in adapter_block
+                else config.get("mutable_trees") or config.get("source_roots") or ()
+            )
+        ),
         adapter_spec=worker_spec,
+        driver_imports=DriverImportContext.from_config(config, workspace_root),
         adapter_source_specs=tuple(dict.fromkeys(source_specs)),
         adapter_declaration=adapter_block if isinstance(adapter_block, Mapping) else None,
         proposer_path=proposer_path,
         external_proposer=external_proposer_config(config, workspace_root),
-        proposer_static_checks=declared_static_checks(workspace_root),
+        proposer_static_checks=declared_static_checks(workspace_root, workspace_config=config),
     )
 
 

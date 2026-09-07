@@ -37,6 +37,7 @@ from typing import Any
 
 import pytest
 
+from zicato.core.configuration import persisted_key
 from zicato.core.types import (
     ExperimentalConfig,
     ExperimentMemoryConfig,
@@ -48,9 +49,8 @@ from zicato.core.types import (
 )
 from zicato.epoch.contract import scoring_to_canon
 from zicato.epoch.contract_serde import (
-    _persisted_key,
     dataclass_to_jsonable,
-    jsonable_to_dataclass,
+    historical_dataclass_from_json,
 )
 from zicato.epoch.lifecycle import _scoring_from_dict, scoring_to_dict
 from zicato.workspace_loader import scoring_weights_from_dict
@@ -239,7 +239,7 @@ def test_every_field_appears_in_snapshot(cls: type) -> None:
     for f in fields(cls):
         if not f.init:
             continue
-        key = _persisted_key(cls.__name__, f.name)
+        key = persisted_key(f)
         assert key in snapshot, (
             f"{cls.__name__}.{f.name} (key {key!r}) is missing from the frozen "
             f"snapshot — a serializer dropped a field; this is the issue #13 defect class"
@@ -250,7 +250,7 @@ def test_every_field_appears_in_snapshot(cls: type) -> None:
 def test_generic_round_trip_identity(cls: type) -> None:
     """``from_dict(to_dict(x)) == x`` for non-default values of every field."""
     inst = _all_fields_nondefault(cls)
-    again = jsonable_to_dataclass(cls, dataclass_to_jsonable(inst))
+    again = historical_dataclass_from_json(cls, dataclass_to_jsonable(inst))
     assert again == inst
 
 

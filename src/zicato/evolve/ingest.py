@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.types import PriorExperiment
+from zicato.runtime.lock import WorkspaceLock
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -44,37 +45,17 @@ def _index_db_path(workspace_root: Path) -> Path:
     return workspace_root / _INDEX_DB_RELPATH
 
 
-def index_preflight(workspace_root: Path) -> str:
+def index_preflight(workspace_root: Path, *, writer: WorkspaceLock | None = None) -> str:
     """Build an absent/stale index, heal a diverged one; report what happened.
 
-    The ``evolve``-start half of the self-healing index
-    (``docs/design/ANALYTICAL-INDEX.md`` §5.3). Returns ONE operator-facing
-    line naming the action taken — never merely that the preflight ran.
+    Invocation startup, settled-memory reads, and final cleanup share this
+    repair owner and forward the writer they already hold. Dirty epoch revisions
+    require a complete projection even when record counts remain unchanged.
+    A fresh build already projects every epoch, so it needs no subsequent heal.
 
-    This serves loop QUALITY rather than convenience. Both index reads in this
-    module — :func:`_load_prior_experiments` (the proposer's experiment
-    memory) and :func:`_load_mutation_track_records` — happen later in the
-    same invocation and are best-effort by design: a stale index does not
-    fail, it silently returns FEWER prior experiments and a thinner track
-    record, and the loop degrades with no error anywhere. Running the heal
-    before the first round is what keeps those reads honest.
-
-    A fresh build makes the heal redundant — the build writes every epoch's
-    cursor as it goes — so the two are reported as alternatives rather than
-    run in sequence.
-
-    Caller wraps this in ``best_effort``: the index is derived, so a
-    preflight failure must never abort a run.
-
-    ``IndexSchemaNewerError`` is the one failure that must not ride that
-    wrapper down to ``debug``. It means the workspace was last opened by a
-    NEWER zicato and this build refuses to touch the file (deleting a
-    database whose columns it cannot interpret is forbidden — §5.4's
-    downgrade-recovery case). The consequence is silent and lasting: no
-    build, no heal for the rest of the run, and the proposer's experiment
-    memory quietly thins for every round. It is also the one failure with an
-    action attached, so it is logged at WARNING and named. The run still
-    continues — a stale index is a degraded read, never a reason to stop.
+    Callers isolate repair failures because canonical execution must continue
+    without the derived index. A database with a newer schema is retained and
+    produces a warning; this executable cannot safely interpret or repair it.
     """
     from zicato.evolve.settlement_recovery import (  # noqa: PLC0415
         acknowledge_repaired_settlement_indexes,
@@ -84,7 +65,7 @@ def index_preflight(workspace_root: Path) -> str:
 
     actions: list[str] = []
     try:
-        ensure_index(workspace_root, action_out=actions)
+        ensure_index(workspace_root, action_out=actions, writer=writer)
     except IndexSchemaNewerError as exc:
         log.warning(
             "index: %s — this run reads a stale index (no build, no heal). "
@@ -97,7 +78,7 @@ def index_preflight(workspace_root: Path) -> str:
     if built.startswith("built:"):
         acknowledge_repaired_settlement_indexes(workspace_root)
         return f"index: built fresh ({built.split(':', 1)[1]})"
-    healed = heal_index(workspace_root)
+    healed = heal_index(workspace_root, writer=writer)
     if healed:
         return "index: healed epochs " + ", ".join(healed)
     return "index: fresh"
@@ -108,8 +89,13 @@ def _load_prior_experiments(
     epoch_id: str,
     *,
     cross_epoch: bool = False,
+    writer: WorkspaceLock | None = None,
 ) -> list[PriorExperiment]:
     """Best-effort read of the epoch's settled experiment-memory digest.
+
+    Refresh dirty epochs under the invocation's writer before reading. Candidate
+    construction subsequently reads mutation track records from that same
+    settled projection; it does not launch workers before this boundary.
 
     The orchestrator threads the result into
     the proposal episode's evidence so the proposer
@@ -129,6 +115,7 @@ def _load_prior_experiments(
     try:
         from zicato.index.query import prior_experiments_for_epoch  # noqa: PLC0415
 
+        index_preflight(workspace_root, writer=writer)
         return prior_experiments_for_epoch(
             _index_db_path(workspace_root), epoch_id, cross_epoch=cross_epoch
         )

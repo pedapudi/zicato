@@ -1,12 +1,10 @@
 """``zicato init --example``: the seven artifacts, and a round that runs.
 
-The claim the scaffold makes is that a new operator gets from an empty
-directory to a settled round without authoring a file. These cases hold
-it to that in two steps: what the scaffold puts on disk and wires into
-``config.json``, and then the loop itself — a real round, through the
-real proposer seam, the real applier, and the real subprocess tournament
-workers, with no model, no endpoint, and no monkeypatch on the path under
-test.
+Initialization writes a working example into an empty directory. These tests
+check the generated files and execute three rounds with the real proposer,
+patch application, and tournament workers. Deterministic responses avoid model
+calls. Telemetry server startup is tested separately; this fixture retains
+local telemetry while excluding that unrelated service startup.
 
 The scalars are exact. The board has four entries; three of the four
 seeded style rules each fail exactly one of them, and the fourth entry
@@ -23,10 +21,12 @@ weights the pass rate at 1.0 and every other channel at 0.0, so
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
+import subprocess
 import sys
+import sysconfig
+import venv
 from pathlib import Path
 
 import pytest
@@ -64,6 +64,7 @@ def test_scaffold_wires_the_config_to_what_it_copied(tmp_path: Path) -> None:
     assert config["adapter"] == {
         "kind": "import",
         "factory": "example_wiring.adapter:make_adapter",
+        "import_roots": ["."],
     }
     tree = str((project / "system_under_test").resolve())
     assert config["mutable_trees"] == [tree]
@@ -114,32 +115,49 @@ def test_the_scaffolded_contract_can_resolve_a_partial_fix(tmp_path: Path) -> No
 
 
 @pytest.mark.integration
-def test_the_scaffolded_project_converges_over_three_rounds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The whole claim: init, then three rounds, then the floor.
+def test_the_scaffolded_project_converges_over_three_rounds(tmp_path: Path) -> None:
+    """Run the real loop from another directory without PYTHONPATH.
 
-    Runs the real loop. ``PYTHONPATH`` carries the project root because
-    the scaffolded packages are top-level there and the tournament workers
-    are separate interpreters that resolve the dotted paths themselves —
-    the same variable the quickstart exports.
+    The interpreter selects the source under test and existing dependencies.
+    Every nested worker resolves copied driver modules from registration.
     """
-    from zicato.orchestrator import evolve_n_rounds
-
-    project = _scaffold(tmp_path)
-    monkeypatch.syspath_prepend(str(project))
-    monkeypatch.setenv(
-        "PYTHONPATH", os.pathsep.join([str(project), os.environ.get("PYTHONPATH", "")])
+    project = _scaffold(tmp_path / "project with spaces")
+    environment = tmp_path / "interpreter"
+    venv.EnvBuilder(with_pip=False).create(environment)
+    packages = Path(sysconfig.get_path("purelib", vars={"base": str(environment)}))
+    source = Path(__file__).resolve().parents[1] / "src"
+    (packages / "checkout.pth").write_text(f"{source}\n{sysconfig.get_path('purelib')}\n")
+    output = tmp_path / "outcomes.json"
+    program = """
+import asyncio, json, sys
+from pathlib import Path
+from zicato.orchestrator import evolve_n_rounds
+from zicato.evolve import lifecycle_services
+# Service startup has separate integration coverage; retain local telemetry here.
+lifecycle_services._resolve_or_launch_harmonograf = (
+    lambda *args, **kwargs: ("", lifecycle_services._NoopShutdownHandle())
+)
+outcomes = asyncio.run(evolve_n_rounds(
+    rounds=3, workspace_root=Path(sys.argv[1]), max_consecutive_rejections=3
+))
+Path(sys.argv[2]).write_text(json.dumps([
+    [o.tournament_decision, o.parent_scalar, o.child_scalar] for o in outcomes
+]))
+"""
+    env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+    result = subprocess.run(
+        [str(environment / "bin" / "python"), "-c", program, str(project / ".zicato"), str(output)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=120,
     )
-    monkeypatch.chdir(project)
-
-    outcomes = asyncio.run(
-        evolve_n_rounds(rounds=3, workspace_root=project / ".zicato", max_consecutive_rejections=3)
-    )
-
-    assert [o.tournament_decision for o in outcomes] == ["promoted"] * 3
-    assert [o.parent_scalar for o in outcomes] == list(EXPECTED_SCALARS[:3])
-    assert [o.child_scalar for o in outcomes] == list(EXPECTED_SCALARS[1:])
+    assert result.returncode == 0, result.stdout + result.stderr
+    outcomes = json.loads(output.read_text())
+    assert [row[0] for row in outcomes] == ["promoted"] * 3
+    assert [row[1] for row in outcomes] == list(EXPECTED_SCALARS[:3])
+    assert [row[2] for row in outcomes] == list(EXPECTED_SCALARS[1:])
     # The evolved policy keeps the one rule that was never a defect.
     policy = (project / ".zicato" / "repo" / "system_under_test" / "__init__.py").read_text(
         encoding="utf-8"
@@ -151,9 +169,8 @@ def test_the_example_modules_import_under_their_copied_names(tmp_path: Path) -> 
     """The copied packages are importable as the config names them.
 
     The dotted paths in ``config.json`` are ``example_wiring.*`` and the
-    mutable tree is ``system_under_test``; both resolve only from the
-    project root, which is why the scaffold prints the ``PYTHONPATH``
-    export rather than assuming a working directory.
+    mutable tree is ``system_under_test``. The declared driver context
+    mounts their project directory while the operator code executes.
     """
     project = _scaffold(tmp_path)
     sys.path.insert(0, str(project))

@@ -616,6 +616,9 @@ def write_experiment(
     construction — only the on-disk shape is split. Round-tripping
     through :func:`read_experiment` reconstitutes the same tuple.
     """
+    from zicato.workspace.projection import mark_epoch_changed  # noqa: PLC0415
+
+    mark_epoch_changed(workspace_root, epoch_id)
     backend = workspace_backend(workspace_root, start=False)
 
     for patch in experiment.patches:

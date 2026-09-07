@@ -274,7 +274,10 @@ class TournamentStructure:
     gauntlet spec an absent ``tournament`` block resolves to.
     """
 
-    structure: str = "gauntlet"
+    structure: str = field(
+        default="gauntlet",
+        metadata={"constraint": KnobConstraint(choices=VALID_TOURNAMENT_STRUCTURES)},
+    )
     params: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

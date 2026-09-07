@@ -200,27 +200,6 @@ class TestIntegrityBlockReason:
 # ---------------------------------------------------------------------------
 
 
-def _set_scoring_flag(workspace: Path, epoch_id: str, **flags: Any) -> None:
-    """Flip integrity knobs on the epoch's frozen scoring.json in place.
-
-    The epoch is already minted; rewriting scoring.json is the test's rig
-    (a real operator would roll the epoch — these knobs are contract
-    fields — but the orchestrator reads the file at round start either
-    way).
-    """
-    scoring_path = workspace / "epochs" / epoch_id / "scoring.json"
-    body = json.loads(scoring_path.read_text())
-    body.update(flags)
-    scoring_path.write_text(json.dumps(body))
-
-
-def _declare_mutable_trees(workspace: Path, trees: list[str]) -> None:
-    config_path = workspace / "config.json"
-    body = json.loads(config_path.read_text())
-    body["mutable_trees"] = trees
-    config_path.write_text(json.dumps(body))
-
-
 def test_containment_block_rejects_out_of_bounds_child(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -229,9 +208,11 @@ def test_containment_block_rejects_out_of_bounds_child(
     the snapshot root while the registered tree basename is ``elsewhere``),
     so an otherwise-promotable child is REJECTED with the containment
     reason and the champion stands."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
-    _declare_mutable_trees(workspace, [str(tmp_path / "elsewhere")])
-    _set_scoring_flag(workspace, epoch_id, block_on_containment_violation=True)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        mutable_trees=(str(tmp_path / "elsewhere"),),
+        weights=deterministic_weights(promote_margin=0.01, block_on_containment_violation=True),
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -260,8 +241,9 @@ def test_containment_block_off_promotes_with_alarm_only(
 ) -> None:
     """Default OFF: the identical out-of-bounds child still promotes —
     containment stays the supervisor's alarm-only concern."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
-    _declare_mutable_trees(workspace, [str(tmp_path / "elsewhere")])
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path, mutable_trees=(str(tmp_path / "elsewhere"),)
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -279,8 +261,10 @@ def test_gate_contradiction_block_refuses_unsupported_promote(
     """Rigged gate: evaluate_gate is patched to PROMOTE a regressing child
     (delta_scalar +1.0 against margin 0.01). With the knob ON the
     orchestrator re-derives the scalar rule pre-persist and refuses."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
-    _set_scoring_flag(workspace, epoch_id, block_on_gate_contradiction=True)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        weights=deterministic_weights(promote_margin=0.01, block_on_gate_contradiction=True),
+    )
     install_stub_adapter_factory(monkeypatch)
     # Child is WORSE than the parent — a promote is a contradiction.
     install_telemetry_stubs(
@@ -350,12 +334,13 @@ def test_supported_promote_passes_with_both_knobs_on(
     """A genuinely-supported, in-bounds promotion is untouched by the
     blocking modes (no mutable_trees registered ⇒ trivially contained;
     the real gate's delta clears the margin)."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
-    _set_scoring_flag(
-        workspace,
-        epoch_id,
-        block_on_containment_violation=True,
-        block_on_gate_contradiction=True,
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=0.01,
+            block_on_containment_violation=True,
+            block_on_gate_contradiction=True,
+        ),
     )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(

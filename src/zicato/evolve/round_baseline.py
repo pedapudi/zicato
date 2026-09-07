@@ -9,7 +9,7 @@ import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from zicato.core.loss import has_execution_evidence, validate_loss_identity
 from zicato.core.measurement import (
@@ -18,10 +18,9 @@ from zicato.core.measurement import (
     measurement_artifact_path,
     recorded_artifact_measurement,
 )
-from zicato.core.types import (
-    Generation,
+from zicato.core.workspace import (
+    generation_dir,
 )
-from zicato.evolve import generation_phase
 from zicato.evolve.epoching import (
     _roll_seed_marker,
 )
@@ -34,6 +33,10 @@ from zicato.evolve.lifecycle_services import (
 from zicato.tournament.scoring import read_gen_score, write_gen_score
 from zicato.util import best_effort
 from zicato.workspace.layout import WorkspaceLayout
+
+if TYPE_CHECKING:
+    from zicato.runtime.lock import WorkspaceLock
+
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -54,12 +57,7 @@ def _recorded_generation_ids(workspace_root: Path, epoch_id: str) -> list[str]:
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
-    """Atomically write ``text`` to ``path`` (``.tmp`` + :func:`os.replace`).
-
-    Delegates to the single atomic-write definition in
-    :mod:`zicato.storage._atomic` so there is one ``.tmp`` + ``fsync`` +
-    rename implementation in the codebase.
-    """
+    """Replace a UTF-8 record through the shared synchronized writer."""
     from zicato.storage._atomic import atomic_write_text as _atomic_write_text_impl  # noqa: PLC0415
 
     _atomic_write_text_impl(path, text)
@@ -121,134 +119,65 @@ def _ensure_baseline_snapshot(
     workspace_root: Path,
     epoch_id: str,
     workspace_config: Any,
+    *,
+    writer: WorkspaceLock,
 ) -> None:
-    """Seed a ``v0`` snapshot for the epoch if no generations exist yet.
+    """Finish baseline initialization from retained source under its writer."""
+    from zicato.epoch.baseline import finish_baseline_seed, prepare_baseline_seed
+    from zicato.epoch.genstore import default_generation_store
+    from zicato.epoch.publication import BaselineSeed
+    from zicato.runtime.lock import validate_workspace_lock
 
-    Two seed sources, in priority order:
-
-    1. **Cross-epoch lineage seed.** When the epoch was created by a
-       contract-roll, :func:`ensure_epoch_for_contract` leaves a
-       ``v0_seed_from`` marker pointing at the previous epoch's promoted-head
-       snapshot. The new epoch's ``v0`` is seeded from that snapshot so the
-       lineage continues from the best result of the predecessor epoch rather
-       than restarting from the registered source.
-    2. **Registered mutable trees.** The default for a fresh, non-rolled
-       epoch (or a rolled epoch whose predecessor had no promoted
-       generation beyond v0). Each registered ``mutable_trees`` root is
-       copied under ``epochs/{epoch}/generations/v0/snapshot/{name}/``.
-
-    Subsequent invocations are a no-op when ``v0`` already exists.
-
-    The seed snapshot is also recorded in lineage (as the unparented
-    promoted head) and marked as the current generation; the same
-    bookkeeping the post-promotion path performs after every successful
-    round. This keeps lineage truthful when the epoch is later
-    summarised by the analysis pass.
-    """
-    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
-
+    validate_workspace_lock(writer, workspace_root)
     store = default_generation_store(workspace_root)
-    # Existence is a RECORD question rather than a source question. The store lists
-    # source-bearing generations only, so an epoch whose v0 snapshot has been
-    # pruned lists nothing — and re-seeding on that answer would write a
-    # fresh v0 source under the surviving v0 records, silently pairing this
-    # epoch's decisions with a tree that never produced them. The generation
-    # record directories survive pruning by design, so they are what says
-    # whether this epoch has already been seeded.
-    if store.list_generations(epoch_id) or _recorded_generation_ids(workspace_root, epoch_id):
-        return  # already have at least one generation; nothing to do
+    seed = BaselineSeed.read(workspace_root, epoch_id)
+    if seed is None:
+        generations = _recorded_generation_ids(workspace_root, epoch_id)
+        if store.list_generations(epoch_id) or generations:
+            if store.has_generation(epoch_id, "v0"):
+                baseline = generation_dir(workspace_root, epoch_id, "v0")
+                if not (baseline / "experiment.json").is_file():
+                    raise RuntimeError(
+                        f"epoch {epoch_id} has baseline source without completed initialization; "
+                        "preserve its source and repair the missing seed records before evolving"
+                    )
+            return
+        source_coordinates: tuple[str, str] | None = None
+        sources: list[Path] = []
+        marker = _roll_seed_marker(workspace_root, epoch_id)
+        if marker.exists():
+            source = Path(marker.read_text(encoding="utf-8").strip())
+            if not source.is_dir():
+                raise FileNotFoundError(f"baseline predecessor snapshot is missing: {source}")
+            sources = sorted(source.iterdir())
+            source_coordinates = _source_epoch_generation(source)
+        if not sources:
+            from zicato.core.adapter_config import registered_mutable_trees
 
-    # Priority 1 — cross-epoch lineage seed left by a contract-roll.
-    # The seed marker points at the *snapshot directory* of the
-    # predecessor epoch's promoted head; its CHILDREN become the new
-    # v0's top-level trees (the roll continues the lineage rather than
-    # nesting it one level deeper). seed_generation copies each source
-    # under its basename, so handing it the children reproduces the
-    # pre-seam flatten-into-v0 behaviour.
-    seed_marker = _roll_seed_marker(workspace_root, epoch_id)
-    seeded_from_roll = False
-    roll_source: tuple[str, str] | None = None  # (source_epoch, source_generation)
-    if seed_marker.exists():
-        seed_text = seed_marker.read_text(encoding="utf-8").strip()
-        seed_source = Path(seed_text) if seed_text else None
-        if seed_source is not None and seed_source.exists():
-            store.seed_generation(epoch_id, "v0", sorted(seed_source.iterdir()))
-            seeded_from_roll = True
-            roll_source = _source_epoch_generation(seed_source)
-            log.info(
-                "epoch %s: seeded v0 from rolled predecessor snapshot %s",
-                epoch_id,
-                seed_source,
-            )
-
-    # Priority 2 — registered mutable trees.
-    if not seeded_from_roll:
-        raw_trees = (
-            workspace_config.get("mutable_trees") or workspace_config.get("source_roots") or []
+            raw = registered_mutable_trees(workspace_config, workspace_root)
+            if not raw:
+                raise RuntimeError(
+                    "evolve_once: workspace_config has no 'mutable_trees' / 'source_roots' — "
+                    "cannot seed a v0 baseline snapshot; run `zicato epoch register` first"
+                )
+            sources = [Path(item) for item in raw]
+        seed = prepare_baseline_seed(
+            workspace_root,
+            epoch_id,
+            sources,
+            backend=store.backend_name,
+            created_at=_now_iso(),
+            source_coordinates=source_coordinates,
         )
-        if not raw_trees:
-            raise RuntimeError(
-                "evolve_once: workspace_config has no 'mutable_trees' / "
-                "'source_roots' — cannot seed a v0 baseline snapshot. "
-                "Run `zicato epoch register --mutable-tree ...` first."
-            )
-        # seed_generation copies each registered tree under its basename
-        # and raises FileNotFoundError for a missing source — the same
-        # contract the inline loop enforced.
-        store.seed_generation(epoch_id, "v0", [Path(raw) for raw in raw_trees])
-
-    snapshot_root = store.materialize_snapshot(epoch_id, "v0")
-
-    # Lineage + current-generation marker so the orchestrator's
-    # downstream readers see a clean baseline state.
-    from zicato.epoch import append_to_lineage  # noqa: PLC0415
-
-    baseline_gen = Generation(
-        id="v0",
-        epoch_id=epoch_id,
-        parent_id=None,
-        snapshot_root=snapshot_root,
-        created_at=_now_iso(),
-        promoted=True,
-    )
-    append_to_lineage(workspace_root, epoch_id, baseline_gen, parent_id=None)
-    generation_phase.set_current_generation(workspace_root, epoch_id, "v0")
-
-    # Synthetic ``experiment.json`` for v0 so every downstream consumer
-    # (the analyzer report data loader, the index dual-write, the
-    # dashboard lineage walker) sees a uniform on-disk shape. The seed is
-    # not a proposer experiment; the marker carries a "baseline seed"
-    # hypothesis and a null outcome (no tournament round produced it).
-    # Idempotent — safe to call again on a workspace whose v0 already
-    # has the marker.
-    from zicato.epoch.journal import write_seed_experiment  # noqa: PLC0415
-
-    write_seed_experiment(
-        workspace_root,
-        epoch_id,
-        "v0",
-        proposed_at=baseline_gen.created_at,
-    )
-
-    # Champion self-containment: when this epoch carried the champion
-    # forward from a rolled predecessor, MATERIALISE the carried-over
-    # per-board losses + aggregate into the new epoch's ``v0`` gen dir,
-    # each tagged ``cached: true`` with ``source_epoch`` / ``source_run``
-    # provenance. Without this the champion would be a hollow shell — only
-    # ``experiment.json`` + ``snapshot/`` — while the challengers carry
-    # their ``loss.json`` files, so the epoch would not be self-contained
-    # and a fast first round would degrade to a full champion re-run. With
-    # the losses materialised, the champion is consistent with the
-    # challengers (both materialised per-board, distinguished only by the
-    # ``cached`` provenance) and the cache-first runner reuses it from the
-    # very first round.
-    if roll_source is not None:
+        seed.write(workspace_root)
+    finish_baseline_seed(workspace_root, seed, writer=writer)
+    if seed.source_epoch is not None and seed.source_generation is not None:
         _materialize_carried_champion(
             workspace_root,
             epoch_id=epoch_id,
             generation_id="v0",
-            source_epoch=roll_source[0],
-            source_generation=roll_source[1],
+            source_epoch=seed.source_epoch,
+            source_generation=seed.source_generation,
         )
 
 

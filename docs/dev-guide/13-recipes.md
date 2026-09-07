@@ -1178,7 +1178,7 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
 | Replicate losses | the unit cache under RESERVED bases (`_unit_loss_path`) | replicates >0 (r0 = the canonical path) |
 | Heartbeat | `.zicato/runtime/heartbeat.json` | the live PHASE (`proposing` / `screening:r{n}` / `tournament:…` / `holdout` / `gate`) |
 | Active runs | `.zicato/runtime/active_runs/{run_id}.json` | in-flight runs; one present-but-unsettled = a worker that never returned |
-| Worker args | a temp file (`python -m zicato._tournament_worker <args-file>`) | the worker spec + `config_pins` (ephemeral — cleaned in a `finally`) |
+| Worker args | a temp file (`python -m zicato._tournament_worker <args-file>`) | the worker spec + `configuration` (ephemeral — cleaned in a `finally`) |
 | Journal + lineage | `epochs/{epoch}/journal…`, `lineage.json` | the journal contains only resolved experiments; lineage also contains applied, unresolved generations as `promoted=null` nodes (invariant `D8`) |
 | Health report | `epochs/{epoch}/health/round_{N}.json` | the per-round `LoopHealth` findings |
 
@@ -1208,7 +1208,7 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
    that did not return.
 5. **Inspect the worker args file for the spawn.** The runner spawns `python -m
    zicato._tournament_worker <args-file>`; the args file carries the worker spec
-   and the `config_pins` (10-builder-cli-library.md §10.10). It is a TEMP file cleaned up in a `finally`, so
+   and the `configuration` (10-builder-cli-library.md §10.10). It is a TEMP file cleaned up in a `finally`, so
    capture it during a hang (or from a crash that skipped cleanup) — it records
    what the worker was told to run.
 6. **Cross-check the journal + lineage.** The journal records only resolved

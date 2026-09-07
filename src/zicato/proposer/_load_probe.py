@@ -43,12 +43,15 @@ from __future__ import annotations
 import json
 import sys
 import traceback
+from contextlib import ExitStack
 from pathlib import Path
+from typing import Any
 
 
 def main(argv: list[str]) -> int:
     """Probe ``adapter.load`` against a scratch tree; print a JSON verdict."""
-    if len(argv) != 2:
+    captured_adapter = len(argv) == 3 and argv[2] == "--adapter-stdin"
+    if len(argv) != 2 and not captured_adapter:
         print(
             f"usage: python -m zicato.proposer._load_probe "
             f"<workspace_root> <scratch_root> (got {len(argv)} args)",
@@ -58,11 +61,35 @@ def main(argv: list[str]) -> int:
     workspace_root = Path(argv[0])
     scratch_root = Path(argv[1])
 
+    from zicato.core.adapter_config import DriverImportContext
+    from zicato.driver_imports import driver_import_scope
+    from zicato.workspace_loader import load_workspace_config
+
+    with ExitStack() as stack:
+        try:
+            configuration = (
+                json.load(sys.stdin) if captured_adapter else load_workspace_config(workspace_root)
+            )
+            stack.enter_context(
+                driver_import_scope(
+                    DriverImportContext.from_config(configuration, workspace_root),
+                    snapshot_root=scratch_root,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — invalid setup is a probe failure
+            print(
+                f"load probe could not build the adapter: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+        return _probe(workspace_root, scratch_root, configuration)
+
+
+def _probe(workspace_root: Path, scratch_root: Path, configuration: dict[str, Any]) -> int:
     try:
         from zicato.adapter_factory import make_adapter_from_config
-        from zicato.workspace_loader import load_workspace_config
 
-        adapter = make_adapter_from_config(load_workspace_config(workspace_root))
+        adapter = make_adapter_from_config(configuration, workspace_root=workspace_root)
     except Exception as exc:  # noqa: BLE001 — a workspace we cannot read is a probe failure
         print(
             f"load probe could not build the adapter: {type(exc).__name__}: {exc}", file=sys.stderr
@@ -70,7 +97,12 @@ def main(argv: list[str]) -> int:
         return 2
 
     try:
-        adapter.load(scratch_root)
+        from zicato.adapter_factory import uses_legacy_run
+
+        uses_legacy_run(adapter.load(scratch_root))
+        from zicato.driver_imports import imported_sources, workspace_driver_imports
+
+        imported_sources(workspace_driver_imports(workspace_root), scratch_root)
     except Exception as exc:  # noqa: BLE001 — an unimportable harness is the RESULT
         print(
             json.dumps(

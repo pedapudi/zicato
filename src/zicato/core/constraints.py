@@ -73,12 +73,18 @@ class KnobConstraint:
         Inclusive lower bound. ``None`` leaves the knob unbounded below.
     maximum:
         Inclusive upper bound. ``None`` leaves the knob unbounded above.
+    exclusive_minimum:
+        Exclude the lower endpoint when a minimum is declared.
+    exclusive_maximum:
+        Exclude the upper endpoint when a maximum is declared.
     choices:
         The closed vocabulary a string-valued knob may hold. Mutually
         exclusive with ``minimum``.
     allow_none:
         Whether ``None`` is a value in its own right — the knob's "auto" or
         "unset" token — rather than a missing number.
+    allow_bool:
+        Whether booleans select an explicitly supported automatic or disabled policy.
     label:
         The name to use in the rejection message when it differs from the
         field name: the dotted path of a knob nested in a contract block
@@ -90,11 +96,16 @@ class KnobConstraint:
     allow_none: bool = False
     label: str = ""
     maximum: float | None = None
+    exclusive_minimum: bool = False
+    exclusive_maximum: bool = False
+    allow_bool: bool = False
 
     def check(self, name: str, value: object) -> None:
         """Raise :class:`ValueError` when ``value`` is outside the knob's domain."""
         shown = self.label or name
         if self.allow_none and value is None:
+            return
+        if self.allow_bool and type(value) is bool:
             return
         if self.choices is not None:
             if value not in self.choices:
@@ -102,11 +113,19 @@ class KnobConstraint:
                 raise ValueError(f"{shown} must be one of {{{known}}}, got {value!r}")
             return
         number = require_finite_number(shown, value)
-        if self.maximum is not None and number > self.maximum:
-            raise ValueError(f"{shown} must be <= {_bound(self.maximum)}, got {value!r}")
-        if self.minimum is not None and number < self.minimum:
+        if self.minimum is not None and (
+            number < self.minimum or (self.exclusive_minimum and number == self.minimum)
+        ):
             suffix = " or None" if self.allow_none else ""
-            raise ValueError(f"{shown} must be >= {_bound(self.minimum)}{suffix}, got {value!r}")
+            relation = ">" if self.exclusive_minimum else ">="
+            raise ValueError(
+                f"{shown} must be {relation} {_bound(self.minimum)}{suffix}, got {value!r}"
+            )
+        if self.maximum is not None and (
+            number > self.maximum or (self.exclusive_maximum and number == self.maximum)
+        ):
+            relation = "<" if self.exclusive_maximum else "<="
+            raise ValueError(f"{shown} must be {relation} {_bound(self.maximum)}, got {value!r}")
 
 
 def validate_knobs(instance: Any) -> None:

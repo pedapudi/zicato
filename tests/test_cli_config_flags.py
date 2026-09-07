@@ -1,31 +1,10 @@
-"""Flag→config threading for the env-var-rationalization CLI flags.
-
-Five operator knobs that used to be ``ZICATO_*`` environment variables
-are now ``zicato evolve`` flags (``--parallelism``, ``--aux-call-timeout``,
-``--supervisor-binary``, ``--harmonograf-url``) plus ``--static-dir`` on
-``zicato dashboard`` / ``zicato dashboard --view builder`` (covered in their own test
-files). The evolve flags land on the typed config tree via
-:func:`zicato.config.pin_overrides`; these tests prove:
-
-* each flag reaches the knob it shadows, through a bare deep-call-site
-  ``load_config()`` — the exact form the consumers use;
-* an unset flag pins nothing (the workspace ``config.json`` and the
-  dataclass defaults stay in charge);
-* the tournament runner threads the pins into the worker args file, and
-  a real worker subprocess honours them (the cross-process leg of
-  ``--aux-call-timeout``);
-* the harmonograf split: the FLAG is the operator surface, while the
-  ``ZICATO_HARMONOGRAF_URL`` env var survives strictly as the internal
-  auto-launch handoff channel — read after the flag, before the
-  workspace config.
-
-The suite-wide autouse fixture clears pins between tests.
-"""
+"""CLI overlays reach runtime construction and real worker processes."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +13,8 @@ from click.testing import CliRunner
 
 from tests._cli_support import install_evolve_capture
 from tests._runtime_builders import make_generation
-from zicato.config import get_pinned_overrides, load_config, pin_overrides
+from tests._runtime_context_support import install_runtime_context
+from zicato.config import IntegrationConfig, InvocationOverlay, resolve_configuration
 from zicato.core import BoardEntry, LossProfile, RuntimeConfig, ScoringWeights
 
 # ---------------------------------------------------------------------------
@@ -55,7 +35,7 @@ async def _aux_call_llm(system: str, user: str, model: str) -> str:
 def _invoke_evolve(
     monkeypatch: pytest.MonkeyPatch,
     *flags: str,
-) -> None:
+) -> dict[str, Any]:
     """Invoke ``zicato evolve`` with stubbed loop + extra ``flags``."""
     from zicato.cli.commands.evolve import evolve_cmd
 
@@ -69,19 +49,23 @@ def _invoke_evolve(
         ],
     )
     assert result.exit_code == 0, result.output
+    return captured
 
 
 # ---------------------------------------------------------------------------
-# Per-flag threading — flag value visible to a bare load_config()
+# Each CLI flag selects a value in the invocation overlay
 # ---------------------------------------------------------------------------
 
 
-def test_parallelism_flag_pins_runtime_parallelism(
+def test_parallelism_flag_selects_runtime_parallelism(
     monkeypatch: pytest.MonkeyPatch, mock_dashboard_spawn: list[Any]
 ) -> None:
     del mock_dashboard_spawn
-    _invoke_evolve(monkeypatch, "--parallelism", "11")
-    assert load_config().runtime.parallelism == 11
+    captured = _invoke_evolve(monkeypatch, "--parallelism", "11")
+    assert (
+        resolve_configuration({}, overlay=captured["invocation_overlay"]).values.runtime.parallelism
+        == 11
+    )
 
 
 def test_aux_call_timeout_flag_reaches_deep_call_site(
@@ -90,18 +74,19 @@ def test_aux_call_timeout_flag_reaches_deep_call_site(
     del mock_dashboard_spawn
     from zicato.aux_timeout import aux_call_timeout_s
 
-    _invoke_evolve(monkeypatch, "--aux-call-timeout", "7.25")
-    # The bare call-site form every aux consumer uses.
-    assert aux_call_timeout_s() == 7.25
+    captured = _invoke_evolve(monkeypatch, "--aux-call-timeout", "7.25")
+    selected = resolve_configuration({}, overlay=captured["invocation_overlay"])
+    assert aux_call_timeout_s(selected.values.aux) == 7.25
 
 
-def test_supervisor_binary_flag_pins_integration_knob(
+def test_supervisor_binary_flag_selects_integration_path(
     monkeypatch: pytest.MonkeyPatch, mock_dashboard_spawn: list[Any], tmp_path: Path
 ) -> None:
     del mock_dashboard_spawn
     sentinel = tmp_path / "sentinel-supervisor"
-    _invoke_evolve(monkeypatch, "--supervisor-binary", str(sentinel))
-    assert load_config().integration.supervisor_binary == str(sentinel)
+    captured = _invoke_evolve(monkeypatch, "--supervisor-binary", str(sentinel))
+    selected = resolve_configuration({}, overlay=captured["invocation_overlay"])
+    assert selected.values.integration.supervisor_binary == str(sentinel)
 
 
 def test_harmonograf_url_flag_reaches_the_resolver(
@@ -110,17 +95,20 @@ def test_harmonograf_url_flag_reaches_the_resolver(
     del mock_dashboard_spawn
     from zicato.telemetry.sink import resolve_harmonograf_url
 
-    _invoke_evolve(monkeypatch, "--harmonograf-url", "http://shared.example:9000")
-    assert resolve_harmonograf_url() == "http://shared.example:9000"
+    captured = _invoke_evolve(monkeypatch, "--harmonograf-url", "http://shared.example:9000")
+    selected = resolve_configuration({}, overlay=captured["invocation_overlay"])
+    assert (
+        resolve_harmonograf_url(config=selected.values.integration) == "http://shared.example:9000"
+    )
 
 
-def test_no_flags_pin_nothing(
+def test_no_flags_produce_an_empty_overlay(
     monkeypatch: pytest.MonkeyPatch, mock_dashboard_spawn: list[Any]
 ) -> None:
-    """A flagless evolve leaves the pin layer empty — defaults / config.json rule."""
+    """Omitted flags leave workspace values and declared defaults in force."""
     del mock_dashboard_spawn
-    _invoke_evolve(monkeypatch)
-    assert get_pinned_overrides() == {}
+    captured = _invoke_evolve(monkeypatch)
+    assert captured["invocation_overlay"].overrides == {}
 
 
 def test_aux_call_timeout_flag_rejects_non_positive(
@@ -149,30 +137,33 @@ def test_aux_call_timeout_flag_rejects_non_positive(
 # ---------------------------------------------------------------------------
 
 
-def test_harmonograf_internal_handoff_still_read(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The env var survives as the INTERNAL auto-launch handoff channel.
-
-    ``_resolve_or_launch_harmonograf`` writes the launched server's URL
-    into ``ZICATO_HARMONOGRAF_URL`` so downstream re-resolvers (workers
-    included) discover it; the resolver must still read it even though
-    it is no longer a ``load_config`` binding.
-    """
+def test_harmonograf_inherited_runtime_context_is_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Nested invocations inherit the browser URL from the parent worker context."""
     from zicato.telemetry.sink import resolve_harmonograf_url
 
-    monkeypatch.setenv("ZICATO_HARMONOGRAF_URL", "http://auto-launched.local:7999")
+    install_runtime_context(monkeypatch, tmp_path, web_url="http://auto-launched.local:7999")
     assert resolve_harmonograf_url() == "http://auto-launched.local:7999"
 
 
-def test_harmonograf_flag_beats_internal_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An explicit operator URL (the flag's pin) outranks an inherited handoff."""
+def test_harmonograf_flag_beats_internal_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An explicit operator URL outranks an inherited handoff."""
     from zicato.telemetry.sink import resolve_harmonograf_url
 
-    monkeypatch.setenv("ZICATO_HARMONOGRAF_URL", "http://outer-invocation.local:7999")
-    pin_overrides({"integration": {"harmonograf_url": "http://operator.example:9000"}})
-    assert resolve_harmonograf_url() == "http://operator.example:9000"
+    install_runtime_context(monkeypatch, tmp_path, web_url="http://outer-invocation.local:7999")
+    config = IntegrationConfig(harmonograf_url="http://operator.example:9000")
+    assert resolve_harmonograf_url(config=config) == "http://operator.example:9000"
 
 
-def test_harmonograf_handoff_beats_workspace_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_harmonograf_handoff_beats_workspace_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """The in-flight handoff outranks the workspace config.json key.
 
     Mid-evolve, the auto-launched URL is THE console for this
@@ -180,13 +171,13 @@ def test_harmonograf_handoff_beats_workspace_config(monkeypatch: pytest.MonkeyPa
     """
     from zicato.telemetry.sink import resolve_harmonograf_url
 
-    monkeypatch.setenv("ZICATO_HARMONOGRAF_URL", "http://auto-launched.local:7999")
+    install_runtime_context(monkeypatch, tmp_path, web_url="http://auto-launched.local:7999")
     resolved = resolve_harmonograf_url({"harmonograf_url": "http://stale.example:1"})
     assert resolved == "http://auto-launched.local:7999"
 
 
 # ---------------------------------------------------------------------------
-# Cross-process threading — orchestrator pins → worker args → worker config
+# Cross-process threading — orchestrator configuration → worker args → worker config
 # ---------------------------------------------------------------------------
 
 
@@ -211,17 +202,15 @@ def _runtime_config(workspace: Path) -> RuntimeConfig:
 
 
 @pytest.mark.integration
-def test_runner_threads_pins_into_worker_args_file(
+def test_runner_threads_configuration_into_worker_args_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``_run_single`` writes the current pins into the worker args file."""
+    """``_run_single`` writes the current configuration into the worker args file."""
     from tests._subprocess_worker_support import StubAdapter
     from zicato.tournament.runner import _run_single
 
-    pin_overrides(
-        {
-            "aux": {"call_timeout_s": 7.5},
-        }
+    configuration = resolve_configuration(
+        {}, overlay=InvocationOverlay.from_mapping({"aux": {"call_timeout_s": 7.5}})
     )
 
     workspace = tmp_path / ".zicato"
@@ -247,7 +236,7 @@ def test_runner_threads_pins_into_worker_args_file(
             generation=generation,
             entry=entry,
             weights=ScoringWeights(),
-            config=_runtime_config(workspace),
+            config=replace(_runtime_config(workspace), configuration=configuration),
             workspace_root=workspace,
             epoch_id="e0",
             side="parent",
@@ -255,17 +244,13 @@ def test_runner_threads_pins_into_worker_args_file(
     )
 
     assert isinstance(loss, LossProfile)
-    assert captured_args["config_pins"] == {"aux": {"call_timeout_s": 7.5}}
+    assert captured_args["configuration"]["values"]["aux"]["call_timeout_s"] == 7.5
+    assert captured_args["configuration"]["sources"]["aux.call_timeout_s"] == "invocation"
 
 
 @pytest.mark.integration
-def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
-    """A real worker subprocess re-pins the args-file pins before running.
-
-    The probe adapter records the WORKER-side ``load_config()`` view of
-    the evaluation-call budget consumed inside the worker; it must reflect
-    the orchestrator's flag pin, with no environment variable involved.
-    """
+def test_worker_uses_configuration_from_args_file(tmp_path: Path) -> None:
+    """A real worker exposes its selected evaluation budget to the adapter."""
     import os
     import subprocess
     import sys
@@ -310,9 +295,9 @@ def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
                 "seed": None,
                 "harmonograf_url": "",
                 "weights": {},
-                "config_pins": {
-                    "aux": {"call_timeout_s": 7.5},
-                },
+                "configuration": resolve_configuration(
+                    {}, overlay=InvocationOverlay.from_mapping({"aux": {"call_timeout_s": 7.5}})
+                ).to_json(),
             }
         ),
         encoding="utf-8",
@@ -331,5 +316,5 @@ def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, proc.stderr.decode()
 
-    probe = json.loads((sink_path.parent / "config_probe.json").read_text(encoding="utf-8"))
+    probe = json.loads(json.loads(result_path.read_text())["run_result"]["final_output"])
     assert probe["aux_call_timeout_s"] == 7.5

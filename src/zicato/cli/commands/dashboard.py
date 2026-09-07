@@ -15,7 +15,7 @@ and exposes two entry points::
     create_app(workspace_root, static_dir, *, read_only=True) -> Starlette
     run(workspace_root, host, port, static_dir) -> None
 
-This command resolves the bundled static asset directory (via
+This command resolves the selected static asset directory (via
 :func:`zicato.dashboard.static_assets.resolve_static_dir` — the
 dashboard owns its own bundle) and calls ``run(...)``.
 """
@@ -75,8 +75,9 @@ def dashboard_url(host: str, port: int, view: str) -> str:
     type=click.Path(file_okay=False),
     help=(
         "Filesystem path to the dashboard static-asset directory. "
-        "Shadows the dashboard.static_dir config knob. Unset (the "
-        "default) serves the bundled zicato/dashboard/static directory."
+        "Overrides dashboard.static_dir in workspace config. Relative flag paths "
+        "use the current directory; relative config paths use the workspace parent. "
+        "An empty configuration serves the bundled assets."
     ),
 )
 def dashboard_cmd(
@@ -90,9 +91,6 @@ def dashboard_cmd(
     foreground until interrupted (Ctrl-C).
     """
     workspace_root = Path(workspace).resolve()
-    static_dir = resolve_static_dir(
-        DashboardConfig(static_dir=static_dir_flag) if static_dir_flag else None
-    )
 
     # Lazy import: the dashboard service pulls in Starlette. Importing it
     # here (rather than at module top level) keeps `zicato --help` fast
@@ -105,6 +103,17 @@ def dashboard_cmd(
         raise click.ClickException(
             f"the dashboard service (zicato.dashboard.server) is not available in this build: {exc}"
         ) from exc
+
+    workspace_root = dashboard_server._resolve_workspace(workspace_root).root
+    try:
+        static_dir = resolve_static_dir(
+            DashboardConfig(static_dir=str(Path(static_dir_flag).resolve()))
+            if static_dir_flag
+            else None,
+            workspace_root=workspace_root,
+        )
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
     # The definitive ``Dashboard:`` URL is printed by ``server.run`` once
     # the real bound port is known (``_pick_port`` may walk +1 off the

@@ -138,7 +138,7 @@ def test_init_force_preserves_existing_generation_source_backend(tmp_path: Path)
         json.dumps(
             {
                 "instance_id": "first",
-                GENERATION_SOURCE_BACKEND_KEY: " Directory ",
+                GENERATION_SOURCE_BACKEND_KEY: "directory",
             }
         ),
         encoding="utf-8",

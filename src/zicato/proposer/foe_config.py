@@ -1,60 +1,21 @@
-"""The workspace's ``proposer`` block: one typed object, strictly validated.
-
-Zicato's proposer is a Foe episode, and everything a workspace decides
-about that episode is declared in one block of its ``config.json``::
-
-    "proposer": {
-      "binary": "/usr/local/bin/foe",
-      "budget": {"model_calls": 12, "seconds": 900,
-                 "input_tokens": 400000, "output_tokens": 60000},
-      "model": {"provider": "<managed-cloud provider>", "model": "<model id>",
-                "options": {"project": "example-project", "location": "example-region"}},
-      "viewer": "off"
-    }
-
-Four decisions, and no fifth. The **binary** is the Foe build the episode
-runs, named by absolute path because the episode's grants are absolute
-and a relative one would mean different things to the loop and to a
-worker. The **budget** bounds the episode in Foe's own dimensions and is
-part of what Foe fingerprints, so raising it rolls the epoch. The
-**model** block selects the endpoint Foe's built-in model client calls.
-Provider-specific options pass through unchanged. They can select a compatible
-HTTP endpoint, name managed-cloud connection fields, or override a credential
-file. Foe may also use the credential recorded by its login command. This
-package reads no credential and defines no credential environment variable.
-The **viewer** decides when a finished episode's trajectory is served for an
-operator to read.
-
-The block carries no instructions: those are the epoch's proposer brief
-and its skills, which the contract already hashes, assembled by
-:mod:`zicato.proposer.foe_request`.
-
-Validation is strict and names the removal. A workspace still carrying
-the configuration of a retired proposer — the coding-agent integration's
-binary, an ADK or native proposer class, a ``proposers/<name>/agent.py``
-module — is refused with the key, what replaced it, and where to read
-about the change, rather than silently falling back. What the seam still accepts is
-an operator's own ``ExternalProposerAgent`` class, which is a different
-thing from a removed built-in and is named in ``docs/design/PROPOSER.md``
-with the trust boundary it runs under.
-"""
+"""Resolve authored proposal settings and bind the invocation's workspace."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from zicato.core.configuration import authored_dataclass_from_json, dataclass_to_jsonable
+from zicato.core.proposer_config import VIEWER_POLICIES as VIEWER_POLICIES
+from zicato.core.proposer_config import FoeBudget as FoeBudget
+from zicato.core.proposer_config import FoeModelRole as FoeModelRole
+from zicato.core.proposer_config import ProposerDeclaration
 from zicato.proposer.external import DEFAULT_PROPOSER_AGENT, UNSET_BINARY
 
 #: The ``config.json`` key holding everything below.
 PROPOSER_BLOCK_KEY = "proposer"
-
-#: What a viewer policy may say. ``off`` serves nothing; ``on-failure``
-#: serves an episode that did not complete, which is the one an operator
-#: reads; ``always`` serves every episode.
-VIEWER_POLICIES: tuple[str, ...] = ("off", "on-failure", "always")
 
 #: Where the removed proposer runtimes were configured, and what each
 #: message tells the operator to do instead. Read by
@@ -84,102 +45,10 @@ class ProposerConfigError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class FoeBudget:
-    """What one proposal episode may spend, in Foe's budget dimensions.
+class FoeProposerConfig(ProposerDeclaration):
+    """Authored proposal settings bound to the workspace owning their artifacts."""
 
-    ``model_calls`` is the only required dimension because Foe requires
-    it; the rest are unlimited when omitted, which ``foe/docs/config.md``
-    states. ``seconds`` is the deadline every episode below the root
-    shares, and the bound the supervisor watchdog enforces from outside
-    when a process outlives it.
-
-    The budget participates in Foe's contract fingerprint, so changing any
-    dimension rolls the epoch. That is the intended reading: a proposer
-    with twelve model calls investigates differently from one with three.
-    """
-
-    model_calls: int = 12
-    seconds: int | None = 900
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-
-    def validate(self) -> None:
-        if self.model_calls < 1:
-            raise ProposerConfigError("proposer.budget.model_calls must be >= 1")
-        for name in ("seconds", "input_tokens", "output_tokens"):
-            value = getattr(self, name)
-            if value is not None and value < 1:
-                raise ProposerConfigError(f"proposer.budget.{name} must be >= 1 when set")
-
-
-@dataclass(frozen=True, slots=True)
-class FoeModelRole:
-    """The ``model`` block Foe's built-in model client calls.
-
-    ``options`` carries the provider-specific flat strings
-    ``foe/docs/models.md`` lists. They include endpoint, credential-file,
-    project, location, and request-control fields. This package preserves the
-    mapping without interpreting it. Foe resolves and reads any credential.
-
-    Model selection is runtime infrastructure and never rolls an epoch,
-    matching the standing rule that keeps every ``models.*`` role out of
-    the contract hash. Foe excludes the block from its fingerprint for the
-    same reason.
-    """
-
-    provider: str
-    model: str
-    options: Mapping[str, str] = field(default_factory=dict)
-
-    def validate(self) -> None:
-        if not self.provider:
-            raise ProposerConfigError("proposer.model.provider must name a Foe provider")
-        if not self.model:
-            raise ProposerConfigError("proposer.model.model must name a model")
-
-
-@dataclass(frozen=True, slots=True)
-class FoeProposerConfig:
-    """Everything a workspace decides about its proposal episodes."""
-
-    binary: Path
-    model: FoeModelRole
-    budget: FoeBudget = field(default_factory=FoeBudget)
-    viewer: str = "off"
-    #: The workspace this configuration was read from. The episode places
-    #: its log directory and its scratch trees relative to it.
     workspace_root: Path | None = None
-
-    def validate(self) -> None:
-        if not self.binary.is_absolute():
-            raise ProposerConfigError(
-                f"proposer.binary must be an absolute path, got {str(self.binary)!r}"
-            )
-        if self.viewer not in VIEWER_POLICIES:
-            raise ProposerConfigError(
-                f"proposer.viewer must be one of {', '.join(VIEWER_POLICIES)}, "
-                f"got {self.viewer!r}"
-            )
-        self.model.validate()
-        self.budget.validate()
-
-
-def _mapping(block: Mapping[str, Any], key: str) -> Mapping[str, Any]:
-    value = block.get(key)
-    if value is None:
-        return {}
-    if not isinstance(value, Mapping):
-        raise ProposerConfigError(f"proposer.{key} must be an object")
-    return value
-
-
-def _optional_int(block: Mapping[str, Any], key: str, where: str) -> int | None:
-    value = block.get(key)
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ProposerConfigError(f"{where}.{key} must be an integer")
-    return value
 
 
 def scaffold_proposer_block() -> dict[str, Any]:
@@ -189,29 +58,14 @@ def scaffold_proposer_block() -> dict[str, Any]:
     documented default so an operator edits rather than researches, and
     :data:`UNSET_BINARY` marks the one field only they can fill.
     """
-    defaults = FoeBudget()
-    return {
-        "binary": UNSET_BINARY,
-        "budget": {
-            "model_calls": defaults.model_calls,
-            "seconds": defaults.seconds,
-        },
-        "model": {
-            "provider": "<foe provider>",
-            "model": "<model id>",
-            "options": {},
-        },
-        "viewer": "off",
-        "_guide": {
-            "binary": "absolute path of the foe binary this workspace's episodes run",
-            "budget": "what one proposal episode may spend; raising any dimension rolls the epoch",
-            "model": (
-                "the provider and model Foe calls; options are provider-specific flat "
-                "strings for endpoint, credential, project, location, and request controls"
-            ),
-            "viewer": f"when a finished episode is served: {', '.join(VIEWER_POLICIES)}",
-        },
-    }
+    block = dataclass_to_jsonable(
+        ProposerDeclaration(
+            binary=Path(UNSET_BINARY),
+            model=FoeModelRole(provider="<model backend>", model="<model name>"),
+        )
+    )
+    block.pop("_guide")
+    return block
 
 
 def load_foe_proposer_config(
@@ -232,51 +86,18 @@ def load_foe_proposer_config(
         raise ProposerConfigError(
             "proposer: the workspace declares no `proposer` block, and " f"{_REPLACEMENT}"
         )
-    binary = str(block.get("binary") or "")
-    if not binary:
-        raise ProposerConfigError(
-            "proposer.binary: name the absolute path of the Foe binary this "
-            "workspace runs its proposal episodes with"
-        )
-    model_block = _mapping(block, "model")
-    if not model_block:
-        raise ProposerConfigError(
-            "proposer.model: name the Foe provider and model the episode calls"
-        )
-    options_block = _mapping(model_block, "options")
-    budget_block = _mapping(block, "budget")
-    defaults = FoeBudget()
-    config = FoeProposerConfig(
-        binary=Path(binary).expanduser(),
-        model=FoeModelRole(
-            provider=str(model_block.get("provider") or ""),
-            model=str(model_block.get("model") or ""),
-            options={str(k): str(v) for k, v in options_block.items()},
-        ),
-        budget=FoeBudget(
-            # A declared dimension is taken as declared, including a zero
-            # the validator then refuses; only an ABSENT key falls back,
-            # so a bound cannot be widened by writing a value that reads
-            # as false.
-            model_calls=(
-                _optional_int(budget_block, "model_calls", "proposer.budget")
-                if budget_block.get("model_calls") is not None
-                else defaults.model_calls
-            )
-            or 0,
-            seconds=(
-                _optional_int(budget_block, "seconds", "proposer.budget")
-                if "seconds" in budget_block
-                else defaults.seconds
-            ),
-            input_tokens=_optional_int(budget_block, "input_tokens", "proposer.budget"),
-            output_tokens=_optional_int(budget_block, "output_tokens", "proposer.budget"),
-        ),
-        viewer=str(block.get("viewer") or "off"),
+    try:
+        declared = authored_dataclass_from_json(ProposerDeclaration, block, path="proposer")
+    except ValueError as exc:
+        raise ProposerConfigError(str(exc)) from exc
+    return FoeProposerConfig(
+        binary=declared.binary,
+        model=declared.model,
+        budget=declared.budget,
+        viewer=declared.viewer,
+        guide=declared.guide,
         workspace_root=workspace_root,
     )
-    config.validate()
-    return config
 
 
 def refuse_removed_proposer_configuration(workspace_config: Mapping[str, Any]) -> None:

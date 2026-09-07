@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 496,751 | +88,090 |
-| Production | 197,702 | 211,339 | +13,637 |
-| Production logic | 110,276 | 120,523 | +10,247 |
+| Total | 408,661 | 502,405 | +93,744 |
+| Production | 197,702 | 213,489 | +15,787 |
+| Production logic | 110,276 | 123,564 | +13,288 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,53 +84,54 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 70,682 | 37,640 | 26,315 | 30.1% |
+| src/zicato/dashboard | 70,692 | 37,650 | 26,336 | 30.1% |
 | src/zicato/query | 20,724 | 20,724 | 12,609 | 39.2% |
-| src/zicato/epoch | 14,015 | 14,015 | 7,309 | 47.8% |
-| src/zicato/evolve | 12,059 | 12,059 | 7,217 | 40.2% |
-| src/zicato/reflection | 10,288 | 10,288 | 6,750 | 34.4% |
+| src/zicato/epoch | 14,872 | 14,872 | 8,141 | 45.3% |
+| src/zicato/evolve | 11,970 | 11,970 | 7,394 | 38.2% |
+| src/zicato/reflection | 10,295 | 10,295 | 6,757 | 34.4% |
+| src/zicato/tournament | 11,579 | 11,579 | 6,517 | 43.7% |
 | crates/supervisor | 16,378 | 13,947 | 6,516 | 53.3% |
-| src/zicato/tournament | 11,564 | 11,564 | 6,463 | 44.1% |
-| src/zicato/proposer | 11,252 | 11,252 | 5,842 | 48.1% |
-| src/zicato/cli | 8,179 | 8,179 | 5,172 | 36.8% |
-| src/zicato/analyzer | 7,631 | 7,631 | 4,793 | 37.2% |
+| src/zicato/proposer | 11,163 | 11,163 | 5,824 | 47.8% |
+| src/zicato/cli | 8,172 | 8,172 | 5,349 | 34.5% |
+| src/zicato/analyzer | 7,635 | 7,635 | 4,808 | 37.0% |
+| src/zicato/core | 7,806 | 7,806 | 3,147 | 59.7% |
 | src/zicato/tui | 4,394 | 4,394 | 3,136 | 28.6% |
 | src/zicato/selection | 5,463 | 5,463 | 3,106 | 43.1% |
-| src/zicato/index | 5,434 | 5,434 | 2,765 | 49.1% |
-| src/zicato/runtime | 5,406 | 5,406 | 2,485 | 54.0% |
-| src/zicato/core | 6,682 | 6,682 | 2,340 | 65.0% |
-| src/zicato/telemetry | 4,732 | 4,732 | 2,272 | 52.0% |
-| src/zicato/contract_draft | 2,928 | 2,928 | 1,684 | 42.5% |
+| src/zicato/index | 5,451 | 5,451 | 2,822 | 48.2% |
+| src/zicato/runtime | 5,374 | 5,374 | 2,485 | 53.8% |
+| src/zicato/telemetry | 4,640 | 4,640 | 2,290 | 50.6% |
+| src/zicato/contract_draft | 3,326 | 3,326 | 2,045 | 38.5% |
 | src/zicato/mutation | 2,888 | 2,888 | 1,346 | 53.4% |
-| src/zicato/builder | 2,343 | 2,343 | 1,332 | 43.1% |
-| src/zicato/health | 2,251 | 2,251 | 1,209 | 46.3% |
-| src/zicato/board | 2,346 | 2,346 | 1,044 | 55.5% |
-| src/zicato/check | 1,566 | 1,566 | 956 | 39.0% |
+| src/zicato/builder | 2,247 | 2,247 | 1,281 | 43.0% |
+| src/zicato/health | 2,316 | 2,316 | 1,267 | 45.3% |
+| src/zicato/check | 1,736 | 1,736 | 1,114 | 35.8% |
+| src/zicato/board | 2,363 | 2,363 | 1,056 | 55.3% |
+| src/zicato/workspace | 2,074 | 2,074 | 976 | 52.9% |
 | src/zicato/adapters | 2,168 | 2,168 | 793 | 63.4% |
+| src/zicato/_tournament_worker.py | 1,400 | 1,400 | 770 | 45.0% |
 | src/zicato/testing | 1,447 | 1,447 | 760 | 47.5% |
 | src/zicato/judge_runtime | 1,772 | 1,772 | 755 | 57.4% |
-| src/zicato/workspace | 1,736 | 1,736 | 740 | 57.4% |
-| src/zicato/_tournament_worker.py | 1,298 | 1,298 | 675 | 48.0% |
 | src/zicato/synthetic | 1,139 | 1,139 | 544 | 52.2% |
-| src/zicato/scoring | 1,388 | 1,388 | 464 | 66.6% |
+| src/zicato/scoring | 1,395 | 1,395 | 469 | 66.4% |
 | src/zicato/patterns | 804 | 804 | 417 | 48.1% |
-| src/zicato/models_config.py | 447 | 447 | 356 | 20.4% |
+| src/zicato/models_config.py | 465 | 465 | 345 | 25.8% |
+| src/zicato/storage | 994 | 994 | 341 | 65.7% |
 | src/zicato/emulator | 675 | 675 | 306 | 54.7% |
-| src/zicato/storage | 940 | 940 | 303 | 67.8% |
 | src/zicato/example_workspace | 658 | 658 | 301 | 54.3% |
-| src/zicato/config.py | 679 | 679 | 225 | 66.9% |
 | src/zicato/logging_stream.py | 445 | 445 | 215 | 51.7% |
-| src/zicato/runtime_factory.py | 421 | 421 | 210 | 50.1% |
 | hatch_build.py | 205 | 205 | 169 | 17.6% |
-| src/zicato/workspace_loader.py | 362 | 362 | 143 | 60.5% |
+| src/zicato/driver_imports.py | 206 | 206 | 161 | 21.8% |
+| src/zicato/runtime_factory.py | 262 | 262 | 149 | 43.1% |
+| src/zicato/workspace_loader.py | 321 | 321 | 126 | 60.7% |
+| src/zicato/config.py | 162 | 162 | 121 | 25.3% |
 | src/zicato/util | 253 | 253 | 103 | 59.3% |
 | src/zicato/integrations | 143 | 143 | 100 | 30.1% |
+| src/zicato/adapter_factory.py | 120 | 120 | 89 | 25.8% |
 | src/zicato/reasoning.py | 112 | 112 | 83 | 25.9% |
-| src/zicato/adapter_factory.py | 218 | 218 | 73 | 66.5% |
 | src/zicato/import_path.py | 155 | 155 | 60 | 61.3% |
 | src/zicato/__init__.py | 74 | 74 | 48 | 35.1% |
 | src/zicato/orchestrator.py | 14 | 14 | 11 | 21.4% |
-| src/zicato/aux_timeout.py | 54 | 54 | 8 | 85.2% |
+| src/zicato/aux_timeout.py | 15 | 15 | 6 | 60.0% |
 
 ## Ratchet policy
 
@@ -423,3 +424,8 @@ dropped rows named.
 | Committed generation file metadata (production) | 211,306 | +33 | 211,339 | Issue #48: stored tree entries retain file type and mode. Publication explicitly includes bookkeeping and compares regular-file type, bytes and executable state with selected parent and child source. Queries retain their three existing response fields. |
 | Committed generation file metadata (production logic) | 120,496 | +27 | 120,523 | Issue #48: compare committed source metadata through the existing generation-store interface. Non-executable permission bits remain outside portable source identity. |
 | Required proposal validator in logging fixture (total) | 496,744 | +7 | 496,751 | Issue #48: supply the validation callback required by candidate acceptance and verify its invocation. All prior proposal lifecycle assertions remain intact. |
+| Accepted invocation inputs and recoverable publication (total) | 496,751 | +5,638 | 502,389 | Issues #364, #387 and #480–#484: accepted declarations, retained epoch inputs, custom driver registration, recoverable contract and epoch publication, index currency, and the invocation lifetime, with strict-admission and real-boundary regression coverage. Reviewed fixture and baseline-experiment corrections preserve existing outcomes. |
+| Accepted invocation inputs and recoverable publication (production) | 211,339 | +2,150 | 213,489 | Issues #364, #387 and #480–#484: shared authored declarations replace global configuration pins and independent coercion. One invocation owns accepted settings, selected epoch inputs, driver scope, telemetry, recovery and cleanup; existing publication owners validate retained writes and dirty revisions. |
+| Accepted invocation inputs and recoverable publication (production logic) | 120,523 | +3,041 | 123,564 | Issues #364, #387 and #480–#484: typed admission and worker reconstruction preserve accepted input forms. Recovery validates retained bytes before publication; settled reads and cleanup enforce projection currency; the score owner persists dirty state before history or flat replacement. |
+| Canonical worker artifacts and retained reader fixtures (total) | 502,389 | +37 | 502,426 | Issues #364, #387 and #480–#482: canonical measurement paths and run identities keep worker transport separate from durable captures. Typed lineage assertions, required score publication markers, read-only revision checks, and retained historical scoring preserve existing lifecycle and reader oracles. |
+| Remove repeated test execution and correct subprocess setup (total) | 502,426 | -21 | 502,405 | Issues #405 and #498: validators run directly where their findings are the subject; recovery cases share prepared input and remove one duplicate test. Subprocess fixtures declare their imports and omit unrelated telemetry server startup. Focused tests retain real process and recovery checks. |

@@ -1,22 +1,8 @@
-"""Tests for :mod:`zicato.config` — the typed configuration tree.
-
-:func:`zicato.config.load_config` is the *single* place zicato reads the
-environment. These tests cover the things that matter: the dataclass
-defaults, the env-var parsing (including invalid-value clamping and
-type coercion), the precedence layering
-(defaults < env < pinned CLI flags < explicit overrides), and the
-loud-ignore of every deleted env binding.
-
-Every test passes an explicit ``env`` dict so the suite is fully
-isolated from the real process environment — no ``monkeypatch`` of
-``os.environ`` required.
-"""
+"""Strict domain configuration, explicit defaults, and environment inventory."""
 
 from __future__ import annotations
 
 import dataclasses
-import re
-from pathlib import Path
 
 import pytest
 
@@ -27,13 +13,9 @@ from zicato.config import (
     IntegrationConfig,
     RuntimeTuningConfig,
     ZicatoConfig,
-    clear_pinned_overrides,
     describe_env_vars,
-    get_pinned_overrides,
     health_config_from_workspace,
     load_config,
-    pin_overrides,
-    pinned_override,
 )
 
 # ---------------------------------------------------------------------------
@@ -118,26 +100,16 @@ def test_health_block_partial_keeps_other_defaults() -> None:
     assert cfg.scoring_epsilon == 1e-6
 
 
-def test_health_block_clamps_invalid_values_to_defaults() -> None:
-    """Out-of-range / unparseable values degrade to the field default.
-
-    The same clamp the env bindings applied: a zero window or a negative
-    epsilon would silently disable a detector, so it falls back instead.
-    """
-    cfg = health_config_from_workspace(
-        {
-            "health": {
-                "scoring_window": 0,
-                "stalled_rejects": -4,
-                "scoring_epsilon": -1.0,
-                "generalization_gap_warn": "not-a-number",
-            }
-        }
-    )
-    assert cfg.scoring_window == 3
-    assert cfg.stalled_rejects == 3
-    assert cfg.scoring_epsilon == 1e-6
-    assert cfg.generalization_gap_warn == 0.05
+def test_health_block_rejects_invalid_values_with_their_field_path() -> None:
+    """Invalid authored thresholds fail before a detector can use a default."""
+    for name, value in {
+        "scoring_window": 0,
+        "stalled_rejects": -4,
+        "scoring_epsilon": -1.0,
+        "generalization_gap_warn": "not-a-number",
+    }.items():
+        with pytest.raises(ValueError, match=f"health.{name}"):
+            health_config_from_workspace({"health": {name: value}})
 
 
 def test_health_block_zero_is_valid_for_non_negative_float() -> None:
@@ -146,22 +118,21 @@ def test_health_block_zero_is_valid_for_non_negative_float() -> None:
     assert cfg.scoring_epsilon == 0.0
 
 
-def test_health_block_string_numbers_coerce() -> None:
-    """A JSON-string number still coerces (same coercers as the env layer)."""
-    cfg = health_config_from_workspace({"health": {"scoring_window": "5"}})
-    assert cfg.scoring_window == 5
-    assert isinstance(cfg.scoring_window, int)
+def test_health_block_rejects_string_numbers() -> None:
+    """An authored integer field requires an integer JSON value."""
+    with pytest.raises(ValueError, match="health.scoring_window: expected an integer"):
+        health_config_from_workspace({"health": {"scoring_window": "5"}})
 
 
 def test_health_block_unknown_key_raises() -> None:
     """A typo'd key fails loudly, naming the valid fields."""
-    with pytest.raises(KeyError, match="scoring_windw"):
+    with pytest.raises(ValueError, match="health.scoring_windw"):
         health_config_from_workspace({"health": {"scoring_windw": 5}})
 
 
 def test_health_block_non_object_raises() -> None:
     """A ``health`` block that is not a JSON object fails loudly."""
-    with pytest.raises(ValueError, match="'health' block"):
+    with pytest.raises(ValueError, match="health: expected an object"):
         health_config_from_workspace({"health": 5})
 
 
@@ -222,9 +193,6 @@ def test_deleted_env_vars_absent_from_describe() -> None:
     """
     by_name = {info.name: info for info in describe_env_vars()}
     for name in _DELETED_ENV_VARS:
-        if name == "ZICATO_HARMONOGRAF_URL":
-            assert by_name[name].role == "internal-handoff"
-            continue
         assert name not in by_name
 
 
@@ -232,72 +200,19 @@ def test_deleted_env_vars_absent_from_describe() -> None:
 # The merited env-var set
 # ---------------------------------------------------------------------------
 
-_VALID_ROLES = {
-    "harness-contract",
-    "internal-handoff",
-    "secrets-boundary",
-    "test-toggle",
-}
 
-
-def test_describe_env_vars_is_the_labelled_merited_set() -> None:
-    """Every kept variable carries a role label and a description."""
-    infos = describe_env_vars()
-    assert infos, "the merited set must not be empty"
-    for info in infos:
-        assert info.role in _VALID_ROLES, info
-        assert info.description, info
-    names = {info.name for info in infos}
-    # The harness contract, internal handoff pair, secret references, and
-    # CI/test toggles are all present.
-    assert "ZICATO_RUN_SCRATCH_DIR" in names
-    assert "ZICATO_HARMONOGRAF_URL" in names
-    assert "ZICATO_HARMONOGRAF_GRPC" in names
-    assert "ZICATO_SKIP_HOOK_CHECK" in names
-    assert "ZICATO_PARITY_UPDATE" in names
-
-
-def test_merited_set_names_match_the_code_constants() -> None:
-    """The described names cannot drift from the constants the code uses."""
+def test_environment_report_describes_the_retained_boundary_values() -> None:
     from zicato.epoch.snapshot_scope import SCRATCH_DIR_ENV
-    from zicato.telemetry.sink import HARMONOGRAF_GRPC_ENV, HARMONOGRAF_URL_ENV
+    from zicato.runtime.context import RUNTIME_CONTEXT_ENV
 
-    names = {info.name for info in describe_env_vars()}
-    assert SCRATCH_DIR_ENV in names
-    assert HARMONOGRAF_URL_ENV in names
-    assert HARMONOGRAF_GRPC_ENV in names
-
-
-def test_merited_set_harmonograf_is_internal_handoff() -> None:
-    """The handoff pair is labelled internal — not an operator surface."""
-    by_name = {info.name: info for info in describe_env_vars()}
-    assert by_name["ZICATO_HARMONOGRAF_URL"].role == "internal-handoff"
-    assert by_name["ZICATO_HARMONOGRAF_GRPC"].role == "internal-handoff"
-
-
-def test_project_specific_environment_names_are_in_the_inventory() -> None:
-    """Every project-owned process variable in production source is discoverable."""
-    source_root = Path(__file__).parents[1] / "src" / "zicato"
-    mentioned: set[str] = set()
-    for path in source_root.rglob("*.py"):
-        if path.name == "config.py":
-            continue
-        text = path.read_text(encoding="utf-8")
-        mentioned.update(re.findall(r"\b(?:ZICATO|PI)_[A-Z][A-Z0-9_]*\b", text))
-
-    non_environment_symbols = {
-        "ZICATO_DEFAULTS",
-        "ZICATO_EVALUATOR_REVISION",
-        "ZICATO_GOLDFIVE_INTEGRATION_REVISION",
-        "ZICATO_HEALTH_",
-        "ZICATO_LOGGER_NAME",
-    }
-    deleted_names_documented_by_tests = set(_DELETED_ENV_VARS) - {"ZICATO_HARMONOGRAF_URL"}
-    discovered = {info.name for info in describe_env_vars() if not info.name.startswith("<")}
-    test_tooling_only = {"ZICATO_SKIP_HOOK_CHECK", "ZICATO_PARITY_UPDATE"}
-    assert mentioned - non_environment_symbols - deleted_names_documented_by_tests == (
-        discovered - test_tooling_only
-    )
+    infos = describe_env_vars()
+    assert all(info.role and info.description for info in infos)
+    by_name = {info.name: info for info in infos}
+    assert by_name[SCRATCH_DIR_ENV].role == "harness-contract"
+    assert by_name[RUNTIME_CONTEXT_ENV].role == "internal-handoff"
+    assert by_name["XDG_RUNTIME_DIR"].role == "operating-system"
+    assert "ZICATO_HARMONOGRAF_URL" not in by_name
+    assert "ZICATO_HARMONOGRAF_GRPC" not in by_name
 
 
 # ---------------------------------------------------------------------------
@@ -326,19 +241,19 @@ def test_override_leaves_other_fields_of_a_section_intact() -> None:
 
 def test_unknown_override_section_raises() -> None:
     """An unknown section name in ``overrides`` raises rather than silently no-ops."""
-    with pytest.raises(KeyError, match="unknown config section"):
+    with pytest.raises(ValueError, match="config.nonsense: unknown field"):
         load_config(overrides={"nonsense": {"x": 1}})
 
 
 def test_unknown_override_field_raises() -> None:
     """An unknown field name within a known section raises."""
-    with pytest.raises(KeyError, match="unknown field"):
+    with pytest.raises(ValueError, match="unknown field"):
         load_config(overrides={"health": {"not_a_field": 1}})
 
 
 def test_non_mapping_override_section_raises() -> None:
     """An override section whose value is not a mapping raises ``TypeError``."""
-    with pytest.raises(TypeError, match="must be a mapping"):
+    with pytest.raises(ValueError, match="expected an object"):
         load_config(overrides={"health": 5})  # type: ignore[dict-item]
 
 
@@ -352,80 +267,6 @@ def test_deleted_env_vars_ignored_via_os_environ(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("ZICATO_HEALTH_SCORING_WINDOW", "21")
     cfg = load_config()
     assert cfg.health.scoring_window == 3  # default — env var deleted
-
-
-# ---------------------------------------------------------------------------
-# Process-pinned overrides — the CLI-flag layer
-# ---------------------------------------------------------------------------
-#
-# Pins are process-global; the suite-wide autouse fixture in conftest.py
-# clears them around every test, so these tests only pin, never clean up.
-
-
-def test_pinned_overrides_beat_the_defaults() -> None:
-    """A pinned value beats the dataclass default."""
-    pin_overrides({"health": {"scoring_window": 12}})
-    cfg = load_config()
-    assert cfg.health.scoring_window == 12
-
-
-def test_pinned_overrides_reach_a_flagless_load_config() -> None:
-    """The whole point: a deep call site's bare ``load_config()`` sees pins."""
-    pin_overrides({"aux": {"call_timeout_s": 3.5}, "runtime": {"parallelism": 9}})
-    cfg = load_config()
-    assert cfg.aux.call_timeout_s == 3.5
-    assert cfg.runtime.parallelism == 9
-
-
-def test_explicit_overrides_beat_pinned_overrides() -> None:
-    """An explicit ``overrides=`` mapping wins over the pinned layer."""
-    pin_overrides({"aux": {"call_timeout_s": 3.5}})
-    cfg = load_config(overrides={"aux": {"call_timeout_s": 99.0}})
-    assert cfg.aux.call_timeout_s == 99.0
-
-
-def test_pin_overrides_merges_field_by_field() -> None:
-    """Repeated pins merge; the latest pin of a field wins."""
-    pin_overrides({"health": {"scoring_window": 5}})
-    pin_overrides({"health": {"stalled_rejects": 8}})
-    pin_overrides({"health": {"scoring_window": 6}})
-    cfg = load_config()
-    assert cfg.health.scoring_window == 6
-    assert cfg.health.stalled_rejects == 8
-
-
-def test_pin_overrides_validates_eagerly() -> None:
-    """An unknown section/field raises at the pin site and pins nothing."""
-    with pytest.raises(KeyError, match="unknown config section"):
-        pin_overrides({"nonsense": {"x": 1}})
-    with pytest.raises(KeyError, match="unknown field"):
-        pin_overrides({"health": {"not_a_field": 1}})
-    assert get_pinned_overrides() == {}
-    assert load_config() == ZicatoConfig()
-
-
-def test_get_pinned_overrides_returns_a_detached_copy() -> None:
-    """Mutating the returned mapping does not touch the live pins."""
-    pin_overrides({"runtime": {"parallelism": 2}})
-    snapshot = get_pinned_overrides()
-    snapshot["runtime"]["parallelism"] = 999
-    assert load_config().runtime.parallelism == 2
-
-
-def test_pinned_override_reports_only_explicit_pins() -> None:
-    """``pinned_override`` distinguishes an explicit pin from the default."""
-    assert pinned_override("runtime", "parallelism") is None
-    pin_overrides({"runtime": {"parallelism": 7}})
-    assert pinned_override("runtime", "parallelism") == 7
-    assert pinned_override("aux", "call_timeout_s") is None
-
-
-def test_clear_pinned_overrides_restores_defaults() -> None:
-    """``clear_pinned_overrides`` drops every pin."""
-    pin_overrides({"aux": {"call_timeout_s": 1.0}})
-    clear_pinned_overrides()
-    assert get_pinned_overrides() == {}
-    assert load_config() == ZicatoConfig()
 
 
 def test_every_sub_config_is_reachable_from_the_root() -> None:

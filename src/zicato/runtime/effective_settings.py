@@ -1,27 +1,4 @@
-"""The settings a run is operating under, each with the tier that set it.
-
-A run's behaviour is decided by knobs that arrive from four places: the
-dataclass field defaults, the workspace ``config.json``, the CLI flags a
-command pins for the process, and the host itself — the worker ceiling is
-derived from the usable CPU count when nothing pins it. The tournament's
-replicate count has three tiers of its own, the frozen contract, the epoch's
-measured noise floor, and the structure's default, and the loop records it
-under :data:`TOURNAMENT_REPLICATES_KEY` once the floor is known. Reading an effective
-value back off a running system meant re-deriving that composition by hand,
-and a ceiling nobody wrote down is indistinguishable, from the outside, from
-one an operator chose.
-
-:func:`effective_settings` composes the whole map once — ``{name: {"value":
-..., "source": ...}}``, keyed by the dotted name the knob carries in
-configuration — and the evolve loop stamps it onto the run's heartbeat
-record. The field is additive: a reader that does not know it ignores it.
-
-Two knobs are resolved rather than read, and both keep their rule in
-:mod:`zicato.runtime_factory` where the configuration is built:
-``runtime.parallelism`` is the one knob all three configurable tiers can
-set, and ``runtime.host_worker_permits`` reports the count actually in
-force, so an AUTO ceiling is checkable against the machine that ran it.
-"""
+"""Record selected operational settings and runtime-derived limits."""
 
 from __future__ import annotations
 
@@ -30,15 +7,16 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
+from zicato.core.settings import RuntimeSettings
 from zicato.core.types import RuntimeConfig
 from zicato.selection.replicates import REPLICATE_SOURCE_TIERS
 
 #: The knob is at the default its dataclass field declares.
 SOURCE_DEFAULT = "default"
 #: The workspace ``config.json`` sets the knob.
-SOURCE_WORKSPACE = "workspace config.json"
-#: A CLI flag pinned the knob for this process (``zicato.config.pin_overrides``).
-SOURCE_PINNED_FLAG = "pinned CLI flag"
+SOURCE_WORKSPACE = "workspace"
+#: The explicit invocation overlay sets the knob.
+SOURCE_INVOCATION = "invocation"
 #: The value was derived from the host's usable CPU count.
 SOURCE_HOST_CPU_COUNT = "host CPU count"
 
@@ -48,7 +26,7 @@ SOURCE_HOST_CPU_COUNT = "host CPU count"
 SOURCE_TIERS: tuple[str, ...] = (
     SOURCE_DEFAULT,
     SOURCE_WORKSPACE,
-    SOURCE_PINNED_FLAG,
+    SOURCE_INVOCATION,
     SOURCE_HOST_CPU_COUNT,
     *REPLICATE_SOURCE_TIERS,
 )
@@ -61,27 +39,7 @@ TOURNAMENT_REPLICATES_KEY = "tournament.replicates"
 #: Each is a knob the workspace ``config.json`` ``runtime`` block can set
 #: under its own name, so presence of the key in that block is what separates
 #: a configured value from a defaulted one.
-RECORDED_RUNTIME_KNOBS: tuple[str, ...] = (
-    "instance_id",
-    "seed",
-    "parallelism",
-    "propose_parallelism",
-    "host_worker_permits",
-    "worker_permit_dir",
-    "log_level",
-    "scrub_worker_env",
-    "worker_env_passthrough",
-    "diversity_tolerance",
-    "infra_abort_round_threshold",
-    "infra_backoff_base_s",
-    "infra_backoff_cap_s",
-    "max_tokens_per_round",
-    "persist_run_results",
-    "persist_judge_io",
-    "preflight_gate",
-    "preflight_probe_points",
-    "preflight_probe_mutation_ids",
-)
+RECORDED_RUNTIME_KNOBS: tuple[str, ...] = tuple(item.name for item in fields(RuntimeSettings))
 
 #: The :class:`~zicato.core.types.RuntimeConfig` fields the record leaves out,
 #: each with the reason it is not a recordable setting. A guard test requires
@@ -104,7 +62,10 @@ UNRECORDED_RUNTIME_FIELDS: Mapping[str, str] = {
     "token_ledger": "a per-round tally minted at run time, not configuration",
     "judge_io_sink": "a live sink object the worker binds, not configuration",
     "goldfive": "contract settings recorded in the epoch's scoring.json",
-    "supervisor_kill_wait_s": "no tier sets it; the factory never reads it from a file",
+    "configuration": "the selected values and their sources, reported field by field",
+    "telemetry": "invocation service addresses, excluded from evaluation identity",
+    "driver_imports": "resolved driver roots and mutable-package scope from adapter registration",
+    "run_context": "per-unit workspace, epoch, generation, run, snapshot, and scratch identities",
 }
 
 
@@ -123,57 +84,18 @@ def recorded_setting(value: Any, source: str) -> dict[str, Any]:
 
 
 def effective_settings(
-    config: RuntimeConfig, runtime_block: Mapping[str, Any]
+    config: RuntimeConfig, runtime_block: Mapping[str, Any] | None = None
 ) -> dict[str, dict[str, Any]]:
-    """Return every effective setting of a run, paired with its source tier.
-
-    ``config`` is the :class:`~zicato.core.types.RuntimeConfig` the run was
-    built with, so the recorded values are the ones in force rather than a
-    second reading of the same files. ``runtime_block`` is the workspace
-    ``config.json`` ``runtime`` object that built it, which is what tells a
-    configured value from a defaulted one.
-
-    The typed configuration tree (:class:`zicato.config.ZicatoConfig`) is
-    read here rather than passed in: it is process state, composed from the
-    dataclass defaults and whatever the command pinned at startup. An
-    embedding application that passes ``overrides`` to a single
-    :func:`zicato.config.load_config` call is not represented, because that
-    override lives only in that call and no runtime path uses one.
-    """
-    from zicato.config import (  # noqa: PLC0415 — the driver layer loads late
-        ZicatoConfig,
-        get_pinned_overrides,
-        load_config,
-    )
+    """Report the values the runtime carries, with their selected sources."""
     from zicato.runtime.spawn_permit import effective_permit_count  # noqa: PLC0415
-    from zicato.runtime_factory import (  # noqa: PLC0415 — avoid an import cycle
-        resolve_host_worker_permits,
-        resolve_parallelism,
+
+    resolved = config.operational_configuration()
+    settings = resolved.effective_settings()
+    limit = config.host_worker_permits
+    source = (
+        SOURCE_HOST_CPU_COUNT if limit is None else resolved.sources["runtime.host_worker_permits"]
     )
-
-    pinned = get_pinned_overrides()
-    typed = load_config()
-    settings: dict[str, dict[str, Any]] = {}
-
-    for section in fields(ZicatoConfig):
-        block = getattr(typed, section.name)
-        pinned_here = pinned.get(section.name, {})
-        for knob in fields(block):
-            source = SOURCE_PINNED_FLAG if knob.name in pinned_here else SOURCE_DEFAULT
-            settings[f"{section.name}.{knob.name}"] = recorded_setting(
-                getattr(block, knob.name), source
-            )
-
-    for name in RECORDED_RUNTIME_KNOBS:
-        source = SOURCE_WORKSPACE if name in runtime_block else SOURCE_DEFAULT
-        settings[f"runtime.{name}"] = recorded_setting(getattr(config, name), source)
-
-    value, source = resolve_parallelism(runtime_block)
-    settings["runtime.parallelism"] = recorded_setting(value, source)
-
-    limit, permits_source = resolve_host_worker_permits(runtime_block)
     settings["runtime.host_worker_permits"] = recorded_setting(
-        effective_permit_count(limit), permits_source
+        effective_permit_count(limit), source
     )
-
     return settings

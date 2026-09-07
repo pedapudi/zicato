@@ -118,7 +118,7 @@ def _resolve_health_config(config: HealthConfig | None) -> HealthConfig:
     ``config.json``'s ``health`` block via
     :func:`zicato.config.health_config_from_workspace`. When a caller
     passes nothing, :func:`zicato.config.load_config` supplies the
-    defaulted tree (plus any process-pinned overrides).
+    declared field defaults.
     """
     if config is not None:
         return config
@@ -325,8 +325,7 @@ def detect_degenerate_scoring(
     real delta.
 
     ``config`` defaults to the :class:`~zicato.config.HealthConfig` that
-    :func:`load_config` builds from the dataclass field defaults plus any
-    process-pinned CLI overrides.
+    :func:`load_config` builds from the dataclass field defaults.
     """
     health = _resolve_health_config(config)
     window = health.scoring_window
@@ -492,8 +491,7 @@ def detect_no_expectations(
     Silent on an empty board.
 
     ``config`` defaults to the :class:`~zicato.config.HealthConfig` that
-    :func:`load_config` builds from the dataclass field defaults plus any
-    process-pinned CLI overrides.
+    :func:`load_config` builds from the dataclass field defaults.
     """
     coverage = measure_expectation_coverage(board_entries, config)
     if not coverage.reportable:
@@ -716,8 +714,7 @@ def detect_stalled_loop(
     already on the outcomes the detector walks.
 
     ``config`` defaults to the :class:`~zicato.config.HealthConfig` that
-    :func:`load_config` builds from the dataclass field defaults plus any
-    process-pinned CLI overrides.
+    :func:`load_config` builds from the dataclass field defaults.
     """
     threshold = _resolve_health_config(config).stalled_rejects
 
@@ -831,8 +828,7 @@ def detect_generalization_gap(
       bar it clears.
 
     ``config`` defaults to the :class:`~zicato.config.HealthConfig` that
-    :func:`load_config` builds from the dataclass field defaults plus any
-    process-pinned CLI overrides.
+    :func:`load_config` builds from the dataclass field defaults.
     """
     health = _resolve_health_config(config)
     warn = health.generalization_gap_warn
@@ -1820,6 +1816,7 @@ def assess_loop_health(
     settlement_receipt_attention: SettlementReceiptAttention | None = None,
     preflight_gate: str = PREFLIGHT_GATE_DEFAULT,
     attributable_regressions: dict[str, dict[str, Any]] | None = None,
+    summarizer_failures: tuple[dict[str, Any], ...] = (),
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -1949,6 +1946,18 @@ def assess_loop_health(
     findings.extend(detect_attributable_entry_regression(attributable_regressions))
     findings.extend(detect_on_promote_hook_failed(on_promote_failure))
     findings.extend(detect_settlement_receipt_attention(settlement_receipt_attention))
+    if summarizer_failures:
+        findings.append(
+            HealthFinding(
+                code="outcome_summarizer_failed",
+                severity="warning",
+                summary=(
+                    f"optional outcome summarizer failed in "
+                    f"{len(summarizer_failures)} recorded round(s)"
+                ),
+                detail={"failures": list(summarizer_failures)},
+            )
+        )
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(

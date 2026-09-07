@@ -27,6 +27,7 @@ import json
 from collections.abc import Awaitable, Callable
 
 from zicato.aux_timeout import aux_call_timeout_s
+from zicato.core.settings import AuxConfig
 from zicato.core.types import Expectation, ExpectationKind, ExpectationResult, RunResult
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,7 @@ async def evaluate_rubric_judge(
     expectation: Expectation,
     result: RunResult,
     aux_call_llm: Callable[[str, str, str], Awaitable[str]] | None,
+    aux_config: AuxConfig | None = None,
 ) -> ExpectationResult:
     """Evaluate a :attr:`~zicato.core.ExpectationKind.RUBRIC` expectation.
 
@@ -169,7 +171,7 @@ async def evaluate_rubric_judge(
         # it. An empty string keeps the dispatch model-agnostic.
         raw = await asyncio.wait_for(
             aux_call_llm(_SYSTEM_PROMPT, user_prompt, ""),
-            timeout=aux_call_timeout_s(),
+            timeout=aux_call_timeout_s(aux_config),
         )
     except TimeoutError:
         return ExpectationResult(

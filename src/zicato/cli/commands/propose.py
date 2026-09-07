@@ -52,6 +52,7 @@ from zicato.core.workspace import (
     epoch_dir,
     generation_dir,
 )
+from zicato.driver_imports import with_workspace_imports
 from zicato.proposer.agent import ProposerContext
 from zicato.proposer.brief import load_brief
 from zicato.proposer.proposer import ProposerError
@@ -379,6 +380,7 @@ def _resolve_aux_llm(config: WorkspaceConfig) -> Any:
     type=click.IntRange(min=0, max=10),
     help="How many times to ask the proposer to fix a malformed response.",
 )
+@with_workspace_imports
 def propose_cmd(
     workspace: str,
     epoch: str | None,

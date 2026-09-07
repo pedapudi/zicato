@@ -81,6 +81,7 @@ def phase1_workspace(tmp_path: Path) -> Path:
         ws / "config.json",
         {
             "adapter": {
+                "kind": "adk",
                 "entrypoint": "kossel_run:root_agent",
                 "mutable_trees": [str(source_root)],
             }

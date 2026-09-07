@@ -486,18 +486,19 @@ async def test_a_failing_draft_call_keeps_the_deterministic_remedy(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_a_hung_draft_endpoint_cannot_wedge_the_pass(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """The optional polish call is wrapped in the shared aux budget.
 
     It matters more here than at most aux call sites: the remedy is already
     complete before the model is asked anything, so a pass that blocked on a
-    dead endpoint would be waiting for nothing. The budget is pinned tiny and
+    dead endpoint would be waiting for nothing. The budget is short and
     the callable never returns; the finding must come back deterministic.
     """
     import asyncio
 
-    monkeypatch.setattr("zicato.proposer.reflection.aux_call_timeout_s", lambda: 0.05)
+    from zicato.config import AuxConfig
+
     _failing_rounds(tmp_path, n=6)
     finding = next(f for f in derive_findings(_investigation(tmp_path)) if f.remedy is not None)
 
@@ -505,7 +506,12 @@ async def test_a_hung_draft_endpoint_cannot_wedge_the_pass(
         await asyncio.sleep(60)
         return "never arrives"
 
-    assert await draft_remedy(finding, call_llm=hangs, model="m") == finding
+    assert (
+        await draft_remedy(
+            finding, call_llm=hangs, model="m", aux_config=AuxConfig(call_timeout_s=0.05)
+        )
+        == finding
+    )
 
 
 # ---------------------------------------------------------------------------

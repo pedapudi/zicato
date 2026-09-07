@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from zicato.config import pin_overrides
+from zicato.config import InvocationOverlay, resolve_configuration
 from zicato.core.types import RuntimeConfig
 from zicato.runtime.effective_settings import (
     RECORDED_RUNTIME_KNOBS,
     SOURCE_DEFAULT,
     SOURCE_HOST_CPU_COUNT,
-    SOURCE_PINNED_FLAG,
+    SOURCE_INVOCATION,
     SOURCE_TIERS,
     SOURCE_WORKSPACE,
     UNRECORDED_RUNTIME_FIELDS,
@@ -78,12 +78,23 @@ def test_a_knob_the_workspace_sets_is_attributed_to_config_json(tmp_path: Path) 
 def test_a_pinned_flag_outranks_the_workspace_and_is_named(tmp_path: Path) -> None:
     """``--parallelism`` beats the same knob in the file, and the map says so."""
     block: dict[str, object] = {"parallelism": 12}
-    pin_overrides({"runtime": {"parallelism": 3}, "aux": {"call_timeout_s": 30.0}})
+    configuration = resolve_configuration(
+        {"runtime": block},
+        overlay=InvocationOverlay.from_mapping(
+            {"runtime": {"parallelism": 3}, "aux": {"call_timeout_s": 30.0}}
+        ),
+    )
+    runtime = make_runtime_config(
+        {},
+        workspace_root=tmp_path,
+        target_call_llm=_target_call_llm,
+        evaluation_call_llm=_evaluation_call_llm,
+        configuration=configuration,
+    )
+    settings = effective_settings(runtime)
 
-    settings = effective_settings(_config(tmp_path, block), block)
-
-    assert settings["runtime.parallelism"] == {"value": 3, "source": SOURCE_PINNED_FLAG}
-    assert settings["aux.call_timeout_s"] == {"value": 30.0, "source": SOURCE_PINNED_FLAG}
+    assert settings["runtime.parallelism"] == {"value": 3, "source": SOURCE_INVOCATION}
+    assert settings["aux.call_timeout_s"] == {"value": 30.0, "source": SOURCE_INVOCATION}
 
 
 def test_the_worker_ceiling_reports_the_count_the_host_resolved(tmp_path: Path) -> None:
@@ -106,10 +117,7 @@ def test_the_worker_ceiling_reports_the_count_the_host_resolved(tmp_path: Path) 
     [
         (9, 9, SOURCE_WORKSPACE),
         (0, 0, SOURCE_WORKSPACE),
-        # ``true`` reads as AUTO rather than ``int()``-ing to a one-worker
-        # host, so the host is what decided the number.
-        (True, None, SOURCE_HOST_CPU_COUNT),
-        (False, 0, SOURCE_WORKSPACE),
+        (None, None, SOURCE_HOST_CPU_COUNT),
     ],
 )
 def test_an_explicit_worker_ceiling_is_recorded_as_written(
@@ -184,7 +192,7 @@ def test_a_heartbeat_without_the_field_reads_back_empty() -> None:
 async def test_the_beater_carries_the_map_onto_disk(tmp_path: Path) -> None:
     """Stamped once, the map survives every later periodic bump."""
     beater = HeartbeatBeater(tmp_path, "default", interval_s=10.0)
-    beater.update(settings={"runtime.parallelism": {"value": 3, "source": SOURCE_PINNED_FLAG}})
+    beater.update(settings={"runtime.parallelism": {"value": 3, "source": SOURCE_INVOCATION}})
     beater.bump_now()
     beater.update(phase="proposer")
     beater.bump_now()
@@ -192,4 +200,4 @@ async def test_the_beater_carries_the_map_onto_disk(tmp_path: Path) -> None:
     written = read_heartbeat(tmp_path)
     assert written is not None
     assert written.phase == "proposer"
-    assert written.settings == {"runtime.parallelism": {"value": 3, "source": SOURCE_PINNED_FLAG}}
+    assert written.settings == {"runtime.parallelism": {"value": 3, "source": SOURCE_INVOCATION}}

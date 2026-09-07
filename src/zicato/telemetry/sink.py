@@ -36,41 +36,14 @@ view across runs.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
-from zicato.config import IntegrationConfig, load_config
+from zicato.config import IntegrationConfig, resolve_configuration
 from zicato.core.workspace import events_jsonl_path
+from zicato.runtime.context import inherited_runtime_context
 
 log = logging.getLogger("zicato.telemetry.sink")
-
-#: INTERNAL HANDOFF CHANNEL — kept as an environment
-#: variable, and NOT an operator surface. Operators point
-#: zicato at an external harmonograf with ``zicato evolve
-#: --harmonograf-url`` (or the workspace ``config.json``'s
-#: ``harmonograf_url`` key); this variable exists so the evolve loop's
-#: AUTO-LAUNCH path (:mod:`zicato.evolve.lifecycle_services`) can
-#: broadcast the launched server's URL to every downstream consumer
-#: that re-resolves via :func:`resolve_harmonograf_url` — in-process
-#: call sites and the tournament worker subprocesses alike — without
-#: any further plumbing. The orchestrator restores the variable's prior
-#: state at shutdown (``_EnvVarRestorer``), so the handoff never leaks
-#: past the invocation that made it.
-HARMONOGRAF_URL_ENV = "ZICATO_HARMONOGRAF_URL"
-
-#: Environment variable carrying the *gRPC* dial target (a bare
-#: ``host:port``) for an AUTO-LAUNCHED harmonograf. The auto-launched
-#: server binds two distinct ports — a browser-facing gRPC-Web port (the
-#: one in ``ZICATO_HARMONOGRAF_URL``, used for dashboard deep-links) and a
-#: native gRPC port the per-run sink must dial. Deriving the gRPC target
-#: from the web URL would dial the *web* port over native gRPC, fail the
-#: handshake, and — because all sink errors are swallowed — silently drop
-#: telemetry. The orchestrator's auto-launch
-#: wiring sets this to ``host:grpc_port`` so the sink dials the right
-#: port. Unset for an EXTERNAL harmonograf, where the web URL *is* the
-#: dial target (a single port) and the scheme-stripping fallback applies.
-HARMONOGRAF_GRPC_ENV = "ZICATO_HARMONOGRAF_GRPC"
 
 
 def make_run_sink_path(
@@ -175,75 +148,20 @@ def resolve_harmonograf_url(
     *,
     config: IntegrationConfig | None = None,
 ) -> str:
-    """Return the configured harmonograf server URL, or ``""`` when unset.
-
-    Resolution order, first non-empty wins:
-
-    1. :attr:`config.harmonograf_url
-       <zicato.config.IntegrationConfig.harmonograf_url>` — the operator
-       surface, set by the ``zicato evolve --harmonograf-url`` flag
-       (pinned into the typed config tree at command startup) or
-       programmatically by an embedding application.
-    2. The ``ZICATO_HARMONOGRAF_URL`` environment variable — the
-       INTERNAL auto-launch handoff channel (:data:`HARMONOGRAF_URL_ENV`),
-       set by the evolve loop when it launches a per-workspace
-       harmonograf so downstream re-resolvers (this function, in the
-       orchestrator process and in every tournament worker subprocess)
-       discover the launched URL. Not an operator knob.
-    3. The ``harmonograf_url`` key of the workspace ``config.json``
-       (passed in as ``workspace_config``).
-
-    Returns the empty string when no source supplies a URL.
-
-    An empty result does not mean "JSONL-only telemetry". The evolve loop's
-    :func:`zicato.evolve.lifecycle_services._resolve_or_launch_harmonograf`
-    auto-launches an in-process server in that case and writes the resulting
-    URL back into ``ZICATO_HARMONOGRAF_URL``, so a later caller of this
-    function (the tournament runner, the per-board worker) re-resolves to the
-    auto-launched URL through the handoff path above. This function itself
-    does NOT trigger a launch; it is a pure resolver.
-
-    Parameters
-    ----------
-    workspace_config:
-        The workspace ``config.json`` as a dict, or ``None``.
-    config:
-        The :class:`~zicato.config.IntegrationConfig` carrying
-        ``harmonograf_url``. When ``None`` it is loaded via
-        :func:`zicato.config.load_config` (which layers any pinned
-        ``--harmonograf-url`` flag on top of the defaults).
-    """
-    integration = config if config is not None else load_config().integration
-    configured = integration.harmonograf_url.strip()
-    if configured:
-        return configured
-    # The INTERNAL auto-launch handoff (see HARMONOGRAF_URL_ENV): read
-    # from the process environment rather than from load_config()
-    # — this is a broadcast channel between the evolve loop and its
-    # downstream consumers (including worker subprocesses) rather than part of
-    # the operator-facing configuration surface.
-    handoff = os.environ.get(HARMONOGRAF_URL_ENV, "").strip()
-    if handoff:
-        return handoff
+    """Resolve an explicit URL, then inherited context, then workspace settings."""
+    if config is not None and config.harmonograf_url.strip():
+        return config.harmonograf_url.strip()
+    inherited = inherited_runtime_context()
+    if inherited is not None and inherited.telemetry.web_url:
+        return inherited.telemetry.web_url
     if workspace_config:
-        cfg = workspace_config.get("harmonograf_url", "")
-        if isinstance(cfg, str) and cfg.strip():
-            return cfg.strip()
+        selected = resolve_configuration(workspace_config).values.integration.harmonograf_url
+        return selected.strip() or str(workspace_config.get("harmonograf_url", "")).strip()
     return ""
 
 
 def _harmonograf_grpc_target(url: str) -> str:
-    """Derive a gRPC dial target (``host:port``) from a harmonograf URL.
-
-    ``ZICATO_HARMONOGRAF_URL`` is documented and consumed elsewhere (the
-    heartbeat, the dashboard drill-down link) as a browser-resolvable URL
-    — typically ``http://host:port``. The harmonograf client, however,
-    hands ``server_addr`` straight to ``grpc.aio.insecure_channel``,
-    which expects a bare ``host:port`` target: a leading ``http://`` or
-    ``https://`` scheme makes gRPC name resolution fail outright. Strip
-    any scheme (and a trailing path/slash) so the same env var works for
-    both the human-facing link and the gRPC client.
-    """
+    """Remove a browser URL's scheme and path to obtain its host and port."""
     target = url.strip()
     for scheme in ("http://", "https://"):
         if target.lower().startswith(scheme):
@@ -254,27 +172,10 @@ def _harmonograf_grpc_target(url: str) -> str:
 
 
 def resolve_harmonograf_grpc_target(url: str) -> str:
-    """Resolve the gRPC dial target for the harmonograf sink to dial.
-
-    The auto-launched harmonograf binds two ports: a browser-facing
-    gRPC-Web port (carried by ``ZICATO_HARMONOGRAF_URL`` / ``url`` here,
-    used for dashboard deep-links) and a native gRPC port the sink must
-    dial. When the orchestrator auto-launches a server it exports the
-    native gRPC target as ``ZICATO_HARMONOGRAF_GRPC`` (a bare
-    ``host:port``); this resolver prefers that env var so the sink dials
-    the gRPC port rather than the web port.
-
-    For an EXTERNAL harmonograf (operator-pinned ``ZICATO_HARMONOGRAF_URL``
-    with no separate auto-launch) ``ZICATO_HARMONOGRAF_GRPC`` is unset and
-    the web URL *is* the single dial target, so we fall back to scheme-
-    stripping it via :func:`_harmonograf_grpc_target` — preserving the
-    pre-split behaviour for the external path.
-    """
-    grpc_env = os.environ.get(HARMONOGRAF_GRPC_ENV, "").strip()
-    if grpc_env:
-        # Tolerate an accidental scheme on the grpc env (defensive — the
-        # orchestrator sets a bare host:port, but normalise anyway).
-        return _harmonograf_grpc_target(grpc_env)
+    """Use a matching inherited native endpoint, otherwise the external URL's port."""
+    inherited = inherited_runtime_context()
+    if inherited is not None and inherited.telemetry.web_url == url:
+        return inherited.telemetry.grpc_target or _harmonograf_grpc_target(url)
     return _harmonograf_grpc_target(url)
 
 
@@ -299,9 +200,9 @@ def _make_harmonograf_sink(
     constructed against the gRPC dial target. When ``grpc_target`` is
     supplied (an auto-launched server's native gRPC ``host:port``) it is
     dialed verbatim; otherwise the target is resolved via
-    :func:`resolve_harmonograf_grpc_target` (which prefers the
-    ``ZICATO_HARMONOGRAF_GRPC`` env, falling back to scheme-stripping the
-    web ``url`` for an external harmonograf).
+    :func:`resolve_harmonograf_grpc_target`, which preserves the native
+    address of a matching inherited runtime context and otherwise derives
+    the target from an external single-port URL.
 
     ``identity_root`` selects the persistent client registry. Tests supply
     a temporary directory; ``None`` uses the client's platform default.
@@ -311,9 +212,8 @@ def _make_harmonograf_sink(
         from harmonograf_client import Client, HarmonografSink  # noqa: PLC0415
     except ImportError as exc:
         log.warning(
-            "harmonograf streaming requested (%s=%s) but harmonograf_client "
+            "harmonograf streaming requested for %s but harmonograf_client "
             "is not installed — proceeding with JSONL telemetry only (%s)",
-            HARMONOGRAF_URL_ENV,
             url,
             exc,
         )
@@ -381,8 +281,7 @@ def make_run_sinks(
 
     url = resolve_harmonograf_url(workspace_config)
     if url:
-        # The grpc target resolution prefers ZICATO_HARMONOGRAF_GRPC (the
-        # auto-launched native gRPC port) over deriving from the web URL.
+        # A matching inherited context retains the service's native port.
         harmonograf_sink = _make_harmonograf_sink(url, identity_root=identity_root)
         if harmonograf_sink is not None:
             sinks.append(harmonograf_sink)
@@ -397,6 +296,4 @@ __all__ = [
     "make_run_sinks",
     "resolve_harmonograf_url",
     "resolve_harmonograf_grpc_target",
-    "HARMONOGRAF_URL_ENV",
-    "HARMONOGRAF_GRPC_ENV",
 ]

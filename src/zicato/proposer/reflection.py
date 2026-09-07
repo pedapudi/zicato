@@ -59,6 +59,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.runtime import CallLLM
+from zicato.core.settings import AuxConfig
 from zicato.proposer.prompts import band_rate
 from zicato.proposer.reflection_records import (
     FORBIDDEN_KEYS,
@@ -591,6 +592,7 @@ async def draft_remedy(
     call_llm: CallLLM,
     model: str,
     proposer_path: Path | None = None,
+    aux_config: AuxConfig | None = None,
 ) -> ProposerFinding:
     """Return ``finding`` with its remedy prose redrafted by the evaluation model.
 
@@ -620,7 +622,7 @@ async def draft_remedy(
     # keep-the-deterministic-remedy branch as any other failure.
     try:
         raw = await asyncio.wait_for(
-            call_llm(_DRAFT_SYSTEM, user, model), timeout=aux_call_timeout_s()
+            call_llm(_DRAFT_SYSTEM, user, model), timeout=aux_call_timeout_s(aux_config)
         )
     except Exception:  # noqa: BLE001 - a failed polish pass must not fail the finding
         return finding

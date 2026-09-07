@@ -935,6 +935,15 @@ an operator whose wheel shipped without the JS still sees something useful.
 
 ### 9.4.2 Port walk, endpoint publication, harmonograf
 
+Dashboard entry points use `dashboard.static_dir` from accepted workspace
+configuration. Relative configured paths resolve against the workspace parent;
+an empty value selects the bundled assets. The standalone `--static-dir` flag
+takes precedence and resolves relative paths against the caller's directory.
+Evolve carries its resolved absolute asset path to the dashboard subprocess,
+including the bundled default, so startup does not reread the live setting.
+The module entry point resolves workspace configuration only when no path is
+carried. Missing assets retain the placeholder page and asset-request errors.
+
 `run(workspace_root, host, port, static_dir)` binds the port, walking `+1`
 up to ten times if it is taken (`_pick_port` — the probe socket deliberately
 does NOT set `SO_REUSEADDR` so a genuinely-bound port reads as occupied),

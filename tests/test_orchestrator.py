@@ -567,6 +567,7 @@ def test_evolve_once_threads_configured_proposer_skill_into_the_episode(
     ``build_proposer_agent`` → ``ProposerContext`` wiring flows the skill
     through the real evolve path, all the way into the model's context.
     """
+    proposer_dir = tmp_path / "proposers" / "demo"
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     (workspace / "config.json").write_text(
@@ -576,8 +577,9 @@ def test_evolve_once_threads_configured_proposer_skill_into_the_episode(
                 "created_at": "2026-05-14T00:00:00Z",
                 # Hand-built directory-backend snapshot layout below; pin it.
                 "generation_source_backend": "directory",
-                "adapter": {"kind": "stub"},
+                "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
                 "proposer": stand_in_proposer_block(tmp_path / "foe"),
+                "contract": {"proposer_path": str(proposer_dir)},
             }
         )
     )
@@ -596,8 +598,7 @@ def test_evolve_once_threads_configured_proposer_skill_into_the_episode(
     brief_src = tmp_path / "brief.md"
     brief_src.write_text("# Proposer brief\n- Be careful.\n")
 
-    # The proposer dir + its single skill, frozen onto the epoch.
-    proposer_dir = tmp_path / "proposers" / "demo"
+    # The configured proposer directory and its skill are sealed with the epoch.
     skills_dir = proposer_dir / "skills"
     skills_dir.mkdir(parents=True)
     skill_body = "Prefer the smallest patch that moves the loss."
@@ -616,7 +617,6 @@ def test_evolve_once_threads_configured_proposer_skill_into_the_episode(
         # single-run duel. See tests/_contract_pins.py.
         weights=deterministic_weights(promote_margin=0.01),
         auto_close_previous=False,
-        proposer_path=proposer_dir,
     )
 
     v0_dir = workspace / "epochs" / cfg.id / "generations" / "v0"
@@ -628,6 +628,10 @@ def test_evolve_once_threads_configured_proposer_skill_into_the_episode(
         '# zicato:mutable id="greeting"\n'
         'GREETING = "hello"\n'
     )
+
+    from zicato.epoch.journal import write_seed_experiment
+
+    write_seed_experiment(workspace, cfg.id, proposed_at=cfg.created_at)
 
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(

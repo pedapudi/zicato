@@ -73,7 +73,9 @@ from typing import Protocol, runtime_checkable
 
 from zicato.core.types import Patch
 from zicato.core.workspace import generation_dir
+from zicato.epoch.seed_sources import prepare_seed_sources, validated_seed_sources
 from zicato.epoch.snapshot_scope import copytree_ignore, is_artifact
+from zicato.storage import publish_directory, sync_directory_tree
 from zicato.workspace import WorkspaceLayout, generation_ids, list_epoch_ids
 from zicato.workspace.config_io import (
     GENERATION_SOURCE_BACKEND_KEY,
@@ -688,25 +690,17 @@ class DirectoryGenerationStore:
         FileNotFoundError
             When a source path does not exist on disk.
         """
-        snapshot_root = self.snapshot_path(epoch_id, generation_id)
-        snapshot_root.mkdir(parents=True, exist_ok=True)
-        for raw in sources:
-            source = Path(raw).resolve()
-            if not source.exists():
-                raise FileNotFoundError(
-                    f"seed_generation: source tree {source} does not exist on disk"
-                )
-            target = snapshot_root / source.name
-            if source.is_file():
-                shutil.copy2(source, target)
-            else:
-                # The copy is filtered through the shared snapshot-scope
-                # policy: run artifacts (``output/``, caches) are never
-                # copied into a generation. Without this a registered
-                # tree's existing ``output/`` would seed v0 and then
-                # compound across the whole lineage.
-                shutil.copytree(source, target, ignore=copytree_ignore())
-        return snapshot_root
+        resolved = validated_seed_sources(sources)
+        destination = generation_dir(self._workspace_root, epoch_id, generation_id)
+        if destination.exists():
+            raise FileExistsError(f"seed_generation: generation already exists: {destination}")
+        self._workspace_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".seed-", dir=self._workspace_root) as directory:
+            prepared = Path(directory) / "generation"
+            prepare_seed_sources(resolved, prepared / SNAPSHOT_DIRNAME)
+            sync_directory_tree(prepared)
+            publish_directory(prepared, destination)
+        return self.snapshot_path(epoch_id, generation_id)
 
     def derive_generation(
         self,

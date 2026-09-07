@@ -48,6 +48,7 @@ from zicato.core import (
     run_id_for_unit,
 )
 from zicato.core.measurement import UNKNOWN_SEED, BaseSeed, MeasurementDraw
+from zicato.core.types import RuntimeConfig
 from zicato.epoch.genstore import EPHEMERAL_SNAPSHOT_PREFIX, EphemeralCheckout
 from zicato.runtime.process import (
     DEFAULT_SIGNAL_GRACE_S,
@@ -746,41 +747,23 @@ def _entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
     return out
 
 
-def _config_pins() -> dict[str, dict[str, Any]]:
-    """Snapshot the process-pinned config overrides for the worker args file.
-
-    CLI flags that shadow typed-config knobs (``--aux-call-timeout``, ...) are
-    pinned process-wide via
-    :func:`zicato.config.pin_overrides`. Some of those knobs are consumed
-    INSIDE the worker subprocess — the judge/emulator call sites read the
-    evaluation-call budget — so the pins must cross the process
-    boundary. They travel in the args file (this snapshot) and the worker
-    re-pins them at startup; no environment variable is involved.
-
-    Best-effort by construction: an empty dict (no flags pinned) is the
-    common case and the worker then runs on its own defaults, exactly as
-    the orchestrator does.
-    """
-    from zicato.config import get_pinned_overrides  # noqa: PLC0415
-
-    return get_pinned_overrides()
+def _configuration_spec(config: RuntimeConfig) -> dict[str, Any]:
+    """Serialize the selected operational settings without ambient state."""
+    return config.operational_configuration().to_json()
 
 
-def _resolve_harmonograf_url(workspace_root: Path) -> str:
-    """Best-effort harmonograf URL resolution for the worker args file.
+def _resolve_harmonograf_url(workspace_root: Path, config: RuntimeConfig | None = None) -> str:
+    """Use selected invocation endpoints, then a configured or existing workspace service."""
+    if config is not None and config.telemetry.web_url:
+        return config.telemetry.web_url
+    from zicato.runtime.context import inherited_runtime_context  # noqa: PLC0415
 
-    The worker runs in a fresh process and re-resolves the env var on
-    its own, but the workspace ``config.json`` value is read here (in the
-    orchestrator process) and threaded through the args file so the
-    worker does not need the workspace-config loader.
-
-    Resilient to a missing / unreadable workspace ``config.json``:
-    ``resolve_harmonograf_url`` is called with whatever config dict we
-    could load (or ``None`` on failure), so the
-    ``ZICATO_HARMONOGRAF_URL`` env path — which the orchestrator's auto-
-    launch wiring (#202) writes into — keeps working even when the
-    workspace has no on-disk config yet (smoke tests, fresh init).
-    """
+    integration = config.operational_configuration().values.integration if config else None
+    if integration is not None and integration.harmonograf_url:
+        return integration.harmonograf_url
+    inherited = inherited_runtime_context()
+    if inherited is not None and inherited.telemetry.web_url:
+        return inherited.telemetry.web_url
     try:
         from zicato.telemetry.sink import resolve_harmonograf_url  # noqa: PLC0415
     except Exception:  # noqa: BLE001 — harmonograf wiring is optional
@@ -793,26 +776,37 @@ def _resolve_harmonograf_url(workspace_root: Path) -> str:
     except Exception:  # noqa: BLE001 — config is optional; env still wins
         cfg = None
     try:
-        return resolve_harmonograf_url(cfg)
+        integration = config.operational_configuration().values.integration if config else None
+        configured = resolve_harmonograf_url(cfg, config=integration)
+        if configured:
+            return configured
+        from zicato.telemetry.harmonograf_supervisor import (
+            find_workspace_harmonograf,  # noqa: PLC0415
+        )
+
+        service = find_workspace_harmonograf(workspace_root)
+        return service.web_url if service is not None else ""
     except Exception:  # noqa: BLE001 — never fail a tournament on URL resolution
         return ""
 
 
-def _resolve_harmonograf_grpc(workspace_root: Path, url: str) -> str:
-    """Best-effort gRPC dial target for the worker args file.
-
-    Threaded through the args file (alongside the web ``url``) so the
-    worker dials the native gRPC port rather than the browser-facing
-    gRPC-Web port. For an auto-launched harmonograf the orchestrator sets
-    ``ZICATO_HARMONOGRAF_GRPC`` to ``host:grpc_port``; the resolver below
-    prefers it and falls back to scheme-stripping ``url`` for an external
-    instance (single port). Empty ``url`` ⇒ empty target.
-    """
+def _resolve_harmonograf_grpc(
+    workspace_root: Path, url: str, config: RuntimeConfig | None = None
+) -> str:
+    """Keep the selected native target paired with its browser URL."""
+    if config is not None and config.telemetry.web_url == url and config.telemetry.grpc_target:
+        return config.telemetry.grpc_target
     if not url:
         return ""
     try:
+        from zicato.telemetry.harmonograf_supervisor import (
+            find_workspace_harmonograf,  # noqa: PLC0415
+        )
         from zicato.telemetry.sink import resolve_harmonograf_grpc_target  # noqa: PLC0415
 
+        service = find_workspace_harmonograf(workspace_root)
+        if service is not None and service.web_url == url:
+            return service.grpc_target
         return resolve_harmonograf_grpc_target(url)
     except Exception:  # noqa: BLE001 — never fail a tournament on target resolution
         return ""
@@ -927,7 +921,7 @@ __all__ = [
     "_api_key_env_names",
     "_callable_dotted_path",
     "_checkout_run_snapshot",
-    "_config_pins",
+    "_configuration_spec",
     "_discard_run_snapshot",
     "_drift_kind_wire",
     "_entry_replicate_index",

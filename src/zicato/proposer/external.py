@@ -110,6 +110,9 @@ class ExternalProposerConfig:
     #: whatever it declares. Not hashed wholesale, for the reason
     #: ``options`` is not.
     workspace_config: Mapping[str, Any] = field(default_factory=dict)
+    #: Retained validation declarations for selected-epoch execution.
+    static_checks: tuple[str, ...] | None = None
+    adapter_configuration_json: bytes | None = None
 
 
 class ExternalProposerAgent(Protocol):

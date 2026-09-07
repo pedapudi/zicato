@@ -1,31 +1,9 @@
-"""The workspace root's ``config.json`` — its location, its parse, its shape.
+"""Read and atomically write the strict authored workspace configuration.
 
-The file at the root of a ``.zicato/`` tree carries the bookkeeping every
-command needs: which harness adapter to load, which source roots are
-mutable, which store holds the generation source trees, the model roles,
-and the ``runtime`` tuning block. This module is the only place in the tree
-that opens it.
-
-:func:`read_workspace_config` resolves the path, parses the JSON once, and
-returns a :class:`WorkspaceConfig` — the whole mapping under
-:attr:`WorkspaceConfig.raw`, plus typed fields for the blocks and keys that
-callers read one at a time. Absence and malformation have one rule each: an
-absent file yields a config whose :attr:`~WorkspaceConfig.exists` is
-``False`` and whose every field holds its absent-key default, so a
-best-effort reader needs no error handling; a file that is not parseable
-JSON, or whose top level is not a JSON object, raises :class:`ValueError`
-naming the path and the failure. A command that cannot proceed without an
-initialized workspace adds :meth:`WorkspaceConfig.require`, whose argument
-is the operator-side remedy — the only thing that legitimately differs
-between such commands.
-
-The loader does no outer→inner ``.zicato`` descent: callers hand it the
-inner workspace root, and a command that accepts either spelling loads both
-candidates and takes the first that exists. Path math for the records
-*inside* the workspace lives in :mod:`zicato.core.workspace` and
-:mod:`zicato.workspace.layout`. The typed tree of process-level knobs
-(dataclass defaults plus pinned CLI flags) is a different object entirely
-and lives in :mod:`zicato.config`.
+The workspace root owns config.json. Missing files produce an absent record;
+malformed JSON and invalid declared fields raise before factories read a value.
+The parsed record retains authored presence for source attribution and exposes
+its validated domain object through WorkspaceConfig.values.
 """
 
 from __future__ import annotations
@@ -37,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.storage import atomic_write_text
+from zicato.workspace.config_schema import WorkspaceDeclaration, workspace_declaration
 
 CONFIG_FILENAME = "config.json"
 LINEAGE_FILENAME = "lineage.json"
@@ -57,41 +36,22 @@ def _config_path(workspace_root: Path) -> Path:
     return workspace_root / CONFIG_FILENAME
 
 
-def _mapping(value: Any) -> Mapping[str, Any]:
-    """A block read off the config: the mapping itself, or empty."""
-    return value if isinstance(value, Mapping) else {}
-
-
-def _str_tuple(value: Any) -> tuple[str, ...]:
-    """A list-of-strings key read off the config, or empty."""
-    if not isinstance(value, list):
-        return ()
-    return tuple(str(item) for item in value)
-
-
 @dataclass(frozen=True, slots=True)
 class WorkspaceConfig:
-    """One workspace's parsed ``config.json``.
-
-    Each block and key below is normalized to its absent-key default when
-    the file omits it or holds the wrong JSON type, so a reader takes the
-    value rather than re-checking the shape. The ``mutable_trees`` key is a
-    later spelling of ``source_roots`` that some readers prefer over it and
-    others fall back to; those readers take both off :attr:`raw` in the
-    order they want, because the order differs between them.
-    """
+    """A workspace file, its authored values, and its validated declaration."""
 
     #: The file this was read from, whether or not it is there. Carried so
     #: an error or a write targets the location the read used.
     path: Path
     #: Whether the file was on disk.
     exists: bool
+    values: WorkspaceDeclaration = field(default_factory=WorkspaceDeclaration)
     #: The whole parsed JSON object. The form the factories consume:
     #: :func:`zicato.runtime_factory.make_runtime_config`,
     #: :func:`zicato.adapter_factory.make_adapter_from_config`,
     #: :func:`zicato.models_config.load_models_config` and
     #: :func:`zicato.config.health_config_from_workspace` each read several
-    #: keys and validate them their own way.
+    #: keys after the root declaration has validated their authored types.
     raw: Mapping[str, Any] = field(default_factory=dict)
     #: The ``runtime`` block — instance id, seed, concurrency, worker
     #: containment, and the pre-flight and backoff knobs.
@@ -159,17 +119,18 @@ def read_workspace_config(workspace_root: Path) -> WorkspaceConfig:
             f"{path}: expected a JSON object at top level, got {type(loaded).__name__}"
         )
     raw = dict(loaded)
-    runtime = _mapping(raw.get("runtime"))
-    backend = raw.get(GENERATION_SOURCE_BACKEND_KEY)
+    values = workspace_declaration(raw)
+    runtime = raw.get("runtime", {})
     return WorkspaceConfig(
         path=path,
         exists=True,
+        values=values,
         raw=raw,
         runtime=runtime,
-        contract=_mapping(raw.get("contract")),
-        source_roots=_str_tuple(raw.get("source_roots")),
-        evaluation_model=str(raw.get("evaluation_model") or runtime.get("evaluation_model") or ""),
-        generation_source_backend=backend if isinstance(backend, str) else "",
+        contract=raw.get("contract", {}),
+        source_roots=values.source_roots,
+        evaluation_model=values.evaluation_model or values.runtime.evaluation_model,
+        generation_source_backend=values.generation_source_backend,
     )
 
 
@@ -184,6 +145,7 @@ def write_workspace_config(workspace_root: Path, config: dict[str, Any]) -> None
         raise FileNotFoundError(
             f"workspace {workspace_root!s} does not exist; run `zicato init` first"
         )
+    workspace_declaration(config)
     atomic_write_text(
         _config_path(workspace_root),
         json.dumps(config, indent=2, sort_keys=True) + "\n",

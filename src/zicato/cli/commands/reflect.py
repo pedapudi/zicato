@@ -36,6 +36,7 @@ from typing import Any
 import click
 
 from zicato.core.workspace import reflection_dir
+from zicato.driver_imports import with_workspace_imports
 
 # The live-run gate message: an ACTIVE reflection — one that would spend
 # meta-judge (adjudicator) budget — is refused unless the operator supplies an
@@ -327,6 +328,7 @@ def reflect_grp(ctx: click.Context) -> None:
 @click.option("--k-adj", default=1, show_default=True, type=click.IntRange(min=1))
 @click.option("--max-wall-clock-seconds", "max_wall_clock_seconds", default=None, type=int)
 @click.option("--output", "output_path", default=None, help="Report destination (default: stdout).")
+@with_workspace_imports
 def run_cmd(
     workspace: str,
     epoch_id: str | None,

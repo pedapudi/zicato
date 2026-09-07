@@ -1,25 +1,9 @@
 """Auto-launch and lifecycle of an in-process harmonograf server.
 
-Historically zicato treated the harmonograf console as an external
-process the operator was responsible for starting; setting
-``ZICATO_HARMONOGRAF_URL`` (or the ``integration.harmonograf_url``
-workspace-config key) merely attached a live-streaming sink to every
-system-under-test run and surfaced a "watch live" link in the heartbeat.
-The default behaviour (env unset) was JSONL-only telemetry.
-
-Self-hosting flips the default: when no URL is configured, zicato
-launches a harmonograf server in-process at evolve startup, bound to a
-free localhost port, and the rest of the pipeline (heartbeat, worker
-sinks, dashboard deep-links) sees that auto-launched URL exactly as it
-would see an externally-supplied one. Setting the env var or config
-key opts back out — useful for an operator who wants to stream multiple
-zicato invocations into a single shared harmonograf instance.
-
-The module exposes one entry point — :func:`start_harmonograf` — which
-returns a :class:`HarmonografHandle` carrying the resolved URL and an
-idempotent ``shutdown()`` method. The orchestrator registers shutdown
-in its evolve teardown ``finally`` block so a Ctrl-C, an unhandled
-exception, or a normal completion all leave no orphaned process.
+An invocation without a configured URL ensures the service recorded for its
+workspace. A live record reuses that service; otherwise a fresh local server
+provides browser and native gRPC addresses. The launching handle owns shutdown.
+An explicit integration URL selects an externally managed service.
 
 Failure isolation is load-bearing: a missing :mod:`harmonograf_server`
 dependency, a port-bind failure, or any startup exception logs a
@@ -651,6 +635,46 @@ def _noop_workspace_handle(reason: str = "") -> WorkspaceHarmonografHandle:
     return WorkspaceHarmonografHandle(web_url="", grpc_target="", launched=False, reason=reason)
 
 
+def _live_workspace_harmonograf(data_dir: Path) -> WorkspaceHarmonografHandle | None:
+    """Read one workspace record and require its existing liveness checks."""
+    record = _read_server_record(data_dir)
+    if record is not None:
+        web_url = str(record.get("web_url") or "")
+        grpc_target = str(record.get("grpc_target") or "")
+        pid = _coerce_pid(record.get("pid"))
+        host, port = _parse_host_port(web_url.split("//", 1)[-1])
+        # Liveness is a CONJUNCTION of three checks, weakest-to-strongest:
+        #   1. the recorded pid is still a live process (cheap, but a
+        #      recycled pid lies),
+        #   2. the recorded web port answers harmonograf's ``/healthz``
+        #      with 200 — positive proof the live process IS a serving
+        #      harmonograf rather than merely *some* process that grabbed the
+        #      freed port. A bare TCP connect is too weak here: the port
+        #      can accept a connection from an unrelated listener (or a
+        #      lingering socket) after the real server died, and a stale
+        #      record would then be reused and a dead ``harmonograf_url``
+        #      advertised.
+        if web_url and _pid_alive(pid) and _harmonograf_healthz_ok(host or "127.0.0.1", port):
+            log.debug("reusing live per-workspace harmonograf at %s (pid %d)", web_url, pid)
+            return WorkspaceHarmonografHandle(
+                web_url=web_url, grpc_target=grpc_target, launched=False
+            )
+        # Stale record (dead pid, or a web port that no longer answers
+        # /healthz) — fall through and relaunch; the write below overwrites
+        # it.
+        log.debug("ignoring stale harmonograf server record at %s", web_url or "<empty>")
+
+    return None
+
+
+def find_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHandle | None:
+    """Return an existing workspace service without launching or owning it."""
+    if not workspace_root.exists():
+        return None
+    parent = workspace_root.parent if workspace_root.name == ".zicato" else workspace_root
+    return _live_workspace_harmonograf(parent / ".harmonograf")
+
+
 def ensure_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHandle:
     """Reuse-or-launch ONE persistent harmonograf server for a workspace.
 
@@ -700,33 +724,9 @@ def ensure_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHa
         log.warning("harmonograf workspace data dir unavailable (%s)", exc)
         return _noop_workspace_handle(f"data dir unavailable: {exc}")
 
-    # 1. Reuse an already-running per-workspace server, if the record is live.
-    record = _read_server_record(data_dir)
-    if record is not None:
-        web_url = str(record.get("web_url") or "")
-        grpc_target = str(record.get("grpc_target") or "")
-        pid = _coerce_pid(record.get("pid"))
-        host, port = _parse_host_port(web_url.split("//", 1)[-1])
-        # Liveness is a CONJUNCTION of three checks, weakest-to-strongest:
-        #   1. the recorded pid is still a live process (cheap, but a
-        #      recycled pid lies),
-        #   2. the recorded web port answers harmonograf's ``/healthz``
-        #      with 200 — positive proof the live process IS a serving
-        #      harmonograf rather than merely *some* process that grabbed the
-        #      freed port. A bare TCP connect is too weak here: the port
-        #      can accept a connection from an unrelated listener (or a
-        #      lingering socket) after the real server died, and a stale
-        #      record would then be reused and a dead ``harmonograf_url``
-        #      advertised.
-        if web_url and _pid_alive(pid) and _harmonograf_healthz_ok(host or "127.0.0.1", port):
-            log.debug("reusing live per-workspace harmonograf at %s (pid %d)", web_url, pid)
-            return WorkspaceHarmonografHandle(
-                web_url=web_url, grpc_target=grpc_target, launched=False
-            )
-        # Stale record (dead pid, or a web port that no longer answers
-        # /healthz) — fall through and relaunch; the write below overwrites
-        # it.
-        log.debug("ignoring stale harmonograf server record at %s", web_url or "<empty>")
+    reusable = _live_workspace_harmonograf(data_dir)
+    if reusable is not None:
+        return reusable
 
     # 2. Launch a fresh server bound to this workspace's sqlite db.
     try:
@@ -807,7 +807,11 @@ def meta_loop_session_id(evolve_started_at_iso: str) -> str:
 
 
 def build_meta_loop_sink(
-    harmonograf_url: str, session_id: str, *, identity_root: Path | None = None
+    harmonograf_url: str,
+    session_id: str,
+    *,
+    identity_root: Path | None = None,
+    grpc_target: str = "",
 ) -> Awaitable[Any] | Any | None:
     """Construct a harmonograf sink scoped to the meta-loop session.
 
@@ -847,11 +851,9 @@ def build_meta_loop_sink(
         log.warning("meta-loop harmonograf sink skipped: client unavailable (%s)", exc)
         return None
     try:
-        # Dial the native gRPC port, NOT the browser-facing gRPC-Web port
-        # carried by ``harmonograf_url``. For an auto-launched server the
-        # resolver prefers ``ZICATO_HARMONOGRAF_GRPC`` (host:grpc_port);
-        # for an external instance it scheme-strips the single-port URL.
-        target = resolve_harmonograf_grpc_target(harmonograf_url)
+        # The service handle supplies its native port. An inherited context
+        # supplies the same pair; external single-port URLs derive the target.
+        target = grpc_target or resolve_harmonograf_grpc_target(harmonograf_url)
         # The client name is validated by harmonograf against
         # ``[a-zA-Z0-9_-]{1,128}``. A raw ``zicato-meta:{session_id}``
         # injects a ':' (and the session id may already be at the length

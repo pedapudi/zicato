@@ -68,7 +68,7 @@ def _pow(value: float, *, exponent: float) -> float:
 
     ``pow(x, 2.0)`` reproduces the quadratic-recall miss term
     ``(1 - mean_score) ** 2`` exactly. (A stray ``pass_exponent`` config key is
-    rejected at load — see ``workspace_loader._reject_retired_scoring_keys``.)
+    rejected at load — see ``core.scoring_config._reject_retired_scoring_keys``.)
     """
     return float(value**exponent)
 

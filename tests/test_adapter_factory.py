@@ -82,12 +82,12 @@ def test_make_adapter_missing_block_raises() -> None:
 
 
 def test_make_adapter_unknown_kind_raises() -> None:
-    with pytest.raises(ValueError, match="unknown adapter kind 'bogus'"):
+    with pytest.raises(ValueError, match="adapter.kind: expected one of"):
         make_adapter_from_config({"adapter": {"kind": "bogus"}})
 
 
 def test_make_adapter_missing_kind_raises() -> None:
-    with pytest.raises(ValueError, match="must be a non-empty string"):
+    with pytest.raises(ValueError, match="adapter.kind: required field is absent"):
         make_adapter_from_config({"adapter": {"entrypoint": "a:b"}})
 
 
@@ -100,7 +100,7 @@ def test_make_adapter_adk_missing_entrypoint_raises(
 
 
 def test_make_adapter_block_must_be_mapping() -> None:
-    with pytest.raises(ValueError, match="must be a mapping"):
+    with pytest.raises(ValueError, match="adapter: expected an object"):
         make_adapter_from_config({"adapter": ["not", "a", "mapping"]})
 
 
@@ -156,7 +156,7 @@ def test_make_adapter_import_missing_factory_raises() -> None:
 
 
 def test_make_adapter_import_non_list_args_raises() -> None:
-    with pytest.raises(ValueError, match="'args' must be a list"):
+    with pytest.raises(ValueError, match="adapter.args: expected an array"):
         make_adapter_from_config(
             {
                 "adapter": {

@@ -37,34 +37,48 @@ import json
 import re
 import shutil
 import sys
+import tempfile
 import warnings
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from zicato.core.settings import AuxConfig
 from zicato.core.types import EpochConfig, ScoringWeights
 from zicato.core.workspace import (
     analysis_path,
-    board_path,
     epoch_dir,
     journal_path,
-    scoring_path,
 )
 from zicato.epoch._storage import (
     RECORD_FORMAT_VERSION,
     check_record_format,
     current_epoch_key,
     epoch_config_key,
-    scoring_key,
 )
-from zicato.proposer.staging import drain_staged_recommendations
-from zicato.storage import workspace_backend
+from zicato.epoch.publication import (
+    BaselineSeed,
+    EpochPublication,
+    epoch_publication_path,
+    prepared_directory,
+)
+from zicato.epoch.seed_sources import seed_content_identity
+from zicato.proposer.staging import acknowledge_staged_recommendations, staged_recommendations
+from zicato.storage import (
+    atomic_write_json,
+    durable_unlink,
+    publish_directory,
+    sync_directory_tree,
+    workspace_backend,
+)
 from zicato.workspace import WorkspaceLayout, list_epoch_ids
 
 if TYPE_CHECKING:
     from zicato.board.builder import Board
     from zicato.epoch.contract import ContractInputs
     from zicato.proposer.brief import ProposerBrief
+    from zicato.runtime.lock import WorkspaceLock
 
 # A callable shape compatible with goldfive's call_llm:
 # (system, user, model) -> awaitable[str].
@@ -148,21 +162,21 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
     """Parse a frozen ``scoring.json`` dict back into :class:`ScoringWeights`.
 
     The inverse of :func:`scoring_to_dict`, field-enumerating via
-    :func:`zicato.epoch.contract_serde.jsonable_to_dataclass`: every field
+    :func:`zicato.epoch.contract_serde.historical_dataclass_from_json`: every field
     absent from a ``scoring.json`` falls back to the dataclass default, so a
     file written before a field existed loads cleanly, and
     every present field — including the nested ``tournament`` /
     ``overfitting`` blocks — round-trips. Mirror of
-    :func:`zicato.workspace_loader.scoring_weights_from_dict`.
+    :func:`zicato.workspace_loader.historical_scoring_weights_from_dict`.
     """
-    from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
-    from zicato.workspace_loader import _reject_retired_scoring_keys  # noqa: PLC0415
+    from zicato.core.scoring_config import _reject_retired_scoring_keys  # noqa: PLC0415
+    from zicato.epoch.contract_serde import historical_dataclass_from_json  # noqa: PLC0415
 
     # Reject retired keys symmetrically with the live loader, so a stale
     # snapshot fails loudly through either path rather than silently scoring
     # under a default nobody chose.
     _reject_retired_scoring_keys(d)
-    return jsonable_to_dataclass(ScoringWeights, dict(d))
+    return historical_dataclass_from_json(ScoringWeights, dict(d))
 
 
 def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
@@ -261,6 +275,9 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
 
 def _write_config(workspace_root: Path, cfg: EpochConfig) -> None:
     """Atomically write one epoch's ``config.json`` through the storage seam."""
+    from zicato.workspace.projection import mark_epoch_changed  # noqa: PLC0415
+
+    mark_epoch_changed(workspace_root, cfg.id)
     backend = workspace_backend(workspace_root, start=False)
     backend.write_json(epoch_config_key(cfg.id), _config_to_dict(cfg))
 
@@ -401,7 +418,7 @@ def _materialize_brief(brief_source: ProposerBrief | Path | str, target: Path) -
     target.write_text(brief_source.text, encoding="utf-8")
 
 
-def new_epoch(
+def _prepare_epoch(
     workspace_root: Path,
     name: str,
     board_source: Board | Path | str,
@@ -415,70 +432,18 @@ def new_epoch(
     mutable_trees: tuple[str, ...] = (),
     goal: str = "",
     proposer_path: Path | None = None,
-) -> EpochConfig:
-    """Create a new epoch directory and switch to it.
+    writer: WorkspaceLock,
+    baseline_sources: tuple[Path, ...] | None = None,
+    baseline_coordinates: tuple[str, str] | None = None,
+    before_contract_roll: Callable[[str], None] | None = None,
+    contract_adoption: str | None = None,
+) -> EpochPublication:
+    """Validate and retain a complete epoch before any canonical publication."""
+    from zicato.runtime.lock import validate_workspace_lock  # noqa: PLC0415
 
-    Steps:
-      1. If ``auto_close_previous`` and the current epoch is open, close
-         it first (warning to stderr). ``aux_call_llm`` is required for
-         that close — the analysis pass runs on it.
-      2. Compute the epoch id from ``name`` and the current date.
-      3. Create ``.zicato/epochs/{id}/`` and write the frozen board +
-         proposer brief into it.
-      4. Serialize ``weights`` to ``scoring.json``.
-      5. Compute the contract hash over the frozen file inputs plus the
-         registered evaluator, adapter, mutation-surface, and proposer
-         identities, and store it on :class:`EpochConfig`.
-      6. Write ``config.json`` and update ``lineage.json``.
-      7. Update the ``current_epoch`` marker.
-
-    Inputs — in-memory objects or paths
-    -----------------------------------
-    ``board_source`` accepts a :class:`zicato.board.builder.Board` *or*
-    a :class:`~pathlib.Path` to a ``board.jsonl``. ``brief_source``
-    accepts a :class:`zicato.proposer.brief.ProposerBrief`, a ``str`` of
-    proposer-brief markdown, *or* a :class:`~pathlib.Path` to a
-    ``brief.md``. ``weights`` is always an in-memory
-    :class:`~zicato.core.types.ScoringWeights`.
-
-    When given in-memory objects ``new_epoch`` owns canonicalization and
-    persistence end to end — it writes the frozen ``board.jsonl`` /
-    ``brief.md`` / ``scoring.json`` itself. The caller never needs a
-    prior ``.save()``; the on-disk files the contract hash is computed
-    from are this function's responsibility rather than the caller's. Passing
-    paths still works and copies the files verbatim.
-
-    Carrying the registered contract components
-    -------------------------------------------
-    ``contract`` is the workspace's live contract as
-    :func:`zicato.epoch.contract.resolve_contract_inputs` resolved it.
-    Pass it and the epoch freezes EVERY registered component — the
-    system-under-test identity, the proposer dir, the external proposer, the
-    proposer's static checks — with its three file paths re-pointed at
-    the copies frozen above, so the stored hash is exactly the hash the
-    orchestrator recomputes from the live contract on the next
-    ``evolve``. Passing the whole resolved object rather than one
-    keyword per component is what keeps the two from drifting: a
-    component added to :class:`~zicato.epoch.contract.ContractInputs`
-    is carried without this function or its callers changing (issue
-    #186, where a hand-enumerated carryover silently froze
-    ``proposer_path=None`` on every hand-forced epoch).
-
-    ``entrypoint`` / ``mutable_trees`` / ``proposer_path`` are the
-    shorthand for callers with no registered workspace config to
-    resolve — chiefly tests. They build the same object. Combining them
-    with ``contract`` raises :class:`ValueError` rather than letting one
-    spelling quietly win, which is the failure mode this whole seam
-    exists to prevent.
-
-    ``goal`` is a free-form operator-supplied statement of intent for the
-    epoch. It is persisted into ``config.json`` and surfaced in the analyzer
-    report header so the *why* of the epoch is machine- readable rather than
-    only narrative in ``journal.md``. Empty by default (rendered as "no goal
-    recorded" downstream); multi-line strings are accepted verbatim.
-
-    Returns the constructed :class:`EpochConfig`.
-    """
+    validate_workspace_lock(writer, workspace_root)
+    if EpochPublication.read(workspace_root) is not None:
+        raise RuntimeError("finish the pending epoch publication before preparing another epoch")
     # Rejected before any directory is created, so a caller that mixes the
     # two spellings gets an error rather than a half-written epoch.
     if contract is not None and (entrypoint or mutable_trees or proposer_path is not None):
@@ -498,128 +463,300 @@ def new_epoch(
 
     workspace_root.mkdir(parents=True, exist_ok=True)
 
-    # 1. Auto-close previous if open.
-    prev_id = current_epoch_id(workspace_root)
-    if auto_close_previous and prev_id is not None:
-        try:
-            prev_cfg = load_epoch(workspace_root, prev_id)
-        except FileNotFoundError:
-            prev_cfg = None
-        if prev_cfg is not None and not prev_cfg.closed:
-            print(
-                f"WARNING: previous epoch {prev_id!r} was not closed manually; "
-                "auto-closing now. analysis.md may be shorter / lower quality "
-                "than a manual close.",
-                file=sys.stderr,
-            )
-            warnings.warn(
-                f"auto-closing previous epoch {prev_id!r}",
-                stacklevel=2,
-            )
-            close_epoch(workspace_root, prev_id, aux_call_llm=aux_call_llm)
-
-    # 2. Construct the new id.
     epoch_id = _make_epoch_id(workspace_root, name)
+    prev_id = current_epoch_id(workspace_root)
+    previous = load_epoch(workspace_root, prev_id) if prev_id is not None else None
+    closed_at = _now_iso() if auto_close_previous and previous and not previous.closed else None
+    final_directory = epoch_dir(workspace_root, epoch_id)
+    parent = Path(tempfile.mkdtemp(prefix=".epoch-publication-", dir=workspace_root))
+    seed: BaselineSeed | None = None
+    try:
+        epoch_content = parent / "epoch"
+        epoch_content.mkdir()
+        target_board = epoch_content / "board.jsonl"
+        target_brief = epoch_content / "brief.md"
+        _materialize_board(board_source, target_board)
+        _materialize_brief(brief_source, target_brief)
 
-    # 3. Create the directory and write the frozen contracts. Both the
-    # board and the proposer brief are materialized here from whatever
-    # the caller passed (in-memory object or path) — canonicalization
-    # and persistence are owned by new_epoch rather than the caller.
-    edir = epoch_dir(workspace_root, epoch_id)
-    edir.mkdir(parents=True, exist_ok=False)
-    target_board = board_path(workspace_root, epoch_id)
-    target_brief = _brief_path(workspace_root, epoch_id)
-    _materialize_board(board_source, target_board)
-    _materialize_brief(brief_source, target_brief)
+        target_scoring = epoch_content / "scoring.json"
+        atomic_write_json(target_scoring, scoring_to_dict(weights))
 
-    # 4. Scoring weights — serialized from the in-memory ScoringWeights,
-    # written atomically through the storage seam.
-    target_scoring = scoring_path(workspace_root, epoch_id)
-    backend = workspace_backend(workspace_root, start=False)
-    backend.write_json(scoring_key(epoch_id), scoring_to_dict(weights))
-
-    # 5. Contract hash over the frozen board/brief/scoring plus every
-    # registered component the caller carried in. Computed from the
-    # just-written frozen copies so the stored hash is exactly what a
-    # later ``resolve_contract_inputs`` over equivalent live files
-    # produces.
-    from zicato.epoch.contract import (  # noqa: PLC0415
-        ContractInputs,
-        compute_component_hashes,
-        compute_contract_hash,
-        evaluation_implementation_identity,
-    )
-
-    if contract is None:
-        contract = ContractInputs(
-            board_path=target_board,
-            brief_path=target_brief,
-            scoring_path=target_scoring,
-            entrypoint=entrypoint,
-            mutable_trees=tuple(mutable_trees),
-            proposer_path=proposer_path,
+        # Hash the frozen board, brief, and scoring plus every
+        # registered component the caller carried in. Computed from the
+        # just-written frozen copies so the stored hash is exactly what a
+        # later ``resolve_contract_inputs`` over equivalent live files
+        # produces.
+        from zicato.epoch.contract import (  # noqa: PLC0415
+            ContractInputs,
+            compute_component_hashes,
+            compute_contract_hash,
+            evaluation_implementation_identity,
         )
-    else:
-        from dataclasses import replace
 
-        contract = replace(
-            contract,
-            board_path=target_board,
-            brief_path=target_brief,
-            scoring_path=target_scoring,
+        if contract is None and not entrypoint and not mutable_trees and proposer_path is None:
+            from zicato.epoch.contract import resolve_contract_inputs
+            from zicato.workspace.config_io import read_workspace_config
+
+            # Default construction captures the registered execution declarations.
+            # Explicit legacy arguments retain their direct-construction identity.
+            contract = resolve_contract_inputs(
+                workspace_root, workspace_config=read_workspace_config(workspace_root).raw
+            )
+        if contract is None:
+            contract = ContractInputs(
+                board_path=target_board,
+                brief_path=target_brief,
+                scoring_path=target_scoring,
+                entrypoint=entrypoint,
+                mutable_trees=tuple(mutable_trees),
+                proposer_path=proposer_path,
+            )
+        else:
+            from dataclasses import replace
+
+            contract = replace(
+                contract,
+                board_path=target_board,
+                brief_path=target_brief,
+                scoring_path=target_scoring,
+            )
+        from zicato.epoch.execution import capture_execution_bindings
+
+        execution_bytes, proposer_spec = capture_execution_bindings(contract)
+        (epoch_content / "execution.json").write_bytes(execution_bytes)
+        contract_hash = compute_contract_hash(contract, proposer_spec=proposer_spec)
+        component_path = epoch_content / "contract_components.json"
+        component_path.write_text(
+            json.dumps(
+                compute_component_hashes(contract, proposer_spec=proposer_spec),
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
         )
-    contract_hash = compute_contract_hash(contract)
-    component_path = WorkspaceLayout.from_root(workspace_root).contract_components(epoch_id)
-    component_path.write_text(
-        json.dumps(compute_component_hashes(contract), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
 
-    # 6. Config + lineage. ``EpochConfig.brief_path`` carries the path
-    # to the frozen proposer brief (the ``brief.md`` file).
-    #
-    # Draining the staged proposer-recommendation queue here is what makes
-    # proposer lineage legible: ``zicato proposer apply-recommendation``
-    # edited the proposer dir and parked the id; the epoch that first runs
-    # under the edited proposer is THIS one, so it is the record that should
-    # say why the proposer changed. Draining is part of epoch creation rather
-    # than of apply, because apply cannot know which epoch will pick
-    # the edit up, and an id parked against a guess would be wrong the moment
-    # the operator applied a second recommendation before rolling.
-    cfg = EpochConfig(
-        id=epoch_id,
-        name=name,
-        created_at=_now_iso(),
-        board_path=target_board,
-        brief_path=target_brief,
-        scoring=weights,
-        closed=False,
-        closed_at="",
-        contract_hash=contract_hash,
-        implementation_identity=evaluation_implementation_identity(weights),
+        # Recommendation ids remain pending until the epoch is durably published.
+        cfg = EpochConfig(
+            id=epoch_id,
+            name=name,
+            created_at=_now_iso(),
+            board_path=final_directory / "board.jsonl",
+            brief_path=final_directory / "brief.md",
+            scoring=weights,
+            closed=False,
+            closed_at="",
+            contract_hash=contract_hash,
+            implementation_identity=evaluation_implementation_identity(weights),
+            goal=goal,
+            # Read off the hashed contract rather than the shorthand parameter, so the
+            # proposer this epoch's rounds are built with is the one its hash
+            # was taken over.
+            proposer_path=contract.proposer_path,
+            applied_proposer_recommendations=staged_recommendations(workspace_root),
+        )
+        atomic_write_json(epoch_content / "config.json", _config_to_dict(cfg))
+        if baseline_sources is not None:
+            from zicato.epoch.baseline import prepare_baseline_seed
+            from zicato.epoch.genstore import default_generation_store
+
+            seed = prepare_baseline_seed(
+                workspace_root,
+                epoch_id,
+                baseline_sources,
+                backend=default_generation_store(workspace_root).backend_name,
+                created_at=cfg.created_at,
+                source_coordinates=baseline_coordinates,
+            )
+            atomic_write_json(epoch_content / "baseline_seed.json", seed.body())
+            if baseline_coordinates is not None:
+                source_snapshot = default_generation_store(workspace_root).snapshot_path(
+                    *baseline_coordinates
+                )
+                (epoch_content / "v0_seed_from").write_text(
+                    str(source_snapshot) + "\n", encoding="utf-8"
+                )
+        if contract_adoption is not None:
+            from zicato.contract_draft.publication import validate_prepared_contract
+
+            validate_prepared_contract(
+                workspace_root,
+                contract_adoption,
+                writer=writer,
+                frozen_directory=epoch_content,
+                frozen_contract_hash=contract_hash,
+            )
+            (epoch_content / "contract_adoption.json").write_text(
+                contract_adoption, encoding="utf-8"
+            )
+        sync_directory_tree(parent)
+        operation = EpochPublication(
+            epoch_id=epoch_id,
+            prepared_directory=epoch_content.relative_to(workspace_root).as_posix(),
+            contract_hash=contract_hash,
+            content_identity=seed_content_identity(epoch_content),
+            predecessor_id=prev_id,
+            predecessor_closed_at=closed_at,
+            recommendation_ids=cfg.applied_proposer_recommendations,
+        )
+        if before_contract_roll is not None and prev_id is not None:
+            before_contract_roll(prev_id)
+        operation.write(workspace_root)
+        return operation
+    except BaseException:
+        if not epoch_publication_path(workspace_root).exists():
+            shutil.rmtree(parent)
+            if seed is not None:
+                source = prepared_directory(workspace_root, seed.prepared_directory)
+                shutil.rmtree(source.parent)
+        raise
+
+
+def recover_epoch_publication(workspace_root: Path, *, writer: WorkspaceLock) -> EpochConfig | None:
+    """Finish the prepared epoch without consulting mutable live inputs."""
+    from zicato.epoch import lineage
+    from zicato.epoch.baseline import validate_baseline_seed
+    from zicato.runtime.lock import validate_workspace_lock  # noqa: PLC0415
+
+    validate_workspace_lock(writer, workspace_root)
+    operation = EpochPublication.read(workspace_root)
+    if operation is None:
+        return None
+    prepared = prepared_directory(workspace_root, operation.prepared_directory)
+    destination = epoch_dir(workspace_root, operation.epoch_id)
+    if prepared.exists() and destination.exists():
+        raise FileExistsError(f"epoch publication destination is occupied: {destination}")
+    content = destination if destination.exists() else prepared
+    if seed_content_identity(content) != operation.content_identity:
+        raise ValueError(f"prepared epoch content changed: {operation.epoch_id}")
+    seed = BaselineSeed.read(
+        workspace_root, operation.epoch_id, path=content / "baseline_seed.json"
+    )
+    if seed is not None:
+        validate_baseline_seed(workspace_root, seed)
+    adoption = content / "contract_adoption.json"
+    if adoption.exists():
+        from zicato.contract_draft.publication import publish_prepared_contract
+
+        publish_prepared_contract(
+            workspace_root, adoption.read_text(encoding="utf-8"), writer=writer
+        )
+    if not destination.exists():
+        from zicato.workspace.projection import mark_epoch_changed  # noqa: PLC0415
+
+        mark_epoch_changed(workspace_root, operation.epoch_id)
+        publish_directory(prepared, destination)
+    cfg = load_epoch(workspace_root, operation.epoch_id)
+    if cfg.id != operation.epoch_id or cfg.contract_hash != operation.contract_hash:
+        raise ValueError(f"published epoch contract differs from intent: {cfg.id}")
+    parent = operation.predecessor_id
+    if seed is not None and seed.source_epoch is not None:
+        parent = f"{seed.source_epoch}:{seed.source_generation}"
+    lineage.register_epoch(workspace_root, cfg, parent_epoch_id=parent)
+    switch_epoch(workspace_root, cfg.id)
+    if operation.predecessor_id is not None and operation.predecessor_closed_at is not None:
+        _close_epoch_prelude(
+            workspace_root,
+            operation.predecessor_id,
+            closed_at=operation.predecessor_closed_at,
+        )
+    acknowledge_staged_recommendations(workspace_root, operation.recommendation_ids)
+    durable_unlink(epoch_publication_path(workspace_root))
+    with suppress(OSError):
+        prepared.parent.rmdir()
+    return cfg
+
+
+def new_epoch(
+    workspace_root: Path,
+    name: str,
+    board_source: Board | Path | str,
+    brief_source: ProposerBrief | Path | str,
+    weights: ScoringWeights,
+    auto_close_previous: bool = True,
+    aux_call_llm: _AuxCallLLM | None = None,
+    *,
+    contract: ContractInputs | None = None,
+    entrypoint: str = "",
+    mutable_trees: tuple[str, ...] = (),
+    goal: str = "",
+    proposer_path: Path | None = None,
+    writer: WorkspaceLock | None = None,
+    contract_adoption: str | None = None,
+) -> EpochConfig:
+    """Prepare a complete evaluation contract, publish it, and switch epochs.
+
+    Invalid inputs leave the predecessor unchanged. Interrupted publication
+    resumes from retained content under the workspace writer. Contract paths
+    name final locations and preserve the existing canonical hash semantics.
+    A supplied writer is validated and borrowed for the entire operation.
+    Optional contract_adoption contains accepted publication bytes prepared by
+    the contract owner; admission verifies their identity against the epoch.
+    """
+    from zicato.runtime.lock import acquire_workspace_lock, validate_workspace_lock
+
+    _slugify(name)
+    if writer is None:
+        with acquire_workspace_lock(workspace_root, "epoch-publication") as owned_writer:
+            return new_epoch(
+                workspace_root,
+                name,
+                board_source,
+                brief_source,
+                weights,
+                auto_close_previous,
+                aux_call_llm,
+                contract=contract,
+                entrypoint=entrypoint,
+                mutable_trees=mutable_trees,
+                goal=goal,
+                proposer_path=proposer_path,
+                writer=owned_writer,
+                contract_adoption=contract_adoption,
+            )
+    validate_workspace_lock(writer, workspace_root)
+    recovered = recover_epoch_publication(workspace_root, writer=writer)
+    if recovered is not None and recovered.name == name:
+        return recovered
+    registered_sources = contract.mutable_trees if contract is not None else mutable_trees
+    baseline_sources = tuple(
+        path if path.is_absolute() else workspace_root.parent / path
+        for path in map(Path, registered_sources)
+    )
+    operation = _prepare_epoch(
+        workspace_root,
+        name,
+        board_source,
+        brief_source,
+        weights,
+        auto_close_previous,
+        aux_call_llm,
+        contract=contract,
+        entrypoint=entrypoint,
+        mutable_trees=mutable_trees,
         goal=goal,
-        # Read off the hashed contract rather than the shorthand parameter, so the
-        # proposer this epoch's rounds are built with is the one its hash
-        # was taken over.
-        proposer_path=contract.proposer_path,
-        applied_proposer_recommendations=drain_staged_recommendations(workspace_root),
+        proposer_path=proposer_path,
+        writer=writer,
+        baseline_sources=baseline_sources or None,
+        contract_adoption=contract_adoption,
     )
-    _write_config(workspace_root, cfg)
-
-    # Lineage update (imported lazily to avoid a circular import at module
-    # load time — lineage.py wants to read this module's helpers).
-    from zicato.epoch import lineage as _lineage
-
-    _lineage.register_epoch(workspace_root, cfg, parent_epoch_id=prev_id)
-
-    # 7. Marker.
-    switch_epoch(workspace_root, epoch_id)
+    cfg = recover_epoch_publication(workspace_root, writer=writer)
+    assert cfg is not None
+    if operation.predecessor_closed_at is not None:
+        print(
+            f"WARNING: auto-closing previous epoch {operation.predecessor_id!r}",
+            file=sys.stderr,
+        )
+        warnings.warn(f"auto-closing previous epoch {operation.predecessor_id!r}", stacklevel=2)
+        close_epoch(workspace_root, operation.predecessor_id, aux_call_llm=aux_call_llm)
     return cfg
 
 
 def _close_epoch_prelude(
     workspace_root: Path,
     epoch_id: str | None,
+    *,
+    closed_at: str | None = None,
 ) -> tuple[str, Path]:
     """Mark an epoch closed + stamp lineage; return ``(epoch_id, out_path)``.
 
@@ -636,7 +773,7 @@ def _close_epoch_prelude(
     if not cfg.closed:
         from dataclasses import replace
 
-        cfg = replace(cfg, closed=True, closed_at=_now_iso())
+        cfg = replace(cfg, closed=True, closed_at=closed_at or _now_iso())
         _write_config(workspace_root, cfg)
 
     # Update lineage's per-epoch closed_at.
@@ -690,6 +827,7 @@ def close_epoch(
     workspace_root: Path,
     epoch_id: str | None = None,
     aux_call_llm: _AuxCallLLM | None = None,
+    aux_config: AuxConfig | None = None,
 ) -> Path:
     """Mark an epoch closed and generate ``analysis.md`` for it.
 
@@ -721,6 +859,7 @@ def close_epoch(
                 epoch_id,
                 aux_call_llm,
                 model="",
+                aux_config=aux_config,
             )
         )
     else:
@@ -732,6 +871,7 @@ async def close_epoch_async(
     workspace_root: Path,
     epoch_id: str | None = None,
     aux_call_llm: _AuxCallLLM | None = None,
+    aux_config: AuxConfig | None = None,
 ) -> Path:
     """Async sibling of :func:`close_epoch`.
 
@@ -750,6 +890,7 @@ async def close_epoch_async(
             epoch_id,
             aux_call_llm,
             model="",
+            aux_config=aux_config,
         )
     else:
         _write_stub_analysis(workspace_root, epoch_id, out_path)

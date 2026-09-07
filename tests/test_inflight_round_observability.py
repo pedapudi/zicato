@@ -49,6 +49,7 @@ from tests._orchestrator_harness import (
     target_call_llm,
 )
 from zicato.core.types import ExperimentalConfig, ScoringWeights, TournamentStructure
+from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import new_epoch
 
 
@@ -136,7 +137,7 @@ def _bootstrap_single_elim_workspace(tmp_path: Path, *, field_size: int) -> tupl
                 # directory backend so the git default does not look for git
                 # tags this fixture never writes.
                 "generation_source_backend": "directory",
-                "adapter": {"kind": "stub"},
+                "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
             }
         )
     )
@@ -182,6 +183,7 @@ def _bootstrap_single_elim_workspace(tmp_path: Path, *, field_size: int) -> tupl
         'GREETING = "hello"\n'
     )
     (workspace / "epochs" / cfg.id / "current_generation").write_text("v0\n")
+    write_seed_experiment(workspace, cfg.id, proposed_at=cfg.created_at)
     return workspace, cfg.id
 
 

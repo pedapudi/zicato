@@ -504,12 +504,10 @@ async def test_llm_failure_still_writes_report(epoch_workspace: tuple[Path, str]
 
 async def test_llm_timeout_still_writes_report(
     epoch_workspace: tuple[Path, str],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A timed-out LLM call substitutes placeholder prose, not a crash."""
     ws, epoch = epoch_workspace
-    # Force a near-instant timeout so the test does not actually wait.
-    monkeypatch.setattr("zicato.analyzer.report.aux_call_timeout_s", lambda *a, **k: 0.01)
+    from zicato.config import AuxConfig
 
     async def slow_aux(system: str, user: str, model: str) -> str:
         import asyncio
@@ -517,7 +515,9 @@ async def test_llm_timeout_still_writes_report(
         await asyncio.sleep(5.0)
         return "never reached"
 
-    out = await generate_epoch_report(ws, epoch, slow_aux)
+    out = await generate_epoch_report(
+        ws, epoch, slow_aux, aux_config=AuxConfig(call_timeout_s=0.01)
+    )
     md = out.read_text(encoding="utf-8")
     assert "## Experimental Results" in md
     assert "prose section unavailable" in md

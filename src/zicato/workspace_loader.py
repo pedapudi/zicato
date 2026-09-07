@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 from zicato.board.jsonl import load_board, load_board_with_meta
+from zicato.core.scoring_config import _reject_retired_scoring_keys
+from zicato.core.scoring_config import scoring_weights_from_dict as scoring_weights_from_dict
 from zicato.core.types import (
     BoardEntry,
     EpochConfig,
@@ -143,7 +145,7 @@ def load_current_scoring(workspace_root: Path) -> ScoringWeights:
             f"scoring.json not found at {path}; the current epoch is incomplete"
         )
     raw = json.loads(path.read_text(encoding="utf-8"))
-    return scoring_weights_from_dict(raw)
+    return historical_scoring_weights_from_dict(raw)
 
 
 def load_current_tournament(workspace_root: Path) -> TournamentStructure:
@@ -171,56 +173,12 @@ def load_current_brief(workspace_root: Path) -> ProposerBrief:
     return load_brief(path)
 
 
-def scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
-    """Build a :class:`ScoringWeights` from a JSON-shaped dict.
-
-    Delegates to the single field-enumerating parser
-    :func:`zicato.epoch.contract_serde.jsonable_to_dataclass`, which is
-    the same code :func:`zicato.epoch.lifecycle._scoring_from_dict` uses,
-    so the writer, the lifecycle parser, and this loader cannot desync —
-    the defect class behind issue #13 (a new contract field threaded
-    through one serializer but not another). Every field absent from a
-    ``scoring.json`` falls back to the dataclass default, and the
-    nested ``tournament`` / ``overfitting`` blocks recurse automatically.
-    """
-    from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
+def historical_scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
+    """Decode frozen scoring records using the persisted compatibility rules."""
+    from zicato.epoch.contract_serde import historical_dataclass_from_json  # noqa: PLC0415
 
     _reject_retired_scoring_keys(d)
-    return jsonable_to_dataclass(ScoringWeights, d)
-
-
-#: Retired ``scoring.json`` keys, each mapped to a template naming what
-#: replaces it. The field-enumerating loader IGNORES unknown keys, so a
-#: retired one would otherwise degrade invisibly — the contract would score
-#: under a default the operator never chose, with no error and no epoch roll.
-#: Every entry here is a key that once shaped the scalar.
-_RETIRED_SCORING_KEYS: Mapping[str, str] = {
-    "pass_exponent": (
-        '`pass_exponent` is retired — express it as pass_transform={{"op": '
-        '"pow", "exponent": {raw}}} in scoring.json.'
-    ),
-    "drift_weight": (
-        "`drift_weight` is retired — drift is one metric channel among "
-        'several, so express it as namespace_weights={{"drift:": {raw}}} in '
-        "scoring.json."
-    ),
-    "runtime_weight": (
-        "`runtime_weight` is retired — runtime is one metric channel among "
-        'several, so express it as namespace_weights={{"runtime:": {raw}}} in '
-        "scoring.json."
-    ),
-}
-
-
-def _reject_retired_scoring_keys(d: Mapping[str, Any]) -> None:
-    """Reject any retired ``scoring.json`` key with a loud migration error.
-
-    A stale contract fails fast, naming the field that replaced the one it
-    uses, rather than loading with a silently defaulted scalar.
-    """
-    for key, template in _RETIRED_SCORING_KEYS.items():
-        if key in d:
-            raise ValueError(template.format(raw=d[key]))
+    return historical_dataclass_from_json(ScoringWeights, d)
 
 
 def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:
@@ -233,18 +191,18 @@ def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:
 
     A present block forwards each recognised key field-by-field via the
     single field-enumerating parser
-    :func:`zicato.epoch.contract_serde.jsonable_to_dataclass` (so a new
+    :func:`zicato.epoch.contract_serde.historical_dataclass_from_json` (so a new
     :class:`OverfittingConfig` field is covered automatically and cannot
     desync from the contract canonicalizer — the defect class behind issue
     #13); unknown keys are ignored, absent keys fall back to the dataclass
     default, and the nested ``ladder`` block recurses. Range/validity is
     enforced by ``OverfittingConfig``'s ``__post_init__``.
     """
-    from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
+    from zicato.epoch.contract_serde import historical_dataclass_from_json  # noqa: PLC0415
 
     if not isinstance(raw, Mapping):
         return OverfittingConfig.defaults()
-    return jsonable_to_dataclass(OverfittingConfig, raw)
+    return historical_dataclass_from_json(OverfittingConfig, raw)
 
 
 def ladder_config_from_dict(raw: Any) -> LadderConfig:
@@ -261,15 +219,15 @@ def ladder_config_from_dict(raw: Any) -> LadderConfig:
     nested frozen dataclasses), so a ``ladder`` change rolls the epoch.
 
     Parses field-by-field via the single field-enumerating parser
-    :func:`zicato.epoch.contract_serde.jsonable_to_dataclass`, so a new
+    :func:`zicato.epoch.contract_serde.historical_dataclass_from_json`, so a new
     :class:`LadderConfig` field is covered automatically (issue #13);
     absent keys fall back to the dataclass default.
     """
-    from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
+    from zicato.epoch.contract_serde import historical_dataclass_from_json  # noqa: PLC0415
 
     if not isinstance(raw, Mapping):
         return LadderConfig.defaults()
-    return jsonable_to_dataclass(LadderConfig, raw)
+    return historical_dataclass_from_json(LadderConfig, raw)
 
 
 def overfitting_config_to_dict(cfg: OverfittingConfig) -> dict[str, Any]:
@@ -299,9 +257,9 @@ def tournament_structure_from_dict(raw: Any) -> TournamentStructure:
     object. ``params`` is stored verbatim as an opaque mapping; per-key
     semantics are the selection strategy's responsibility.
 
-    Shared by :func:`scoring_weights_from_dict` (used by the contract
-    canonicalizer) and the lifecycle serializer so the on-disk format is
-    fully shared between the two loaders.
+    This compatibility reader is used for frozen tournament records.
+    Authored scoring uses :func:`scoring_weights_from_dict`, which rejects
+    malformed blocks before constructing the nested contract records.
     """
     if not isinstance(raw, Mapping):
         return TournamentStructure.gauntlet()
@@ -348,6 +306,7 @@ __all__ = [
     "activate_mutation_surface",
     "load_workspace_config",
     "scoring_weights_from_dict",
+    "historical_scoring_weights_from_dict",
     "load_current_epoch_config",
     "load_current_board",
     "load_current_board_with_meta",

@@ -369,7 +369,10 @@ def test_ensure_baseline_snapshot_writes_v0_marker(tmp_path: Path) -> None:
     v0_dir = ws / "epochs" / epoch_id / "generations" / "v0"
     assert not v0_dir.exists()
 
-    _ensure_baseline_snapshot(ws, epoch_id, {"mutable_trees": [str(src_tree)]})
+    from zicato.runtime.lock import acquire_workspace_lock
+
+    with acquire_workspace_lock(ws, "contract-test") as writer:
+        _ensure_baseline_snapshot(ws, epoch_id, {"mutable_trees": [str(src_tree)]}, writer=writer)
 
     # The marker landed alongside the seeded snapshot.
     exp_path = v0_dir / "experiment.json"
@@ -385,5 +388,8 @@ def test_ensure_baseline_snapshot_writes_v0_marker(tmp_path: Path) -> None:
     # A second call is a no-op (idempotent guard kicks in twice — the
     # outer return-early because v0 exists, AND the write-seed helper's
     # exists check).
-    _ensure_baseline_snapshot(ws, epoch_id, {"mutable_trees": [str(src_tree)]})
+    from zicato.runtime.lock import acquire_workspace_lock
+
+    with acquire_workspace_lock(ws, "contract-test") as writer:
+        _ensure_baseline_snapshot(ws, epoch_id, {"mutable_trees": [str(src_tree)]}, writer=writer)
     assert json.loads(exp_path.read_text()) == body

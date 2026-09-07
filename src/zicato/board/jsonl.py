@@ -155,63 +155,67 @@ def load_board_with_meta(
         share an ``id``. The error message carries the offending line
         number (1-indexed) when applicable.
     """
-    path = Path(path)
+    return parse_board_with_meta(Path(path).read_text(encoding="utf-8"), source=path)
+
+
+def parse_board_with_meta(
+    text: str, *, source: Path | str = "board"
+) -> tuple[list[BoardEntry], tuple[DriftKind, ...], bool]:
+    """Validate captured board bytes with the file loader's line diagnostics."""
+    path = source
     entries: list[BoardEntry] = []
     seen_ids: set[str] = set()
     disable_drift: tuple[DriftKind, ...] = ()
     judge_only = False
     seen_any_row = False
 
-    with path.open("r", encoding="utf-8") as fh:
-        for line_no, raw_line in enumerate(fh, start=1):
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                payload = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"{path}: line {line_no}: malformed JSON: {exc.msg}") from exc
-            if not isinstance(payload, dict):
+    for line_no, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path}: line {line_no}: malformed JSON: {exc.msg}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(
+                f"{path}: line {line_no}: expected a JSON object, got {type(payload).__name__}"
+            )
+
+        # Board-level metadata header. Must be the first non-blank
+        # line; anything later is a structural error.
+        if payload.get(_BOARD_META_KEY) is True:
+            if seen_any_row:
                 raise ValueError(
-                    f"{path}: line {line_no}: expected a JSON object, got {type(payload).__name__}"
+                    f"{path}: line {line_no}: 'board_meta' header must be the "
+                    "first line of the board file"
                 )
-
-            # Board-level metadata header. Must be the first non-blank
-            # line; anything later is a structural error.
-            if payload.get(_BOARD_META_KEY) is True:
-                if seen_any_row:
-                    raise ValueError(
-                        f"{path}: line {line_no}: 'board_meta' header must be the "
-                        "first line of the board file"
-                    )
-                disable_drift = _coerce_disable_drift(
-                    payload.get("disable_drift", []), f"{path}: line {line_no}"
-                )
-                if "judge_only" in payload:
-                    judge_only = _coerce_judge_only(
-                        payload["judge_only"], f"{path}: line {line_no}"
-                    )
-                seen_any_row = True
-                continue
-
+            disable_drift = _coerce_disable_drift(
+                payload.get("disable_drift", []), f"{path}: line {line_no}"
+            )
+            if "judge_only" in payload:
+                judge_only = _coerce_judge_only(payload["judge_only"], f"{path}: line {line_no}")
             seen_any_row = True
-            # Back-compat alias: ``budget_s`` is the short field name
-            # preferred by Python-builder boards (see
-            # :class:`zicato.board.builder.Entry`). Promote it to the
-            # canonical ``wall_clock_budget_seconds`` when only the
-            # short form is present so older readers stay tolerant of
-            # boards written by the builder API.
-            if "budget_s" in payload and "wall_clock_budget_seconds" not in payload:
-                payload["wall_clock_budget_seconds"] = payload.pop("budget_s")
-            _reject_legacy_expectation(payload, f"{path}: line {line_no}")
-            try:
-                entry = validate_board_entry(payload)
-            except (KeyError, ValueError) as exc:
-                raise ValueError(f"{path}: line {line_no}: invalid entry: {exc}") from exc
-            if entry.id in seen_ids:
-                raise ValueError(f"{path}: line {line_no}: duplicate entry id {entry.id!r}")
-            seen_ids.add(entry.id)
-            entries.append(entry)
+            continue
+
+        seen_any_row = True
+        # Back-compat alias: ``budget_s`` is the short field name
+        # preferred by Python-builder boards (see
+        # :class:`zicato.board.builder.Entry`). Promote it to the
+        # canonical ``wall_clock_budget_seconds`` when only the
+        # short form is present so older readers stay tolerant of
+        # boards written by the builder API.
+        if "budget_s" in payload and "wall_clock_budget_seconds" not in payload:
+            payload["wall_clock_budget_seconds"] = payload.pop("budget_s")
+        _reject_legacy_expectation(payload, f"{path}: line {line_no}")
+        try:
+            entry = validate_board_entry(payload)
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"{path}: line {line_no}: invalid entry: {exc}") from exc
+        if entry.id in seen_ids:
+            raise ValueError(f"{path}: line {line_no}: duplicate entry id {entry.id!r}")
+        seen_ids.add(entry.id)
+        entries.append(entry)
 
     return entries, disable_drift, judge_only
 
@@ -341,9 +345,8 @@ def save_board(
 ) -> None:
     """Serialize a list of :class:`BoardEntry` to ``path`` as JSONL.
 
-    The output is overwritten atomically: a sibling ``.tmp`` file is
-    written first, then renamed over the target. This keeps a partial
-    write from corrupting an existing board.
+    The shared atomic writer publishes the serialized board through a unique
+    sibling temporary file and synchronizes the file and destination directory.
 
     Each row contains only the keys relevant to that entry's ``kind`` —
     optional fields with default values are omitted for cleanliness.
@@ -353,7 +356,7 @@ def save_board(
     entries:
         The entries to write, in order.
     path:
-        Destination path. Parent directory must already exist.
+        Destination path. Missing parent directories are created.
     disable_drift:
         Board-level drift kinds to suppress.
     judge_only:
@@ -370,23 +373,32 @@ def save_board(
     ValueError
         If two entries in ``entries`` share an id.
     """
-    path = Path(path)
+    from zicato.storage import atomic_write_text  # noqa: PLC0415
+
+    atomic_write_text(
+        Path(path),
+        board_to_jsonl(entries, disable_drift=disable_drift, judge_only=judge_only),
+        mode=0o666,
+    )
+
+
+def board_to_jsonl(
+    entries: list[BoardEntry],
+    *,
+    disable_drift: tuple[DriftKind, ...] = (),
+    judge_only: bool = False,
+) -> str:
+    """Serialize a board and its metadata without publishing a file."""
     seen_ids: set[str] = set()
+    rows = []
+    if disable_drift or judge_only:
+        rows.append(board_meta_to_dict(disable_drift, judge_only))
     for entry in entries:
         if entry.id in seen_ids:
             raise ValueError(f"duplicate entry id {entry.id!r} in entries to save")
         seen_ids.add(entry.id)
-
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as fh:
-        if disable_drift or judge_only:
-            fh.write(json.dumps(board_meta_to_dict(disable_drift, judge_only), ensure_ascii=False))
-            fh.write("\n")
-        for entry in entries:
-            row = entry_to_dict(entry)
-            fh.write(json.dumps(row, ensure_ascii=False))
-            fh.write("\n")
-    tmp_path.replace(path)
+        rows.append(entry_to_dict(entry))
+    return "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
 
 
 def append_entry(path: Path, entry: BoardEntry) -> None:

@@ -71,6 +71,13 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
     Raises :class:`ValueError` on an unknown op or a malformed arg, which
     the handler turns into a 400.
     """
+    import inspect  # noqa: PLC0415
+
+    operation = getattr(ops, op, None)
+    if operation is not None and callable(operation):
+        unknown = set(args) - set(inspect.signature(operation).parameters)
+        if unknown:
+            raise ValueError(f"{op}: unknown arguments {sorted(unknown)}")
     if op == "set_structure":
         return ops.set_structure(draft, str(args["structure"]))
     if op == "set_param":
@@ -157,12 +164,10 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
             mutation_surface=raw_surface if isinstance(raw_surface, Mapping) else None,
         )
     if op == "set_screening":
-        raw_entries = args.get("entries")
-        raw_veto_only = args.get("veto_only")
         return ops.set_screening(
             draft,
-            entries=int(raw_entries) if raw_entries is not None else None,
-            veto_only=bool(raw_veto_only) if raw_veto_only is not None else None,
+            entries=_opt_int(args, "entries"),
+            veto_only=_opt_bool(args, "veto_only"),
         )
     if op == "edit_board_entry":
         entry = validate_board_entry(args["entry"])
@@ -191,81 +196,50 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
 
 
 def _opt_int(args: dict[str, Any], key: str) -> int | None:
-    """Coerce an optional integer arg (absent / null ⇒ ``None``).
-
-    A non-integer raises :class:`ValueError` so the handler returns a
-    clear 400 instead of silently mis-typing a contract knob.
-    """
+    """Accept an authored integer, with null meaning no requested edit."""
     raw = args.get(key)
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{key!r} must be an integer, got {raw!r}") from exc
+    if raw is not None and type(raw) is not int:
+        raise ValueError(f"{key!r} must be an integer, got {raw!r}")
+    return raw
 
 
 def _opt_float(args: dict[str, Any], key: str) -> float | None:
-    """Coerce an optional float arg (absent / null ⇒ ``None``).
+    """Accept a finite JSON number without parsing strings or booleans."""
+    import math  # noqa: PLC0415
 
-    The float twin of :func:`_opt_int`, closing the same hole on the other
-    half of the knobs. Were a float arg to reach an op as the RAW JSON
-    value, the outcome would split by which validator the field happens to
-    have. A string ``"0.5"`` lands in the contract intact for
-    ``promote_margin`` and the weight scalars, whose validators never compare
-    them. The same string raises an uncaught ``TypeError`` — a 500 rather
-    than a 400 — for ``holdout_fraction``, whose validator does compare.
-    Both are the mis-typed contract knob this coercion exists to refuse.
-
-    A bool is rejected outright: Python floats it to 0.0/1.0 happily, so
-    ``true`` would otherwise read as a silent 1.0 weight.
-    """
     raw = args.get(key)
     if raw is None:
         return None
-    if isinstance(raw, bool):
+    if type(raw) not in (int, float):
         raise ValueError(f"{key!r} must be a number, got {raw!r}")
     try:
-        return float(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{key!r} must be a number, got {raw!r}") from exc
+        value = float(raw)
+    except OverflowError as exc:
+        raise ValueError(f"{key!r} must be a finite number") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{key!r} must be a finite number")
+    return value
 
 
 def _opt_bool(args: dict[str, Any], key: str) -> bool | None:
-    """Coerce an optional boolean arg (absent / null ⇒ ``None``)."""
+    """Accept a JSON boolean, with null meaning no requested edit."""
     raw = args.get(key)
-    if raw is None:
-        return None
-    return bool(raw)
+    if raw is not None and type(raw) is not bool:
+        raise ValueError(f"{key!r} must be a boolean, got {raw!r}")
+    return raw
 
 
 def _opt_str(args: dict[str, Any], key: str) -> str | None:
-    """Coerce an optional string arg (absent / null ⇒ ``None``).
-
-    A non-string raises :class:`ValueError` so the handler returns a clear
-    400 instead of silently mis-typing a contract knob.
-    """
+    """Accept a JSON string, with null meaning no requested edit."""
     raw = args.get(key)
-    if raw is None:
-        return None
-    if not isinstance(raw, str):
+    if raw is not None and type(raw) is not str:
         raise ValueError(f"{key!r} must be a string, got {raw!r}")
     return raw
 
 
 def _runs_of(args: dict[str, Any]) -> int | None:
-    """Coerce the optional ``runs`` arg of the ``preflight`` op.
-
-    ``None`` (absent) defers to the op's default; a non-integer raises
-    :class:`ValueError` so the handler returns a clear 400.
-    """
-    raw = args.get("runs")
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"preflight 'runs' must be an integer, got {raw!r}") from exc
+    """Use the same authored integer admission for preflight draw counts."""
+    return _opt_int(args, "runs")
 
 
 def _builder_vocab() -> dict[str, list[str]]:
@@ -561,11 +535,15 @@ def make_builder_endpoints(
             return JSONResponse({"error": str(exc)}, status_code=400)
         session = _session_of(body, request)
         confirm = bool(body.get("confirm", False))
-        draft = draft_store.get(session, root)
+        from zicato.runtime.lock import WorkspaceLockHeld
+
         try:
+            draft = draft_store.get(session, root)
             result = ops.apply(draft, root, confirm)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
+        except WorkspaceLockHeld as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
         return JSONResponse(result.to_dict())
 
     async def builder_chat(request: Request) -> Response:

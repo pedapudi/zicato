@@ -19,7 +19,9 @@ from pathlib import Path
 
 import pytest
 
+from tests._runtime_context_support import install_runtime_context
 from zicato.core.workspace import events_jsonl_path
+from zicato.runtime.context import RUNTIME_CONTEXT_ENV
 from zicato.telemetry import make_run_sink, make_run_sink_path
 
 
@@ -122,31 +124,25 @@ def test_make_run_sinks_jsonl_only_when_no_harmonograf_url(
     pytest.importorskip("goldfive")
     from goldfive.sinks.persistence import JSONLPersistenceSink  # type: ignore
 
-    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, make_run_sinks
+    from zicato.telemetry.sink import make_run_sinks
 
-    monkeypatch.delenv(HARMONOGRAF_URL_ENV, raising=False)
+    monkeypatch.delenv(RUNTIME_CONTEXT_ENV, raising=False)
     sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
     assert len(sinks) == 1
     assert isinstance(sinks[0], JSONLPersistenceSink)
 
 
-def test_make_run_sinks_attaches_harmonograf_when_env_set(
+def test_make_run_sinks_attaches_harmonograf_from_context(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """ZICATO_HARMONOGRAF_URL appends a harmonograf sink alongside JSONL.
-
-    The goldfive-side harmonograf sink ships in ``harmonograf_client``,
-    which is not a test dependency — so we install a minimal stub
-    ``harmonograf_client`` module exporting ``Client`` + ``HarmonografSink``
-    and assert the builder constructs and appends it.
-    """
+    """An inherited telemetry endpoint adds a live sink alongside canonical JSONL."""
     pytest.importorskip("goldfive")
     import sys
     import types
 
     from goldfive.sinks.persistence import JSONLPersistenceSink  # type: ignore
 
-    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, make_run_sinks
+    from zicato.telemetry.sink import make_run_sinks
 
     constructed: dict[str, object] = {}
 
@@ -164,7 +160,7 @@ def test_make_run_sinks_attaches_harmonograf_when_env_set(
     stub_mod.HarmonografSink = _StubHarmonografSink  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "harmonograf_client", stub_mod)
 
-    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "127.0.0.1:7531")
+    install_runtime_context(monkeypatch, tmp_path, web_url="127.0.0.1:7531")
     sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
 
     assert len(sinks) == 2
@@ -221,18 +217,12 @@ def test_harmonograf_metadata_stays_on_registration_envelopes(
 def test_make_run_sinks_strips_url_scheme_for_grpc_target(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An ``http://`` harmonograf URL is reduced to a bare gRPC target.
-
-    ``ZICATO_HARMONOGRAF_URL`` is also consumed as a browser-resolvable
-    link, so operators set it as ``http://host:port``. The harmonograf
-    client hands ``server_addr`` straight to ``grpc.aio.insecure_channel``,
-    which rejects a scheme prefix — so the builder must strip it.
-    """
+    """An external single-port browser URL is reduced to its native gRPC target."""
     pytest.importorskip("goldfive")
     import sys
     import types
 
-    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, make_run_sinks
+    from zicato.telemetry.sink import make_run_sinks
 
     constructed: dict[str, object] = {}
 
@@ -249,7 +239,7 @@ def test_make_run_sinks_strips_url_scheme_for_grpc_target(
     stub_mod.HarmonografSink = _StubHarmonografSink  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "harmonograf_client", stub_mod)
 
-    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "http://127.0.0.1:7531")
+    install_runtime_context(monkeypatch, tmp_path, web_url="http://127.0.0.1:7531")
     sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
 
     assert len(sinks) == 2
@@ -277,8 +267,8 @@ def test_make_run_sinks_auto_launch_dials_grpc_port_not_web_port(
 
     Regression for the silent-telemetry-drop bug: the auto-launched
     server binds a browser-facing gRPC-Web port (carried by
-    ``ZICATO_HARMONOGRAF_URL`` for dashboard deep-links) AND a distinct
-    native gRPC port (``ZICATO_HARMONOGRAF_GRPC``) the per-run sink must
+    ``runtime_context.telemetry.web_url`` for dashboard deep-links) AND a distinct
+    native gRPC port (``runtime_context.telemetry.grpc_target``) the per-run sink must
     dial. Stripping the scheme off the web URL (the old behaviour) dialed
     the WEB port over native gRPC, failing the handshake silently. Here
     web_port (9080) != grpc_port (9090); the sink MUST dial the grpc port.
@@ -287,11 +277,7 @@ def test_make_run_sinks_auto_launch_dials_grpc_port_not_web_port(
     import sys
     import types
 
-    from zicato.telemetry.sink import (
-        HARMONOGRAF_GRPC_ENV,
-        HARMONOGRAF_URL_ENV,
-        make_run_sinks,
-    )
+    from zicato.telemetry.sink import make_run_sinks
 
     constructed: dict[str, object] = {}
 
@@ -309,9 +295,9 @@ def test_make_run_sinks_auto_launch_dials_grpc_port_not_web_port(
     monkeypatch.setitem(sys.modules, "harmonograf_client", stub_mod)
 
     # The dashboard link gets the WEB port; the sink must NOT dial it.
-    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "http://127.0.0.1:9080")
-    # The orchestrator's auto-launch wiring exports the native gRPC port.
-    monkeypatch.setenv(HARMONOGRAF_GRPC_ENV, "127.0.0.1:9090")
+    install_runtime_context(monkeypatch, tmp_path, web_url="http://127.0.0.1:9080")
+    # The context carries the native gRPC port beside its browser address.
+    install_runtime_context(monkeypatch, tmp_path, grpc_target="127.0.0.1:9090")
 
     sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
 
@@ -320,23 +306,21 @@ def test_make_run_sinks_auto_launch_dials_grpc_port_not_web_port(
     assert constructed["server_addr"] == "127.0.0.1:9090"
 
 
-def test_resolve_harmonograf_grpc_target_prefers_grpc_env(
+def test_resolve_harmonograf_grpc_target_uses_matching_context(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    """resolve_harmonograf_grpc_target: grpc env wins, else derives from web URL."""
-    from zicato.telemetry.sink import (
-        HARMONOGRAF_GRPC_ENV,
-        resolve_harmonograf_grpc_target,
-    )
+    """A matching inherited context supplies its native endpoint; external URLs derive it."""
+    from zicato.telemetry.sink import resolve_harmonograf_grpc_target
 
-    # Auto-launch path: ZICATO_HARMONOGRAF_GRPC set ⇒ dial it (the grpc
-    # port), ignoring the web URL passed in.
-    monkeypatch.setenv(HARMONOGRAF_GRPC_ENV, "127.0.0.1:9090")
+    # The inherited pair keeps the service's separate native port.
+    install_runtime_context(
+        monkeypatch, tmp_path, grpc_target="127.0.0.1:9090", web_url="http://127.0.0.1:9080"
+    )
     assert resolve_harmonograf_grpc_target("http://127.0.0.1:9080") == "127.0.0.1:9090"
 
-    # External path: no grpc env ⇒ the web URL IS the single dial target,
-    # scheme-stripped.
-    monkeypatch.delenv(HARMONOGRAF_GRPC_ENV, raising=False)
+    # Without inherited context, an external URL names a single dial target.
+    monkeypatch.delenv(RUNTIME_CONTEXT_ENV, raising=False)
     assert resolve_harmonograf_grpc_target("http://ext-host:7777") == "ext-host:7777"
 
 
@@ -349,7 +333,7 @@ def test_make_run_sinks_falls_back_to_jsonl_when_harmonograf_client_missing(
 
     from goldfive.sinks.persistence import JSONLPersistenceSink  # type: ignore
 
-    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, make_run_sinks
+    from zicato.telemetry.sink import make_run_sinks
 
     real_import = builtins.__import__
 
@@ -359,7 +343,7 @@ def test_make_run_sinks_falls_back_to_jsonl_when_harmonograf_client_missing(
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "127.0.0.1:7531")
+    install_runtime_context(monkeypatch, tmp_path, web_url="127.0.0.1:7531")
 
     sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA")
     # Only JSONL — the harmonograf attachment degraded gracefully.
@@ -367,20 +351,21 @@ def test_make_run_sinks_falls_back_to_jsonl_when_harmonograf_client_missing(
     assert isinstance(sinks[0], JSONLPersistenceSink)
 
 
-def test_resolve_harmonograf_url_env_beats_config(
+def test_resolve_harmonograf_url_context_precedes_workspace(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    """resolve_harmonograf_url prefers the env var over the workspace config."""
-    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, resolve_harmonograf_url
+    """Inherited invocation endpoints precede the standalone workspace setting."""
+    from zicato.telemetry.sink import resolve_harmonograf_url
 
-    monkeypatch.delenv(HARMONOGRAF_URL_ENV, raising=False)
+    monkeypatch.delenv(RUNTIME_CONTEXT_ENV, raising=False)
     # Config-only.
     assert resolve_harmonograf_url({"harmonograf_url": "cfg-host:1234"}) == "cfg-host:1234"
     # No source at all.
     assert resolve_harmonograf_url(None) == ""
     assert resolve_harmonograf_url({}) == ""
-    # Env wins over config.
-    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "env-host:9999")
+    # Inherited context precedes workspace configuration.
+    install_runtime_context(monkeypatch, tmp_path, web_url="env-host:9999")
     assert resolve_harmonograf_url({"harmonograf_url": "cfg-host:1234"}) == "env-host:9999"
 
 
@@ -415,7 +400,7 @@ def test_make_run_sinks_uses_real_harmonograf_client_when_available(
 ) -> None:
     """With harmonograf_client installed for real, make_run_sinks attaches it.
 
-    The other "attaches harmonograf when env set" test stubs
+    The companion inherited-context sink test stubs
     `harmonograf_client` in `sys.modules` so it can run even on a venv
     without the package. This test exercises the real install — the
     sink list ends with a `harmonograf_client.HarmonografSink`
@@ -428,11 +413,11 @@ def test_make_run_sinks_uses_real_harmonograf_client_when_available(
     from harmonograf_client import HarmonografSink  # type: ignore[import-not-found]
 
     from tests._telemetry_support import sentinel_operator_registry
-    from zicato.telemetry.sink import HARMONOGRAF_URL_ENV, make_run_sinks
+    from zicato.telemetry.sink import make_run_sinks
 
     sentinel = sentinel_operator_registry(tmp_path, monkeypatch)
     sentinel_before = sentinel.read_bytes()
-    monkeypatch.setenv(HARMONOGRAF_URL_ENV, "127.0.0.1:7531")
+    install_runtime_context(monkeypatch, tmp_path, web_url="127.0.0.1:7531")
     identity_root = tmp_path / "test-registry"
     sinks = make_run_sinks(tmp_path, "ep1", "v0", "entryA", identity_root=identity_root)
 

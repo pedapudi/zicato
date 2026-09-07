@@ -41,10 +41,13 @@ subcommands can read them back without re-asking the operator.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from shlex import quote
 
 import click
 
+from zicato.core.adapter_config import AdapterDeclaration
 from zicato.workspace.config_io import (
     read_workspace_config,
     workspace_is_initialized,
@@ -117,7 +120,7 @@ def _validate_entrypoint(entrypoint: str, mutable_trees: tuple[str, ...] = ()) -
 @click.option(
     "--adk",
     "entrypoint",
-    required=True,
+    default=None,
     help=(
         "Adapter entrypoint in 'module.path:agent_symbol' form. Either inside a "
         "--mutable-tree (its TOP-LEVEL module is the tree's basename) or outside "
@@ -169,9 +172,32 @@ def _validate_entrypoint(entrypoint: str, mutable_trees: tuple[str, ...] = ()) -
         "configuring it (or editing a skill) rolls the epoch."
     ),
 )
+@click.option("--factory", default=None, help="Custom adapter factory in module:callable form.")
+@click.option("--factory-args", default="[]", help="JSON array of positional factory arguments.")
+@click.option("--factory-options", default="{}", help="JSON object of factory keyword arguments.")
+@click.option(
+    "--import-root",
+    "import_roots",
+    multiple=True,
+    type=click.Path(file_okay=False),
+    help=(
+        "Fixed driver import directory, relative to the workspace parent "
+        "unless absolute (repeatable)."
+    ),
+)
+@click.option(
+    "--confirm-stock-grading",
+    is_flag=True,
+    help="Confirm that stock grading measures this custom target.",
+)
 def register_cmd(
     workspace: str,
-    entrypoint: str,
+    entrypoint: str | None,
+    factory: str | None,
+    factory_args: str,
+    factory_options: str,
+    import_roots: tuple[str, ...],
+    confirm_stock_grading: bool,
     mutable_trees: tuple[str, ...],
     board_path: str | None,
     brief_path: str | None,
@@ -200,22 +226,49 @@ def register_cmd(
     leaves the key unset, which resolves to the built-in default
     proposer.
     """
-    _validate_entrypoint(entrypoint, mutable_trees)
-    workspace_root = Path(workspace)
+    if bool(entrypoint) == bool(factory):
+        raise click.UsageError("select exactly one of --adk or --factory")
+    if entrypoint:
+        _validate_entrypoint(entrypoint, mutable_trees)
+    elif factory and (":" not in factory or not all(factory.split(":", 1))):
+        raise click.BadParameter("expected module:callable", param_hint="--factory")
+    try:
+        args, options = json.loads(factory_args), json.loads(factory_options)
+        if not isinstance(args, list) or not isinstance(options, dict):
+            raise ValueError("factory arguments must be an array and options must be an object")
+    except ValueError as exc:
+        raise click.UsageError(str(exc)) from exc
+    if entrypoint and (args or options):
+        raise click.UsageError("factory arguments and options require --factory")
+    workspace_root = Path(workspace).resolve()
     if not workspace_is_initialized(workspace_root):
         raise click.UsageError(
             f"workspace {workspace_root!s} is not initialized; run `zicato init` first"
         )
 
     config = dict(read_workspace_config(workspace_root).raw)
-    config["adk_entrypoint"] = entrypoint
+    declaration = AdapterDeclaration(
+        kind="adk" if entrypoint else "import",
+        entrypoint=entrypoint,
+        factory=factory,
+        args=tuple(args),
+        options=options,
+        mutable_trees=tuple(str(Path(tree).resolve()) for tree in mutable_trees),
+        import_roots=import_roots,
+        stock_grading_confirmed=confirm_stock_grading,
+    )
+    config["adapter"] = declaration.document()
+    if entrypoint:
+        config["adk_entrypoint"] = entrypoint
+    else:
+        config.pop("adk_entrypoint", None)
     # ``mutable_trees`` and ``source_roots`` are the same concept under
     # two historical names: ``zicato inspect mutations`` and ``zicato proposer propose``
     # read ``source_roots``; the adapter factory reads ``mutable_trees``.
     # Writing both keeps the readers consistent without forcing a
     # workspace-format migration.
-    config["mutable_trees"] = list(mutable_trees)
-    config["source_roots"] = list(mutable_trees)
+    config["mutable_trees"] = list(declaration.mutable_trees)
+    config["source_roots"] = list(declaration.mutable_trees)
 
     # Canonical contract source paths. The operator's live, editable
     # copies — frozen into epochs/{id}/ on each epoch creation / roll.
@@ -257,14 +310,19 @@ def register_cmd(
         scoring = {}
     if not isinstance(scoring, dict):
         raise click.UsageError(f"scoring contract at {scoring_file} must be a JSON object")
-    if "goldfive" not in scoring:
+    if entrypoint and "goldfive" not in scoring:
         scoring["goldfive"] = {}
         atomic_write_json(scoring_file, scoring)
     write_workspace_config(workspace_root, config)
 
     click.echo(
-        f"registered entrypoint {entrypoint!r} with {len(mutable_trees)} "
+        f"registered harness {entrypoint or factory!r} with {len(mutable_trees)} "
         f"mutable tree(s) in {workspace_root!s}"
+    )
+    click.echo(
+        "Run `zicato inspect setup --workspace "
+        + quote(str(workspace_root))
+        + "` to validate without model requests."
     )
 
 

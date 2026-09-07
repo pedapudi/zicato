@@ -158,8 +158,7 @@ class Heartbeat:
     harmonograf_url:
         Server address of the harmonograf console this run is streaming
         telemetry to, when configured (``zicato evolve --harmonograf-url``,
-        the workspace ``config.json``, or the auto-launch's internal
-        ``ZICATO_HARMONOGRAF_URL`` handoff). Empty string when the run is
+        the workspace ``config.json``, or the selected service handle). Empty string when the run is
         JSONL-only. The dashboard surfaces it as a "watch live" link.
         Optional — old readers ignore the field.
     harmonograf_meta_session:
@@ -177,7 +176,7 @@ class Heartbeat:
         Every setting the run is operating under, as ``{name: {"value":
         ..., "source": ...}}`` keyed by the knob's dotted configuration
         name, where ``source`` names the tier that set it — the dataclass
-        default, the workspace ``config.json``, a pinned CLI flag, or the
+        default, the workspace ``config.json``, an invocation overlay, or the
         host's CPU count. Composed by
         :func:`zicato.runtime.effective_settings.effective_settings` and
         stamped when the run resolves its runtime configuration, so a

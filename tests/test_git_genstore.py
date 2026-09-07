@@ -545,3 +545,30 @@ def test_cold_store_concurrent_derive_never_races_on_materialise(tmp_path: Path)
         shutil.rmtree(worktrees, ignore_errors=True)
         _git(store.repo_path, "worktree", "prune")
         _run_cold_materialise_rep(store, tmp_path / "scratch", rep, threads)
+
+
+def test_seed_hardens_private_objects_and_refs_without_changing_global_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    global_config = tmp_path / "global-config"
+    global_config.write_text("[core]\n\tfsync = none\n\tfsyncMethod = writeout-only\n")
+    before = global_config.read_bytes()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    source = mutable_tree(tmp_path / "source")
+    store = GitGenerationStore(tmp_path / "workspace")
+    store.seed_generation("evaluation", "v0", [source])
+    assert _git(store.repo_path, "config", "--local", "--get", "core.fsync").strip() == (
+        "committed,reference"
+    )
+    assert (
+        _git(store.repo_path, "config", "--local", "--get", "core.fsyncMethod").strip() == "fsync"
+    )
+    assert global_config.read_bytes() == before
+    tag = "epoch/evaluation/v0"
+    assert _git(store.repo_path, "rev-parse", tag) == _git(
+        store.repo_path, "rev-parse", "epoch/evaluation"
+    )
+    assert (
+        store.read_file("evaluation", "v0", "agent/prompts.py")
+        == (source / "prompts.py").read_bytes()
+    )

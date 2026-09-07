@@ -1092,21 +1092,27 @@ def loss_profile_to_dict(profile: LossProfile) -> dict[str, Any]:
 
 
 def write_loss_profile(profile: LossProfile, target_path: Path) -> None:
-    """Serialise ``profile`` to ``target_path`` as JSON.
+    """Publish a complete loss record and invalidate its epoch projection.
 
-    The path is created together with its parent directories so the
-    caller can hand in a path under a generation directory that has not
-    been pre-created. Writes are atomic-by-convention only: we write
-    the bytes and close. A crash between write and close would leave a
-    truncated file; the workspace assumes the reducer is run once per
-    completed run and so a partial file is treated as "rerun the
-    reducer".
+    Standalone reducer outputs also use atomic replacement. Workspace run
+    slots carry an epoch revision before replacement. Archived attempts do
+    not invalidate the projection.
     """
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = loss_profile_to_dict(profile)
-    with open(target_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, sort_keys=True, indent=2)
-        f.write("\n")
+    from zicato.core.measurement import artifact_replicate_index  # noqa: PLC0415
+    from zicato.core.workspace import run_coordinates_from_dir  # noqa: PLC0415
+    from zicato.storage import atomic_write_text  # noqa: PLC0415
+    from zicato.workspace.projection import mark_epoch_changed  # noqa: PLC0415
+
+    if artifact_replicate_index(target_path.name) is not None:
+        for entry_dir in (target_path.parent, target_path.parent.parent):
+            coordinates = run_coordinates_from_dir(entry_dir)
+            if coordinates is None:
+                continue
+            mark_epoch_changed(entry_dir.parents[5], coordinates[0])
+            break
+    atomic_write_text(
+        target_path, json.dumps(loss_profile_to_dict(profile), sort_keys=True, indent=2) + "\n"
+    )
 
 
 def read_loss_profile(path: Path) -> LossProfile:

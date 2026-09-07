@@ -26,12 +26,17 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from zicato.core.settings import AuxConfig
 from zicato.util import best_effort
 from zicato.workspace import WorkspaceLayout
+
+if TYPE_CHECKING:
+    from zicato.runtime.lock import WorkspaceLock
+
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -90,50 +95,18 @@ async def ensure_epoch_for_contract(
     workspace_root: Path,
     *,
     auto_epoch: bool,
-    aux_call_llm: CallLLM,
+    writer: WorkspaceLock,
+    aux_call_llm: CallLLM | None,
     epoch_name: str | None = None,
     before_contract_roll: Callable[[str], None] | None = None,
+    aux_config: AuxConfig | None = None,
+    workspace_config: Mapping[str, Any] | None = None,
 ) -> str:
-    """Resolve the epoch ``evolve`` should run against, auto-rolling on drift.
+    """Resolve the contract under its writer, recovering retained publication first.
 
-    The evaluation contract includes the board, proposer brief, scoring,
-    evaluator revision, adapter identity, mutable source paths, and proposer.
-    A change to any of those means generations on either side are no
-    longer comparable, so the epoch must roll. This function is the
-    roll-at-evolve-time hook: it is called before the orchestrator
-    resolves an epoch.
-
-    Logic:
-
-    1. Compute the current contract hash via
-       :func:`zicato.epoch.contract.compute_contract_hash`.
-    2. ``cur = current_epoch_id(workspace_root)``.
-    3. If ``cur`` is ``None``:
-
-       * ``auto_epoch`` True  — create epoch ``e0`` from the contract,
-         return it.
-       * ``auto_epoch`` False — raise (tell the operator to
-         ``zicato epoch new``).
-    4. Load ``cur``'s :class:`EpochConfig`.
-
-       * If ``cur.contract_hash is None`` (the epoch stores no hash) OR it
-         equals the current hash: return ``cur`` (continue, no roll).
-       * Else (the contract changed):
-
-         * ``auto_epoch`` True  — close ``cur`` (generating
-           ``analysis.md``), create a NEW epoch carrying the new
-           contract, baselined from ``cur``'s promoted head, auto-named
-           ``e{N+1}``; echo a clear message; return the new id.
-         * ``auto_epoch`` False — raise a clear error: the contract
-           drifted from the current epoch; revert the files or run
-           ``zicato epoch new``.
-
-    ``epoch_name`` overrides the default ``e{N}`` auto-name for any
-    epoch this function creates (the first epoch on a fresh workspace,
-    or the new epoch after a roll). When ``None``, the ``e{N}`` scheme
-    is used.
-
-    Returns the epoch id ``evolve`` should use.
+    A drifted contract prepares the complete epoch and baseline source before
+    reconciling in-flight work. Publication then switches to the complete epoch
+    and closes its predecessor. Recovery uses retained inputs and timestamps.
     """
     from zicato.epoch.contract import (  # noqa: PLC0415
         compute_component_hashes,
@@ -144,9 +117,15 @@ async def ensure_epoch_for_contract(
         current_epoch_id,
         list_epochs,
         load_epoch,
+        recover_epoch_publication,
     )
+    from zicato.runtime.lock import validate_workspace_lock  # noqa: PLC0415
 
-    inputs = resolve_contract_inputs(workspace_root)
+    validate_workspace_lock(writer, workspace_root)
+    recovered = recover_epoch_publication(workspace_root, writer=writer)
+    if recovered is not None:
+        return recovered.id
+    inputs = resolve_contract_inputs(workspace_root, workspace_config=workspace_config)
     current_hash = compute_contract_hash(inputs)
     current_components = compute_component_hashes(inputs)
 
@@ -163,6 +142,7 @@ async def ensure_epoch_for_contract(
             inputs=inputs,
             name=epoch_name or "e0",
             aux_call_llm=aux_call_llm,
+            writer=writer,
         )
         return new_id
 
@@ -187,16 +167,22 @@ async def ensure_epoch_for_contract(
             "epoch automatically.)"
         )
 
-    # Auto-roll: reconcile any contract-bound in-flight work before closing
-    # the drifted epoch, then open a fresh epoch carrying the
-    # new contract, baselined from the closed epoch's promoted head.
-    # close_epoch_async is awaited (we are already inside an event loop;
-    # the sync close_epoch would nest asyncio.run and raise).
     from zicato.epoch.lifecycle import close_epoch_async  # noqa: PLC0415
+    from zicato.evolve.generation_phase import current_generation  # noqa: PLC0415
 
-    if before_contract_roll is not None:
-        before_contract_roll(cur)
-    await close_epoch_async(workspace_root, cur, aux_call_llm=aux_call_llm)
+    previous_source = _promoted_head_snapshot(workspace_root, cur)
+    coordinates = (cur, current_generation(workspace_root, cur)) if previous_source else None
+    new_id = _create_epoch_from_contract(
+        workspace_root,
+        inputs=inputs,
+        name=epoch_name or f"e{len(list_epochs(workspace_root))}",
+        aux_call_llm=aux_call_llm,
+        writer=writer,
+        baseline_sources=tuple(sorted(previous_source.iterdir())) if previous_source else None,
+        baseline_coordinates=coordinates,
+        before_contract_roll=before_contract_roll,
+    )
+    await close_epoch_async(workspace_root, cur, aux_call_llm=aux_call_llm, aux_config=aux_config)
 
     # Mid-run the publication is refreshed deterministically each round (no
     # LLM), carrying a LIVING DRAFT stamp and preserving whatever prose was
@@ -213,27 +199,11 @@ async def ensure_epoch_for_contract(
         if aux_call_llm is not None:
             from zicato.analyzer import generate_epoch_report  # noqa: PLC0415
 
-            await generate_epoch_report(workspace_root, cur, aux_call_llm)
+            await generate_epoch_report(workspace_root, cur, aux_call_llm, aux_config=aux_config)
         else:
             from zicato.analyzer import restamp_persisted_report  # noqa: PLC0415
 
             restamp_persisted_report(workspace_root, cur)
-
-    next_n = len(list_epochs(workspace_root))
-    new_id = _create_epoch_from_contract(
-        workspace_root,
-        inputs=inputs,
-        name=epoch_name or f"e{next_n}",
-        aux_call_llm=aux_call_llm,
-    )
-    # Record where the new epoch's v0 should be seeded from: the
-    # promoted head of the epoch we just closed. `_ensure_baseline_snapshot`
-    # reads this marker on the first evolve round of the new epoch.
-    prev_head_snapshot = _promoted_head_snapshot(workspace_root, cur)
-    if prev_head_snapshot is not None:
-        _roll_seed_marker(workspace_root, new_id).write_text(
-            str(prev_head_snapshot) + "\n", encoding="utf-8"
-        )
 
     changed = _component_diff_label(
         _stored_component_hashes(workspace_root, cur), current_components
@@ -296,17 +266,14 @@ def _create_epoch_from_contract(
     *,
     inputs: Any,
     name: str,
-    aux_call_llm: CallLLM,
+    aux_call_llm: CallLLM | None,
+    writer: WorkspaceLock,
+    baseline_sources: tuple[Path, ...] | None = None,
+    baseline_coordinates: tuple[str, str] | None = None,
+    before_contract_roll: Callable[[str], None] | None = None,
 ) -> str:
-    """Create an epoch from resolved contract inputs; return its id.
-
-    A thin wrapper over :func:`zicato.epoch.lifecycle.new_epoch` that
-    loads the scoring weights from the live ``scoring.json`` and hands
-    the resolved contract over whole, so the epoch's stored hash equals
-    the hash :func:`ensure_epoch_for_contract` computed from the same
-    inputs — every component of it, including ones added later.
-    """
-    from zicato.epoch.lifecycle import new_epoch  # noqa: PLC0415
+    """Publish the resolved contract and retained baseline source with one writer."""
+    from zicato.epoch.lifecycle import _prepare_epoch, recover_epoch_publication  # noqa: PLC0415
     from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
     if inputs.scoring_path.exists():
@@ -317,17 +284,27 @@ def _create_epoch_from_contract(
         from zicato.core.types import ScoringWeights  # noqa: PLC0415
 
         weights = ScoringWeights()
-
-    cfg = new_epoch(
+    if baseline_sources is None:
+        baseline_sources = tuple(
+            path if path.is_absolute() else workspace_root.parent / path
+            for path in map(Path, inputs.mutable_trees)
+        )
+        if not baseline_sources:
+            raise ValueError("automatic epoch creation requires registered mutable source paths")
+    _prepare_epoch(
         workspace_root=workspace_root,
         name=name,
         board_source=inputs.board_path,
         brief_source=inputs.brief_path,
         weights=weights,
-        auto_close_previous=False,  # ensure_epoch_for_contract closes explicitly
-        aux_call_llm=aux_call_llm,
         contract=inputs,
+        writer=writer,
+        baseline_sources=baseline_sources,
+        baseline_coordinates=baseline_coordinates,
+        before_contract_roll=before_contract_roll,
     )
+    cfg = recover_epoch_publication(workspace_root, writer=writer)
+    assert cfg is not None
     return cfg.id
 
 

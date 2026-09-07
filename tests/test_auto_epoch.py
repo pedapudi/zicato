@@ -14,7 +14,14 @@ from pathlib import Path
 import pytest
 
 from zicato.epoch.lifecycle import current_epoch_id, list_epochs, load_epoch
-from zicato.orchestrator import ensure_epoch_for_contract
+from zicato.evolve.epoching import ensure_epoch_for_contract as _ensure_epoch_for_contract
+from zicato.runtime.lock import acquire_workspace_lock
+
+
+async def ensure_epoch_for_contract(workspace_root: Path, **kwargs):
+    with acquire_workspace_lock(workspace_root, "auto-epoch-test") as writer:
+        return await _ensure_epoch_for_contract(workspace_root, writer=writer, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # LLM stubs
@@ -66,6 +73,9 @@ def _bootstrap(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
+    source = tmp_path / "agent"
+    source.mkdir()
+    (source / "value.py").write_text("VALUE = 1\n")
 
     board = tmp_path / "board.jsonl"
     brief = tmp_path / "brief.md"
@@ -78,6 +88,7 @@ def _bootstrap(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
         json.dumps(
             {
                 "instance_id": "test",
+                "generation_source_backend": "directory",
                 "adk_entrypoint": "pkg.mod:agent",
                 "mutable_trees": [str(tmp_path / "agent")],
                 "source_roots": [str(tmp_path / "agent")],
@@ -365,6 +376,7 @@ def test_explicit_epoch_contract_check_rejects_adapter_and_tree_drift(tmp_path: 
     assert "frozen_epoch_contract_mismatch" in _frozen_contract_codes(workspace, epoch_id)
 
     config["adk_entrypoint"] = "pkg.mod:agent"
+    (tmp_path / "another-tree").mkdir()
     config["mutable_trees"].append(str(tmp_path / "another-tree"))
     config_path.write_text(json.dumps(config))
     assert "frozen_epoch_contract_mismatch" in _frozen_contract_codes(workspace, epoch_id)

@@ -32,6 +32,7 @@ from typing import Any
 
 import click
 
+from zicato.driver_imports import with_workspace_imports
 from zicato.proposer.scorecard import (
     MIN_SAMPLE_N,
     ProposerScorecard,
@@ -310,6 +311,7 @@ def _render_findings(reflection: Any) -> str:
 )
 @click.option("--model", default="", help="Model name passed to --draft-with-llm's callable.")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit the raw record.")
+@with_workspace_imports
 def reflect_cmd(
     workspace: str,
     epoch_id: str | None,
@@ -335,17 +337,25 @@ def reflect_cmd(
     reflection = reflect(workspace_root, resolved_epoch, proposer_path=proposer_path)
 
     if draft_spec:
+        from zicato.config import resolve_configuration  # noqa: PLC0415
         from zicato.import_path import import_dotted_path  # noqa: PLC0415
+        from zicato.workspace.config_io import read_workspace_config  # noqa: PLC0415
 
         call_llm = import_dotted_path(draft_spec)
         if not callable(call_llm):
             raise click.ClickException(f"--draft-with-llm {draft_spec!r} is not callable")
 
+        aux_config = resolve_configuration(read_workspace_config(workspace_root).raw).values.aux
+
         async def _redraft() -> tuple[Any, ...]:
             return tuple(
                 [
                     await draft_remedy(
-                        f, call_llm=call_llm, model=model, proposer_path=proposer_path
+                        f,
+                        call_llm=call_llm,
+                        model=model,
+                        proposer_path=proposer_path,
+                        aux_config=aux_config,
                     )
                     for f in reflection.findings
                 ]

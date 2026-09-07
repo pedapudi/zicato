@@ -61,7 +61,7 @@ def test_concurrency_report_attributes_a_workspace_value(tmp_path: Path) -> None
         _workspace(tmp_path, {"parallelism": 12, "propose_parallelism": 2})
     )
 
-    assert "parallelism=12 (from workspace config.json)" in line
+    assert "parallelism=12 (from workspace)" in line
     assert "propose_parallelism=2" in line
 
 

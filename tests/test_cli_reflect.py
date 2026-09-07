@@ -21,6 +21,7 @@ import pytest
 from click.testing import CliRunner
 from goldfive import DriftSeverity
 
+from tests._stub_adapter import STUB_ADAPTER_FACTORY
 from zicato.board.jsonl import save_board
 from zicato.cli.discovery import build_cli_root
 from zicato.core.types import BoardEntry, JudgeMode, JudgeSpec, ScoringWeights
@@ -102,7 +103,10 @@ def workspace(tmp_path: Path) -> tuple[Path, str]:
     """A workspace with one epoch, one judged entry, two candidate runs."""
     ws = tmp_path / ".zicato"
     ws.mkdir(parents=True)
-    (ws / "config.json").write_text(json.dumps({"runtime": {}, "adapter": {}}), encoding="utf-8")
+    (ws / "config.json").write_text(
+        json.dumps({"runtime": {}, "adapter": {"kind": "import", "factory": STUB_ADAPTER_FACTORY}}),
+        encoding="utf-8",
+    )
 
     entry = BoardEntry(
         id="entryA",

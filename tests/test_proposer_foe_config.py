@@ -91,7 +91,7 @@ def test_a_relative_binary_path_is_refused() -> None:
 
 
 def test_a_viewer_policy_outside_the_closed_set_is_refused() -> None:
-    with pytest.raises(ProposerConfigError, match="proposer.viewer must be one of"):
+    with pytest.raises(ProposerConfigError, match="proposer.viewer: viewer must be one of"):
         load_foe_proposer_config(_config(viewer="sometimes"))
 
 

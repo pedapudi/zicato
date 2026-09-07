@@ -264,7 +264,7 @@ def test_mutation_index_degrades_and_reports_the_reason(keyless_client: TestClie
 def test_repair_sets_the_key_and_leaves_every_other_key_alone(tmp_path: Path) -> None:
     ws = _directory_workspace(tmp_path, None)
     config = json.loads((ws / "config.json").read_text())
-    config["contract"] = {"frozen": True}
+    config["contract"] = {"board_path": "operator-board.jsonl"}
     config["mutable_trees"] = ["agent"]
     (ws / "config.json").write_text(json.dumps(config), encoding="utf-8")
     (ws / "lineage.json").write_text(json.dumps({"epochs": [{"id": "e1"}]}), encoding="utf-8")
@@ -277,7 +277,7 @@ def test_repair_sets_the_key_and_leaves_every_other_key_alone(tmp_path: Path) ->
     assert result.exit_code == 0, result.output
     written = json.loads((ws / "config.json").read_text())
     assert written[GENERATION_SOURCE_BACKEND_KEY] == "directory"
-    assert written["contract"] == {"frozen": True}
+    assert written["contract"] == {"board_path": "operator-board.jsonl"}
     assert written["mutable_trees"] == ["agent"]
     assert json.loads((ws / "lineage.json").read_text())["epochs"] == [{"id": "e1"}]
     # …and the workspace now opens.

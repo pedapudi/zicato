@@ -1,6 +1,6 @@
 ---
 name: zicato-override-seams
-description: Set up zicato's three override seams when a target or a metric diverges from the defaults — a custom HarnessAdapter for non-ADK targets (hand-written config, no CLI flag), the predicate expectation for board entries needing partial credit or a metrics decomposition instead of a bare pass/fail, and outcome_summarizer_spec for proposer failure categories zicato does not compute. Use when deciding whether you need an override, writing one so zicato can consume what it returns, and wiring it onto the contract. Every seam attaches by DOTTED PATH — zicato imports your callable from your own package, and hashes the source of the two grading seams into the epoch contract; the adapter's is not hashed, so changing it rolls nothing.
+description: Configure a custom harness, target predicates, and optional outcome summaries. Use this skill to choose a supported adapter and grading interface, register its fixed driver imports, validate setup without model requests, and keep implementation changes in the evaluation contract.
 ---
 
 # zicato override seams — custom adapters and scoring
@@ -149,36 +149,35 @@ writes `run_aborted` for a worker killed from outside.
 
 ### Apply
 
-⚠️ **There is no CLI flag for this seam.** `zicato epoch register --adk` writes
-an `adk_entrypoint`, so pointing it at your factory registers an
-`ADKHarnessAdapter` wrapping your path rather than your adapter. Hand-write the
-import-kind `adapter` block into `.zicato/config.json` instead:
+Register the fixed driver separately from the mutable target:
 
-```json
-{
-  "adapter": {
-    "kind": "import",
-    "factory": "my_pkg.harness:make_adapter"
-  },
-  "mutable_trees": ["./my_pkg"],
-  "source_roots": ["./my_pkg"]
-}
+```sh
+zicato epoch register --workspace .zicato \
+  --factory my_driver.harness:make_adapter --import-root . \
+  --mutable-tree ./my_target
+zicato inspect setup --workspace .zicato
 ```
 
-- **These are TOP-LEVEL keys.** The sibling `contract` block holds only
-  `board_path`, `rubric_path`, `scoring_path`, and an optional `proposer_path`.
-  Nothing reads an adapter key nested inside it.
-- **`factory` takes an optional `"args": [...]`** — JSON-serializable, replayed
-  positionally when the worker re-imports the path in a fresh interpreter.
-- **Write `mutable_trees` and `source_roots` to the same list.** Two names for
-  one concept; `zicato inspect mutations` and `zicato proposer propose` read
-  `source_roots`, and the snapshot is seeded from whichever is set — omit both
-  and `evolve` raises. `mutable_subpaths()` can only narrow within them. Scope
-  both to the code you want rewritten: leave support code and anything that
-  grades the run outside, or the proposer can edit the thing measuring it.
+The factory receives `--factory-args` as a JSON array and `--factory-options`
+as a JSON object of keyword arguments. Their persisted fields are `adapter.args`
+and `adapter.options`; the implementation validates its arguments. The fixed
+import roots are relative to the workspace parent unless absolute. They are
+operational locations and do not enter the contract hash. Workers receive the
+resolved roots explicitly, with their candidate snapshot first in the import
+search path. The coordinator restores its import tables when execution ends.
 
-⚠️ With no `adapter` block, the factory falls back to a top-level
-`adk_entrypoint`; with neither, it raises rather than defaulting.
+The canonical `adapter` declaration also carries `mutable_trees`. Registration
+writes the compatible `mutable_trees` and `source_roots` aliases used by existing
+commands. Fixed drivers, predicates, and summarizers belong outside those trees.
+The contract hashes the declared factory path, constructor configuration, and
+resolved implementation source, even when `worker_spec()` returns a constant
+specification. Changing any of those semantic inputs rolls the epoch; a declared
+factory without inspectable source is refused.
+
+`inspect setup` imports the configured hooks and loads a snapshot in a bounded
+subprocess. It makes no model request and runs no board entry. A custom adapter
+using only stock grading receives an advisory unless `--confirm-stock-grading`
+records that choice explicitly.
 
 ## 2. Board entry scoring: the `predicate` expectation
 
@@ -313,16 +312,17 @@ the rendered profile by pattern-matching its text, so a key echoing a built-in
 mode (`looping`, `over-retrieval`, empty / terse) changes the hint every
 candidate gets.
 
-⚠️ **The seam fails quiet.** An unresolvable spec, a non-callable target, or a
-raise yields an empty mapping and the round continues silently. Cover the hook
-with a unit test over fixture `LossProfile`s. If nothing appears, check in
-order: the spec resolves, the target is callable, it does not raise, every key
-survives the rules above.
+Setup validation refuses a configured hook that does not resolve to a callable
+accepting one argument. If an optional summarizer raises during a round or
+returns a non-mapping result, the round continues without its marginals and logs
+`outcome_summarizer_failed`. The failure is retained under the epoch's `health/`
+directory and appears in both the round health report and `zicato health`.
+Cover the hook with representative `LossProfile` inputs and check that every
+returned key survives the sanitization rules above.
 
 **What your hook can read.** `lp.metrics` holds your custom numbers only when a
 §2 predicate returned `(score, metrics)`; on a board of `rubric` / `regex` /
-`json_schema` entries it is empty, and the seam fails quiet, so you see no
-error. `drift_counts` and `output_chars` are always there, but `pass_fail` and
+`json_schema` entries it is empty. `drift_counts` and `output_chars` are always there, but `pass_fail` and
 `score` are `None` on aborted or skipped units — guard before arithmetic. Read
 `LossProfile.metrics`, NOT `LossProfile.expectation_result.metrics`: the former
 is the replicate mean, the latter replicate 0's raw values.
@@ -336,11 +336,9 @@ flag. Default `""` means no hook; both dotted forms resolve as in §2.
 {"outcome_summarizer_spec": "my_pkg.summarize:board_marginals"}
 ```
 
-⚠️ Hand-editing `scoring.json` is unguarded: the loader enumerates the declared
-fields of `ScoringWeights`, so a key that is not one of them is never read. A
-misspelled knob is silently ignored and whatever it meant to configure keeps
-its default. The file and the resolved summarizer's source are both contract
-inputs, so either edit rolls the epoch.
+The scoring document and the resolved summarizer source are contract inputs.
+A semantic edit to either rolls the epoch. Validate the configured dotted path
+with `zicato inspect setup` before starting measured rounds.
 
 ## Reference
 

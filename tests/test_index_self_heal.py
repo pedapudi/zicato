@@ -297,37 +297,23 @@ def test_a_failed_ensure_build_leaves_no_index_and_no_scratch(
     assert list(ws.glob("index.db*.tmp")) == []
 
 
-def test_concurrent_builders_cannot_publish_each_others_half_built_database(
+def test_concurrent_builders_share_the_workspace_writer_protocol(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Two unserialised builders must not corrupt the index they repair.
-
-    Evolve builds under the workspace lock, but the dashboard's build only
-    SKIPS when it OBSERVES a held lock — two dashboards, or one that lost the
-    read/build window to a starting evolve, both build with nothing between
-    them. On a shared scratch path that is destructive rather than merely
-    wasteful: the second builder's unlink removes the inode the first is
-    still writing into, the first's rename then publishes whatever now sits
-    at the path, and the sidecar unlink that follows deletes the WAL holding
-    the rest of it. The observed result was a valid, EMPTY ``index.db``
-    (``user_version=0``, zero tables) installed by the healing path itself,
-    no exception raised anywhere.
-
-    The barrier guarantees the two builds are genuinely inside their build
-    windows at the same time, which is the only condition the defect needs.
-    """
+    """A second builder cannot enter while a complete projection is in flight."""
     import threading
 
     import zicato.index.ingest as ingest_mod
+    from zicato.runtime.lock import WorkspaceLockHeld
 
     ws = _make_workspace(tmp_path, epoch_ids=("e1", "e2"))
     real_rebuild_all = ingest_mod._rebuild_all
-    # Both builders have created their scratch file and are inside the walk
-    # before either is allowed to finish.
-    barrier = threading.Barrier(2, timeout=60)
+    entered = threading.Event()
+    finish = threading.Event()
 
     def _synchronised(conn: object, workspace_root: Path) -> None:
-        barrier.wait()
+        entered.set()
+        assert finish.wait(timeout=5)
         real_rebuild_all(conn, workspace_root)
 
     monkeypatch.setattr(ingest_mod, "_rebuild_all", _synchronised)
@@ -340,14 +326,18 @@ def test_concurrent_builders_cannot_publish_each_others_half_built_database(
         except BaseException as exc:  # noqa: BLE001 — reported, not swallowed
             failures.append(exc)
 
-    threads = [threading.Thread(target=_build) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=60)
+    thread = threading.Thread(target=_build)
+    thread.start()
+    try:
+        assert entered.wait(timeout=5)
+        with pytest.raises(WorkspaceLockHeld):
+            ensure_index(ws)
+    finally:
+        finish.set()
+        thread.join(timeout=5)
 
+    assert not thread.is_alive()
     assert failures == []
-    # Whichever build won the rename, it published a COMPLETE database.
     conn = sqlite3.connect(str(ws / "index.db"))
     try:
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
@@ -412,7 +402,8 @@ def test_the_outgoing_wal_is_cleared_before_the_rename_not_after(
 
     def _replace_then_die(src: object, dst: object) -> None:
         real_replace(src, dst)
-        raise KeyboardInterrupt("killed between the rename and the cleanup")
+        if dst == target:
+            raise KeyboardInterrupt("killed between the rename and the cleanup")
 
     monkeypatch.setattr(ingest_mod.os, "replace", _replace_then_die)
     with pytest.raises(KeyboardInterrupt):
@@ -503,6 +494,297 @@ def test_a_fresh_index_reports_no_divergence(tmp_path: Path) -> None:
     rebuild_index(ws)
     assert validate_index(ws) == ()
     assert heal_index(ws) == ()
+
+
+@pytest.mark.parametrize("record", ["epoch", "experiment", "loss", "lineage"])
+def test_replacing_canonical_records_with_same_counts_requires_repair(
+    tmp_path: Path, record: str
+) -> None:
+    from dataclasses import replace
+
+    from zicato.epoch.journal import read_experiment, write_experiment
+    from zicato.epoch.lifecycle import close_epoch
+    from zicato.epoch.lineage import append_to_lineage
+    from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
+    from zicato.testing.fixtures import make_generation
+
+    ws = _make_workspace(tmp_path)
+    _write_loss_profile(ws, "e1", "v1", "entry")
+    db = rebuild_index(ws)
+    counts_before = _epoch_signals(ws, "e1", _walk_epochs(ws)[0].lineage_entry)
+    if record == "epoch":
+        close_epoch(ws, "e1")
+    elif record == "experiment":
+        experiment = read_experiment(ws, "e1", "v1")
+        write_experiment(
+            ws,
+            "e1",
+            "v1",
+            replace(
+                experiment, hypothesis=replace(experiment.hypothesis, core_idea="revised idea")
+            ),
+        )
+    elif record == "loss":
+        path = loss_profile_path(ws, "e1", "v1", "entry")
+        write_loss_profile(replace(read_loss_profile(path), runtime_ms=17), path)
+    else:
+        append_to_lineage(ws, "e1", make_generation(id="v1", epoch_id="e1", promoted=True), "v0")
+
+    assert _epoch_signals(ws, "e1", _walk_epochs(ws)[0].lineage_entry) == counts_before
+    assert validate_index(ws) == ("e1",)
+    assert heal_index(ws) == ("e1",)
+    assert validate_index(ws) == ()
+    assert heal_index(ws) == ()
+    healed = _dump(db, sort_rows=True)
+    assert _dump(rebuild_index(ws), sort_rows=True) == healed
+
+
+@pytest.mark.parametrize("repair", [heal_index, rebuild_index])
+@pytest.mark.parametrize("interruption", ["projection", "acknowledgement"])
+def test_interrupted_projection_preserves_the_pending_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repair: Any, interruption: str
+) -> None:
+    import zicato.index.ingest as ingest_mod
+    from zicato.epoch.lifecycle import close_epoch
+
+    ws = _make_workspace(tmp_path)
+    db = rebuild_index(ws)
+    close_epoch(ws, "e1")
+
+    def interrupted(*args: object, **kwargs: object) -> None:
+        raise OSError("injected projection interruption")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            ingest_mod,
+            "_fold_elo" if interruption == "projection" else "_acknowledge_revisions",
+            interrupted,
+        )
+        with pytest.raises(OSError, match="injected projection interruption"):
+            repair(ws)
+
+    assert validate_index(ws) == ("e1",)
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT closed FROM epochs").fetchone() == (
+            0 if interruption == "projection" else 1,
+        )
+    assert heal_index(ws) == ("e1",)
+    assert heal_index(ws) == ()
+    healed = _dump(db, sort_rows=True)
+    assert _dump(rebuild_index(ws), sort_rows=True) == healed
+
+
+def test_revision_is_durable_before_canonical_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import zicato.storage._atomic as atomic_mod
+    from zicato.epoch.lifecycle import close_epoch
+
+    ws = _make_workspace(tmp_path)
+    db = rebuild_index(ws)
+    before = _dump(db)
+    config_path = ws / "epochs" / "e1" / "config.json"
+    original = config_path.read_bytes()
+    replace_file = atomic_mod.os.replace
+
+    def refuse_config(source: Path, destination: Path) -> None:
+        if destination == config_path:
+            assert validate_index(ws) == ("e1",)
+            raise OSError("interrupted canonical replacement")
+        replace_file(source, destination)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(atomic_mod.os, "replace", refuse_config)
+        with pytest.raises(OSError, match="interrupted canonical replacement"):
+            close_epoch(ws, "e1")
+
+    assert config_path.read_bytes() == original
+    assert validate_index(ws) == ("e1",)
+    assert heal_index(ws) == ("e1",)
+    assert _dump(db) == before
+    assert heal_index(ws) == ()
+
+
+def test_acknowledging_a_snapshot_cannot_clear_a_later_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    import zicato.index.ingest as ingest_mod
+    from zicato.epoch.journal import read_experiment, write_experiment
+    from zicato.epoch.lifecycle import close_epoch
+    from zicato.runtime.lock import acquire_workspace_lock
+
+    ws = _make_workspace(tmp_path)
+    db = rebuild_index(ws)
+    acknowledge = ingest_mod._acknowledge_revisions
+
+    def mutate_before_acknowledging(root: Path, target: Path, revisions: dict[str, str]) -> None:
+        experiment = read_experiment(root, "e1", "v1")
+        write_experiment(
+            root,
+            "e1",
+            "v1",
+            replace(
+                experiment, hypothesis=replace(experiment.hypothesis, core_idea="after projection")
+            ),
+        )
+        acknowledge(root, target, revisions)
+
+    with acquire_workspace_lock(ws, "record-writer") as writer:
+        close_epoch(ws, "e1")
+        with monkeypatch.context() as patch:
+            patch.setattr(ingest_mod, "_acknowledge_revisions", mutate_before_acknowledging)
+            assert heal_index(ws, writer=writer) == ("e1",)
+        assert validate_index(ws) == ("e1",)
+        assert heal_index(ws, writer=writer) == ("e1",)
+        assert heal_index(ws, writer=writer) == ()
+    healed = _dump(db, sort_rows=True)
+    assert _dump(rebuild_index(ws), sort_rows=True) == healed
+
+
+def test_unrelated_incremental_ingest_preserves_a_failed_record_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    import zicato.index.ingest as ingest_mod
+    from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
+
+    ws = _make_workspace(tmp_path)
+    _write_loss_profile(ws, "e1", "v1", "entry")
+    db = rebuild_index(ws)
+    path = loss_profile_path(ws, "e1", "v1", "entry")
+    write_loss_profile(replace(read_loss_profile(path), runtime_ms=17), path)
+
+    def interrupted(*args: object, **kwargs: object) -> None:
+        raise OSError("failed incremental projection")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(ingest_mod, "_ingest_run_into", interrupted)
+        with pytest.raises(OSError, match="failed incremental projection"):
+            ingest_mod.ingest_run(ws, db, "e1", "v1", "entry")
+    ingest_experiment(ws, db, "e1", "v1")
+
+    assert validate_index(ws) == ("e1",)
+    assert heal_index(ws) == ("e1",)
+    assert heal_index(ws) == ()
+    healed = _dump(db, sort_rows=True)
+    assert _dump(rebuild_index(ws), sort_rows=True) == healed
+
+
+def test_delegated_writes_must_finish_before_the_parent_acknowledges_revisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    import zicato.storage._atomic as atomic_mod
+    from zicato.runtime.lock import acquire_workspace_lock
+
+    ws = _make_workspace(tmp_path)
+    db = rebuild_index(ws)
+    ready = threading.Barrier(3, timeout=5)
+    finish = threading.Event()
+    replace_file = atomic_mod.os.replace
+
+    def pause_loss_publication(source: Path, destination: Path) -> None:
+        if destination.name == "loss.json":
+            ready.wait()
+            assert finish.wait(timeout=5)
+        replace_file(source, destination)
+
+    active = [ws / "runtime" / "active_runs" / f"{entry}.json" for entry in ("a", "b")]
+    with acquire_workspace_lock(ws, "delegating-writer") as writer:
+        for path in active:
+            _write_json(path, {"run_id": path.stem})
+        with monkeypatch.context() as patch, ThreadPoolExecutor(max_workers=2) as workers:
+            patch.setattr(atomic_mod.os, "replace", pause_loss_publication)
+            pending = [
+                workers.submit(_write_loss_profile, ws, "e1", "v1", entry) for entry in ("a", "b")
+            ]
+            try:
+                ready.wait()
+                assert validate_index(ws) == ("e1",)
+                for repair in (ensure_index, heal_index, rebuild_index):
+                    with pytest.raises(RuntimeError, match="delegated workers"):
+                        repair(ws, writer=writer)
+            finally:
+                finish.set()
+            for result in pending:
+                result.result(timeout=5)
+        for path in active:
+            assert json.loads(path.read_text()) == {"run_id": path.stem}
+            path.unlink()
+        assert heal_index(ws, writer=writer) == ("e1",)
+        assert heal_index(ws, writer=writer) == ()
+    assert {row[3] for row in _table_rows(db, "runs")} == {"a", "b"}
+    healed = _dump(db, sort_rows=True)
+    assert _dump(rebuild_index(ws), sort_rows=True) == healed
+
+
+def test_rebuilding_an_alternate_database_does_not_acknowledge_the_default_index(
+    tmp_path: Path,
+) -> None:
+    from zicato.epoch.lifecycle import close_epoch
+
+    ws = _make_workspace(tmp_path)
+    rebuild_index(ws)
+    close_epoch(ws, "e1")
+    alternate = rebuild_index(ws, tmp_path / "inspection.db")
+    assert validate_index(ws, alternate) == ()
+    assert validate_index(ws) == ("e1",)
+    assert heal_index(ws) == ("e1",)
+    assert heal_index(ws) == ()
+
+
+@pytest.mark.parametrize("record", ["reflection", "pareto"])
+def test_replacing_auxiliary_epoch_records_requires_repair(tmp_path: Path, record: str) -> None:
+    from dataclasses import replace
+
+    from zicato.epoch.pareto import FrontierMember, ParetoFrontier, save_frontier
+    from zicato.reflection.plan import new_plan, write_plan
+
+    ws = _make_workspace(tmp_path)
+    plan = new_plan(
+        epoch_id="e1",
+        candidates=["v0", "v1"],
+        entries=["entry"],
+        replicates=1,
+        created_at="2026-01-01T00:00:00Z",
+    )
+    frontier = ParetoFrontier(epoch_id="e1", members=(FrontierMember("v1", 1, "v0", scalar=1.0),))
+    write_plan(ws, plan)
+    save_frontier(ws, "e1", frontier)
+    db = rebuild_index(ws)
+    counts_before = _epoch_signals(ws, "e1", _walk_epochs(ws)[0].lineage_entry)
+    if record == "reflection":
+        write_plan(ws, plan.mark_executed())
+    else:
+        save_frontier(
+            ws, "e1", replace(frontier, members=(replace(frontier.members[0], scalar=0.5),))
+        )
+
+    assert _epoch_signals(ws, "e1", _walk_epochs(ws)[0].lineage_entry) == counts_before
+    assert validate_index(ws) == ("e1",)
+    assert heal_index(ws) == ("e1",)
+    assert heal_index(ws) == ()
+    healed = _dump(db, sort_rows=True)
+    assert _dump(rebuild_index(ws), sort_rows=True) == healed
+
+
+@pytest.mark.parametrize("filename", ["loss.a1.json", "loss.r1.a1.json"])
+def test_archiving_a_loss_attempt_does_not_invalidate_the_epoch(
+    tmp_path: Path, filename: str
+) -> None:
+    from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
+
+    ws = _make_workspace(tmp_path)
+    _write_loss_profile(ws, "e1", "v1", "entry")
+    rebuild_index(ws)
+    path = loss_profile_path(ws, "e1", "v1", "entry")
+    write_loss_profile(read_loss_profile(path), path.with_name(filename))
+    assert validate_index(ws) == ()
 
 
 def test_divergence_on_an_added_experiment(tmp_path: Path) -> None:
@@ -671,7 +953,12 @@ def _write_loss_profile(ws: Path, epoch: str, gen: str, entry: str) -> None:
 
     path = loss_profile_path(ws, epoch, gen, entry)
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_loss_profile(make_loss_profile(epoch_id=epoch, generation_id=gen, entry_id=entry), path)
+    write_loss_profile(
+        make_loss_profile(
+            run_id=f"{epoch}--{gen}--{entry}", epoch_id=epoch, generation_id=gen, entry_id=entry
+        ),
+        path,
+    )
 
 
 def test_a_crashed_dual_write_stays_visible_however_many_writes_follow(
@@ -871,9 +1158,14 @@ def test_the_evolve_preflight_reports_what_it_healed(tmp_path: Path) -> None:
     assert index_preflight(ws) == "index: fresh"
 
 
-def test_the_evolve_preflight_heals_the_proposers_experiment_memory(tmp_path: Path) -> None:
-    """The loop-quality fix: a stale index silently thins the proposer's memory."""
-    from zicato.evolve.ingest import _load_prior_experiments, index_preflight
+def test_proposer_memory_repairs_missing_and_same_count_changed_records(tmp_path: Path) -> None:
+    """Each settled-memory read observes canonical replacements between rounds."""
+    from dataclasses import replace
+
+    from zicato.epoch.journal import read_experiment, write_experiment
+    from zicato.evolve.ingest import _load_prior_experiments
+    from zicato.index.query import prior_experiments_for_epoch
+    from zicato.runtime.lock import acquire_workspace_lock
 
     ws = _make_workspace(tmp_path)
     db = rebuild_index(ws)
@@ -895,11 +1187,25 @@ def test_the_evolve_preflight_heals_the_proposers_experiment_memory(tmp_path: Pa
     conn.commit()
     conn.close()
 
-    assert _load_prior_experiments(ws, "e1") == []
-
-    index_preflight(ws)
-
-    assert [p.core_idea for p in _load_prior_experiments(ws, "e1")] == ["idea for v1"]
+    assert prior_experiments_for_epoch(db, "e1") == []
+    with acquire_workspace_lock(ws, "memory-reader") as writer:
+        assert [p.core_idea for p in _load_prior_experiments(ws, "e1", writer=writer)] == [
+            "idea for v1"
+        ]
+        experiment = read_experiment(ws, "e1", "v1")
+        write_experiment(
+            ws,
+            "e1",
+            "v1",
+            replace(
+                experiment, hypothesis=replace(experiment.hypothesis, core_idea="revised idea")
+            ),
+        )
+        assert [p.core_idea for p in prior_experiments_for_epoch(db, "e1")] == ["idea for v1"]
+        assert [p.core_idea for p in _load_prior_experiments(ws, "e1", writer=writer)] == [
+            "revised idea"
+        ]
+        assert validate_index(ws) == ()
 
 
 def test_the_dashboard_startup_builds_an_absent_index(tmp_path: Path) -> None:

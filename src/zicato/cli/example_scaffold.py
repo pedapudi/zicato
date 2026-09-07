@@ -14,10 +14,9 @@ skipped, so running ``--example`` inside a project that has real files
 cannot destroy them.
 
 The copied packages are top-level in the operator's project, so their
-dotted paths resolve once that project directory is on ``PYTHONPATH``.
-The tournament workers are separate interpreters and read the same
-variable, which is why the quickstart exports it rather than relying on
-the working directory.
+dotted paths resolve through the declared fixed driver import directory.
+Tournament workers receive those locations in their argument document,
+so imports are independent of the launch directory.
 """
 
 from __future__ import annotations
@@ -102,6 +101,7 @@ def example_config_overlay(project_root: Path) -> dict[str, Any]:
         "adapter": {
             "kind": "import",
             "factory": f"{WIRING_PACKAGE_NAME}.adapter:make_adapter",
+            "import_roots": ["."],
         },
         "mutable_trees": [tree],
         "source_roots": [tree],

@@ -34,9 +34,10 @@ You almost never read this book front-to-back. Instead:
 6. **Find your task in `13-recipes.md`.** Most changes are a named recipe with
    exact steps and a Verify block. If yours is not, the closest recipe is your
    template.
-7. **Run complete validation on the revision proposed for merge.**
-   `make check` owns that requirement (§below, full detail in
-   `11-testing.md §11.11`). Required failures block merge.
+7. **Require complete CI validation on the source proposed for merge.**
+   Use focused checks during implementation. Run the equivalent `make check`
+   locally when CI is unavailable; do not require both complete runs.
+   See `11-testing.md §11.11`. Required failures block merge.
 
 > ⛔ **NEVER** treat this guide as authoritative *over the code*. If a symbol,
 > path, or line the guide names is not in the current tree, the code is right and
@@ -80,7 +81,7 @@ chapter 01.
 | 07 | `07-runtime-and-durability.md` | CQRS persistence, atomic writes, the git generation store, GC, crash-resume, the control protocol, RoundLog | you touch state files, storage, resume, or the round log |
 | 08 | `08-supervisor.md` | the Rust watchdog/notary — heartbeat, reaping, the hash-chained ledger, diff-containment, the read-only index | you change the supervisor or a state file it reads |
 | 09 | `09-dashboard-and-query.md` | `zicato/query` (lib) vs `zicato/dashboard` (driver), **server-authority**, **digest gating**, the add-a-panel recipe | you change a reader, an endpoint, or a view |
-| 10 | `10-builder-cli-library.md` | the builder contract-IDE, the CLI + flag→pin, the library facade + import contracts | you change the builder, add a CLI flag, or extend the public API |
+| 10 | `10-builder-cli-library.md` | the builder contract-IDE, the CLI + flag→invocation overlay, the library facade + import contracts | you change the builder, add a CLI flag, or extend the public API |
 | 11 | `11-testing.md` | the suites, the two oracles, the parity gates, the import contracts, **complete validation** | before merge; when you add a test |
 | 12 | `12-bug-casebook.md` | the twelve shipped bugs as teaching cases + the meta-lessons | before touching any of the six bug-prone surfaces |
 | 13 | `13-recipes.md` | the cookbook — fourteen self-contained, copy-precise recipes | you are about to make a change (find yours first) |
@@ -105,11 +106,11 @@ citing section states the failure mode.
 | **numbered in place** | `03-contract-and-epochs.md` | the contract hash and epoch identity: hash-identifies-contract-not-checkout, omit-at-default, serializer-completeness, edit-the-body-rolls, runtime-never-hashed, absent-hash-is-`None`, refuse-on-newer, lineage-tri-state |
 | **numbered in place** | `04-evaluation-statistics.md` | the noise doctrine: measurements are stochastic, margin is read against the floor, the evidence gate buys soundness rather than power, replicate bases are reserved, and a statistical change is proven by its operating characteristics |
 | **numbered in place** | `05-proposer.md` | the proposer contract: the restricted-visibility envelope, mounted-tree-matches-chosen, screen-vetoes-never-ranks, pure-prompt-assembler, `ProposerError`-only, byte-identical-at-default |
-| **T** | `06-tournament-and-selection.md` | tournament execution and the unit cache: evaluate-once, the canonical replicate slot, cache-only-budget-exhaustion, importable worker callables, config pins rather than environment, the gate as the per-duel decider, only-promotion-advances-the-champion, disjoint reserved bases, mounted-tree-matches-the-chosen-candidate, distinct-draws-only, placebo-never-crowns |
+| **T** | `06-tournament-and-selection.md` | tournament execution and the unit cache: evaluate-once, the canonical replicate slot, cache-only-budget-exhaustion, importable worker callables, explicit invocation settings, the gate as the per-duel decider, only-promotion-advances-the-champion, disjoint reserved bases, mounted-tree-matches-the-chosen-candidate, distinct-draws-only, placebo-never-crowns |
 | **D** | `07-runtime-and-durability.md` | persistence and crash-safety: files canonical and the index derived, best-effort index writes, atomic record writes, torn-tail tolerance for append-only logs, transactional derivation, known-shape ephemeral checkouts, prune-trees-never-records, outcome-before-journal-and-lineage, pid-plus-start-time identity, one writer per event log, best-effort round-log emission, refuse-a-newer-record-format |
 | **S** | `08-supervisor.md` | the supervisor's out-of-band enforcement: out-of-band supervision, never-kill-the-orchestrator, vetted pid signalling, clamped deadlines, confirmed death before reaping, path-confined snapshot collection, a ledger that records without gating, a read-only version-pinned index, the sole worker signaller, read-only fail-open integrity checks, two loops with a fixed trigger priority, a live surface that never blocks or leaks, no cached state across ticks, an operational rather than analytical HTTP surface |
 | **DQ** | `09-dashboard-and-query.md` | the dashboard and query doctrine: server-computes-client-renders, one spelling per wire field, every reader is best-effort, the query layer is library code, change-signals carry no content, a no-op heartbeat rebuilds zero DOM, verdicts are honest about the noise floor, null-degrade under the Rust supervisor, controls gate on writability, the champion is the reigning spine end, a payload-shape change is a clean break, validate an id before it touches the workspace, every JSON GET has a declared contract, lineage owns topology, composite readers share walks |
-| **L** | `10-builder-cli-library.md` | the builder and library boundary: one mutation surface, full coverage for a new knob, an honest cost meter with one owner, recommend-only, the builder never rolls the epoch, config pins rather than environment, a lazy pure facade, the library never imports a driver |
+| **L** | `10-builder-cli-library.md` | the builder and library boundary: one mutation surface, full coverage for a new knob, an honest cost meter with one owner, recommend-only, the builder never rolls the epoch, explicit invocation settings, a lazy pure facade, the library never imports a driver |
 | **V** | `11-testing.md` | the verification discipline: the full suite is the default, a regression test must fail with the fix stashed, never weaken an assertion, pin a knob off and carry the adversarial countermeasure, a worker resolves callables from a dotted path, fixtures clear global state on both sides, the reaper selects by workspace provenance, parity gates stay green on unchanged behaviour, the import contracts are lint, the exit code is the node signal |
 
 > ⚠️ **TRAP** — `05-proposer.md` also cites the process-exemplar redaction rules
@@ -147,7 +148,7 @@ its case; each ends with "you are about to reintroduce this if…".
 
 ## Complete verification (full detail in `11-testing.md §11.11`)
 
-Use `make check-fast` for iteration and `make check` for complete validation.
+Use `make check-fast` for iteration. CI runs complete validation; `make check` is the local equivalent when needed.
 `tools/verify.py` supplies the commands to both Make and CI. Its complete
 plan includes the known-answer and statistical oracles, independent golden
 comparisons, all language checks, packaging, prose and budget policy.
@@ -168,7 +169,7 @@ namespace / weight · 4. Add a board expectation kind · 5. Add a goldfive
 drift-kind consumer · 6. Extend the deterministic example target (updating both
 oracles honestly) · 7. Add an index table / column (schema bump + migration +
 golden re-capture) · 8. Add an epoch-open step · 9. Change the round pipeline
-safely (the seam-ownership map) · 10. Run the full local verification ladder ·
+safely (the map of module responsibilities) · 10. Run focused checks and require complete CI validation ·
 11. Investigate a red parity gate · 12. Debug a failing tournament end-to-end run
 (the forensic file map) · 13. Safely bump a pinned operating-characteristic
 number · 14. Add a `skills/` entry for a new operator workflow.

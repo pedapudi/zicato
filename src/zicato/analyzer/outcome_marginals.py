@@ -47,8 +47,9 @@ identifying before the operator's marginals are merged.
 
 from __future__ import annotations
 
+import logging
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -357,35 +358,34 @@ def sanitize_operator_marginals(raw: object) -> dict[str, float]:
     return out
 
 
-def run_operator_summarizer(spec: str, losses: Iterable[Any]) -> dict[str, float]:
-    """Resolve + invoke the operator outcome-summarizer hook, then sanitize.
+def run_operator_summarizer(
+    spec: str, losses: Iterable[Any], *, on_error: Callable[[str], None] | None = None
+) -> dict[str, float]:
+    """Run an optional aggregate hook; failures omit its marginals and warn.
 
-    ``spec`` is a dotted path (``pkg.mod:fn`` or ``pkg.mod.fn``) resolved the
-    same way predicates / judges resolve theirs
-    (:func:`zicato.import_path.import_dotted_path`). The resolved callable
-    receives the TRAIN-slice per-entry results and is expected to return a
-    STRUCTURED aggregate — a ``{marginal_name: numeric_rate}`` mapping. Its
-    return is passed straight through :func:`sanitize_operator_marginals`,
-    which strips anything non-numeric or identity-bearing, so a misbehaving
-    summarizer (one that returns prose, an entry id, or a free string)
-    contributes nothing rather than leaking.
-
-    Best-effort: a bad spec, a non-callable target, or a summarizer that
-    raises yields an empty mapping rather than aborting the round — the
-    proposer simply runs without the operator's extra marginals, exactly as
-    it does when no summarizer is configured.
+    The callback receives failure evidence for the owning round's health
+    record. An absent spec contributes no marginals and produces no warning.
+    Only sanitized numeric marginals can reach proposer input.
     """
     if not spec:
         return {}
     try:
         fn = import_dotted_path(spec, label=f"outcome summarizer {spec!r}")
-    except (ImportError, ValueError):
-        return {}
-    if not callable(fn):
-        return {}
-    try:
+        if not callable(fn):
+            raise TypeError("expected a callable")
         raw = fn(list(losses))
-    except Exception:  # noqa: BLE001 — an operator hook must never abort the round
+        if not isinstance(raw, Mapping):
+            raise TypeError("expected a mapping of numeric marginals")
+    except Exception as exc:  # noqa: BLE001 — optional hooks cannot abort a measured round
+        error = f"{type(exc).__name__}: {exc}"
+        logging.getLogger(__name__).warning("outcome_summarizer_failed: %s: %s", spec, error)
+        if on_error is not None:
+            try:
+                on_error(error)
+            except Exception as evidence_error:  # noqa: BLE001 — evidence cannot abort a round
+                logging.getLogger(__name__).warning(
+                    "outcome_summarizer_evidence_failed: %s", evidence_error
+                )
         return {}
     return sanitize_operator_marginals(raw)
 

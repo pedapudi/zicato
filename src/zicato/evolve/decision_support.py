@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from zicato.config import HealthConfig
 from zicato.evolve.lifecycle_services import (
     _beat,
 )
@@ -100,6 +101,7 @@ def _defer_round_infra_outage(
     infra_threshold: int,
     beater: HeartbeatBeater | None,
     round_log: _RoundLogEmitter,
+    health_config: HealthConfig | None = None,
 ) -> EvolveRoundOutcome:
     """Settle one round as DEFERRED on the endpoint-outage circuit.
 
@@ -148,6 +150,7 @@ def _defer_round_infra_outage(
         generation_round_number(next_id) or round_index,
         board,
         infra_outage=(infra_aborted, infra_threshold),
+        health_config=health_config,
     )
     _beat(
         beater,
@@ -370,7 +373,14 @@ def _build_events_paths(
     }
 
 
-def _render_failure_profile(losses: list[Any], weights: Any) -> str:
+def _render_failure_profile(
+    losses: list[Any],
+    weights: Any,
+    *,
+    workspace_root: Path | None = None,
+    epoch_id: str | None = None,
+    round_index: int = 0,
+) -> str:
     """Build the bucketed, board-anonymized outcome-marginal profile block.
 
     Capability 2 of issue #18. Aggregates the TRAIN-slice ``losses`` (the
@@ -392,7 +402,16 @@ def _render_failure_profile(losses: list[Any], weights: Any) -> str:
     from zicato.proposer.prompts import render_failure_mode_profile  # noqa: PLC0415
 
     spec = str(getattr(weights, "outcome_summarizer_spec", "") or "")
-    operator_marginals = run_operator_summarizer(spec, losses) if spec else {}
+
+    def record_error(error: str) -> None:
+        if workspace_root is not None and epoch_id is not None:
+            from zicato.health.summarizer import record_summarizer_failure
+
+            record_summarizer_failure(workspace_root, epoch_id, round_index, spec, error)
+
+    operator_marginals = (
+        run_operator_summarizer(spec, losses, on_error=record_error) if spec else {}
+    )
     summary = aggregate_outcome_marginals(losses, operator_marginals=operator_marginals)
     return render_failure_mode_profile(summary)
 

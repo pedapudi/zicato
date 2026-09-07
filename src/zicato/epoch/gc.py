@@ -70,10 +70,8 @@ workspace-config block, default off) that prunes an epoch as it closes.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from zicato.epoch.genstore import default_generation_store
 from zicato.workspace import natural_key
@@ -212,29 +210,6 @@ def prune_generations(
     return report
 
 
-def _read_storage_gc_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    """Extract a well-formed ``storage_gc`` block, or ``None`` when off.
-
-    Returns the block only when it is a dict with ``on_epoch_close``
-    truthy AND a usable policy (``keep_last_n`` >= 1 or
-    ``keep_promoted_only``). Anything else — absent block, malformed
-    values, hook disabled — yields ``None`` so the close path stays
-    byte-identical to a workspace that never heard of GC.
-    """
-    if not isinstance(config, dict):
-        return None
-    block = config.get(STORAGE_GC_KEY)
-    if not isinstance(block, dict) or not block.get("on_epoch_close"):
-        return None
-    keep_promoted_only = bool(block.get("keep_promoted_only", False))
-    keep_last_n = block.get("keep_last_n")
-    if keep_promoted_only:
-        return {"keep_promoted_only": True}
-    if isinstance(keep_last_n, int) and not isinstance(keep_last_n, bool) and keep_last_n >= 1:
-        return {"keep_last_n": keep_last_n}
-    return None
-
-
 def maybe_prune_on_epoch_close(workspace_root: Path, epoch_id: str) -> PruneReport | None:
     """Opt-in epoch-close hook: prune the closing epoch when configured.
 
@@ -250,10 +225,18 @@ def maybe_prune_on_epoch_close(workspace_root: Path, epoch_id: str) -> PruneRepo
             config = read_workspace_config(workspace_root)
         except (OSError, ValueError):
             return None
-        policy = _read_storage_gc_config(config.raw)
-        if policy is None:
+        policy = config.values.storage_gc
+        if not policy.on_epoch_close or (
+            not policy.keep_promoted_only and policy.keep_last_n is None
+        ):
             return None
-        return prune_generations(workspace_root, epoch_id, dry_run=False, **policy)
+        return prune_generations(
+            workspace_root,
+            epoch_id,
+            dry_run=False,
+            keep_promoted_only=policy.keep_promoted_only,
+            keep_last_n=None if policy.keep_promoted_only else policy.keep_last_n,
+        )
     except Exception as exc:  # noqa: BLE001 — the close path must never fail on GC
         log.warning("epoch gc on close skipped for %s: %s", epoch_id, exc)
         return None

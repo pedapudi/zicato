@@ -6,7 +6,7 @@
 > GUI and the chat copilot both drive through ONE mutation surface, plus its
 > honest cost meter, its statistical pre-flight, its margin-vs-floor validate,
 > and its fork/compare slots; (2) the **CLI** — the auto-discovered `click`
-> command tree, the flag → pin → config-knob → worker-propagation layer, `zicato
+> command tree, invocation configuration and worker propagation, `zicato
 > config env`, and `CLI.md`; (3) the **library facade** — the small lazy
 > `zicato` surface, the import-linter contracts, the TID251 bans, and how a
 > name (or a driver edge) is added; and (4) **packaging** — the wheel, the
@@ -17,7 +17,7 @@
 > green-gates rule (parity gates, import contracts, the node suite), the
 > omit-at-default rule, and the module-level-callable rule for callables that
 > cross the worker boundary; 02-architecture.md §1 "The process topology" (the
-> four OS processes the pins and the environment-variable contracts cross);
+> four OS processes configuration and environment-variable contracts cross);
 > 03-contract-and-epochs.md §3.7 "Computing the hash" (what "rolls the epoch"
 > means — the builder's entire reason to exist); 04-evaluation-statistics.md §4
 > "A/A noise-floor calibration" (what the pre-flight measures and what the
@@ -33,9 +33,9 @@
 > | L1 | the one-mutation-surface rule | Every editable contract change flows through exactly one function in `zicato/contract_draft/operations.py`. The form, the copilot, and the REST dispatch all call the same op; there is never a second edit path. |
 > | L2 | the full-coverage rule for a new knob | A new contract knob ships only once it has an op (`operations.py`), a dispatch arm (`api.py::_dispatch_op`), a copilot tool (`copilot_tools.py::DEFAULT_BUILDER_TOOLS`), a GUI control or a documented exception, a cost line if it changes the schedule, and a `validate` consideration if it can be unsound. Two tests — **the knob-coverage pins** — machine-pin the wiring: `test_default_builder_tools_registry_covers_every_op` for the op↔dispatch↔copilot triple, and `test_builder_gui_coverage.py` for the GUI control or exception. |
 > | L3 | the honest-cost-meter rule | Every board-run multiplier the runtime will spend gets a `CostLine`; evaluation LLM calls are labelled and excluded from the board-runs headline. `operations.py::estimate_cost` is the only implementation of the arithmetic; the console renders the served numbers, and a correspondence test pins that what the page shows equals what the estimator computed. |
-> | L4 | the recommend-only rule | The builder never hard-blocks `apply`. Even a `refuse`-severity warning or a `refuse` pre-flight verdict informs the operator; it never gates the write. |
+> | L4 | the recommend-only rule | Statistical and cost warnings remain advisory. Malformed authored data, stale drafts, and competing mutation ownership block Apply before publication. |
 > | L5 | the builder-never-rolls-the-epoch rule | The builder never rolls the epoch and never starts a live evolve. `apply(confirm=True)` writes the contract source files and lets the auto-epoch machinery roll on the next resolve; the copilot's apply tool is always `confirm=False`. |
-> | L6 | the config-pins-not-environment rule | Flags cross the worker boundary via `config_pins`, never an environment variable. No environment variable is a configuration knob; operator knobs are CLI flags (pinned via `pin_overrides`) and `config.json` blocks. |
+> | L6 | explicit worker configuration | Workers receive selected operational values and their sources through the `configuration` argument payload. |
 > | L7 | the lazy-pure-facade rule | `import zicato` imports only `zicato`; every facade name is `is`-identical to its home-module attribute; the `TYPE_CHECKING` mirror is the static view of the runtime lazy surface. |
 > | L8 | the library-never-imports-a-driver rule | The only driver→driver edges are `cli → dashboard` and `dashboard → builder`; the import-linter contracts pin exactly that. |
 
@@ -80,7 +80,7 @@ forbidden** — §10.11 is the enforcement.
 | `src/zicato/dashboard/static/js/builder/model.js` | `paramSpecsFor`, the schematic preview model, and the chat-pane width persistence — no cost or validation arithmetic | ~305 lines |
 | `src/zicato/cli/discovery.py` | `build_cli_root`, `ZicatoGroup`, the command auto-discovery | ~370 lines |
 | `src/zicato/cli/commands/*.py` | one command (or sub-group) per file — the inventory in §10.9 | — |
-| `src/zicato/config.py` | `pin_overrides` / `pinned_override` / `load_config` + `describe_env_vars` | ~690 lines |
+| `src/zicato/config.py` | configuration records, explicit resolution, and `describe_env_vars` | — |
 | `src/zicato/__init__.py` | the lazy `_EXPORTS` facade + `__getattr__` + `TYPE_CHECKING` mirror | ~75 lines |
 | `pyproject.toml` | the import-linter contracts, TID251 bans, extras, uv workspace, wheel packaging | ~660 lines |
 | `hatch_build.py` | the custom build hook that bundles `zicato-supervisor` into the wheel | ~98 lines |
@@ -712,76 +712,58 @@ a ⛔ glyph), the fork/compare diff, and a **two-click Dry-run / Apply** confirm
 > `epoch/contract.py` rather than to a builder warning — and it will then block
 > every write path rather than only the builder's.
 
-### 10.5.3 The apply path — dry-run vs confirm, and why apply does not roll
+### 10.5.3 Applying editable contracts and recovering interrupted edits
 
-`apply(draft, workspace_root, confirm)` is where a draft becomes (or previews
-becoming) the live contract. It returns an `ApplyResult` carrying `confirmed`,
-`rolled`, `components_changed`, `new_contract_hash`, `cost`, `diff`, and
-`warnings`. The two branches:
+`TournamentDraft.from_workspace` loads the registered live board, brief, scoring,
+and proposer inputs. Conventional live paths also work before an epoch exists.
+Frozen epoch files describe evaluations already run. Each draft retains the
+source bytes and their digests, including workspace configuration, so applying
+an unrelated edit preserves pending authored changes. Forks and undo snapshots
+retain the same source revision until an explicit reload or successful Apply.
 
-- **Dry run (`confirm=False`).** Nothing is written. The result carries the
-  *predicted* contract hash, computed by `_predicted_contract_hash`, which
-  materializes the draft's board/brief/scoring into a throwaway
-  `tempfile.TemporaryDirectory` and runs the real `compute_contract_hash` over
-  them, the workspace's live adapter identity and mutable trees, and the draft's
-  proposer. The operator sees the hash an apply would land without touching the
-  workspace. `rolled` is always `False` for a dry run.
-- **Confirm (`confirm=True`).** `_write_contract` writes the draft to the
-  workspace's LIVE contract source paths — the same `board.jsonl` / `brief.md` /
-  `scoring.json` (and proposer dir) that `zicato epoch register` / `zicato epoch new`
-  publish, recorded under `config.json`'s `contract` key. The result recomputes
-  the hash from the now-written live contract and sets `rolled=diff.rolls_epoch`.
+`apply(draft, workspace_root, confirm, writer=...)` shares mutation ownership with
+its caller. A standalone confirmed Apply acquires the workspace writer lease;
+an invocation forwards its validated handle. Immediately before publication,
+Apply compares every source digest and the proposer identity. A stale draft
+fails with the changed component names. Competing Apply calls cannot both
+replace a component from the same prior revision.
 
-The critical design point (the builder-never-rolls-the-epoch rule): **`apply`
-writes contract *source files*; it never opens an epoch.** The ordinary
-auto-epoch machinery rolls the epoch on the NEXT `zicato evolve` resolve,
-exactly as it would for a hand-edited `scoring.json`. The builder edits a
-contract; it does not drive epochs. It reuses the existing write paths, so one
-mechanism rolls the epoch and the builder owns no second one:
+The board parser and authored scoring decoder validate the complete candidate
+before any accepted file is published. Statistical and cost warnings remain
+advisory. Scoring edits merge only changed effective fields into the original
+partial document, preserving unrelated values and omissions. Board metadata
+passes through the same parser and serializer used by ordinary board files.
 
-```python
-# src/zicato/contract_draft/operations.py — apply (confirm branch)
-    _write_contract(draft, workspace_root)
-    # Recompute the hash from the now-written live contract so the result
-    # reflects exactly what the next resolve will see.
-    from zicato.epoch.contract import (  # noqa: PLC0415
-        compute_contract_hash,
-        resolve_contract_inputs,
-    )
+Confirmed Apply records accepted board, brief, scoring, and config bytes in
+`contract-publication.json`, together with expected source digests and a unique
+revision. It atomically replaces each authored destination, then replaces the
+pending record with a completed revision marker. The completed marker carries
+no settings. The authored files remain canonical, and their configured paths
+remain the publication destinations.
 
-    new_hash = compute_contract_hash(resolve_contract_inputs(workspace_root))
-    return ApplyResult(
-        confirmed=True,
-        rolled=diff.rolls_epoch,
-        ...
-    )
-```
+`contract_draft.publication.recover_contract_publication` requires the workspace
+writer. It first checks that every destination still contains either its expected
+source bytes or its accepted bytes. A conflicting manual edit stops recovery
+before further replacement. Replay skips files already accepted, replaces the
+remaining files, and records completion. Mutating and execution entry points
+must recover before resolving live inputs. Read-only resolvers reject pending
+publication; live checks compare publication revisions and captured
+file digests to refuse reads spanning an edit.
 
-> ⚠️ TRAP — a dry-run's predicted hash and a confirmed apply's hash are computed
-> two DIFFERENT ways (temp-dir materialization vs. re-resolving the written
-> workspace), and they must agree for an unchanged draft. If you add a contract
-> input, thread it into BOTH `_predicted_contract_hash`'s `ContractInputs` and
-> the live `resolve_contract_inputs` path, or the preview quotes a hash the apply
-> does not produce — and the operator's "this rolls to X" promise breaks. This is
-> the builder's local instance of the contract-hash cwd/checkout hazard — the
-> case where the contract hash embedded the checkout path
-> (`12-bug-casebook.md` Case 10).
+External editors do not participate in the lease and revision protocol. Digest
+checks detect changes to captured bytes; they do not provide transactional
+isolation for arbitrary simultaneous editor writes.
 
-> ⚠️ TRAP — the draft must round-trip EVERY board-file component, the header as
-> well as the entries. The board's optional `board_meta` header (`disable_drift` /
-> `judge_only`) is part of the contract, and `apply` rewrites the whole
-> `board.jsonl`: a draft loaded through the entries-only loader would silently
-> STRIP the header from the live contract on apply.
-> `TournamentDraft.from_workspace` therefore loads via
-> `load_current_board_with_meta`, the draft carries `disable_drift` /
-> `judge_only` fields, and BOTH writers (`_write_contract` and
-> `_predicted_contract_hash`) pass them to `save_board`. The draft's
-> `_board_canon` prepends the header line only-when-non-default, mirroring
-> `save_board`'s emit rule (`zicato.board.jsonl.board_meta_to_dict` is the
-> shared header builder), so the diff agrees with the on-disk bytes the
-> contract hash sees. If you add another board-level header field, thread it
-> through the same four seams in one commit: the loader, both writers, and
-> `_board_canon`.
+A preview (`confirm=False`) writes no canonical files, including when a writer
+is supplied. It computes the predicted hash in a temporary directory. Evolve's
+tournament flags build the same draft, and dry-run passes its validated scoring
+to `CheckContext` in memory. Failed validation also leaves canonical files
+unchanged. Explicit epoch selection rejects live tournament overrides because
+an epoch's frozen contract cannot be edited by those flags.
+
+Confirmed Apply returns the contract hash only after publication completes.
+Apply never opens an epoch or runs an evaluation. The next execution compares
+the live contract with the frozen epoch and opens an epoch when required.
 
 ---
 
@@ -1186,175 +1168,114 @@ every command and mirroring the output. Its header states the contract:
 
 ---
 
-## 10.10 Flags → pins → config knob → workers
+## 10.10 Explicit configuration reaches each worker
 
-The single most bug-prone thing about the CLI is how an operator flag reaches
-the code that consumes it — especially code that runs in a **worker
-subprocess**, a different OS process than the one that parsed the flag. zicato
-solves this with a **process-pinned override** layer, and the rule that falls
-out of it is the config-pins-not-environment rule: *no environment variable is a
-configuration knob*. The config module states it at the top:
+The authored `config.json` root is `workspace.config_schema.WorkspaceDeclaration`.
+It composes runtime, health, integration, dashboard, model, proposer, adapter,
+and contract-source declarations. The file owner validates unknown keys, exact
+JSON types, ranges, and relationships before returning typed values or publishing
+an edit. Scoring is a separate document owned by `ScoringWeights`; authored edits
+use the strict decoder, while frozen historical records use their explicit
+historical decoder.
 
-```python
-# src/zicato/config.py (module docstring, excerpt)
-:func:`load_config` honours NO environment variables; the former
-operator-env surface was deleted outright:
-...
-What remains is a small MERITED set of environment variables zicato
-deliberately touches — each one an actual process-boundary contract,
-not a configuration knob
-```
+Operational field declarations live in `core/settings.py`. `zicato.config`
+exports the domain records, immutable `InvocationOverlay`, and
+`resolve_configuration(workspace_config, overlay=...)`. The resolver applies
+field defaults, workspace values, and explicit invocation values in that order.
+Unknown fields, wrong types, and invalid ranges raise before conversion.
 
-### 10.10.1 The four-hop path
+An overlay contains only the fields an invocation explicitly supplies. Its
+nested mappings and sequences are detached from caller-owned inputs and frozen.
+The resolved object carries typed `values` and a source for every persisted
+field: `default`, `workspace`, or `invocation`. Constraints between fields run
+after composition, so an overlay can use a related value from the workspace.
+Execution identity declarations and run paths cannot be changed by an
+operational overlay.
 
-**Hop 1 — flag to pin.** A command validates its flags once at startup and pins
-them as a nested `{section: {field: value}}` override. `evolve` does this in
-`_pin_config_flags`:
+### 10.10.1 Runtime construction and transport use selected values
 
-```python
-# src/zicato/cli/commands/evolve.py — _pin_config_flags (excerpt)
-    if parallelism is not None:
-        pins.setdefault("runtime", {})["parallelism"] = parallelism
-    if aux_call_timeout is not None:
-        pins.setdefault("aux", {})["call_timeout_s"] = aux_call_timeout
-    ...
-        pin_overrides(pins)
-```
+The CLI and public evolve functions pass an explicit overlay into the validated
+invocation scope. The scope acquires the writer, recovers pending contract and
+epoch publication, and resolves the workspace settings once. The CLI stages any
+tournament edit after recovery and publishes it under that writer before
+validation. A dry run checks its candidate in memory and never recovers or
+publishes a pending edit. Child services start only after validation succeeds.
 
-**Hop 2 — pin into the config tree.** `pin_overrides` validates eagerly: an
-unknown section or field raises at the pin site rather than surfacing later as a
-silently-defaulted knob. It merges into a process-wide store, and `load_config`
-layers the pins on top
-of the dataclass defaults — so every later `load_config()`, however deep in the
-call graph, sees the flag:
+`InvocationContext.configuration` retains the resolved values and sources.
+`make_runtime_config(..., configuration=resolved)` copies operational fields
+from their shared declaration and retains the same object on each round's
+runtime. Callables and model roles resolve from the invocation's captured
+workspace declaration. Token ledgers remain local to each round.
 
-```python
-# src/zicato/config.py — pin_overrides (docstring, excerpt)
-    This is the bridge from CLI flags to the config tree: a command
-    validates and pins its flag values once at startup, and every later
-    :func:`load_config` call — however deep in the call graph — sees
-    them layered on top of the dataclass defaults ...
+The selected epoch supplies captured board, scoring, brief, proposer skills,
+and adapter declarations through `EpochExecutionContract`. Explicit epoch
+selection uses that epoch's driver import roots. Rounds retain the same contract
+object and verify its executable dependencies before execution. An intentional
+contract roll waits for worker cleanup, releases the previous import scope, and
+binds the replacement epoch. Operational settings remain fixed for the invocation.
 
-    The tournament runner serialises the current pins into every worker
-    args file and the worker re-pins them at startup, so a pinned knob
-    consumed inside the worker subprocess (for example, board-unit
-    parallelism) crosses the process boundary without an environment variable.
-```
+Telemetry browser and native endpoints are explicit runtime values. Workers
+receive both addresses with the resolved settings; the coordinator does not
+change its environment to forward them.
 
-For the rare call site that must tell "explicitly pinned" from "at its default"
-(e.g. `runtime_factory.make_runtime_config`, where `--parallelism` outranks the
-`config.json` value but the mere default must not), there is `pinned_override(
-section, field)` returning the pinned value or `None`.
+The runner writes `configuration` into each worker argument file using
+`_configuration_spec(config)`. The payload contains the selected values and
+their sources. `ResolvedConfiguration.from_json` validates both before the
+worker constructs its runtime. Evaluation consumers receive the selected
+`AuxConfig`, including rubric judging and emulated turns.
 
-**Hop 3 — pins cross into the worker through the args file.** The
-tournament runner writes the current pins into each worker's JSON args file
-under a `config_pins` key:
+`effective_settings` reports the carried configuration. The host worker limit
+also records the effective CPU-derived count when its declared value is null.
+The report does not re-read flags or workspace files. `load_config` constructs
+an explicit configuration over defaults and holds no process-wide overrides.
 
-```python
-# src/zicato/tournament/worker_transport.py — _config_pins
-def _config_pins() -> dict[str, dict[str, Any]]:
-    ...
-    return get_pinned_overrides()
-```
+### 10.10.2 Environment inspection describes process boundaries
 
-The runner writes `"config_pins": _config_pins()` into the args file it hands
-the worker. A flag consumed inside the worker therefore crosses the process
-boundary through the args file rather than an environment variable.
+`zicato inspect environment` reads `describe_env_vars()`. Entries describe the
+scratch-directory compatibility, child context inheritance, credentials, worker
+environment construction, and operating-system inputs. The module/function
+inventory in `ENVIRONMENT_BOUNDARIES` is checked against parsed Python access
+sites by `tools/check_environment_boundaries.py`; new undeclared access fails.
+Credential values are read only by their named boundary owners.
 
-**Hop 4 — the worker re-pins before any `load_config`.** The fresh worker
-interpreter reads the args file and re-pins before it touches config:
+Telemetry endpoints are invocation values, selected from explicit integration
+settings, inherited context, or the workspace service record. Browser and native
+addresses travel together in `WorkerRuntimeContext`. A worker sets one internal
+`ZICATO_RUNTIME_CONTEXT` pointer to its own argument file before target imports;
+nested processes inherit that pointer. A configured missing or malformed pointer
+raises an error. Coordinators never set it, and each argument file must survive
+until the worker and its descendants are reaped.
 
-```python
-# src/zicato/_tournament_worker.py (excerpt)
-    config_pins = args.get("config_pins")
-    if config_pins:
-        ...
-        pin_overrides(config_pins)
-```
+### 10.10.3 Inspect authored values and generate configuration artifacts
 
-> ⛔ NEVER add an environment variable to carry an operator knob across the
-> worker boundary (the config-pins-not-environment rule). A flag value read via
-> `os.environ` in the worker is invisible to the orchestrator's validation,
-> cannot be told apart from a default, and drifts from the
-> `config.json` fallback. Pin the flag (`pin_overrides`), and let the runner's
-> `config_pins` args-file channel carry it. The worker re-pins; `load_config`
-> then resolves it identically on both sides of the boundary.
+`zicato inspect config FIELD` explains a dotted field, including model-engine
+names such as `models.engines.judge.api_key_env`. `--schema` emits closed editor
+schemas for both configuration files. `--scaffold` emits sparse defaults;
+`--scaffold --complete` spells out class defaults without inventing executable
+paths or connections. These documents describe an unregistered workspace until
+registration supplies its required target and proposer inputs.
 
-> ⚠️ TRAP — a pinned value must be JSON-serialisable, because it round-trips
-> through the worker args file. Every CLI-flag value already is (ints, floats,
-> strings, bools). If you pin a non-JSON value, `get_pinned_overrides()` →
-> args-file write silently drops or corrupts it and the worker runs on the
-> default. Pin the primitive, resolve the object worker-side.
+`--effective --sources --workspace .zicato` resolves the next invocation's
+workspace values and defaults without starting services or reading credentials.
+A running invocation's settings remain on its heartbeat. `--reference` renders
+the field reference from the same descriptions, types, defaults, bounds,
+persisted paths, CLI bindings, scopes, epoch effects, and secret-reference flags.
+Adding a field updates these outputs through its declaration.
 
-### 10.10.2 The merited env-var set — `zicato config env`
+### 10.10.4 Add an operational field at its owner
 
-The env vars zicato *does* touch are a small MERITED set, each one a
-process-boundary contract and never a knob. `zicato config env` prints the set
-by reading `describe_env_vars()`, so the command can never drift from the code.
-Each entry carries a **boundary-kind role** (NOT a process label):
+1. Declare the field, default, type, and constraint on its domain record. The
+   parser, schema, runtime field inventory, and worker transport derive those
+   facts from the declaration.
+2. If a CLI flag is needed, preserve an unset value and map only explicit
+   input into `_configuration_overlay`.
+3. Pass the selected domain record to its consumer. Runtime consumers use the
+   configuration attached to their runtime.
+4. Verify a malformed value is rejected and an explicit value reaches its
+   actual consumer. Worker settings require a process-boundary check.
 
-| Role | Meaning | Members |
-|---|---|---|
-| `harness-contract` | set by zicato for the system under test — part of the run contract | `ZICATO_RUN_SCRATCH_DIR` |
-| `internal-handoff` | set and restored by zicato to hand a value across its own processes | `ZICATO_HARMONOGRAF_URL`, `ZICATO_HARMONOGRAF_GRPC` |
-| `secrets-boundary` | Configuration records a variable name while its credential value remains in the process environment | `<models.<role>.api_key_env>`, Goldfive names returned by `RuntimeConfigDocument.secret_env_names`, and `<runtime.worker_env_passthrough>` when used for credentials |
-| `test-toggle` | CI / test switches; never read on an operator path | `ZICATO_SKIP_HOOK_CHECK`, `ZICATO_PARITY_UPDATE` |
-
-The role is a *boundary taxonomy* of five values; which process
-sets/reads a variable is prose in the entry's `description` (e.g.
-`ZICATO_RUN_SCRATCH_DIR` is "Set BY the tournament worker FOR the system
-under test"). The backing type is `EnvVarInfo(name, role, description)`.
-
-> ⛔ NEVER add an operator tuning knob to `_MERITED_ENV_VARS`. The set is for
-> process-boundary contracts only. If your feature needs an operator knob, it is
-> a CLI flag (pinned) plus a `config.json` block, the posture every operator
-> threshold takes. A new env var must justify its role from the five above, or
-> it does not belong.
-
-### 10.10.3 Recipe: add a CLI flag the right way
-
-Goal: add an operator flag to `evolve` (or any command) so it shadows a
-`config.json` knob and reaches the workers correctly.
-
-1. **Add the config field first.** The knob lives on a `ZicatoConfig` sub-config
-   (`runtime`, `aux`, `integration`, `health`, …) with a safe default, and — if
-   operators should be able to set it without the flag — a `config.json` reader
-   in `workspace_loader`. The flag *shadows* this knob; it is not a second
-   source of truth.
-2. **Add the `@click.option`.** In the command file, add the option with a help
-   string that NAMES the config knob it shadows (the CLI-HELP convention — every
-   flag's `--help` says which `config.json` knob it overrides and that the flag
-   wins). Give it an exact type (`int | None`, `float | None`) so "unset"
-   is distinguishable from a real value.
-3. **Pin it.** In the command's pin helper (`_pin_config_flags` for `evolve`),
-   map the non-`None` flag to its `{section: {field: value}}` pin and ensure
-   `pin_overrides(pins)` runs once at startup. Do NOT read the flag again
-   downstream — consume it via `load_config()` / `pinned_override()`.
-4. **Confirm worker propagation IF the knob is consumed in a worker.** The
-   runner already threads ALL pins via `config_pins`; you get propagation for
-   free. Your job is to prove it: add a test that pins the override, builds the
-   worker args (or calls `_config_pins()`), and asserts your `section.field` is
-   present in the args payload and re-pins correctly worker-side. Both halves —
-   flag→config threading and the `config_pins` worker payload — live in
-   `tests/test_cli_config_flags.py`; add yours beside them.
-5. **Help text + CLI.md.** Re-run `uv run zicato <command> --help`, confirm the
-   flag reads correctly, then reconcile `docs/design/CLI.md` (§10.9.2) — update
-   the option, its default, and the "Last reconciled" date.
-6. **Verify:**
-   ```bash
-   uv run pytest tests/test_config.py tests/test_cli_config_flags.py -x -q
-   uv run zicato evolve --help          # eyeball the new flag + its shadow note
-   # CLI-HELP parity gate (11-testing.md §"parity gates"):
-   bash tools/parity.sh --only CLI-HELP
-   ```
-   If you skipped step 3 and read the flag inline, the worker never sees it
-   (the config-pins-not-environment rule) — the value silently reverts to the
-   `config.json` default inside every duel. If you skipped the CLI.md reconcile, the CLI-HELP parity
-   gate or the doc census reds.
-
-**Definition of done.** The flag shadows a real `config.json` knob, wins over it,
-reaches worker subprocesses via `config_pins` (proven by a test), reads correctly
-in `--help`, and CLI.md matches the binary.
+The focused configuration checks are `tests/test_authored_config.py`,
+`tests/test_invocation_configuration.py`, and `tests/test_cli_config_flags.py`.
 
 ---
 
@@ -1467,7 +1388,11 @@ The cuts inside the library:
 |---|---|
 | the proposer's patch validator has no path to the board | `zicato.proposer.validate` → the board, the judge runtime, the emulator, the adapters, the adapter factory, the tournament worker |
 | the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, the contract draft, or the drivers | any of the 24 listed modelling and execution packages → `zicato.analyzer` / `zicato.check` / `zicato.contract_draft` / `zicato.evolve` / `zicato.health` / `zicato.orchestrator` / `zicato.query` / `zicato.reflection` / the four drivers |
-| the shared primitives import nothing else in the library | `zicato.aux_timeout` / `zicato.config` / `zicato.import_path` / `zicato.integrations` / `zicato.logging_stream` / `zicato.storage` / `zicato.util` → every other top-level package |
+| the shared primitives import nothing else in the library | `zicato.import_path` / `zicato.integrations` / `zicato.logging_stream` / `zicato.storage` / `zicato.util` → every other top-level package |
+
+Configuration resolution, auxiliary deadline settings, and registered driver
+import scopes belong to the execution layer. Their shared domain declarations
+remain in `core`; these modules cannot import coordination or driver code.
 
 The library-must-not-import-the-drivers contract lists every library package
 explicitly as a `source_module` — including `zicato.query`, which is
@@ -1639,7 +1564,7 @@ build can still run the hook.
   gate), §11.9 "Node behaviour-suite conventions" (including §11.9.5, the
   cross-language correspondence pattern this chapter's cost meter uses), and
   §11.8 "The import contracts + the TID251 bans".
-- 13-recipes.md — the short-form cookbook; §10.8 and §10.10.3 here are the
+- 13-recipes.md — the short-form cookbook; §10.8 and §10.10.4 here are the
   long-form builder-op and CLI-flag procedures.
 - `docs/design/TOURNAMENT-BUILDER.md` — the full builder design record (the
   operations layer, the copilot, and the form GUI; §4 "The consequence-forward

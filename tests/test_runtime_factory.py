@@ -129,14 +129,18 @@ def test_runtime_config_parallelism_pinned_flag_wins_over_workspace(
     ``config.json`` is the per-workspace default. The pin is applied
     exactly as the evolve CLI applies it.
     """
-    from zicato.config import pin_overrides
+    from zicato.config import InvocationOverlay, resolve_configuration
 
-    pin_overrides({"runtime": {"parallelism": 7}})
+    configuration = resolve_configuration(
+        {"runtime": {"parallelism": 3}},
+        overlay=InvocationOverlay.from_mapping({"runtime": {"parallelism": 7}}),
+    )
     cfg = make_runtime_config(
         {"runtime": {"parallelism": 3}},
         workspace_root=tmp_path,
         target_call_llm=_stub_target,
         evaluation_call_llm=_stub_aux,
+        configuration=configuration,
     )
     assert cfg.parallelism == 7
 
@@ -206,7 +210,7 @@ def test_worker_permit_directory_and_log_level_read_the_runtime_block(tmp_path: 
         {
             "runtime": {
                 "worker_permit_dir": str(permit_dir),
-                "log_level": "debug",
+                "log_level": "DEBUG",
             }
         },
         workspace_root=tmp_path,
@@ -222,7 +226,7 @@ def test_worker_permit_directory_requires_an_absolute_path(
     tmp_path: Path,
     value: object,
 ) -> None:
-    with pytest.raises(ValueError, match="worker_permit_dir must be .*absolute path"):
+    with pytest.raises(ValueError, match="runtime.worker_permit_dir"):
         make_runtime_config(
             {"runtime": {"worker_permit_dir": value}},
             workspace_root=tmp_path,
@@ -232,7 +236,7 @@ def test_worker_permit_directory_requires_an_absolute_path(
 
 
 def test_runtime_log_level_rejects_an_unknown_name(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="RuntimeConfig.log_level"):
+    with pytest.raises(ValueError, match="config.runtime.log_level"):
         make_runtime_config(
             {"runtime": {"log_level": "verbose"}},
             workspace_root=tmp_path,
@@ -241,28 +245,16 @@ def test_runtime_log_level_rejects_an_unknown_name(tmp_path: Path) -> None:
         )
 
 
-def test_host_worker_permits_reads_a_json_boolean_as_intent(tmp_path: Path) -> None:
-    """``true`` means AUTO, not ``int(True) == 1``.
-
-    The knob name reads boolean-ish, so "on" is a plausible thing to write —
-    and one permit host-wide would silently serialise every concurrent run
-    down to a single worker, which is emphatically not what "on" meant.
-    """
-    on = make_runtime_config(
-        {"runtime": {"host_worker_permits": True}},
-        workspace_root=tmp_path,
-        target_call_llm=_stub_target,
-        evaluation_call_llm=_stub_aux,
-    )
-    assert on.host_worker_permits is None, "true must mean AUTO, never a cap of 1"
-
-    off = make_runtime_config(
-        {"runtime": {"host_worker_permits": False}},
-        workspace_root=tmp_path,
-        target_call_llm=_stub_target,
-        evaluation_call_llm=_stub_aux,
-    )
-    assert off.host_worker_permits == 0
+def test_host_worker_permits_reads_boolean_automatic_and_disabled_policies(tmp_path: Path) -> None:
+    """True selects the automatic ceiling; false disables host permits."""
+    for value, expected in ((True, None), (False, 0)):
+        config = make_runtime_config(
+            {"runtime": {"host_worker_permits": value}},
+            workspace_root=tmp_path,
+            target_call_llm=_stub_target,
+            evaluation_call_llm=_stub_aux,
+        )
+        assert config.host_worker_permits == expected
 
 
 def test_runtime_config_default_instance_id(tmp_path: Path) -> None:

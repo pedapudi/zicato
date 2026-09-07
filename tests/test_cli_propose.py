@@ -70,7 +70,7 @@ def _workspace(tmp_path: Path, **proposer: Any) -> tuple[Path, str]:
                 "instance_id": "test",
                 "created_at": "2026-09-01T00:00:00Z",
                 "generation_source_backend": "directory",
-                "adapter": {"kind": "stub"},
+                "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
                 "source_roots": [str(agent)],
                 "mutable_trees": [str(agent)],
                 "proposer": stand_in_proposer_block(tmp_path / "foe", **proposer),
@@ -194,11 +194,11 @@ def test_debugging_leaves_the_canonical_trees_byte_identical(tmp_path: Path) -> 
     added = set(after) - set(before)
     changed = {k for k in set(after) & set(before) if after[k] != before[k]}
     assert not changed, sorted(changed)
-    # The stable lock inode coordinates producers and survives lease release.
+    # Epoch creation already acquired and released the shared workspace writer.
+    assert "runtime/lock.guard" in before
     assert added == {
         str((epoch / "proposals" / "v1.json").relative_to(workspace)),
         str((epoch / "proposer_inputs.jsonl").relative_to(workspace)),
-        "runtime/lock.guard",
     } | {a for a in added if a.startswith(str(Path("epochs") / epoch_id / "episodes"))}
 
 

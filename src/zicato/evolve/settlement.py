@@ -620,6 +620,7 @@ async def _close_field_round(
         mutations=field_round.mutations,
         evaluation_call_llm=field_round.evaluation_call_llm,
         evaluation_model=field_round.evaluation_model,
+        configuration=field_round.config.operational_configuration(),
         meta_loop_emitter=field_round.meta_loop_emitter,
         token_clip=_token_clip_state(field_round.config),
         attributable_regressions=(

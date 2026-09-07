@@ -36,6 +36,7 @@ import click
 from zicato.board.jsonl import append_entry, load_board, remove_entry
 from zicato.core.types import validate_board_entry
 from zicato.core.workspace import board_path
+from zicato.driver_imports import with_workspace_imports
 
 
 def _resolve_epoch_id(workspace_root: Path) -> str:
@@ -198,6 +199,7 @@ def remove_cmd(entry_id: str, workspace: str) -> None:
     required=True,
     help="Dotted import path of the evaluation call_llm (e.g. mymodule:evaluation).",
 )
+@with_workspace_imports
 def audit_cmd(
     workspace: str,
     epoch_id: str | None,
@@ -248,7 +250,9 @@ def audit_cmd(
     board, disable_drift, judge_only = load_board_with_meta(board_file)
 
     workspace_config = workspace_loader.load_workspace_config(workspace_root)
-    adapter = adapter_factory.make_adapter_from_config(workspace_config)
+    adapter = adapter_factory.make_adapter_from_config(
+        workspace_config, workspace_root=workspace_root
+    )
     config = runtime_factory.make_runtime_config(
         workspace_config,
         workspace_root=workspace_root,
@@ -371,6 +375,7 @@ def audit_cmd(
     required=True,
     help="Dotted import path of the evaluation call_llm (e.g. mymodule:evaluation).",
 )
+@with_workspace_imports
 def preflight_cmd(
     workspace: str,
     epoch_id: str | None,
@@ -442,7 +447,9 @@ def preflight_cmd(
     board, disable_drift, judge_only = load_board_with_meta(board_file)
 
     workspace_config = workspace_loader.load_workspace_config(workspace_root)
-    adapter = adapter_factory.make_adapter_from_config(workspace_config)
+    adapter = adapter_factory.make_adapter_from_config(
+        workspace_config, workspace_root=workspace_root
+    )
     config = runtime_factory.make_runtime_config(
         workspace_config,
         workspace_root=workspace_root,
@@ -668,6 +675,7 @@ def preflight_cmd(
         "Required with --test-retest — inline judges are LLM-backed."
     ),
 )
+@with_workspace_imports
 def judges_cmd(
     workspace: str,
     epoch_id: str | None,

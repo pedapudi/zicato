@@ -308,6 +308,9 @@ def bootstrap_example_workspace(
     # a hand-built v0 must too, else a rejected round's dir-scan fallback
     # resolves to the highest vN dir).
     (workspace / "epochs" / cfg.id / "current_generation").write_text("v0\n")
+    from zicato.epoch.journal import write_seed_experiment
+
+    write_seed_experiment(workspace, cfg.id, proposed_at=cfg.created_at)
     return workspace, cfg.id
 
 

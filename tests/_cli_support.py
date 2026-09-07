@@ -15,32 +15,42 @@ from typing import Any
 
 import pytest
 
+from tests._stub_adapter import STUB_ADAPTER_FACTORY
 from zicato.board.jsonl import save_board
 from zicato.core.types import BoardEntry, ScoringWeights
 from zicato.epoch.lifecycle import new_epoch
 
 
 def install_evolve_capture(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
-    """Replace ``evolve_n_rounds`` with a stub that records its kwargs.
+    """Capture CLI parsing at the private loop seam without workspace IO.
 
-    ``evolve`` imports ``zicato.orchestrator.evolve_n_rounds`` inside its
-    coroutine rather than at module import, so patching the attribute on
-    the module object is what the command sees at call time. The stub
-    reports a normal completion through ``stop_reason_out`` when the
-    caller supplied one, because the command reads that list after the
-    await and would otherwise report an unfinished run.
+    Invocation ownership has separate real boundary tests. This helper supplies
+    only the resolved settings and resource stack needed to inspect CLI arguments.
     """
+    from contextlib import AsyncExitStack, asynccontextmanager
+    from types import SimpleNamespace
 
-    async def _fake_evolve_n_rounds(**kwargs: Any) -> list[Any]:
+    from zicato.core.settings import resolve_configuration
+    from zicato.evolve import invocation, loop
+
+    @asynccontextmanager
+    async def context(workspace_root, epoch, instance, *, overlay=None, prepare_contract=None):
+        captured["workspace_root"] = workspace_root
+        captured["invocation_overlay"] = overlay
+        async with AsyncExitStack() as resources:
+            yield SimpleNamespace(
+                configuration=resolve_configuration({}, overlay=overlay), resources=resources
+            )
+
+    async def capture(**kwargs: Any) -> list[Any]:
         captured.update(kwargs)
         stop_reason_out = kwargs.get("stop_reason_out")
         if stop_reason_out is not None:
             stop_reason_out.append("completed")
         return []
 
-    import zicato.orchestrator as orch_mod
-
-    monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
+    monkeypatch.setattr(invocation, "validated_invocation", context)
+    monkeypatch.setattr(loop, "_evolve_n_rounds", capture)
 
 
 def registered_workspace(tmp_path: Path, epoch_name: str) -> tuple[Path, str]:
@@ -51,7 +61,10 @@ def registered_workspace(tmp_path: Path, epoch_name: str) -> tuple[Path, str]:
     """
     ws = tmp_path / ".zicato"
     ws.mkdir(parents=True)
-    (ws / "config.json").write_text(json.dumps({"runtime": {}, "adapter": {}}), encoding="utf-8")
+    (ws / "config.json").write_text(
+        json.dumps({"runtime": {}, "adapter": {"kind": "import", "factory": STUB_ADAPTER_FACTORY}}),
+        encoding="utf-8",
+    )
     entry = BoardEntry(id="entryA", kind="single_turn", wall_clock_budget_seconds=30, input="hi")
     board_path = tmp_path / "board.jsonl"
     save_board([entry], board_path)

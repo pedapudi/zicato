@@ -62,39 +62,36 @@ import json
 import shutil
 import signal
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 
-from zicato.config import IntegrationConfig, load_config, pin_overrides
+from zicato.config import DashboardConfig, IntegrationConfig, InvocationOverlay
+from zicato.driver_imports import with_workspace_imports
+from zicato.runtime.lock import WorkspaceLock
+
+if TYPE_CHECKING:
+    from zicato.contract_draft.draft import TournamentDraft
 
 
-def _pin_config_flags(
+def _configuration_overlay(
     *,
     parallelism: int | None,
     aux_call_timeout: float | None,
     supervisor_binary: str | None,
     harmonograf_url: str | None,
-) -> None:
-    """Pin the config-shadowing evolve flags via :func:`pin_overrides`.
-
-    Each flag shadows one typed-config knob; only explicitly-passed
-    flags (non-``None``) are pinned so a defaulted flag never overrides
-    the workspace ``config.json`` or the dataclass default. Pinning
-    happens once, at command startup, before any ``load_config()``
-    consumer runs.
-    """
-    pins: dict[str, dict[str, Any]] = {}
+) -> InvocationOverlay:
+    """Capture only explicitly supplied flags for this invocation."""
+    overrides: dict[str, dict[str, Any]] = {}
     if parallelism is not None:
-        pins.setdefault("runtime", {})["parallelism"] = parallelism
+        overrides.setdefault("runtime", {})["parallelism"] = parallelism
     if aux_call_timeout is not None:
-        pins.setdefault("aux", {})["call_timeout_s"] = aux_call_timeout
+        overrides.setdefault("aux", {})["call_timeout_s"] = aux_call_timeout
     if supervisor_binary is not None:
-        pins.setdefault("integration", {})["supervisor_binary"] = supervisor_binary
+        overrides.setdefault("integration", {})["supervisor_binary"] = supervisor_binary
     if harmonograf_url is not None:
-        pins.setdefault("integration", {})["harmonograf_url"] = harmonograf_url
-    if pins:
-        pin_overrides(pins)
+        overrides.setdefault("integration", {})["harmonograf_url"] = harmonograf_url
+    return InvocationOverlay.from_mapping(overrides)
 
 
 def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path | None:
@@ -104,7 +101,7 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
 
     1. The ``supervisor_binary`` of
        :class:`~zicato.config.IntegrationConfig`, sourced from the
-       ``--supervisor-binary`` flag pinned at command startup (useful
+       ``--supervisor-binary`` invocation setting (useful
        for tests that point at a sentinel script).
     2. The fresher of two checkout/install candidates:
 
@@ -133,17 +130,16 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
     ----------
     config:
         The :class:`~zicato.config.IntegrationConfig` carrying
-        ``supervisor_binary``. When ``None`` it is loaded via
-        :func:`zicato.config.load_config`, which layers any pinned
-        ``--supervisor-binary`` flag on top of the defaults.
+        ``supervisor_binary``. When ``None``, declared integration defaults
+        apply. The CLI resolves its overlay before calling this function.
 
     Returns ``None`` when nothing resolves — the caller prints a warning
     and proceeds without a dashboard.
     """
     import os  # noqa: PLC0415
 
-    # 1. Explicit env override.
-    integration = config if config is not None else load_config().integration
+    # 1. Explicit invocation setting.
+    integration = config if config is not None else IntegrationConfig()
     if integration.supervisor_binary:
         candidate = Path(integration.supervisor_binary)
         if candidate.exists() and os.access(candidate, os.X_OK):
@@ -207,6 +203,7 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
 async def _maybe_spawn_supervisor(
     workspace_root: Path,
     disabled: bool,
+    config: IntegrationConfig | None = None,
 ) -> asyncio.subprocess.Process | None:
     """Spawn the supervisor binary as a subprocess (or return ``None``).
 
@@ -232,7 +229,7 @@ async def _maybe_spawn_supervisor(
     """
     if disabled:
         return None
-    binary = _resolve_supervisor_binary()
+    binary = _resolve_supervisor_binary(config)
     if binary is None:
         click.echo(
             "warning: zicato-supervisor binary not found; watchdog disabled",
@@ -256,7 +253,9 @@ async def _maybe_spawn_supervisor(
     return proc
 
 
-def _dashboard_spawn_argv(workspace_root: Path, host: str, port: int) -> list[str]:
+def _dashboard_spawn_argv(
+    workspace_root: Path, host: str, port: int, *, config: DashboardConfig | None = None
+) -> list[str]:
     """Return the argv that launches the Python dashboard service.
 
     Spawned as ``python -m zicato.dashboard`` so the dashboard runs in
@@ -264,15 +263,15 @@ def _dashboard_spawn_argv(workspace_root: Path, host: str, port: int) -> list[st
     subprocess, and the cleanest teardown story (kill the process, the
     HTTP server dies with it).
 
-    The ``zicato.dashboard.__main__`` entry point accepts ``--workspace``,
-    ``--host`` and ``--port`` and calls :func:`zicato.dashboard.server.run`
-    with the bundled static directory resolved by
-    :func:`zicato.dashboard.static_assets.resolve_static_dir`. If the
-    dashboard's optional dependencies are absent the spawn fails cleanly
+    The module receives the selected static directory as an absolute path, so
+    it serves the accepted invocation settings without rereading live config.
+    If the dashboard's optional dependencies are absent the spawn fails cleanly
     and ``evolve`` continues without a dashboard (see
     :func:`_maybe_spawn_dashboard`).
     """
     import sys  # noqa: PLC0415
+
+    from zicato.dashboard.static_assets import resolve_static_dir  # noqa: PLC0415
 
     return [
         sys.executable,
@@ -284,6 +283,8 @@ def _dashboard_spawn_argv(workspace_root: Path, host: str, port: int) -> list[st
         host,
         "--port",
         str(port),
+        "--static-dir",
+        str(resolve_static_dir(config, workspace_root=workspace_root).resolve()),
     ]
 
 
@@ -304,6 +305,8 @@ async def _maybe_spawn_dashboard(
     workspace_root: Path,
     port: int,
     disabled: bool,
+    *,
+    config: DashboardConfig | None = None,
 ) -> asyncio.subprocess.Process | None:
     """Spawn the Python dashboard service as a subprocess (or ``None``).
 
@@ -353,7 +356,7 @@ async def _maybe_spawn_dashboard(
         # Building the argv can itself fail, so it belongs INSIDE the guard:
         # this function's contract is that a dashboard which cannot start
         # degrades to a warning, never to an aborted run.
-        argv = _dashboard_spawn_argv(workspace_root, _DASHBOARD_HOST, port)
+        argv = _dashboard_spawn_argv(workspace_root, _DASHBOARD_HOST, port, config=config)
         proc = await asyncio.create_subprocess_exec(*argv, start_new_session=True)
     except (OSError, TypeError, ValueError) as exc:
         click.echo(
@@ -539,49 +542,32 @@ def _parse_tournament_param(raw: str) -> tuple[str, Any]:
     return key, parsed
 
 
-def _write_tournament_structure_into_scoring(
+def _tournament_draft(
     workspace_root: Path,
-    structure: str,
+    structure: str | None,
     params_raw: tuple[str, ...],
-) -> None:
-    """Write the ``tournament`` block into the live ``scoring.json``.
-
-    Resolves the live scoring.json the same way the contract does
-    (``resolve_contract_inputs``), so the written block is the exact file
-    the contract hash reads. Preserves every other key in the file (an
-    operator's partial document). The file is created with just the
-    tournament block when it does not exist yet.
-    """
-    from zicato.epoch.contract import resolve_contract_inputs  # noqa: PLC0415
+) -> TournamentDraft:
+    """Build and validate tournament edits through the shared contract draft."""
+    from zicato.contract_draft import operations
+    from zicato.contract_draft.draft import TournamentDraft
 
     try:
-        inputs = resolve_contract_inputs(workspace_root)
-        scoring_path = inputs.scoring_path
-    except FileNotFoundError as exc:
+        draft = TournamentDraft.from_workspace(workspace_root)
+        if structure is not None:
+            operations.set_structure(draft, structure)
+        for raw in params_raw:
+            key, value = _parse_tournament_param(raw)
+            operations.set_param(draft, key, value)
+        operations.candidate_scoring(draft)
+        return draft
+    except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
-    params: dict[str, Any] = {}
-    for raw in params_raw:
-        key, value = _parse_tournament_param(raw)
-        params[key] = value
 
-    existing: dict[str, Any] = {}
-    if scoring_path.exists():
-        try:
-            loaded = json.loads(scoring_path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                existing = loaded
-        except json.JSONDecodeError as exc:
-            raise click.ClickException(
-                f"scoring.json at {scoring_path} is not valid JSON: {exc}"
-            ) from exc
-
-    existing["tournament"] = {"structure": structure, "params": params}
-    scoring_path.parent.mkdir(parents=True, exist_ok=True)
-    scoring_path.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
+@with_workspace_imports
+def _dry_run_and_exit(
+    workspace_root: Path, epoch: str | None, *, candidate_scoring: dict[str, Any] | None = None
+) -> None:
     """Report the workspace gate's verdict and exit without spending.
 
     Normal evolve execution is gated inside ``evolve_n_rounds``, the
@@ -613,7 +599,12 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
         render_report,
     )
 
-    with CheckContext(workspace_root, epoch_id=epoch, live_contract=epoch is None) as ctx:
+    with CheckContext(
+        workspace_root,
+        epoch_id=epoch,
+        live_contract=epoch is None,
+        candidate_scoring=candidate_scoring,
+    ) as ctx:
         report = build_report(ctx)
         entries, points = len(ctx.board), len(ctx.surface)
         shown_epoch = ctx.epoch_id or "no epoch"
@@ -773,13 +764,10 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
     callback=_validate_structure,
     default=None,
     help=(
-        "Set the per-epoch tournament structure. This is a "
-        "CONTRACT-MUTATING convenience: it writes {structure, params} into "
-        "the live scoring.json before the contract hash is computed, so it "
-        "participates in the hash and auto-rolls the epoch if it differs "
-        "from the current one — exactly equivalent to editing scoring.json "
-        "by hand. Unset (the default) reads whatever scoring.json says "
-        "(gauntlet when absent). The experimental structures single_elim, "
+        "Edit the live tournament structure before execution. The validated edit "
+        "participates in the contract hash and can open an epoch. With --dry-run, "
+        "the edit is checked in memory. Cannot be combined with --epoch. "
+        "Unset reads scoring.json (gauntlet when absent). The experimental structures single_elim, "
         "double_elim and swiss are selected in scoring.json alongside "
         "experimental.tournament_structures = true, which admits them."
     ),
@@ -791,8 +779,8 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
     metavar="KEY=VALUE",
     help=(
         "Set one tournament params key (repeatable). VALUE is parsed as "
-        "JSON when possible, else taken as a string. Only applied when "
-        "--tournament-structure is also passed."
+        "JSON when possible, else taken as a string. Preserves other params; "
+        "--dry-run checks the edit without saving it. Cannot be combined with --epoch."
     ),
 )
 @click.option(
@@ -867,37 +855,41 @@ def evolve_cmd(
     """
     workspace_root = Path(workspace).resolve()
 
-    # Pin the config-shadowing flags process-wide, FIRST — every later
-    # load_config() in this invocation (the supervisor-binary resolver,
-    # the aux-timeout call sites, the runtime factory, the harmonograf
-    # resolver) then sees them; the tournament runner also threads the
-    # pins into every worker args file so the values cross the worker
-    # subprocess boundary. Only explicitly-passed flags are pinned, so
-    # a defaulted flag never masks the workspace config.json.
-    _pin_config_flags(
+    invocation_overlay = _configuration_overlay(
         parallelism=parallelism,
         aux_call_timeout=aux_call_timeout,
         supervisor_binary=supervisor_binary,
         harmonograf_url=harmonograf_url,
     )
 
-    # Contract-mutating convenience: when --tournament-structure is set,
-    # write the {structure, params} block into the live scoring.json
-    # BEFORE the contract hash is computed, so it auto-rolls the epoch if
-    # it differs. Exactly equivalent to editing scoring.json by hand.
-    if tournament_structure is not None:
-        _write_tournament_structure_into_scoring(
-            workspace_root, tournament_structure, tournament_params
-        )
-
-    # ``--dry-run`` exits through the same validators as the public loop.
-    # Normal execution is gated inside ``evolve_n_rounds`` itself.
+    has_tournament_edit = tournament_structure is not None or bool(tournament_params)
+    if has_tournament_edit and epoch is not None:
+        raise click.ClickException("tournament overrides edit the live contract; omit --epoch")
     if dry_run:
-        _dry_run_and_exit(workspace_root, epoch)
+        from zicato.contract_draft import operations
 
-    # Lazy import — the orchestrator is heavy. We keep it out of
-    # `zicato --help` time.
-    from zicato.orchestrator import evolve_n_rounds  # noqa: PLC0415
+        candidate = None
+        if has_tournament_edit:
+            draft = _tournament_draft(workspace_root, tournament_structure, tournament_params)
+            candidate = operations.candidate_scoring(draft)
+        _dry_run_and_exit(workspace_root, epoch, candidate_scoring=candidate)
+
+    def prepare_contract(writer: WorkspaceLock) -> None:
+        if not has_tournament_edit:
+            return
+        from zicato.check import CheckContext, WorkspaceCheckError, build_report
+        from zicato.contract_draft import operations
+
+        draft = _tournament_draft(workspace_root, tournament_structure, tournament_params)
+        candidate = operations.candidate_scoring(draft)
+        with CheckContext(workspace_root, live_contract=True, candidate_scoring=candidate) as ctx:
+            report = build_report(ctx)
+        if report.blocking:
+            raise WorkspaceCheckError(report)
+        operations.apply(draft, workspace_root, confirm=True, writer=writer)
+
+    from zicato.evolve.invocation import validated_invocation  # noqa: PLC0415
+    from zicato.evolve.loop import _evolve_n_rounds  # noqa: PLC0415
 
     # ``evolve_n_rounds`` appends a single symbolic terminal-reason
     # string here so the summary below can name exactly why the loop
@@ -953,22 +945,37 @@ def evolve_cmd(
         # neither walks onto the other's port. The dashboard's URL is
         # reported only after reading the port it actually bound back
         # from runtime/dashboard.json — never assumed.
-        sup: asyncio.subprocess.Process | None = None
         dash: asyncio.subprocess.Process | None = None
-        try:
+        completed = False
+
+        async def close_dashboard_on_failure(exc_type: Any, exc: Any, traceback: Any) -> None:
+            if exc_type is not None or not completed:
+                await _terminate_child(dash)
+
+        async with validated_invocation(
+            workspace_root,
+            epoch,
+            "default",
+            overlay=invocation_overlay,
+            prepare_contract=prepare_contract,
+        ) as invocation:
             sup = await _maybe_spawn_supervisor(
                 workspace_root,
                 disabled=no_dashboard,
+                config=invocation.configuration.values.integration,
             )
+            invocation.resources.push_async_callback(_terminate_child, sup)
             dash = await _maybe_spawn_dashboard(
                 workspace_root,
                 dashboard_port,
                 disabled=no_dashboard,
+                config=invocation.configuration.values.dashboard,
             )
+            invocation.resources.push_async_exit(close_dashboard_on_failure)
             await _report_dashboard_url(workspace_root, dashboard_port, dash)
-            result = await evolve_n_rounds(
+            result = await _evolve_n_rounds(
+                invocation=invocation,
                 rounds=rounds,
-                workspace_root=workspace_root,
                 epoch_id=epoch,
                 fast_mode=(mode == "fast"),
                 max_consecutive_rejections=max_consecutive_rejections,
@@ -977,26 +984,7 @@ def evolve_cmd(
                 epoch_name=epoch_name,
                 stop_reason_out=stop_reason_out,
             )
-        except BaseException:
-            # Genuine error path or an explicit interrupt — Ctrl-C raises
-            # KeyboardInterrupt, and a SIGTERM lands here as the handler's
-            # cooperative CancelledError. Clean up BOTH children: tear the
-            # dashboard down first so its port is freed before the
-            # watchdog notices it is gone. (Spawn-time failures land here
-            # too; ``_terminate_child(None)`` is a no-op for a child that
-            # never spawned.)
-            await _terminate_child(dash)
-            await _terminate_child(sup)
-            raise
-        # Normal conclusion. The watchdog supervisor has no purpose once
-        # the loop is done, so tear it down — but leave the
-        # dashboard service running so the operator can inspect the final
-        # state of the run (per repo convention every evolve launch serves
-        # the dashboard and reports its URL). Announce that it is still up.
-        # The SIGTERM handler above applies to SIGNAL-interrupted exits
-        # only — it never fires on this path, so the served dashboard
-        # outliving the command is untouched.
-        await _terminate_child(sup)
+            completed = True
         _announce_dashboard_still_serving(workspace_root, dashboard_port, dash)
         return result
 

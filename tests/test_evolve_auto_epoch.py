@@ -162,7 +162,7 @@ def _bootstrap_registered(tmp_path: Path) -> tuple[Path, Path]:
 def _install_stub_adapter_factory(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_factory = types.ModuleType("zicato.adapter_factory")
 
-    def make_adapter_from_config(workspace_config: dict[str, Any]) -> Any:
+    def make_adapter_from_config(workspace_config: dict[str, Any], *, workspace_root: Path) -> Any:
         del workspace_config
         return make_stub_adapter()
 
@@ -181,7 +181,11 @@ def _install_telemetry_stubs(
     canned_loss_by_gen: dict[str, float],
     canned_pass_by_gen: dict[str, bool],
 ) -> None:
+    from zicato.telemetry.sink import resolve_harmonograf_grpc_target, resolve_harmonograf_url
+
     sink_mod = types.ModuleType("zicato.telemetry.sink")
+    sink_mod.resolve_harmonograf_url = resolve_harmonograf_url  # type: ignore[attr-defined]
+    sink_mod.resolve_harmonograf_grpc_target = resolve_harmonograf_grpc_target  # type: ignore[attr-defined]
 
     def make_run_sink_path(
         *,
@@ -233,13 +237,12 @@ def _install_telemetry_stubs(
 
     # Real, dependency-light meta_loop so the structural-span call sites can
     # import ``meta_span`` (a no-op here — no ambient emitter is bound).
+    import zicato.telemetry as telemetry_pkg
     import zicato.telemetry.meta_loop as meta_loop_mod
 
-    telemetry_pkg = types.ModuleType("zicato.telemetry")
-    telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
-    telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
-    telemetry_pkg.meta_loop = meta_loop_mod  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
+    monkeypatch.setattr(telemetry_pkg, "sink", sink_mod, raising=False)
+    monkeypatch.setattr(telemetry_pkg, "reducer", reducer_mod, raising=False)
+    monkeypatch.setattr(telemetry_pkg, "meta_loop", meta_loop_mod, raising=False)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.meta_loop", meta_loop_mod)
@@ -371,7 +374,7 @@ def test_evolve_auto_creates_then_rolls_on_rubric_edit(
     # Cross-epoch lineage edge recorded.
     lineage = json.loads((workspace / "lineage.json").read_text())
     second = next(e for e in lineage["epochs"] if e["id"] == epoch_after_second)
-    assert second["v0_parent"] == epoch_after_first
+    assert second["v0_parent"] == f"{epoch_after_first}:v1"
 
 
 def test_pending_settlement_finishes_before_contract_drift_rolls_epoch(
@@ -441,7 +444,7 @@ def test_pending_settlement_finishes_before_contract_drift_rolls_epoch(
     assert (workspace / "epochs" / crashed_epoch / "current_generation").read_text().strip() == "v1"
     lineage = json.loads((workspace / "lineage.json").read_text(encoding="utf-8"))
     rolled = next(row for row in lineage["epochs"] if row["id"] == rolled_epoch)
-    assert rolled["v0_parent"] == crashed_epoch
+    assert rolled["v0_parent"] == f"{crashed_epoch}:v1"
 
 
 def test_contract_drift_discards_unsettled_candidate_before_closing_epoch(
@@ -498,7 +501,7 @@ def test_contract_drift_discards_unsettled_candidate_before_closing_epoch(
     crashed = next(row for row in lineage["epochs"] if row["id"] == crashed_epoch)
     assert all(row["id"] != "v1" for row in crashed["generations"])
     rolled = next(row for row in lineage["epochs"] if row["id"] == rolled_epoch)
-    assert rolled["v0_parent"] == crashed_epoch
+    assert rolled["v0_parent"] == f"{crashed_epoch}:v0"
 
 
 def test_evolve_no_auto_epoch_errors_on_drift(

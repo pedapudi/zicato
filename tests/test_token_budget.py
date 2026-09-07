@@ -38,6 +38,7 @@ from tests._orchestrator_harness import (
 )
 from zicato.core.runtime import RoundTokenLedger, RuntimeConfig
 from zicato.core.types import DriftCount, LossProfile
+from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import new_epoch
 
 # Grab the REAL reducer helper before any test masks zicato.telemetry in
@@ -76,7 +77,7 @@ def _bootstrap_multi_entry_workspace(
                 "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "created_at": "2026-05-14T00:00:00Z",
                 "generation_source_backend": "directory",
-                "adapter": {"kind": "stub"},
+                "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
                 "runtime": runtime_block,
             }
         )
@@ -118,6 +119,7 @@ def _bootstrap_multi_entry_workspace(
         '# zicato:mutable id="greeting"\n'
         'GREETING = "hello"\n'
     )
+    write_seed_experiment(workspace, cfg.id, proposed_at=cfg.created_at)
     return workspace, cfg.id
 
 

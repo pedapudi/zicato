@@ -427,11 +427,13 @@ _INADMISSIBLE_VALUES: dict[tuple[type, str], object] = {
     (ScoringWeights, "diff_complexity_weight"): -1.0,
     (ScoringWeights, "diff_complexity_ceiling"): -1.0,
     (ScoringWeights, "promote_margin"): -0.05,
+    (ScoringWeights, "holdout_margin"): float("nan"),
     (ScoringWeights, "holdout_entry_regression_budget"): -1,
     (ScoringWeights, "pass_rate_monotonicity_scope"): "per_namespace",
     (ScoringWeights, "regression_timeout_s"): 0,
     (ScoringWeights, "telemetry_dialect"): "syslog",
     (OverfittingConfig, "min_board_size_for_split"): -1,
+    (OverfittingConfig, "holdout_fraction"): 0.0,
     # Not ``0``: ``set_holdout`` reserves that as the token that CLEARS the
     # ceiling, since ``None`` there already means "leave unchanged".
     (OverfittingConfig, "max_generations_per_contract"): -1,
@@ -475,13 +477,21 @@ def _set_through_builder(knob: ContractKnob, value: object) -> None:
 
 @pytest.mark.parametrize("knob", _bounded_knobs(), ids=lambda knob: knob.key)
 def test_loader_and_builder_refuse_alike(knob: ContractKnob) -> None:
-    """Contract load and the builder operation reject with one wording."""
+    """Both boundaries enforce every declared bound; authored type errors include a path."""
     value = _INADMISSIBLE_VALUES[(knob.owner, knob.name)]
     with pytest.raises(ValueError) as from_loader:
         knob.owner(**{knob.name: value})
     with pytest.raises(ValueError) as from_builder:
         _set_through_builder(knob, value)
-    assert str(from_loader.value) == str(from_builder.value)
+    from zicato.core.configuration import ConfigurationError
+
+    if isinstance(from_builder.value, ConfigurationError):
+        assert from_builder.value.category == "range"
+        assert from_builder.value.path == f"{knob.builder_op}.{knob.builder_arg}"
+        assert "finite" in str(from_loader.value)
+        assert "finite" in str(from_builder.value)
+    else:
+        assert str(from_loader.value) == str(from_builder.value)
     expected_name = knob_constraint(knob.owner, knob.name).label or knob.name
     assert str(from_loader.value).startswith(expected_name)
 

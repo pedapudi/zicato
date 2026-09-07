@@ -32,9 +32,9 @@ Key naming
 One field carries a *persisted-key alias* for backwards compatibility:
 ``ScoringWeights.tournament_structure`` is written under the on-disk key
 ``"tournament"`` (the shape the dashboard builder and every existing
-``scoring.json`` use). :data:`_KEY_ALIASES` records that single rename so
-the field-enumerating writer keeps emitting the historical key and the
-parser keeps reading it. Every other field is written under its own name,
+``scoring.json`` use). The field's ``persisted_name`` metadata records
+that spelling for the writer, authored decoder, and historical decoder.
+Every other field is written under its own name,
 so the on-disk output for an already-correct contract is byte-identical
 to the previous hand-written form.
 """
@@ -45,62 +45,19 @@ from collections.abc import Mapping
 from dataclasses import MISSING, fields, is_dataclass
 from typing import TYPE_CHECKING, Any, TypeVar, cast, get_args, get_origin
 
+from zicato.core.configuration import dataclass_to_jsonable, persisted_key
+
 if TYPE_CHECKING:
     from dataclasses import Field
 
 _T = TypeVar("_T")
 
-#: Per-dataclass map of ``field name -> on-disk key`` for fields whose
-#: persisted key differs from the attribute name. Only one historical
-#: rename exists: the scoring weights' ``tournament_structure`` field is
-#: stored under ``"tournament"``. Keeping this explicit (rather than
-#: deriving keys purely from field names) preserves byte-identical on-disk
-#: output for already-correct contracts while the writer stays
-#: field-enumerating.
-_KEY_ALIASES: dict[str, dict[str, str]] = {
-    "ScoringWeights": {"tournament_structure": "tournament"},
-}
 
+def historical_dataclass_from_json(cls: type[_T], data: Mapping[str, Any]) -> _T:
+    """Decode historical records with their compatible conversions and defaults.
 
-def _persisted_key(cls_name: str, field_name: str) -> str:
-    """Return the on-disk key for ``field_name`` on dataclass ``cls_name``."""
-    return _KEY_ALIASES.get(cls_name, {}).get(field_name, field_name)
-
-
-def dataclass_to_jsonable(obj: Any) -> dict[str, Any]:
-    """Serialize a frozen contract dataclass to a JSON-shaped dict.
-
-    Field-enumerating and recursive: every field declared on the
-    dataclass is written (under its persisted key — see
-    :data:`_KEY_ALIASES`), nested dataclasses recurse, mappings are
-    copied to plain ``dict``, and tuples/lists become JSON lists. Adding a
-    new field to a contract dataclass is therefore covered with no edit
-    here, which is exactly the property that prevents the frozen snapshot
-    from silently dropping fields.
-    """
-    if not is_dataclass(obj) or isinstance(obj, type):
-        raise TypeError(f"dataclass_to_jsonable expects a dataclass instance, got {obj!r}")
-    cls_name = type(obj).__name__
-    out: dict[str, Any] = {}
-    for f in fields(obj):
-        value = getattr(obj, f.name)
-        out[_persisted_key(cls_name, f.name)] = _value_to_jsonable(value)
-    return out
-
-
-def _value_to_jsonable(value: Any) -> Any:
-    """Recursively reduce a single field value to a JSON-shaped form."""
-    if is_dataclass(value) and not isinstance(value, type):
-        return dataclass_to_jsonable(value)
-    if isinstance(value, Mapping):
-        return {k: _value_to_jsonable(v) for k, v in value.items()}
-    if isinstance(value, list | tuple):
-        return [_value_to_jsonable(v) for v in value]
-    return value
-
-
-def jsonable_to_dataclass(cls: type[_T], data: Mapping[str, Any]) -> _T:
-    """Build a contract dataclass from a JSON-shaped dict, field by field.
+    Authored input uses ``core.configuration.authored_dataclass_from_json``;
+    this reader retains the conversion rules of persisted contract records.
 
     The inverse of :func:`dataclass_to_jsonable`. Every field is resolved
     by enumerating ``dataclasses.fields()``:
@@ -117,13 +74,12 @@ def jsonable_to_dataclass(cls: type[_T], data: Mapping[str, Any]) -> _T:
     for an unchanged on-disk contract is unaffected by this parser.
     """
     if not (isinstance(cls, type) and is_dataclass(cls)):
-        raise TypeError(f"jsonable_to_dataclass expects a dataclass type, got {cls!r}")
-    cls_name = cls.__name__
+        raise TypeError(f"historical_dataclass_from_json expects a dataclass type, got {cls!r}")
     kwargs: dict[str, Any] = {}
     for f in fields(cls):
         if not f.init:
             continue
-        key = _persisted_key(cls_name, f.name)
+        key = persisted_key(f)
         if key not in data:
             # Absent ⇒ let the dataclass default fill it in. We only skip
             # the kwarg when the field actually HAS a default; a required
@@ -160,7 +116,7 @@ def _value_from_jsonable(field_type: Any, raw: Any) -> Any:
 
     if isinstance(resolved, type) and is_dataclass(resolved):
         mapping = raw if isinstance(raw, Mapping) else {}
-        return jsonable_to_dataclass(resolved, mapping)
+        return historical_dataclass_from_json(resolved, mapping)
 
     origin = get_origin(resolved)
     if origin in (tuple,):
@@ -233,5 +189,5 @@ def _optional_inner(resolved: Any) -> Any:
 
 __all__ = [
     "dataclass_to_jsonable",
-    "jsonable_to_dataclass",
+    "historical_dataclass_from_json",
 ]

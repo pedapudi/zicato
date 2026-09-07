@@ -72,12 +72,17 @@ def workspace(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
 
+    source = tmp_path / "src" / "agent"
+    source.mkdir(parents=True)
+    (source / "value.py").write_text("VALUE = 1\n")
+
     ws = tmp_path / ".zicato"
     ws.mkdir()
     (ws / "config.json").write_text(
         json.dumps(
             {
                 "adk_entrypoint": "pkg.mod:agent",
+                "generation_source_backend": "directory",
                 "mutable_trees": ["src/agent"],
                 # An adapter whose factory ignores its arguments and reports a
                 # worker document naming only itself, so the declared ``args``
@@ -197,6 +202,11 @@ def test_auto_rolled_epoch_carries_the_registered_contract(workspace: Path) -> N
     from zicato.evolve.epoching import _create_epoch_from_contract
 
     inputs = resolve_contract_inputs(workspace)
-    epoch_id = _create_epoch_from_contract(workspace, inputs=inputs, name="e0", aux_call_llm=None)
+    from zicato.runtime.lock import acquire_workspace_lock
+
+    with acquire_workspace_lock(workspace, "contract-carryover-test") as writer:
+        epoch_id = _create_epoch_from_contract(
+            workspace, inputs=inputs, name="e0", aux_call_llm=None, writer=writer
+        )
     cfg = load_epoch(workspace, epoch_id)
     assert cfg.contract_hash == compute_contract_hash(inputs)

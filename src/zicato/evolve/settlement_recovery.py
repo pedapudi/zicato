@@ -26,6 +26,7 @@ from zicato.epoch.settlement_receipt import (
     write_settlement_receipt,
 )
 from zicato.evolve import generation_phase
+from zicato.runtime.lock import WorkspaceLock
 from zicato.tournament.records import decode_field_tournament_record, write_field_tournament_record
 
 log = logging.getLogger("zicato.orchestrator")
@@ -162,8 +163,16 @@ def replay_field_settlement(
     _checkpoint(crash_checkpoint, "receipt_committed")
 
 
-def recover_field_settlements(workspace_root: Path, epoch_id: str) -> int:
-    """Complete every pending receipt for ``epoch_id`` in round order."""
+def recover_field_settlements(
+    workspace_root: Path, epoch_id: str, *, writer: WorkspaceLock | None = None
+) -> int:
+    """Complete every pending receipt for ``epoch_id`` under its workspace writer."""
+    from zicato.runtime.lock import acquire_workspace_lock, validate_workspace_lock  # noqa: PLC0415
+
+    if writer is None:
+        with acquire_workspace_lock(workspace_root, "settlement-recovery") as owned_writer:
+            return recover_field_settlements(workspace_root, epoch_id, writer=owned_writer)
+    validate_workspace_lock(writer, workspace_root)
     if not epoch_id:
         return 0
     recovered = 0

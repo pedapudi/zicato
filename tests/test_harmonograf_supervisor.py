@@ -20,13 +20,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests._runtime_context_support import install_runtime_context
 from zicato.config import IntegrationConfig
-from zicato.evolve.lifecycle_services import (
-    _EnvVarRestorer,
-    _LaunchedHandle,
-    _NoopShutdownHandle,
-    _resolve_or_launch_harmonograf,
-)
+from zicato.evolve.lifecycle_services import _NoopShutdownHandle, _resolve_or_launch_harmonograf
+from zicato.runtime.context import RUNTIME_CONTEXT_ENV
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.state import read_heartbeat
 from zicato.telemetry import harmonograf_supervisor as supervisor
@@ -215,10 +212,10 @@ def test_distinct_ports_on_repeat_launch(tmp_path: Path) -> None:
 
 def test_resolver_opt_out_does_not_launch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Configured URL -> orchestrator returns it verbatim, no launch happens."""
-    # The orchestrator's resolver checks ZICATO_HARMONOGRAF_URL via
+    # The invocation resolver reads inherited runtime context through
     # IntegrationConfig; we set it directly so the resolver short-
     # circuits before reaching start_harmonograf.
-    monkeypatch.setenv("ZICATO_HARMONOGRAF_URL", "http://external.example/")
+    install_runtime_context(monkeypatch, tmp_path, web_url="http://external.example/")
 
     # If start_harmonograf is ever called the test should fail.
     sentinel = {"called": False}
@@ -239,35 +236,30 @@ def test_resolver_opt_out_does_not_launch(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 @_boots_or_uses_live_server
-def test_resolver_auto_launch_sets_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Auto-launch path: orchestrator pushes URL into ZICATO_HARMONOGRAF_URL."""
-    monkeypatch.delenv("ZICATO_HARMONOGRAF_URL", raising=False)
+def test_resolver_auto_launch_returns_endpoints_without_changing_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A workspace service exposes both addresses without a coordinator handoff."""
+    monkeypatch.delenv(RUNTIME_CONTEXT_ENV, raising=False)
     url, handle = _resolve_or_launch_harmonograf(tmp_path)
     try:
-        # On a clean install harmonograf-server is present and launch
-        # succeeds; if it doesn't (a degraded install), the URL is empty
-        # and we skip — we still verified the resolver path doesn't
-        # raise.
         if not url:
             pytest.skip("harmonograf-server unavailable; cannot exercise launch path")
-        assert isinstance(handle, _LaunchedHandle)
+        assert isinstance(handle, WorkspaceHarmonografHandle)
         assert url.startswith("http://127.0.0.1:")
-        # Env was rewritten so tournament workers re-resolve to the
-        # same URL via load_config().
-        assert os.environ.get("ZICATO_HARMONOGRAF_URL") == url
-        # And resolve_harmonograf_url with that env in place returns it.
-        assert resolve_harmonograf_url(workspace_config=None) == url
+        assert handle.grpc_target
+        assert RUNTIME_CONTEXT_ENV not in os.environ
+        assert resolve_harmonograf_url(workspace_config=None) == ""
     finally:
         handle.shutdown()
-    # After shutdown the env var is restored to its prior absence.
-    assert "ZICATO_HARMONOGRAF_URL" not in os.environ
+    assert RUNTIME_CONTEXT_ENV not in os.environ
 
 
 def test_failure_isolation_when_supervisor_import_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A missing harmonograf-server dep yields an empty URL, never raises."""
-    monkeypatch.delenv("ZICATO_HARMONOGRAF_URL", raising=False)
+    monkeypatch.delenv(RUNTIME_CONTEXT_ENV, raising=False)
     # Simulate harmonograf_server import failure by monkeypatching
     # start_harmonograf to behave as if the package was missing.
     monkeypatch.setattr(
@@ -291,7 +283,7 @@ def test_heartbeat_round_trip_carries_resolved_url(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """After the resolver runs, a freshly-written heartbeat carries the URL."""
-    monkeypatch.setenv("ZICATO_HARMONOGRAF_URL", "http://carry-me.example/")
+    install_runtime_context(monkeypatch, tmp_path, web_url="http://carry-me.example/")
     url, handle = _resolve_or_launch_harmonograf(tmp_path)
     try:
         beater = HeartbeatBeater(tmp_path, instance_id="default", interval_s=60.0)
@@ -308,9 +300,9 @@ def test_heartbeat_round_trip_carries_resolved_url(
 
 @_boots_or_uses_live_server
 def test_worker_args_use_auto_launched_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Tournament runner's resolver picks up the auto-launched URL via env."""
-    # Clear env so the resolver lands on the auto-launch path.
-    monkeypatch.delenv("ZICATO_HARMONOGRAF_URL", raising=False)
+    """Standalone worker resolution reuses the live workspace service record."""
+    # Remove inherited context so resolution reaches the workspace service.
+    monkeypatch.delenv(RUNTIME_CONTEXT_ENV, raising=False)
     url, handle = _resolve_or_launch_harmonograf(tmp_path)
     try:
         if not url:
@@ -347,19 +339,18 @@ def test_build_meta_loop_sink_no_url_returns_none() -> None:
 
 def test_build_meta_loop_sink_dials_grpc_port_and_scopes_session(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Meta-loop sink dials the gRPC port (not the web URL) and scopes the session.
 
     Same web≠grpc split as the per-run sink: with the auto-launch
-    ``ZICATO_HARMONOGRAF_GRPC`` env set, the meta-loop Client must dial
+    ``runtime_context.telemetry.grpc_target`` provided, the meta-loop Client must dial
     the native gRPC port, NOT the gRPC-Web port in the URL. The session
     id is threaded into the Client so meta-loop traffic is bucketed under
     one harmonograf session.
     """
     import sys
     import types
-
-    from zicato.telemetry.sink import HARMONOGRAF_GRPC_ENV
 
     constructed: dict[str, object] = {}
 
@@ -378,7 +369,9 @@ def test_build_meta_loop_sink_dials_grpc_port_and_scopes_session(
     stub_mod.HarmonografSink = _StubHarmonografSink  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "harmonograf_client", stub_mod)
 
-    monkeypatch.setenv(HARMONOGRAF_GRPC_ENV, "127.0.0.1:9090")
+    install_runtime_context(
+        monkeypatch, tmp_path, grpc_target="127.0.0.1:9090", web_url="http://127.0.0.1:9080"
+    )
     sink = build_meta_loop_sink("http://127.0.0.1:9080", "zicato-meta-loop-sess")
 
     assert sink is not None
@@ -386,30 +379,6 @@ def test_build_meta_loop_sink_dials_grpc_port_and_scopes_session(
     assert constructed["server_addr"] == "127.0.0.1:9090"
     # Session scoped on the client.
     assert constructed["session_id"] == "zicato-meta-loop-sess"
-
-
-def test_env_var_restorer_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
-    """_EnvVarRestorer captures prior value and restores it idempotently."""
-    monkeypatch.setenv("__ZICATO_TEST_VAR__", "before")
-    r = _EnvVarRestorer("__ZICATO_TEST_VAR__")
-    r.set("during")
-    assert os.environ["__ZICATO_TEST_VAR__"] == "during"
-    r.restore()
-    assert os.environ["__ZICATO_TEST_VAR__"] == "before"
-    # Second restore is a no-op.
-    os.environ["__ZICATO_TEST_VAR__"] = "after-restore"
-    r.restore()
-    assert os.environ["__ZICATO_TEST_VAR__"] == "after-restore"
-
-
-def test_env_var_restorer_unset_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the variable was absent, restore removes it."""
-    monkeypatch.delenv("__ZICATO_TEST_VAR2__", raising=False)
-    r = _EnvVarRestorer("__ZICATO_TEST_VAR2__")
-    r.set("during")
-    assert os.environ.get("__ZICATO_TEST_VAR2__") == "during"
-    r.restore()
-    assert "__ZICATO_TEST_VAR2__" not in os.environ
 
 
 def test_pick_free_port_returns_distinct() -> None:
@@ -638,7 +607,7 @@ def test_resolve_harmonograf_url_pure_resolver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """resolve_harmonograf_url itself does NOT trigger a launch (purity)."""
-    monkeypatch.delenv("ZICATO_HARMONOGRAF_URL", raising=False)
+    monkeypatch.delenv(RUNTIME_CONTEXT_ENV, raising=False)
     # Pure resolver returns "" — the launch path lives in the orchestrator.
     assert (
         resolve_harmonograf_url(

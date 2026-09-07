@@ -201,7 +201,11 @@ def load_brief(path: Path) -> ProposerBrief:
         If the file cannot be read (forwarded from :func:`pathlib.Path.read_text`).
     """
 
-    text = path.read_text(encoding="utf-8")
+    return parse_brief(path.read_text(encoding="utf-8"))
+
+
+def parse_brief(text: str) -> ProposerBrief:
+    """Parse a captured proposer brief without rereading its source."""
     sections = _split_into_sections(text)
 
     forbidden_ids: tuple[str, ...] = ()

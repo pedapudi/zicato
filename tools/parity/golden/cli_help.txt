@@ -194,9 +194,11 @@ Options:
   --port INTEGER RANGE       Port for the dashboard HTTP server.  [default:
                              7892; 1<=x<=65535]
   --static-dir DIRECTORY     Filesystem path to the dashboard static-asset
-                             directory. Shadows the dashboard.static_dir config
-                             knob. Unset (the default) serves the bundled
-                             zicato/dashboard/static directory.
+                             directory. Overrides dashboard.static_dir in
+                             workspace config. Relative flag paths use the
+                             current directory; relative config paths use the
+                             workspace parent. An empty configuration serves the
+                             bundled assets.
   --help                     Show this message and exit.
 
 ===== zicato epoch --help =====
@@ -277,20 +279,7 @@ Options:
 ===== zicato epoch new --help =====
 Usage: zicato epoch new [OPTIONS] NAME
 
-  Advanced: create a new epoch and make it current.
-
-  Off the happy path — `zicato evolve` auto-opens epochs. Run this by hand only
-  to force an epoch boundary.
-
-  If a previous epoch is still open it is auto-closed first; the auto close
-  emits a stub analysis.md (no evaluation LLM is wired through the CLI yet — see
-  module docstring).
-
-  The supplied contract files are both frozen into the epoch directory AND
-  published as the workspace's live contract (recorded in config.json under
-  `contract`), so a subsequent `zicato evolve` resolves the same contract and
-  continues this epoch rather than failing to find the board or spuriously
-  rolling.
+  Create an epoch and adopt its contract for subsequent evolve runs.
 
 Options:
   --workspace TEXT        Path to the zicato workspace directory.  [default:
@@ -302,9 +291,9 @@ Options:
                           epoch and adopted as the workspace's live contract
                           brief. ``--rubric`` is accepted as a legacy alias.
                           [required]
-  --scoring FILE          Path to scoring.json; defaults applied if absent. When
-                          given, frozen into the epoch and adopted as the live
-                          contract scoring.
+  --scoring FILE          Path to scoring.json; defaults applied if absent. The
+                          accepted scoring is frozen into the epoch and adopted
+                          as the live contract scoring.
   --goal TEXT             Free-form statement of *why* this epoch exists (the
                           intent the operator is testing). Persisted into
                           config.json and surfaced in the analyzer report
@@ -337,28 +326,35 @@ Usage: zicato epoch register [OPTIONS]
   the built-in default proposer.
 
 Options:
-  --workspace DIRECTORY  Workspace directory to update.  [default: .zicato]
-  --adk TEXT             Adapter entrypoint in 'module.path:agent_symbol' form.
-                         Either inside a --mutable-tree (its TOP-LEVEL module is
-                         the tree's basename) or outside every tree, which is
-                         the dependency shape: the harness imports the mutable
-                         trees, and each tree is verified to have loaded from
-                         the generation snapshot per run instead.  [required]
-  --mutable-tree PATH    Source root the proposer is allowed to mutate
-                         (repeatable). Its BASENAME must be the importable
-                         package name — the snapshot exposes each tree under its
-                         basename on sys.path.
-  --board PATH           Canonical board.jsonl path (default:
-                         <workspace_parent>/board.jsonl).
-  --brief PATH           Canonical proposer-brief path (default:
-                         <workspace_parent>/brief.md).
-  --scoring PATH         Canonical scoring.json path (default:
-                         <workspace_parent>/scoring.json).
-  --proposer-path PATH   Proposer dir (proposers/<name>/ — skills + optional
-                         agent.py). Absent ⇒ the built-in default proposer. Part
-                         of the contract: configuring it (or editing a skill)
-                         rolls the epoch.
-  --help                 Show this message and exit.
+  --workspace DIRECTORY    Workspace directory to update.  [default: .zicato]
+  --adk TEXT               Adapter entrypoint in 'module.path:agent_symbol'
+                           form. Either inside a --mutable-tree (its TOP-LEVEL
+                           module is the tree's basename) or outside every tree,
+                           which is the dependency shape: the harness imports
+                           the mutable trees, and each tree is verified to have
+                           loaded from the generation snapshot per run instead.
+  --mutable-tree PATH      Source root the proposer is allowed to mutate
+                           (repeatable). Its BASENAME must be the importable
+                           package name — the snapshot exposes each tree under
+                           its basename on sys.path.
+  --board PATH             Canonical board.jsonl path (default:
+                           <workspace_parent>/board.jsonl).
+  --brief PATH             Canonical proposer-brief path (default:
+                           <workspace_parent>/brief.md).
+  --scoring PATH           Canonical scoring.json path (default:
+                           <workspace_parent>/scoring.json).
+  --proposer-path PATH     Proposer dir (proposers/<name>/ — skills + optional
+                           agent.py). Absent ⇒ the built-in default proposer.
+                           Part of the contract: configuring it (or editing a
+                           skill) rolls the epoch.
+  --factory TEXT           Custom adapter factory in module:callable form.
+  --factory-args TEXT      JSON array of positional factory arguments.
+  --factory-options TEXT   JSON object of factory keyword arguments.
+  --import-root DIRECTORY  Fixed driver import directory, relative to the
+                           workspace parent unless absolute (repeatable).
+  --confirm-stock-grading  Confirm that stock grading measures this custom
+                           target.
+  --help                   Show this message and exit.
 
 ===== zicato epoch rounds --help =====
 Usage: zicato epoch rounds [OPTIONS]
@@ -503,15 +499,12 @@ Options:
                                   default) auto-launches a per-workspace
                                   harmonograf on a free localhost port.
   --tournament-structure [gauntlet|racing]
-                                  Set the per-epoch tournament structure. This
-                                  is a CONTRACT-MUTATING convenience: it writes
-                                  {structure, params} into the live scoring.json
-                                  before the contract hash is computed, so it
-                                  participates in the hash and auto-rolls the
-                                  epoch if it differs from the current one —
-                                  exactly equivalent to editing scoring.json by
-                                  hand. Unset (the default) reads whatever
-                                  scoring.json says (gauntlet when absent). The
+                                  Edit the live tournament structure before
+                                  execution. The validated edit participates in
+                                  the contract hash and can open an epoch. With
+                                  --dry-run, the edit is checked in memory.
+                                  Cannot be combined with --epoch. Unset reads
+                                  scoring.json (gauntlet when absent). The
                                   experimental structures single_elim,
                                   double_elim and swiss are selected in
                                   scoring.json alongside
@@ -519,8 +512,9 @@ Options:
                                   which admits them.
   --tournament-param KEY=VALUE    Set one tournament params key (repeatable).
                                   VALUE is parsed as JSON when possible, else
-                                  taken as a string. Only applied when
-                                  --tournament-structure is also passed.
+                                  taken as a string. Preserves other params;
+                                  --dry-run checks the edit without saving it.
+                                  Cannot be combined with --epoch.
   --no-auto-epoch                 Disable contract-hash auto-epoching. With this
                                   flag, evolve errors out (instead of rolling
                                   the epoch) when the evaluation contract has
@@ -587,8 +581,8 @@ Usage: zicato init [OPTIONS]
   it, a proposer that edits it, callables for the two model roles, a four-entry
   board, a proposer brief, and a scoring contract. config.json is wired to all
   of it, so the next command can be `zicato evolve`. It uses no model and needs
-  no endpoint. Put the project directory on PYTHONPATH first — the dotted paths
-  in config.json resolve there, in this process and in every tournament worker.
+  no endpoint. The fixed driver directory is recorded in adapter.import_roots
+  and passed to every validation and tournament subprocess.
 
   Example:
     zicato init --workspace .zicato --instance-id my-project
@@ -615,25 +609,37 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  environment  List the environment variables zicato deliberately touches.
+  config       Explain a field or inspect the declared effective...
+  environment  List credential, operating-system, and child-process...
   logs         Advanced: tail the structured operator-log stream for an
                invocation.
   mutations    Advanced: audit the mutable surface the proposer may change.
   reflection   Advanced: validate the evaluation contract (board reflection).
+  setup        Validate driver imports, adapter loading, grading seams, and...
   telemetry    Advanced: (re)run the decision-telemetry analyzer for an epoch.
+
+===== zicato inspect config --help =====
+Usage: zicato inspect config [OPTIONS] [FIELD]
+
+  Explain a field or inspect the declared effective configuration.
+
+Options:
+  --workspace PATH
+  --effective       Resolve values for an invocation without CLI overrides.
+  --sources         Include the source of each effective value.
+  --schema          Print editor schemas for workspace and scoring files.
+  --scaffold        Print valid workspace and scoring defaults.
+  --complete        Spell out every default in the scaffold.
+  --reference       Print the generated Markdown field reference.
+  --help            Show this message and exit.
 
 ===== zicato inspect environment --help =====
 Usage: zicato inspect environment [OPTIONS]
 
-  List the environment variables zicato deliberately touches.
-
-  NO environment variable is a configuration knob. Every variable printed here
-  is a process-boundary contract: the per-run harness contract, the internal
-  harmonograf handoff pair, the secrets boundary (operator-named api_key_env
-  variables and the worker passthrough allowlist), and the CI/test toggles.
+  List credential, operating-system, and child-process environment contracts.
 
 Options:
-  --json  Emit the set as a JSON array instead of grouped text.
+  --json  Print the approved boundary declarations as JSON.
   --help  Show this message and exit.
 
 ===== zicato inspect logs --help =====
@@ -819,6 +825,20 @@ Options:
                             workspace episodes; goldfive-optional.
   --json                    Emit raw suggestion dicts.
   --help                    Show this message and exit.
+
+===== zicato inspect setup --help =====
+Usage: zicato inspect setup [OPTIONS]
+
+  Validate driver imports, adapter loading, grading seams, and configuration.
+
+  This performs the same local checks that gate evolve. It imports operator code
+  and loads one snapshot in a bounded subprocess, without calling model roles,
+  running board entries, or writing an epoch.
+
+Options:
+  --workspace DIRECTORY  [default: .zicato]
+  --epoch TEXT           Check a frozen epoch instead of the editable contract.
+  --help                 Show this message and exit.
 
 ===== zicato inspect telemetry --help =====
 Usage: zicato inspect telemetry [OPTIONS]

@@ -13,10 +13,12 @@ def test_root_exposes_only_primary_commands_and_advanced_namespaces() -> None:
 def test_moved_commands_have_one_location() -> None:
     root = build_cli_root()
     assert set(root.commands["inspect"].commands) == {
+        "config",
         "environment",
         "logs",
         "mutations",
         "reflection",
+        "setup",
         "telemetry",
     }
     assert set(root.commands["repair"].commands) == {

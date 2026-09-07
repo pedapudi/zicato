@@ -72,6 +72,24 @@ def test_builder_config_endpoint(client: TestClient) -> None:
     assert "skills" in body
 
 
+def test_stale_builder_apply_reports_changed_component(client: TestClient, workspace: Path) -> None:
+    assert client.get("/builder/draft?session=editing").status_code == 200
+    (workspace.parent / "scoring.json").write_text('{"pass_weight":3.0}')
+    response = client.post("/builder/apply", json={"session": "editing", "confirm": True})
+    assert response.status_code == 400
+    assert "scoring" in response.json()["error"]
+    assert json.loads((workspace.parent / "scoring.json").read_text()) == {"pass_weight": 3.0}
+
+
+def test_builder_apply_reports_competing_writer(client: TestClient, workspace: Path) -> None:
+    from zicato.runtime.lock import acquire_workspace_lock
+
+    with acquire_workspace_lock(workspace, "evolve"):
+        response = client.post("/builder/apply", json={"session": "editing", "confirm": True})
+    assert response.status_code == 409
+    assert response.json()["error"]
+
+
 def test_builder_config_enables_chat_from_named_role(workspace: Path, tmp_path: Path) -> None:
     config = dict(read_workspace_config(workspace).raw)
     config["models"] = {
@@ -310,32 +328,20 @@ def test_builder_op_set_board_meta_bad_args_are_400(client: TestClient) -> None:
 
 
 def test_builder_op_float_knobs_are_typed_not_passed_through(client: TestClient) -> None:
-    """A numeric knob lands in the contract as a NUMBER, or the post is a 400.
-
-    The float args used to reach the ops as the raw JSON value, and the
-    outcome split by which validator the field happened to have: a string
-    ``"0.5"`` landed in the contract intact for ``promote_margin`` and the
-    weight scalars (whose validators never compare them), while
-    ``holdout_fraction`` raised an uncaught ``TypeError`` — a 500 — from
-    the comparison in its validator. Both shapes are the mis-typed contract
-    knob the arg coercion exists to refuse.
-    """
+    """Numeric JSON is admitted; strings, booleans, and malformed values are refused."""
 
     def post(op: str, args: dict[str, object]) -> object:
         return client.post("/builder/op", json={"session": "typed", "op": op, "args": args})
 
-    # A numeric string coerces to a real float rather than being stored raw.
-    resp = post("set_gate", {"promote_margin": "0.5"})
+    for op, arguments in (
+        ("set_gate", {"promote_margin": "0.5"}),
+        ("set_holdout", {"fraction": "0.4"}),
+        ("set_holdout", {"ladder": {"budget": "8"}}),
+    ):
+        assert post(op, arguments).status_code == 400
+    resp = post("set_gate", {"promote_margin": 0.5})
     assert resp.status_code == 200
     assert resp.json()["draft"]["scoring"]["promote_margin"] == 0.5
-    resp = post("set_holdout", {"fraction": "0.4"})
-    assert resp.status_code == 200
-    assert resp.json()["draft"]["scoring"]["overfitting"]["holdout_fraction"] == 0.4
-    # …including inside the ladder's partial mapping, which reaches the op
-    # as raw JSON from BOTH the REST dispatch and the copilot.
-    resp = post("set_holdout", {"ladder": {"budget": "8"}})
-    assert resp.status_code == 200
-    assert resp.json()["draft"]["scoring"]["overfitting"]["ladder"]["budget"] == 8
 
     # Garbage is a field-precise 400, never a 500.
     for op, args, needle in (
@@ -361,7 +367,7 @@ def test_builder_op_float_knobs_are_typed_not_passed_through(client: TestClient)
     for key in ("enabled", "budget", "noise_scale"):
         resp = post("set_holdout", {"ladder": {key: None}})
         assert resp.status_code == 400, (key, resp.status_code)
-        assert f"ladder.{key} must not be null" in resp.json()["error"]
+        assert f"set_holdout.ladder.{key}: expected" in resp.json()["error"]
 
 
 def test_builder_apply_dry_run(client: TestClient, workspace: Path) -> None:

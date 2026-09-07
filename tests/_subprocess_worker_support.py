@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from zicato.core.types import RunResult, RuntimeConfig
+
 
 async def target_call_llm(system: str, user: str, model: str) -> str:
     """Stub harness-side LLM callable. Never actually invoked by the stub."""
@@ -374,26 +376,20 @@ def artifact_inventory_is_visible(result: Any) -> bool:
 
 
 class _ConfigProbeSession:
-    """A session that records the WORKER process's resolved typed config.
+    """Return the configuration received at the real worker's runtime boundary."""
 
-    Writes the worker-side ``load_config()`` view of the evaluation-call
-    budget to ``config_probe.json`` next to the events file. The
-    config-pins threading test reads it back to prove a value pinned in
-    the ORCHESTRATOR process (a CLI flag) crossed the subprocess
-    boundary via the args file — with no environment variable involved.
-    """
-
-    async def run(self, entry: Any, sink_path: Path) -> None:
+    async def run(self, entry: Any, sinks: list[Any], config: RuntimeConfig) -> RunResult:
         import json  # noqa: PLC0415
 
-        from zicato.config import load_config  # noqa: PLC0415
-
-        del entry
-        cfg = load_config()
-        probe = {"aux_call_timeout_s": cfg.aux.call_timeout_s}
-        sink_path.parent.mkdir(parents=True, exist_ok=True)
-        (sink_path.parent / "config_probe.json").write_text(json.dumps(probe), encoding="utf-8")
-        sink_path.write_text("", encoding="utf-8")
+        del sinks
+        probe = {"aux_call_timeout_s": config.operational_configuration().values.aux.call_timeout_s}
+        return RunResult(
+            run_id="configuration-probe",
+            entry_id=entry.id,
+            final_output=json.dumps(probe),
+            transcript=(),
+            runtime_ms=1,
+        )
 
 
 class ConfigProbeAdapter:
@@ -528,3 +524,57 @@ def make_artifact_writing_adapter() -> ArtifactWritingAdapter:
 def pid_marker_path() -> Path:
     """Return a per-process marker path — unused placeholder for symmetry."""
     return Path(os.getcwd()) / f".ztw-pid-{os.getpid()}-{time.time_ns()}"
+
+
+class _NestedContextProbeSession:
+    """Expose the context seen by an actual nested process."""
+
+    async def run(self, entry: Any, sinks: list[Any], config: RuntimeConfig) -> RunResult:
+        import asyncio
+        import json
+        import sys
+
+        del sinks
+        script = (
+            "import json; from zicato.runtime.context import inherited_runtime_context; "
+            "print(json.dumps(inherited_runtime_context().to_json()))"
+        )
+        child = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            script,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await child.communicate()
+        if child.returncode:
+            raise RuntimeError(stderr.decode())
+        return RunResult(
+            run_id="nested-context-probe",
+            entry_id=entry.id,
+            transcript=(),
+            runtime_ms=1,
+            final_output=json.dumps(
+                {
+                    "worker_url": config.telemetry.web_url,
+                    "worker_grpc": config.telemetry.grpc_target,
+                    "nested_context": json.loads(stdout),
+                }
+            ),
+        )
+
+
+class NestedContextProbeAdapter(ConfigProbeAdapter):
+    def load(self, generation_root: Path) -> _NestedContextProbeSession:
+        del generation_root
+        return _NestedContextProbeSession()
+
+    def worker_spec(self) -> dict[str, Any]:
+        return {
+            "kind": "import",
+            "factory": "tests._subprocess_worker_support:make_nested_context_probe_adapter",
+        }
+
+
+def make_nested_context_probe_adapter() -> NestedContextProbeAdapter:
+    return NestedContextProbeAdapter()

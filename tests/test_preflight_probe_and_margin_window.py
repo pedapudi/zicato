@@ -579,7 +579,7 @@ def test_probe_knobs_are_read_from_the_runtime_block() -> None:
 
         # A bare string would be read character-by-character as ids — the kind
         # of config typo that silently probes nothing real.
-        with pytest.raises(ValueError, match="must be a LIST"):
+        with pytest.raises(ValueError, match="config.runtime.preflight_probe_mutation_ids"):
             make_runtime_config(
                 {"runtime": {"preflight_probe_mutation_ids": "coordinator_instruction"}},
                 workspace_root=root,
@@ -587,7 +587,7 @@ def test_probe_knobs_are_read_from_the_runtime_block() -> None:
                 evaluation_call_llm=_aux,
             )
 
-        with pytest.raises(ValueError, match="must be >= 1"):
+        with pytest.raises(ValueError, match="config.runtime.preflight_probe_points"):
             make_runtime_config(
                 {"runtime": {"preflight_probe_points": 0}},
                 workspace_root=root,

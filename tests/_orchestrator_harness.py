@@ -44,6 +44,7 @@ from zicato.core.types import (
     DriftCount,
     ExpectationResult,
     LossProfile,
+    ScoringWeights,
 )
 from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.lifecycle import new_epoch
@@ -70,7 +71,13 @@ def make_aux_responder(responses: list[str]) -> Any:
     return _aux
 
 
-def bootstrap_workspace(tmp_path: Path, **proposer: Any) -> tuple[Path, str]:
+def bootstrap_workspace(
+    tmp_path: Path,
+    *,
+    weights: ScoringWeights | None = None,
+    mutable_trees: tuple[str, ...] = (),
+    **proposer: Any,
+) -> tuple[Path, str]:
     """Create a workspace + one epoch + a v0 baseline snapshot.
 
     The snapshot contains one Python file with a mutable span and a
@@ -96,6 +103,7 @@ def bootstrap_workspace(tmp_path: Path, **proposer: Any) -> tuple[Path, str]:
                 # directory backend explicitly — the git default reads its
                 # generations from git tags this fixture never writes.
                 "generation_source_backend": "directory",
+                "mutable_trees": list(mutable_trees),
                 "adapter": {
                     "kind": "import",
                     "factory": "tests._stub_adapter:make_stub_adapter",
@@ -129,7 +137,7 @@ def bootstrap_workspace(tmp_path: Path, **proposer: Any) -> tuple[Path, str]:
         # single-sample proposer): these tests drive SCRIPTED proposers and
         # stub reducers whose call sequences assume the historical
         # single-run duel. See tests/_contract_pins.py.
-        weights=deterministic_weights(promote_margin=0.01),
+        weights=weights or deterministic_weights(promote_margin=0.01),
         auto_close_previous=False,
     )
 
@@ -149,6 +157,9 @@ def bootstrap_workspace(tmp_path: Path, **proposer: Any) -> tuple[Path, str]:
         '    return GREETING + " " + name\n'
         "    # zicato:mutable:end\n"
     )
+    from zicato.epoch.journal import write_seed_experiment
+
+    write_seed_experiment(workspace, cfg.id, proposed_at=cfg.created_at)
     return workspace, cfg.id
 
 
@@ -174,7 +185,7 @@ def install_stub_adapter_factory(
 
     fake_factory = types.ModuleType("zicato.adapter_factory")
 
-    def make_adapter_from_config(workspace_config: dict[str, Any]) -> Any:
+    def make_adapter_from_config(workspace_config: dict[str, Any], *, workspace_root: Path) -> Any:
         del workspace_config
         return make_stub_adapter()
 
@@ -201,7 +212,11 @@ def install_telemetry_stubs(
 ) -> None:
     """Install ad-hoc telemetry.sink / .reducer modules."""
 
+    from zicato.telemetry.sink import resolve_harmonograf_grpc_target, resolve_harmonograf_url
+
     sink_mod = types.ModuleType("zicato.telemetry.sink")
+    sink_mod.resolve_harmonograf_url = resolve_harmonograf_url  # type: ignore[attr-defined]
+    sink_mod.resolve_harmonograf_grpc_target = resolve_harmonograf_grpc_target  # type: ignore[attr-defined]
 
     def make_run_sink_path(
         *,
@@ -295,20 +310,22 @@ def install_telemetry_stubs(
 
     supervisor_mod.start_harmonograf = _stub_start_harmonograf  # type: ignore[attr-defined]
     supervisor_mod.HarmonografHandle = _StubHandle  # type: ignore[attr-defined]
+    from zicato.telemetry.harmonograf_supervisor import find_workspace_harmonograf
+
+    supervisor_mod.find_workspace_harmonograf = find_workspace_harmonograf  # type: ignore[attr-defined]
 
     # The real, dependency-light meta_loop module — the structural-span call
     # sites (runner / scheduler / best-of-N) import ``meta_span`` from it. It is
     # a no-op here (no ambient emitter is bound when evolve_once is driven
     # directly), so registering the real module preserves behaviour while
     # keeping the shadow package importable.
+    import zicato.telemetry as telemetry_pkg
     import zicato.telemetry.meta_loop as meta_loop_mod
 
-    telemetry_pkg = types.ModuleType("zicato.telemetry")
-    telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
-    telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
-    telemetry_pkg.harmonograf_supervisor = supervisor_mod  # type: ignore[attr-defined]
-    telemetry_pkg.meta_loop = meta_loop_mod  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
+    monkeypatch.setattr(telemetry_pkg, "sink", sink_mod, raising=False)
+    monkeypatch.setattr(telemetry_pkg, "reducer", reducer_mod, raising=False)
+    monkeypatch.setattr(telemetry_pkg, "harmonograf_supervisor", supervisor_mod, raising=False)
+    monkeypatch.setattr(telemetry_pkg, "meta_loop", meta_loop_mod, raising=False)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.harmonograf_supervisor", supervisor_mod)

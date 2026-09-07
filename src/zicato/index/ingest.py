@@ -63,7 +63,7 @@ import logging
 import os
 import sqlite3
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -85,6 +85,8 @@ from zicato.index.schema import (
     raise_if_newer,
     read_schema_version,
 )
+from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock, validate_workspace_lock
+from zicato.storage import atomic_write_json, read_json
 from zicato.telemetry.reducer import loss_profile_to_dict
 from zicato.workspace import (
     WorkspaceLayout,
@@ -92,9 +94,53 @@ from zicato.workspace import (
     round_indices,
     run_entry_ids,
 )
+from zicato.workspace.projection import epoch_revisions
 from zicato.workspace.reads import generation_base_seed
 
 log = logging.getLogger("zicato.index")
+
+
+def _require_completed_workers(workspace_root: Path) -> None:
+    """A parent lease cannot settle revisions issued by unfinished workers."""
+    runs = WorkspaceLayout.from_root(workspace_root).active_runs_dir
+    if any(runs.glob("*.json")):
+        raise RuntimeError("index repair requires all delegated workers to finish cleanup")
+
+
+@contextlib.contextmanager
+def _index_writer(workspace_root: Path, writer: WorkspaceLock | None) -> Iterator[None]:
+    """Acquire a repair lease or validate the invocation's existing lease."""
+    if writer is None:
+        with acquire_workspace_lock(workspace_root, "index-repair") as acquired:
+            with _index_writer(workspace_root, acquired):
+                yield
+        return
+    validate_workspace_lock(writer, workspace_root)
+    _require_completed_workers(workspace_root)
+    yield
+
+
+def _projected_revisions(target: Path) -> dict[str, str]:
+    """Read acknowledgements belonging to this particular derived database."""
+    try:
+        raw = read_json(target.with_name(target.name + ".revisions.json"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {key: value for key, value in raw.items() if isinstance(value, str)}
+
+
+def _acknowledge_revisions(workspace_root: Path, target: Path, revisions: dict[str, str]) -> None:
+    """Publish only the captured revisions, after their SQLite commit."""
+    _require_completed_workers(workspace_root)
+    atomic_write_json(target.with_name(target.name + ".revisions.json"), revisions)
+
+
+def _pending_revisions(revisions: dict[str, str], projected: dict[str, str]) -> set[str]:
+    return {
+        epoch_id for epoch_id, revision in revisions.items() if projected.get(epoch_id) != revision
+    }
 
 
 def _now_iso() -> str:
@@ -1089,7 +1135,9 @@ def _iter_reflection_dirs(workspace_root: Path, epoch_id: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def rebuild_index(workspace_root: Path, db_path: Path | None = None) -> Path:
+def rebuild_index(
+    workspace_root: Path, db_path: Path | None = None, *, writer: WorkspaceLock | None = None
+) -> Path:
     """Drop and rebuild the index database from the workspace files.
 
     Walks every epoch (from ``lineage.json`` + each epoch's
@@ -1100,9 +1148,9 @@ def rebuild_index(workspace_root: Path, db_path: Path | None = None) -> Path:
 
     The whole database is derived into a scratch file beside the target
     and renamed into place on success (:func:`_build_index_atomically`),
-    so the result is a from-scratch rebuild. The index carries no state that
-    is not in the files, so discarding the existing database loses nothing,
-    and a FAILED rebuild leaves it byte-untouched rather than destroying it.
+    so the result is a complete projection. A derivation failure preserves
+    the existing database. If revision acknowledgement fails after publication,
+    the complete replacement remains readable and repair is still required.
 
     Idempotent: running it twice produces an identical database.
 
@@ -1120,10 +1168,11 @@ def rebuild_index(workspace_root: Path, db_path: Path | None = None) -> Path:
     Path
         The path the index was written to.
     """
-    target = db_path if db_path is not None else _default_db_path(workspace_root)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    _build_index_atomically(workspace_root, target)
-    return target
+    with _index_writer(workspace_root, writer):
+        target = db_path if db_path is not None else _default_db_path(workspace_root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _build_index_atomically(workspace_root, target)
+        return target
 
 
 def _fold_elo(conn: sqlite3.Connection) -> None:
@@ -1595,31 +1644,7 @@ def _unlink_db(path: Path) -> None:
 
 
 def _build_tmp_path(target: Path) -> Path:
-    """A scratch path for ONE build, unique to this process and call.
-
-    Unique rather than a fixed ``{target}.tmp`` because builders are NOT
-    serialised against each other. Evolve's build runs under the workspace
-    lock, but the dashboard's (``dashboard/server.py::_ensure_index_at_startup``)
-    only SKIPS when it observes a held lock — two dashboards racing, or one
-    whose lock read lost the window to a starting evolve, both build.
-
-    A shared scratch path makes that race destructive rather than merely
-    wasteful, because a build is not a moment. The second builder's
-    :func:`_unlink_db` removes the inode the first is still writing into.
-    The first's :func:`os.replace` then renames whatever now sits at the
-    path — the second's HALF-BUILT database — onto the live index. The
-    sidecar unlink that follows deletes the WAL holding the rest of it.
-    The observed result is a valid, EMPTY ``index.db`` (``user_version=0``,
-    zero tables) installed by the self-healing path itself, with no
-    exception raised anywhere. A partial build lands the worse shape: a
-    correct ``user_version`` over missing rows, which :func:`_rebuild_reason`
-    has no reason to rebuild.
-
-    With a unique path the race costs duplicated work and nothing else:
-    each builder derives a COMPLETE database into its own file and
-    ``os.replace`` publishes one of them whole. Last writer wins, and every
-    possible winner is valid.
-    """
+    """Return scratch owned by this build, separate from abandoned files."""
     return target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
 
 
@@ -1665,44 +1690,18 @@ def _sweep_stale_build_tmps(target: Path) -> None:
 
 
 def _build_index_atomically(workspace_root: Path, target: Path) -> None:
-    """Build the full index beside ``target``, then rename it into place.
+    """Build and publish a complete index while holding the workspace lease.
 
-    The single build path — :func:`rebuild_index` and :func:`ensure_index`
-    both route through it. The whole database is derived into a private
-    scratch file (:func:`_build_tmp_path`) and only then
-    :func:`os.replace`\\ d onto ``target``, so a failure at any point during
-    the build leaves the existing index byte-untouched.
+    Derivation and SQLite commit finish in private scratch. Closing the last
+    connection checkpoints its WAL; publication refuses any leftover sidecar.
+    The outgoing database's sidecars must be removed before replacement,
+    because SQLite can replay a foreign WAL over the replacement database.
 
-    That ordering retires a defect class rather than a defect. The previous
-    shape unlinked ``index.db`` FIRST and built in place, so any failure
-    mid-build — an unreadable canonical record, a full disk, a Ctrl-C — left
-    a schema-only file with every table empty, along the very path an
-    operator runs to RECOVER a bad index. Here the worst case is that the
-    old index survives unchanged and the caller sees the exception.
-
-    The scratch path is per-build because concurrent builders are possible
-    and are not serialised — see :func:`_build_tmp_path` for what a shared
-    one does to them.
-
-    The outgoing file's WAL / SHM sidecars are removed **before** the
-    rename, and the order is the whole point. They describe the inode that
-    is about to be swapped out, and a WAL is not merely "confusing" beside a
-    different database — SQLite REPLAYS it. Its frames are validated by an
-    internal checksum chain seeded from the WAL header's own salts, with no
-    tie to the main file, so a complete foreign WAL is accepted and its
-    pages — page 1 included, carrying ``user_version`` and the whole schema
-    — are recovered over the file that was just published. Removing the
-    sidecars afterwards leaves a window in which exactly that is on disk: a
-    crash inside it (or a reader opening the pair, which may then CHECKPOINT
-    the foreign frames into the new file and make it permanent) resurrects
-    the OLD index in place of the new one, ``PRAGMA integrity_check`` says
-    ``ok``, and nothing anywhere raises. Clearing them first means the new
-    inode never coexists with a sidecar that is not its own.
-
-    (The SCRATCH file needs no such care — closing the last connection
-    checkpoints its WAL back into the main file and removes the sidecars,
-    which is what makes the renamed file whole.)
+    A failure before publication preserves the existing database. A failure
+    after publication leaves a complete database with a pending revision,
+    so repair can repeat. Acknowledgement uses the captured revisions only.
     """
+    revisions = epoch_revisions(workspace_root)
     _sweep_stale_build_tmps(target)
     tmp = _build_tmp_path(target)
     _unlink_db(tmp)
@@ -1759,6 +1758,7 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
     for suffix in ("-wal", "-shm"):
         target.with_name(target.name + suffix).unlink(missing_ok=True)
     os.replace(tmp, target)
+    _acknowledge_revisions(workspace_root, target, revisions)
 
 
 def _rebuild_reason(target: Path) -> str | None:
@@ -1806,6 +1806,7 @@ def ensure_index(
     db_path: Path | None = None,
     *,
     action_out: list[str] | None = None,
+    writer: WorkspaceLock | None = None,
 ) -> Path:
     """Guarantee an index of the CURRENT schema exists, building it if not.
 
@@ -1844,31 +1845,31 @@ def ensure_index(
     zicato.index.schema.IndexSchemaNewerError
         When the existing database was written by a newer zicato.
     """
-    target = db_path if db_path is not None else _default_db_path(workspace_root)
-    reason = _rebuild_reason(target)
-    if reason is None and target.resolve() == _default_db_path(workspace_root).resolve():
-        from zicato.epoch.settlement_receipt import (  # noqa: PLC0415
-            settlement_index_repair_required,
-        )
+    with _index_writer(workspace_root, writer):
+        target = db_path if db_path is not None else _default_db_path(workspace_root)
+        reason = _rebuild_reason(target)
+        if reason is None and target.resolve() == _default_db_path(workspace_root).resolve():
+            from zicato.epoch.settlement_receipt import (  # noqa: PLC0415
+                settlement_index_repair_required,
+            )
 
-        if settlement_index_repair_required(workspace_root):
-            reason = "settlement-repair-required"
-    if reason is None:
-        _record_action(action_out, "present")
+            if settlement_index_repair_required(workspace_root):
+                reason = "settlement-repair-required"
+        if reason is None:
+            _record_action(action_out, "present")
+            return target
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _build_index_atomically(workspace_root, target)
+        _record_action(action_out, f"built:{reason}")
         return target
-    target.parent.mkdir(parents=True, exist_ok=True)
-    _build_index_atomically(workspace_root, target)
-    _record_action(action_out, f"built:{reason}")
-    return target
 
 
 def validate_index(workspace_root: Path, db_path: Path | None = None) -> tuple[str, ...]:
     """Return the sorted ids of epochs whose index rows diverged from disk.
 
-    Read-only, and cheap by construction: every epoch's persisted cursor
-    (schema v14) is compared against four directory-entry counts, never
-    against re-derived row content. An empty result means the index agrees
-    with the workspace at cursor granularity.
+    Read-only: compare the five cursor counts and durable epoch revisions.
+    API-driven replacements remain visible even when file counts stay equal.
+    Manual edits that bypass revision issuance require a full rebuild.
 
     A missing database yields ``()`` — there is nothing to validate, and
     building one is :func:`ensure_index`'s job. A database predating v14 has
@@ -1890,10 +1891,14 @@ def validate_index(workspace_root: Path, db_path: Path | None = None) -> tuple[s
         return ()
     finally:
         conn.close()
-    return _diverged_epochs(workspace_root, cursors, _walk_epochs(workspace_root), indexed)
+    stale = _diverged_epochs(workspace_root, cursors, _walk_epochs(workspace_root), indexed)
+    pending = _pending_revisions(epoch_revisions(workspace_root), _projected_revisions(target))
+    return tuple(sorted(set(stale) | pending))
 
 
-def heal_index(workspace_root: Path, db_path: Path | None = None) -> tuple[str, ...]:
+def heal_index(
+    workspace_root: Path, db_path: Path | None = None, *, writer: WorkspaceLock | None = None
+) -> tuple[str, ...]:
     """Re-ingest ONLY the epochs whose index rows diverged from the workspace.
 
     The incremental half of the self-healing index
@@ -1911,28 +1916,40 @@ def heal_index(workspace_root: Path, db_path: Path | None = None) -> tuple[str, 
     Returns the ids it healed (``()`` when nothing diverged). Idempotent: a
     second call immediately after the first finds nothing to do.
     """
-    conn, _target = _open_for_write(workspace_root, db_path)
-    try:
-        walk = _walk_epochs(workspace_root)
-        stale = _diverged_epochs(
-            workspace_root, _read_cursors(conn), walk, _indexed_epoch_ids(conn)
-        )
-        if stale:
-            by_id = {item.epoch_id: item for item in walk}
-            for epoch_id in stale:
-                _delete_epoch_rows(conn, epoch_id)
-                item = by_id.get(epoch_id)
-                if item is None:
-                    # Gone from the workspace: the rows are removed, and there is
-                    # nothing left on disk to re-project them from.
-                    continue
-                _upsert_epoch_from_walk(conn, item)
-                _rebuild_epoch(conn, workspace_root, epoch_id, item.lineage_entry)
-            _fold_elo(conn)
-            conn.commit()
-    finally:
-        conn.close()
-    return stale
+    with _index_writer(workspace_root, writer):
+        revisions = epoch_revisions(workspace_root)
+        conn, target = _open_for_write(workspace_root, db_path)
+        projected = _projected_revisions(target)
+        try:
+            walk = _walk_epochs(workspace_root)
+            stale = tuple(
+                sorted(
+                    set(
+                        _diverged_epochs(
+                            workspace_root, _read_cursors(conn), walk, _indexed_epoch_ids(conn)
+                        )
+                    )
+                    | _pending_revisions(revisions, projected)
+                )
+            )
+            if stale:
+                by_id = {item.epoch_id: item for item in walk}
+                for epoch_id in stale:
+                    _delete_epoch_rows(conn, epoch_id)
+                    item = by_id.get(epoch_id)
+                    if item is None:
+                        continue
+                    _upsert_epoch_from_walk(conn, item)
+                    _rebuild_epoch(conn, workspace_root, epoch_id, item.lineage_entry)
+                _fold_elo(conn)
+                conn.commit()
+                projected.update(
+                    {epoch_id: revisions[epoch_id] for epoch_id in stale if epoch_id in revisions}
+                )
+                _acknowledge_revisions(workspace_root, target, projected)
+        finally:
+            conn.close()
+        return stale
 
 
 def _open_for_write(workspace_root: Path, db_path: Path | None) -> tuple[sqlite3.Connection, Path]:

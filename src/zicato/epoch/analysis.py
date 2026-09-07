@@ -36,6 +36,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
 from zicato.aux_timeout import aux_call_timeout_s
+from zicato.core.settings import AuxConfig
 from zicato.core.types import (
     Experiment,
     Generation,
@@ -1053,6 +1054,7 @@ async def generate_analysis(
     epoch_id: str,
     aux_call_llm: _AuxCallLLM,
     model: str = "",
+    aux_config: AuxConfig | None = None,
 ) -> Path:
     """Run the analysis pass and write ``analysis.md``.
 
@@ -1105,12 +1107,12 @@ async def generate_analysis(
     try:
         narrative = await asyncio.wait_for(
             aux_call_llm(_SYSTEM_PROMPT, user_prompt, model),
-            timeout=aux_call_timeout_s(),
+            timeout=aux_call_timeout_s(aux_config),
         )
     except TimeoutError:
         logging.getLogger(__name__).warning(
             "analysis pass timed out after %.1fs; substituting placeholder narrative",
-            aux_call_timeout_s(),
+            aux_call_timeout_s(aux_config),
         )
         narrative = (
             "## Headline movements\n\n"
