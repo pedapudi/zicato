@@ -1,0 +1,21 @@
+{
+  "artifact_names": [
+    ".git",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    ".zicato-scratch",
+    "__pycache__",
+    "node_modules",
+    "output"
+  ],
+  "artifact_suffixes": [
+    ".pyc",
+    ".pyo",
+    ".pyd"
+  ]
+}

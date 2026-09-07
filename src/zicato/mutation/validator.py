@@ -59,7 +59,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from zicato.core.types import MutationPoint, Patch
-from zicato.mutation.enumerator import enumerate_mutations
+from zicato.mutation.enumerator import enumerate_mutations, relocate_enumeration_roots
 
 #: Per-op required / forbidden payload fields and the mutation-point kinds
 #: each op can target. ``payload`` is the :class:`Patch` attribute the op
@@ -282,8 +282,13 @@ def validate_post_apply(
     target_root: Path,
     patches: list[Patch],
     pre_apply_mutations: list[MutationPoint],
+    *,
+    enumeration_roots: Sequence[Path] | None = None,
 ) -> list[str]:
     """Validate ``target_root`` after applying ``patches``.
+
+    ``enumeration_roots`` names the selected paths inside ``target_root``.
+    Omission selects the complete target tree.
 
     Returns an empty list on success; each entry is a human-readable
     error string describing one problem. Callers (the tournament runner)
@@ -297,7 +302,9 @@ def validate_post_apply(
     # Files we expect to have been touched. We re-enumerate to learn
     # which files the patched mutation ids now live in (post-apply line
     # numbers don't matter here; only the file-of-record does).
-    post_mutations = enumerate_mutations([target_root])
+    post_mutations = enumerate_mutations(
+        relocate_enumeration_roots(target_root, target_root, enumeration_roots)
+    )
     post_by_id: dict[str, MutationPoint] = {p.id: p for p in post_mutations}
     touched_files: set[Path] = set()
     for patch in patches:

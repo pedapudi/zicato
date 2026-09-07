@@ -602,6 +602,79 @@ operator's markers define what the surface is. The post-apply id-resolution
 check (`A2`) enforces that every patched id still resolves after the
 rewrite.
 
+### Accepted source and byte-range evidence
+
+Proposal acceptance uses one captured parent source inventory, mutation
+snapshot, and forbidden-ID set. The snapshot covers the adapter's selected
+enumeration roots; support code outside those roots remains in the source
+inventory and cannot be edited. Empty selections and roots outside the parent
+snapshot are refused. Application translates the captured roots into each
+child copy and uses them for validation and every enumeration between edits.
+A matching marker in unselected support code cannot redirect a patch or make
+its selected target ambiguous. The episode verifier projects the edited
+units into patches and runs the authoritative applier. Acceptance requires
+the reconstructed file set, bytes, and executable state to match the working
+copy. Assignment renames and adjacent expressions beside an editable literal
+produce repair findings. A whole-file patch cannot change a forbidden nested
+unit. Every returned candidate also passes the final application guard,
+including custom proposers and candidates selected from a slate.
+
+Applied proposer candidates publish `generations/<id>/containment.json` after
+their immutable patch records exist. The record owner is
+`zicato.epoch.containment`. Publication independently reconstructs the accepted
+patch set and compares it with the selected generation's materialized and
+committed source. The manifest records selected epoch, parent, and child
+coordinates; exact patch-file hashes; complete source inventories; executable
+state; captured mutation metadata; and changed byte ranges.
+
+Before proposal work, the parent retains its resolved permissions in
+`generations/<parent>/mutation-policies/<sha256>.json`. The record captures
+the complete parent inventory, selected enumeration roots, mutation operations,
+forbidden flags, and frozen brief and scoring byte hashes. Its content hash
+names an immutable file. Reusing that identity never replaces its bytes, and
+a corrupt existing record is refused. The child's manifest retains the same
+identity after repair, slate selection, and final application.
+
+Mutation intervals are half-open byte offsets in both parent and child files.
+Each point records its supported operations separately: string replacement,
+numeric constant replacement, and enum replacement use the applier's existing
+AST locators. Numeric replacement may address a different constant from string
+replacement; forbidden-unit protection covers every supported operation.
+Bracketed code
+and allowlisted text regions use their raw source boundaries. An insertion
+belongs to a unit only when its parent position and child bytes both fit that
+unit. Deletions obey the corresponding condition in both coordinate spaces.
+Forbidden units retain identical bytes even inside a larger allowed unit.
+
+The Rust supervisor's `--diff-containment` audit independently checks full
+observed source inventories, patch bindings, interval hashes, unchanged bytes,
+and ownership of every change. It checks the retained policy's hash and frozen
+inputs, then compares each parent declaration with that policy. Source
+locations come from the selected
+generation store; the manifest cannot choose the child being inspected.
+Python owns marker and metadata semantics. Rust trusts the captured intervals
+as that semantic declaration and verifies them against actual bytes. This
+detects inconsistent canonical evidence. A writer that fabricates a policy
+together with matching dependent evidence is outside the audit's trust model.
+
+Both implementations use the artifact registry in
+`zicato/epoch/source_scope.json`. Binary source remains in the inventory.
+Target-authored `.gitignore` files remain source; changing their rules cannot
+disappear from acceptance. The Git store's root `.gitignore` is also compared
+with its committed bytes, even though the file-browser inventory omits it.
+File creation, deletion, and executable changes are outside patch authority.
+Symbolic links, special files, and unreadable source prevent verification.
+
+The range audit reports `contained`, `violated`, or `unverified`. Missing,
+stale, malformed, or empty mutation evidence is unverified, including older
+generations without manifests or retained policies. Reading an archived
+generation never creates missing policy evidence. Findings appear on `/statusz` and in
+`health/mutation_containment_<id>.json`. Range findings are alarm-only;
+`block_on_containment_violation` still governs the separate file-level check
+outside registered mutable trees. A shared acceptance corpus and deterministic
+tournament audits measure agreement and false positives before any change to
+blocking policy.
+
 ## 7. The `zicato inspect mutations` CLI
 
 The audit command carries the help text `Advanced: audit the mutable

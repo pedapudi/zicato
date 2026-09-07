@@ -36,12 +36,12 @@ from __future__ import annotations
 import ast
 import shutil
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from zicato.core.types import MutationPoint, Patch
 from zicato.epoch.snapshot_scope import copytree_ignore
-from zicato.mutation.enumerator import enumerate_mutations
+from zicato.mutation.enumerator import enumerate_mutations, relocate_enumeration_roots
 from zicato.mutation.markers import (
     MarkerSyntax,
     is_end_marker,
@@ -76,6 +76,11 @@ def _write_text_writable(file_path: Path, content: str) -> None:
     file_path.write_text(content, encoding="utf-8")
 
 
+def _read_source(path: Path) -> str:
+    """Decode source without normalizing bytes outside the edited unit."""
+    return path.read_bytes().decode("utf-8")
+
+
 def _format_numeric(value: float) -> str:
     """Render a numeric replacement value back into Python source.
 
@@ -105,7 +110,7 @@ def _resolve_marker_line(file_path: Path, mutation_id: str) -> int | None:
     syntax = marker_syntax_for(file_path)
     if syntax is None:
         return None
-    text = file_path.read_text(encoding="utf-8")
+    text = _read_source(file_path)
     for idx, line in enumerate(text.splitlines()):
         parsed = parse_marker_line(line, syntax=syntax)
         if parsed is not None and parsed.id == mutation_id:
@@ -125,7 +130,7 @@ def _find_constant_after(
     ``col_offset`` / ``end_col_offset`` for an in-place rewrite.
     """
 
-    text = file_path.read_text(encoding="utf-8")
+    text = _read_source(file_path)
     try:
         tree = ast.parse(text)
     except SyntaxError:
@@ -175,7 +180,7 @@ def _resolve_string_literal_node(
     whole-file / non-Python cases).
     """
 
-    text = file_path.read_text(encoding="utf-8")
+    text = _read_source(file_path)
     try:
         tree = ast.parse(text)
     except SyntaxError:
@@ -218,7 +223,7 @@ def _node_span(lines: list[str], node: ast.expr | ast.stmt) -> tuple[int, int, i
 
 def _node_text(file_path: Path, node: ast.expr | ast.stmt) -> str:
     """The source ``node`` covers, exactly as it stands in ``file_path``."""
-    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines = _read_source(file_path).splitlines(keepends=True)
     line_start, start_index, line_end, end_index = _node_span(lines, node)
     if line_start == line_end:
         return lines[line_start - 1][start_index:end_index]
@@ -233,7 +238,7 @@ def _replace_node_text(
 ) -> None:
     """Replace the substring covered by ``node`` with ``new_text``."""
 
-    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines = _read_source(file_path).splitlines(keepends=True)
     line_start, start_index, line_end, end_index = _node_span(lines, node)
     before = "".join(lines[: line_start - 1]) + lines[line_start - 1][:start_index]
     after = lines[line_end - 1][end_index:] + "".join(lines[line_end:])
@@ -255,7 +260,7 @@ def replacement_source(point: MutationPoint) -> str:
     is written by the applier verbatim over the lines the enumerator
     reported, so for those the point's content is already the unit.
 
-    Used by :func:`zicato.proposer.foe_scratch.project_onto_mutation_points`
+    Used by :func:`zicato.proposer.foe_scratch.project_working_copy`
     to turn an edited working copy back into a patch set that applies to
     the tree it was copied from.
     """
@@ -268,7 +273,76 @@ def replacement_source(point: MutationPoint) -> str:
         )
         if node is not None:
             return _node_text(point.file, node)
-    return point.content
+    start, end = replacement_byte_span(point)
+    return point.file.read_bytes()[start:end].decode("utf-8")
+
+
+def replacement_byte_span(point: MutationPoint) -> tuple[int, int]:
+    """The half-open byte interval owned by a replacement in the parent file.
+
+    This uses the same literal resolver as replacement application. Other
+    units own their enumerated lines; a file unit owns all bytes. Offsets
+    address the raw file, including its original line endings.
+    """
+    raw = point.file.read_bytes()
+    if point.kind == "file":
+        return 0, len(raw)
+    lines = raw.splitlines(keepends=True)
+    if point.kind == "span" and point.file.suffix == ".py":
+        marker = _resolve_marker_line(point.file, point.id)
+        node = _resolve_string_literal_node(point.file, marker) if marker is not None else None
+        if node is not None:
+            return _node_byte_span(lines, node)
+    if not 1 <= point.line_start <= point.line_end <= len(lines):
+        raise ValueError(f"mutation point {point.id!r} has invalid source line bounds")
+    return sum(map(len, lines[: point.line_start - 1])), sum(map(len, lines[: point.line_end]))
+
+
+def _node_byte_span(lines: list[bytes], node: ast.expr) -> tuple[int, int]:
+    assert node.end_lineno is not None and node.end_col_offset is not None
+    return (
+        sum(map(len, lines[: node.lineno - 1])) + node.col_offset,
+        sum(map(len, lines[: node.end_lineno - 1])) + node.end_col_offset,
+    )
+
+
+def _signed_constant_expression(path: Path, node: ast.Constant) -> ast.expr:
+    """Include unary signs that numeric replacement can introduce."""
+    result: ast.expr = node
+    for expression in ast.walk(ast.parse(_read_source(path))):
+        if not isinstance(expression, ast.UnaryOp) or not isinstance(
+            expression.op, ast.UAdd | ast.USub
+        ):
+            continue
+        operand = expression.operand
+        while isinstance(operand, ast.UnaryOp) and isinstance(operand.op, ast.UAdd | ast.USub):
+            operand = operand.operand
+        if (operand.lineno, operand.col_offset) == (node.lineno, node.col_offset) and (
+            expression.lineno,
+            expression.col_offset,
+        ) < (result.lineno, result.col_offset):
+            result = expression
+    return result
+
+
+def operation_byte_spans(point: MutationPoint) -> dict[str, tuple[int, int]]:
+    """Resolve each supported operation through the applier's source locators.
+
+    Numeric operations can address a different constant from the string
+    literal used by replacement. Every reachable operation participates in
+    forbidden-unit protection, including when an outer file is replaced.
+    """
+    spans = {"replace": replacement_byte_span(point)}
+    marker = _resolve_marker_line(point.file, point.id)
+    if point.kind != "span" or marker is None:
+        return spans
+    lines = point.file.read_bytes().splitlines(keepends=True)
+    for operation, numeric in (("set_numeric", True), ("set_enum", False)):
+        node = _find_constant_after(point.file, marker, want_numeric=numeric)
+        if node is not None:
+            expression = _signed_constant_expression(point.file, node) if numeric else node
+            spans[operation] = _node_byte_span(lines, expression)
+    return spans
 
 
 def _byte_column_to_character_index(line: str, byte_column: int) -> int:
@@ -611,7 +685,7 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
       corrupt the file.
     """
 
-    text = point.file.read_text(encoding="utf-8")
+    text = _read_source(point.file)
     lines = text.splitlines(keepends=True)
     if point.kind == "file":
         _write_text_writable(point.file, new_content)
@@ -728,8 +802,14 @@ def apply_patches(
     target_root: Path,
     *,
     ignore: CopytreeIgnore | None = None,
+    enumeration_roots: Sequence[Path] | None = None,
 ) -> None:
     """Materialise a child snapshot and atomically apply ``patches`` to it.
+
+    ``enumeration_roots`` selects files or directories inside ``source_root``.
+    The selection is translated into the copied tree for every enumeration.
+    Omission selects the complete source tree; an empty selection is invalid.
+    Copying and syntax validation still cover the complete source tree.
 
     This is the default, **all-or-nothing** apply path. Behaviour:
 
@@ -787,6 +867,7 @@ def apply_patches(
 
     source_root = Path(source_root).resolve()
     target_root = Path(target_root).resolve()
+    selected = relocate_enumeration_roots(source_root, target_root, enumeration_roots)
     if target_root.exists():
         raise FileExistsError(
             f"apply_patches: target_root {target_root} already exists; refusing to overwrite"
@@ -797,7 +878,7 @@ def apply_patches(
     # every patch up front. The copied tree has identical content to
     # ``source_root``, so its enumeration is the surface the subsequent
     # apply will resolve against.
-    problems = validate_patches(patches, source_root=target_root)
+    problems = validate_patches(patches, enumeration=enumerate_mutations(selected))
     if problems:
         # Refuse the whole batch — remove the copied tree so generation
         # lineage stays append-only and nothing is left half-applied.
@@ -820,7 +901,9 @@ def apply_patches(
     # surface signals every bad-patch-set condition with ONE type; remove
     # the copied tree so a mid-batch rejection leaves nothing half-applied.
     try:
-        _apply_patches_into_tree(target_root, patches, missing_anchor_error=ValueError)
+        _apply_patches_into_tree(
+            target_root, patches, missing_anchor_error=ValueError, enumeration_roots=selected
+        )
     except ValueError:
         shutil.rmtree(target_root, ignore_errors=True)
         raise
@@ -864,7 +947,7 @@ def _unparseable_py_files(root: Path) -> dict[Path, str]:
     out: dict[Path, str] = {}
     for py_file in sorted(root.rglob("*.py")):
         try:
-            text = py_file.read_text(encoding="utf-8")
+            text = _read_source(py_file)
         except OSError:
             continue
         except UnicodeDecodeError as exc:
@@ -914,6 +997,8 @@ def apply_patches_unchecked(
     source_root: Path,
     patches: list[Patch],
     target_root: Path,
+    *,
+    enumeration_roots: Sequence[Path] | None = None,
 ) -> None:
     """Materialise a child snapshot and apply ``patches`` best-effort.
 
@@ -971,8 +1056,9 @@ def apply_patches_unchecked(
             f"apply_patches_unchecked: target_root {target_root} already "
             f"exists; refusing to overwrite"
         )
+    selected = relocate_enumeration_roots(source_root, target_root, enumeration_roots)
     shutil.copytree(source_root, target_root)
-    _apply_patches_into_tree(target_root, patches)
+    _apply_patches_into_tree(target_root, patches, enumeration_roots=selected)
 
 
 def _apply_patches_into_tree(
@@ -980,6 +1066,7 @@ def _apply_patches_into_tree(
     patches: list[Patch],
     *,
     missing_anchor_error: type[Exception] = KeyError,
+    enumeration_roots: Sequence[Path] | None = None,
 ) -> None:
     """Apply ``patches`` in order against an already-materialised tree.
 
@@ -997,7 +1084,8 @@ def _apply_patches_into_tree(
     Payload/op mismatches are ``ValueError`` on both paths.
     """
 
-    points = enumerate_mutations([target_root])
+    selected = relocate_enumeration_roots(target_root, target_root, enumeration_roots)
+    points = enumerate_mutations(selected)
     index = _build_index(points)
 
     for patch in patches:
@@ -1012,7 +1100,7 @@ def _apply_patches_into_tree(
                 )
             _apply_span_replace(point, patch.new_content)
             # Re-enumerate so subsequent patches see updated line numbers.
-            points = enumerate_mutations([target_root])
+            points = enumerate_mutations(selected)
             index = _build_index(points)
         elif patch.op == "set_numeric":
             if patch.new_numeric is None:
@@ -1038,7 +1126,7 @@ def _apply_patches_into_tree(
                     f"for {patch.mutation_id!r} in {point.file}"
                 )
             _replace_node_text(point.file, node, _format_numeric(patch.new_numeric))
-            points = enumerate_mutations([target_root])
+            points = enumerate_mutations(selected)
             index = _build_index(points)
         elif patch.op == "set_enum":
             if patch.new_enum is None:
@@ -1062,10 +1150,16 @@ def _apply_patches_into_tree(
                     f"for {patch.mutation_id!r} in {point.file}"
                 )
             _replace_node_text(point.file, node, repr(patch.new_enum))
-            points = enumerate_mutations([target_root])
+            points = enumerate_mutations(selected)
             index = _build_index(points)
         else:  # pragma: no cover — Literal-typed; defensive
             raise ValueError(f"Patch {patch.id!r}: unknown op {patch.op!r}")
 
 
-__all__ = ["apply_patches", "apply_patches_unchecked", "replacement_source"]
+__all__ = [
+    "apply_patches",
+    "apply_patches_unchecked",
+    "replacement_source",
+    "replacement_byte_span",
+    "operation_byte_spans",
+]

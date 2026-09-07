@@ -282,6 +282,12 @@ pub struct DiffContainmentView {
     pub pairs_skipped: u64,
     /// The quarantined attestations (those with out-of-bounds violations).
     pub quarantined: Vec<Attestation>,
+    /// Pairs whose complete byte-range evidence was independently checked.
+    pub range_pairs_verified: u64,
+    /// Pairs with missing, stale, malformed, or unreadable evidence.
+    pub range_pairs_unverified: u64,
+    /// Every range result, including successful checks that clear earlier findings.
+    pub range_attestations: Vec<crate::range_containment::Attestation>,
 }
 
 impl DiffContainmentFindings {
@@ -345,11 +351,26 @@ pub fn scan_workspace(paths: &WorkspacePaths) -> DiffContainmentView {
     let mut pairs_scanned = 0u64;
     let mut pairs_skipped = 0u64;
     let mut quarantined = Vec::new();
+    let mut range_pairs_verified = 0u64;
+    let mut range_pairs_unverified = 0u64;
+    let mut range_attestations = Vec::new();
 
     for gen in &lineage.generations {
         let Some(parent_id) = gen.parent_generation_id.as_deref() else {
             continue; // root / no parent — nothing to diff against.
         };
+        let ranges = crate::range_containment::attest_generation(
+            paths,
+            &gen.epoch_id,
+            parent_id,
+            &gen.generation_id,
+        );
+        if ranges.status == crate::range_containment::Status::Unverified {
+            range_pairs_unverified += 1;
+        } else {
+            range_pairs_verified += 1;
+        }
+        range_attestations.push(ranges);
         let child_root = snapshot_root(&gen.epoch_id, &gen.generation_id);
         let parent_root = snapshot_root(&gen.epoch_id, parent_id);
         // Only attest a materialised child; a generation that has not yet been
@@ -380,6 +401,9 @@ pub fn scan_workspace(paths: &WorkspacePaths) -> DiffContainmentView {
         pairs_scanned,
         pairs_skipped,
         quarantined,
+        range_pairs_verified,
+        range_pairs_unverified,
+        range_attestations,
     }
 }
 
@@ -738,6 +762,7 @@ mod tests {
             pairs_scanned: 3,
             pairs_skipped: 1,
             quarantined: vec![],
+            ..Default::default()
         });
         let v = store.view();
         assert!(v.scanned);

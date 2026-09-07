@@ -239,7 +239,7 @@ def test_stale_pre_image_is_caught(ctx: ProposerToolContext) -> None:
     )
     report = _validate(ctx, _replace("You are a terse assistant."))
     assert report["ok"] is False, report
-    stale = [e for e in report["errors"] if "stale pre-image" in e]
+    stale = [e for e in report["errors"] if "stale" in e]
     assert stale, report["errors"]
     # Naming the point is the actionable part — the proposer has to know
     # WHICH of its patches to re-draft.
@@ -255,13 +255,8 @@ def test_unmoved_points_pass_the_pre_image_guard(ctx: ProposerToolContext) -> No
     assert _validate(ctx, _replace("You are a terse assistant."))["ok"] is True
 
 
-def test_pre_image_guard_ignores_untouched_points(tmp_path: Path) -> None:
-    """A point that moved but is NOT patched is none of the guard's business.
-
-    The guard is about the patch's own target. Rejecting a draft because
-    some unrelated part of the tree changed would make it unusable in any
-    workspace with a live operator.
-    """
+def test_pre_image_guard_rejects_a_stale_parent_even_outside_the_patch(tmp_path: Path) -> None:
+    """A sealed generation's identity includes source outside the edited point."""
     snapshot = tmp_path / "snapshot"
     harness = snapshot / "harness"
     harness.mkdir(parents=True)
@@ -284,7 +279,8 @@ def test_pre_image_guard_ignores_untouched_points(tmp_path: Path) -> None:
         '# zicato:mutable id="harness__other"\nOTHER = """moved"""\n', encoding="utf-8"
     )
     report = _validate(ctx, _replace("You are a terse assistant."))
-    assert report["ok"] is True, report
+    assert report["ok"] is False, report
+    assert any("stale" in error for error in report["errors"])
 
 
 def test_patch_carries_no_pre_image_field(ctx: ProposerToolContext) -> None:
@@ -303,35 +299,6 @@ def test_patch_carries_no_pre_image_field(ctx: ProposerToolContext) -> None:
     without = _validate(ctx, _replace("You are a terse assistant."))
     assert with_key["ok"] == without["ok"] is True
     assert with_key["errors"] == without["errors"] == []
-
-
-def test_content_hash_has_exactly_one_reader() -> None:
-    """``MutationPoint.content_hash``'s docstring described a check the
-    applier never performed. This module is now the check it described.
-
-    Pinned because the field is written by the enumerator and rendered by
-    the CLI and the dashboard — plenty of *mentions*, and for a long time
-    zero *readers*, which is exactly how the docstring stayed wrong.
-    """
-    import subprocess
-
-    root = Path(__file__).resolve().parent.parent / "src" / "zicato"
-    hits = subprocess.run(
-        # -R, not -r. GNU grep's -r does NOT follow symlinks it meets while
-        # recursing, so over a tree of symlinked sources it walks, matches
-        # nothing and exits 1 -- which reads exactly like "no reader found".
-        ["grep", "-Rn", r"\.content_hash", str(root)],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.splitlines()
-    # Attribute READS only — the enumerator writes it as a kwarg, which
-    # does not match ``.content_hash``.
-    readers = {line.split(":")[0].split("/")[-1] for line in hits if line.strip()}
-    assert "validate.py" in readers, hits
-    comparing = [ln for ln in hits if "==" in ln or "!=" in ln]
-    assert comparing, "no module actually COMPARES content_hash any more"
-    assert all("validate.py" in ln for ln in comparing), comparing
 
 
 # ---------------------------------------------------------------------------

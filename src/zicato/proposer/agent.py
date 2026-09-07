@@ -44,6 +44,7 @@ from zicato.proposer.proposer import ExperimentValidator
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.index.query import MutationTrackRecord
+    from zicato.mutation.policy import MutationPolicy
     from zicato.proposer.best_of_n import ScreenRunner
     from zicato.proposer.calibration import CalibrationSummary
     from zicato.proposer.external import ExternalProposerConfig
@@ -100,6 +101,7 @@ class ProposerContext:
     #: a supported production shape. ``_propose_child`` takes it as a
     #: REQUIRED argument so the real path cannot reach the fallback.
     generation_root: Path | None = None
+    mutation_policy: MutationPolicy | None = None
     validate_experiment: ExperimentValidator | None = None
     meta_loop_emitter: MetaLoopEmitter | None = None
     custom_judge_names: frozenset[str] | None = None

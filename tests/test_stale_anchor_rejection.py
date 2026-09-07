@@ -92,6 +92,9 @@ async def test_transaction_boundary_surfaces_key_error_as_a_finding(tmp_path: Pa
     from zicato.evolve.round import build_post_apply_validator
 
     class _KeyErrorGenstore:
+        def materialize_snapshot(self, _epoch: str, _generation: str) -> Path:
+            return tmp_path
+
         def derive_generation(self, **_kwargs: Any) -> Path:
             raise KeyError("Patch 'p2': mutation_id 'ghost' not found in target_root")
 

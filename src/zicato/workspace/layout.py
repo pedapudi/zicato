@@ -282,6 +282,14 @@ class WorkspaceLayout:
         """One epoch's rendered analysis page (``analysis.html``)."""
         return self.epoch_dir(epoch_id) / "analysis.html"
 
+    def mutation_policy(self, epoch_id: str, parent_generation_id: str, digest: str) -> Path:
+        """Immutable mutation permissions for one parent and selected contract."""
+        return (
+            self.generation_dir(epoch_id, parent_generation_id)
+            / "mutation-policies"
+            / f"{digest}.json"
+        )
+
     def mutations(self, epoch_id: str) -> Path:
         """One epoch's per-round mutation-points snapshot (``mutations.json``)."""
         return self.epoch_dir(epoch_id) / "mutations.json"
@@ -552,6 +560,10 @@ class WorkspaceLayout:
     def patches_dir(self, epoch_id: str, generation_id: str) -> Path:
         """One generation's per-patch JSON directory (``patches/``)."""
         return self.generation_dir(epoch_id, generation_id) / "patches"
+
+    def containment_manifest(self, epoch_id: str, generation_id: str) -> Path:
+        """One generation's parent-bound byte-range evidence (``containment.json``)."""
+        return self.generation_dir(epoch_id, generation_id) / "containment.json"
 
     def patch_json(self, epoch_id: str, generation_id: str, patch_id: str) -> Path:
         """One patch's JSON file inside a generation's ``patches/`` directory."""

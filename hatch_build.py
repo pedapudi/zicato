@@ -45,7 +45,13 @@ def build_identity(root: Path) -> str:
     """Hash source, embedded revision, toolchain, host, release profile and flags."""
     files = {
         path
-        for pattern in ("Cargo.*", "rust-toolchain*", "crates/**/*", "hatch_build.py")
+        for pattern in (
+            "Cargo.*",
+            "rust-toolchain*",
+            "crates/**/*",
+            "hatch_build.py",
+            "src/zicato/epoch/source_scope.json",
+        )
         for path in root.glob(pattern)
         if path.is_file()
     }

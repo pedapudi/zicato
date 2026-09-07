@@ -15,6 +15,7 @@ pub mod index_db;
 pub mod ledger;
 pub mod log;
 pub mod promotion_gate;
+pub mod range_containment;
 pub mod reader;
 pub mod reap;
 pub mod routes;

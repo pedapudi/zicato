@@ -87,16 +87,14 @@ struct Cli {
     #[arg(long, default_value_t = 6 * 3600)]
     max_run_seconds: u64,
 
-    /// Enable diff-containment attestation (INTEGRITY NOTARY record #2).
+    /// Audit source changes against registered trees and recorded mutation spans.
     ///
-    /// When set, each watchdog tick independently recomputes the on-disk diff
-    /// of every materialised child generation snapshot against its parent and
-    /// ALARMS when a file OUTSIDE the registered mutable surface differs — a
-    /// mutation that escaped its sandbox. Alarm-only / read-only in v1: it
-    /// writes a quarantine finding into the epoch health dir and surfaces a
-    /// hard ALERT on `/statusz`, but never blocks a promotion. Off by default
-    /// (the scan is purely additive — absent, the supervisor behaves exactly
-    /// as before).
+    /// Each watchdog tick checks materialized parent/child source inventories,
+    /// accepted patch bindings, and changed-byte ownership. Python publishes
+    /// mutation spans; the supervisor independently verifies their byte ranges.
+    /// Missing or inconsistent mutation evidence is reported as unverified.
+    /// Findings appear in the epoch health directory and on `/statusz`.
+    /// This audit is alarm-only and does not block promotion. Off by default.
     #[arg(long, default_value_t = false)]
     diff_containment: bool,
 

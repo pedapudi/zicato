@@ -96,7 +96,9 @@ def _bootstrap(
         json.dumps(
             {
                 "instance_id": "default",
-                "proposer": stand_in_proposer_block(tmp_path / "foe", contents=policies),
+                "proposer": stand_in_proposer_block(
+                    tmp_path / "foe", contents=policies, break_first=1
+                ),
                 "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
@@ -160,7 +162,9 @@ def _policy_text(workspace: Path, epoch_id: str, generation_id: str) -> str:
     worktree path the orchestrator records as ``Generation.snapshot_root``
     (what the gate's regression scan and any direct reader consume).
     """
+    from zicato.epoch.containment import attest_generation
     from zicato.epoch.genstore import default_generation_store
+    from zicato.epoch.journal import read_experiment
 
     store = default_generation_store(workspace)
     committed = store.read_file(epoch_id, generation_id, "agent/policy.py").decode()
@@ -170,6 +174,26 @@ def _policy_text(workspace: Path, epoch_id: str, generation_id: str) -> str:
     assert committed == mounted, (
         f"{generation_id}: the committed tree and the materialised snapshot " f"worktree diverged"
     )
+    experiment = read_experiment(workspace, epoch_id, generation_id)
+    assert experiment.parent_generation_id is not None
+    attestation = attest_generation(
+        workspace,
+        epoch_id=epoch_id,
+        parent_generation_id=experiment.parent_generation_id,
+        generation_id=generation_id,
+        parent_root=store.snapshot_path(epoch_id, experiment.parent_generation_id),
+        child_root=store.snapshot_path(epoch_id, generation_id),
+    )
+    assert attestation.status == "contained", attestation
+    episode = workspace / "epochs" / epoch_id / "episodes" / f"{generation_id}-0" / "episode.jsonl"
+    events = [json.loads(line) for line in episode.read_text().splitlines()]
+    verdicts = [
+        event["data"]["value"]
+        for event in events
+        if event["type"] == "tool/result" and event["data"]["name"] == "validate_patches"
+    ]
+    assert verdicts[0], "the selected slate slot did not exercise repair"
+    assert verdicts[-1] == []
     return committed
 
 

@@ -580,7 +580,7 @@ th{color:#888;font-weight:normal}\
 
     // Diff-containment: are mutations confined to the mutation sites?
     let dc = &v.diff_containment;
-    out.push_str("<h2>diff containment</h2><table>");
+    out.push_str("<h2>file containment</h2><table>");
     if !dc.scanned {
         out.push_str(
             "<tr><th>state</th><td class=\"dim\">not scanned \
@@ -614,6 +614,30 @@ th{color:#888;font-weight:normal}\
     }
     out.push_str("</table>");
     // The offending generations + files, when any.
+    if dc.scanned {
+        let violations = dc
+            .range_attestations
+            .iter()
+            .filter(|finding| finding.status == crate::range_containment::Status::Violated)
+            .count();
+        out.push_str(&format!(
+            "<h2>mutation containment</h2><table><tr><th>verified pairs</th><td>{}</td></tr>\
+<tr><th>unverified pairs</th><td>{}</td></tr><tr><th>violations</th><td>{}</td></tr></table>",
+            dc.range_pairs_verified, dc.range_pairs_unverified, violations,
+        ));
+        for attestation in &dc.range_attestations {
+            for finding in &attestation.findings {
+                out.push_str(&format!(
+                    "<p>{}/{} {}: {} — {}</p>",
+                    esc(&attestation.epoch_id),
+                    esc(&attestation.generation_id),
+                    esc(&finding.path),
+                    esc(&finding.code),
+                    esc(&finding.detail)
+                ));
+            }
+        }
+    }
     if !dc.quarantined.is_empty() {
         out.push_str(
             "<table><tr><th>generation</th><th>parent</th>\

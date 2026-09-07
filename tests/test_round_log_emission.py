@@ -147,6 +147,12 @@ class TestRoundLogEmitter:
         async def _aux(_system: str, _user: str, _model: str) -> str:
             return ""
 
+        validated: list[str] = []
+
+        async def _validate(candidate: Experiment) -> list[str]:
+            validated.append(candidate.generation_id)
+            return []
+
         asyncio.run(
             _propose_child(
                 proposer_agent=_Proposer(),
@@ -162,7 +168,7 @@ class TestRoundLogEmitter:
                 max_proposer_retries=1,
                 workspace_root=tmp_path,
                 generation_root=tmp_path,
-                validate_experiment=None,
+                validate_experiment=_validate,
                 meta_loop_emitter=None,
                 custom_judge_names=frozenset(),
                 prior_experiments=(),
@@ -172,6 +178,7 @@ class TestRoundLogEmitter:
                 round_emitter=_RoundLogEmitter(tmp_path, "e1", 3),
             )
         )
+        assert validated == ["v1"]
         events = RoundLog(tmp_path, "e1", 3).read()
         assert [event.type for event in events] == [
             "proposal_attempted",

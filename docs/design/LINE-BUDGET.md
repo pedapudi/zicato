@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 487,564 | +78,903 |
-| Production | 197,702 | 209,151 | +11,449 |
-| Production logic | 110,276 | 118,573 | +8,297 |
+| Total | 408,661 | 496,751 | +88,090 |
+| Production | 197,702 | 211,339 | +13,637 |
+| Production logic | 110,276 | 120,523 | +10,247 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -85,31 +85,31 @@ production-logic series per subsystem along a branch's first-parent commits.
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
 | src/zicato/dashboard | 70,682 | 37,640 | 26,315 | 30.1% |
-| src/zicato/query | 20,725 | 20,725 | 12,610 | 39.2% |
-| src/zicato/evolve | 11,967 | 11,967 | 7,131 | 40.4% |
+| src/zicato/query | 20,724 | 20,724 | 12,609 | 39.2% |
+| src/zicato/epoch | 14,015 | 14,015 | 7,309 | 47.8% |
+| src/zicato/evolve | 12,059 | 12,059 | 7,217 | 40.2% |
 | src/zicato/reflection | 10,288 | 10,288 | 6,750 | 34.4% |
-| src/zicato/epoch | 13,122 | 13,122 | 6,502 | 50.4% |
+| crates/supervisor | 16,378 | 13,947 | 6,516 | 53.3% |
 | src/zicato/tournament | 11,564 | 11,564 | 6,463 | 44.1% |
-| src/zicato/proposer | 11,379 | 11,379 | 5,852 | 48.6% |
-| crates/supervisor | 15,335 | 12,904 | 5,671 | 56.1% |
+| src/zicato/proposer | 11,252 | 11,252 | 5,842 | 48.1% |
 | src/zicato/cli | 8,179 | 8,179 | 5,172 | 36.8% |
 | src/zicato/analyzer | 7,631 | 7,631 | 4,793 | 37.2% |
 | src/zicato/tui | 4,394 | 4,394 | 3,136 | 28.6% |
 | src/zicato/selection | 5,463 | 5,463 | 3,106 | 43.1% |
 | src/zicato/index | 5,434 | 5,434 | 2,765 | 49.1% |
 | src/zicato/runtime | 5,406 | 5,406 | 2,485 | 54.0% |
-| src/zicato/core | 6,689 | 6,689 | 2,340 | 65.0% |
+| src/zicato/core | 6,682 | 6,682 | 2,340 | 65.0% |
 | src/zicato/telemetry | 4,732 | 4,732 | 2,272 | 52.0% |
 | src/zicato/contract_draft | 2,928 | 2,928 | 1,684 | 42.5% |
+| src/zicato/mutation | 2,888 | 2,888 | 1,346 | 53.4% |
 | src/zicato/builder | 2,343 | 2,343 | 1,332 | 43.1% |
 | src/zicato/health | 2,251 | 2,251 | 1,209 | 46.3% |
-| src/zicato/mutation | 2,611 | 2,611 | 1,137 | 56.5% |
 | src/zicato/board | 2,346 | 2,346 | 1,044 | 55.5% |
 | src/zicato/check | 1,566 | 1,566 | 956 | 39.0% |
 | src/zicato/adapters | 2,168 | 2,168 | 793 | 63.4% |
 | src/zicato/testing | 1,447 | 1,447 | 760 | 47.5% |
 | src/zicato/judge_runtime | 1,772 | 1,772 | 755 | 57.4% |
-| src/zicato/workspace | 1,724 | 1,724 | 732 | 57.5% |
+| src/zicato/workspace | 1,736 | 1,736 | 740 | 57.4% |
 | src/zicato/_tournament_worker.py | 1,298 | 1,298 | 675 | 48.0% |
 | src/zicato/synthetic | 1,139 | 1,139 | 544 | 52.2% |
 | src/zicato/scoring | 1,388 | 1,388 | 464 | 66.6% |
@@ -121,7 +121,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/config.py | 679 | 679 | 225 | 66.9% |
 | src/zicato/logging_stream.py | 445 | 445 | 215 | 51.7% |
 | src/zicato/runtime_factory.py | 421 | 421 | 210 | 50.1% |
-| hatch_build.py | 199 | 199 | 163 | 18.1% |
+| hatch_build.py | 205 | 205 | 169 | 17.6% |
 | src/zicato/workspace_loader.py | 362 | 362 | 143 | 60.5% |
 | src/zicato/util | 253 | 253 | 103 | 59.3% |
 | src/zicato/integrations | 143 | 143 | 100 | 30.1% |
@@ -410,3 +410,16 @@ dropped rows named.
 | Canonical record identity agreement (production) | 209,090 | +61 | 209,151 | One loss identity validator replaces consumer-local checks. Existing artifact traversal distinguishes canonical slots from audit-only aliases, and event indexes include the requested epoch in lookup and cache scope. |
 | Canonical record identity agreement (production logic) | 118,527 | +46 | 118,573 | Shared coordinate validation, confirmation pair matching, and epoch-scoped transcript resolution refuse records belonging to another requested execution. |
 | Canonical worker and aggregate fixtures (total) | 487,508 | +56 | 487,564 | Worker doubles and cached records use the runtime identifier for their actual generation, entry, draw, and seed. Valid aggregate fixtures use the canonical writer; a contradictory generation must fail before execution. Existing numerical and cache-count assertions remain, and the corrupted field record is checked through its canonical reader. |
+| Candidate source and mutation containment (total) | 487,564 | +9,027 | 496,591 | Issue #48: 5,627 lines are the shared 46-case Python and supervisor corpus. Other tests cover reconstruction, retained policy, selected mutation roots, stores, repair and concurrent candidate choice. Production grows by 2,148 lines. |
+| Candidate source and mutation containment (production) | 209,151 | +2,148 | 211,299 | Issue #48: captured parent policy constrains proposal projection, patch application and published source evidence. Selected-root forwarding through stores, validation, reconstruction and placebo derivation contributes 72 lines. Historical records without evidence remain unverified. |
+| Candidate source and mutation containment (production logic) | 118,573 | +1,916 | 120,489 | Issue #48: executable source inventory, patch reconstruction, retained-policy checks and supervisor attestation. Selected-root forwarding contributes 55 of these lines; findings do not alter promotion policy. |
+| Embedded source scope in native build identity (total) | 496,591 | +7 | 496,598 | Issue #48: include the source-scope JSON embedded by the supervisor in the existing build-input inventory and its invalidation regression. |
+| Embedded source scope in native build identity (production) | 211,299 | +6 | 211,305 | Issue #48: hash the embedded source scope so a scope edit cannot reuse a stale native executable. |
+| Embedded source scope in native build identity (production logic) | 120,489 | +6 | 120,495 | Issue #48: extend the existing explicit build-input list. |
+| Whole-file projection of nested mutation declarations (total) | 496,598 | +46 | 496,644 | Issue #48: expand the existing protected-point regression across removal, kind changes and selected roots. Authoritative application provides the comparison; relocation into unpatched source remains refused. |
+| Whole-file projection of nested mutation declarations (production) | 211,305 | +1 | 211,306 | Issue #48: defer unresolved inner declarations until whole-file replacement coverage is known. Captured parent policy and complete reconstruction still govern acceptance. |
+| Whole-file projection of nested mutation declarations (production logic) | 120,495 | +1 | 120,496 | Issue #48: retain each unresolved declaration and its reason for the coverage check. |
+| Committed generation file metadata (total) | 496,644 | +100 | 496,744 | Issue #48: six committed-metadata refusal cases, two store-backend controls and the existing query response assertion accompany the shared stored-mode implementation. |
+| Committed generation file metadata (production) | 211,306 | +33 | 211,339 | Issue #48: stored tree entries retain file type and mode. Publication explicitly includes bookkeeping and compares regular-file type, bytes and executable state with selected parent and child source. Queries retain their three existing response fields. |
+| Committed generation file metadata (production logic) | 120,496 | +27 | 120,523 | Issue #48: compare committed source metadata through the existing generation-store interface. Non-executable permission bits remain outside portable source identity. |
+| Required proposal validator in logging fixture (total) | 496,744 | +7 | 496,751 | Issue #48: supply the validation callback required by candidate acceptance and verify its invocation. All prior proposal lifecycle assertions remain intact. |

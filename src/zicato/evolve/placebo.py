@@ -49,6 +49,7 @@ payload is kind-dependent:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -169,6 +170,7 @@ def derive_placebo_snapshot(
     parent_id: str,
     generation_id: str,
     patches: list[Patch] | tuple[Patch, ...],
+    enumeration_roots: Sequence[Path] | None = None,
 ) -> Path:
     """Materialise the placebo child tree through the generation store.
 
@@ -185,6 +187,7 @@ def derive_placebo_snapshot(
         parent_generation_id=parent_id,
         child_generation_id=generation_id,
         patches=list(patches),
+        enumeration_roots=enumeration_roots,
     )
 
 

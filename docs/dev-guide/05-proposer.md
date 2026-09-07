@@ -311,9 +311,9 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 ## 5.3 The episode loop
 
 `FoeProposerAgent.propose` (`src/zicato/proposer/foe_agent.py`) runs one
-episode per call. Where the repair happens is the thing to hold onto: the
-model fixes its own work *inside* the episode, and zicato's checks are
-what remains outside it.
+episode per call. The episode verifier reports source reconstruction,
+forbidden-edit, and static validation findings while the proposer can still
+repair its working copy. Final application checks the same mutation policy.
 
 ```
 build_request(...)                 # instructions + task + grants + budget
@@ -323,11 +323,34 @@ foe.start_config(...)              # one process; its pid → active_runs
   │    findings → back to the model, up to `verify_retries` turns
   │    retries spent → the episode ends BLOCKED
   └─ return {hypothesis}            # the model never drafts a patch document
-project_onto_mutation_points(...)  # the copy IS the patch set
+project_working_copy(...)          # actual-applier reconstruction equals the copy
 parse_experiment_json(...)         # two-pass (§5.4)
-enforce_forbidden(...)             # the brief's forbidden-edits list
 await ctx.validate_experiment(...) # the post-apply hook (§5.3.3)
 ```
+
+The captured mutation policy binds the complete parent source, mutation
+snapshot, selected enumeration roots, and forbidden IDs. Support files outside
+the selected roots remain protected source. Before proposal work, the parent
+retains its resolved policy under a content hash; the accepted child's
+containment manifest references that same record. Projection reads the edited units through the
+enumerator, applies those patches with the authoritative applier, and checks
+the reconstructed file set, bytes, and executable state against the working
+copy. An assignment rename beside an editable literal therefore produces a
+repair finding. A whole-file replacement cannot change a forbidden nested
+point. Missing or stale mutation snapshots cannot authorize a proposal.
+
+Source comparisons use the generation store's artifact exclusions. Unchanged
+binary files remain source. Added or deleted files, executable changes,
+symbolic links, special files, and read failures cannot silently disappear
+from acceptance. Timestamps and non-executable permissions are not generation
+identity. The applier preserves raw line endings outside replaced bytes;
+the reconstructed source must match the working copy byte for byte.
+
+The final application guard checks every returned experiment, including
+custom proposers that omit their validation hook or return a different patch
+set. Repeated validation reuses a derived tree only when its patches, parent
+identity, and complete child source still match. Only a successful validation
+publishes the child path for tournament use.
 
 `ctx.max_retries` becomes the episode's `verify_retries`. It bounds turns
 inside one episode rather than whole re-proposals, which is why a broken
@@ -1274,8 +1297,8 @@ per round (evolve_once, evolve/round_entry.py):
         capture the instructions + task → proposer_inputs.jsonl
         foe.start_config(…)   → one process; its pid → active_runs
             └ the episode edits the copy, calls validate_patches, returns
-        project_onto_mutation_points(copy vs snapshot) → the patch set
-        parse_experiment_json → enforce_forbidden → scratch validate(candidate)
+        project_working_copy(policy, copy) → patches reproducing accepted source
+        parse_experiment_json → scratch validate(candidate)
             └ derive_scratch applies into /tmp/ztw-slate-*/child   ← slot 0's OWN tree
       the working copy and the scratch lease are both removed
     slots 1, 2: … each into its own disjoint scratch tree

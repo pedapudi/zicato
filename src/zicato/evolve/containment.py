@@ -19,9 +19,9 @@ Semantics mirrored from the supervisor, and kept in lockstep with it:
   basename is ignored.
 * When ``mutable_trees`` is empty the surface is the WHOLE snapshot —
   everything is in-bounds, the check is trivially contained.
-* v1 granularity is the COARSE file-level check: any out-of-bounds file
-  that differs is a violation. Tightening the check to a line range is
-  registered as follow-up work on the supervisor side.
+* This promotion policy checks files outside registered mutable trees.
+  The independent byte-range audit reads ``epoch.containment`` records;
+  its findings are alarm-only and do not change this policy.
 * FAIL-OPEN: an unreadable snapshot or parent yields a ``skipped_reason``
   (the attestation cannot be made), never a violation; an unreadable
   individual file is skipped from the hash map. Symlinks are not

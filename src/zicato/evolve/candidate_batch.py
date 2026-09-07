@@ -132,6 +132,16 @@ async def produce_candidate_batch(
             cross_epoch=prepared.weights.experiment_memory.cross_epoch,
         )
     )
+    from zicato.mutation.policy import MutationPolicy  # noqa: PLC0415
+
+    policy = MutationPolicy.capture(
+        prepared.parent_generation.snapshot_root,
+        prepared.mutations,
+        prepared.brief.forbidden_ids,
+        enumeration_roots=generation_phase.mutable_trees(
+            prepared.adapter, prepared.parent_generation.snapshot_root
+        ),
+    )
     siblings: list[PriorExperiment] = []
     sibling_signatures: list[tuple[frozenset[str], str]] = []
     accepted_mutation_sets: list[frozenset[str]] = []
@@ -170,6 +180,7 @@ async def produce_candidate_batch(
             parent_id=parent_id,
             next_id=next_id,
             mutations=list(prepared.mutations),
+            mutation_policy=policy,
             patterns=list(prepared.patterns),
             brief=prepared.brief,
             loss_summary=prepared.loss_summary,

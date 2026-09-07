@@ -71,7 +71,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import logging
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -515,6 +515,22 @@ def _text_pass_files(
             continue
         out.append((path, syntax))
     return out
+
+
+def relocate_enumeration_roots(
+    source_root: Path, target_root: Path, enumeration_roots: Sequence[Path] | None = None
+) -> list[Path]:
+    """Translate selected source paths into a copy of the same source tree."""
+    source_root = source_root.resolve()
+    selected = [
+        path.resolve()
+        for path in ((source_root,) if enumeration_roots is None else enumeration_roots)
+    ]
+    if not selected or any(
+        not path.is_relative_to(source_root) or not path.exists() for path in selected
+    ):
+        raise ValueError("mutation enumeration roots must exist inside the parent snapshot")
+    return [target_root / path.relative_to(source_root) for path in selected]
 
 
 def enumerate_mutations(
