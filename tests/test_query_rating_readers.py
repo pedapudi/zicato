@@ -5,7 +5,8 @@ The server-side join (DQ1 — the client never re-derives): the lineage/gens
 feed (``build_lineage_view``) and the tournament standings
 (``build_tournament_structure``) each attach the index-derived Bradley--Terry
 rating to their rows, and ``elo_for_epoch`` / ``generations_for_epoch`` carry
-``elo_se`` as an optional column. Everything is best-effort by contract
+``elo_se`` as a null field without independent measurement provenance.
+Everything is best-effort by contract
 (DQ3): an absent / cold / pre-v10 index attaches the null triple — present
 keys, ``None`` values (DQ2: one snake_case spelling on the wire) — and never
 raises. The rating is visibility-only; nothing here feeds the gate.
@@ -179,7 +180,7 @@ def test_rating_map_reads_the_triple(tmp_path: Path) -> None:
     layout = _workspace(tmp_path)
     _build_index(layout)
     ratings = rating_by_generation(WorkspacePaths(layout.root), EPOCH)
-    assert ratings[(EPOCH, "v1")] == {"elo": 1534.0, "elo_se": 122.5, "elo_games": 1}
+    assert ratings[(EPOCH, "v1")] == {"elo": 1534.0, "elo_se": None, "elo_games": 1}
     # The unplayed leaf reads present-but-null (NULL cells, not absence).
     assert ratings[(EPOCH, "v2")] == null_rating()
 
@@ -203,13 +204,13 @@ def test_rating_map_tolerates_a_pre_v12_index(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_elo_for_epoch_carries_elo_se(tmp_path: Path) -> None:
+def test_elo_for_epoch_suppresses_unproven_uncertainty(tmp_path: Path) -> None:
     from zicato.index.query import elo_for_epoch  # noqa: PLC0415
 
     layout = _workspace(tmp_path)
     _build_index(layout)
     rows = {r["generation_id"]: r for r in elo_for_epoch(layout.index_db_path, EPOCH)}
-    assert rows["v1"]["elo_se"] == 122.5
+    assert rows["v1"]["elo_se"] is None
     # Tolerant of NULL: the unplayed leaf reads present-but-null.
     assert rows["v2"]["elo_se"] is None
 
@@ -228,13 +229,13 @@ def test_elo_for_epoch_tolerates_a_pre_v12_index(tmp_path: Path) -> None:
         assert r["elo_se"] is None
 
 
-def test_generations_for_epoch_carries_elo_se(tmp_path: Path) -> None:
+def test_generations_for_epoch_suppresses_unproven_uncertainty(tmp_path: Path) -> None:
     from zicato.index.query import generations_for_epoch  # noqa: PLC0415
 
     layout = _workspace(tmp_path)
     _build_index(layout)
     rows = {r["generation_id"]: r for r in generations_for_epoch(layout.index_db_path, EPOCH)}
-    assert rows["v1"]["elo_se"] == 122.5
+    assert rows["v1"]["elo_se"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +249,7 @@ def test_lineage_nodes_carry_the_rating_triple(tmp_path: Path) -> None:
     view = build_lineage_view(WorkspacePaths(layout.root), EPOCH)
     nodes = {n["generation_id"]: n for n in view["generations"]}
     assert nodes["v1"]["elo"] == 1534.0
-    assert nodes["v1"]["elo_se"] == 122.5
+    assert nodes["v1"]["elo_se"] is None
     assert nodes["v1"]["elo_games"] == 1
     assert nodes["v0"]["elo"] == 1466.0
 
@@ -277,7 +278,7 @@ def test_standings_carry_the_rating_triple(tmp_path: Path) -> None:
     assert st["source"] == "index"
     by_gid = {s["generation_id"]: s for s in st["standings"]}
     assert by_gid["v1"]["elo"] == 1534.0
-    assert by_gid["v1"]["elo_se"] == 122.5
+    assert by_gid["v1"]["elo_se"] is None
     assert by_gid["v1"]["elo_games"] == 1
     assert by_gid["v0"]["elo"] == 1466.0
     # The pre-existing standings fields are untouched by the enrichment.

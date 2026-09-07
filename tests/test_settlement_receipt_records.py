@@ -238,7 +238,6 @@ def test_pure_cross_record_checks_preserve_unresolved_lineage() -> None:
 def test_field_readers_expose_corruption_instead_of_dropping_records(tmp_path: Path) -> None:
     from zicato.epoch._storage import RecordError
     from zicato.index.ingest import _load_field_tournaments
-    from zicato.query.gate_view import _read_pair_duels_from_durable
     from zicato.query.paths import WorkspacePaths
     from zicato.query.tournament_view import _enrich_override_status
 
@@ -249,7 +248,7 @@ def test_field_readers_expose_corruption_instead_of_dropping_records(tmp_path: P
     with pytest.raises(RecordError, match="field-v1.json"):
         _load_field_tournaments(tmp_path, "epoch")
     with pytest.raises(RecordError, match="field-v1.json"):
-        _read_pair_duels_from_durable(paths, "epoch", "v0", "v1")
+        read_field_tournament_record(path)
     projected = _enrich_override_status(paths, "epoch", "epoch:field:v1", {})
     assert "field-v1.json" in projected["unreadable"]
 

@@ -53,7 +53,7 @@ log = logging.getLogger("zicato.epoch.contract")
 # Bump only when Zicato's evaluator protocol changes the meaning of a run,
 # loss, or tournament decision. This intentionally excludes presentation,
 # query, dashboard, and integration-specific code.
-ZICATO_EVALUATOR_REVISION = 1
+ZICATO_EVALUATOR_REVISION = 2
 
 #: Separator between the canonical component forms before hashing.
 #: Chosen to be a byte sequence that cannot appear in any canonical

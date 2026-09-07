@@ -164,7 +164,17 @@ def tournament_cmd(
     )
     resolved_replicates = replicates if replicates is not None else strategy.replicates()
 
-    if mode == "full":
+    parent_historical = (
+        _load_historical_aggregate(workspace_root, resolved_epoch_id, parent_gen.id)
+        if mode == "fast"
+        else None
+    )
+    if (
+        parent_historical is None
+        or "base_seed" not in parent_historical
+        or parent_historical["base_seed"] != config.seed
+        or parent_historical.get("generation_id") != parent_gen.id
+    ):
         result = asyncio.run(
             run_tournament(
                 adapter=adapter,
@@ -180,14 +190,11 @@ def tournament_cmd(
                 # ``--mode full`` re-samples BOTH sides for noise (it bypasses
                 # the cache by design); force-fresh the champion too rather
                 # than reusing its cached per-board units.
-                champion_force_fresh=True,
+                champion_force_fresh=mode == "full",
                 replicates=resolved_replicates,
             )
         )
     else:
-        parent_historical = _load_historical_aggregate(
-            workspace_root, resolved_epoch_id, parent_gen.id
-        )
         result = asyncio.run(
             run_fast_mode(
                 adapter=adapter,
@@ -198,6 +205,7 @@ def tournament_cmd(
                 workspace_root=workspace_root,
                 epoch_id=resolved_epoch_id,
                 parent_historical_agg=parent_historical,
+                parent_generation_id=parent_gen.id,
                 disable_drift=disable_drift,
                 judge_only=judge_only,
                 replicates=resolved_replicates,
@@ -205,10 +213,12 @@ def tournament_cmd(
         )
 
     payload = dataclasses.asdict(result)
-    # ``per_entry_losses`` contains tuples of frozen dataclasses;
-    # ``asdict`` already unwrapped them into nested dicts. JSON-ify
-    # with ``default=str`` to cover Path fields without bespoke
-    # converters.
+    from zicato.telemetry.reducer import loss_profile_to_dict  # noqa: PLC0415
+
+    payload["per_entry_losses"] = {
+        entry_id: [loss_profile_to_dict(profile) for profile in profiles]
+        for entry_id, profiles in result.per_entry_losses.items()
+    }
     click.echo(json.dumps(payload, default=str, indent=2, sort_keys=True))
 
 

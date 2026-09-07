@@ -75,6 +75,11 @@ from zicato.core import (
     ScoringWeights,
     validate_board_entry,
 )
+from zicato.core.measurement import (
+    MeasurementDraw,
+    artifact_replicate_index,
+    recorded_artifact_measurement,
+)
 from zicato.import_path import import_dotted_path
 from zicato.judge_runtime.error_register import judge_error_snapshot
 from zicato.util import best_effort, now_iso
@@ -646,6 +651,7 @@ def _write_result(
     runtime_ms: int,
     aborted: bool,
     abort_reason: str,
+    measurement: MeasurementDraw | None = None,
 ) -> None:
     """Write the worker's result JSON the parent reads back.
 
@@ -678,6 +684,8 @@ def _write_result(
         "aborted": bool(aborted),
         "abort_reason": str(abort_reason),
     }
+    if measurement is not None:
+        payload["measurement"] = measurement.to_json()
     result_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = result_path.with_suffix(result_path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
@@ -723,6 +731,25 @@ async def _run(args: dict[str, Any]) -> None:
     events_path = Path(args["sink_events_path"])
     loss_path = Path(args["loss_path"])
     result_path = Path(args["result_path"])
+    slot = artifact_replicate_index(loss_path.name)
+    if slot is None:
+        raise ValueError("worker loss path does not identify a measurement draw")
+    if (
+        artifact_replicate_index(events_path.name, "events") != slot
+        or events_path.parent != loss_path.parent
+    ):
+        raise ValueError("worker events and loss paths disagree on the measurement draw")
+    from zicato.core.workspace import run_dir  # noqa: PLC0415
+
+    measurement = recorded_artifact_measurement(
+        run_dir(workspace_root, epoch_id, generation_id, str(args["entry"]["id"])),
+        loss_path,
+        MeasurementDraw.from_json(args["measurement"]) if "measurement" in args else None,
+    )
+    if "measurement" in args and measurement != MeasurementDraw.from_index(
+        slot, base_seed=args.get("seed")
+    ):
+        raise ValueError("worker seed differs from the recorded measurement")
     harmonograf_url = str(args.get("harmonograf_url", "") or "")
     harmonograf_grpc = str(args.get("harmonograf_grpc", "") or "")
     harmonograf_metadata = {
@@ -746,6 +773,11 @@ async def _run(args: dict[str, Any]) -> None:
         os.environ[SCRATCH_DIR_ENV] = str(scratch_dir)
 
     entry = validate_board_entry(args["entry"])
+    if int(entry.context.get("replicate_index", "0")) != slot:
+        raise ValueError("worker entry and measurement draw disagree")
+    from zicato.tournament.artifacts import archive_unit_artifacts  # noqa: PLC0415
+
+    archive_unit_artifacts(loss_path)
     # The run id arrives from the parent, which minted it via
     # zicato.core.workspace.run_id_for_unit and already stamped the
     # active_runs record the supervisor polices. Re-deriving it here from
@@ -889,7 +921,9 @@ async def _run(args: dict[str, Any]) -> None:
         # (judge_io.jsonl / judge_io.r{n}.jsonl) — the adapter reads it
         # off the config (the token_ledger live-object precedent) and
         # threads it into every custom inline judge it assembles.
-        judge_io_sink = JudgeIOFileSink(judge_io_path_for_loss(loss_path))
+        judge_io_sink = JudgeIOFileSink(
+            judge_io_path_for_loss(loss_path), measurement=measurement, run_id=run_id
+        )
 
     config = RuntimeConfig(
         instance_id=str(args.get("instance_id", "default")),
@@ -1055,7 +1089,14 @@ async def _run(args: dict[str, Any]) -> None:
     )
     # Stamp the unit's wall-clock position (issue #242) — every profile the
     # worker writes carries one, aborted or not.
-    loss = replace(loss, started_at=started_at, ended_at=ended_at)
+    loss = replace(
+        loss,
+        run_id=run_id,
+        started_at=started_at,
+        ended_at=ended_at,
+        execution_started=True,
+        measurement=measurement,
+    )
     # Attribute the worst-case penalty ``run_not_completed`` just bought
     # (issue #245): the reducer adds a heavy fixed term and floors
     # ``task_failure_ratio``, which lands as a large ``drift_loss`` next to an
@@ -1090,17 +1131,6 @@ async def _run(args: dict[str, Any]) -> None:
         from dataclasses import replace as _replace  # noqa: PLC0415
 
         loss = _replace(loss, judge_errors=judge_errors)
-    # Retain the measurement this write is about to truncate (issue #122),
-    # the loss-side twin of the events archive in ``_build_sinks``. THIS is
-    # the seam: the champion under ``--mode full`` is re-run every round and
-    # each round's worker overwrites the slot, so by the time the parent's
-    # ``_persist_unit_loss`` re-persists the same profile the predecessor is
-    # already gone. Best-effort — a failed archive never costs the run its
-    # loss.json.
-    from zicato.tournament.unit_cache import archive_outgoing_unit_loss  # noqa: PLC0415
-
-    with best_effort("unit_loss_archive"):
-        archive_outgoing_unit_loss(loss_path)
     reducer_mod.write_loss_profile(loss, loss_path)
 
     # Persist the run's user-facing RunResult as result.json beside
@@ -1125,7 +1155,10 @@ async def _run(args: dict[str, Any]) -> None:
                 unit_result_path,
             )
 
-            atomic_write_json(unit_result_path(loss_path), run_result_to_payload(run_result))
+            atomic_write_json(
+                unit_result_path(loss_path),
+                run_result_to_payload(replace(run_result, run_id=run_id), measurement=measurement),
+            )
 
     _write_result(
         result_path,
@@ -1134,6 +1167,7 @@ async def _run(args: dict[str, Any]) -> None:
         runtime_ms=runtime_ms,
         aborted=budget_exceeded,
         abort_reason=(WORKER_BUDGET_ABORT_REASON if budget_exceeded else ""),
+        measurement=measurement,
     )
 
     # Clean exit — remove our own active-runs file. If the worker had

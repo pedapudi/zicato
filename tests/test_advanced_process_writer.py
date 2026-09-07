@@ -134,7 +134,15 @@ async def test_tournament_retains_writer_through_repeated_cancellation(
             if entry_point == "run_matchup":
                 kwargs.update(left_gen=parent, right_gen=child)
             elif entry_point == "run_fast_mode":
-                kwargs.update(child_gen=child, parent_historical_agg={"scalar": 0.0})
+                kwargs.update(
+                    child_gen=child,
+                    parent_generation_id=parent.id,
+                    parent_historical_agg={
+                        "scalar": 0.0,
+                        "generation_id": parent.id,
+                        "base_seed": config.seed,
+                    },
+                )
             else:
                 kwargs.update(parent_gen=parent, child_gen=child)
             await getattr(runner, entry_point)(**kwargs)

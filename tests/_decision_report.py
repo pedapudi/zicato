@@ -25,6 +25,7 @@ class DecisionTrial:
     reason: str
     audit_json: str
     rating_eligibility: tuple[bool, ...] | None
+    evidence_json: str | None = None
 
     @property
     def comparisons_spent(self) -> int:

@@ -1,16 +1,11 @@
 """A read-only Plackett--Luce rating fold over the persisted match ledger.
 
-This module answers the design question "can tournaments generate a
-candidate-strength number?" (see ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md``
-§5 + ``docs/design/SELECTION-THEORY.md`` §7.1) with a pure, **read-only**
-rating layer derived at *index* time from the already-persisted per-match
-results. It is for **visibility** — a human-legible strength number (plus a
-standard error) across the lineage — and it **never** touches the promote gate
-or the selection path. Nothing here is consulted by the orchestrator while
-deciding a crowning; the gate and the gauntlet stay byte-identical. The columns
-keep their historical names (``elo`` / ``elo_games``, plus the additive
-``elo_se``) and the ratings are still reported on the conventional Elo scale, so
-downstream consumers do not have to learn a new unit.
+The fold derives descriptive point ratings and observation counts from the
+persisted match ledger. It never gates promotion. Matchup rows do not carry
+independent measurement provenance: racing rungs can reuse observations and
+finalists are selected using those outcomes. The stored and served ``elo_se``
+therefore remains null. Internal numerical curvature is not exposed as an
+inferential standard error. Ratings retain the conventional Elo scale.
 
 The engine: batch maximum-likelihood Plackett--Luce
 ---------------------------------------------------
@@ -33,7 +28,6 @@ The fitted strengths are mapped onto the Elo scale so a 400-point gap is the
 classic 10:1 odds::
 
     elo    = 1500 + theta * (400 / ln 10)
-    elo_se =         se    * (400 / ln 10)
 
 Three properties this engine buys over the sequential margin-K Elo it replaced:
 
@@ -44,12 +38,6 @@ Three properties this engine buys over the sequential margin-K Elo it replaced:
   ratings. The BT fit gives one answer regardless of ordering, so a full
   ``zicato repair index`` — or any re-derivation — reproduces identical ratings with
   no reliance on a stable game-ordering pass.
-* **Uncertainty.** The Fisher information yields a per-generation standard error
-  (``elo_se``). The ridge prior keeps the information matrix positive-definite,
-  so the SE is always finite — even for a contestant with a perfect or empty
-  record, or in a disconnected component of the duel graph (two clusters that
-  never played each other are each anchored to the field mean by the ridge
-  prior rather than diverging).
 * **Margins are ignored.** The fit uses win/loss and rank-group
   outcomes only. The margin of victory (``|delta_scalar|``) is still *extracted*
   from the ledger (:class:`EloGame` carries it) but is **not** an input to the
@@ -774,7 +762,8 @@ def fold_elo_into_index(conn: sqlite3.Connection) -> dict[str, EloRating]:
 
     Reads every ``tournaments`` row + the ``generations`` lineage off the
     open connection, folds the ratings (:func:`compute_elo`), and writes
-    each rated generation's ``elo`` / ``elo_se`` / ``elo_games`` columns.
+    each rated generation's point rating and count. ``elo_se`` is cleared
+    because the descriptive ledger does not prove independent measurements.
     **Read-only with respect to the ledger** — it only ever updates the three
     additive rating columns; it never touches a decision, a loss, or any other
     column, and nothing gate-side ever reads them back (Elo is for visibility,
@@ -801,7 +790,10 @@ def fold_elo_into_index(conn: sqlite3.Connection) -> dict[str, EloRating]:
         # write; an apply_schema / migration adds them. Return empty so a
         # caller on a stale schema degrades quietly.
         return {}
-    has_se = "elo_se" in gen_cols
+    # Match-ledger rows do not prove independent measurement provenance.
+    # Retain descriptive points/counts, and clear historical inferred errors.
+    if "elo_se" in gen_cols:
+        conn.execute("UPDATE generations SET elo_se = NULL")
 
     rows = _read_tournament_rows(conn)
     lineage = _read_lineage(conn)
@@ -815,20 +807,11 @@ def fold_elo_into_index(conn: sqlite3.Connection) -> dict[str, EloRating]:
         # Only write a row that exists; a game can reference a generation
         # with no ``generations`` row (rare — a deleted gen dir), which we
         # skip rather than insert a thin orphan.
-        if has_se:
-            conn.execute(
-                "UPDATE generations SET elo = ?, elo_se = ?, elo_games = ? "
-                "WHERE generation_id = ? AND epoch_id = ?",
-                (float(rating.rating), float(rating.se), int(rating.games), gid, epoch_id),
-            )
-        else:
-            # A v10/v11 index that has ``elo`` but not yet the v12 ``elo_se``
-            # column: write the two older columns and skip the SE.
-            conn.execute(
-                "UPDATE generations SET elo = ?, elo_games = ? "
-                "WHERE generation_id = ? AND epoch_id = ?",
-                (float(rating.rating), int(rating.games), gid, epoch_id),
-            )
+        conn.execute(
+            "UPDATE generations SET elo = ?, elo_games = ? "
+            "WHERE generation_id = ? AND epoch_id = ?",
+            (float(rating.rating), int(rating.games), gid, epoch_id),
+        )
     return ratings
 
 

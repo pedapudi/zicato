@@ -13,6 +13,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
+from zicato.core.loss import has_execution_evidence
+from zicato.core.measurement import recorded_measurement
 from zicato.epoch._storage import RecordError
 from zicato.util import best_effort
 from zicato.workspace import WorkspaceLayout, generation_ids
@@ -478,7 +480,10 @@ def _collect_epoch_health_inputs(
             if not lpath.exists():
                 continue
             try:
-                gen_losses.append(read_loss_profile(lpath))
+                profile = read_loss_profile(lpath)
+                recorded_measurement(0, measurement=profile.measurement, match_id=profile.match_id)
+                if has_execution_evidence(profile):
+                    gen_losses.append(profile)
             except (OSError, ValueError, KeyError):
                 continue
         if gen_losses:

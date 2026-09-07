@@ -244,7 +244,8 @@ def _write_args_file(
 # ---------------------------------------------------------------------------
 
 
-def test_worker_runs_entry_end_to_end(tmp_path: Path) -> None:
+@pytest.mark.parametrize("replicate", [0, 4999])
+def test_worker_runs_entry_end_to_end(tmp_path: Path, replicate: int) -> None:
     """A directly-spawned worker writes active_runs with its own pid, runs the
     entry, writes loss.json + result file, exits 0, and cleans up active_runs."""
     workspace = tmp_path / ".zicato"
@@ -260,28 +261,65 @@ def test_worker_runs_entry_end_to_end(tmp_path: Path) -> None:
         generation=generation,
         entry=entry,
         result_path=result_path,
-        adapter_factory="tests._subprocess_worker_support:make_stub_adapter",
+        adapter_factory="tests._subprocess_worker_support:make_completing_adapter",
     )
+
+    from zicato.core.measurement import MeasurementDraw, unit_artifact_name
+
+    identity = MeasurementDraw.from_index(replicate, base_seed=None).to_json()
+    args = json.loads(args_path.read_text())
+    args["measurement"] = identity
+    args["entry"]["context"] = {"replicate_index": str(replicate)}
+    args["loss_path"] = str(
+        Path(args["loss_path"]).parent / "seed-none" / unit_artifact_name("loss", replicate)
+    )
+    args["sink_events_path"] = str(
+        Path(args["sink_events_path"]).parent
+        / "seed-none"
+        / unit_artifact_name("events", replicate)
+    )
+    args["run_id"] = run_id_for_unit(generation.id, entry.id, replicate, base_seed=None)
+    args_path.write_text(json.dumps(args))
 
     proc = _spawn_worker_blocking(args_path)
     assert proc.returncode == 0, "worker should exit cleanly"
 
-    run_id = f"{generation.id}--{entry.id}"
+    run_id = args["run_id"]
 
     # loss.json was written by the worker.
-    loss_path = loss_profile_path(workspace, "e0", generation.id, entry.id)
+    loss_path = Path(args["loss_path"])
     assert loss_path.exists()
+    assert json.loads(loss_path.read_text())["execution_started"] is True
 
     # The result file carries the agreed schema and points at loss.json.
     result = json.loads(result_path.read_text(encoding="utf-8"))
     assert result["schema"] == "zicato.tournament_worker.result/1"
     assert result["loss_profile_path"] == str(loss_path)
+    from zicato.tournament.unit_cache import read_run_result, unit_result_path
+
+    capture = read_run_result(unit_result_path(loss_path))
+    assert capture is not None and capture["measurement"] == identity
+    assert result["measurement"] == identity
+    assert json.loads(loss_path.read_text())["measurement"] == identity
+    assert Path(args["sink_events_path"]).name == unit_artifact_name("events", replicate)
     assert result["aborted"] is False
     assert result["abort_reason"] == ""
     assert isinstance(result["runtime_ms"], int)
 
     # On a clean exit the worker removed its own active_runs file.
     assert not active_run_path(workspace, run_id).exists()
+
+    if replicate == 0:
+        first_capture = {
+            path.name: path.read_bytes() for path in loss_path.parent.iterdir() if path.is_file()
+        }
+        repeated = _spawn_worker_blocking(args_path)
+        assert repeated.returncode == 0
+        archives = list((loss_path.parent / "attempts").glob("loss-*"))
+        assert len(archives) == 1
+        assert all(
+            (archives[0] / name).read_bytes() == body for name, body in first_capture.items()
+        )
 
 
 def test_worker_captures_unknown_files_before_grading(tmp_path: Path) -> None:
@@ -646,7 +684,7 @@ def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
         adapter_factory="tests._subprocess_worker_support:make_sleeping_adapter",
     )
 
-    run_id = f"{generation.id}--{entry.id}"
+    run_id = run_id_for_unit(generation.id, entry.id)
     run_path = active_run_path(workspace, run_id)
 
     # Spawn with a fresh session/process-group, exactly as the runner does
@@ -752,10 +790,13 @@ def test_full_tournament_persists_charge_before_real_holdout_worker(
             tags=(HOLDOUT_TAG,),
         ),
     ]
+    from zicato.core.measurement import MeasurementDraw
+
     for entry in board:
         write_loss_profile(
             LossProfile(
-                run_id=run_id_for_unit("v0", entry.id),
+                run_id=run_id_for_unit("v0", entry.id, base_seed=None),
+                measurement=MeasurementDraw.from_index(0, base_seed=None),
                 entry_id=entry.id,
                 generation_id="v0",
                 epoch_id="e0",
@@ -768,7 +809,7 @@ def test_full_tournament_persists_charge_before_real_holdout_worker(
                 drift_loss=2.0,
                 pass_fail=True,
             ),
-            loss_profile_path(workspace, "e0", "v0", entry.id),
+            loss_profile_path(workspace, "e0", "v0", entry.id).parent / "seed-none" / "loss.json",
         )
 
     launches: list[tuple[str, int | None]] = []
@@ -932,15 +973,19 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     # escalation(0.3) ≈ 2.1s, not 3600s.
     assert elapsed < 30.0
     # The parent cleaned up the worker's active_runs file...
-    assert not active_run_path(workspace, f"{generation.id}--{entry.id}").exists()
+    assert not active_run_path(
+        workspace, run_id_for_unit(generation.id, entry.id, base_seed=None)
+    ).exists()
     # ...and its own kill-request marker (a recycled run id must not inherit
     # a stale request the supervisor would act on).
     from zicato.runtime.paths import kill_request_path
 
-    assert not kill_request_path(workspace, f"{generation.id}--{entry.id}").exists()
+    assert not kill_request_path(
+        workspace, run_id_for_unit(generation.id, entry.id, base_seed=None)
+    ).exists()
     # The per-run ephemeral snapshot working copy is discarded even on
     # the abort path — _run_single's finally block runs unconditionally.
-    run_id = f"{generation.id}--{entry.id}"
+    run_id = run_id_for_unit(generation.id, entry.id, base_seed=None)
     leaked = list(
         Path(tempfile.gettempdir()).glob(f"{runner_mod._EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-*")
     )
@@ -1005,7 +1050,7 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
     workspace.mkdir()
     generation = make_generation(workspace)
     entry = _entry(budget_s=1)
-    run_id = f"{generation.id}--{entry.id}"
+    run_id = run_id_for_unit(generation.id, entry.id, base_seed=None)
 
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
 
@@ -1102,7 +1147,7 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
     workspace.mkdir()
     generation = make_generation(workspace)
     entry = _entry(budget_s=60)
-    run_id = f"{generation.id}--{entry.id}"
+    run_id = run_id_for_unit(generation.id, entry.id, base_seed=None)
     record_path = active_run_path(workspace, run_id)
     kill_path = kill_request_path(workspace, run_id)
     if cancel_during == "delegation":
@@ -1240,7 +1285,9 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
             assert not snapshot.exists()
             assert not args_path.exists()
             assert not kill_path.exists()
-            loss_path = runner_mod._unit_loss_path(workspace, "e0", generation.id, entry.id, 0)
+            loss_path = runner_mod._unit_loss_path(
+                workspace, "e0", generation.id, entry.id, 0, base_seed=None
+            )
             assert not loss_path.exists()
         finally:
             allow_spawn_return.set()
@@ -1354,7 +1401,7 @@ def test_run_single_handles_externally_killed_worker(
     generation = make_generation(workspace)
     entry = _entry(budget_s=3600)  # long budget so neither side's timeout fires
 
-    run_id = f"{generation.id}--{entry.id}"
+    run_id = run_id_for_unit(generation.id, entry.id, base_seed=None)
 
     # Patch create_subprocess_exec so that as soon as the worker has
     # written its active_runs file we SIGKILL it — simulating exactly
@@ -1451,7 +1498,9 @@ def test_parent_escalates_to_sigkill_when_worker_ignores_sigterm(
     # grace(0.3) ≈ 1.9s; the bound leaves headroom for a loaded machine
     # while still catching a reintroduced multi-second dead wait.
     assert elapsed < 10.0
-    assert not active_run_path(workspace, f"{generation.id}--{entry.id}").exists()
+    assert not active_run_path(
+        workspace, run_id_for_unit(generation.id, entry.id, base_seed=None)
+    ).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1495,6 +1544,7 @@ def test_worker_cooperative_budget_produces_clean_aborted_result(
 
     loss = read_loss_profile(Path(result["loss_profile_path"]))
     assert loss.wall_clock_budget_exceeded is True
+    assert loss.execution_started is True
     # A genuine cooperative-budget exhaustion is the ONE cache-eligible abort
     # cause; the worker stamps it so the cache layer reuses it (re-running
     # re-hits the same budget) rather than treating it as an infra abort.
@@ -1608,7 +1658,7 @@ def test_run_does_not_pollute_canonical_generation_snapshot(tmp_path: Path) -> N
     # system temp dir — _run_single's finally block discards it. The
     # glob is scoped to this run's run_id so a concurrent test's temp
     # dir cannot cause a false failure.
-    run_id = f"{generation.id}--{entry.id}"
+    run_id = run_id_for_unit(generation.id, entry.id, base_seed=None)
     leaked = list(
         Path(tempfile.gettempdir()).glob(f"{runner_mod._EPHEMERAL_SNAPSHOT_PREFIX}{run_id}-*")
     )

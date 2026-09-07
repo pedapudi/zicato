@@ -1,32 +1,30 @@
-"""ON-path tests for the driver's Bradley--Terry pre-gate replication loop.
+"""Required evidence confirmation across fresh, replayed, and unusable draws.
 
-The driver (:func:`zicato.selection.resolve_tournament`) is byte-identical to
-today when ``pre_gate`` is ``None`` (the default). These tests pass a
-``pre_gate`` ON to prove the defer→replicate→refit loop:
-
-* a clearly-separated win still promotes through the pre-gate,
-* a noisy near-tie spends its closest-CI replicates, then converges to a crown,
-* a duel that never separates exhausts its budget and lands ``inconclusive`` +
-  fires the dead-letter callback,
-* a field structure (swiss) reaches the same hold on its crowning promote,
-* with no ``replicate_duel`` runner the pre-gate terminates (no dangling defer),
-* a gauntlet still promotes/rejects untouched when the pre-gate cannot fit
-  (single duel, below the credibility floor),
-* the default (``pre_gate=None``) path is unchanged.
-
-All synthetic — no live runs.
+Synthetic matchups exercise production strategies and the confirmation driver.
+Confirmed improvements promote; incomplete evidence remains terminally deferred.
+An absent requirement preserves the strategy's original decision.
 """
 
 from __future__ import annotations
 
 import asyncio
 import itertools
+from dataclasses import replace
 
+import pytest
+
+from zicato.core.measurement import MeasurementDraw
+from zicato.core.scoring_config import ScoringWeights, recommended_scaffold_weights
 from zicato.core.types import TournamentStructure
 from zicato.selection import Contestant, Matchup, MatchupResult, make_strategy
-from zicato.selection.driver import EvidencePreGate, EvidenceResolution, resolve_tournament
+from zicato.selection.driver import (
+    EvidencePreGate,
+    EvidenceResolution,
+    evaluate_tournament,
+    resolve_tournament,
+)
 from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
-from zicato.tournament.gate import GateOutcome
+from zicato.tournament.gate import GateOutcome, evaluate_gate
 
 
 def _champion(gid: str = "v0") -> Contestant:
@@ -66,8 +64,10 @@ def _replicate_result(left_id: str, right_id: str, *, child_won: bool) -> Matchu
         left_scalar, right_scalar, delta, dec = 1.0, 0.5, -0.5, "promoted"
     else:
         left_scalar, right_scalar, delta, dec = 0.5, 1.0, 0.5, "rejected"
+    slot = next(_REPLICATE_SLOTS)
     return MatchupResult(
-        matchup_id=f"bt-replicate:r{next(_REPLICATE_SLOTS)}:{left_id}:{right_id}",
+        measurement_draw=MeasurementDraw.from_index(slot, base_seed=None),
+        matchup_id=f"bt-replicate:r{slot}:{left_id}:{right_id}",
         left_id=left_id,
         right_id=right_id,
         left_agg={"scalar": left_scalar, "pass_rate": 1.0},
@@ -77,13 +77,12 @@ def _replicate_result(left_id: str, right_id: str, *, child_won: bool) -> Matchu
 
 
 # ---------------------------------------------------------------------------
-# A single-duel gauntlet is below the credibility floor → pre-gate is a no-op
+# A single duel cannot satisfy required confirmation without further evidence
 # ---------------------------------------------------------------------------
 
 
-def test_gauntlet_single_duel_promotes_untouched_under_pregate() -> None:
-    # One duel is < MIN_CREDIBLE_DUELS, so the pre-gate cannot fit a credible
-    # rating and leaves the gauntlet's promotion verdict alone.
+def test_gauntlet_single_duel_keeps_champion_without_confirmation_runner() -> None:
+    # A missing runner cannot turn statistical insufficiency into permission.
     s = make_strategy(TournamentStructure(structure="gauntlet"))
     champ = _champion("v0")
     challenger = _challenger("v1")
@@ -102,9 +101,86 @@ def test_gauntlet_single_duel_promotes_untouched_under_pregate() -> None:
             pre_gate=EvidencePreGate(threshold=0.9, replicate_budget=3),
         )
     )
-    # Below the credibility floor → the gauntlet promotion stands verbatim.
-    assert dec.promoted_generation_id == "v1"
-    assert dec.decision == "promoted"
+    assert dec.promoted_generation_id is None
+    assert dec.decision == "deferred"
+
+
+@pytest.mark.parametrize(
+    "unusable",
+    [
+        "tie",
+        "all_ties",
+        "incomplete",
+        "nonfinite",
+        "unexpected_pair",
+        "zero_budget",
+        "missing_runner",
+    ],
+)
+def test_required_confirmation_retains_attempts_when_evidence_is_incomplete(
+    unusable: str,
+) -> None:
+    initial: list[MatchupResult] = []
+    calls: list[MatchupResult] = []
+
+    async def request_field(_count: int):
+        return _champion(), [_challenger("v1")]
+
+    async def run_matchup(matchup: Matchup) -> MatchupResult:
+        result = _result(matchup, left_scalar=1.0, right_scalar=0.5)
+        if unusable == "all_ties":
+            aggregate = {"scalar": 1.0, "pass_rate": 1.0}
+            result = replace(
+                result,
+                left_agg=aggregate,
+                right_agg=aggregate,
+                outcome=evaluate_gate(aggregate, aggregate, ScoringWeights(promote_margin=0.0)),
+            )
+        initial.append(result)
+        return result
+
+    async def replicate_duel(left: str, right: str) -> MatchupResult:
+        result = _replicate_result(left, right, child_won=True)
+        if unusable in {"tie", "all_ties"}:
+            result = replace(
+                result,
+                right_agg=dict(result.left_agg),
+                outcome=GateOutcome("rejected", "tie", delta_scalar=0.0, delta_pass_rate=0.0),
+            )
+        elif unusable == "incomplete":
+            result = replace(result, right_agg={"incomplete_entries": ["task"], "scalar": 0.0})
+        elif unusable == "nonfinite":
+            result = replace(result, outcome=replace(result.outcome, delta_scalar=float("nan")))
+        elif unusable == "unexpected_pair":
+            result = replace(result, right_id="v2")
+        calls.append(result)
+        return result
+
+    budget = 0 if unusable == "zero_budget" else 5
+    result = asyncio.run(
+        evaluate_tournament(
+            make_strategy(TournamentStructure(structure="gauntlet")),
+            request_field=request_field,
+            run_matchup=run_matchup,
+            pre_gate=EvidencePreGate(threshold=0.8, replicate_budget=budget),
+            replicate_duel=None if unusable == "missing_runner" else replicate_duel,
+        )
+    )
+    assert result.decision.decision == "deferred"
+    assert result.decision.promoted_generation_id is None
+    assert result.evidence is not None
+    verdict = result.evidence.verdict
+    assert verdict.confirmation_status == "incomplete"
+    assert not verdict.credible
+    assert verdict.replicates_spent == len(calls)
+    assert len(verdict.attempts) == 1 + len(calls)
+    assert sum(attempt.budget_spent for attempt in verdict.attempts) == len(calls)
+    assert verdict.attempts[0].eligibility == "selection_only"
+    expected_eligibility = "tie" if unusable == "all_ties" else unusable
+    assert all(attempt.eligibility == expected_eligibility for attempt in verdict.attempts[1:])
+    assert result.decision.matchups == tuple(initial + calls)
+    if unusable == "all_ties":
+        assert verdict.n_duels == 0
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +223,54 @@ def test_pregate_replicates_then_promotes_on_separation() -> None:
     assert all({a, b} == {"v0", "v1"} for a, b in replicate_calls)
     # The replicate duels were appended to the audit trail.
     assert len(dec.matchups) > 1
+
+
+@pytest.mark.parametrize("applied_count", [1, 2, 4])
+def test_recommended_racing_confirms_full_and_partial_fields_within_budget(
+    applied_count: int,
+) -> None:
+    specification = recommended_scaffold_weights().tournament_structure
+    strategy = make_strategy(specification, board_ids=[f"entry-{i}" for i in range(10)])
+    champion = _champion()
+    challengers = [_challenger(f"v{i}") for i in range(1, applied_count + 1)]
+    evidence_calls: list[tuple[str, str]] = []
+
+    async def request_field(n: int):
+        assert n == 4
+        return champion, challengers
+
+    async def run_matchup(matchup: Matchup) -> MatchupResult:
+        assert matchup.replicates == 2
+        child_scalar = 0.4 if matchup.right.generation_id == "v1" else 0.8
+        return _result(matchup, left_scalar=1.0, right_scalar=child_scalar)
+
+    async def replicate_duel(left: str, right: str) -> MatchupResult:
+        evidence_calls.append((left, right))
+        return _replicate_result(left, right, child_won=True)
+
+    budget = specification.params["promote_confidence_replicates"]
+    result = asyncio.run(
+        evaluate_tournament(
+            strategy,
+            request_field=request_field,
+            run_matchup=run_matchup,
+            pre_gate=EvidencePreGate(
+                threshold=specification.params["promote_confidence_threshold"],
+                replicate_budget=budget,
+            ),
+            replicate_duel=replicate_duel,
+        )
+    )
+    assert result.decision.promoted_generation_id == "v1"
+    assert result.evidence is not None
+    assert result.evidence.verdict.credible
+    assert result.evidence.verdict.difference is not None
+    assert result.evidence.verdict.difference.ci_lo > 0.0
+    # Partial application cannot reduce the family planned before outcomes.
+    assert result.evidence.verdict.difference.comparison_count == 4 * (budget + 1)
+    assert result.evidence.verdict.replicates_spent == len(evidence_calls)
+    assert 0 < len(evidence_calls) <= budget
+    assert set(evidence_calls) == {("v0", "v1")}
 
 
 # ---------------------------------------------------------------------------
@@ -270,12 +394,8 @@ def test_pregate_holds_a_noisy_swiss_crowning_promote() -> None:
 
 
 def test_pregate_drops_replicates_that_replay_an_audited_draw() -> None:
-    # A degenerate replicate runner that re-presents the SAME draw (one fixed
-    # matchup id — the pre-fix fast-mode cache-replay shape) must not let the
-    # audit grow by repetition: the duplicate is dropped, the budget is still
-    # spent (the loop terminates), and with the pair stuck below the
-    # credibility floor the strategy's verdict passes through verbatim — the
-    # fit never "separates" on one sample repeated.
+    # Replaying a draw spends budget but cannot supply another observation.
+    # The unresolved requirement therefore retains the champion.
     s = make_strategy(TournamentStructure(structure="gauntlet"))
     champ = _champion("v0")
     challenger = _challenger("v1")
@@ -304,23 +424,19 @@ def test_pregate_drops_replicates_that_replay_an_audited_draw() -> None:
     )
     # The whole budget was spent chasing evidence the runner never supplied...
     assert calls["n"] == 10
-    # ...but only ONE copy of the draw entered the audit, the pair never
-    # reached the credibility floor, and the gate verdict passed through
-    # unchanged (never a repetition-driven "confirmed" crown).
-    assert dec.decision == "promoted"
-    assert dec.promoted_generation_id == "v1"
-    assert len(dec.matchups) == 1  # pass-through: the original decision's audit
+    # Every attempt remains recorded; only one supplies independent evidence.
+    assert dec.decision == "deferred"
+    assert dec.promoted_generation_id is None
+    assert len(dec.matchups) == 11  # selection plus every returned attempt
 
 
 # ---------------------------------------------------------------------------
-# No replicate runner → terminate, never dangle a "deferred"
+# Missing replicate runner produces a terminal deferred decision
 # ---------------------------------------------------------------------------
 
 
 def test_pregate_without_replicate_runner_terminates() -> None:
-    # The pre-gate cannot reach the credibility floor without a replicate
-    # runner, so the gauntlet's single-duel promotion stands verbatim — never a
-    # dangling non-terminal "deferred".
+    # Missing execution capability produces a durable inconclusive terminal.
     s = make_strategy(TournamentStructure(structure="gauntlet"))
     champ = _champion("v0")
     challenger = _challenger("v1")
@@ -345,11 +461,11 @@ def test_pregate_without_replicate_runner_terminates() -> None:
             on_inconclusive=on_inconclusive,
         )
     )
-    # Terminal, never a dangling deferred; below the floor the gate verdict
-    # stands unchanged and no dead-letter fires.
-    assert dec.decision == "promoted"
-    assert dec.promoted_generation_id == "v1"
-    assert fired == []
+    # The terminal remains available through the dead-letter callback.
+    assert dec.decision == "deferred"
+    assert dec.promoted_generation_id is None
+    assert len(fired) == 1
+    assert fired[0].verdict.confirmation_status == "incomplete"
 
 
 # ---------------------------------------------------------------------------

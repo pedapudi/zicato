@@ -28,10 +28,15 @@
         "drift_loss_delta": -1.6,
         "drift_movements": [],
         "eliminated_in_round": null,
-        "evidence": null,
+        "evidence": {
+          "confirmation_status": "disabled",
+          "present": false,
+          "reason": "no promotion confidence threshold in the evaluation contract"
+        },
         "final_rank": 1,
         "generalization_gap": 0.0,
         "holdout": {
+          "confirmation_status": "satisfied",
           "confirmed": true,
           "holdout_consulted": true,
           "holdout_scalar": 0.4,
@@ -40,6 +45,7 @@
           "ladder_budget_total": 16,
           "ladder_query_reserved": true,
           "ladder_released": true,
+          "reason": "",
           "threshold": 0.01,
           "train_scalar": 0.4
         },
@@ -483,6 +489,7 @@
   },
   "gen_scores": {
     "v0": {
+      "base_seed": null,
       "drift_loss_mean": 2.0,
       "entry_count": 5,
       "expectation_count": 5,
@@ -548,6 +555,7 @@
       "scalar_provenance": "builtin"
     },
     "v1": {
+      "base_seed": null,
       "drift_loss_mean": 0.4,
       "entry_count": 5,
       "expectation_count": 5,
@@ -613,6 +621,7 @@
       "scalar_provenance": "builtin"
     },
     "v2": {
+      "base_seed": null,
       "drift_loss_mean": 0.8,
       "entry_count": 5,
       "expectation_count": 5,
@@ -678,6 +687,7 @@
       "scalar_provenance": "builtin"
     },
     "v3": {
+      "base_seed": null,
       "drift_loss_mean": 1.2,
       "entry_count": 5,
       "expectation_count": 5,
@@ -743,6 +753,7 @@
       "scalar_provenance": "builtin"
     },
     "v4": {
+      "base_seed": null,
       "drift_loss_mean": 1.6,
       "entry_count": 5,
       "expectation_count": 5,
@@ -871,7 +882,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "06de0b7a809cb96c7f6e39a1b81b4a35513e1976dd2fa149ca1ca3945cb58b33"
+          "contract_hash": "81b11c418dacd0ad6146db86ffbfaea9d90ab6c55c122fec99c64583bd0f2e12"
         },
         "scope": {},
         "seq": 1,

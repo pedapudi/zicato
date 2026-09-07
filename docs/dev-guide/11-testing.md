@@ -696,165 +696,86 @@ the gauntlet oracle.
 
 ### 11.4.2 The decision-procedure power harness
 
-Where the convergence oracle proves the loop converges under exact
-measurement, `tests/test_decision_procedure_power.py` proves the decision
-procedure itself — the margin gate, replication, pass-rate monotonicity
-scope, and the Bradley–Terry evidence pre-gate — has the right OPERATING
-CHARACTERISTICS when measurement is noisy, the way it is in production.
+`tests/test_decision_procedure_power.py` characterizes the margin gate,
+replication, pass-rate monotonicity and independent confirmation under a fixed
+noise model. Each observation uses the example target's `draw_measured_tokens`,
+output synthesis and board predicates. Its seed is determined by the workspace
+seed, generation id, entry id and replicate index. The resulting rates describe
+these inputs and seed sets; they do not qualify arbitrary targets or optional
+selection features.
 
-**The methodology.** Every trial is reproducible: the noise model is
-the example harness's own `draw_measured_tokens`, seeded from the stable
-tuple `(workspace seed, generation id, entry id, replicate index)` via
-`stable_noise_seed`. Nothing derives from the clock or a global RNG, so the
-"rates" the test asserts are DETERMINISTIC functions of the chosen seeds —
-calibrated documentation of the procedure's behaviour rather than flaky
-statistics:
+The policy trials call production functions directly: `fold_matchup_replicates`
+in `tournament/scoring.py`, `aggregate_generation_score`, `evaluate_gate`, the
+gauntlet strategy and `evaluate_tournament`. Replicate reduction has one owner
+for both the scheduler and the policy trials. Test observations are immutable;
+converting them into loss profiles does not require a workspace, worker,
+cache file or dashboard record.
 
-```python
-"""Operating characteristics of the DECISION PROCEDURE under seeded noise.
-...
-Every trial is exactly reproducible: the noise model is the example
-harness's own :func:`draw_measured_tokens`, seeded from the stable
-identifier tuple ``(workspace seed, generation id, entry id, replicate
-index)`` via :func:`stable_noise_seed`. ... so the "rates" asserted below
-are deterministic functions of the chosen seeds, and the assertions are
-calibrated documentation of the procedure's behaviour, not flaky statistics.
-"""
-```
-— `tests/test_decision_procedure_power.py` (module docstring)
+`tests/_decision_report.py` defines immutable reports containing the requested
+seed set, effective scoring inputs, implementation digest, observations,
+decisions and actual `EvidenceResolution`. Every requested seed must appear
+exactly once in order, including rejection, deferral and inconclusive results.
+Evidence eligibility comes from the production confirmation attempts: ordinary
+selection attempts remain visible with `selection_only` status and cannot
+increase the number of independent duels. Budget spent and exclusion reasons
+remain available even when confirmation fails.
 
-It drives the REAL tournament machinery in-process — `run_matchup` (board-
-unit scheduling, replicate averaging, the unchanged gate) and
-`resolve_tournament` (the gauntlet strategy + the evidence pre-gate's
-defer→replicate loop) — swapping ONLY the subprocess-worker boundary
-`runner._run_single` (the suite's documented monkeypatch anchor) for an
-in-process evaluator built on the SAME noise model, output synthesis, and
-REAL board predicates. One test at the bottom drives the actual
-`NoisyPolicyAdapter` through real subprocess workers to prove the seeded
-draw crosses the process boundary intact.
+Related assertions consume the same complete report within a test invocation.
+The three planted effects each run once; the small-effect cost assertions reuse
+that report. A module fixture shares the single-draw null report among the
+noise-floor and effect-size assertions in each worker. There is no persisted
+pass cache or cross-invocation statistical fit cache. Changing inputs or code
+requires a fresh report; the implementation digest identifies what produced it.
 
-The power-curve test produces one immutable report per effect and contract.
-Each report contains every requested trial seed, the observed drift and pass
-results, the decision audit, rating eligibility, reasons, and comparison spend.
-Assertions consume this report; the small-effect comparison shares the power
-curve's report. Missing or duplicate seeds invalidate a report, and every seed
-contributes to the promotion-rate denominator. Each invocation recomputes the
-complete trial set once.
+The fixed characterization uses these conditions:
 
-**The four methodology pillars, each a pinned number:**
+| Condition | Inputs and assertions |
+|---|---|
+| Noise model | Per-defect flip probability `0.22`; analytical single-draw difference standard deviation about `0.663` |
+| Single-draw null | Seeds `0..59`; the observed difference spread must be consistent with the analytical scale |
+| Confirmed null | Seeds `0..23`; none may promote an unchanged system |
+| Planted effects | Seeds `0..11` for measured improvements `0.336`, `0.672` and `2.016`; power must be monotone and the largest effect must always promote |
+| Replicated selection | `32` ordinary draws, margin `0.01`, aggregate pass-rate monotonicity |
+| Confirmation | Threshold `0.8`, at most `38` independent single-draw attempts, covariance-aware contrast intervals and planned family/look correction |
 
-1. **Seeded noise.** `NOISE_SIGMA = 0.22`, chosen so one full defect fix
-   lands at ~1× the noise floor. The arithmetic is written into the file so a
-   future reader can re-derive it (a per-token effect of 1.2 is measured as
-   `1.2*(1 - 2*sigma) = 0.672`; the A/A floor is analytically
-   `1.6*sqrt(sigma*(1-sigma)) = 0.663`).
+A confirmed trial uses at most 700 board units: two generations times five
+entries times 32 selection draws plus 38 confirmation draws. Its report records
+the actual count. Selection replication does not multiply the sample size of
+a confirmation attempt. The measured small-effect power and the assumptions
+behind the independent power/cost reference are documented in
+[`CONFIRMATION-POWER.md`](../design/CONFIRMATION-POWER.md).
 
-2. **A/A nulls.** Trials that race a generation against ITSELF measure the
-   null delta-scalar distribution — the noise floor. `AA_TRIALS = 60`
-   single-sample duels measure it cheaply; the assertion is that the naive
-   single-sample procedure's false-promote rate under the null is what the
-   arithmetic predicts.
+A change in a pinned rate, seed set, threshold or budget requires a measured
+technical explanation. Preserve the failed result when correcting an invalid
+measurement claim. Cost reduction alone does not justify changing the expected
+operating characteristics.
 
-3. **Planted δ.** `DELTA_CASES` plants three known effects — `small` (~0.5×
-   floor, half-fix one defect), `medium` (~1× floor, fully fix one), `large`
-   (~3× floor, fix all three) — each with the exact measured delta it plants:
+### 11.4.3 Conformance between direct trials and execution
 
-```python
-DELTA_CASES: dict[str, tuple[tuple[str, ...], float]] = {
-    "small": (("verbose-prose", "omit-summary", "sometimes-50-skip-citations"), 0.336),
-    "medium": (("verbose-prose", "omit-summary"), 0.672),
-    "large": ((), 2.016),
-}
-```
-— `tests/test_decision_procedure_power.py`
+The direct policy trials are paired with focused execution checks.
+`test_direct_decisions_match_scheduler_at_measurement_boundaries` compares the
+complete production decision and confirmation result against `run_matchup` for
+an improvement, a tie and missing execution. Its scheduler path replaces only
+`runner._run_single` with the example noise model. The missing-execution case
+must remain ineligible and retain the champion.
 
-4. **Pinned OC numbers.** The NAIVE contract (`replicates=1`, fixed
-   `promote_margin=0.01`, no gate) and the EFFECTIVE contract
-   (`replicates=32`, aggregate-scope monotonicity, the BT evidence pre-gate
-   at 0.8) each get their operating characteristics pinned. One measured fact
-   carries the design: a two-contestant Bradley–Terry confidence interval
-   only separates after about 37 duels of an unbroken win streak. The
-   pre-gate is therefore a SOUNDNESS device alone, and POWER must be bought
-   with replication. Both halves are pinned (`EFFECTIVE_REPLICATES = 32`,
-   `EFFECTIVE_THRESHOLD = 0.8`, `EFFECTIVE_BUDGET = 38`).
+`test_noisy_adapter_seeded_draws_cross_the_worker_boundary` runs the example
+adapter through real subprocess workers and compares its measurements with the
+same deterministic reference. Separate confirmation tests exercise reserved
+draw indices and verify that fresh confirmation cannot overwrite or reuse
+ordinary selection artifacts. Cache identity, cancellation and settlement
+retain their own real-boundary tests.
 
-**When you may move a pinned OC number.** These numbers are the procedure's
-characterized behaviour. They move ONLY with a measured justification in the
-commit — never nudged to make a red test green.
+The scheduler publishes partial aggregates only when a live progress consumer
+exists. Its conformance tests check both paths: an absent consumer performs
+only the two final generation reductions, while a present consumer still
+receives progress. Measurement accounting and final gate inputs are unchanged.
 
-> ⛔ NEVER change a pinned rate / trial count / threshold in the power harness
-> to make it pass. Those numbers ARE the decision procedure's measured
-> operating characteristics (the never-weaken-an-assertion rule). If a change
-> to the gate or replication moves
-> them, that is the test doing its job — the RED tells you the procedure's
-> false-promote rate or its power changed. Re-derive the new number from the
-> seeded model, WRITE the derivation in the commit (the file's own arithmetic
-> comments are the template), and only then move the pin. A pin moved without
-> a stated measurement is an un-review-able claim that the procedure is still
-> sound.
-
-> ⚠️ TRAP — the harness monkeypatches `runner._run_single` (the ONE
-> documented anchor) rather than the gate or the strategy. If you add a NEW
-> subprocess
-> seam, do not monkeypatch it here — thread your in-process evaluator through
-> `_run_single` so the REAL gate and REAL strategy still run. The whole value
-> is that everything above the worker boundary is production code; a second
-> monkeypatch above `_run_single` would hollow out the coverage.
-
-### 11.4.3 The in-process evaluator seam — `_NoisyWorld`
-
-The mechanism that keeps the power harness fast AND real is `_NoisyWorld`,
-which replaces the ONE subprocess-worker boundary with an in-process
-evaluator built on the SAME noise model, output synthesis, and REAL board
-predicates a worker run reduces to:
-
-```python
-class _NoisyWorld:
-    """In-process stand-in for the subprocess worker, on the SAME noise model.
-
-    Replaces ``runner._run_single`` (the suite's documented monkeypatch
-    anchor) with an evaluator that reproduces exactly what a noisy-adapter
-    worker run reduces to: draw the measured tokens with
-    :func:`draw_measured_tokens` seeded from ``(config.seed, generation id,
-    entry id, replicate index)``, synthesize the REAL output with
-    :func:`synthesize_output`, evaluate the entry's REAL predicate on it,
-    and score one info-severity drift frame per measured token (the exact
-    reduction Tier 1 pinned end-to-end). The replicate index is read from
-    ``entry.context`` — the same stamp the real worker path consumes — so
-    the production replication threading is exercised, not bypassed.
-    """
-```
-— `tests/test_decision_procedure_power.py`, `_NoisyWorld`
-
-Two properties make this a legitimate substitute rather than a stub of the
-thing under test: (1) it reproduces the EXACT reduction the convergence
-oracle already pinned end-to-end through real subprocess
-workers, so the in-process path and the real path score identically; (2) it
-reads the replicate index from `entry.context` — the same stamp the real
-worker consumes — so the production REPLICATION threading is exercised
-rather than bypassed. Everything ABOVE the worker boundary — `run_matchup`'s
-scheduling and averaging, `resolve_tournament`'s gauntlet strategy, the
-evidence pre-gate's defer→replicate loop, the gate — is production code. The final
-test in the file drives the ACTUAL `NoisyPolicyAdapter` through real
-subprocess workers to prove the seeded draw crosses the process boundary
-intact, closing the loop between the fast in-process trials and the real
-worker path.
-
-The trial counts are sized so the whole file stays fast while the measured
-rates stay meaningful: `AA_TRIALS = 60` cheap single-sample null duels,
-`AA_EFFECTIVE_TRIALS = 24` and `POWER_TRIALS = 12` for the replicated
-procedure (each effective trial runs up to ~39 replicated duels, ~12k board
-units in-process). These counts are pinned like every other OC number — they
-move only with a measured reason (§11.4.2, the never-weaken-an-assertion
-rule).
-
-> ⚠️ TRAP — `_NoisyWorld` is a substitute for the WORKER rather than for the
-> decision procedure. Its `install()` silences the best-effort dashboard-live
-> append and the per-unit cache persist (orthogonal side channels), but it
-> does NOT touch the gate, the strategy, or the averaging — those are the
-> subject. If you find yourself patching one of THOSE to make a power trial
-> pass, stop: you are stubbing the thing the harness exists to characterize,
-> and the pinned rate you are trying to hit means nothing.
+Use direct production computation for broad policy characterization and small
+independent mathematical examples for numerical correctness. Keep focused
+scheduler, worker and durable-record checks for the behaviors those boundaries
+own. A test that substitutes a gate, strategy or confirmation verdict cannot
+establish the operating characteristics of that substituted component.
 
 ---
 

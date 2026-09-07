@@ -27,20 +27,18 @@ byte-identical to the inline joins it replaces.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
-_REPLICATE_EVENTS_RE = re.compile(r"^events\.r([1-9]\d*)\.jsonl$")
+from zicato.core.measurement import UNKNOWN_SEED, BaseSeed, measurement_artifact_path
 
 
 def events_replicate_index(path: Path | str) -> int | None:
     """Return a current events file's replicate index; archives are ``None``."""
-    name = Path(path).name
-    if name == "events.jsonl":
-        return 0
-    match = _REPLICATE_EVENTS_RE.match(name)
-    return int(match.group(1)) if match else None
+    from zicato.core.measurement import artifact_replicate_index  # noqa: PLC0415
+
+    index = artifact_replicate_index(Path(path).name, "events")
+    return None if index == 0 and Path(path).name != "events.jsonl" else index
 
 
 def is_events_file(path: Path | str) -> bool:
@@ -569,37 +567,69 @@ class WorkspaceLayout:
         """The directory holding one run's artifacts (one board entry)."""
         return self.runs_dir(epoch_id, generation_id) / entry_id
 
-    def loss(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
-        """One run's reducer ``loss.json`` output."""
-        return self.run_dir(epoch_id, generation_id, entry_id) / "loss.json"
+    def loss(
+        self,
+        epoch_id: str,
+        generation_id: str,
+        entry_id: str,
+        replicate_index: int = 0,
+        *,
+        base_seed: BaseSeed = UNKNOWN_SEED,
+    ) -> Path:
+        """One measurement's reducer output, with historical paths preserved."""
+        return measurement_artifact_path(
+            self.run_dir(epoch_id, generation_id, entry_id),
+            "loss",
+            replicate_index,
+            base_seed=base_seed,
+        )
 
-    def result(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
-        """One run's persisted ``result.json`` (the RunResult capture).
-
-        The canonical (replicate 0) slot; replicate ``r>0`` maps to the
-        sibling ``result.r{n}.json`` via
-        :func:`zicato.tournament.unit_cache.unit_result_path`, exactly
-        mirroring how :meth:`loss` relates to ``loss.r{n}.json``.
-        """
-        return self.run_dir(epoch_id, generation_id, entry_id) / "result.json"
+    def result(
+        self,
+        epoch_id: str,
+        generation_id: str,
+        entry_id: str,
+        replicate_index: int = 0,
+        *,
+        base_seed: BaseSeed = UNKNOWN_SEED,
+    ) -> Path:
+        """One measurement's captured result."""
+        return measurement_artifact_path(
+            self.run_dir(epoch_id, generation_id, entry_id),
+            "result",
+            replicate_index,
+            base_seed=base_seed,
+        )
 
     def events(
-        self, epoch_id: str, generation_id: str, entry_id: str, replicate_index: int = 0
+        self,
+        epoch_id: str,
+        generation_id: str,
+        entry_id: str,
+        replicate_index: int = 0,
+        *,
+        base_seed: BaseSeed = UNKNOWN_SEED,
     ) -> Path:
-        """One replicate's events JSONL; replicate 0 is canonical."""
-        run = self.run_dir(epoch_id, generation_id, entry_id)
-        if replicate_index <= 0:
-            return run / "events.jsonl"
-        return run / f"events.r{replicate_index}.jsonl"
+        """One measurement's events JSONL."""
+        return measurement_artifact_path(
+            self.run_dir(epoch_id, generation_id, entry_id),
+            "events",
+            replicate_index,
+            base_seed=base_seed,
+        )
 
     def events_prev(
-        self, epoch_id: str, generation_id: str, entry_id: str, replicate_index: int = 0
+        self,
+        epoch_id: str,
+        generation_id: str,
+        entry_id: str,
+        replicate_index: int = 0,
+        *,
+        base_seed: BaseSeed = UNKNOWN_SEED,
     ) -> Path:
-        """The retained predecessor of one replicate's events JSONL."""
-        run = self.run_dir(epoch_id, generation_id, entry_id)
-        if replicate_index <= 0:
-            return run / "events.prev.jsonl"
-        return run / f"events.r{replicate_index}.prev.jsonl"
+        """The retained predecessor of one measurement's events JSONL."""
+        path = self.events(epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed)
+        return path.with_name(path.stem + ".prev.jsonl")
 
     def loss_archive(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
         """One run's displaced-loss archive (``loss.archive.jsonl``).

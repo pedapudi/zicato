@@ -212,7 +212,7 @@ def test_new_epoch_writes_evaluator_identity_into_config_json(
         weights=ScoringWeights(),
     )
 
-    expected = {"zicato_evaluator_revision": 1}
+    expected = {"zicato_evaluator_revision": 2}
     assert cfg.implementation_identity == expected
     raw = json.loads((workspace / "epochs" / cfg.id / "config.json").read_text())
     assert raw["implementation_identity"] == expected

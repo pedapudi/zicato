@@ -132,8 +132,12 @@ ADJUDICATOR_SYSTEM_PROMPT: str = (
 
 
 def run_ref_for(obs: ObservationRun) -> str:
-    """The stable ``{candidate}:{entry}:r{replicate}`` key of a decision."""
-    return f"{obs.candidate_id}:{obs.entry_id}:r{obs.replicate}"
+    """Name a decision by candidate, entry, purpose, draw, and recorded seed."""
+    from zicato.core.measurement import seed_qualifier  # noqa: PLC0415
+
+    reference = f"{obs.candidate_id}:{obs.entry_id}:r{obs.replicate}"
+    qualifier = seed_qualifier(obs.measurement.base_seed) if obs.measurement is not None else ""
+    return f"{qualifier}:{reference}" if qualifier else reference
 
 
 # ---------------------------------------------------------------------------
@@ -149,8 +153,12 @@ def _verbatim_context(loss_path: Path, judge_name: str) -> tuple[Any, str] | Non
         judge_io_path_for_loss,
         read_judge_io,
     )
+    from zicato.tournament.unit_cache import read_capture_loss  # noqa: PLC0415
 
-    records = read_judge_io(judge_io_path_for_loss(loss_path))
+    loss = read_capture_loss(loss_path)
+    if loss is None:
+        return None
+    records = read_judge_io(judge_io_path_for_loss(loss_path), expected=loss)
     for rec in records:
         if str(rec.get("judge_name", "")) != judge_name:
             continue
@@ -172,9 +180,16 @@ def _verbatim_context(loss_path: Path, judge_name: str) -> tuple[Any, str] | Non
 
 def _result_context(loss_path: Path) -> tuple[Any, str] | None:
     """Build a ``result`` context from ``result.json``, or ``None``."""
-    from zicato.tournament.unit_cache import read_run_result, unit_result_path  # noqa: PLC0415
+    from zicato.tournament.unit_cache import (  # noqa: PLC0415
+        read_capture_loss,
+        read_run_result,
+        unit_result_path,
+    )
 
-    body = read_run_result(unit_result_path(loss_path))
+    loss = read_capture_loss(loss_path)
+    if loss is None:
+        return None
+    body = read_run_result(unit_result_path(loss_path), expected=loss)
     if body is None:
         return None
     turns = [str(t) for t in body.get("transcript", ()) or ()]

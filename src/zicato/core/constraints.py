@@ -71,6 +71,8 @@ class KnobConstraint:
     ------
     minimum:
         Inclusive lower bound. ``None`` leaves the knob unbounded below.
+    maximum:
+        Inclusive upper bound. ``None`` leaves the knob unbounded above.
     choices:
         The closed vocabulary a string-valued knob may hold. Mutually
         exclusive with ``minimum``.
@@ -87,6 +89,7 @@ class KnobConstraint:
     choices: tuple[str, ...] | None = None
     allow_none: bool = False
     label: str = ""
+    maximum: float | None = None
 
     def check(self, name: str, value: object) -> None:
         """Raise :class:`ValueError` when ``value`` is outside the knob's domain."""
@@ -99,6 +102,8 @@ class KnobConstraint:
                 raise ValueError(f"{shown} must be one of {{{known}}}, got {value!r}")
             return
         number = require_finite_number(shown, value)
+        if self.maximum is not None and number > self.maximum:
+            raise ValueError(f"{shown} must be <= {_bound(self.maximum)}, got {value!r}")
         if self.minimum is not None and number < self.minimum:
             suffix = " or None" if self.allow_none else ""
             raise ValueError(f"{shown} must be >= {_bound(self.minimum)}{suffix}, got {value!r}")

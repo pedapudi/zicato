@@ -1,115 +1,59 @@
-"""Crown on evidence rather than a point estimate — the Bradley--Terry pre-gate.
+"""Confirm promotion with uncertainty in the challenger-minus-champion strength.
 
-The opt-in uncertainty pre-gate of ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md``
-§5 / ``docs/design/SELECTION-THEORY.md`` §7.1: the one layer that may hold a
-crowning promotion the measured ratings cannot separate from noise. It runs a
-**defer → replicate → refit** schedule, so it answers two questions together —
-is there enough evidence to crown, and when there is not, which duel is the
-cheapest to replicate to find out — by reading the fitted Bradley--Terry
-strengths AND their confidence intervals:
+The Bradley--Terry fit estimates the probability that one contestant wins a
+duel. Confirmation requires a positive lower bound for the fitted strength
+difference. Its normal interval includes covariance and allocates the allowed
+probability tail across the planned candidate family and confirmation looks.
+The approximation requires independent observations and must be checked with
+unchanged-system controls and planted improvements.
 
-* :func:`evidence_verdict` fits BT over the strategy's already-measured duel
-  audit and returns one of three verdicts for the crowning pair:
-
-  - ``"promoted"`` — ``P(theta_child > theta_champion) >= threshold`` AND the
-    two rating CIs are *separated* (no overlap). Crown on evidence.
-  - ``"deferred"`` — the probability bar is unmet OR the CIs still overlap, and
-    there is replicate budget left to spend. Hold and replicate.
-  - ``"inconclusive"`` — the budget is exhausted and the CIs still overlap. A
-    terminal state recorded in the dead-letter queue
-    (:mod:`zicato.selection.dead_letter`); nothing is silently dropped.
-
-  A fit is only trusted once the pair has at least :data:`MIN_CREDIBLE_DUELS`
-  resolved duels — the Fisher-information SE blows up below that, so a guard
-  built on it would defer (or crown) on noise. Below the minimum the verdict is
-  the gate's own (no evidence to override it).
-
-* :func:`closest_ci_duel` is the schedule: of all candidate duels, the one whose
-  two contestants have the *smallest* CI gap (the most-overlapping, least-
-  resolved pairing) is the cheapest replicate to sharpen the fit. The driver
-  spends each defer's replicate there, refits, and rechecks.
-
-Everything here is **pure** and **opt-in**: with
-``params["promote_confidence_threshold"]`` unset,
-:func:`read_promote_confidence_threshold` returns ``None`` and no pre-gate
-runs. The gate is NOT on by default — it is a **soundness**
-device rather than a power device. Measured on the two-contestant crowning pair
-(the Tier-2 power harness): the gate blocks 100% of A/A false promotes, but
-its CIs separate only after an UNBROKEN win streak of ~37 duels (mixed
-records never separate), so a small default budget would freeze every true
-promotion at ``inconclusive`` and a converging budget costs ~32×2×board
-fresh runs per crowning. Decision **power** is bought with per-duel
-replication (the ``replicates`` knob, default 2) and a margin calibrated
-above the measured A/A noise floor (:mod:`zicato.tournament.calibration`);
-the scaffolded contracts (``zicato init`` / the builder) enable the gate
-EXPLICITLY with an honest budget, so operators see the cost they are
-opting into. Both selection shapes reach it when enabled — the
-multi-challenger driver and the gauntlet crowning duel.
+The scalar gate must first approve the challenger using selection observations.
+Those observations never enter confirmation: racing rungs can overlap, and
+selecting their winner conditions on their outcomes. Only separately identified
+confirmation draws of the fixed crowning pair enter the inferential fit.
+Confirmation can hold that
+promotion while collecting fresh evidence, or finish inconclusive when its
+budget is exhausted. Individual 95% strength intervals remain diagnostics;
+the difference interval determines confirmation. An absent probability
+threshold disables confirmation; workspace scaffolds enable it explicitly.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from statistics import NormalDist
 from typing import Any, Literal
 
-from zicato.selection.rating import fit_bradley_terry, prob_stronger
+from zicato.core.measurement import EVIDENCE_REPLICATE_BASE as EVIDENCE_REPLICATE_BASE
+from zicato.core.measurement import MeasurementDraw, validate_measurement_interval
+from zicato.core.tournament import ConfirmationStatus
+from zicato.selection.rating import RatingFit, fit_bradley_terry, prob_stronger
 from zicato.selection.standings_ext import audit_duels
 from zicato.selection.strategy import MatchupResult
 
-#: The minimum number of resolved duels for the SAME pair before its
-#: Bradley--Terry fit is credible enough to gate on. The Fisher-information
-#: standard error is dominated by the prior (and thus enormous) at ``n < 3``,
-#: so a CI / probability computed there would defer (or crown) on noise rather
-#: than measurement. Below this the verdict falls back to the gate's own and
-#: the rating block is reported with ``present`` but ``credible=False``.
+#: Confirmation requires at least three independent resolved duels for the
+#: fixed crowning pair. This minimum evidence policy applies in addition to
+#: the adjusted strength-difference interval. Below it, required confirmation
+#: remains incomplete and cannot authorize promotion.
 MIN_CREDIBLE_DUELS: int = 3
 
-#: Replicate-index base for the pre-gate's evidence duels. Evidence replicate
-#: ``j`` runs the crowning pair at replicate index ``EVIDENCE_REPLICATE_BASE
-#: + j`` — a RESERVED per-unit cache slot — so each replicate draws BOTH
-#: sides (champion AND challenger) fresh instead of replaying the canonical
-#: replicate-0 sample the tournament already scored: identical data repeated
-#: through the fit would shrink the Bradley--Terry SE by repetition alone
-#: (fast mode), and a force-fresh re-run at slot 0 would clobber the child's
-#: canonical ``loss.json`` that reindex/crash-resume key on (full mode).
-#: Reserved far above every sibling base so the slots can never collide:
-#: real duel replicates count up from 0, A/A calibration draws at 1000
-#: (:data:`zicato.tournament.calibration.CALIBRATION_REPLICATE_BASE`), the
-#: contract pre-flight across 2000..2999 (probe ``j`` of its achievable-signal
-#: sample at ``2000 + j``;
-#: :data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE` +
-#: :data:`~zicato.epoch.preflight.PREFLIGHT_REPLICATE_SPAN`), the
-#: pre-tournament candidate screen at 3000
-#: (:data:`zicato.epoch.screen.SCREEN_REPLICATE_BASE`; its
-#: confirm-before-veto re-run at 3001), board reflection at 5000
-#: (:data:`zicato.reflection.corpus.REFLECTION_REPLICATE_BASE`), and
-#: eval-synthesis admission at 6000
-#: (:data:`zicato.reflection.admission.SYNTHESIS_REPLICATE_BASE`).
-EVIDENCE_REPLICATE_BASE: int = 4000
 
-#: The half-width multiplier turning a Bradley--Terry standard error into a
-#: confidence interval ``theta ± Z * se``. ``1.96`` is the 95% normal quantile
-#: — the same level the ``prob_stronger`` probability is naturally read at, so
-#: "P >= 0.95 AND CIs clear" is one coherent confidence statement rather than
-#: two unrelated bars.
+#: Individual displayed strength intervals use the two-sided 95% normal level.
 CI_Z: float = 1.959963984540054
+#: Its positive lower bound corresponds to a one-sided probability of 0.975.
+#: Confirmation divides this tail across planned candidates and refits.
+MIN_PROMOTE_PROBABILITY: float = 0.975
 
-#: The default replicate budget for the defer→replicate loop when
-#: ``promote_confidence_replicates`` is unset. A small budget: the unit cache
-#: makes each extra replicate cheap, but a near-tie that will not separate
-#: should reach ``inconclusive`` quickly rather than burn the round's
-#: wall-clock budget.
+#: Historical fallback when ``promote_confidence_replicates`` is unset:
+#: three fresh paired confirmation draws. Each draw evaluates both contestants;
+#: its execution cost depends on the board. Exhaustion leaves required
+#: confirmation incomplete.
 DEFAULT_REPLICATE_BUDGET: int = 3
 
-#: The RECOMMENDED probability bar — the value the scaffolded contracts
-#: (``zicato init`` / the builder's blank draft) write explicitly when they
-#: enable the gate. NOT applied when the param is absent (the gate is opt-in;
-#: see the module docstring for the measured soundness-vs-power tradeoff).
-#: ``0.8`` is below the 0.95 the CI level speaks at: the
-#: CI-separation requirement is the sharp half of the test, and the
-#: probability bar mostly guards against a fit whose point estimates favour
-#: the challenger while the evidence is thin.
+#: The probability threshold written by workspace scaffolds. The difference
+#: interval also requires MIN_PROMOTE_PROBABILITY before comparison allocation;
+#: an authored threshold above that minimum makes confirmation stricter.
 DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD: float = 0.8
 
 #: The verdict literal this module emits. ``"rejected"`` is included only so a
@@ -123,7 +67,8 @@ def read_promote_confidence_threshold(params: Mapping[str, Any]) -> float | None
 
     Reads ``params["promote_confidence_threshold"]`` — the probability bar a
     promotion must clear under the Bradley--Terry pre-gate: crown only if
-    ``P(theta_child > theta_champion)`` reaches it AND the rating CIs clear.
+    ``P(theta_child > theta_champion)`` reaches it and the adjusted strength
+    difference interval lies above zero.
     Absent / explicit ``null`` / ``0`` / non-numeric / outside ``(0, 1)`` ⇒
     ``None`` (no pre-gate). The gate is OPT-IN — see the module
     docstring for the measured soundness-vs-power tradeoff; the scaffolded
@@ -151,7 +96,7 @@ def read_replicate_budget(params: Mapping[str, Any]) -> int:
     """The defer→replicate budget for the pre-gate loop.
 
     Reads ``params["promote_confidence_replicates"]`` — how many extra
-    closest-CI replicates the driver may spend chasing separation before the
+    fresh crowning-pair replicates the driver may spend before the
     verdict goes terminal (``inconclusive``). Absent / non-integer / negative ⇒
     :data:`DEFAULT_REPLICATE_BUDGET`. Zero is honoured (defer once, then go
     inconclusive immediately) so an operator can disable replication while still
@@ -166,6 +111,7 @@ def read_replicate_budget(params: Mapping[str, Any]) -> int:
         return DEFAULT_REPLICATE_BUDGET
     if value < 0:
         return DEFAULT_REPLICATE_BUDGET
+    validate_measurement_interval(EVIDENCE_REPLICATE_BASE, value, allow_empty=True)
     return value
 
 
@@ -178,6 +124,64 @@ class RatingCI:
     se: float
     ci_lo: float
     ci_hi: float
+
+
+@dataclass(frozen=True, slots=True)
+class StrengthDifference:
+    """Strength difference with its applied normal interval and comparison count."""
+
+    mean: float
+    se: float
+    ci_lo: float
+    ci_hi: float
+    confidence_level: float
+    comparison_count: int
+
+    @property
+    def p_stronger(self) -> float:
+        return prob_stronger(self.mean, self.se, 0.0, 0.0)
+
+    def clears(self, threshold: float) -> bool:
+        """Require a positive interval and the configured probability bar."""
+        return self.ci_lo > 0.0 and self.p_stronger >= threshold
+
+
+def strength_difference(
+    rating: RatingFit,
+    child_id: str,
+    parent_id: str,
+    *,
+    threshold: float = MIN_PROMOTE_PROBABILITY,
+    comparison_count: int = 1,
+) -> StrengthDifference:
+    """Allocate the probability tail across planned comparisons and refits.
+
+    The baseline is the positive end of a two-sided 95% interval. Bonferroni
+    allocation bounds repeated looks and candidate selection when each normal
+    tail approximation is calibrated; it does not make that approximation exact.
+    """
+    if comparison_count < 1:
+        raise ValueError("comparison_count must be positive")
+    mean, se = rating.difference(child_id, parent_id)
+    tail = min(1.0 - threshold, 1.0 - MIN_PROMOTE_PROBABILITY) / comparison_count
+    z = -NormalDist().inv_cdf(tail)
+    return StrengthDifference(
+        mean, se, mean - z * se, mean + z * se, 1.0 - 2.0 * tail, comparison_count
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceAttempt:
+    """One returned or failed draw, including why it can contribute to the fit."""
+
+    matchup_id: str
+    left_id: str
+    right_id: str
+    eligibility: str
+    budget_spent: int
+    delta_scalar: float | None = None
+    reason: str = ""
+    measurement_draw: MeasurementDraw | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,8 +198,7 @@ class EvidenceVerdict:
         Human-readable explanation mirroring the gate's reason discipline.
     credible:
         ``True`` once the pair cleared :data:`MIN_CREDIBLE_DUELS`. When
-        ``False`` the verdict is the caller's gate verdict unchanged — there is
-        no trustworthy fit to override it.
+        ``False`` the configured requirement is incomplete and cannot promote.
     champion, challenger:
         The two :class:`RatingCI` rows (``None`` when the fit could not place
         that contestant — e.g. it never appeared in the audit).
@@ -204,7 +207,10 @@ class EvidenceVerdict:
     threshold:
         The probability bar this verdict was judged against.
     ci_overlap:
-        ``True`` when the two CIs overlap (the duel is not yet separated).
+        Overlap of the individual displayed intervals; diagnostic only.
+    difference:
+        The covariance-aware contrast, applied interval level, and planned
+        comparison count used for confirmation.
     replicates_spent, n_duels:
         Audit size markers for the dashboard rating block.
     """
@@ -219,6 +225,11 @@ class EvidenceVerdict:
     ci_overlap: bool
     replicates_spent: int = 0
     n_duels: int = 0
+    difference: StrengthDifference | None = None
+    confirmation_status: ConfirmationStatus = ConfirmationStatus.INCOMPLETE
+    champion_id: str = ""
+    challenger_id: str = ""
+    attempts: tuple[EvidenceAttempt, ...] = ()
 
 
 def _rating_ci(rating: Mapping[str, tuple[float, float]], gid: str) -> RatingCI | None:
@@ -246,7 +257,7 @@ def _count_pair_duels(audit: Sequence[MatchupResult], parent_id: str, child_id: 
     n = 0
     for r in audit:
         ids = {r.left_id, r.right_id}
-        if ids != {parent_id, child_id}:
+        if ids != {parent_id, child_id} or not r.execution_complete:
             continue
         if r.outcome.delta_scalar != 0.0:
             n += 1
@@ -263,8 +274,12 @@ def evidence_verdict(
     threshold: float,
     replicate_budget: int,
     replicates_spent: int = 0,
+    planned_candidates: int = 1,
 ) -> EvidenceVerdict:
-    """The Bradley--Terry pre-gate verdict for a crowning duel.
+    """Fit already-admitted independent confirmation observations.
+
+    The driver establishes draw provenance, excludes selection observations,
+    and rejects repeated measurements before calling this mathematical rule.
 
     Only ever consulted when the gate has already said ``"promoted"`` — a
     non-promote verdict passes straight through (the pre-gate can hold a
@@ -275,13 +290,14 @@ def evidence_verdict(
 
     * ``P(theta_child > theta_parent) >= threshold`` (confidence the child is
       stronger), AND
-    * the two rating CIs are *separated* (the strength estimates do not
-      overlap — the duel is resolved rather than a noisy near-tie).
+    * the lower bound of the strength difference is positive after allocating
+      the probability tail across ``planned_candidates * (replicate_budget + 1)``.
+      The planned family is fixed before candidate outcomes are observed.
 
     Otherwise it ``"deferred"`` while replicate budget remains, or goes terminal
-    ``"inconclusive"`` once the budget is spent and the CIs still overlap. Below
+    ``"inconclusive"`` once the budget is spent without confirming the difference. Below
     :data:`MIN_CREDIBLE_DUELS` resolved duels for the pair the fit is not
-    trustworthy, so the verdict is the gate's own (``credible=False``).
+    trustworthy, so confirmation stays incomplete (``credible=False``).
 
     The returned :class:`EvidenceVerdict` always carries the full rating block
     (both CIs, ``p_stronger``, ``ci_overlap``) so the journal / dashboard can
@@ -300,37 +316,47 @@ def evidence_verdict(
         ci_overlap=False,
         replicates_spent=replicates_spent,
         n_duels=n_pair,
+        champion_id=parent_id,
+        challenger_id=child_id,
     )
 
     # The pre-gate only ever holds a promotion. A reject / defer passes through.
     if gate_decision != "promoted":
         return base
 
-    # Not enough evidence for a credible fit ⇒ no override; the gate stands.
+    # An enabled requirement cannot authorize promotion before it is credible.
     if not duels or n_pair < MIN_CREDIBLE_DUELS:
-        return base
+        return replace(
+            base,
+            decision="deferred" if replicates_spent < replicate_budget else "inconclusive",
+            reason=(
+                f"confirmation incomplete: {n_pair} resolved pair duels; "
+                f"at least {MIN_CREDIBLE_DUELS} required"
+            ),
+        )
 
     rating = fit_bradley_terry(duels)
     champ_ci = _rating_ci(rating, parent_id)
     chal_ci = _rating_ci(rating, child_id)
     if champ_ci is None or chal_ci is None:
-        # The fit could not place one side — never invent a hold from absence.
-        return EvidenceVerdict(
-            decision="promoted",
-            reason=gate_reason,
-            credible=False,
+        return replace(
+            base,
+            decision="deferred" if replicates_spent < replicate_budget else "inconclusive",
+            reason="confirmation incomplete: the fit could not place both contestants",
             champion=champ_ci,
             challenger=chal_ci,
-            p_stronger=None,
-            threshold=threshold,
-            ci_overlap=False,
-            replicates_spent=replicates_spent,
-            n_duels=n_pair,
         )
 
-    p = prob_stronger(chal_ci.theta, chal_ci.se, champ_ci.theta, champ_ci.se)
+    difference = strength_difference(
+        rating,
+        child_id,
+        parent_id,
+        threshold=threshold,
+        comparison_count=planned_candidates * (replicate_budget + 1),
+    )
+    p = difference.p_stronger
     overlap = _ci_overlap(champ_ci, chal_ci)
-    cleared = p >= threshold and not overlap
+    cleared = difference.clears(threshold)
 
     if cleared:
         decision: EvidenceDecision = "promoted"
@@ -340,14 +366,15 @@ def evidence_verdict(
         reason = (
             f"deferred: crowning win not yet decisive — "
             f"P(theta_child > theta_champion)={p:.3f} vs threshold {threshold:.2f}"
-            f"{', CIs overlap' if overlap else ''}; "
+            f"; strength difference {difference.confidence_level:.3%} interval "
+            f"[{difference.ci_lo:.3f}, {difference.ci_hi:.3f}]; "
             f"replicate the closest duel "
             f"({replicates_spent}/{replicate_budget} spent)"
         )
     else:
         decision = "inconclusive"
         reason = (
-            f"inconclusive: rating CIs still overlap after exhausting the "
+            f"inconclusive: strength difference remains unconfirmed after exhausting the "
             f"{replicate_budget}-replicate budget — "
             f"P(theta_child > theta_champion)={p:.3f}; recorded to the "
             f"dead-letter queue, champion stands"
@@ -364,6 +391,12 @@ def evidence_verdict(
         ci_overlap=overlap,
         replicates_spent=replicates_spent,
         n_duels=n_pair,
+        difference=difference,
+        confirmation_status=(
+            ConfirmationStatus.SATISFIED if cleared else ConfirmationStatus.INCOMPLETE
+        ),
+        champion_id=parent_id,
+        challenger_id=child_id,
     )
 
 
@@ -371,10 +404,10 @@ def evidence_verdict(
 class CandidateDuel:
     """A pairing the driver may replicate, with its current CI gap.
 
-    ``ci_gap`` is the signed separation between the two contestants' CIs:
-    negative / zero ⇒ overlapping (the more negative, the deeper the overlap);
-    positive ⇒ already separated. The closest-to-resolve duel — the cheapest
-    replicate to sharpen — is the one with the *smallest* gap.
+    ``ci_gap`` is the distance from zero to the nearer end of the pointwise
+    95% strength-difference interval. A negative value means that the interval
+    contains zero. The scheduler chooses the smallest gap as a heuristic for
+    an unresolved pairing; confirmation applies its own comparison allocation.
     """
 
     left_id: str
@@ -389,10 +422,9 @@ def closest_ci_duel(
 ) -> CandidateDuel | None:
     """The duel whose contestants' CIs are closest — the cheapest replicate.
 
-    Fits Bradley--Terry over the audit, then scores every distinct pairing that
-    actually appears by its CI gap (``argmin`` over the gap). The most-
-    overlapping, least-resolved pairing is the one a replicate sharpens most, so
-    the driver spends each defer's replicate there. ``restrict_to`` pins the
+    Fits Bradley--Terry over the audit and scores each observed pairing by
+    its pointwise difference interval's distance from zero. This scheduling
+    heuristic does not claim an optimal information gain per replicate. ``restrict_to`` pins the
     schedule to a single pairing (the crowning pair) when the operator only
     wants to resolve the champion-vs-challenger duel; ``None`` considers the
     whole field. Returns ``None`` when no fittable pairing exists.
@@ -404,7 +436,7 @@ def closest_ci_duel(
 
     pairs: dict[frozenset[str], tuple[str, str]] = {}
     for r in audit:
-        if r.left_id == r.right_id:
+        if r.left_id == r.right_id or not r.execution_complete:
             continue
         if r.outcome.delta_scalar == 0.0:
             continue
@@ -415,17 +447,10 @@ def closest_ci_duel(
 
     best: CandidateDuel | None = None
     for left_id, right_id in pairs.values():
-        a = _rating_ci(rating, left_id)
-        b = _rating_ci(rating, right_id)
-        if a is None or b is None:
+        if left_id not in rating or right_id not in rating:
             continue
-        # Gap between the two intervals on the theta axis: the separation
-        # between the lower edge of the higher CI and the upper edge of the
-        # lower CI. Negative ⇒ they overlap; smaller ⇒ closer to a tie.
-        if a.theta >= b.theta:
-            gap = a.ci_lo - b.ci_hi
-        else:
-            gap = b.ci_lo - a.ci_hi
+        difference = strength_difference(rating, left_id, right_id)
+        gap = abs(difference.mean) - CI_Z * difference.se
         cand = CandidateDuel(left_id=left_id, right_id=right_id, ci_gap=gap)
         if (
             best is None
@@ -460,6 +485,26 @@ def rating_block(verdict: EvidenceVerdict) -> dict[str, Any]:
 
     return {
         "present": True,
+        "evidence_basis": "independent_confirmation",
+        "confirmation_status": verdict.confirmation_status,
+        "reason": verdict.reason,
+        "champion_id": verdict.champion_id,
+        "challenger_id": verdict.challenger_id,
+        "attempts": [
+            {
+                "matchup_id": attempt.matchup_id,
+                "left_id": attempt.left_id,
+                "right_id": attempt.right_id,
+                "eligibility": attempt.eligibility,
+                "budget_spent": attempt.budget_spent,
+                "delta_scalar": attempt.delta_scalar,
+                "reason": attempt.reason,
+                "measurement_draw": (
+                    attempt.measurement_draw.to_json() if attempt.measurement_draw else None
+                ),
+            }
+            for attempt in verdict.attempts
+        ],
         "credible": verdict.credible,
         "champion": _ci(verdict.champion),
         "challenger": _ci(verdict.challenger),
@@ -469,6 +514,27 @@ def rating_block(verdict: EvidenceVerdict) -> dict[str, Any]:
         "ci_overlap": verdict.ci_overlap,
         "replicates_spent": verdict.replicates_spent,
         "n_duels": verdict.n_duels,
+        "difference": (
+            {
+                "mean": verdict.difference.mean,
+                "se": verdict.difference.se,
+                "ci_lo": verdict.difference.ci_lo,
+                "ci_hi": verdict.difference.ci_hi,
+                "confidence_level": verdict.difference.confidence_level,
+                "comparison_count": verdict.difference.comparison_count,
+            }
+            if verdict.difference is not None
+            else None
+        ),
+    }
+
+
+def disabled_rating_block() -> dict[str, Any]:
+    """Record that the contract has no promotion confidence requirement."""
+    return {
+        "present": False,
+        "confirmation_status": ConfirmationStatus.DISABLED,
+        "reason": "no promotion confidence threshold in the evaluation contract",
     }
 
 
@@ -480,7 +546,11 @@ __all__ = [
     "DEFAULT_REPLICATE_BUDGET",
     "EvidenceDecision",
     "RatingCI",
+    "StrengthDifference",
+    "strength_difference",
     "EvidenceVerdict",
+    "EvidenceAttempt",
+    "disabled_rating_block",
     "CandidateDuel",
     "read_promote_confidence_threshold",
     "read_replicate_budget",

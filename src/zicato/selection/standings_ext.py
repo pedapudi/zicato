@@ -89,7 +89,7 @@ def audit_duels(audit: Sequence[MatchupResult]) -> list[DuelOutcome]:
     """
     out: list[DuelOutcome] = []
     for r in audit:
-        if r.left_id == r.right_id:
+        if r.left_id == r.right_id or not r.execution_complete:
             continue
         delta = r.outcome.delta_scalar  # right - left; < 0 ⇒ right better
         if delta < 0.0:
@@ -110,7 +110,7 @@ def audit_matrix(audit: Sequence[MatchupResult]) -> MarginMatrix:
     """
     duels: list[Duel] = []
     for r in audit:
-        if r.left_id == r.right_id:
+        if r.left_id == r.right_id or not r.execution_complete:
             continue
         delta = r.outcome.delta_scalar
         margin = abs(delta)

@@ -229,7 +229,8 @@ def test_full_tournament_exhausted_budget_never_launches_holdout_units(
         weights=weights,
     )
 
-    assert result.outcome.decision == "promoted", "the train decision stands at exhaustion"
+    assert result.outcome.decision == "deferred"
+    assert result.holdout["confirmation_status"] == "incomplete"
     assert all(entry_id != "h0" for _generation_id, entry_id in calls)
     assert result.holdout is not None
     assert result.holdout["holdout_consulted"] is False
@@ -368,7 +369,7 @@ def test_confirm_crowning_holdout_degrades_byte_identically_without_holdout(
 ) -> None:
     # A board with NO holdout (no tag, below the split floor) ⇒ the helper
     # consults no holdout, charges no budget, and returns the train outcome
-    # unchanged with no evidence block — byte-identical to today.
+    # unchanged, with confirmation explicitly disabled.
     board = [
         BoardEntry(id="only_a", kind="single_turn", wall_clock_budget_seconds=60, input="x"),
         BoardEntry(id="only_b", kind="single_turn", wall_clock_budget_seconds=60, input="x"),
@@ -377,14 +378,15 @@ def test_confirm_crowning_holdout_degrades_byte_identically_without_holdout(
         monkeypatch, tmp_path, board=board, holdout_child_drift=5.0
     )
     assert outcome.decision == "promoted"  # the train outcome, untouched
-    assert block is None
+    assert block is not None
+    assert block["confirmation_status"] == "disabled"
     assert holdout_scalar is None
 
 
 def test_confirm_crowning_holdout_does_not_launch_after_budget_exhaustion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An exhausted Ladder leaves the train decision standing without access.
+    """Exhausted allowance defers promotion without accessing the holdout.
 
     The holdout runner is the access boundary.  Reaching it after the durable
     query budget reaches zero would reveal uncharged evidence even if the
@@ -422,7 +424,8 @@ def test_confirm_crowning_holdout_does_not_launch_after_budget_exhaustion(
         )
     )
 
-    assert outcome is train_outcome
+    assert outcome.decision == "deferred"
+    assert block["confirmation_status"] == "incomplete"
     assert block is not None
     assert block["confirmed"] is None
     assert block["holdout_scalar"] is None

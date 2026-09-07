@@ -1,49 +1,14 @@
-"""Evidence gate on the GAUNTLET crowning duel — known-answer e2e.
+"""Confirm a planted improvement through real gauntlet workers and persistence.
 
-The gauntlet analogue of ``test_convergence_known_answer``'s racing case:
-the target_0 planted-defect contract with an EXPLICIT
-``promote_confidence_threshold`` drives one real evolve round through
-subprocess workers, and the crowning train-promote must be confirmed by
-the Bradley--Terry defer→replicate→inconclusive adjudication before it
-is persisted.
+The deterministic target executes one evolution round with confirmation enabled.
+A sufficient budget promotes its known improvement; a two-duel budget leaves
+confirmation inconclusive and preserves the champion. Each confirmation draw
+uses a distinct reserved slot for both sides and leaves canonical scores intact.
 
-Every evidence replicate ``j`` executes at the RESERVED replicate index
-``EVIDENCE_REPLICATE_BASE + j`` — a genuine fresh subprocess run of BOTH
-sides on a distinct per-unit cache slot — never a cache replay of (or a
-force-fresh clobber over) the canonical replicate-0 ``loss.json`` the
-crowning tournament scored. Both tests assert that routing on disk: the
-reserved-slot files exist for champion AND challenger, tagged with the
-slot-encoding matchup id, and the canonical slots carry no replicate tag.
-
-Determinism note (mirrors the Tier-1 racing case): target_0 is exactly
-zero-noise, so every fresh draw of the crowning pair is an IDENTICAL
-child-win sample — under zero noise, independent sampling and replay are
-indistinguishable BY VALUE, which is why this deterministic e2e cannot
-(and does not) prove statistical independence. What it proves is that the
-production replicate path executes at the reserved base through the real
-worker machinery and the confirm still resolves both terminals; the
-SOUNDNESS half — distinct draws with real variance, canonical byte
-integrity under noise, and the driver refusing duplicate draws — lives in
-``test_decision_procedure_power`` and ``test_driver_evidence_pregate``.
-
-The Bradley--Terry fit over n identical wins is a fixed function of n;
-its CIs separate only after several dozen duels (the Fisher information
-grows slowly on a two-node graph). Both terminals are therefore
-byte-deterministic:
-
-* a GENEROUS budget (48) converges — the loop bootstraps to the
-  credibility floor, defers while the CIs overlap, and crowns once they
-  separate (the promotion path);
-* a SMALL budget (2) exhausts at the credibility floor with overlapping
-  CIs — terminally ``inconclusive``, the champion stands, and the duel
-  is recorded to the dead-letter queue (the champion-stands path).
-
-Cost note: each replicate duel is now a real 2-sides x 5-entries worker
-sweep the first time (the reserved slot is a natural cache MISS; a
-repeated confirm under the same contract would reuse the persisted
-draws). That is the honest price of independent evidence — the pre-fix
-"pure cache read" replicates were free precisely because they re-counted
-one sample.
+Identical zero-noise outcomes cannot establish statistical independence by
+value. These tests verify worker execution, reserved-slot artifacts, the applied
+strength-difference interval, and both settlement outcomes. Seeded noise and
+replay rejection are tested by the statistical and driver suites.
 """
 
 from __future__ import annotations
@@ -91,6 +56,7 @@ def _bootstrap(tmp_path: Path, replicate_budget: int) -> tuple[Path, str]:
                 "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
+                "runtime": {"parallelism": 2, "propose_parallelism": 2},
                 "mutable_trees": [str(AGENT_DIR)],
             }
         )
@@ -163,13 +129,13 @@ def _assert_replicates_ran_at_reserved_slots(
     for gen_id in ("v0", "v1"):
         runs_dir = workspace / "epochs" / epoch_id / "generations" / gen_id / "runs"
         for entry_id in _BOARD_ENTRY_IDS:
-            canonical = json.loads((runs_dir / entry_id / "loss.json").read_text())
+            canonical = json.loads((runs_dir / entry_id / "seed-none" / "loss.json").read_text())
             assert not str(canonical.get("match_id", "")).startswith(
                 "bt-replicate:"
             ), f"{gen_id}/{entry_id}: an evidence replicate clobbered the canonical slot"
             for j in range(replicates_run):
                 slot = EVIDENCE_REPLICATE_BASE + j
-                reserved = runs_dir / entry_id / f"loss.r{slot}.json"
+                reserved = runs_dir / entry_id / "seed-none" / f"loss.r{slot}.json"
                 assert reserved.exists(), f"{gen_id}/{entry_id}: no reserved draw at r{slot}"
                 profile = json.loads(reserved.read_text())
                 assert (
@@ -220,6 +186,9 @@ def test_gauntlet_promote_confirmed_by_evidence_gate(tmp_path: Path) -> None:
     assert evidence["n_duels"] >= 3
     assert evidence["replicates_spent"] >= 3
     assert evidence["p_stronger"] >= 0.8
+    assert evidence["difference"]["ci_lo"] > 0.0
+    assert evidence["difference"]["comparison_count"] == 49
+    assert evidence["difference"]["confidence_level"] > 0.95
     # The defer→replicate trace: one entry per refit, converging.
     assert len(evidence["ci_history"]) == evidence["replicates_spent"] + 1
     assert evidence["ci_history"][0]["replicates_spent"] == 0
@@ -243,8 +212,7 @@ def test_gauntlet_inconclusive_champion_stands(tmp_path: Path) -> None:
 
     assert len(outcomes) == 1
     outcome = outcomes[0]
-    # Loop bookkeeping treats the hold as a non-promotion.
-    assert outcome.tournament_decision == "rejected"
+    assert outcome.tournament_decision == "deferred"
     assert outcome.proposed_generation_id == "v1"
 
     # The champion pointer never moved.
@@ -257,12 +225,18 @@ def test_gauntlet_inconclusive_champion_stands(tmp_path: Path) -> None:
         (workspace / "epochs" / epoch_id / "generations" / "v1" / "experiment.json").read_text()
     )["outcome"]
     assert record["tournament_decision"] == "deferred"
-    assert "inconclusive" in record["rejection_reason"]
+    assert "confirmation incomplete" in record["rejection_reason"]
     evidence = record["evidence"]
     assert evidence["decision"] == "inconclusive"
-    assert evidence["credible"] is True
-    assert evidence["ci_overlap"] is True
-    assert evidence["n_duels"] == 3  # 1 crowning duel + 2 bootstrap replicates
+    assert evidence["confirmation_status"] == "incomplete"
+    assert len(evidence["attempts"]) == 3
+    assert sum(attempt["budget_spent"] for attempt in evidence["attempts"]) == 2
+    assert evidence["credible"] is False
+    assert evidence["p_stronger"] is None
+    assert evidence["champion"] is None and evidence["challenger"] is None
+    assert evidence["n_duels"] == 2
+    assert evidence["attempts"][0]["eligibility"] == "selection_only"
+    assert sum(attempt["eligibility"] == "eligible" for attempt in evidence["attempts"]) == 2
     assert len(evidence["ci_history"]) == 3
     _assert_evidence_refits_logged(workspace, epoch_id, len(evidence["ci_history"]))
 

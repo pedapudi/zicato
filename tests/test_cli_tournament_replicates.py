@@ -96,7 +96,10 @@ def _seed_historical_aggregate(workspace: Path, epoch_id: str, generation_id: st
     gen_dir = generation_dir(workspace, epoch_id, generation_id)
     gen_dir.mkdir(parents=True, exist_ok=True)
     (gen_dir / "gen_score.json").write_text(
-        json.dumps({"scalar": 1.0, "pass_rate": 1.0}), encoding="utf-8"
+        json.dumps(
+            {"scalar": 1.0, "pass_rate": 1.0, "base_seed": None, "generation_id": generation_id}
+        ),
+        encoding="utf-8",
     )
 
 
@@ -260,6 +263,72 @@ def test_cli_fast_mode_replicates_override_reproduces_old_behavior(
 
     assert res.exit_code == 0, res.output
     assert captured["replicates"] == 1
+
+
+@pytest.mark.parametrize(
+    "aggregate",
+    [
+        {"generation_id": "v0"},
+        {"generation_id": "v0", "base_seed": 17},
+    ],
+)
+def test_fast_cli_remeasures_a_champion_without_requested_seed_and_parent_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, aggregate: dict[str, Any]
+) -> None:
+    from click.testing import CliRunner
+
+    from zicato.cli.commands.tournament import tournament_cmd
+    from zicato.tournament.scoring import write_gen_score
+
+    workspace = _make_workspace(tmp_path)
+    _make_cli_stubs(monkeypatch)
+    write_gen_score(workspace, "e0", "v0", {"scalar": 1.0, **aggregate})
+    captured: dict[str, Any] = {}
+
+    async def paired(**kwargs: Any) -> TournamentResult:
+        captured.update(kwargs)
+        return _fake_result()
+
+    monkeypatch.setattr("zicato.tournament.run_tournament", paired)
+    result = CliRunner().invoke(
+        tournament_cmd,
+        ["v0", "v1", "--workspace", str(workspace), "--mode", "fast"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["parent_gen"].id == "v0"
+    assert captured["champion_force_fresh"] is False
+
+
+def test_fast_cli_refuses_a_champion_aggregate_for_another_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from click.testing import CliRunner
+
+    from zicato.cli.commands.tournament import tournament_cmd
+
+    workspace = _make_workspace(tmp_path)
+    _make_cli_stubs(monkeypatch)
+    (workspace / "epochs/e0/generations/v0/gen_score.json").write_text(
+        json.dumps({"scalar": 1.0, "generation_id": "v2", "base_seed": None})
+    )
+    calls: list[dict[str, Any]] = []
+
+    async def paired(**kwargs: Any) -> TournamentResult:
+        calls.append(kwargs)
+        return _fake_result()
+
+    monkeypatch.setattr("zicato.tournament.run_tournament", paired)
+    result = CliRunner().invoke(
+        tournament_cmd,
+        ["v0", "v1", "--workspace", str(workspace), "--mode", "fast"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 1
+    assert "generation_id 'v2' does not match 'v0'" in result.output
+    assert calls == []
 
 
 def test_cli_explicit_epoch_uses_that_epochs_frozen_contract(

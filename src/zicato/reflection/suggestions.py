@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from zicato.core.measurement import SYNTHESIS_REPLICATE_BASE as SYNTHESIS_REPLICATE_BASE
 from zicato.epoch._storage import RecordError
 from zicato.storage import atomic_write_json
 
@@ -39,13 +40,6 @@ SLICE_EXISTING_JUDGE: str = "existing_judge"
 #: the measured numbers, NEVER as a silent drop or an auto-verdict.
 RECOMMENDED_FLIP_CEILING: float = 0.25
 RECOMMENDED_MIN_DISCRIMINATION: int = 1
-
-#: The reserved replicate base admission measures A/A noise at
-#: (EVAL-SYNTHESIS.md §5; dev-guide 04 §8.1 — 6000 is the next free base after
-#: board reflection's 5000). Declared HERE only for the plan-cost narrative;
-#: :mod:`zicato.reflection.admission` owns the canonical constant and the
-#: r0-isolation proof.
-SYNTHESIS_REPLICATE_BASE: int = 6000
 
 
 @dataclass(frozen=True, slots=True)

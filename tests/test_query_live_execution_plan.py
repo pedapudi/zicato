@@ -30,7 +30,8 @@ from starlette.testclient import TestClient
 
 import zicato.query.live_execution_plan as live_plan
 from zicato.core.loss import LossProfile
-from zicato.core.workspace import WorkspaceLayout, loss_profile_path
+from zicato.core.measurement import MeasurementDraw
+from zicato.core.workspace import loss_profile_path
 from zicato.dashboard.server import create_app
 from zicato.epoch.preflight import PREFLIGHT_PHASE
 from zicato.epoch.round_log import (
@@ -45,6 +46,7 @@ from zicato.query.contracts import ENDPOINT_PAYLOADS
 from zicato.query.execution_plan import build_execution_plan_model
 from zicato.telemetry import reducer
 from zicato.tournament.calibration import CALIBRATION_PHASE
+from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-08-20_live"
 ENTRIES = ("login", "search")
@@ -97,6 +99,7 @@ def _write_loss(root: Path, generation_id: str, entry_id: str, *, replicate: int
         match_id="rung0_m0",
         started_at="2026-08-20T00:01:00Z",
         ended_at="2026-08-20T00:01:01Z",
+        measurement=MeasurementDraw.from_index(replicate),
     )
     base = loss_profile_path(root, EPOCH, generation_id, entry_id)
     target = base if replicate == 0 else base.with_name(f"loss.r{replicate}.json")

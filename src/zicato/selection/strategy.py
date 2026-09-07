@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
+from zicato.core.measurement import MeasurementDraw
 from zicato.core.types import Experiment, TournamentDecision
 from zicato.tournament.gate import GateOutcome
 
@@ -144,6 +145,16 @@ class MatchupResult:
     outcome: GateOutcome
     stage_index: int = 0
     bracket_slot: str = ""
+    # Complete board contributions on both sides must share this measured draw.
+    # Missing or mixed provenance cannot establish independent confirmation.
+    measurement_draw: MeasurementDraw | None = None
+
+    @property
+    def execution_complete(self) -> bool:
+        """Whether both sides measured every requested board unit."""
+        return not (
+            self.left_agg.get("incomplete_entries") or self.right_agg.get("incomplete_entries")
+        )
 
     def left_scalar(self) -> float:
         """The ``left`` side's scalar (lower is better)."""

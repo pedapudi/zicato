@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from zicato.core.loss import LossProfile
 from zicato.evolve.dashboard_projection import _overlay_projected_standings
 from zicato.runtime.state import (
     ActiveTournament,
@@ -34,6 +35,7 @@ from zicato.runtime.state import (
     update_tournament_projected,
     write_active_tournament,
 )
+from zicato.testing.fixtures import make_loss_profile
 from zicato.tournament.runner import _IncrementalScorer
 from zicato.tournament.scoring import ScoringWeights
 
@@ -380,22 +382,8 @@ def test_publish_preserves_projected_while_carrying_live_progress(tmp_path: Path
 # ---------------------------------------------------------------------------
 
 
-class _FakeLoss:
-    """Minimal LossProfile stand-in for aggregate_generation_score.
-
-    ``drift_loss`` is the per-run float (``per_run_drift_loss`` returns it
-    verbatim); ``unified_metrics()`` yields no namespaced metrics; the
-    ``pass_fail`` carries the predicate verdict.
-    """
-
-    def __init__(self, entry_id: str, drift: float, passed: bool | None = True) -> None:
-        self.entry_id = entry_id
-        self.drift_loss = drift
-        self.pass_fail = passed
-        self.adk_session_id = ""
-
-    def unified_metrics(self) -> list:
-        return []
+def _loss(entry_id: str, drift: float, passed: bool | None = True) -> LossProfile:
+    return make_loss_profile(entry_id=entry_id, drift_loss=drift, pass_fail=passed)
 
 
 def test_incremental_scorer_writes_projected_per_board(tmp_path: Path) -> None:
@@ -420,9 +408,7 @@ def test_incremental_scorer_writes_projected_per_board(tmp_path: Path) -> None:
 
     async def _run() -> None:
         # one board unit settles (champion + challenger).
-        await scorer.record(
-            champion_loss=_FakeLoss("b0", 0.4), challenger_loss=_FakeLoss("b0", 0.2)
-        )
+        await scorer.record(champion_loss=_loss("b0", 0.4), challenger_loss=_loss("b0", 0.2))
 
     asyncio.run(_run())
     back = read_active_tournament(tmp_path)
@@ -452,7 +438,7 @@ def test_incremental_scorer_no_ids_writes_no_projected(tmp_path: Path) -> None:
     scorer = _IncrementalScorer(ScoringWeights(), tmp_path)
 
     async def _run() -> None:
-        await scorer.record(challenger_loss=_FakeLoss("b0", 0.2))
+        await scorer.record(challenger_loss=_loss("b0", 0.2))
 
     asyncio.run(_run())
     back = read_active_tournament(tmp_path)

@@ -7,7 +7,13 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from zicato.core.workspace import replicate_index_from_run_id
+from zicato.core.measurement import (
+    UNKNOWN_SEED,
+    iter_measurement_artifacts,
+    measurement_artifact_path,
+    unit_artifact_name,
+)
+from zicato.core.workspace import measurement_from_run_id, run_coordinates_from_dir, run_id_for_unit
 from zicato.epoch._storage import RecordError
 from zicato.epoch.journal import read_experiment_body
 from zicato.proposer.brief import brief_goal
@@ -37,8 +43,8 @@ from zicato.workspace import (
     generation_ids,
     is_events_file,
     iter_epochs,
-    run_entry_ids,
 )
+from zicato.workspace.reads import generation_base_seed
 
 # ---------------------------------------------------------------------------
 # Run-directory discovery — for the conversation / matchup endpoints
@@ -81,10 +87,13 @@ _RunIdIndexState = tuple[dict[str, _RunIdFileState], dict[str, Path]]
 _RUN_ID_INDEX_CACHE: dict[str, _RunIdIndexState] = {}
 
 
-def _current_events_files(epochs: Path) -> list[Path]:
+def _current_events_files(epochs: Path, *, epoch_id: str = "") -> list[Path]:
     """Every current replicate events file, excluding ``*.prev.jsonl``."""
     return sorted(
-        path for path in epochs.glob("*/generations/*/runs/*/events*.jsonl") if is_events_file(path)
+        path
+        for run_dir in epochs.glob(f"{epoch_id or '*'}/generations/*/runs/*")
+        for path in iter_measurement_artifacts(run_dir, "events")
+        if is_events_file(path)
     )
 
 
@@ -119,7 +128,7 @@ def _run_id_file_state(path: Path, cached: _RunIdFileState | None) -> _RunIdFile
 
 def _replicate_events_in_run(run_dir: Path) -> list[Path]:
     """Return the run directory's current replicate event files."""
-    return sorted(path for path in run_dir.glob("events*.jsonl") if is_events_file(path))
+    return list(iter_measurement_artifacts(run_dir, "events"))
 
 
 def _loss_twin(events_path: Path) -> Path | None:
@@ -127,9 +136,7 @@ def _loss_twin(events_path: Path) -> Path | None:
     replicate_index = events_replicate_index(events_path)
     if replicate_index is None:
         return None
-    if replicate_index == 0:
-        return events_path.with_name("loss.json")
-    return events_path.with_name(f"loss.r{replicate_index}.json")
+    return events_path.with_name(unit_artifact_name("loss", replicate_index))
 
 
 def _nested_events_for_disambiguator(run_dir: Path, disambiguator: str) -> Path | None:
@@ -155,7 +162,7 @@ def _nested_events_for_disambiguator(run_dir: Path, disambiguator: str) -> Path 
     return None
 
 
-def _build_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
+def _build_run_id_index(paths: WorkspacePaths, *, epoch_id: str = "") -> dict[str, Path]:
     """Scan ``epochs/*/generations/*/runs/*/events.jsonl`` → ``{run_id: path}``.
 
     Matches on the ``runId`` carried inside each events file rather than on
@@ -165,10 +172,14 @@ def _build_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
     replaced, truncated, or was empty at the last scan is parsed on demand.
     """
     epochs = paths.epochs
-    cache_key = str(epochs)
+    cache_key = str(epochs / epoch_id)
     if not epochs.is_dir():
         return {}
-    events_files = _current_events_files(epochs)
+    events_files = (
+        _current_events_files(epochs, epoch_id=epoch_id)
+        if epoch_id
+        else _current_events_files(epochs)
+    )
     cached_entry = _RUN_ID_INDEX_CACHE.get(cache_key)
     cached = cached_entry[0] if cached_entry is not None else {}
 
@@ -187,9 +198,11 @@ def _build_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
     return index
 
 
-def _find_run_events_in_index(paths: WorkspacePaths, run_id: str) -> Path | None:
+def _find_run_events_in_index(
+    paths: WorkspacePaths, run_id: str, *, epoch_id: str = ""
+) -> Path | None:
     """Fast lookup that touches only a cached run's own file on live appends."""
-    cache_key = str(paths.epochs)
+    cache_key = str(paths.epochs / epoch_id)
     cached = _RUN_ID_INDEX_CACHE.get(cache_key)
     if cached is not None:
         states, index = cached
@@ -208,7 +221,7 @@ def _find_run_events_in_index(paths: WorkspacePaths, run_id: str) -> Path | None
                 discovered = state[-1]
                 if discovered:
                     index.setdefault(discovered, events_path)
-    return _build_run_id_index(paths).get(run_id)
+    return _build_run_id_index(paths, epoch_id=epoch_id).get(run_id)
 
 
 # Cache: workspace epochs dir → {run_id: gen×entry events.jsonl path}. In
@@ -220,12 +233,14 @@ def _find_run_events_in_index(paths: WorkspacePaths, run_id: str) -> Path | None
 # ``runs/<entry>/loss.json`` carrying both its ``run_id`` and the gen×entry it
 # belongs to (the run directory it lives under). Mapping every such ``run_id``
 # to its gen×entry ``events.jsonl`` lets a transcript-less reuse run_id resolve
-# to the one real transcript for that pair. Memoized on the epochs-dir mtime
-# (the reuse records are settled rather than live streams).
-_REUSE_RUN_ID_INDEX_CACHE: dict[str, tuple[float, dict[str, Path]]] = {}
+# to the real transcript for that measurement. File identity, modification
+# time, and size invalidate the cache when any canonical loss is replaced.
+_REUSE_RUN_ID_INDEX_CACHE: dict[
+    str, tuple[tuple[tuple[str, int, int, int], ...], dict[str, Path]]
+] = {}
 
 
-def _build_reuse_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
+def _build_reuse_run_id_index(paths: WorkspacePaths, *, epoch_id: str = "") -> dict[str, Path]:
     """Scan ``runs/<entry>/loss.json`` → ``{run_id: gen×entry events.jsonl}``.
 
     Every per-entry ``loss.json`` carries the ``run_id`` of the record it
@@ -235,24 +250,33 @@ def _build_reuse_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
     inside that ``events.jsonl`` (the run that actually executed), so this
     index maps the reuse ``run_id`` onto the real transcript file. Only
     pairs whose ``events.jsonl`` actually exists are indexed, so a resolve
-    through this map always lands on a readable transcript. Cached per
-    workspace, invalidated when the epochs dir mtime changes.
+    through this map always lands on a readable transcript. The cache tracks
+    each loss file, including seed-qualified paths.
     """
     epochs = paths.epochs
-    cache_key = str(epochs)
-    try:
-        mtime = epochs.stat().st_mtime
-    except OSError:
-        return {}
-
+    cache_key = str(epochs / epoch_id)
+    states: list[tuple[str, int, int, int]] = []
+    for run_dir in sorted(epochs.glob(f"{epoch_id or '*'}/generations/*/runs/*")):
+        for path in iter_measurement_artifacts(run_dir):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            states.append((str(path), stat.st_ino, stat.st_mtime_ns, stat.st_size))
+    fingerprint = tuple(states)
     cached = _REUSE_RUN_ID_INDEX_CACHE.get(cache_key)
-    if cached is not None and cached[0] == mtime:
+    if cached is not None and cached[0] == fingerprint:
         return cached[1]
 
     index: dict[str, Path] = {}
     if epochs.is_dir():
-        for loss_path in epochs.glob("*/generations/*/runs/*/loss.json"):
-            events_path = loss_path.parent / "events.jsonl"
+        for path_text, *_ in states:
+            loss_path = Path(path_text)
+            from zicato.core.measurement import artifact_replicate_index  # noqa: PLC0415
+
+            index_value = artifact_replicate_index(loss_path.name)
+            assert index_value is not None
+            events_path = loss_path.with_name(unit_artifact_name("events", index_value))
             if not events_path.exists():
                 continue
             loss = _read_json_value(loss_path)
@@ -261,11 +285,11 @@ def _build_reuse_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
             rid = loss.get("run_id")
             if isinstance(rid, str) and rid and rid not in index:
                 index[rid] = events_path
-    _REUSE_RUN_ID_INDEX_CACHE[cache_key] = (mtime, index)
+    _REUSE_RUN_ID_INDEX_CACHE[cache_key] = (fingerprint, index)
     return index
 
 
-def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
+def find_run_events_path(paths: WorkspacePaths, run_id: str, *, epoch_id: str = "") -> Path | None:
     """Locate the ``events.jsonl`` for one run id.
 
     Tries, in order:
@@ -280,6 +304,7 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
        runner actually writes: run directories are named by board ENTRY
        id rather than run id, so the run id only appears inside the events.
 
+    A named epoch restricts every lookup and its cache to that epoch.
     Returns ``None`` when nothing matches.
     """
     run_file = paths.active_runs_dir / f"{run_id}.json"
@@ -287,18 +312,23 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
     if isinstance(run, dict):
         events = run.get("events_jsonl_path")
         if isinstance(events, str) and events and Path(events).exists():
-            return Path(events)
+            candidate = Path(events)
+            if not epoch_id or candidate.resolve().is_relative_to(
+                (paths.epochs / epoch_id).resolve()
+            ):
+                return candidate
 
     layout = layout_of(paths)
-    for epoch in iter_epochs(layout):
-        for generation_id in generation_ids(layout, epoch.id):
-            events = layout.events(epoch.id, generation_id, run_id)
+    epoch_ids = [epoch_id] if epoch_id else [epoch.id for epoch in iter_epochs(layout)]
+    for candidate_epoch in epoch_ids:
+        for generation_id in generation_ids(layout, candidate_epoch):
+            events = layout.events(candidate_epoch, generation_id, run_id)
             if events.exists():
                 return events
 
     # Fall back to the run-id → events.jsonl index (matches the canonical
     # board-run layout, where the run directory is named by entry id).
-    indexed = _find_run_events_in_index(paths, run_id)
+    indexed = _find_run_events_in_index(paths, run_id, epoch_id=epoch_id)
     if indexed is not None and indexed.exists():
         return indexed
 
@@ -308,7 +338,7 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
     # the one real transcript. Map the reuse run_id → that gen×entry
     # events.jsonl so the champion side renders rather than reporting
     # "could not be reconstructed".
-    reused = _build_reuse_run_id_index(paths).get(run_id)
+    reused = _build_reuse_run_id_index(paths, epoch_id=epoch_id).get(run_id)
     if reused is not None and reused.exists():
         return reused
     return None
@@ -317,23 +347,13 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
 def find_generation_entry_events(
     paths: WorkspacePaths, generation_id: str, entry_id: str
 ) -> Path | None:
-    """STRICT ``(generation_id, entry_id)`` → events.jsonl resolution.
+    """Resolve the selected draw, strictly within the requested board entry.
 
-    Unlike :func:`find_generation_run`, this requires the events file to
-    live in the entry's OWN run directory
-    (``generations/<gen>/runs/<entry>/events.jsonl``) — no fallback to an
-    arbitrary sibling run dir. This is the right primitive for the
-    successive-halving champion fallback: an absent gen×entry
-    must NOT fabricate some other entry's transcript. Returns ``None`` when
-    no such file exists.
+    Historical generations without selection provenance retain unqualified
+    events. A missing selected-seed capture cannot borrow another seed's events.
     """
-    for epoch in iter_epochs(layout_of(paths)):
-        events = (
-            epoch.directory / "generations" / generation_id / "runs" / entry_id / "events.jsonl"
-        )
-        if events.exists():
-            return events
-    return None
+    found = find_generation_run(paths, generation_id, entry_id)
+    return found[1] if found is not None else None
 
 
 def resolve_transcript_events(
@@ -356,36 +376,28 @@ def resolve_transcript_events(
     Resolution, strict to this entry's own run directory (never a sibling's):
 
     1. Locate ``generations/<gen>/runs/<entry>`` in the requested
-       ``epoch_id`` (then any epoch carrying that generation, since a
-       generation id is unique workspace-wide).
+       ``epoch_id``. An omitted epoch searches in canonical epoch order.
+       A named epoch never falls back to another epoch.
     2. Disambiguator: a ``match_id`` first selects the nested-rung
        layout; a ``run_id`` first selects an exact sibling
        ``events.rN.jsonl`` by validated runtime id, event ``runId``, or its
        matching loss record. Each then falls back to the other layout.
-    3. Default or unmatched disambiguator: return canonical
-       ``events.jsonl`` (replicate 0).
-
-    Returns ``None`` only when no events.jsonl exists for this gen×entry at
-    all — the genuine-absence case the honest "could not be reconstructed"
-    message is reserved for.
+    3. An exact runtime identity resolves only its own seed and draw. A
+       missing exact transcript returns ``None``. Without an exact identity,
+       the generation score selects the seed for ordinary draw zero. Missing
+       selection provenance retains historical unqualified audit behavior.
     """
     if not paths.epochs.is_dir():
         return None
 
-    # Locate this entry's run directory. Prefer the requested epoch; a
-    # generation id is unique workspace-wide, so fall back to any epoch that
-    # carries it (covers a mis-scoped epoch_id from the caller).
     layout = layout_of(paths)
     run_dir: Path | None = None
-    primary = layout.run_dir(epoch_id, generation_id, entry_id)
-    if primary.is_dir() or (primary / "events.jsonl").exists():
-        run_dir = primary
-    else:
-        for epoch in iter_epochs(layout):
-            cand = epoch.directory / "generations" / generation_id / "runs" / entry_id
-            if cand.is_dir() or (cand / "events.jsonl").exists():
-                run_dir = cand
-                break
+    epoch_ids = [epoch_id] if epoch_id else [epoch.id for epoch in iter_epochs(layout)]
+    for candidate_epoch in epoch_ids:
+        candidate = layout.run_dir(candidate_epoch, generation_id, entry_id)
+        if candidate.is_dir():
+            run_dir = candidate
+            break
     if run_dir is None:
         return None
 
@@ -403,15 +415,15 @@ def resolve_transcript_events(
         # Replicates share the entry directory, so resolve their sibling file
         # before considering the nested-directory layout used by racing.
         if run_id:
-            replicate_index = replicate_index_from_run_id(generation_id, entry_id, run_id)
-            if replicate_index is not None:
-                exact = (
-                    run_dir / "events.jsonl"
-                    if replicate_index == 0
-                    else run_dir / f"events.r{replicate_index}.jsonl"
+            measurement = measurement_from_run_id(generation_id, entry_id, run_id)
+            if measurement is not None:
+                exact = measurement_artifact_path(
+                    run_dir,
+                    "events",
+                    measurement.replicate_index,
+                    base_seed=measurement.base_seed,
                 )
-                if exact.exists():
-                    return exact
+                return exact if exact.exists() else None
         for events in _replicate_events_in_run(run_dir):
             if run_id and _run_id_of_events_file(events) == run_id:
                 return events
@@ -430,10 +442,15 @@ def resolve_transcript_events(
         # Disambiguator did not match a specific rung — fall through to the
         # entry's own canonical events file rather than 404-ing.
 
-    own = run_dir / "events.jsonl"
-    if own.exists():
-        return own
-    return None
+    coordinates = run_coordinates_from_dir(run_dir)
+    if coordinates is None:
+        return None
+    try:
+        seed = generation_base_seed(layout, coordinates[0], generation_id)
+    except ValueError:
+        return None
+    own = measurement_artifact_path(run_dir, "events", 0, base_seed=seed)
+    return own if own.is_file() else None
 
 
 def find_proposal_episode_log(
@@ -502,24 +519,27 @@ def _slate_episode_dirs(episodes: Path, generation_id: str) -> list[Path]:
 def find_generation_run(
     paths: WorkspacePaths, generation_id: str, entry_id: str
 ) -> tuple[str, Path] | None:
-    """Locate the run directory for one ``(generation_id, entry_id)`` pair.
+    """Locate the ordinary draw selected by a generation's persisted score.
 
-    Returns ``(run_id, events_jsonl_path)``. The run id is the run
-    directory's name (the convention zicato uses for board-entry runs).
-    Returns ``None`` when no events file is found.
+    A known selected seed returns its canonical runtime identity. Without seed
+    provenance, only the historical unqualified entry remains available for
+    audit. A live seed-qualified run before score publication requires its exact
+    producer run id; this lookup cannot infer selection from runtime defaults.
     """
     layout = layout_of(paths)
     for epoch in iter_epochs(layout):
-        # Exact directory match on the entry id is the common layout.
-        events = layout.events(epoch.id, generation_id, entry_id)
-        if events.exists():
-            return (entry_id, events)
-        # Otherwise scan run records and match one whose events.jsonl
-        # carries this entry id (rare alternate layout).
-        for run_entry_id in run_entry_ids(layout, epoch.id, generation_id):
-            ev = layout.events(epoch.id, generation_id, run_entry_id)
-            if ev.exists():
-                return (run_entry_id, ev)
+        try:
+            seed = generation_base_seed(layout, epoch.id, generation_id)
+        except ValueError:
+            continue
+        events = layout.events(epoch.id, generation_id, entry_id, base_seed=seed)
+        if events.is_file():
+            run_id = (
+                entry_id
+                if seed is UNKNOWN_SEED
+                else run_id_for_unit(generation_id, entry_id, base_seed=seed)
+            )
+            return run_id, events
     return None
 
 

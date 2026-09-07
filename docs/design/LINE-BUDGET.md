@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 483,175 | +74,514 |
-| Production | 197,702 | 207,982 | +10,280 |
-| Production logic | 110,276 | 116,981 | +6,705 |
+| Total | 408,661 | 487,564 | +78,903 |
+| Production | 197,702 | 209,151 | +11,449 |
+| Production logic | 110,276 | 118,573 | +8,297 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,22 +84,22 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 70,648 | 37,625 | 26,301 | 30.1% |
-| src/zicato/query | 20,652 | 20,652 | 12,458 | 39.7% |
-| src/zicato/evolve | 11,890 | 11,890 | 7,053 | 40.7% |
-| src/zicato/reflection | 10,277 | 10,277 | 6,699 | 34.8% |
-| src/zicato/epoch | 13,127 | 13,127 | 6,482 | 50.6% |
-| src/zicato/tournament | 11,420 | 11,420 | 6,059 | 46.9% |
+| src/zicato/dashboard | 70,682 | 37,640 | 26,315 | 30.1% |
+| src/zicato/query | 20,725 | 20,725 | 12,610 | 39.2% |
+| src/zicato/evolve | 11,967 | 11,967 | 7,131 | 40.4% |
+| src/zicato/reflection | 10,288 | 10,288 | 6,750 | 34.4% |
+| src/zicato/epoch | 13,122 | 13,122 | 6,502 | 50.4% |
+| src/zicato/tournament | 11,564 | 11,564 | 6,463 | 44.1% |
 | src/zicato/proposer | 11,379 | 11,379 | 5,852 | 48.6% |
 | crates/supervisor | 15,335 | 12,904 | 5,671 | 56.1% |
-| src/zicato/cli | 8,169 | 8,169 | 5,159 | 36.8% |
-| src/zicato/analyzer | 7,622 | 7,622 | 4,784 | 37.2% |
+| src/zicato/cli | 8,179 | 8,179 | 5,172 | 36.8% |
+| src/zicato/analyzer | 7,631 | 7,631 | 4,793 | 37.2% |
 | src/zicato/tui | 4,394 | 4,394 | 3,136 | 28.6% |
-| src/zicato/selection | 5,306 | 5,306 | 2,875 | 45.8% |
-| src/zicato/index | 5,399 | 5,399 | 2,699 | 50.0% |
-| src/zicato/runtime | 5,407 | 5,407 | 2,483 | 54.1% |
-| src/zicato/telemetry | 4,709 | 4,709 | 2,249 | 52.2% |
-| src/zicato/core | 6,228 | 6,228 | 1,970 | 68.4% |
+| src/zicato/selection | 5,463 | 5,463 | 3,106 | 43.1% |
+| src/zicato/index | 5,434 | 5,434 | 2,765 | 49.1% |
+| src/zicato/runtime | 5,406 | 5,406 | 2,485 | 54.0% |
+| src/zicato/core | 6,689 | 6,689 | 2,340 | 65.0% |
+| src/zicato/telemetry | 4,732 | 4,732 | 2,272 | 52.0% |
 | src/zicato/contract_draft | 2,928 | 2,928 | 1,684 | 42.5% |
 | src/zicato/builder | 2,343 | 2,343 | 1,332 | 43.1% |
 | src/zicato/health | 2,251 | 2,251 | 1,209 | 46.3% |
@@ -108,9 +108,9 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/check | 1,566 | 1,566 | 956 | 39.0% |
 | src/zicato/adapters | 2,168 | 2,168 | 793 | 63.4% |
 | src/zicato/testing | 1,447 | 1,447 | 760 | 47.5% |
-| src/zicato/judge_runtime | 1,749 | 1,749 | 740 | 57.7% |
-| src/zicato/_tournament_worker.py | 1,264 | 1,264 | 635 | 49.8% |
-| src/zicato/workspace | 1,621 | 1,621 | 628 | 61.3% |
+| src/zicato/judge_runtime | 1,772 | 1,772 | 755 | 57.4% |
+| src/zicato/workspace | 1,724 | 1,724 | 732 | 57.5% |
+| src/zicato/_tournament_worker.py | 1,298 | 1,298 | 675 | 48.0% |
 | src/zicato/synthetic | 1,139 | 1,139 | 544 | 52.2% |
 | src/zicato/scoring | 1,388 | 1,388 | 464 | 66.6% |
 | src/zicato/patterns | 804 | 804 | 417 | 48.1% |
@@ -403,3 +403,10 @@ dropped rows named.
 | Canonical record readers and responsive review clients (production) | 205,963 | +2,019 | 207,982 | Shared record readers replace direct decoding across query, CLI, index, and execution consumers. Request capture, responsive terminal review, and endpoint identity add behavior. The minimal epoch revision hook is a prerequisite; the complete index currency protocol remains separate. |
 | Canonical record readers and responsive review clients (production logic) | 114,740 | +2,241 | 116,981 | Strict record acceptance and inverse codecs, request-owned inputs, asynchronous client refresh, terminal candidate review, and explicit unreadable-record displays. The persisted-record audit retains the remaining ownership work. |
 | Proposal fixture readiness publication (total) | 483,173 | +2 | 483,175 | Publish the test process ownership record through the existing atomic text writer before its readiness check can observe it. Existing descendant and writer-ownership assertions remain unchanged. |
+| Seed-qualified measurements and independent confirmation (total) | 483,175 | +3,944 | 487,119 | Issues #486–#489 and #500: complete execution admission, seed-qualified artifacts and readers, independent confirmation, and focused refusal regressions. Direct statistical fixtures share immutable reports and production reducers; real scheduler and worker conformance remains. Existing process and reader changes are included in the preceding rows. |
+| Seed-qualified measurements and independent confirmation (production) | 207,982 | +1,108 | 209,090 | Measurement identity and canonical artifact traversal preserve distinct seeds and exclude incomplete attempts. Confirmation records its required state and admits only fresh independent paired draws; descriptive ratings retain point estimates with unknown inferential uncertainty. |
+| Seed-qualified measurements and independent confirmation (production logic) | 116,981 | +1,546 | 118,527 | Shared evidence admission and covariance-aware contrast inference replace marginal-error comparisons. Seed-qualified cache, capture, and query readers reject conflicting provenance. The production reducer avoids unused partial aggregation while preserving progress and budget accounting. |
+| Canonical record identity agreement (total) | 487,119 | +389 | 487,508 | Confirmation records must identify the requested pair; transcript lookup remains within the requested epoch. Measurement filename, run identifier, and body coordinates agree across readers and cache admission. Focused producer-based regressions preserve valid controls and historical audit records. |
+| Canonical record identity agreement (production) | 209,090 | +61 | 209,151 | One loss identity validator replaces consumer-local checks. Existing artifact traversal distinguishes canonical slots from audit-only aliases, and event indexes include the requested epoch in lookup and cache scope. |
+| Canonical record identity agreement (production logic) | 118,527 | +46 | 118,573 | Shared coordinate validation, confirmation pair matching, and epoch-scoped transcript resolution refuse records belonging to another requested execution. |
+| Canonical worker and aggregate fixtures (total) | 487,508 | +56 | 487,564 | Worker doubles and cached records use the runtime identifier for their actual generation, entry, draw, and seed. Valid aggregate fixtures use the canonical writer; a contradictory generation must fail before execution. Existing numerical and cache-count assertions remain, and the corrupted field record is checked through its canonical reader. |

@@ -23,6 +23,7 @@ no live LLM, no real subprocess.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -35,10 +36,12 @@ from zicato.core import (
     LossProfile,
     ScoringWeights,
 )
+from zicato.core.measurement import MeasurementDraw
 from zicato.core.types import DriftCount, ExpectationResult
-from zicato.core.workspace import loss_profile_path
+from zicato.core.workspace import run_id_for_unit
 from zicato.telemetry.reducer import write_loss_profile
 from zicato.tournament.runner import run_matchup
+from zicato.tournament.unit_cache import _unit_loss_path
 
 EPOCH = "e0"
 
@@ -107,7 +110,14 @@ def _seed_champion_cache(tmp_path: Path, champion_id: str, board: list[BoardEntr
         profile = _loss(
             generation_id=champion_id, entry_id=entry.id, drift_loss=2.0, pass_fail=True
         )
-        write_loss_profile(profile, loss_profile_path(tmp_path, EPOCH, champion_id, entry.id))
+        profile = replace(
+            profile,
+            measurement=MeasurementDraw.from_index(0, base_seed=None),
+            run_id=run_id_for_unit(champion_id, entry.id, base_seed=None),
+        )
+        write_loss_profile(
+            profile, _unit_loss_path(tmp_path, EPOCH, champion_id, entry.id, 0, base_seed=None)
+        )
 
 
 def test_fast_matchup_reuses_cached_champion_and_skips_its_run(monkeypatch, tmp_path):
@@ -291,11 +301,19 @@ def _stub_run_single_persisting(monkeypatch, canned, *, log: list):
     async def fake_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, config, side, match_id
+        del adapter, weights, side, match_id
         log.append((generation.id, entry.id))
-        profile = canned[(generation.id, entry.id)]
+        replicate = int(entry.context.get("replicate_index", "0"))
+        profile = replace(
+            canned[(generation.id, entry.id)],
+            run_id=run_id_for_unit(generation.id, entry.id, replicate, base_seed=config.seed),
+            measurement=MeasurementDraw.from_index(replicate, base_seed=config.seed),
+        )
         write_loss_profile(
-            profile, loss_profile_path(workspace_root, epoch_id, generation.id, entry.id)
+            profile,
+            _unit_loss_path(
+                workspace_root, epoch_id, generation.id, entry.id, replicate, base_seed=config.seed
+            ),
         )
         return profile
 
@@ -397,15 +415,19 @@ def test_replicates_incremental_runs_only_missing(monkeypatch, tmp_path):
     async def fake_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, config, side, match_id
+        del adapter, weights, side, match_id
         log.append((generation.id, entry.id))
-        profile = canned[(generation.id, entry.id)]
-        # Persist to the per-replicate slot the cache-first runner reads:
-        # replicate 0 → canonical loss.json; r>0 → loss.r<r>.json. We
-        # cannot know the replicate index here, so persist via the
-        # canonical writer and let the runner's own persist fill r>0.
+        replicate = int(entry.context.get("replicate_index", "0"))
+        profile = replace(
+            canned[(generation.id, entry.id)],
+            run_id=run_id_for_unit(generation.id, entry.id, replicate, base_seed=config.seed),
+            measurement=MeasurementDraw.from_index(replicate, base_seed=config.seed),
+        )
         write_loss_profile(
-            profile, loss_profile_path(workspace_root, epoch_id, generation.id, entry.id)
+            profile,
+            _unit_loss_path(
+                workspace_root, epoch_id, generation.id, entry.id, replicate, base_seed=config.seed
+            ),
         )
         return profile
 

@@ -263,11 +263,14 @@ def test_recombination_promotes_where_singles_reject(tmp_path: Path) -> None:
 
     # The union's per-entry floor: zero drift, all five predicates pass.
     from zicato.board.jsonl import load_board
-    from zicato.core.workspace import board_path, loss_profile_path
+    from zicato.core.workspace import board_path
     from zicato.telemetry.reducer import read_loss_profile
+    from zicato.tournament.unit_cache import _unit_loss_path
 
     for entry in load_board(board_path(workspace, epoch_id)):
-        profile = read_loss_profile(loss_profile_path(workspace, epoch_id, "v3", entry.id))
+        profile = read_loss_profile(
+            _unit_loss_path(workspace, epoch_id, "v3", entry.id, 0, base_seed=None)
+        )
         assert profile.drift_loss == 0.0, entry.id
         assert profile.pass_fail is True, entry.id
 

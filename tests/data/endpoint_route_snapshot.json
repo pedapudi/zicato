@@ -3096,7 +3096,7 @@
         "decision": "baseline",
         "decision_label": "seed (v0)",
         "elo": 1601.881112404967,
-        "elo_se": 149.88256838577433,
+        "elo_se": null,
         "elo_games": 2
       },
       "holdout": null,
@@ -3124,7 +3124,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1601.881112404967,
-          "elo_se": 149.88256838577433,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -3137,7 +3137,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -3150,7 +3150,7 @@
           "decision_label": "rejected",
           "round_index": 1,
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -4248,7 +4248,7 @@
         "decision": "baseline",
         "decision_label": "seed (v0)",
         "elo": 1601.881112404967,
-        "elo_se": 149.88256838577433,
+        "elo_se": null,
         "elo_games": 2
       },
       "experiment": {
@@ -4271,7 +4271,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1,
           "relationship": "child"
         },
@@ -4285,7 +4285,7 @@
           "decision_label": "rejected",
           "round_index": 1,
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1,
           "relationship": "child"
         }
@@ -4669,7 +4669,7 @@
         "decision_label": "rejected",
         "round_index": 0,
         "elo": 1449.0594437975165,
-        "elo_se": 160.1851199535229,
+        "elo_se": null,
         "elo_games": 1
       },
       "experiment": {
@@ -4766,7 +4766,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1601.881112404967,
-          "elo_se": 149.88256838577433,
+          "elo_se": null,
           "elo_games": 2,
           "relationship": "parent"
         }
@@ -5127,7 +5127,7 @@
         "decision_label": "rejected",
         "round_index": 1,
         "elo": 1449.0594437975165,
-        "elo_se": 160.1851199535229,
+        "elo_se": null,
         "elo_games": 1
       },
       "experiment": {
@@ -5213,7 +5213,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1601.881112404967,
-          "elo_se": 149.88256838577433,
+          "elo_se": null,
           "elo_games": 2,
           "relationship": "parent"
         }
@@ -5557,7 +5557,7 @@
         "decision_label": "rejected",
         "round_index": 0,
         "elo": 1449.0594437975165,
-        "elo_se": 160.1851199535229,
+        "elo_se": null,
         "elo_games": 1
       },
       "experiment": {
@@ -5654,7 +5654,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1601.881112404967,
-          "elo_se": 149.88256838577433,
+          "elo_se": null,
           "elo_games": 2,
           "relationship": "parent"
         }
@@ -6054,7 +6054,7 @@
         "decision": "baseline",
         "decision_label": "seed (v0)",
         "elo": 1601.881112404967,
-        "elo_se": 149.88256838577433,
+        "elo_se": null,
         "elo_games": 2
       },
       "experiment": {
@@ -6077,7 +6077,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1,
           "relationship": "child"
         },
@@ -6091,7 +6091,7 @@
           "decision_label": "rejected",
           "round_index": 1,
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1,
           "relationship": "child"
         }
@@ -6475,7 +6475,7 @@
         "decision_label": "rejected",
         "round_index": 0,
         "elo": 1449.0594437975165,
-        "elo_se": 160.1851199535229,
+        "elo_se": null,
         "elo_games": 1
       },
       "experiment": {
@@ -6572,7 +6572,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1601.881112404967,
-          "elo_se": 149.88256838577433,
+          "elo_se": null,
           "elo_games": 2,
           "relationship": "parent"
         }
@@ -6933,7 +6933,7 @@
         "decision_label": "rejected",
         "round_index": 1,
         "elo": 1449.0594437975165,
-        "elo_se": 160.1851199535229,
+        "elo_se": null,
         "elo_games": 1
       },
       "experiment": {
@@ -7019,7 +7019,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1601.881112404967,
-          "elo_se": 149.88256838577433,
+          "elo_se": null,
           "elo_games": 2,
           "relationship": "parent"
         }
@@ -7548,7 +7548,7 @@
         "decision": "baseline",
         "decision_label": "seed (v0)",
         "elo": 1558.6151292645534,
-        "elo_se": 159.73639641300883,
+        "elo_se": null,
         "elo_games": 1
       },
       "holdout": null,
@@ -7576,7 +7576,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1558.6151292645534,
-          "elo_se": 159.73639641300883,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -7589,7 +7589,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1441.3848707354466,
-          "elo_se": 159.73639641300883,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -7744,7 +7744,7 @@
         "decision_label": "rejected",
         "round_index": 0,
         "elo": 1441.3848707354466,
-        "elo_se": 159.73639641300883,
+        "elo_se": null,
         "elo_games": 1
       },
       "experiment": {
@@ -7841,7 +7841,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1558.6151292645534,
-          "elo_se": 159.73639641300883,
+          "elo_se": null,
           "elo_games": 1,
           "relationship": "parent"
         }
@@ -8604,7 +8604,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1668.297188382394,
-        "elo_se": 126.7249593380244,
+        "elo_se": null,
         "elo_games": 6
       },
       "holdout": null,
@@ -8632,7 +8632,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1592.2098394711106,
-          "elo_se": 119.27445576220985,
+          "elo_se": null,
           "elo_games": 8
         },
         {
@@ -8645,7 +8645,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1394.1314493132882,
-          "elo_se": 146.01779127517932,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -8658,7 +8658,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1394.1314493132882,
-          "elo_se": 146.01779127517932,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -8671,7 +8671,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1668.297188382394,
-          "elo_se": 126.7249593380244,
+          "elo_se": null,
           "elo_games": 6
         },
         {
@@ -8684,7 +8684,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1451.2300735199187,
-          "elo_se": 133.57763031907785,
+          "elo_se": null,
           "elo_games": 4
         }
       ]
@@ -9363,7 +9363,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1668.297188382394,
-        "elo_se": 126.7249593380244,
+        "elo_se": null,
         "elo_games": 6
       },
       "experiment": {
@@ -9454,7 +9454,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1592.2098394711106,
-          "elo_se": 119.27445576220985,
+          "elo_se": null,
           "elo_games": 8,
           "relationship": "parent"
         }
@@ -9871,7 +9871,7 @@
         "decision": "baseline",
         "decision_label": "seed (v0)",
         "elo": 1558.6151292645534,
-        "elo_se": 159.73639641300883,
+        "elo_se": null,
         "elo_games": 1
       },
       "holdout": null,
@@ -9899,7 +9899,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1558.6151292645534,
-          "elo_se": 159.73639641300883,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -9912,7 +9912,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1441.3848707354466,
-          "elo_se": 159.73639641300883,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -10064,7 +10064,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1780.3591380135977,
-          "elo_se": 116.4900627251985,
+          "elo_se": null,
           "elo_games": 11
         },
         {
@@ -10077,7 +10077,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1474.5128056351275,
-          "elo_se": 164.28091138364732,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -10090,7 +10090,7 @@
           "decision_label": "rejected",
           "round_index": 1,
           "elo": 1474.5128056351275,
-          "elo_se": 164.28091138364732,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -10103,7 +10103,7 @@
           "decision_label": "rejected",
           "round_index": 2,
           "elo": 1474.5128056351275,
-          "elo_se": 164.28091138364732,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -10116,7 +10116,7 @@
           "decision_label": "rejected",
           "round_index": 3,
           "elo": 1474.5128056351275,
-          "elo_se": 164.28091138364732,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -10129,7 +10129,7 @@
           "decision_label": "rejected",
           "round_index": 4,
           "elo": 1474.5128056351275,
-          "elo_se": 164.28091138364732,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -10142,7 +10142,7 @@
           "decision_label": "rejected",
           "round_index": 5,
           "elo": 1474.5128056351275,
-          "elo_se": 164.28091138364732,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -10155,7 +10155,7 @@
           "decision_label": "rejected",
           "round_index": 6,
           "elo": 1474.5128056351275,
-          "elo_se": 164.28091138364732,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -10168,7 +10168,7 @@
           "decision_label": "rejected",
           "round_index": 7,
           "elo": 1474.5128056351275,
-          "elo_se": 164.28091138364732,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -10181,7 +10181,7 @@
           "decision_label": "rejected",
           "round_index": 8,
           "elo": 1474.5128056351275,
-          "elo_se": 164.28091138364732,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -10194,7 +10194,7 @@
           "decision_label": "rejected",
           "round_index": 9,
           "elo": 1474.5128056351275,
-          "elo_se": 164.28091138364732,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -10207,7 +10207,7 @@
           "decision_label": "rejected",
           "round_index": 10,
           "elo": 1474.5128056351275,
-          "elo_se": 164.28091138364732,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -11325,7 +11325,7 @@
         "decision": "baseline",
         "decision_label": "seed (v0)",
         "elo": 1535.093246869124,
-        "elo_se": 125.05890412150966,
+        "elo_se": null,
         "elo_games": 6
       },
       "holdout": null,
@@ -11392,7 +11392,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1419.7427611880833,
-          "elo_se": 152.68019172657915,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -11405,7 +11405,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1705.678469566626,
-          "elo_se": 136.2394073930879,
+          "elo_se": null,
           "elo_games": 4
         },
         {
@@ -11417,7 +11417,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1535.093246869124,
-          "elo_se": 125.05890412150966,
+          "elo_se": null,
           "elo_games": 6
         },
         {
@@ -11430,7 +11430,7 @@
           "decision_label": "undecided",
           "round_index": 0,
           "elo": 1419.7427611880833,
-          "elo_se": 152.68019172657912,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -11443,7 +11443,7 @@
           "decision_label": "undecided",
           "round_index": 0,
           "elo": 1419.7427611880833,
-          "elo_se": 152.68019172657915,
+          "elo_se": null,
           "elo_games": 2
         }
       ]
@@ -11786,7 +11786,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1705.678469566626,
-        "elo_se": 136.2394073930879,
+        "elo_se": null,
         "elo_games": 4
       },
       "holdout": null,
@@ -11853,7 +11853,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1419.7427611880833,
-          "elo_se": 152.68019172657915,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -11866,7 +11866,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1705.678469566626,
-          "elo_se": 136.2394073930879,
+          "elo_se": null,
           "elo_games": 4
         }
       ]
@@ -12466,7 +12466,7 @@
         "decision": "baseline",
         "decision_label": "seed (v0)",
         "elo": 1535.093246869124,
-        "elo_se": 125.05890412150966,
+        "elo_se": null,
         "elo_games": 6
       },
       "holdout": null,
@@ -12494,7 +12494,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1535.093246869124,
-          "elo_se": 125.05890412150966,
+          "elo_se": null,
           "elo_games": 6
         },
         {
@@ -12507,7 +12507,7 @@
           "decision_label": "undecided",
           "round_index": 0,
           "elo": 1419.7427611880833,
-          "elo_se": 152.68019172657912,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -12520,7 +12520,7 @@
           "decision_label": "undecided",
           "round_index": 0,
           "elo": 1419.7427611880833,
-          "elo_se": 152.68019172657915,
+          "elo_se": null,
           "elo_games": 2
         }
       ]
@@ -12891,7 +12891,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1630.260967401915,
-        "elo_se": 143.1918270298256,
+        "elo_se": null,
         "elo_games": 3
       },
       "holdout": null,
@@ -12919,7 +12919,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1545.1090597889415,
-          "elo_se": 139.78594815144453,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -12932,7 +12932,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1630.260967401915,
-          "elo_se": 143.1918270298256,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -12945,7 +12945,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1452.2531897272277,
-          "elo_se": 139.31434370544102,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -12958,7 +12958,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1372.3767830819158,
-          "elo_se": 144.7615560345625,
+          "elo_se": null,
           "elo_games": 2
         }
       ]
@@ -13500,7 +13500,7 @@
           "scalar": 40.0,
           "status": "alive",
           "elo": 1630.260967401915,
-          "elo_se": 143.1918270298256,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -13510,7 +13510,7 @@
           "status": "alive",
           "role": "champion",
           "elo": 1545.1090597889415,
-          "elo_se": 139.78594815144453,
+          "elo_se": null,
           "elo_games": 3
         }
       ],
@@ -13765,7 +13765,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1630.260967401915,
-        "elo_se": 143.1918270298256,
+        "elo_se": null,
         "elo_games": 3
       },
       "experiment": {
@@ -13837,7 +13837,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1545.1090597889415,
-          "elo_se": 139.78594815144453,
+          "elo_se": null,
           "elo_games": 3,
           "relationship": "parent"
         }
@@ -15018,7 +15018,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1653.6333484331997,
-        "elo_se": 143.09320702575084,
+        "elo_se": null,
         "elo_games": 3
       },
       "holdout": null,
@@ -15046,7 +15046,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1541.0590492849155,
-          "elo_se": 129.9095061938662,
+          "elo_se": null,
           "elo_games": 5
         },
         {
@@ -15059,7 +15059,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1653.6333484331997,
-          "elo_se": 143.09320702575084,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -15072,7 +15072,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1410.1011510459896,
-          "elo_se": 151.02174595079185,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -15085,7 +15085,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1395.2064512358952,
-          "elo_se": 150.71666185238033,
+          "elo_se": null,
           "elo_games": 2
         }
       ]
@@ -15699,7 +15699,7 @@
           "status": "champion",
           "role": "challenger",
           "elo": 1653.6333484331997,
-          "elo_se": 143.09320702575084,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -15711,7 +15711,7 @@
           "status": "eliminated",
           "role": "champion",
           "elo": 1541.0590492849155,
-          "elo_se": 129.9095061938662,
+          "elo_se": null,
           "elo_games": 5
         }
       ],
@@ -16039,7 +16039,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1653.6333484331997,
-        "elo_se": 143.09320702575084,
+        "elo_se": null,
         "elo_games": 3
       },
       "experiment": {
@@ -16111,7 +16111,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1541.0590492849155,
-          "elo_se": 129.9095061938662,
+          "elo_se": null,
           "elo_games": 5,
           "relationship": "parent"
         }
@@ -16510,7 +16510,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1633.2252800564895,
-        "elo_se": 145.1985826044856,
+        "elo_se": null,
         "elo_games": 3
       },
       "holdout": null,
@@ -16538,7 +16538,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1470.6353763934271,
-          "elo_se": 142.69446187956828,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -16551,7 +16551,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1633.2252800564895,
-          "elo_se": 145.1985826044856,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -16564,7 +16564,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1396.1393435500834,
-          "elo_se": 150.4655759218746,
+          "elo_se": null,
           "elo_games": 2
         }
       ]
@@ -16921,7 +16921,7 @@
           "losses": 0,
           "status": "champion",
           "elo": 1633.2252800564895,
-          "elo_se": 145.1985826044856,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -16932,7 +16932,7 @@
           "losses": 1,
           "status": "alive",
           "elo": 1470.6353763934271,
-          "elo_se": 142.69446187956828,
+          "elo_se": null,
           "elo_games": 3
         }
       ],
@@ -17187,7 +17187,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1633.2252800564895,
-        "elo_se": 145.1985826044856,
+        "elo_se": null,
         "elo_games": 3
       },
       "experiment": {
@@ -17259,7 +17259,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1470.6353763934271,
-          "elo_se": 142.69446187956828,
+          "elo_se": null,
           "elo_games": 3,
           "relationship": "parent"
         }
@@ -17717,7 +17717,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1656.7510384649354,
-        "elo_se": 143.30014085504575,
+        "elo_se": null,
         "elo_games": 3
       },
       "holdout": null,
@@ -17745,7 +17745,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1561.7585493369984,
-          "elo_se": 126.54658693702089,
+          "elo_se": null,
           "elo_games": 6
         },
         {
@@ -17758,7 +17758,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1656.7510384649354,
-          "elo_se": 143.30014085504575,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -17771,7 +17771,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1380.2221506106068,
-          "elo_se": 145.63714509744796,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -17784,7 +17784,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1401.2682615874594,
-          "elo_se": 150.9638707495286,
+          "elo_se": null,
           "elo_games": 2
         }
       ]
@@ -18470,7 +18470,7 @@
           "status": "champion",
           "role": "challenger",
           "elo": 1656.7510384649354,
-          "elo_se": 143.30014085504575,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -18482,7 +18482,7 @@
           "status": "eliminated",
           "role": "champion",
           "elo": 1561.7585493369984,
-          "elo_se": 126.54658693702089,
+          "elo_se": null,
           "elo_games": 6
         }
       ],
@@ -18816,7 +18816,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1656.7510384649354,
-        "elo_se": 143.30014085504575,
+        "elo_se": null,
         "elo_games": 3
       },
       "experiment": {
@@ -18888,7 +18888,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1561.7585493369984,
-          "elo_se": 126.54658693702089,
+          "elo_se": null,
           "elo_games": 6,
           "relationship": "parent"
         }
@@ -19299,7 +19299,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1641.4940497354632,
-        "elo_se": 143.7135649742824,
+        "elo_se": null,
         "elo_games": 3
       },
       "holdout": null,
@@ -19327,7 +19327,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1477.030914316406,
-          "elo_se": 142.05186452200448,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -19340,7 +19340,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1641.4940497354632,
-          "elo_se": 143.7135649742824,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -19352,7 +19352,7 @@
           "decision": "pending",
           "decision_label": "undecided",
           "elo": 1455.6293947730524,
-          "elo_se": 160.8821923395602,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -19365,7 +19365,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1425.8456411750783,
-          "elo_se": 158.19507154717567,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -19735,7 +19735,7 @@
           "losses": 0,
           "status": "champion",
           "elo": 1641.4940497354632,
-          "elo_se": 143.7135649742824,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -19746,7 +19746,7 @@
           "losses": 1,
           "status": "alive",
           "elo": 1477.030914316406,
-          "elo_se": 142.05186452200448,
+          "elo_se": null,
           "elo_games": 3
         }
       ],
@@ -20463,7 +20463,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1633.2252800564895,
-        "elo_se": 145.1985826044856,
+        "elo_se": null,
         "elo_games": 3
       },
       "holdout": null,
@@ -20491,7 +20491,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1470.6353763934271,
-          "elo_se": 142.69446187956828,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -20504,7 +20504,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1633.2252800564895,
-          "elo_se": 145.1985826044856,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -20517,7 +20517,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1396.1393435500834,
-          "elo_se": 150.4655759218746,
+          "elo_se": null,
           "elo_games": 2
         }
       ]
@@ -20874,7 +20874,7 @@
           "losses": 0,
           "status": "champion",
           "elo": 1633.2252800564895,
-          "elo_se": 145.1985826044856,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -20885,7 +20885,7 @@
           "losses": 1,
           "status": "alive",
           "elo": 1470.6353763934271,
-          "elo_se": 142.69446187956828,
+          "elo_se": null,
           "elo_games": 3
         }
       ],
@@ -21273,7 +21273,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1715.7262843565688,
-        "elo_se": 131.87685392140042,
+        "elo_se": null,
         "elo_games": 6
       },
       "holdout": null,
@@ -21301,7 +21301,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1536.5705873121794,
-          "elo_se": 125.28255580544537,
+          "elo_se": null,
           "elo_games": 6
         },
         {
@@ -21314,7 +21314,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1715.7262843565688,
-          "elo_se": 131.87685392140042,
+          "elo_se": null,
           "elo_games": 6
         },
         {
@@ -21327,7 +21327,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1415.9010427770838,
-          "elo_se": 151.96370479330687,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -21340,7 +21340,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1415.9010427770838,
-          "elo_se": 151.96370479330687,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -21353,7 +21353,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1415.9010427770838,
-          "elo_se": 151.96370479330687,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -21992,7 +21992,7 @@
           "losses": 0,
           "status": "champion",
           "elo": 1715.7262843565688,
-          "elo_se": 131.87685392140042,
+          "elo_se": null,
           "elo_games": 6
         },
         {
@@ -22003,7 +22003,7 @@
           "losses": 2,
           "status": "alive",
           "elo": 1536.5705873121794,
-          "elo_se": 125.28255580544537,
+          "elo_se": null,
           "elo_games": 6
         },
         {
@@ -22014,7 +22014,7 @@
           "losses": 1,
           "status": "eliminated",
           "elo": 1415.9010427770838,
-          "elo_se": 151.96370479330687,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -22319,7 +22319,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1658.367581537957,
-        "elo_se": 141.02073253614483,
+        "elo_se": null,
         "elo_games": 3
       },
       "holdout": null,
@@ -22347,7 +22347,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1549.9771666842853,
-          "elo_se": 128.78330935300502,
+          "elo_se": null,
           "elo_games": 5
         },
         {
@@ -22360,7 +22360,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1658.367581537957,
-          "elo_se": 141.02073253614483,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -22373,7 +22373,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1395.8276258888789,
-          "elo_se": 147.5457976314046,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -22386,7 +22386,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1395.8276258888789,
-          "elo_se": 147.5457976314046,
+          "elo_se": null,
           "elo_games": 2
         }
       ]
@@ -22946,7 +22946,7 @@
           "scalar": 0.39,
           "status": "champion",
           "elo": 1658.367581537957,
-          "elo_se": 141.02073253614483,
+          "elo_se": null,
           "elo_games": 3
         }
       ],
@@ -23201,7 +23201,7 @@
         "decision_label": "promoted",
         "round_index": 0,
         "elo": 1658.367581537957,
-        "elo_se": 141.02073253614483,
+        "elo_se": null,
         "elo_games": 3
       },
       "experiment": {
@@ -23273,7 +23273,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1549.9771666842853,
-          "elo_se": 128.78330935300502,
+          "elo_se": null,
           "elo_games": 5,
           "relationship": "parent"
         }
@@ -23601,7 +23601,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1601.881112404967,
-          "elo_se": 149.88256838577433,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -23613,7 +23613,7 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -23625,7 +23625,7 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -23873,7 +23873,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1558.6151292645534,
-          "elo_se": 159.73639641300883,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -23885,7 +23885,7 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "elo": 1441.3848707354466,
-          "elo_se": 159.73639641300883,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -24174,7 +24174,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1511.9265270604872,
-          "elo_se": 147.96345694992863,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -24187,7 +24187,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1432.6284178467063,
-          "elo_se": 158.72537001136592,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -24200,7 +24200,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1643.5352589649522,
-          "elo_se": 141.7421148328625,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -24213,7 +24213,7 @@
           "decision_label": "rejected",
           "round_index": 1,
           "elo": 1455.9548980639272,
-          "elo_se": 160.8855566155333,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -24226,7 +24226,7 @@
           "decision_label": "rejected",
           "round_index": 1,
           "elo": 1455.9548980639272,
-          "elo_se": 160.8855566155333,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -24533,7 +24533,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1511.9265270604872,
-          "elo_se": 147.96345694992863,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -24545,7 +24545,7 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "elo": 1432.6284178467063,
-          "elo_se": 158.72537001136592,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -24557,7 +24557,7 @@
           "decision": "promoted",
           "decision_label": "promoted",
           "elo": 1643.5352589649522,
-          "elo_se": 141.7421148328625,
+          "elo_se": null,
           "elo_games": 3
         },
         {
@@ -24569,7 +24569,7 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "elo": 1455.9548980639272,
-          "elo_se": 160.8855566155333,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -24581,7 +24581,7 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "elo": 1455.9548980639272,
-          "elo_se": 160.8855566155333,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -24906,7 +24906,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1601.881112404967,
-          "elo_se": 149.88256838577433,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -24918,7 +24918,7 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -24930,7 +24930,7 @@
           "decision": "rejected",
           "decision_label": "rejected",
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -25158,7 +25158,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1500.0,
-          "elo_se": 147.48507327370694,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -25171,7 +25171,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1430.3290655773244,
-          "elo_se": 158.5839233486123,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -25184,7 +25184,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1569.6709344226756,
-          "elo_se": 158.5839233486123,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -25369,7 +25369,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1441.3848707354466,
-          "elo_se": 159.73639641300883,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -25382,7 +25382,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1558.6151292645534,
-          "elo_se": 159.73639641300883,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -25528,7 +25528,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -25541,7 +25541,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1601.881112404967,
-          "elo_se": 149.88256838577433,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -25554,7 +25554,7 @@
           "decision_label": "rejected",
           "round_index": 1,
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -25868,7 +25868,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1601.881112404967,
-          "elo_se": 149.88256838577433,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -25881,7 +25881,7 @@
           "decision_label": "rejected",
           "round_index": 0,
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -25894,7 +25894,7 @@
           "decision_label": "rejected",
           "round_index": 1,
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         }
       ]
@@ -26120,7 +26120,7 @@
           "decision": "baseline",
           "decision_label": "seed (v0)",
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         },
         {
@@ -26133,7 +26133,7 @@
           "decision_label": "promoted",
           "round_index": 0,
           "elo": 1601.881112404967,
-          "elo_se": 149.88256838577433,
+          "elo_se": null,
           "elo_games": 2
         },
         {
@@ -26146,7 +26146,7 @@
           "decision_label": "rejected",
           "round_index": 1,
           "elo": 1449.0594437975165,
-          "elo_se": 160.1851199535229,
+          "elo_se": null,
           "elo_games": 1
         }
       ]

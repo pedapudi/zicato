@@ -19,6 +19,7 @@ import pytest
 
 import zicato.tournament.runner as runner_mod
 from zicato.core import BoardEntry, Generation, LossProfile, RuntimeConfig, ScoringWeights
+from zicato.core.workspace import run_id_for_unit
 from zicato.testing.fixtures import make_loss_profile
 from zicato.tournament.runner import _run_unit_cache_first
 from zicato.tournament.unit_cache import _UnitProvenance
@@ -109,7 +110,12 @@ def _stub_run_single(
         generation = kwargs["generation"]
         entry = kwargs["entry"]
         overrides: dict[str, Any] = {
-            "run_id": f"{generation.id}--{entry.id}",
+            "run_id": run_id_for_unit(
+                generation.id,
+                entry.id,
+                int(entry.context.get("replicate_index", 0)),
+                base_seed=kwargs["config"].seed,
+            ),
             "generation_id": generation.id,
             "entry_id": entry.id,
             "epoch_id": kwargs["epoch_id"],

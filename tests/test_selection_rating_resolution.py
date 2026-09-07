@@ -18,6 +18,7 @@ All synthetic — no live runs.
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import pytest
 
@@ -70,12 +71,83 @@ def test_bradley_terry_recovers_a_known_strength_order() -> None:
     assert math.isclose(theta_a + theta_b + theta_c, 0.0, abs_tol=1e-6)
 
 
-def test_bradley_terry_replication_shrinks_standard_errors() -> None:
-    few = fit_bradley_terry([("a", "b"), ("b", "a"), ("a", "b")])
-    many = fit_bradley_terry(([("a", "b")] * 6) + ([("b", "a")] * 6))
-    # More replicates ⇒ tighter (smaller) standard errors on the same pair.
-    assert many["a"][1] < few["a"][1]
-    assert many["b"][1] < few["b"][1]
+@pytest.mark.parametrize("games", [100, 1_000, 10_000])
+def test_balanced_pair_standard_error_matches_identifiable_information(games: int) -> None:
+    # With theta_a = t and theta_b = -t, the balanced pair has information
+    # games + 2 * prior for t. This one-dimensional calculation does not use
+    # the fitter's matrix inversion or its covariance projection.
+    rating = fit_bradley_terry([("a", "b"), ("b", "a")] * (games // 2))
+    expected_se = 1.0 / math.sqrt(games + 2.0)
+    assert rating["a"][0] == pytest.approx(0.0)
+    assert rating["a"][1] == pytest.approx(expected_se)
+    assert rating["b"][1] == pytest.approx(expected_se)
+
+
+@pytest.mark.parametrize("scale", [1, 10, 100])
+def test_mixed_pair_difference_matches_scalar_likelihood(scale: int) -> None:
+    wins, losses = 80 * scale, 20 * scale
+    games = wins + losses
+    # In the zero-sum two-player model, strengths are delta/2 and -delta/2.
+    # Its scalar score is wins - games * logistic(delta) - prior * delta/2.
+    # Bisection and scalar curvature provide an independent fit reference.
+    lo, hi = 0.0, 5.0
+    for _ in range(60):
+        delta = (lo + hi) / 2.0
+        probability = 1.0 / (1.0 + math.exp(-delta))
+        if wins - games * probability - delta / 2.0 > 0.0:
+            lo = delta
+        else:
+            hi = delta
+    expected_delta = (lo + hi) / 2.0
+    probability = 1.0 / (1.0 + math.exp(-expected_delta))
+    expected_se = 1.0 / math.sqrt(games * probability * (1.0 - probability) + 0.5)
+    rating = fit_bradley_terry([("a", "b")] * wins + [("b", "a")] * losses)
+    delta, se = rating.difference("a", "b")
+    assert delta == pytest.approx(expected_delta)
+    assert se == pytest.approx(expected_se)
+
+
+def test_strength_difference_ignores_shared_location_and_location_variance() -> None:
+    rating = fit_bradley_terry([("a", "b")] * 8 + [("b", "a")] * 2)
+    shifted = replace(
+        rating,
+        estimates={gid: (theta + 37.0, se) for gid, (theta, se) in rating.items()},
+    )
+    assert shifted.difference("a", "b") == pytest.approx(rating.difference("a", "b"))
+    # A shared random offset changes every marginal variance and covariance
+    # equally. Its uncertainty cancels from any difference.
+    translated_covariance = {pair: value + 100.0 for pair, value in rating.covariance.items()}
+    translated = replace(
+        shifted,
+        estimates={
+            gid: (theta, math.sqrt(translated_covariance[gid, gid]))
+            for gid, (theta, _) in shifted.items()
+        },
+        covariance=translated_covariance,
+    )
+    assert translated.difference("a", "b") == pytest.approx(rating.difference("a", "b"))
+    assert prob_stronger(
+        *translated["a"],
+        *translated["b"],
+        covariance=translated.covariance["a", "b"],
+    ) == pytest.approx(
+        prob_stronger(*rating["a"], *rating["b"], covariance=rating.covariance["a", "b"])
+    )
+
+
+@pytest.mark.parametrize("field_size", [2, 3, 5])
+def test_balanced_complete_field_difference_matches_information_eigenvalue(
+    field_size: int,
+) -> None:
+    ids = [str(i) for i in range(field_size)]
+    matches = [(a, b) for a in ids for b in ids if a != b]
+    rating = fit_bradley_terry(matches)
+    # Every unordered pair contributes information 1/2. The complete
+    # graph Laplacian has eigenvalue field_size/2 on zero-sum contrasts.
+    expected_variance = 2.0 / (1.0 + field_size / 2.0)
+    assert rating.difference("0", "1") == pytest.approx((0.0, math.sqrt(expected_variance)))
+    for gid in ids:
+        assert sum(rating.covariance[gid, other] for other in ids) == pytest.approx(0.0)
 
 
 def test_bradley_terry_empty_field_is_empty() -> None:

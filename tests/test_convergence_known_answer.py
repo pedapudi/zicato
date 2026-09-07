@@ -229,12 +229,13 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
     # numbers the floor is built from: one info-severity drift frame
     # (the remaining verbose-prose token) and 4/5 predicates passing.
     from zicato.board.jsonl import load_board
-    from zicato.core.workspace import board_path, loss_profile_path
+    from zicato.core.workspace import board_path
     from zicato.telemetry.reducer import read_loss_profile
+    from zicato.tournament.unit_cache import _unit_loss_path
 
     passes = {}
     for entry in load_board(board_path(workspace, epoch_id)):
-        lp_path = loss_profile_path(workspace, epoch_id, "v3", entry.id)
+        lp_path = _unit_loss_path(workspace, epoch_id, "v3", entry.id, 0, base_seed=None)
         assert lp_path.exists(), entry.id
         profile = read_loss_profile(lp_path)
         assert profile.drift_loss == 1.0, entry.id
@@ -316,13 +317,12 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
         ), round_index
         assert record.decision_provenance["operator_override"] is False, round_index
 
-    # --- (f) Index run rows are unique per (generation, entry): the
-    # harness derives run ids from the run's stable coordinate
-    # (``conv-<generation>-<entry>``), so the ``runs`` table (PRIMARY KEY
-    # run_id) keeps every generation's rows instead of each round
-    # overwriting the last (task #11: the old ``conv-<entry>`` id was
-    # reused across generations).
+    # The audit index retains ordinary, calibration, and preflight measurements.
+    # The selected loss projection contains one ordinary draw per board entry.
     import sqlite3
+    from collections import Counter
+
+    from zicato.core.workspace import measurement_from_run_id
 
     conn = sqlite3.connect(str(workspace / "index.db"))
     try:
@@ -331,12 +331,30 @@ def test_gauntlet_converges_to_known_floor(tmp_path: Path) -> None:
                 "SELECT generation_id, COUNT(*) FROM runs GROUP BY generation_id"
             ).fetchall()
         )
-        run_ids = [r[0] for r in conn.execute("SELECT run_id FROM runs").fetchall()]
+        runs = conn.execute("SELECT generation_id, entry_id, run_id FROM runs").fetchall()
     finally:
         conn.close()
-    assert per_gen == {gid: BOARD_SIZE for gid in ("v0", "v1", "v2", "v3")}
-    assert len(run_ids) == len(set(run_ids)) == 4 * BOARD_SIZE
-    assert all(run_id.startswith("conv-v") for run_id in run_ids)
+    assert per_gen == {"v0": 7 * BOARD_SIZE, "v1": BOARD_SIZE, "v2": BOARD_SIZE, "v3": BOARD_SIZE}
+    assert len(runs) == len({run_id for _, _, run_id in runs}) == 10 * BOARD_SIZE
+    measurements = [measurement_from_run_id(gid, eid, rid) for gid, eid, rid in runs]
+    assert all(m is not None and m.base_seed is None for m in measurements)
+    assert Counter(m.purpose.value for m in measurements if m is not None) == {
+        "tournament": 4 * BOARD_SIZE,
+        "calibration": 5 * BOARD_SIZE,
+        "contract_preflight": BOARD_SIZE,
+    }
+    from zicato.index import rebuild_index
+
+    conn = sqlite3.connect(str(rebuild_index(workspace)))
+    try:
+        selected = dict(
+            conn.execute(
+                "SELECT generation_id, COUNT(*) FROM loss_profiles GROUP BY generation_id"
+            ).fetchall()
+        )
+    finally:
+        conn.close()
+    assert selected == {gid: BOARD_SIZE for gid in ("v0", "v1", "v2", "v3")}
 
 
 @pytest.mark.slow

@@ -87,6 +87,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from zicato.core.measurement import (
+    UNKNOWN_SEED,
+    measurement_artifact_path,
+    seed_qualifier,
+    unit_artifact_name,
+)
 from zicato.epoch.round_log import (
     DecisionRecorded,
     GateEvaluated,
@@ -112,12 +118,12 @@ from zicato.query.paths import (
     layout_of,
 )
 from zicato.query.replicate_scores import (
+    AMBIGUOUS_BAND,
     UNCLAIMED_BAND,
     MeasurementBand,
     cell_replicate_draws_indexed,
     measurement_band_draws_indexed,
     measurement_bands,
-    replicate_index,
 )
 from zicato.query.runtime_view import read_active_tournament_dict
 from zicato.workspace import (
@@ -345,11 +351,11 @@ def _board_facts(paths: WorkspacePaths, epoch_id: str) -> tuple[str, list[str]]:
     return digest, [eid for eid in (board_entry_id(row) for row in rows) if eid]
 
 
-def _run_result(loss_path: Path) -> dict[str, Any]:
+def _run_result(loss_path: Path, profile: Any) -> dict[str, Any]:
     """The ``result.json`` twin of one loss slot, or an empty dict."""
     from zicato.tournament.unit_cache import read_run_result, unit_result_path  # noqa: PLC0415
 
-    result = read_run_result(unit_result_path(loss_path))
+    result = read_run_result(unit_result_path(loss_path), expected=profile)
     return result if isinstance(result, dict) else {}
 
 
@@ -409,42 +415,31 @@ def _attempt_nodes(
 ) -> tuple[PlanNode, ...]:
     """The superseded executions recorded beside one unit's scoring slot.
 
-    An attempt file is provenance about an execution that lost the slot,
-    so it is NEVER a work unit (:func:`is_unit_attempt_slot` is the guard
-    every glob-reaching reader owes the run directory). It renders as a
-    child of the unit it belongs to, which is the only place it explains
-    anything: "this cell passed on its second execution".
+    Committed archive directories and historical attempt siblings appear
+    beneath their measurement. They remain audit records and never count as
+    additional draws. Pending archive copies are excluded by the shared reader.
     """
+    from zicato.core.measurement import iter_measurement_attempts  # noqa: PLC0415
     from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
-    from zicato.tournament.unit_cache import is_unit_attempt_slot  # noqa: PLC0415
 
     found: list[tuple[int, PlanNode]] = []
-    try:
-        children = list(run_dir.iterdir())
-    except OSError:
-        return ()
-    for path in sorted(children):
-        if not path.is_file() or not is_unit_attempt_slot(path):
-            continue
+    index = 0
+    loss_path = run_dir / unit_artifact_name("loss", replicate)
+    for path in iter_measurement_attempts(loss_path):
         match = _ATTEMPT_STEM.match(path.stem)
-        if match is None:
-            continue
-        # The attempt belongs to the slot its stem names minus the ``.a<n>``
-        # infix, so it can only ever hang under its own replicate.
-        if replicate_index(f"{match.group('slot')}.json") != replicate:
-            continue
-        index = int(match.group("attempt"))
+        index = int(match.group("attempt")) if match is not None else index + 1
+        attempt_id = f"a{index}" if match is not None else path.parent.name
         try:
             profile = read_loss_profile(path)
         except Exception:  # noqa: BLE001 — an unreadable attempt is dropped
             continue
-        outcome = _unit_outcome(profile, _run_result(path))
+        outcome = _unit_outcome(profile, _run_result(path, profile))
         started, ended, duration_ms, provenance = _timing(profile)
         found.append(
             (
                 index,
                 PlanNode(
-                    id=f"{unit_id}/a{index}",
+                    id=f"{unit_id}/{attempt_id}",
                     kind="board_entry_attempt",
                     label=f"Attempt {index}",
                     purpose="An execution of this unit that was superseded.",
@@ -475,8 +470,11 @@ def _unit_nodes(
     for replicate, profile in cell_replicate_draws_indexed(
         paths, epoch_id, generation_id, entry_id
     ):
-        loss_path = run_dir / ("loss.json" if replicate == 0 else f"loss.r{replicate}.json")
-        outcome = _unit_outcome(profile, _run_result(loss_path))
+        base_seed = (
+            profile.measurement.base_seed if profile.measurement is not None else UNKNOWN_SEED
+        )
+        loss_path = measurement_artifact_path(run_dir, "loss", replicate, base_seed=base_seed)
+        outcome = _unit_outcome(profile, _run_result(loss_path, profile))
         coordinates = {
             "epoch_id": epoch_id,
             "generation_id": generation_id,
@@ -484,8 +482,13 @@ def _unit_nodes(
             "replicate": replicate,
             "match_id": str(getattr(profile, "match_id", "") or ""),
         }
-        unit_id = f"{sweep_id}/{entry_id}/r{replicate}"
-        attempts = _attempt_nodes(unit_id, run_dir, replicate, coordinates)
+        qualifier = seed_qualifier(base_seed)
+        if qualifier:
+            coordinates["base_seed"] = base_seed
+        unit_id = (
+            f"{sweep_id}/{entry_id}/" + (f"{qualifier}/" if qualifier else "") + f"r{replicate}"
+        )
+        attempts = _attempt_nodes(unit_id, loss_path.parent, replicate, coordinates)
         started, ended, duration_ms, own = _timing(profile)
         nodes.append(
             PlanNode(
@@ -596,11 +599,17 @@ def _band_draw_node(
     """
     generation_id, entry_id = coordinates["generation_id"], coordinates["entry_id"]
     replicate = coordinates["replicate"]
-    # Every band index is above zero, so a band draw is always a sibling slot.
-    outcome = _unit_outcome(profile, _run_result(run_dir / f"loss.r{replicate}.json"))
+    base_seed = profile.measurement.base_seed if profile.measurement is not None else UNKNOWN_SEED
+    qualifier = seed_qualifier(base_seed)
+    if qualifier:
+        coordinates["base_seed"] = base_seed
+    loss_path = measurement_artifact_path(run_dir, "loss", replicate, base_seed=base_seed)
+    outcome = _unit_outcome(profile, _run_result(loss_path, profile))
     started, ended, duration_ms, provenance = _timing(profile)
     return PlanNode(
-        id=f"{band_id}/{generation_id}/{entry_id}/r{replicate}",
+        id=f"{band_id}/{generation_id}/{entry_id}/"
+        + (f"{qualifier}/" if qualifier else "")
+        + f"r{replicate}",
         kind="measurement_draw",
         label=f"{generation_id} · {entry_id} · replicate {replicate}",
         purpose=band.purpose,
@@ -655,7 +664,7 @@ def _band_steps(
                 )
                 contributors.setdefault(band.key, set()).add(generation_id)
     steps: list[PlanNode] = []
-    for band in (*measurement_bands(), UNCLAIMED_BAND):
+    for band in (*measurement_bands(), UNCLAIMED_BAND, AMBIGUOUS_BAND):
         children = tuple(draws.get(band.key, ()))
         if not children:
             continue

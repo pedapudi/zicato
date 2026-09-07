@@ -20,6 +20,7 @@ log = logging.getLogger("zicato.orchestrator")
 
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 
+from zicato.core.measurement import UNKNOWN_SEED, BaseSeed, measurement_artifact_path
 from zicato.evolve.round_api import DEFERRED_INFRA_DECISION, EvolveRoundOutcome
 from zicato.evolve.round_prepare import _assess_and_persist_loop_health
 from zicato.evolve.round_reporting import _RoundLogEmitter
@@ -225,6 +226,8 @@ def _load_parent_losses(
     parent_id: str,
     board: list[Any],
     read_loss_profile: Callable[[Path], Any],
+    *,
+    base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> list[Any]:
     """Read ONE champion loss profile per board entry, in board order.
 
@@ -273,6 +276,7 @@ def _load_parent_losses(
     )
     from zicato.tournament.unit_cache import (  # noqa: PLC0415
         _average_losses,
+        _resolve_cached_unit,
         own_code_board_draws,
     )
 
@@ -285,8 +289,14 @@ def _load_parent_losses(
     canonical: dict[str, Any] = {}
     uncovered: list[Any] = []
     for entry in board:
-        lpath = loss_profile_path(workspace_root, epoch_id, parent_id, entry.id)
-        profile = _read(lpath) if lpath.exists() else None
+        profile = _resolve_cached_unit(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            generation_id=parent_id,
+            entry_id=entry.id,
+            replicate_index=0,
+            base_seed=base_seed,
+        )
         if profile is None:
             uncovered.append(entry)
         else:
@@ -304,7 +314,7 @@ def _load_parent_losses(
     draws: dict[int, dict[str, Any]] = {}
     for entry in uncovered:
         run_dir = loss_profile_path(workspace_root, epoch_id, parent_id, entry.id).parent
-        for index, path in own_code_board_draws(run_dir):
+        for index, path in own_code_board_draws(run_dir, base_seed=base_seed):
             if not CALIBRATION_REPLICATE_BASE <= index < band_end:
                 continue
             profile = _read(path)
@@ -335,6 +345,8 @@ def _build_events_paths(
     epoch_id: str,
     parent_id: str,
     board: list[Any],
+    *,
+    base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> dict[str, Path]:
     """Map entry id → the parent generation's transcript for that entry.
 
@@ -347,7 +359,12 @@ def _build_events_paths(
 
     return {
         entry.id: any_unit_transcript(
-            events_jsonl_path(workspace_root, epoch_id, parent_id, entry.id)
+            measurement_artifact_path(
+                events_jsonl_path(workspace_root, epoch_id, parent_id, entry.id).parent,
+                "events",
+                0,
+                base_seed=base_seed,
+            )
         )
         for entry in board
     }
@@ -388,6 +405,7 @@ def _render_process_exemplars_block(
     patterns: list[Any],
     train_entry_ids: list[str],
     weights: Any,
+    base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> str:
     """Build the opt-in, redacted process-exemplar prompt block — best-effort.
 
@@ -424,6 +442,7 @@ def _render_process_exemplars_block(
             cap,
             parent_generation_id=parent_id,
             train_entry_ids=train_entry_ids,
+            base_seed=base_seed,
         )
         return render_process_exemplars(exemplars)
     return ""

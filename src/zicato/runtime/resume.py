@@ -18,13 +18,11 @@ a wrong inference is journal / lineage corruption.
 
 Why resume is nearly free
 -------------------------
-A board unit is cached by ``(generation_id, entry_id, replicate)`` —
-its ``loss.json`` on disk IS the cache (see
-:func:`zicato.tournament.runner._resolve_cached_unit`). A generation
-under a fixed contract is immutable, so a completed unit's ``loss.json``
-is a permanent cache HIT. Resuming a tournament is therefore largely
-"re-enter the loop and let the cache hit the done units": the resumed
-round re-runs only the entries that have no ``loss.json`` yet.
+A reusable board measurement must match the requested epoch, generation,
+entry, purpose, draw, and selected seed. The unit cache checks the surviving
+loss profile and evidence of execution before admitting it. Resume preserves
+an applied snapshot when a physical loss slot survives; tournament scheduling
+then reruns every unit whose cached profile cannot satisfy its request.
 
 The load-bearing safety invariant
 ----------------------------------
@@ -75,6 +73,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from zicato.core.measurement import iter_measurement_artifacts
 from zicato.epoch._storage import RecordError
 from zicato.epoch.lineage import LineageGeneration
 from zicato.runtime.paths import (
@@ -489,17 +488,17 @@ def _invalidate_index_before_field_discard(workspace_root: Path) -> None:
 
 
 def _has_any_loss(workspace_root: Path, epoch_id: str, generation_id: str) -> bool:
-    """True iff at least one board entry has a ``loss.json`` for this gen.
+    """Retain an applied snapshot when a physical loss slot survives.
 
-    The presence of even one per-entry ``loss.json`` is the marker that
-    the tournament had started and a completed unit is cacheable — the
-    signal that makes resume-in-place worth doing instead of a clean
-    re-run from scratch.
+    Cache admission separately checks identity and execution evidence before
+    reusing a result. Presence here only avoids discarding the snapshot that
+    produced the surviving measurements.
     """
     layout = WorkspaceLayout.from_root(workspace_root)
     return any(
-        layout.loss(epoch_id, generation_id, entry_id).is_file()
+        True
         for entry_id in run_entry_ids(layout, epoch_id, generation_id)
+        for _ in iter_measurement_artifacts(layout.run_dir(epoch_id, generation_id, entry_id))
     )
 
 

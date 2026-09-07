@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from zicato.core.types import LossProfile
 from zicato.core.workspace import loss_profile_path
 from zicato.evolve.round_baseline import (
@@ -161,3 +163,35 @@ def test_fresh_profile_defaults_to_not_cached(tmp_path: Path) -> None:
     assert rows[0]["cached"] == 0
     assert rows[0]["source_epoch"] is None
     assert rows[0]["source_run"] is None
+
+
+@pytest.mark.parametrize(
+    "ambiguity", ["purpose", "execution", "epoch_id", "generation_id", "entry_id"]
+)
+def test_ambiguous_measurements_withhold_carried_aggregate(tmp_path: Path, ambiguity: str) -> None:
+    from dataclasses import replace
+
+    from zicato.core.measurement import MeasurementDraw, MeasurementPurpose
+
+    ws = tmp_path / ".zicato"
+    _write_source_epoch(ws, epoch="source", gen="v1", entries={"task": 2.0})
+    source = loss_profile_path(ws, "source", "v1", "task")
+    profile = read_loss_profile(source)
+    if ambiguity == "purpose":
+        profile = replace(profile, measurement=MeasurementDraw(MeasurementPurpose.CALIBRATION, 0))
+    elif ambiguity == "execution":
+        profile = replace(profile, abort_cause="budget_exhausted", runtime_ms=0)
+    else:
+        profile = replace(profile, **{ambiguity: "other"})
+    write_loss_profile(profile, source)
+    before = source.read_bytes()
+    _materialize_carried_champion(
+        ws,
+        epoch_id="destination",
+        generation_id="v0",
+        source_epoch="source",
+        source_generation="v1",
+    )
+    assert not loss_profile_path(ws, "destination", "v0", "task").exists()
+    assert not (ws / "epochs/destination/generations/v0/gen_score.json").exists()
+    assert source.read_bytes() == before

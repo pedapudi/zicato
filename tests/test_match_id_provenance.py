@@ -242,9 +242,13 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
     """
     ws = tmp_path / ".zicato"
     epoch_id, gen_id, entry_id = "e0", "v1", "entry_a"
-    lpath = loss_profile_path(ws, epoch_id, gen_id, entry_id)
+    from zicato.core.measurement import MeasurementDraw
+    from zicato.tournament.unit_cache import _unit_loss_path
+
+    lpath = _unit_loss_path(ws, epoch_id, gen_id, entry_id, 0, base_seed=None)
     base = LossProfile(
-        run_id=f"{gen_id}--{entry_id}",
+        run_id=f"seed-none.{gen_id}--{entry_id}",
+        measurement=MeasurementDraw.from_index(0, base_seed=None),
         entry_id=entry_id,
         generation_id=gen_id,
         epoch_id=epoch_id,
@@ -284,6 +288,7 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
             return 0
 
     async def fake_spawn(*args, **kwargs):
+        write_loss_profile(base, lpath)
         return _Proc()
 
     monkeypatch.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_spawn)

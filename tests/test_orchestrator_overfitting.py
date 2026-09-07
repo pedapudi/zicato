@@ -15,6 +15,7 @@ board, byte-identically to before the split existed.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,7 @@ import pytest
 from tests._proposal_evidence import render_proposal_evidence
 from zicato.board.split import HOLDOUT_TAG, split_board
 from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile, ScoringWeights
+from zicato.core.measurement import MeasurementDraw
 from zicato.core.types import OverfittingConfig
 from zicato.core.workspace import loss_profile_path
 from zicato.evolve.decision_support import _load_parent_losses, _render_loss_summary
@@ -144,7 +146,10 @@ def test_small_board_degrades_to_the_full_board(tmp_path: Path) -> None:
 def _write_replicate_loss(tmp_path: Path, entry_id: str, replicate: int, loss: LossProfile) -> None:
     canonical = loss_profile_path(tmp_path, _EPOCH, _PARENT, entry_id)
     canonical.parent.mkdir(parents=True, exist_ok=True)
-    write_loss_profile(loss, canonical.with_name(f"loss.r{replicate}.json"))
+    write_loss_profile(
+        replace(loss, measurement=MeasurementDraw.from_index(replicate)),
+        canonical.with_name(f"loss.r{replicate}.json"),
+    )
 
 
 def _degraded_loss(entry_id: str) -> LossProfile:

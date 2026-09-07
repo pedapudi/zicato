@@ -47,6 +47,7 @@ from zicato.core import (
     ScoringWeights,
     run_id_for_unit,
 )
+from zicato.core.measurement import UNKNOWN_SEED, BaseSeed, MeasurementDraw
 from zicato.epoch.genstore import EPHEMERAL_SNAPSHOT_PREFIX, EphemeralCheckout
 from zicato.runtime.process import (
     DEFAULT_SIGNAL_GRACE_S,
@@ -128,9 +129,13 @@ def _now_iso_utc() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _run_id_for(generation: Generation, entry: BoardEntry) -> str:
+def _run_id_for(
+    generation: Generation, entry: BoardEntry, *, base_seed: BaseSeed = UNKNOWN_SEED
+) -> str:
     """Return the canonical run id for the entry's stamped replicate."""
-    return run_id_for_unit(generation.id, entry.id, _entry_replicate_index(entry))
+    return run_id_for_unit(
+        generation.id, entry.id, _entry_replicate_index(entry), base_seed=base_seed
+    )
 
 
 #: ``BoardEntry.context`` key under which the board-level ``disable_drift``
@@ -274,18 +279,22 @@ def _stamp_replicate_index(
     replicate ``r`` carries ``context['replicate_index'] == str(r)``
     through the subprocess boundary to the adapter session.
 
-    ``replicate_index == 0`` returns the board UNCHANGED (object identity
-    preserved), mirroring :func:`_stamp_disable_drift`'s "empty →
-    untouched" behaviour: every single-replicate path — the gauntlet, the
-    seed scoring, replicate 0 of a replicated matchup — is byte-identical
-    to before, and readers treat an absent key as replicate 0.
+    Replicate zero preserves entries without a replicate context key and
+    removes a stale key when present. Invalid or unclaimed indices are
+    rejected before they can select a worker output path.
     """
-    if replicate_index <= 0:
+    MeasurementDraw.from_index(replicate_index)
+    if replicate_index == 0 and all(
+        _REPLICATE_INDEX_CONTEXT_KEY not in entry.context for entry in board
+    ):
         return board
     stamped: list[BoardEntry] = []
     for entry in board:
         context = dict(entry.context)
-        context[_REPLICATE_INDEX_CONTEXT_KEY] = str(replicate_index)
+        if replicate_index == 0:
+            context.pop(_REPLICATE_INDEX_CONTEXT_KEY, None)
+        else:
+            context[_REPLICATE_INDEX_CONTEXT_KEY] = str(replicate_index)
         stamped.append(replace(entry, context=context))
     return stamped
 
@@ -294,14 +303,12 @@ def _entry_replicate_index(entry: BoardEntry) -> int:
     """Read the replicate index stamped onto an entry's context, or ``0``.
 
     The read side of :func:`_stamp_replicate_index`: an absent key is
-    replicate 0 (every single-replicate path), and a malformed value is
-    read as 0 rather than raising inside a scoring run.
+    replicate zero. A malformed or unclaimed value is refused so the worker
+    cannot silently select a different measurement slot.
     """
     raw = dict(entry.context).get(_REPLICATE_INDEX_CONTEXT_KEY, "0")
-    try:
-        return max(0, int(raw or 0))
-    except (TypeError, ValueError):
-        return 0
+    index = int(raw)
+    return MeasurementDraw.from_index(index).replicate_index
 
 
 def _runtime_state() -> tuple[Any, Any] | None:

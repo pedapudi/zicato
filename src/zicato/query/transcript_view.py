@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any
 
 from zicato.query.events_index import (
-    find_generation_entry_events,
     find_proposal_episode_log,
     find_run_events_path,
     resolve_transcript_events,
@@ -92,21 +91,18 @@ def resolve_conversation(
     entry coordinate is what tells them apart, so a caller that omits it is
     asking for the proposal. ``slot`` names one best-of-N slate slot; without
     it the lowest-numbered slot answers.
+
+    A named epoch confines every lookup. A supplied generation and entry
+    remain authoritative when their transcript is absent.
     """
-    events_path: Path | None = None
     if gen and entry:
-        events_path = resolve_transcript_events(paths, epoch or "", gen, entry, run_id=run_id)
-        if events_path is None:
-            # Strict to the entry's own run dir — never a sibling's.
-            events_path = find_generation_entry_events(paths, gen, entry)
-    elif gen:
+        return resolve_transcript_events(paths, epoch or "", gen, entry, run_id=run_id)
+    if gen:
         # The episode log or nothing: a proposal transcript is served from a
         # Foe episode and from no other source, so an absent episode must not
         # fall through to some run's event stream.
         return find_proposal_episode_log(paths, epoch or "", gen, slot_index=slot)
-    if events_path is None:
-        events_path = find_run_events_path(paths, run_id)
-    return events_path
+    return find_run_events_path(paths, run_id, epoch_id=epoch or "")
 
 
 def _configured_foe_binary(paths: WorkspacePaths) -> str:
@@ -312,9 +308,24 @@ def empty_run_transcript_delta(
 
 def _verbatim_capture_exists(events_path: Path) -> bool:
     """Report whether a valid higher-fidelity ``result.json`` exists."""
-    from zicato.tournament.unit_cache import read_run_result  # noqa: PLC0415
+    from zicato.core.measurement import (  # noqa: PLC0415
+        artifact_replicate_index,
+        unit_artifact_name,
+    )
+    from zicato.tournament.unit_cache import (  # noqa: PLC0415
+        read_capture_loss,
+        read_run_result,
+        unit_result_path,
+    )
 
-    return read_run_result(events_path.parent / "result.json") is not None
+    index = artifact_replicate_index(events_path.name, "events")
+    if index is None:
+        return False
+    loss_path = events_path.with_name(unit_artifact_name("loss", index))
+    loss = read_capture_loss(loss_path)
+    return (
+        loss is not None and read_run_result(unit_result_path(loss_path), expected=loss) is not None
+    )
 
 
 def build_run_transcript_delta(

@@ -1746,12 +1746,13 @@ def _as_str_list(raw: Any) -> list[str]:
 
 
 def _entry_from_refs(refs: tuple[str, ...]) -> str | None:
-    """Resolve an entry id from an adjudication run_ref (``"gen:entry"``)."""
+    """Resolve an entry id from historical or seed-qualified adjudication references."""
     for ref in refs:
-        if ":" in ref:
-            entry = ref.split(":", 1)[1].strip()
-            if entry:
-                return entry
+        parts = ref.split(":")
+        if len(parts) >= 3 and parts[-1].startswith("r") and parts[-1][1:].isdigit():
+            return parts[-2] or None
+        if len(parts) == 2 and parts[1].strip():
+            return parts[1].strip()
     return None
 
 

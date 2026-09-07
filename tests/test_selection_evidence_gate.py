@@ -17,6 +17,8 @@ All synthetic — no live runs.
 
 from __future__ import annotations
 
+import pytest
+
 from zicato.selection.dead_letter import (
     InconclusiveRecord,
     list_inconclusive,
@@ -32,7 +34,9 @@ from zicato.selection.evidence_gate import (
     rating_block,
     read_promote_confidence_threshold,
     read_replicate_budget,
+    strength_difference,
 )
+from zicato.selection.rating import fit_bradley_terry
 from zicato.selection.strategy import MatchupResult
 from zicato.tournament.gate import GateOutcome
 
@@ -149,9 +153,79 @@ def test_clearly_separated_win_promotes() -> None:
     assert v.p_stronger is not None and v.p_stronger >= 0.9
 
 
-def test_below_min_duels_is_not_credible_and_passes_through() -> None:
+@pytest.mark.parametrize("scale", [1, 10, 100])
+def test_mixed_wins_resolve_with_increasing_evidence(scale: int) -> None:
+    verdict = evidence_verdict(
+        "promoted",
+        "scalar improvement",
+        audit=_audit("v0", "v1", child_wins=80 * scale, parent_wins=20 * scale),
+        parent_id="v0",
+        child_id="v1",
+        threshold=0.95,
+        replicate_budget=0,
+    )
+    assert verdict.decision == "promoted"
+    assert verdict.p_stronger is not None and verdict.p_stronger > 0.999
+
+
+@pytest.mark.parametrize("planned_candidates", [1, 4])
+def test_optional_stopping_null_probability_and_power(planned_candidates: int) -> None:
+    """Sum every independent Bernoulli path through the production stopping rule."""
+    budget = 32
+    comparison_count = planned_candidates * (budget + 1)
+    resolved: set[tuple[int, int]] = set()
+    for count in range(MIN_CREDIBLE_DUELS, budget + 1):
+        for wins in range(count + 1):
+            fit = fit_bradley_terry(
+                [("child", "parent")] * wins + [("parent", "child")] * (count - wins)
+            )
+            difference = strength_difference(
+                fit, "child", "parent", threshold=0.8, comparison_count=comparison_count
+            )
+            if difference.clears(0.8):
+                resolved.add((count, wins))
+
+    def promotion_probability(win_probability: float) -> float:
+        # Condition on a candidate already selected using separate observations.
+        # Confirmation starts with zero wins; stopped paths never enter later looks.
+        active = {0: 1.0}
+        promoted = 0.0
+        for count in range(1, budget + 1):
+            remaining: dict[int, float] = {}
+            for wins, mass in active.items():
+                for win, probability in ((0, 1.0 - win_probability), (1, win_probability)):
+                    next_wins = wins + win
+                    if (count, next_wins) in resolved:
+                        promoted += mass * probability
+                    else:
+                        remaining[next_wins] = remaining.get(next_wins, 0.0) + mass * probability
+            active = remaining
+        return promoted
+
+    null = promotion_probability(0.5)
+    power = [promotion_probability(p) for p in (0.6, 0.7, 0.8, 0.9, 1.0)]
+    assert planned_candidates * null <= 0.025
+    assert power == sorted(power)
+    assert power[-2] > 0.8
+    assert power[-1] == pytest.approx(1.0)
+
+
+def test_comparison_allocation_uses_planned_looks_and_probability_bar() -> None:
+    fit = fit_bradley_terry([("child", "parent")] * 20)
+    pointwise = strength_difference(fit, "child", "parent", threshold=0.8)
+    repeated = strength_difference(fit, "child", "parent", threshold=0.8, comparison_count=132)
+    strict = strength_difference(fit, "child", "parent", threshold=0.999, comparison_count=132)
+    assert pointwise.confidence_level == pytest.approx(0.95)
+    assert repeated.confidence_level == pytest.approx(1.0 - 0.05 / 132)
+    assert strict.confidence_level == pytest.approx(1.0 - 0.002 / 132)
+    assert strict.ci_lo < repeated.ci_lo < pointwise.ci_lo
+    assert pointwise.clears(0.8)
+    assert not repeated.clears(0.8)
+
+
+def test_below_min_duels_requires_more_confirmation() -> None:
     # Fewer than MIN_CREDIBLE_DUELS resolved pair duels ⇒ no trustworthy fit;
-    # the gate's verdict stands unchanged (no override on noise).
+    # the configured requirement stays incomplete.
     assert MIN_CREDIBLE_DUELS == 3
     audit = _audit("v0", "v1", child_wins=2, parent_wins=0)
     v = evidence_verdict(
@@ -163,9 +237,10 @@ def test_below_min_duels_is_not_credible_and_passes_through() -> None:
         threshold=0.9,
         replicate_budget=3,
     )
-    assert v.decision == "promoted"
+    assert v.decision == "deferred"
     assert v.credible is False
-    assert v.reason == "ok"
+    assert v.confirmation_status == "incomplete"
+    assert "at least 3 required" in v.reason
 
 
 def test_non_promote_passes_through_unchanged() -> None:
@@ -259,6 +334,7 @@ def test_rating_block_shape() -> None:
     assert block["present"] is True
     assert set(block) == {
         "present",
+        "evidence_basis",
         "credible",
         "champion",
         "challenger",
@@ -268,6 +344,12 @@ def test_rating_block_shape() -> None:
         "decision",
         "replicates_spent",
         "n_duels",
+        "difference",
+        "confirmation_status",
+        "reason",
+        "champion_id",
+        "challenger_id",
+        "attempts",
     }
     for side in ("champion", "challenger"):
         assert set(block[side]) == {"theta", "se", "ci_lo", "ci_hi"}

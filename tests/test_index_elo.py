@@ -558,11 +558,12 @@ def test_racing_field_fold_end_to_end_through_the_index(tmp_path: Path) -> None:
     ratings = fold_elo_into_index(conn)
     assert {"champ", "a", "b", "c", "d"} <= set(ratings)
     for gid in ("c", "d"):
-        db_elo, db_games = conn.execute(
-            "SELECT elo, elo_games FROM generations WHERE generation_id = ?", (gid,)
+        db_elo, db_games, db_se = conn.execute(
+            "SELECT elo, elo_games, elo_se FROM generations WHERE generation_id = ?", (gid,)
         ).fetchone()
         assert db_elo is not None
         assert db_games > 0
+        assert db_se is None
 
 
 def test_overlapping_sources_are_deduplicated() -> None:

@@ -29,8 +29,8 @@ def rating_by_generation(
 
     Returns ``{(epoch_id, generation_id): {"elo", "elo_se", "elo_games"}}``
     for every indexed generation (scoped to ``epoch_id`` when given). Values
-    are ``None`` where the index has not derived them (a pre-v12 file's
-    ``elo_se``, or a generation that never played a settled duel). An
+    are ``None`` where the index has not derived them. ``elo_se`` is always
+    null: descriptive match-ledger ratings lack independent provenance. An
     absent / unreadable index — or a pre-v10 schema with no rating columns
     at all — returns ``{}`` so the caller attaches the null triple to every
     row. The read degrades and never raises.
@@ -44,7 +44,8 @@ def rating_by_generation(
             if "elo" not in present:
                 return {}  # pre-v10 index: no rating columns at all
             terms = ["epoch_id", "generation_id"] + [
-                col if col in present else f"NULL AS {col}" for col in RATING_FIELDS
+                col if col in present and col != "elo_se" else f"NULL AS {col}"
+                for col in RATING_FIELDS
             ]
             sql = f"SELECT {', '.join(terms)} FROM generations"
             params: tuple[Any, ...] = ()

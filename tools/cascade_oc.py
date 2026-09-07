@@ -886,12 +886,12 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
     untouched rather than by a persisted slot.
     """
     from zicato.core.types import TournamentDecision
-    from zicato.core.workspace import loss_profile_path
     from zicato.selection.driver import (  # noqa: PLC0415
         EvidencePreGate,
         confirm_promotion_with_evidence,
     )
     from zicato.selection.strategy import SelectionDecision
+    from zicato.tournament.unit_cache import _unit_loss_path
 
     checks: dict[str, Any] = {}
     world = _CountingWorld({"champion": BASE_TOKENS, "challenger": BASE_TOKENS}, params.sigma)
@@ -915,8 +915,8 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
         canonical: dict[tuple[str, str], bytes] = {}
         for gid in ("champion", "challenger"):
             for entry in _board():
-                canonical[(gid, entry.id)] = loss_profile_path(
-                    workspace, "e0", gid, entry.id
+                canonical[(gid, entry.id)] = _unit_loss_path(
+                    workspace, "e0", gid, entry.id, 0, base_seed=1
                 ).read_bytes()
 
         # (1) a calibration slice-floor draw at base 1000.
@@ -991,19 +991,19 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
 
         # Assertions.
         r0_unchanged = all(
-            loss_profile_path(workspace, "e0", gid, entry_id).read_bytes() == before
+            _unit_loss_path(workspace, "e0", gid, entry_id, 0, base_seed=1).read_bytes() == before
             for (gid, entry_id), before in canonical.items()
         )
         calib_present = all(
-            loss_profile_path(workspace, "e0", "champion", entry.id)
-            .with_name(f"loss.r{CALIBRATION_REPLICATE_BASE}.json")
-            .exists()
+            _unit_loss_path(
+                workspace, "e0", "champion", entry.id, CALIBRATION_REPLICATE_BASE, base_seed=9
+            ).exists()
             for entry in _board()[:2]
         )
         evidence_present = all(
-            loss_profile_path(workspace, "e0", gid, entry.id)
-            .with_name(f"loss.r{EVIDENCE_REPLICATE_BASE + j}.json")
-            .exists()
+            _unit_loss_path(
+                workspace, "e0", gid, entry.id, EVIDENCE_REPLICATE_BASE + j, base_seed=2
+            ).exists()
             for gid in ("champion", "challenger")
             for j in range(budget)
             for entry in _board()

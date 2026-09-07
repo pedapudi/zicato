@@ -43,8 +43,8 @@ from zicato.epoch.journal import (
     write_experiment,
 )
 from zicato.telemetry.reducer import (
-    _profile_to_dict,
     loss_profile_from_dict,
+    loss_profile_to_dict,
     read_loss_profile,
     write_loss_profile,
 )
@@ -225,7 +225,7 @@ def test_loss_profile_from_dict_unknown_kind_raises_valueerror() -> None:
     file / treat the slot as a predecessor) name that exception, so a token
     that fails to coerce must not surface as anything else.
     """
-    payload = _profile_to_dict(_loss_profile(ExpectationKind.PREDICATE))
+    payload = loss_profile_to_dict(_loss_profile(ExpectationKind.PREDICATE))
     payload["expectation_result"]["kind"] = "not_a_kind"
     with pytest.raises(ValueError):
         loss_profile_from_dict(payload)

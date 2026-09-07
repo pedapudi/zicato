@@ -76,6 +76,7 @@ from zicato.core import (
     normalize_wire_drift_kind,
     normalize_wire_severity,
 )
+from zicato.core.measurement import MeasurementDraw
 from zicato.scoring import DriftContext, builtin_drift_loss, resolve_drift_loss
 from zicato.telemetry.dialects import (
     DialectReducer,
@@ -1065,7 +1066,7 @@ def reduce_loss(
 # ---------------------------------------------------------------------------
 
 
-def _profile_to_dict(profile: LossProfile) -> dict[str, Any]:
+def loss_profile_to_dict(profile: LossProfile) -> dict[str, Any]:
     """Render :class:`LossProfile` into a JSON-serialisable dict.
 
     We use :func:`dataclasses.asdict` for the body, which recursively
@@ -1074,7 +1075,20 @@ def _profile_to_dict(profile: LossProfile) -> dict[str, Any]:
     ``asdict``, which is the correct JSON-side shape; the inverse
     reader re-tuples them on the way back.
     """
-    return asdict(profile)
+    payload = asdict(profile)
+    if profile.execution_started is None:
+        payload.pop("execution_started")
+    if profile.measurement is None:
+        payload.pop("measurement")
+    else:
+        payload["measurement"] = profile.measurement.to_json()
+    if profile.source_measurements:
+        payload["source_measurements"] = [
+            draw.to_json() if draw is not None else None for draw in profile.source_measurements
+        ]
+    else:
+        payload.pop("source_measurements")
+    return payload
 
 
 def write_loss_profile(profile: LossProfile, target_path: Path) -> None:
@@ -1089,7 +1103,7 @@ def write_loss_profile(profile: LossProfile, target_path: Path) -> None:
     reducer".
     """
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = _profile_to_dict(profile)
+    payload = loss_profile_to_dict(profile)
     with open(target_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, sort_keys=True, indent=2)
         f.write("\n")
@@ -1246,10 +1260,19 @@ def loss_profile_from_dict(d: dict[str, Any]) -> LossProfile:
         ),
         started_at=(str(d["started_at"]) if d.get("started_at") is not None else None),
         ended_at=(str(d["ended_at"]) if d.get("ended_at") is not None else None),
+        measurement=(MeasurementDraw.from_json(d["measurement"]) if "measurement" in d else None),
+        source_measurements=tuple(
+            MeasurementDraw.from_json(value) if value is not None else None
+            for value in d.get("source_measurements", ())
+        ),
+        execution_started=(
+            d["execution_started"] if isinstance(d.get("execution_started"), bool) else None
+        ),
     )
 
 
 __all__ = [
+    "loss_profile_to_dict",
     "reduce_loss",
     "compute_drift_loss",
     "compute_per_judge_loss",

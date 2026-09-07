@@ -33,6 +33,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from zicato.core.measurement import (
+    MeasurementPurpose,
+    measurement_range,
+    validate_measurement_interval,
+)
 from zicato.epoch._storage import RecordError, check_record_format
 from zicato.storage import atomic_write_json
 from zicato.workspace.projection import mark_epoch_changed
@@ -151,6 +156,13 @@ class ReflectionPlan:
     created_at: str
     format_version: int = PLAN_FORMAT_VERSION
     _json: str | None = field(default=None, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        validate_measurement_interval(
+            measurement_range(MeasurementPurpose.REFLECTION).start,
+            self.replicates,
+            allow_empty=self.mode == MODE_PASSIVE,
+        )
 
     def to_json(self) -> dict[str, Any]:
         """Return stored fields unchanged, or encode a freshly constructed plan."""

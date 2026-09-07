@@ -28,10 +28,15 @@
         "drift_loss_delta": -1.6,
         "drift_movements": [],
         "eliminated_in_round": null,
-        "evidence": null,
+        "evidence": {
+          "confirmation_status": "disabled",
+          "present": false,
+          "reason": "no promotion confidence threshold in the evaluation contract"
+        },
         "final_rank": 1,
         "generalization_gap": 5.551115123125783e-17,
         "holdout": {
+          "confirmation_status": "satisfied",
           "confirmed": true,
           "holdout_consulted": true,
           "holdout_scalar": 0.4000000000000001,
@@ -40,6 +45,7 @@
           "ladder_budget_total": 16,
           "ladder_query_reserved": true,
           "ladder_released": true,
+          "reason": "",
           "threshold": 0.01,
           "train_scalar": 0.4
         },
@@ -539,6 +545,7 @@
   },
   "gen_scores": {
     "v0": {
+      "base_seed": null,
       "drift_loss_mean": 2.0,
       "entry_count": 4,
       "expectation_count": 4,
@@ -598,6 +605,7 @@
       "scalar_provenance": "builtin"
     },
     "v1": {
+      "base_seed": null,
       "drift_loss_mean": 0.4,
       "entry_count": 4,
       "expectation_count": 4,
@@ -657,6 +665,7 @@
       "scalar_provenance": "builtin"
     },
     "v2": {
+      "base_seed": null,
       "drift_loss_mean": 0.8,
       "entry_count": 4,
       "expectation_count": 4,
@@ -716,6 +725,7 @@
       "scalar_provenance": "builtin"
     },
     "v3": {
+      "base_seed": null,
       "drift_loss_mean": 1.2,
       "entry_count": 4,
       "expectation_count": 4,
@@ -775,6 +785,7 @@
       "scalar_provenance": "builtin"
     },
     "v4": {
+      "base_seed": null,
       "drift_loss_mean": 1.6,
       "entry_count": 4,
       "expectation_count": 4,
@@ -897,7 +908,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "966b42dbe44adcd0c9a2bb30be3e2ab0015457c27dd9dd931f79f5431b47513f"
+          "contract_hash": "fd6f266be60288bb0ead3fc3b4ceabe68c0911f3fddded5a01ea63fbe72b2739"
         },
         "scope": {},
         "seq": 1,

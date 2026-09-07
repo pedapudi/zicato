@@ -13,12 +13,88 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.lineage import ArtifactFile, ArtifactSet
+from zicato.core.measurement import artifact_replicate_index, unit_artifact_name
 
 ARTIFACT_FORMAT_VERSION = 1
 MAX_ARTIFACT_FILES = 1_000
 MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
 _COPY_CHUNK_BYTES = 1024 * 1024
 _MIME_TYPES = mimetypes.MimeTypes(filenames=())
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def archive_unit_artifacts(loss_path: Path) -> Path | None:
+    """Publish a complete attempt archive before clearing any reusable artifact.
+
+    Publication is one directory rename after every copied file is flushed.
+    A failed copy leaves all originals intact. After publication the loss is
+    removed first, so interruption while clearing companions leaves a cache
+    miss and the complete prior attempt remains recoverable from the archive.
+    The caller serializes writers for the same seed and draw.
+    """
+    index = artifact_replicate_index(loss_path.name)
+    if index is None:
+        raise ValueError("attempt archive requires a measurement loss path")
+    sources = [
+        loss_path.with_name(unit_artifact_name(kind, index))
+        for kind in ("loss", "events", "result", "judge_io")
+    ]
+    sources.extend(artifact_paths(loss_path))
+    sources = [source for source in sources if source.exists()]
+    if not sources:
+        return None
+    archive_root = loss_path.parent / "attempts"
+    archive_root.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".pending-", dir=archive_root))
+    try:
+        for source in sources:
+            destination = staging / source.name
+            if source.is_dir():
+                shutil.copytree(source, destination)
+            else:
+                shutil.copyfile(source, destination)
+        digest = hashlib.sha256()
+        for path in sorted(staging.rglob("*")):
+            if path.is_file():
+                with path.open("rb") as handle:
+                    body = handle.read()
+                    os.fsync(handle.fileno())
+                relative = path.relative_to(staging).as_posix().encode()
+                digest.update(len(relative).to_bytes(8, "big") + relative)
+                digest.update(len(body).to_bytes(8, "big") + body)
+        for directory in [
+            *sorted((p for p in staging.rglob("*") if p.is_dir()), reverse=True),
+            staging,
+        ]:
+            _fsync_directory(directory)
+        archive = archive_root / f"{loss_path.stem}-{digest.hexdigest()}"
+        if archive.exists():
+            shutil.rmtree(staging)
+        else:
+            os.rename(staging, archive)
+        _fsync_directory(archive_root)
+        _fsync_directory(loss_path.parent)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    # Keep the existing loss-history reader supplied with the same raw profile.
+    from zicato.tournament.unit_cache import archive_outgoing_unit_loss  # noqa: PLC0415
+
+    archive_outgoing_unit_loss(loss_path)
+    for source in sources:
+        if source.is_dir():
+            shutil.rmtree(source)
+        else:
+            source.unlink()
+    _fsync_directory(loss_path.parent)
+    return archive
 
 
 def artifact_paths(loss_path: Path) -> tuple[Path, Path]:

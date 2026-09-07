@@ -346,6 +346,37 @@ def test_infra_abort_is_no_signal_never_a_veto(
     assert all(c[2] == SCREEN_REPLICATE_BASE for c in world.calls)
 
 
+def test_spent_scheduling_budget_has_no_screen_scalar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from zicato.core.runtime import RoundTokenLedger
+
+    workspace, parent = _workspace(tmp_path)
+    world = _ScreenWorld()
+    world.install(monkeypatch)
+    ledger = RoundTokenLedger(1)
+    ledger.add(1)
+    results = asyncio.run(
+        run_candidate_screen(
+            candidates=[_experiment("candidate")],
+            adapter=object(),
+            parent_gen=parent,
+            panel=_panel("e_a", "e_b"),
+            weights=ScoringWeights(),
+            config=replace(_config(tmp_path), token_ledger=ledger, max_tokens_per_round=1),
+            workspace_root=workspace,
+            epoch_id="e1",
+            round_index=0,
+        )
+    )
+    assert world.calls == []
+    assert results[0].scalar is None
+    assert results[0].vetoed is False
+    assert "unstarted 2" in results[0].reason
+
+
 def test_budget_abort_vetoes_immediately_without_confirm_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

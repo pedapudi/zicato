@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,8 @@ from zicato.core import (
     RuntimeConfig,
     ScoringWeights,
 )
-from zicato.core.workspace import loss_profile_path, run_dir
+from zicato.core.measurement import MeasurementDraw, range_at
+from zicato.core.workspace import loss_profile_path, run_dir, run_id_for_unit
 from zicato.judge_runtime.io_capture import JudgeIOFileSink, judge_io_path_for_loss
 from zicato.reflection.corpus import (
     FIDELITY_PREVIEW,
@@ -42,6 +44,7 @@ from zicato.reflection.corpus import (
 )
 from zicato.reflection.plan import new_plan, read_plan
 from zicato.tournament.unit_cache import _unit_loss_path, unit_events_path, unit_result_path
+from zicato.tournament.worker_transport import _entry_replicate_index
 
 EPOCH = "epoch-1"
 CREATED_AT = "2026-07-01T00:00:00+00:00"
@@ -79,6 +82,8 @@ def _write_loss(workspace: Path, gen: str, entry: str, replicate: int, loss: Los
     from zicato.telemetry import reducer
 
     path = _unit_loss_path(workspace, EPOCH, gen, entry, replicate)
+    if range_at(replicate):
+        loss = replace(loss, measurement=MeasurementDraw.from_index(replicate))
     reducer.write_loss_profile(loss, path)
     return path
 
@@ -324,7 +329,7 @@ class _CountingRunSingle:
         generation: Generation,
         entry: BoardEntry,
         weights: object,
-        config: object,
+        config: RuntimeConfig,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -332,7 +337,9 @@ class _CountingRunSingle:
     ) -> LossProfile:
         self.calls += 1
         return LossProfile(
-            run_id=f"run-{generation.id}-{entry.id}",
+            run_id=run_id_for_unit(
+                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+            ),
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,
@@ -381,7 +388,9 @@ def test_active_corpus_lands_draws_at_reserved_base(tmp_path: Path, monkeypatch)
     assert len(runs) == 6
     assert {o.replicate for o in runs} == {5000, 5001, 5002}
     # The cache slot filenames prove the reserved base.
-    rundir = run_dir(workspace, EPOCH, "v1", "entryA")
+    rundir = _unit_loss_path(
+        workspace, EPOCH, "v1", "entryA", 5000, base_seed=_config(workspace).seed
+    ).parent
     assert (rundir / "loss.r5000.json").exists()
     assert (rundir / "loss.r5001.json").exists()
     assert (rundir / "loss.r5002.json").exists()

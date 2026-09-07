@@ -69,6 +69,7 @@ from zicato.analyzer.redaction import (
     truncate_free_text,
 )
 from zicato.core import normalize_wire_drift_kind, normalize_wire_severity
+from zicato.core.measurement import UNKNOWN_SEED, BaseSeed, measurement_artifact_path
 from zicato.telemetry.event_log import EventRecord, read_event_log
 
 # ---------------------------------------------------------------------------
@@ -532,6 +533,7 @@ def extract_process_exemplars(
     *,
     parent_generation_id: str,
     train_entry_ids: Collection[str],
+    base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> tuple[ProcessExemplar, ...]:
     """Extract ≤ ``cap`` redacted exemplar windows for the detected patterns.
 
@@ -577,7 +579,14 @@ def extract_process_exemplars(
         if cached is None:
             cached = _load_events(
                 any_unit_transcript(
-                    events_jsonl_path(workspace_root, epoch_id, parent_generation_id, entry_id)
+                    measurement_artifact_path(
+                        events_jsonl_path(
+                            workspace_root, epoch_id, parent_generation_id, entry_id
+                        ).parent,
+                        "events",
+                        0,
+                        base_seed=base_seed,
+                    )
                 )
             )
             events_cache[entry_id] = cached

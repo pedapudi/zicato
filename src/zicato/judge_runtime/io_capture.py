@@ -55,6 +55,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from zicato.core.loss import LossProfile, capture_matches_loss
+from zicato.core.measurement import MeasurementDraw, artifact_replicate_index, unit_artifact_name
+
 log = logging.getLogger("zicato.judge_runtime.io_capture")
 
 #: ``format_version`` stamped onto every ``judge_io.jsonl`` line. The reader
@@ -90,6 +93,9 @@ def judge_io_path_for_loss(loss_path: Path) -> Path:
     as the loss it accompanies.
     """
     name = loss_path.name
+    index = artifact_replicate_index(name)
+    if index is not None:
+        return loss_path.with_name(unit_artifact_name("judge_io", index))
     if name.startswith("loss.") and name.endswith(".json"):
         middle = name[len("loss.") : -len(".json")]  # "" for loss.json, "r3" for loss.r3.json
         if middle:
@@ -192,13 +198,20 @@ class JudgeIOFileSink:
     to the latter); the reader tolerates a torn tail line by skipping
     it. ``call_index`` is assigned per sink, monotonically, in call
     order — one sink per run keeps it a per-run sequence.
+
+    The worker supplies fixed measurement and run identity at construction;
+    every line carries those values independently of judge input.
     """
 
-    __slots__ = ("_path", "_call_index")
+    __slots__ = ("_path", "_call_index", "_measurement", "_run_id")
 
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self, path: Path, *, measurement: MeasurementDraw | None = None, run_id: str | None = None
+    ) -> None:
         self._path = Path(path)
         self._call_index = 0
+        self._measurement = measurement
+        self._run_id = run_id
 
     @property
     def path(self) -> Path:
@@ -229,6 +242,10 @@ class JudgeIOFileSink:
             severity=severity,
             detail=detail,
         )
+        if self._measurement is not None:
+            record["measurement"] = self._measurement.to_json()
+        if self._run_id is not None:
+            record["run_id"] = self._run_id
         self._call_index += 1
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,7 +255,7 @@ class JudgeIOFileSink:
             log.debug("judge-io capture skipped for %s: %s", judge_name, exc)
 
 
-def read_judge_io(path: Path) -> list[dict[str, Any]]:
+def read_judge_io(path: Path, *, expected: LossProfile | None = None) -> list[dict[str, Any]]:
     """Read one ``judge_io.jsonl`` sidecar; empty list on ANY defect.
 
     The tolerant read twin: a missing/unreadable file returns ``[]``;
@@ -246,10 +263,14 @@ def read_judge_io(path: Path) -> list[dict[str, Any]]:
     ``format_version`` is not :data:`JUDGE_IO_FORMAT_VERSION` (absent,
     older, newer, garbage) is SKIPPED — the reader returns every line it
     can vouch for and never raises.
+
+    With an expected loss carrying a known seed, only lines matching its
+    complete measurement and run id can supply verbatim fidelity. Unpaired
+    reads remain available for historical audit.
     """
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
         return []
     records: list[dict[str, Any]] = []
     for line in raw.splitlines():
@@ -263,6 +284,8 @@ def read_judge_io(path: Path) -> list[dict[str, Any]]:
         if not isinstance(body, dict):
             continue
         if body.get("format_version") != JUDGE_IO_FORMAT_VERSION:
+            continue
+        if not capture_matches_loss(body, expected):
             continue
         records.append(body)
     return records

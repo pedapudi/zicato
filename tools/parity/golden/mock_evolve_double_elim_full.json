@@ -28,10 +28,15 @@
         "drift_loss_delta": -1.6,
         "drift_movements": [],
         "eliminated_in_round": null,
-        "evidence": null,
+        "evidence": {
+          "confirmation_status": "disabled",
+          "present": false,
+          "reason": "no promotion confidence threshold in the evaluation contract"
+        },
         "final_rank": 1,
         "generalization_gap": 5.551115123125783e-17,
         "holdout": {
+          "confirmation_status": "satisfied",
           "confirmed": true,
           "holdout_consulted": true,
           "holdout_scalar": 0.4000000000000001,
@@ -40,6 +45,7 @@
           "ladder_budget_total": 16,
           "ladder_query_reserved": true,
           "ladder_released": true,
+          "reason": "",
           "threshold": 0.01,
           "train_scalar": 0.4
         },
@@ -557,6 +563,7 @@
   },
   "gen_scores": {
     "v0": {
+      "base_seed": null,
       "drift_loss_mean": 2.0,
       "entry_count": 4,
       "expectation_count": 4,
@@ -616,6 +623,7 @@
       "scalar_provenance": "builtin"
     },
     "v1": {
+      "base_seed": null,
       "drift_loss_mean": 0.4,
       "entry_count": 4,
       "expectation_count": 4,
@@ -675,6 +683,7 @@
       "scalar_provenance": "builtin"
     },
     "v2": {
+      "base_seed": null,
       "drift_loss_mean": 0.8,
       "entry_count": 4,
       "expectation_count": 4,
@@ -734,6 +743,7 @@
       "scalar_provenance": "builtin"
     },
     "v3": {
+      "base_seed": null,
       "drift_loss_mean": 1.2,
       "entry_count": 4,
       "expectation_count": 4,
@@ -793,6 +803,7 @@
       "scalar_provenance": "builtin"
     },
     "v4": {
+      "base_seed": null,
       "drift_loss_mean": 1.6,
       "entry_count": 4,
       "expectation_count": 4,
@@ -915,7 +926,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "ffc37cd440f2a16ab0b693b7d424e79ba7f271d55a05dc18324484736a5e0cb1"
+          "contract_hash": "40241370dafd602d600eb9bf3459dd4024d2936793af8dac1747d897463218a3"
         },
         "scope": {},
         "seq": 1,

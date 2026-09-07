@@ -62,6 +62,10 @@ from zicato.core import (
     ScoringWeights,
 )
 from zicato.core.loss import BUDGET_ABORT_CAUSE, is_infra_abort_cause
+from zicato.core.measurement import SCREEN_REPLICATE_BASE as SCREEN_REPLICATE_BASE
+from zicato.core.measurement import (
+    validate_measurement_interval,
+)
 from zicato.core.types import Experiment
 from zicato.proposer.best_of_n import CandidateScreenResult
 from zicato.runtime.lock import WorkspaceLock
@@ -70,15 +74,6 @@ from zicato.util.iso_time import now_iso as _now_iso
 
 log = logging.getLogger("zicato.epoch.screen")
 
-#: Replicate-index base for candidate-screen runs. Reserved on the
-#: replicate ladder documented at
-#: :data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`: real
-#: duels count up from 0, A/A calibration draws at 1000, the contract
-#: pre-flight at 2000, THIS screen at 3000, the evidence gate at 4000 —
-#: so a screen run's cache slot can never collide with (or pre-seed)
-#: anything a tournament, audit, pre-flight or evidence refit reads.
-#: The confirm-before-veto re-run of a flipped entry uses ``+ 1`` (3001).
-SCREEN_REPLICATE_BASE: int = 3000
 
 #: Substring that marks an ephemeral screen generation id. The id shape is
 #: ``{parent}-screen-r{round}c{i}`` — it can never match a real ``v\\d+``
@@ -246,6 +241,7 @@ async def run_candidate_screen(
     never fail (or empty) a propose step. Result strings carry counts
     only, never entry ids.
     """
+    validate_measurement_interval(SCREEN_REPLICATE_BASE, 2)
     from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
 
     async with workspace_writer(
@@ -364,9 +360,13 @@ async def _screen_one_candidate(
 
             budget_aborts = 0
             infra_no_signal = 0
+            unstarted = 0
             flipped: list[BoardEntry] = []
             for entry in stamped:
                 loss = losses.get(entry.id)
+                if loss is not None and loss.execution_started is False:
+                    unstarted += 1
+                    continue
                 if loss is None or is_infra_abort_cause(loss.abort_cause):
                     infra_no_signal += 1
                     continue
@@ -394,7 +394,11 @@ async def _screen_one_candidate(
                 )
                 for entry in flipped:
                     confirm = confirm_losses.get(entry.id)
-                    if confirm is None or is_infra_abort_cause(confirm.abort_cause):
+                    if (
+                        confirm is None
+                        or confirm.execution_started is False
+                        or is_infra_abort_cause(confirm.abort_cause)
+                    ):
                         continue  # infra on the confirm run — no signal, no veto
                     if _is_budget_abort(confirm):
                         budget_aborts += 1
@@ -406,7 +410,7 @@ async def _screen_one_candidate(
                 loss for loss in losses.values() if not is_infra_abort_cause(loss.abort_cause)
             ]
             scalar: float | None
-            if usable:
+            if usable and not unstarted:
                 agg = aggregate_generation_score(list(losses.values()), weights)
                 scalar = float(agg.get("scalar", 0.0))
             else:
@@ -422,6 +426,7 @@ async def _screen_one_candidate(
                     confirmed_flips=confirmed_flips,
                     budget_aborts=budget_aborts,
                     infra_no_signal=infra_no_signal,
+                    unstarted=unstarted,
                     vetoed=vetoed,
                 ),
                 scalar=scalar,
@@ -455,6 +460,7 @@ def _summarize(
     confirmed_flips: int,
     budget_aborts: int,
     infra_no_signal: int,
+    unstarted: int,
     vetoed: bool,
 ) -> str:
     """The counts-only result summary. NEVER carries an entry id."""
@@ -465,6 +471,8 @@ def _summarize(
         parts.append(f"pass-flips {flips} ({confirmed_flips} confirmed)")
     if infra_no_signal:
         parts.append(f"infra-no-signal {infra_no_signal}")
+    if unstarted:
+        parts.append(f"unstarted {unstarted}")
     verdict = "vetoed" if vetoed else "clear"
     return f"{verdict}: " + ", ".join(parts)
 

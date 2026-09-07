@@ -1,15 +1,7 @@
-"""Tests for the Bradley--Terry ``gate.rating`` block reader.
+"""Recorded independent confirmation is the only source of confidence views.
 
-``build_rating_view`` wires :mod:`zicato.selection.rating` into the gate
-breakdown. These tests build a minimal ``.zicato/`` workspace and assert:
-
-* ``present=false`` on a pre-BT / disabled run (no ``promote_confidence_threshold``
-  in the structure params) — back-compat clean;
-* ``present=true`` with a reconstructed BT fit from the durable field-tournament
-  matches, gated on the minimum-duel credibility floor;
-* the dead-letter record is the authoritative source for an inconclusive duel
-  (its recorded block + ci_history win over a live re-fit);
-* the block is threaded onto ``build_gate_breakdown`` under ``rating``.
+Selection matchups cannot reconstruct uncertainty. Disabled requirements remain
+absent, and authoritative independent confirmation records retain their history.
 """
 
 from __future__ import annotations
@@ -17,11 +9,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from tests._workspace_support import experiment_record
 from zicato.core import TournamentDecision
+from zicato.epoch.journal import write_experiment
 from zicato.query import WorkspacePaths, build_gate_breakdown
 from zicato.query.gate_view import build_rating_view
+from zicato.query.inputs import EpochInputs
 from zicato.selection.dead_letter import InconclusiveRecord, record_inconclusive
+from zicato.selection.evidence_gate import EvidenceVerdict, rating_block
 from zicato.selection.strategy import SelectionDecision
+from zicato.testing.fixtures import make_experiment, make_outcome_record
 from zicato.tournament.records import field_tournament_record, write_field_tournament_record
 
 EPOCH_ID = "2026-06-10_e0"
@@ -98,59 +97,133 @@ def test_rating_absent_when_no_challenger(tmp_path: Path) -> None:
     assert block == {"present": False}
 
 
+@pytest.mark.parametrize("captured", [False, True])
+@pytest.mark.parametrize(
+    ("record_generation", "record_parent", "accepted"),
+    [("v1", "v0", True), ("v2", "v0", False), ("v1", "v9", False)],
+)
+def test_confirmation_requires_requested_generation_and_parent(
+    tmp_path: Path,
+    captured: bool,
+    record_generation: str,
+    record_parent: str,
+    accepted: bool,
+) -> None:
+    ws = _workspace(tmp_path, threshold=0.9)
+    evidence = {
+        "present": True,
+        "credible": True,
+        "evidence_basis": "independent_confirmation",
+        "confirmation_status": "complete",
+        "champion_id": "v0",
+        "challenger_id": "v1",
+    }
+    _write_json(
+        ws / "epochs" / EPOCH_ID / "generations" / "v1" / "experiment.json",
+        experiment_record(
+            record_generation,
+            parent_generation_id=record_parent,
+            outcome={"evidence": evidence},
+        ),
+    )
+    paths = WorkspacePaths(ws)
+    block = build_rating_view(
+        paths,
+        EPOCH_ID,
+        "v0",
+        "v1",
+        inputs=EpochInputs.capture(paths, EPOCH_ID) if captured else None,
+    )
+    if accepted:
+        assert block == {**evidence, "next_duel": None}
+    else:
+        assert block["present"] is False
+        assert block["unreadable"]
+        assert "credible" not in block
+
+
+@pytest.mark.parametrize("source", ["experiment", "captured experiment", "inconclusive"])
+@pytest.mark.parametrize(
+    ("champion_id", "challenger_id"),
+    [("v0", "v1"), ("v8", "v1"), ("v0", "v9"), (None, "v1"), ("v0", None)],
+)
+def test_confirmation_requires_recorded_pair_identity(
+    tmp_path: Path, source: str, champion_id: str | None, challenger_id: str | None
+) -> None:
+    ws = _workspace(tmp_path, threshold=0.9)
+    evidence = rating_block(
+        EvidenceVerdict(
+            decision="inconclusive",
+            reason="recorded confirmation",
+            credible=True,
+            champion=None,
+            challenger=None,
+            p_stronger=0.9,
+            threshold=0.975,
+            ci_overlap=False,
+            champion_id="v0",
+            challenger_id="v1",
+        )
+    )
+    for key, value in (("champion_id", champion_id), ("challenger_id", challenger_id)):
+        if value is None:
+            evidence.pop(key)
+        else:
+            evidence[key] = value
+    history = [{"replicates_spent": 3}]
+    if source == "inconclusive":
+        record_inconclusive(
+            ws, InconclusiveRecord("v1", "v0", EPOCH_ID, evidence, history, "unresolved")
+        )
+    else:
+        write_experiment(
+            ws,
+            EPOCH_ID,
+            "v1",
+            make_experiment(
+                epoch_id=EPOCH_ID,
+                generation_id="v1",
+                parent_generation_id="v0",
+                outcome=make_outcome_record(evidence=evidence),
+            ),
+        )
+    paths = WorkspacePaths(ws)
+    block = build_rating_view(
+        paths,
+        EPOCH_ID,
+        "v0",
+        "v1",
+        inputs=EpochInputs.capture(paths, EPOCH_ID) if source == "captured experiment" else None,
+    )
+    if (champion_id, challenger_id) == ("v0", "v1"):
+        expected = {**evidence, "next_duel": None}
+        if source == "inconclusive":
+            expected["ci_history"] = history
+        assert block == expected
+    else:
+        assert block == {
+            "present": False,
+            "unreadable": "recorded confirmation pair differs from requested contestants",
+        }
+
+
 # ---------------------------------------------------------------------------
 # present=true, reconstructed fit from the durable matches
 # ---------------------------------------------------------------------------
 
 
-def test_rating_present_but_uncredible_below_floor(tmp_path: Path) -> None:
-    # Two durable duels between v0/v1 — below MIN_CREDIBLE_DUELS=3 → present but
-    # not credible.
+def test_selection_matchups_do_not_establish_confirmation_confidence(tmp_path: Path) -> None:
     ws = _workspace(tmp_path, threshold=0.9)
-    matches = [
-        _match("v0", "v1", winner="v1", delta=-0.5),
-        _match("v0", "v1", winner="v1", delta=-0.5),
-    ]
+    matches = [_match("v0", "v1", winner="v1", delta=-0.5) for _ in range(60)]
     _write_durable_record(ws, matches)
     block = build_rating_view(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
     assert block["present"] is True
+    assert block["confirmation_status"] == "incomplete"
     assert block["credible"] is False
-    assert block["n_duels"] == 2
+    assert block["n_duels"] == 0
     assert block["threshold"] == 0.9
-    # The fit still placed both sides.
-    assert block["champion"] is not None
-    assert block["challenger"] is not None
-
-
-def test_rating_present_and_credible_from_durable(tmp_path: Path) -> None:
-    # Enough durable duels for a credible fit; v1 wins them all.
-    ws = _workspace(tmp_path, threshold=0.9)
-    matches = [_match("v0", "v1", winner="v1", delta=-0.5) for _ in range(6)]
-    _write_durable_record(ws, matches)
-    block = build_rating_view(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
-    assert block["present"] is True
-    assert block["credible"] is True
-    assert block["n_duels"] == 6
-    assert block["p_stronger"] is not None and block["p_stronger"] > 0.5
-    assert set(block) == {
-        "present",
-        "credible",
-        "champion",
-        "challenger",
-        "p_stronger",
-        "threshold",
-        "decision",
-        "ci_overlap",
-        "replicates_spent",
-        "n_duels",
-        "next_duel",
-        "ci_history",
-    }
-    for side in ("champion", "challenger"):
-        assert set(block[side]) == {"theta", "se", "ci_lo", "ci_hi"}
-    # A still-overlapping near-tie surfaces the next duel to replicate.
-    if block["ci_overlap"]:
-        assert block["next_duel"] == {"left": "v0", "right": "v1"}
+    for key in ("champion", "challenger", "difference", "p_stronger", "next_duel"):
+        assert block[key] is None
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +239,9 @@ def test_rating_prefers_dead_letter_record(tmp_path: Path) -> None:
     # ...but a dead-letter record with an explicit inconclusive block wins.
     authoritative_rating = {
         "present": True,
+        "evidence_basis": "independent_confirmation",
+        "champion_id": "v0",
+        "challenger_id": "v1",
         "credible": True,
         "champion": {"theta": -0.1, "se": 0.8, "ci_lo": -1.6, "ci_hi": 1.4},
         "challenger": {"theta": 0.1, "se": 0.8, "ci_lo": -1.4, "ci_hi": 1.6},

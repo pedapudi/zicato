@@ -7,17 +7,15 @@ unit folds its ``LossProfile.tokens_spent`` into the tally at the one
 choke point every unit routes through, and once the budget is spent the
 schedulers stop LAUNCHING further board units / replicate slots — never
 mid-unit — and the round settles with what it has (un-run units record the
-same budget-exceeded losses a matchup-deadline trip synthesizes).
+scheduling omissions a matchup-deadline trip records).
 
 Coverage:
 
 * rigged token-heavy runs ⇒ the round clips: only the first board unit
-  runs live, the remaining units persist budget-exceeded losses, and the
+  runs, the remaining units persist unstarted attempts, and the
   ``round_token_clipped`` health WARNING lands in the round report;
 * budget off (the default) ⇒ byte-identical scheduling — every unit runs,
   no ledger consulted, no finding;
-* the replicate loop stops scheduling FURTHER slots on a spent ledger and
-  averages the completed replicates as-is;
 * the ledger's tally/latch semantics, the factory threading, the bound
   validation, and the detector shape.
 """
@@ -44,7 +42,7 @@ from zicato.epoch.lifecycle import new_epoch
 
 # Grab the REAL reducer helper before any test masks zicato.telemetry in
 # sys.modules — the unit cache persists a skipped unit through the writer
-# (the clip test asserts on those persisted budget-exceeded losses).
+# (the clip test asserts on those persisted scheduling omissions).
 from zicato.telemetry.reducer import (  # isort: skip
     write_loss_profile as _real_write_loss_profile,
 )
@@ -181,7 +179,7 @@ def _run_one_round(
     calls: list[tuple[str, str]] = []
     _install_token_heavy_run_single(monkeypatch, calls)
     # The telemetry stub masks the real reducer; reattach the real loss
-    # writer so a skipped unit's budget-exceeded loss genuinely persists
+    # writer so a skipped unit's attempt record persists
     # (the on-disk shape the clip assertions — and resume — read).
     import sys
 
@@ -211,18 +209,27 @@ def test_token_heavy_round_clips_and_reports(
     assert len(calls) == 2
     assert {entry for _, entry in calls} == {"entry_1"}
 
-    # The un-run units persisted the SAME budget-exceeded losses a
-    # matchup-deadline trip records, on both sides.
+    # Unstarted units remain attempts and leave their measurement slots empty.
     for gen in ("v0", "v1"):
         for entry in ("entry_2", "entry_3"):
             loss_path = (
-                workspace / "epochs" / epoch_id / "generations" / gen / "runs" / entry / "loss.json"
+                workspace
+                / "epochs"
+                / epoch_id
+                / "generations"
+                / gen
+                / "runs"
+                / entry
+                / "seed-none"
+                / "loss.json"
             )
-            body = json.loads(loss_path.read_text())
-            assert body["abort_cause"] == "budget_exhausted"
+            assert not loss_path.exists()
+            body = json.loads(loss_path.with_name("loss.a1.json").read_text())
+            assert body["execution_started"] is False
+            assert body["not_completed_reason"] == "scheduling_budget_exhausted"
 
     # The round still SETTLES (with what it has) — a clip is not a crash.
-    assert outcome.tournament_decision in ("promoted", "rejected")
+    assert outcome.tournament_decision == "deferred"
 
     # The round health report carries the token-clip WARNING.
     report = json.loads((workspace / "epochs" / epoch_id / "health" / "round_1.json").read_text())
@@ -246,65 +253,6 @@ def test_budget_off_runs_every_unit_no_finding(
     if report_path.exists():
         codes = {f["code"] for f in json.loads(report_path.read_text())["findings"]}
         assert "round_token_clipped" not in codes
-
-
-# ---------------------------------------------------------------------------
-# Replicate loop — stop scheduling FURTHER slots, settle with what completed
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_replicate_slots_stop_on_spent_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
-    import zicato.tournament.scheduling as sched
-    from zicato.core.types import Generation
-
-    ledger = RoundTokenLedger(500)
-
-    async def _a(s: str, u: str, m: str) -> str:
-        return ""
-
-    async def _b(s: str, u: str, m: str) -> str:
-        return ""
-
-    config = RuntimeConfig(
-        instance_id="t",
-        workspace_root=Path("/tmp/ws"),
-        target_call_llm=_a,
-        evaluation_call_llm=_b,
-        max_tokens_per_round=500,
-        token_ledger=ledger,
-    )
-    slots: list[int] = []
-
-    async def _fake_full(**kwargs: Any) -> tuple[dict, dict]:
-        slots.append(kwargs["replicate_index"])
-        ledger.add(1000)  # slot 0 alone spends the whole budget
-        return {}, {}
-
-    monkeypatch.setattr(sched, "_run_board_units_full", _fake_full)
-    gen = Generation(
-        id="v0",
-        epoch_id="e1",
-        parent_id=None,
-        snapshot_root=Path("/tmp/snap"),
-        created_at="2026-07-01T00:00:00Z",
-    )
-    left, right, mode, _prov = await sched._run_replicated(
-        adapter=None,
-        left_gen=gen,
-        right_gen=gen,
-        board=[],
-        weights=deterministic_weights(),
-        config=config,
-        workspace_root=Path("/tmp/ws"),
-        epoch_id="e1",
-        replicates=3,
-        fast=True,
-    )
-    # Slot 0 ran; slots 1 and 2 were never scheduled; the ledger latched.
-    assert slots == [0]
-    assert ledger.clipped
-    assert left == {} and right == {}
 
 
 # ---------------------------------------------------------------------------
