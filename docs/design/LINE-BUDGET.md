@@ -50,7 +50,7 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 483,173 | +74,512 |
+| Total | 408,661 | 483,175 | +74,514 |
 | Production | 197,702 | 207,982 | +10,280 |
 | Production logic | 110,276 | 116,981 | +6,705 |
 
@@ -402,3 +402,4 @@ dropped rows named.
 | Canonical record readers and responsive review clients (total) | 477,848 | +5,325 | 483,173 | Issues #411, #490, #491, #492, #493, #171, and #405: shared record codecs, request input capture, responsive review clients, workspace endpoint identity, parent refusal display, and focused boundary tests. The search fixture uses the existing complete index schema. |
 | Canonical record readers and responsive review clients (production) | 205,963 | +2,019 | 207,982 | Shared record readers replace direct decoding across query, CLI, index, and execution consumers. Request capture, responsive terminal review, and endpoint identity add behavior. The minimal epoch revision hook is a prerequisite; the complete index currency protocol remains separate. |
 | Canonical record readers and responsive review clients (production logic) | 114,740 | +2,241 | 116,981 | Strict record acceptance and inverse codecs, request-owned inputs, asynchronous client refresh, terminal candidate review, and explicit unreadable-record displays. The persisted-record audit retains the remaining ownership work. |
+| Proposal fixture readiness publication (total) | 483,173 | +2 | 483,175 | Publish the test process ownership record through the existing atomic text writer before its readiness check can observe it. Existing descendant and writer-ownership assertions remain unchanged. |
