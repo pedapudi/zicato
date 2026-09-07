@@ -27,9 +27,9 @@ from tests._contract_pins import deterministic_weights
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     bootstrap_workspace,
+    evaluation_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
     target_call_llm,
 )
@@ -73,7 +73,7 @@ def test_evolve_once_promotes_on_improvement(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "promoted"
     assert outcome.parent_generation_id == "v0"
@@ -127,7 +127,7 @@ def test_evolve_once_writes_a_real_health_round_report(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     assert outcome.tournament_decision == "promoted"
 
     report_path = workspace / "epochs" / epoch_id / "health" / "round_1.json"
@@ -164,7 +164,7 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
     )
 
     # Round 0: v0 -> v1, promoted. Birth round of v1 is 0.
-    out0 = run_evolve_once(workspace, epoch_id, make_aux_responder([]), round_index=0)
+    out0 = run_evolve_once(workspace, epoch_id, evaluation_call_llm, round_index=0)
     assert out0.tournament_decision == "promoted"
     assert out0.proposed_generation_id == "v1"
 
@@ -172,7 +172,7 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
     assert rounds0["v1"] == 0  # minted in round 0
 
     # Round 1: v1 -> v2, promoted. Birth round of v2 is 1; v1 keeps its.
-    out1 = run_evolve_once(workspace, epoch_id, make_aux_responder([]), round_index=1)
+    out1 = run_evolve_once(workspace, epoch_id, evaluation_call_llm, round_index=1)
     assert out1.proposed_generation_id == "v2"
 
     rounds1 = _lineage_round_index(load_lineage(workspace).to_dict(), epoch_id)
@@ -217,7 +217,7 @@ def test_evolve_once_fast_mode_degrades_to_full_when_no_cache(
     v0_cache = workspace / "epochs" / epoch_id / "generations" / "v0" / "gen_score.json"
     assert not v0_cache.exists()
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]), fast_mode=True)
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm, fast_mode=True)
 
     assert outcome.tournament_decision == "promoted"
     # The seeding full round wrote the parent's cached aggregate, so a
@@ -237,7 +237,7 @@ def test_evolve_once_rejects_when_child_regresses(
         canned_pass_by_gen={"v0": True, "v1": False},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason  # non-empty
@@ -273,7 +273,7 @@ def test_evolve_once_retries_destructive_patch_then_succeeds(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     # The round was NOT wasted — it reached a real tournament decision.
     assert outcome.tournament_decision == "promoted"
@@ -317,7 +317,7 @@ def test_evolve_once_rejects_when_the_episode_cannot_repair_its_edit(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]), max_proposer_retries=2)
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm, max_proposer_retries=2)
 
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason
@@ -353,7 +353,7 @@ def test_evolve_n_rounds_stops_on_consecutive_rejections(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
             max_consecutive_rejections=3,
         )
     )
@@ -373,7 +373,7 @@ def test_evolve_round_writes_per_patch_layout(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     v1 = workspace / "epochs" / epoch_id / "generations" / "v1"
     body = json.loads((v1 / "experiment.json").read_text())
@@ -415,7 +415,7 @@ def test_evolve_once_dumps_mutations_json(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     from zicato.core.workspace import mutations_json_path
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     snapshot_path = mutations_json_path(workspace, epoch_id)
     assert snapshot_path.exists()
@@ -473,7 +473,7 @@ def test_evolve_n_rounds_populates_heartbeat_metadata(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
             instance_id="hb-meta",
         )
     )
@@ -510,7 +510,7 @@ def test_evolve_once_regenerates_analysis_report(
     # No evaluation call is scripted: the per-round refresh re-templates the
     # publication's data-bearing sections from workspace data and spends no
     # tokens, and the proposal is a Foe episode rather than an aux call.
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     assert outcome.tournament_decision == "promoted"
 
     # The report landed as analysis.md + analysis.html under the epoch.
@@ -567,7 +567,7 @@ def test_evolve_once_survives_report_generation_failure(
 
     monkeypatch.setattr(_analyzer_pkg, "generate_epoch_report", _boom)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     # The round still produced its real verdict despite the report crash.
     assert outcome.tournament_decision == "promoted"
     assert outcome.proposed_generation_id == "v1"
@@ -597,6 +597,10 @@ def test_evolve_once_threads_configured_proposer_skill_into_the_episode(
                 "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
                 "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "contract": {"proposer_path": str(proposer_dir)},
+                "runtime": {
+                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
+                    "evaluation_call_llm": "tests._orchestrator_harness:evaluation_call_llm",
+                },
             }
         )
     )
@@ -657,7 +661,7 @@ def test_evolve_once_threads_configured_proposer_skill_into_the_episode(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    run_evolve_once(workspace, cfg.id, make_aux_responder([]))
+    run_evolve_once(workspace, cfg.id, evaluation_call_llm)
 
     # The durable input capture records exactly what the episode was
     # given, so this reads the model's own context rather than a proxy.

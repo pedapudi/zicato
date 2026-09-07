@@ -1,30 +1,22 @@
 # Contract field registry
 
-## Decision
+`ScoringWeights` and its nested dataclasses own the scoring schema. Field
+declarations carry defaults, descriptions, persisted names, constraints, and
+canonical omission metadata. `contract_knobs()` derives a read-only registry
+from these declarations.
 
-`ScoringWeights` and its nested dataclasses are the schema. Their field
-declarations carry defaults and `_knob` metadata; `contract_knobs()` derives a
-read-only registry from those declarations at import time.
-
-The registry is not code generation. Nothing derived from it is checked in.
-Consumers project only what they own:
-
-- contract canonicalization reads omit-at-default names;
-- builder guards read operation and argument mappings;
-- field-enumerating serialization reads the dataclasses directly.
-
-This keeps one declaration behind hashing, serialization, and builder
-coverage without adding a parallel schema.
-
-## Compatibility
-
-The change is structural. Canonical scoring bytes and hashes remain unchanged.
-The frozen omit-set test and contract-hash parity gate detect any drift.
+Canonicalization reads the declared omission rules. Serialization, generated
+configuration help, and schemas read the same field declarations. Contract
+operations consult the declared constraints before changing a value.
 
 ## Adding a field
 
-1. Declare the field and validation on its owning dataclass.
-2. Set `_knob(omit_at_default=True)` only for an additive default-off field.
-3. Name its builder operation or record a reviewed exemption.
-4. Run the registry guards, serializer completeness tests, and contract-hash
-   parity gate.
+1. Declare its type, default, description, and validation on the owning record.
+2. Define its persisted name and contract-identity behavior. Use
+   `omit_at_default` only when omitting that value preserves recorded meaning.
+3. Update its runtime consumer, cost estimate, or validation where required.
+4. Verify serialization and sparse/expanded identity, including retained
+   historical records when canonical behavior changes.
+
+Historical decoding and recorded-hash verification have explicit owners. A
+constructor default must not silently change an archived evaluation contract.

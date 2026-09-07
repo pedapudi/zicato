@@ -499,7 +499,7 @@ Upgrade `src/zicato/dashboard/static/js/views/board.js` to render
   rather than recomputed analysis.
 
 ### The instrument-quality panel
-Recommend-only; every finding links into `reflect` / `builder`.
+Read-only findings link to reflection reports.
 - The **measured floor** and the **live minimum-detectable-effect ladder**
   (§4.3), with the replicate count in effect and the tier that set it.
 - **Ranked noisy evals** — entries by descending `flip_rate`.

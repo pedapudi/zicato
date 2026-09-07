@@ -1,37 +1,20 @@
-"""Draft operations — the single source of truth for every contract edit.
-
-Every editable change to a :class:`~zicato.contract_draft.draft.TournamentDraft`
-flows through one of the operations here. The builder form's direct edits,
-its copilot's tool calls, and the reflection adjudicator's staged edits all
-call the *same* functions, so there is exactly one place each mutation's
-semantics live.
-
-The write ops (``set_structure`` … ``set_brief``) mutate the draft in
-place and return a structured :class:`DraftPatch` describing what changed
-— the UI / chat renders that to confirm the edit. The read ops
-(:func:`estimate_cost`, :func:`validate`) never mutate. :func:`apply`
-either writes the draft to the workspace (``confirm=True``) reusing the
-existing epoch / register write paths and lets the auto-epoch machinery
-roll the epoch on the next resolve, or returns a dry-run preview
-(``confirm=False``) that writes nothing.
-
-These functions never start a live ``zicato evolve``.
-"""
+"""Validate edits to evaluation inputs and publish accepted files together."""
 
 from __future__ import annotations
 
 import dataclasses
 import math
 import re
-import statistics
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from zicato.board.budgets import BUDGET_OUTLIER_FACTOR, assess_budget_outliers
 from zicato.board.split import HOLDOUT_TAG, split_board
 from zicato.contract_draft.admission import authored_edit
 from zicato.contract_draft.draft import TournamentDraft
+from zicato.core.configuration import authored_dataclass_from_json
 from zicato.core.constraints import require_knob
 from zicato.core.types import (
     VALID_TOURNAMENT_STRUCTURES,
@@ -41,9 +24,9 @@ from zicato.core.types import (
     ScoringWeights,
     TournamentStructure,
 )
-from zicato.driver_imports import with_workspace_imports
 from zicato.selection.registry import default_replicates_for
 from zicato.selection.strategies.racing import SLICE_SCHEDULES
+from zicato.selection.strategy import _param_float, _param_int
 
 if TYPE_CHECKING:
     from zicato.runtime.lock import WorkspaceLock
@@ -150,10 +133,8 @@ class Warning:
         Human-readable explanation.
     severity:
         ``"info"`` (advisory) / ``"warning"`` (likely a mistake) /
-        ``"refuse"`` (statistically unsound — the same recommend-only
-        REFUSE posture the contract pre-flight verdict carries). The
-        builder never blocks on any of these — they inform the operator's
-        choice; even a ``refuse`` never hard-blocks apply.
+        ``"refuse"`` (statistically unsound). Warnings inform the operator;
+        they do not block publication.
     """
 
     code: str
@@ -162,54 +143,6 @@ class Warning:
 
     def to_dict(self) -> dict[str, Any]:
         return {"code": self.code, "message": self.message, "severity": self.severity}
-
-
-@dataclass(frozen=True, slots=True)
-class PreflightResult:
-    """The outcome of the builder's :func:`preflight` read-op.
-
-    Either a real measurement (``available=True`` with the
-    :class:`~zicato.epoch.preflight.PreflightReport` JSON + the measured
-    A/A noise floor) or an HONEST degrade (``available=False`` with a
-    clear ``reason`` naming what the measurement needs — a registered
-    target, a seeded baseline, runtime ``call_llm`` config). Never an
-    exception for a workspace that simply is not ready; recommend-only
-    either way.
-
-    Fields
-    ------
-    available:
-        ``True`` iff the measurement ran.
-    verdict:
-        The SIGNAL pre-flight verdict (``"ok"`` / ``"warn"`` / ``"inert"`` /
-        ``"refuse"``) when available, else ``None``. Signal-vs-noise only —
-        the ``promote_margin`` window verdict rides along inside
-        :attr:`report` (``window_verdict`` / ``window_failure``) and the
-        Review pane chips it separately, because a draft can clear its floor
-        and still be null. Recommend-only, never a gate.
-    reason:
-        The honest degrade explanation when ``available`` is ``False``.
-    report:
-        :meth:`PreflightReport.to_json` dict when available.
-    noise_floor:
-        The measured A/A floor's :meth:`NoiseFloor.to_json` dict when
-        available.
-    """
-
-    available: bool
-    verdict: str | None = None
-    reason: str = ""
-    report: dict[str, Any] | None = None
-    noise_floor: dict[str, Any] | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "available": self.available,
-            "verdict": self.verdict,
-            "reason": self.reason,
-            "report": self.report,
-            "noise_floor": self.noise_floor,
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,43 +260,6 @@ def set_param(draft: TournamentDraft, key: str, value: Any) -> DraftPatch:
     )
 
 
-#: The ladder mapping's per-key coercion. The mapping arrives as raw JSON
-#: (both the REST dispatch and the copilot hand it through untouched), so a
-#: string ``"8"`` would otherwise reach ``LadderConfig`` and raise an
-#: uncaught ``TypeError`` from its comparison validator — a 500 where every
-#: other builder arg gives a field-precise 400.
-_LADDER_TYPES: dict[str, type] = {
-    "enabled": bool,
-    "threshold": float,
-    "budget": int,
-}
-
-
-def _coerce_ladder_value(key: str, value: Any) -> Any:
-    """Coerce one ladder mapping value to its field type, or raise.
-
-    ``threshold`` is the ONLY nullable ladder key — its ``None`` means
-    "auto-derive from ``promote_margin``". A null anywhere else must be
-    rejected here: reaching the dataclass, it would raise an uncaught
-    ``TypeError`` from ``budget``'s comparison validator
-    (surfacing as a 500), and ``enabled``, which has no validator to trip,
-    would silently store ``None`` in a bool field.
-    """
-    if value is None:
-        if key == "threshold":
-            return None
-        raise ValueError(f"ladder.{key} must not be null (only ladder.threshold is nullable)")
-    want = _LADDER_TYPES[key]
-    if want is bool:
-        return bool(value)
-    if isinstance(value, bool):
-        raise ValueError(f"ladder.{key} must be a number, got {value!r}")
-    try:
-        return want(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"ladder.{key} must be a number, got {value!r}") from exc
-
-
 @authored_edit
 def set_holdout(
     draft: TournamentDraft,
@@ -408,23 +304,15 @@ def set_holdout(
             of_changes[name] = value
             changed[name] = {"from": getattr(of, name), "to": value}
     if ladder is not None:
-        allowed = {"enabled", "threshold", "budget"}
-        unknown = set(ladder) - allowed
-        if unknown:
-            raise ValueError(
-                f"unknown ladder key(s) {sorted(unknown)!r}; expected a subset of "
-                f"{sorted(allowed)!r}"
-            )
-        ladder_changes: dict[str, Any] = {}
-        for key, value in ladder.items():
-            # ``threshold: None`` is a REAL value (auto-derive); every other
-            # key treats None as absent-from-the-mapping only.
-            coerced = _coerce_ladder_value(key, value)
-            if coerced != getattr(of.ladder, key):
-                ladder_changes[key] = coerced
-                changed[f"ladder.{key}"] = {"from": getattr(of.ladder, key), "to": coerced}
-        if ladder_changes:
-            of_changes["ladder"] = dataclasses.replace(of.ladder, **ladder_changes)
+        candidate = authored_dataclass_from_json(
+            type(of.ladder), {**dataclasses.asdict(of.ladder), **ladder}, path="set_holdout.ladder"
+        )
+        for key in ladder:
+            before, after = getattr(of.ladder, key), getattr(candidate, key)
+            if before != after:
+                changed[f"ladder.{key}"] = {"from": before, "to": after}
+        if candidate != of.ladder:
+            of_changes["ladder"] = candidate
     if of_changes:
         draft.scoring = _replace_scoring(draft, overfitting=dataclasses.replace(of, **of_changes))
     if tags is not None:
@@ -468,7 +356,7 @@ def set_weights(
     """Set scoring weights (the loss-shaping knobs).
 
     Any subset of the supported weight fields may be supplied. Mapping
-    fields replace the whole mapping (the builder edits them wholesale).
+    fields replace the whole mapping.
     The per-CHANNEL coefficients — including ``drift:``, ``judge:``,
     ``failure:`` and ``runtime:`` — are :func:`set_namespace_weights`; the
     fields here shape a channel from within it.
@@ -541,8 +429,7 @@ def set_gate(
 
     The remaining keywords cover the rest of the gate contract:
     ``namespace_monotonicity`` replaces the per-namespace strict-
-    monotonicity flag mapping wholesale (the builder edits mappings
-    wholesale, like :func:`set_weights`); the two ``block_on_*`` booleans
+    monotonicity flag mapping, like :func:`set_weights`; the two ``block_on_*`` booleans
     opt into the integrity BLOCKING modes (containment / gate-
     contradiction — both alarm-only by default); the ``regression_*``
     trio configures the snapshot's own test suite as a hard pre-gate
@@ -912,9 +799,7 @@ def add_board_entry(draft: TournamentDraft, entry: BoardEntry) -> DraftPatch:
     provenance the author stamped onto ``entry.context`` (EVAL-SYNTHESIS.md §4)
     rides along untouched — the op neither injects nor strips it.
 
-    A board change, so it rolls the epoch like any board edit. This is the op a
-    regression / coverage / harder-variant suggestion applies through (the
-    ``reflect apply`` suggestion seam).
+    Publishing the board change causes the next evaluation to use a fresh epoch.
     """
     entry.validate()
     if any(e.id == entry.id for e in draft.entries):
@@ -944,60 +829,6 @@ def remove_board_entry(draft: TournamentDraft, entry_id: str) -> DraftPatch:
         op="remove_board_entry",
         changed={"entry_id": entry_id, "action": "removed"},
     )
-
-
-def restore_draft(
-    draft: TournamentDraft,
-    source: TournamentDraft,
-    *,
-    op: str = "revert_to_live",
-) -> DraftPatch:
-    """Restore ``draft``'s contract fields IN PLACE from ``source``.
-
-    The shared implementation behind the ``revert_to_live`` lifecycle op
-    (``source`` = a fresh :meth:`TournamentDraft.from_workspace`) and the
-    step-``undo`` op (``source`` = a :class:`DraftStore` history
-    snapshot). IN PLACE — never a rebind — so every live binding to the
-    draft object (the store's session entry, a named slot the session is
-    on, the copilot's bound context) sees the restored state; rebinding
-    would silently detach the session from its slot.
-
-    The patch's ``changed`` map reports the restored components through
-    the same canonicalizers the epoch-roll rule uses
-    (:func:`compare_drafts`), so a restore that only reorders entries —
-    canonically identical — honestly reports no change.
-    """
-    diff = compare_drafts(draft, source)
-    changed: dict[str, Any] = {}
-    for component in diff["changed_components"]:
-        if component == "scoring":
-            changed["scoring"] = diff["scoring"]
-        elif component == "board":
-            changed["board"] = diff["board"]
-        elif component == "board_meta":
-            changed["board_meta"] = {
-                "from": diff["board_meta"]["a"],
-                "to": diff["board_meta"]["b"],
-            }
-        elif component == "brief":
-            changed["brief_chars"] = {
-                "from": diff["brief"]["a_chars"],
-                "to": diff["brief"]["b_chars"],
-            }
-        elif component == "proposer":
-            changed["proposer_path"] = {
-                "from": diff["proposer"]["a"],
-                "to": diff["proposer"]["b"],
-            }
-    draft.scoring = source.scoring
-    draft.entries = list(source.entries)
-    draft.brief = source.brief
-    draft.proposer_path = source.proposer_path
-    draft.disable_drift = tuple(source.disable_drift)
-    draft.judge_only = source.judge_only
-    draft.source = source.source
-    note = "" if changed else "draft already matches the restore source"
-    return DraftPatch(op=op, changed=changed, note=note)
 
 
 def add_judge(draft: TournamentDraft, entry_id: str, judge: JudgeSpec) -> DraftPatch:
@@ -1065,7 +896,7 @@ def set_board_meta(
     """Set the board-level ``board_meta`` header (drift suppression + judge-only).
 
     ``disable_drift`` replaces the whole suppression set wholesale (the
-    builder edits mappings/sets wholesale, like :func:`set_weights`);
+    caller supplies the complete set, like :func:`set_weights`);
     each token is validated against the registered drift-kind set
     (:func:`zicato.core.drift_kinds.validate_drift_kind`) and an unknown
     token raises :class:`ValueError` listing the offender. ``judge_only``
@@ -1078,9 +909,6 @@ def set_board_meta(
     by ``apply`` only when non-default, byte-compatible with
     :func:`zicato.board.jsonl.save_board`.
 
-    GUI note: the knob-coverage rule permits a documented exception, and
-    this is one. The builder GUI exposes no ``board_meta`` form control, so
-    this operation is reachable from the copilot and the REST dispatch only.
     """
     from zicato.core.drift_kinds import DriftKind, validate_drift_kind  # noqa: PLC0415
 
@@ -1118,26 +946,10 @@ def _replace_entry(draft: TournamentDraft, updated: BoardEntry) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _param_int(params: Any, key: str, default: int) -> int:
-    """Read an int param, falling back to ``default`` on absence / bad type."""
-    try:
-        return int(params.get(key, default))
-    except (TypeError, ValueError):
-        return default
-
-
-def _param_float(params: Any, key: str, default: float) -> float:
-    """Read a float param, falling back to ``default`` on absence / bad type."""
-    try:
-        return float(params.get(key, default))
-    except (TypeError, ValueError):
-        return default
-
-
 def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     """Estimate board-runs-per-round for the draft's structure + params.
 
-    The model follows the builder skill's schedule arithmetic:
+    The estimate accounts for the scheduled evaluations:
 
     * ``gauntlet`` — ``field_size × replicates`` duel runs (one duel per
       challenger), counted across the train board.
@@ -1425,8 +1237,7 @@ def validate(
       a wall-clock budget more than 10× the board median);
       ``judge_only_board`` (info — the board_meta judge-only flag).
     * STATISTICAL: when a measured A/A noise floor is known — passed in
-      explicitly (``noise_floor_max_abs_delta``, e.g. the floor a
-      just-run :func:`preflight` measured) or read off the current
+      explicitly (``noise_floor_max_abs_delta``) or read off the current
       epoch's record under ``workspace_root`` — a ``promote_margin`` at
       or below that floor WITH the evidence gate off
       (``promote_confidence_threshold`` unset) is flagged at ``refuse``
@@ -1434,13 +1245,9 @@ def validate(
       by noise. Recommend-only, like every warning here — apply is never
       hard-blocked.
 
-    SECURITY POSTURE — the dotted-path checks are SHAPE-ONLY. ``validate``
-    NEVER imports (or ``find_spec``s) an operator- or copilot-supplied
-    dotted path server-side: resolving a module executes parent-package
-    code, and a draft may be copilot-authored. The messages point the
-    operator at ``zicato board audit``, which exercises the paths in the
-    workspace's own runtime context. Keep any future path check on this
-    side of the line.
+    Dotted-path checks validate syntax without importing modules: resolving
+    a module executes parent-package code. ``zicato board audit`` exercises
+    the paths in the workspace's runtime context.
     """
     warnings: list[Warning] = []
     ts = draft.scoring.tournament_structure
@@ -1550,15 +1357,11 @@ _DOTTED_PATH_RE = re.compile(
     r"|^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$"
 )
 
-#: How far above the board's median wall-clock budget an entry must sit
-#: before the ``entry_budget_outlier`` info fires.
-_BUDGET_OUTLIER_FACTOR = 10.0
-
 #: The message tail every dotted-path shape warning carries — the checks
 #: are shape-only by design (see the security posture in ``validate``'s
 #: docstring); runtime exercise belongs to ``zicato board audit``.
 _AUDIT_HINT = (
-    "Shape-check only — the builder never imports the path; run "
+    "Import-path syntax is checked without loading the module; run "
     "`zicato board audit` to exercise it."
 )
 
@@ -1651,22 +1454,18 @@ def _board_authoring_warnings(draft: TournamentDraft) -> list[Warning]:
                     )
                 )
 
-    budgets = [e.wall_clock_budget_seconds for e in draft.entries]
-    if len(budgets) >= 2:
-        median = statistics.median(budgets)
-        if median > 0:
-            for entry in draft.entries:
-                if entry.wall_clock_budget_seconds > _BUDGET_OUTLIER_FACTOR * median:
-                    warnings.append(
-                        Warning(
-                            "entry_budget_outlier",
-                            f"entry {entry.id!r} has a wall-clock budget of "
-                            f"{entry.wall_clock_budget_seconds}s, more than 10× the "
-                            f"board median ({median:g}s) — it will dominate the "
-                            "round's wall-clock time.",
-                            severity="info",
-                        )
-                    )
+    budget_assessment = assess_budget_outliers(draft.entries)
+    for entry in budget_assessment.outliers:
+        warnings.append(
+            Warning(
+                "entry_budget_outlier",
+                f"entry {entry.id!r} has a wall-clock budget of "
+                f"{entry.wall_clock_budget_seconds}s, more than {BUDGET_OUTLIER_FACTOR:g}× the "
+                f"board median ({budget_assessment.median_seconds:g}s) — it will dominate the "
+                "round's wall-clock time.",
+                severity="info",
+            )
+        )
 
     if draft.judge_only:
         warnings.append(
@@ -1771,236 +1570,9 @@ def _measured_noise_floor(workspace_root: Path) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def compare_drafts(a: TournamentDraft, b: TournamentDraft) -> dict[str, Any]:
-    """A keyed diff between two drafts — the fork/compare read-op.
-
-    The :meth:`TournamentDraft.diff_vs_live` precedent generalized to any
-    draft pair, over the SAME canonicalizers the epoch-roll rule uses
-    (:func:`~zicato.contract_draft.draft._scoring_canon` /
-    :func:`~zicato.contract_draft.draft._board_canon` /
-    :func:`~zicato.contract_draft.draft._brief_canon`), so "differs" here agrees
-    with "would roll the epoch". Purely read-side; mutates nothing.
-
-    Shape::
-
-        {
-          "changed_components": ["scoring", "board", ...],
-          "scoring": {key: {"a": ..., "b": ...}, ...},   # differing top-level keys
-          "board": {"added": [ids], "removed": [ids], "changed": [ids]},
-          "board_meta": {"changed": bool, "a": {...}, "b": {...}},
-          "brief": {"changed": bool, "a_chars": int, "b_chars": int},
-          "proposer": {"changed": bool, "a": str|None, "b": str|None},
-        }
-
-    ``scoring`` keys come from the contract-canonical scoring form (float-
-    rounded, omitted-at-default fields absent), so the diff never reports
-    a phantom change the contract hash would not see. ``board`` is keyed
-    by entry id: ``added`` = in ``b`` only, ``removed`` = in ``a`` only,
-    ``changed`` = present in both with differing canonical content.
-    ``board_meta`` is the board-level header (disable_drift / judge_only)
-    — not per-entry, so it gets its own detail key and its own
-    ``changed_components`` entry when it differs.
-    """
-    import json as _json
-
-    from zicato.contract_draft.draft import _board_canon, _brief_canon, _scoring_canon
-
-    changed_components: list[str] = []
-
-    scoring_a = _json.loads(_scoring_canon(a.scoring))
-    scoring_b = _json.loads(_scoring_canon(b.scoring))
-    scoring_diff: dict[str, Any] = {}
-    for key in sorted(set(scoring_a) | set(scoring_b)):
-        va, vb = scoring_a.get(key), scoring_b.get(key)
-        if va != vb:
-            scoring_diff[key] = {"a": va, "b": vb}
-    if scoring_diff:
-        changed_components.append("scoring")
-
-    canon_a = {e.id: _board_canon([e]) for e in a.entries}
-    canon_b = {e.id: _board_canon([e]) for e in b.entries}
-    added = sorted(set(canon_b) - set(canon_a))
-    removed = sorted(set(canon_a) - set(canon_b))
-    entry_changed = sorted(
-        eid for eid in set(canon_a) & set(canon_b) if canon_a[eid] != canon_b[eid]
-    )
-    if added or removed or entry_changed:
-        changed_components.append("board")
-
-    meta_a = {
-        "disable_drift": [str(getattr(k, "value", k)) for k in a.disable_drift],
-        "judge_only": a.judge_only,
-    }
-    meta_b = {
-        "disable_drift": [str(getattr(k, "value", k)) for k in b.disable_drift],
-        "judge_only": b.judge_only,
-    }
-    meta_changed = meta_a != meta_b
-    if meta_changed:
-        changed_components.append("board_meta")
-
-    brief_changed = _brief_canon(a.brief) != _brief_canon(b.brief)
-    if brief_changed:
-        changed_components.append("brief")
-
-    proposer_a = str(a.proposer_path) if a.proposer_path is not None else None
-    proposer_b = str(b.proposer_path) if b.proposer_path is not None else None
-    proposer_changed = proposer_a != proposer_b
-    if proposer_changed:
-        changed_components.append("proposer")
-
-    return {
-        "changed_components": changed_components,
-        "scoring": scoring_diff,
-        "board": {"added": added, "removed": removed, "changed": entry_changed},
-        "board_meta": {"changed": meta_changed, "a": meta_a, "b": meta_b},
-        "brief": {
-            "changed": brief_changed,
-            "a_chars": len(a.brief),
-            "b_chars": len(b.brief),
-        },
-        "proposer": {"changed": proposer_changed, "a": proposer_a, "b": proposer_b},
-    }
-
-
 # ---------------------------------------------------------------------------
 # Read-side: the build-time contract pre-flight
 # ---------------------------------------------------------------------------
-
-
-@with_workspace_imports
-async def preflight(
-    draft: TournamentDraft,
-    workspace_root: Path,
-    *,
-    runs: int | None = None,
-) -> PreflightResult:
-    """Measure the DRAFT contract's noise floor + degradation signal.
-
-    Runs :func:`zicato.epoch.preflight.run_contract_preflight` — the SAME
-    measurement ``zicato board preflight`` takes — but against the
-    DRAFT's board and scoring weights (the two contract components the
-    builder edits; ``run_contract_preflight`` consumes them directly, so
-    the draft needs no on-disk materialization). The champion tree, the
-    adapter, and the runtime ``call_llm`` config are the workspace's own:
-    a pre-flight needs a real registered target to probe.
-
-    HONEST DEGRADE, never a crash: each missing prerequisite returns
-    ``available=False`` with a ``reason`` naming exactly what is missing
-    (no current epoch / no seeded baseline generation / no adapter block /
-    no ``runtime.target_call_llm`` dotted callables / an empty draft
-    board / no mutation points). The result is RECOMMEND-ONLY and is NOT
-    persisted onto the epoch record — the draft is not the live contract,
-    so its measurement must never masquerade as the live epoch's.
-
-    This op never starts a live ``zicato evolve``; it spends only the
-    small K-draw measurement budget (cache-idempotent with ``zicato board
-    audit`` — re-running is a cache hit).
-    """
-    from zicato import adapter_factory, runtime_factory, workspace_loader  # noqa: PLC0415
-    from zicato.core.types import Generation  # noqa: PLC0415
-    from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
-    from zicato.epoch.preflight import run_contract_preflight  # noqa: PLC0415
-    from zicato.tournament.calibration import DEFAULT_CALIBRATION_RUNS  # noqa: PLC0415
-
-    resolved_runs = DEFAULT_CALIBRATION_RUNS if runs is None else int(runs)
-    if resolved_runs < 2:
-        raise ValueError(f"preflight needs at least 2 A/A draws, got {resolved_runs!r}")
-
-    if not draft.entries:
-        return PreflightResult(
-            available=False,
-            reason="preflight requires a non-empty draft board — there is nothing to measure",
-        )
-
-    epoch_id = current_epoch_id(workspace_root)
-    if not epoch_id:
-        return PreflightResult(
-            available=False,
-            reason=(
-                "preflight requires a registered target: no current epoch under "
-                "this workspace (run `zicato epoch register` / `zicato epoch new` first)"
-            ),
-        )
-
-    try:
-        workspace_config = workspace_loader.load_workspace_config(workspace_root)
-    except (FileNotFoundError, ValueError) as exc:
-        return PreflightResult(
-            available=False,
-            reason=f"preflight requires a registered target: {exc}",
-        )
-
-    from zicato.evolve.generation_phase import (  # noqa: PLC0415
-        current_generation,
-        snapshot_root,
-    )
-
-    try:
-        champion_id = current_generation(workspace_root, epoch_id)
-    except FileNotFoundError:
-        return PreflightResult(
-            available=False,
-            reason=(
-                "preflight requires a registered target with a seeded baseline "
-                "generation — run one `zicato evolve` round (or seed v0) first"
-            ),
-        )
-
-    try:
-        adapter = adapter_factory.make_adapter_from_config(
-            workspace_config, workspace_root=workspace_root
-        )
-    except (KeyError, ValueError, ImportError) as exc:
-        return PreflightResult(
-            available=False,
-            reason=f"preflight requires a configured adapter: {exc}",
-        )
-
-    try:
-        config = runtime_factory.make_runtime_config(
-            workspace_config, workspace_root=workspace_root
-        )
-    except (ValueError, ImportError) as exc:
-        return PreflightResult(
-            available=False,
-            reason=(
-                "preflight requires the runtime call_llm config "
-                f"(config.json `runtime.target_call_llm` / `runtime.evaluation_call_llm`): {exc}"
-            ),
-        )
-
-    champion = Generation(
-        id=champion_id,
-        epoch_id=epoch_id,
-        parent_id=None,
-        snapshot_root=snapshot_root(workspace_root, epoch_id, champion_id),
-        created_at="",
-        promoted=True,
-    )
-
-    try:
-        report, floor = await run_contract_preflight(
-            adapter=adapter,
-            generation=champion,
-            board=list(draft.entries),
-            weights=draft.scoring,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            runs=resolved_runs,
-        )
-    except ValueError as exc:
-        # No mutation points under the champion snapshot — nothing to
-        # degrade (and nothing an evolve loop could optimize either).
-        return PreflightResult(available=False, reason=str(exc))
-
-    return PreflightResult(
-        available=True,
-        verdict=report.verdict,
-        report=report.to_json(),
-        noise_floor=floor.to_json(),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -2037,7 +1609,7 @@ def _predicted_contract_hash(draft: TournamentDraft, workspace_root: Path) -> st
     except FileNotFoundError:
         live_inputs = None
 
-    with tempfile.TemporaryDirectory(prefix="zicato-builder-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="zicato-contract-") as tmp:
         tmp_dir = Path(tmp)
         board_file = tmp_dir / "board.jsonl"
         brief_file = tmp_dir / "brief.md"
@@ -2238,9 +1810,7 @@ __all__ = [
     "CostLine",
     "CostEstimate",
     "Warning",
-    "PreflightResult",
     "ApplyResult",
-    "preflight",
     "set_structure",
     "set_param",
     "set_holdout",
@@ -2261,10 +1831,8 @@ __all__ = [
     "remove_judge",
     "set_brief",
     "set_board_meta",
-    "restore_draft",
     "estimate_cost",
     "validate",
-    "compare_drafts",
     "apply",
     "VALID_TOURNAMENT_STRUCTURES",
 ]

@@ -6,9 +6,8 @@ module owns everything on the wire between the orchestrator process and
 those workers:
 
 * the wire-spec builders that serialise a run's inputs into the
-  JSON args file the worker re-parses (:func:`_role_worker_spec`,
-  :func:`adapter_worker_spec`, :func:`_weights_spec`, :func:`_entry_to_dict`,
-  :func:`_callable_dotted_path`, plus the board-level context stampers
+  JSON args file the worker re-parses (:func:`adapter_worker_spec`,
+  :func:`_weights_spec`, :func:`_entry_to_dict`, plus the board-level context stampers
   :func:`_stamp_disable_drift` / :func:`_stamp_judge_only`);
 * the per-run ephemeral snapshot checkout (:func:`_checkout_run_snapshot`
   / :func:`_discard_run_snapshot`) that keeps the canonical generation
@@ -475,57 +474,6 @@ def _discard_run_snapshot(checkout: EphemeralCheckout | None) -> None:
         log.debug("ephemeral snapshot cleanup skipped for %s: %s", checkout.working_dir, exc)
 
 
-def _callable_dotted_path(fn: Any) -> str:
-    """Return a re-importable ``module:qualname`` dotted path for ``fn``.
-
-    The worker subprocess re-imports the target / evaluation LLM
-    callables from these paths. A callable must therefore be a
-    module-level (or class-attribute) object; a closure-local callable
-    has ``<locals>`` in its ``__qualname__`` and cannot be re-imported —
-    we surface that as a clear :class:`ValueError` at spawn time rather
-    than letting the worker fail opaquely.
-    """
-    module = getattr(fn, "__module__", None)
-    qualname = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", None)
-    if not module or not qualname:
-        raise ValueError(
-            f"cannot derive an import path for callable {fn!r}: it has no __module__/__qualname__"
-        )
-    if "<locals>" in qualname:
-        raise ValueError(
-            f"callable {module}:{qualname} is defined inside a function "
-            "(closure-local) and cannot be re-imported by a subprocess "
-            "worker; pass a module-level callable instead"
-        )
-    return f"{module}:{qualname}"
-
-
-def _role_worker_spec(
-    role: str,
-    *,
-    models: Any,
-    fallback_callable: Any,
-) -> dict[str, Any]:
-    """Build the subprocess-worker spec for one LLM role.
-
-    When the workspace ``models.<role>`` block is configured (a dotted path
-    OR a model spec), its secret-free :meth:`RoleSpec.to_worker_spec` dict is
-    emitted under ``{"models_role": {...}}`` — the worker re-resolves it with
-    :func:`zicato.models_config.resolve_text_call_llm` in its fresh
-    interpreter (reading any ``api_key_env`` from the worker's own
-    :data:`os.environ`). This lets a model-spec role (whose resolved callable
-    is a closure that cannot cross the process boundary) reach the worker.
-
-    Otherwise the dotted form is used: the resolved callable's re-importable
-    path under ``{"dotted": "module:qualname"}``, which is what an
-    unconfigured role crosses the boundary as.
-    """
-    spec = models.role(role)
-    if not spec.is_empty:
-        return {"models_role": spec.to_worker_spec()}
-    return {"dotted": _callable_dotted_path(fallback_callable)}
-
-
 #: Process-essential environment variables a scrubbed worker still needs to
 #: start a Python interpreter, find tools, resolve a home/temp dir, and keep
 #: byte-for-byte-stable text output (locale). Deliberately small: this is the
@@ -919,7 +867,6 @@ __all__ = [
     "_aborted_loss_profile",
     "adapter_worker_spec",
     "_api_key_env_names",
-    "_callable_dotted_path",
     "_checkout_run_snapshot",
     "_configuration_spec",
     "_discard_run_snapshot",
@@ -932,7 +879,6 @@ __all__ = [
     "_now_iso_utc",
     "_resolve_harmonograf_grpc",
     "_resolve_harmonograf_url",
-    "_role_worker_spec",
     "_run_id_for",
     "_runtime_state",
     "scrubbed_worker_env",

@@ -60,7 +60,7 @@
 | `pyproject.toml` | `[tool.pytest.ini_options]` (markers, `addopts`), `[tool.zicato.importlinter]` (the five contracts), `[tool.ruff.lint...banned-api]` (the TID251 bans) |
 | `Makefile` | the targets (`test` = both tiers / `test-fast` = the default tier / `node-test` / `lint` / `import-lint` / `typecheck` / `check`) |
 | `.github/workflows/ci.yml` | the pull-request jobs (Python 3.12 running the DEFAULT tier, dashboard JavaScript, parity, and the Rust supervisor) |
-| `.github/workflows/slow-tier.yml` | the `slow` tier on pull requests, nightly against main, and on demand |
+| `.github/workflows/slow-tier.yml` | the `slow` tier on pull requests and on demand |
 | `src/zicato/dashboard/static/test/run-all.mjs` | the Node behaviour-suite runner (exit-code-honest) |
 
 The suite is large (about 5,990 Python tests plus the Node suite plus the
@@ -93,11 +93,10 @@ both Python groups. The full verification policy is in §11.11.
 Pull requests also report dashboard JavaScript and Rust checks separately.
 Repository policy requires
 every reported result to pass before merge. `.github/workflows/slow-tier.yml`
-also runs the slow tests nightly against main and on demand from the
-Actions tab.
+also runs the slow tests on demand from the Actions tab.
 
 ```
-addopts = "-n auto -m 'not node and not cascade_oc'"
+addopts = "-n 4 -m 'not node and not cascade_oc'"
 markers = [
     "node: shells out to the standalone Node test harness (run via `make node-test`)",
     "slow: one test measured at 15 s or more (statistical characterizations and end-to-end simulations); deselected ONLY by a bare `pytest` (see tests/conftest.py) — naming a file or a test runs it, `-m slow` runs the tier alone, and `make test` and CI run both tiers",
@@ -126,14 +125,9 @@ about what may never be stubbed away. All four combinations occur: the
 
 Membership in `slow` is a MEASUREMENT, and the measurement is SERIAL —
 `pytest -n0 --durations=0 <the test>`, marked when the total reaches 15 s.
-`-n0` is load-bearing. Under `-n auto` twelve workers contend for twelve
-cores while each scripted test spawns workers of its own, so the same test
-reads two to three times longer on a busy box; a tier set from those
-numbers has a membership that depends on what else was running. Six tests
-were tiered that way at 15–17 s; each measures 5.5 to 7.4 s alone, and all
-six are back in the default tier. The serial numbers leave a wide gap — 7.4 s is the
-slowest test outside the tier, 29.2 s the fastest inside it — so nothing
-sits near the line.
+Parallel tests may launch their own workers and contend for CPU and memory.
+Measure each candidate test serially so machine load and the pytest worker
+count do not determine its tier membership.
 
 `tests/test_slow_tier_registry.py` pins the marked set against a declared
 list of node ids and their measured seconds, so a mark added or dropped
@@ -193,7 +187,7 @@ honest:
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-n auto -m 'not node and not cascade_oc'"
+addopts = "-n 4 -m 'not node and not cascade_oc'"
 pythonpath = ["."]
 ```
 — `pyproject.toml`, `[tool.pytest.ini_options]`
@@ -202,11 +196,10 @@ pythonpath = ["."]
   without a per-test `@pytest.mark.asyncio`. Most of the loop is async; the
   suite tests it directly with `asyncio.run(...)` inside a sync test (the
   convergence oracle) or as a bare async test.
-- **`-n auto`** — one xdist worker per detected core. The suite is
-  **process-isolation-clean by construction**: `tmp_path` everywhere,
-  dynamic ports via `bind(("127.0.0.1", 0))`, tempdir-isolated worker
-  fixtures. `-n0` on the command line overrides back to a single serial
-  in-process run for debugging (`pytest -n0 tests/test_foo.py::test_bar`).
+- **`-n 4`** — four pytest workers by default, matching the complete verifier.
+  Tests isolate their files with `tmp_path` and use dynamic ports via
+  `bind(("127.0.0.1", 0))`. An explicit `-n` overrides the worker count;
+  `pytest -n0 tests/test_foo.py::test_bar` runs serially for debugging.
 - **`pythonpath = ["."]`** — pins the repo root so the src-layout `zicato`
   package resolves via the editable install AND `tests.*` helper imports
   resolve from a subprocess; the `sys.path` pin in `conftest.py` covers the
@@ -219,7 +212,7 @@ pythonpath = ["."]
 > ⚠️ TRAP — the suite's xdist-cleanliness is a PROPERTY YOU CAN BREAK. A test
 > that binds a FIXED port, writes to a shared path outside `tmp_path`, or
 > mutates a module global without the both-sides clear will pass alone and
-> flake under `-n auto` (two workers collide nondeterministically). When a new
+> flake under parallel pytest (two workers collide nondeterministically). When a new
 > test flakes only in the full run, the first suspect is a shared resource it
 > did not isolate — never "xdist is flaky".
 
@@ -306,8 +299,8 @@ checks flag admission and propagation through a real worker process.
 ### 11.2.2 The stand-in proposal runtime
 
 A round cannot open without a proposal runtime: there is no built-in
-default to fall back to, and the builder refuses a workspace that declared
-none by name. So every fixture workspace that runs a round declares one,
+default to fall back to. Runtime construction requires an explicit named
+proposal declaration. So every fixture workspace that runs a round declares one,
 and `tests/_foe_support.stand_in_proposer_block` writes it:
 
 ```python
@@ -1020,8 +1013,8 @@ subprocess) and asserts byte-identity. The CLI surface — command set,
 options, defaults, help prose — is observable behaviour a refactor must not
 move. **Reds legitimately** whenever you change a command, flag, default, or
 help string. **The update mechanism:** `--help` is canonical; regenerate the
-golden with `uv run python tools/parity/lib/cli_help.py --update` (this is
-also how `docs/design/CLI.md` stays accurate — it is a generated artifact).
+golden with `uv run python tools/parity/lib/cli_help.py --update` and reconcile the hand-authored command contract in
+`docs/design/CLI.md` with the same help output.
 
 ```python
     # Each chunk already ends with "\n"; the join leaves exactly one trailing
@@ -1195,40 +1188,22 @@ Neither is a pytest test — a violation reds the linter, so they run in
 
 ### 11.8.1 The import contracts
 
-zicato is a LIBRARY first — the surface in `zicato/__init__.py` — with three
-DRIVERS on top: `zicato.cli`, `zicato.dashboard`, `zicato.builder`, and the
-terminal console `zicato.tui` as a fourth. The contracts pin which edges
-exist:
+Namespace roles in `pyproject.toml [tool.zicato.namespace_roles]` are the
+inventory used by `tools/check_imports.py`. Every production namespace has one
+role. Library code cannot import the CLI or dashboard. Primitives and execution
+code cannot import coordination code; primitives may import only primitives.
+Packages with mixed responsibilities retain their declared library role.
 
-| Contract | Forbids |
-|---|---|
-| the library must not import the drivers | every lib package (`core`, `epoch`, `evolve`, `orchestrator`, `proposer`, `query`, `runtime`, `selection`, `tournament`, `storage`, …) importing `cli` / `dashboard` / `builder` / `tui` |
-| dashboard driver: no import of the cli | `zicato.dashboard` → `zicato.cli` (the `dashboard → builder` mount is the ONE allowed dashboard→driver edge) |
-| builder driver: no import of the other drivers | `zicato.builder` → `cli` / `dashboard` |
-| cli driver: no DIRECT import of the builder | `zicato.cli` → `zicato.builder` directly (`allow_indirect_imports = true` — the cli reaches the builder legitimately via `cli → dashboard.server → builder.api`) |
-| the query layer stays dashboard-free | `zicato.query` → `zicato.dashboard` (the query-layer-is-library-code rule — 09-dashboard-and-query.md §9.1, doctrine `DQ4`) |
-| tui driver: no import of the other drivers | `zicato.tui` → `cli` / `dashboard` / `builder` (the terminal console speaks HTTP to the served payloads) |
-| the proposer's patch validator has no path to the board | `zicato.proposer`'s validator reaching the board loader, which is what keeps entry text out of the validator's import closure |
-| the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, the contract draft, or the drivers | the 24 packages that model, execute, score and store importing `analyzer` / `check` / `contract_draft` / `evolve` / `health` / `orchestrator` / `query` / `reflection` / the four drivers (10-builder-cli-library.md §10.11.3 lists the seven library packages held out of the source list because they sit above the cut) |
-| the shared primitives import nothing else in the library | `import_path` / `integrations` / `logging_stream` / `storage` / `util` importing any other top-level package (the five may import each other) |
+The explicit import-linter contracts add narrower restrictions:
 
-The declared driver→driver edges are exactly two: `cli → dashboard` (the CLI
-launches the server and resolves its static bundle) and `dashboard →
-builder` (server.py mounts the builder's REST routes). Everything else is
-forbidden. The cli-no-direct-import-of-the-builder contract is the subtle one
-— it forbids the cli growing its OWN builder dependency while permitting the
-transitive reach through the two declared edges:
+| Source | Forbidden dependency |
+| --- | --- |
+| Dashboard | CLI |
+| Query readers | Dashboard |
+| Proposer patch validator | Board execution, judges, emulators, adapters and workers |
 
-```
-name = "cli driver: no direct import of the builder (cli -> dashboard is the declared edge)"
-...
-# Direct only: the cli legitimately reaches the builder TRANSITIVELY
-# through the two declared edges (cli -> dashboard.server -> builder.api
-# mount); what this contract forbids is the cli growing its own builder
-# dependency.
-allow_indirect_imports = true
-```
-— `pyproject.toml`, `[[tool.importlinter.contracts]]`
+The CLI may launch the dashboard. `make import-lint` verifies the complete role
+inventory and these import restrictions.
 
 ### 11.8.2 The TID251 bans — retired private reaches
 
@@ -1380,39 +1355,16 @@ split or rename a node test file, the runner (`run-all.mjs`) globs
 assertion you rely on; the grouping is by DOMINANT view and a few assertions
 cross seams.
 
-### 11.9.5 Correspondence: pinning what the page shows against what Python computed
+### 11.9.5 Verify server values in rendered browser output
 
-A value the server computes and the browser renders spans two languages, and
-the seam between them is where a copy of the arithmetic tends to appear. The
-remedy is to give the value one owner in Python and test the join rather than
-either side alone.
+A browser test should verify values produced by the owning Python reader and
+rendered through the production JavaScript module. Comparing only the response
+mapping misses errors in labels, formatting and DOM construction.
 
-`tests/test_builder_cost_envelope_correspondence.py` is the worked example. The
-tournament builder's cost estimate and its lint findings belong to
-`zicato.contract_draft.operations`; the console renders whatever the response envelope
-carries. The test computes the envelope for a fixed set of drafts, writes it to
-a fixture file, runs `static/test/cost_envelope_readback.mjs` under node to
-render that fixture through the production module (`builder/preview.js`), and
-compares the numbers and texts read back off the rendered nodes with the ones
-Python produced. Because the driver renders the shipping module rather than a
-stand-in, a field renamed on either side makes the readback disagree.
-
-Two habits make the pattern hold its value:
-
-- **Read the rendered nodes rather than the input model.** The readback pulls
-  each cost line out of the rendered element's `title`, so it measures what a
-  reader of the page sees.
-- **Pin the coverage of the fixtures.** A companion assertion requires the set
-  of rendered terms and finding codes to equal the expected set, so a new term
-  with no fixture reds the suite instead of going untested.
-
-A third check in the same module fails if any file under `static/js/` spells
-one of the owned labels or codes as a string literal — the signature a second
-implementation would have to leave behind.
-
-The driver lives in `static/test/` but is not named `*.test.mjs`, so neither
-`run-all.mjs` nor `node --test` picks it up; it runs only when the Python test
-invokes it. The whole module skips when `node` is unavailable.
+Use fixed inputs to generate the reader payload, render that payload, and read
+the resulting nodes. Assert the displayed values and the set of fields covered
+by the fixture. Keep statistical arithmetic in its Python owner; browser
+rendering tests verify how those results are displayed.
 
 ---
 
@@ -1564,12 +1516,10 @@ a widened pattern that starts swallowing ordinary sentences turns red.
 It reads the Markdown, and the Python docstrings and comments, under seven
 roots — `CHANGELOG.md`, `README.md`, `docs/`, `examples/`, `skills/`,
 `src/zicato/`, and `tools/` — which is every tree whose prose a reader is
-expected to act on. Two paths under those roots are skipped, because a hit in
-either is owned somewhere else and cannot be fixed where it appears:
-`docs/design/CLI.md` is generated from `zicato --help`, so its text is help
-literals owned by the command definitions, and the captured bytes under
-`tools/parity/golden/` are a record of what a run produced. JavaScript comments
-are out of scope, so the dashboard client is unread.
+expected to act on. The hand-authored command contract in `docs/design/CLI.md`
+is included. Generated captures under `tools/parity/golden/` are excluded;
+correct their source values or renderers before regenerating the captures.
+JavaScript comments are outside the scanner's scope.
 
 One file is exempt from one rule, through a per-file table beside that skipped
 list: `CHANGELOG.md` is an explicitly historical document whose chronology is

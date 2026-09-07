@@ -650,11 +650,13 @@ def test_worker_capture_failure_is_best_effort(tmp_path: Path) -> None:
     """Unwritable capture paths: loss.json + exit code + result file unchanged."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
+    (workspace / "logs").mkdir()
     loss_path = _write_args(
         tmp_path / "args.json",
         workspace=workspace,
         adapter_factory="tests._subprocess_worker_support:make_capture_blocked_adapter",
         result_path=tmp_path / "worker_result.json",
+        knobs={"log_stream_path": str(workspace / "logs" / "20260101T000000Z-1.jsonl")},
     )
     proc = _spawn_worker(tmp_path / "args.json")
     assert proc.returncode == 0, "capture failures must never fail the worker"
@@ -665,3 +667,112 @@ def test_worker_capture_failure_is_best_effort(tmp_path: Path) -> None:
     assert result["aborted"] is False
     # The blocked capture paths read back as absent, tolerantly.
     assert read_run_result(unit_result_path(loss_path)) is None
+
+    from zicato.workspace import WorkspaceLayout
+
+    WorkspaceLayout.from_root(workspace).current_epoch_marker.write_text("e0")
+    reader = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json,sys; from pathlib import Path; "
+                "from zicato.query.paths import WorkspacePaths; "
+                "from zicato.query.gate_view import build_health_report; "
+                "print(json.dumps(build_health_report(WorkspacePaths(Path(sys.argv[1])))))"
+            ),
+            str(workspace),
+        ],
+        env=_worker_env(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    health = json.loads(reader.stdout)
+    failures = [
+        finding for finding in health["findings"] if finding["code"] == "optional_operation_failed"
+    ]
+    assert health["healthy"] is False
+    assert len(failures) == 1
+    assert failures[0]["detail"]["run_id"] == run_id_for_unit("v0", "entry_a")
+    assert failures[0]["detail"]["fields"] == {
+        "operation": "worker run-result capture",
+        "exception_type": "IsADirectoryError",
+    }
+
+
+@pytest.mark.integration
+def test_authoritative_worker_loss_write_failure_is_not_optional(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    loss = _write_args(
+        tmp_path / "args.json",
+        workspace=workspace,
+        adapter_factory="tests._subprocess_worker_support:make_loss_blocked_adapter",
+        result_path=tmp_path / "worker_result.json",
+    )
+    proc = _spawn_worker(tmp_path / "args.json")
+    assert proc.returncode != 0
+    assert not (tmp_path / "worker_result.json").exists()
+    assert loss.is_dir()
+
+
+@pytest.mark.parametrize("invalid", [b"{", b"[]", b"{}", b'{"drift_counts": null}', b"\xff", None])
+def test_capture_loss_distinguishes_absence_and_present_defects(
+    tmp_path: Path, invalid: bytes | None
+) -> None:
+    from zicato.tournament.unit_cache import read_capture_loss
+
+    path = tmp_path / "loss.json"
+    assert read_capture_loss(path) is None
+    if invalid is None:
+        path.mkdir()
+    else:
+        path.write_bytes(invalid)
+    with pytest.raises(ValueError, match="paired loss unavailable") as raised:
+        read_capture_loss(path)
+    assert str(path) in str(raised.value)
+    assert path.is_dir() if invalid is None else path.read_bytes() == invalid
+
+
+@pytest.mark.parametrize("invalid", [b"{", b"[]"])
+def test_invalid_paired_loss_declines_captures_in_fidelity_readers(
+    tmp_path: Path, invalid: bytes
+) -> None:
+    from zicato.query.reflection_view import _transcript_from_judge_io, _transcript_from_result
+    from zicato.query.transcript_view import _verbatim_capture_exists
+    from zicato.reflection.adjudicator import _result_context, _verbatim_context
+    from zicato.reflection.corpus import _read_loss
+    from zicato.telemetry.reducer import write_loss_profile
+    from zicato.testing.fixtures import make_loss_profile
+
+    loss_path = tmp_path / "loss.json"
+    write_loss_profile(make_loss_profile(), loss_path)
+    unit_result_path(loss_path).write_text(json.dumps(run_result_to_payload(_run_result())))
+    sink = JudgeIOFileSink(judge_io_path_for_loss(loss_path))
+    sink.record(
+        "judge",
+        reasoning_text="recorded text",
+        transcript_window=("recorded text",),
+        raw_response="OK",
+        drift_emitted=False,
+        kind="",
+        severity="",
+        detail="",
+    )
+    capture_bytes = {path: path.read_bytes() for path in (unit_result_path(loss_path), sink.path)}
+    readers = (
+        lambda: _transcript_from_judge_io(str(loss_path), "judge"),
+        lambda: _transcript_from_result(str(loss_path)),
+        lambda: _verbatim_context(loss_path, "judge"),
+        lambda: _result_context(loss_path),
+        lambda: _read_loss(loss_path),
+    )
+    assert all(reader() is not None for reader in readers)
+    assert _verbatim_capture_exists(loss_path.with_name("events.jsonl"))
+    loss_path.write_bytes(invalid)
+    assert all(reader() is None for reader in readers)
+    assert not _verbatim_capture_exists(loss_path.with_name("events.jsonl"))
+    assert loss_path.read_bytes() == invalid
+    assert {path: path.read_bytes() for path in capture_bytes} == capture_bytes

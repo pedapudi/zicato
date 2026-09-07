@@ -28,7 +28,6 @@ Public surface:
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
 import os
 import socket
@@ -359,23 +358,9 @@ def create_app(
         Route("/static/{path:path}", serve_static_path),
     ]
 
-    # Tournament-builder REST surface (B1a). The form (B2) and the copilot
-    # (B1b) both drive these handlers; they share the same draft store and
-    # the same builder operations, so there is one source of truth for an
-    # edit. The POST ops respect the dashboard's read_only flag. Spliced in
-    # before the catch-all asset fallback so /builder/* never falls through
-    # to the static server.
-    from zicato.builder.api import builder_routes  # noqa: PLC0415
-
-    routes.extend(builder_routes(paths.root, read_only=read_only))
-
-    # Unified models / LLM-endpoints settings surface. A model/endpoint is
-    # runtime infra (NOT the evaluation contract), so a write here never rolls
-    # the epoch. GET returns the secret-safe view (api_key_env NAME + a
-    # set/unset flag); POST persists only the ``models`` block of config.json.
     from zicato.dashboard.settings_api import settings_routes  # noqa: PLC0415
 
-    routes.extend(settings_routes(paths.root, read_only=read_only))
+    routes.extend(settings_routes(paths.root))
 
     # Any unmatched GET is treated as a request for a bundled asset so
     # index.html's root-relative references resolve. MUST stay last.
@@ -429,21 +414,10 @@ def _publish_endpoint(workspace_root: Path, host: str, bound_port: int) -> None:
     still gets a working UI even if the convenience file is missing.
     """
     try:
-        from zicato.runtime.paths import (  # noqa: PLC0415
-            dashboard_endpoint_path,
-            ensure_runtime_dirs,
-        )
+        from zicato.runtime.state import DashboardEndpoint, write_dashboard_endpoint
 
-        root = Path(workspace_root)
-        # ``run`` is called with the .zicato directory itself; accept a
-        # project root containing one too, matching create_app's lenient
-        # resolution.
-        if root.name != ".zicato" and (root / ".zicato").is_dir():
-            root = root / ".zicato"
-        ensure_runtime_dirs(root)
-        dashboard_endpoint_path(root).write_text(
-            json.dumps({"host": host, "port": bound_port}) + "\n",
-            encoding="utf-8",
+        write_dashboard_endpoint(
+            _resolve_workspace(workspace_root).root, DashboardEndpoint(host, bound_port)
         )
     except Exception:  # noqa: BLE001 — the endpoint file is a convenience
         return

@@ -1,74 +1,7 @@
-"""Triage pins for the two cross-cutting patterns in issue #129.
+"""Health summaries retain measured findings and actionable recommendations.
 
-Issue #129 generalises eleven reports (#118-#128) into two claims:
-
-**A. Detection without explanation.** zicato detects that something is
-wrong and fails to say what. Triage narrowed this claim considerably,
-and the narrowing matters: at the detector layer it does not hold. All
-19 :class:`~zicato.health.diagnostics.HealthFinding` construction sites
-populate the documented ``detail`` dict, every one of their ``summary``
-strings interpolates the measured quantities, and 15 of the 19 carry an
-explicit ``detail["recommendation"]`` telling the operator what to do.
-The collection layer is in good shape.
-
-The gap is the **render** hop, and specifically the loss of the
-recommendation. :func:`zicato.evolve.round_prepare._summarise_loop_health` builds
-the operator-facing one-liner from a ``_text`` helper that accepts only
-*string* attributes (``message`` / ``summary`` / ``detail`` /
-``description``) and returns the first non-empty one. ``detail`` is a
-**dict**, so an ``isinstance(val, str)`` guard skips it: the
-remediation the detector already wrote is structurally unreachable from
-the line the operator reads. The same renderer also shows only
-``findings[0]``, collapsing every other finding to a ``(+N more)``
-count.
-
-The evidence does survive to the per-round health JSON (via
-:func:`zicato.evolve.round_prepare._loop_health_to_json`, which uses
-``dataclasses.asdict``), and a handful of findings get bespoke
-terminal warnings (``_warn_dead_judges`` and siblings) that do inline
-their detail. So this is a surfacing gap on the generic path, not a
-collection gap — which is why the fix is cheap.
-
-The bar is not invented here. zicato's sibling diagnostic contract,
-:class:`zicato.reflection.practices.PracticeCheck`, already specifies
-it: ``headline`` is documented as "a single sentence **with the numbers
-inline**", carried alongside a structured ``evidence`` dict and a
-``rationale``. The health path collects the same material and then drops
-the actionable half on the way out.
-
-But that precedent has the same defect one layer up, which is why the
-fix has to be a **render conformance rule** rather than another
-well-shaped dataclass field:
-:func:`zicato.cli.commands.reflect._render_practice_section` never reads
-``evidence`` at all, so the numbers behind all eleven practice checks are
-invisible to operators today. Both layers of this codebase collect good
-structured evidence and then drop it at the last hop; adding a third
-evidence field would reproduce the bug rather than fix it.
-
-**B. Surfaces that assume the champion advances.** ``PracticeCheck`` also
-models the fix for pattern B: an explicit ``VERDICT_UNMEASURED`` plus an
-``unmeasured_reason`` naming the missing input — e.g.
-``check_promotion_hygiene`` answers "No promotions under this contract
-yet — promotion hygiene has nothing to audit" rather than reporting a
-vacuous pass. Surfaces that degrade silently when the champion is
-retained lack that third state: they cannot distinguish "measured, and
-it is fine" from "there was nothing to measure".
-
-Pattern B is not uniform, and the exceptions cut both ways. Several
-report sections DO degrade honestly (the "_No promoted lineage long
-enough..._" notices), and ``build_round_timeline`` models retention
-correctly with explicit ``held`` steps. But the report's headline
-callout does not: it publishes the last REJECTED challenger's
-counterfactual under a label naming the promoted lineage, so a
-zero-promotion epoch can be headlined as having *improved*. Reading a
-few honest degradations is not evidence that a surface family is
-sound — each of these was written independently, and each invented its
-own behaviour for a regime nothing centrally records.
-
-These landed as ``xfail(strict=True)`` triage pins. Every marker has now
-come off — each pin asserts the fixed behaviour directly, so a
-regression fails here rather than silently flipping an xfail to an
-xpass.
+The domain renderer includes the leading finding's recommendation; the saved
+health record retains every finding and its complete detail object.
 """
 
 from __future__ import annotations
@@ -81,8 +14,7 @@ from pathlib import Path
 from zicato.analyzer.report_data import EpochReportData, GenerationView, _cumulate_scalar
 from zicato.analyzer.report_sections import _render_campaign_callout, render_score_sparkline
 from zicato.cli.commands.reflect import _render_practice_section
-from zicato.evolve.round_prepare import _summarise_loop_health
-from zicato.health.diagnostics import HealthFinding, LoopHealth
+from zicato.health.diagnostics import HealthFinding, LoopHealth, summarize_loop_health
 from zicato.tournament.detail import optimization_trajectory
 
 EPOCH = "2026-07_e0"
@@ -175,7 +107,7 @@ def test_loop_health_summary_carries_the_detector_s_recommendation() -> None:
         },
     )
 
-    summary, has_critical = _summarise_loop_health(_health(finding))
+    summary, has_critical = summarize_loop_health(_health(finding))
 
     assert has_critical is True
     assert "raise promote_margin" in summary, (
@@ -183,7 +115,7 @@ def test_loop_health_summary_carries_the_detector_s_recommendation() -> None:
     )
 
 
-# NOT PINNED (deliberate): ``_summarise_loop_health`` renders only
+# NOT PINNED (deliberate): ``summarize_loop_health`` renders only
 # ``findings[0]`` and collapses the rest to ``(+N more critical)``, so a
 # round tripping three detectors reports one of them. That is a real
 # operator cost, but the function is documented as deriving a ONE-LINE

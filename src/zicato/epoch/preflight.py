@@ -450,10 +450,7 @@ class PreflightReport:
             "champion_scalars": list(self.champion_scalars),
             "degraded_scalar": self.degraded_scalar,
             "signal": self.signal,
-            # Same number, honest name (issue #119) — what the probe measured
-            # is how far the scalar fell when a mutation point was destroyed.
-            # ``signal`` is retained verbatim: dashboards, the builder's
-            # pre-flight panel and every persisted-record reader key off it.
+            # The stored signal is the scalar change after destroying a mutation point.
             "degradation_signal": self.signal,
             "degraded_mutation_id": self.degraded_mutation_id,
             "degraded_mutation_kind": self.degraded_mutation_kind,

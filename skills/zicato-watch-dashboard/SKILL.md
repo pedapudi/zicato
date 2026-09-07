@@ -57,8 +57,8 @@ bare `#/`:
 | **Traces** | `#/e/<epoch>/traces[/<reflectionId>[/<traceId>]]` | imported foreign trajectories: one **trajectory strip** per trace with mined episodes bracketed and cross-linked to the board-entry suggestions they motivated; the detail view lays the strip over the reconstructed conversation. |
 | **Publication** | `#/e/<epoch>/paper` | the **ACM-style epoch report** (eyebrow / title / abstract / body, GFM tables render, figures splice in). |
 
-Two views are workspace-scoped rather than epoch-scoped: `#/logs` (the
-per-invocation operator-log stream) and `#/builder` (below).
+The operator-log stream (`#/logs`) and Settings (`#/settings`) are
+workspace-scoped rather than epoch-scoped.
 
 Navigation: the top-left **`↑ up`** control climbs the selection hierarchy
 (candidate → generations → epoch → environment; a compare split collapses to the
@@ -68,9 +68,8 @@ typeface picker) is a TEXT-ONLY multiplier (`--dt-font-scale`) that grows the
 type without rescaling figures; a **color theme** swatch dropdown (16 themes,
 monokai default) and a **typeface** picker (Technical default) re-skin without
 re-render. **Settings** opens as a routed right-side **drawer overlay** that
-paints over the current view (not a full page); the **tournament builder** is
-its own first-class view at `#/builder` (and the standalone `zicato dashboard --view builder`
-CLI deep-links there).
+paints over the current view. Its Contract and Models sections are read-only;
+Appearance changes the local theme, typeface, and scale.
 
 ## 3. The per-structure Match-ups figure (consistency matters)
 

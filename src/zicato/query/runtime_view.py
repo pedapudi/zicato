@@ -287,10 +287,7 @@ def read_active_tournament_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
     try:
         t = read_active_tournament(paths.root)
     except Exception:
-        # Fall back to the raw file so a shape the typed reader rejects
-        # still surfaces rather than vanishing.
-        raw = _normalize_tournament_statuses(_read_json_value(paths.active_tournament))
-        return attach_elim_states(raw) if isinstance(raw, dict) else raw
+        return None
     if t is None:
         return None
     out = _normalize_tournament_statuses(t.to_dict())
@@ -659,7 +656,7 @@ def derive_liveness(
     One derivation, read by every live surface, so "is anything running?"
     has exactly one answer. Liveness is a property of the CLOCK rather than
     of file presence: a workspace whose runtime files froze in June still has
-    a ``phase``, an ``active_tournament.json`` reading ``running`` and
+    a ``phase``, an ``active_tournament.events.jsonl`` reading ``running`` and
     seven ``active_runs`` records — none of which mean anything is running.
 
     The rules, in order:

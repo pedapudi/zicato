@@ -191,28 +191,6 @@ def reflection_suggestions_path(workspace_root: Path, epoch_id: str, reflection_
     return _layout(workspace_root).reflection_suggestions(epoch_id, reflection_id)
 
 
-def proposer_reflections_dir(workspace_root: Path, epoch_id: str) -> Path:
-    """Return one epoch's proposer-reflection subtree (``proposer_reflections/``)."""
-    return _layout(workspace_root).proposer_reflections_dir(epoch_id)
-
-
-def proposer_reflection_dir(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
-    """Return the directory holding ONE proposer-reflection pass's artifacts."""
-    return _layout(workspace_root).proposer_reflection_dir(epoch_id, reflection_id)
-
-
-def proposer_reflection_findings_path(
-    workspace_root: Path, epoch_id: str, reflection_id: str
-) -> Path:
-    """Path to one proposer-reflection pass's ``findings.json``."""
-    return _layout(workspace_root).proposer_reflection_findings(epoch_id, reflection_id)
-
-
-def proposer_staged_recommendations_path(workspace_root: Path) -> Path:
-    """Path to the workspace's staged-recommendation queue (``proposer_staged.json``)."""
-    return _layout(workspace_root).proposer_staged_recommendations()
-
-
 def run_id_for_unit(
     generation_id: str,
     entry_id: str,
@@ -442,16 +420,6 @@ def brief_path(workspace_root: Path, epoch_id: str) -> Path:
     return _layout(workspace_root).brief(epoch_id)
 
 
-def rubric_path(workspace_root: Path, epoch_id: str) -> Path:
-    """Deprecated alias of :func:`brief_path`.
-
-    The per-epoch proposer brief was once ``rubric.md``; it is now
-    ``brief.md``. This alias resolves to the current path so older
-    callers/imports keep working — new code should use ``brief_path``.
-    """
-    return brief_path(workspace_root, epoch_id)
-
-
 def board_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to one epoch's frozen board JSONL."""
     return _layout(workspace_root).board(epoch_id)
@@ -552,10 +520,6 @@ __all__ = [
     # Defined since the eval-synthesis surface landed but never exported; the
     # CLI reaches it through the module, so the omission was invisible.
     "reflection_suggestions_path",
-    "proposer_reflections_dir",
-    "proposer_reflection_dir",
-    "proposer_reflection_findings_path",
-    "proposer_staged_recommendations_path",
     "run_dir",
     "events_jsonl_path",
     "run_id_for_unit",
@@ -573,7 +537,6 @@ __all__ = [
     "analysis_path",
     "lineage_path",
     "brief_path",
-    "rubric_path",
     "board_path",
     "scoring_path",
     "field_tournaments_dir",

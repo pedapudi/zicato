@@ -52,7 +52,7 @@
 | 11 | Investigate a red parity gate | 11-testing.md |
 | 12 | Debug a failing tournament e2e | 06-tournament-and-selection.md, 07-runtime-and-durability.md |
 | 13 | Safely bump a pinned operating-characteristic number | 04-evaluation-statistics.md |
-| 14 | Add a `skills/` entry | 10-builder-cli-library.md |
+| 14 | Add a `skills/` entry | 10-cli-and-configuration.md |
 
 ---
 
@@ -125,7 +125,7 @@ or "the judge panel has gone silent".
    bound, add a typed field to `zicato.config.HealthConfig` (the `health` block
    of `config.json`) and read it via `_resolve_health_config`. Never use a bare
    constant an operator cannot change, and never an environment variable (see
-   10-builder-cli-library.md §"The merited env-var set").
+   10-cli-and-configuration.md §10.10.2).
 6. **Thread new inputs through the orchestrator only if needed.** If your
    detector needs a fact `assess_loop_health` is not already handed, add it to
    `_collect_epoch_health_inputs` and `_assess_and_persist_loop_health` in
@@ -383,9 +383,9 @@ colon) whose weighted mean folds into the generation scalar.
    (a `{namespace: bool}` map). `tournament/gate.py::_regressed_namespaces`
    consumes it. See 04-evaluation-statistics.md §2 for the
    monotonicity scope semantics.
-5. **Builder + omit-at-default.** The builder already edits `namespace_weights`
-   via `set_namespace_weights` (10-builder-cli-library.md §"The op inventory"),
-   so a GUI/copilot surface is free. Confirm your key is omitted-at-default from
+5. **Contract editing and omission at default.** The typed operation
+   `set_namespace_weights` edits `namespace_weights`
+   (10-cli-and-configuration.md §10.2). Confirm your key is omitted-at-default from
    the canonical scoring form so existing epochs do not roll retroactively (a
    non-default value MUST roll — that is the contract).
 6. **Test** in `tests/test_scoring_multi_objective.py` (the namespace composes
@@ -876,11 +876,9 @@ is the contract pre-flight and the noise-floor calibration.
   (and re-spend the budget). Wrap it in `best_effort`: a measurement failure must
   never fail the round, the same discipline as the best-effort-round-log rule
   (07-runtime-and-durability.md, invariant `D11`).
-- ⚠️ **Do not persist a DRAFT measurement as the live epoch's.** Contrast the
-  builder's `preflight` (10-builder-cli-library.md §"The statistical pre-flight"),
-  which measures a draft and is recommend-only, NEVER persisted — because the
-  draft is not the live contract. The epoch-open step persists BECAUSE it
-  measures the live epoch's own champion.
+- ⚠️ **Persist measurements under the contract they evaluated.** An epoch-open
+  measurement uses the selected epoch's champion and frozen inputs. A result
+  computed from another candidate contract cannot populate that epoch's record.
 
 **Verify.**
 
@@ -1059,7 +1057,7 @@ golden under `tools/parity/golden/` (only after you have justified the update).
    wrong. Revert the leak; do not re-capture to make it pass.
 5. **For `CLI-HELP`, also reconcile `CLI.md`.** A legitimate CLI change updates
    both the help golden AND the hand-reconciled `docs/design/CLI.md`
-   (10-builder-cli-library.md §"CLI.md is a GENERATED artifact").
+   (10-cli-and-configuration.md §10.9).
 
 **Traps.**
 
@@ -1137,7 +1135,7 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
    that did not return.
 5. **Inspect the worker args file for the spawn.** The runner spawns `python -m
    zicato._tournament_worker <args-file>`; the args file carries the worker spec
-   and the `configuration` (10-builder-cli-library.md §10.10). It is a TEMP file cleaned up in a `finally`, so
+   and the `configuration` (10-cli-and-configuration.md §10.10). It is a TEMP file cleaned up in a `finally`, so
    capture it during a hang (or from a crash that skipped cleanup) — it records
    what the worker was told to run.
 6. **Cross-check the journal + lineage.** The journal records only resolved
@@ -1366,8 +1364,8 @@ Each recipe's owning chapter carries the theory the recipe applies:
   §7.10 the durable round log — Recipe 12.
 - 04-evaluation-statistics.md §1.9 (the loop-health detectors over the
   measurement chain) — the layer Recipe 1's detector joins.
-- 10-builder-cli-library.md §"The op inventory" (Recipe 3's builder surface),
-  §"CLI.md is a GENERATED artifact" (Recipe 11), §10.10 (Recipe 12).
+- 10-cli-and-configuration.md §10.2 (Recipe 3's contract operation),
+  §10.9 (Recipe 11), §10.10 (Recipe 12).
 - 11-testing.md §"parity gates" (Recipes 10, 11), §"Node behaviour-suite conventions"
   (Recipe 10), §"The two oracles" (every recipe's finish line).
 - 12-bug-casebook.md — Case 1 (replicate-cache clobber; Recipes 12, 13), Case 3

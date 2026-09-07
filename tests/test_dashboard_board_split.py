@@ -41,7 +41,17 @@ def _board() -> list[dict[str, object]]:
 
 def _board_jsonl_rows() -> list[dict[str, object]]:
     # The RAW board.jsonl rows (the board input format keys the id as "id").
-    return [{"id": e["entry_id"], "weight": e["weight"], "tags": e["tags"]} for e in _board()]
+    return [
+        {
+            "id": e["entry_id"],
+            "weight": e["weight"],
+            "tags": e["tags"],
+            "kind": "single_turn",
+            "input": "Task",
+            "budget_s": 1,
+        }
+        for e in _board()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -287,9 +297,10 @@ def test_epoch_view_board_meta_is_defensive_on_garbage(tmp_path: Path) -> None:
             *_board_jsonl_rows(),
         ],
     )
-    # every malformed field degrades to its default ⇒ nothing to say ⇒ omitted.
-    assert "board_meta" not in build_epoch_view(WorkspacePaths(ws))
-    # a partly-usable header keeps the usable half and drops the non-strings.
+    view = build_epoch_view(WorkspacePaths(ws))
+    assert "board_meta" not in view
+    assert "disable_drift" in view["unreadable"]
+    # A malformed token cannot produce a partial suppression header.
     _write_board(
         ws,
         [
@@ -298,5 +309,5 @@ def test_epoch_view_board_meta_is_defensive_on_garbage(tmp_path: Path) -> None:
         ],
     )
     view = build_epoch_view(WorkspacePaths(ws))
-    # ``judge_only: 1`` is not the boolean the format requires ⇒ False.
-    assert view["board_meta"] == {"disable_drift": ["user_steer"], "judge_only": False}
+    assert "board_meta" not in view
+    assert "disable_drift" in view["unreadable"]

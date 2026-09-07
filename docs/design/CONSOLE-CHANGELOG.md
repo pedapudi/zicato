@@ -89,8 +89,7 @@ digest-gated swaps, and transient overlays never inside the gated render.
    Promoted out of Settings (where the nested rail gave it a cramped centre);
    Settings keeps only a **launcher** rail entry that navigates to `#/builder`.
    The same route-agnostic `builder.render(host)` backs the top-bar nav, the
-   deep-link, the Settings launcher, and the `zicato dashboard --view builder` CLI. See
-   [TOURNAMENT-BUILDER.md](TOURNAMENT-BUILDER.md).
+   deep-link, the Settings launcher, and the `zicato dashboard --view builder` CLI.
 
 4. **The live racing HERO redesign** (`live.js` `LiveController`). One muted
    **metadata baseline** — `● LIVE · racing · rung N of M · field of K · J

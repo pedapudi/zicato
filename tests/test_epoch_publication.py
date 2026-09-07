@@ -14,7 +14,6 @@ from zicato.epoch.git_genstore import GitGenerationStore
 from zicato.epoch.publication import BaselineSeed, EpochPublication, prepared_directory
 from zicato.evolve.epoching import ensure_epoch_for_contract
 from zicato.evolve.round_baseline import _ensure_baseline_snapshot
-from zicato.proposer.staging import stage_recommendation, staged_recommendations
 from zicato.runtime.lock import acquire_workspace_lock
 from zicato.workspace import WorkspaceLayout, generation_ids
 from zicato.workspace.config_io import write_workspace_config
@@ -69,20 +68,17 @@ def test_invalid_name_preserves_open_predecessor(workspace) -> None:
         "lineage",
         "marker",
         "closure",
-        "recommendations",
     ],
 )
 def test_epoch_recovery_finishes_same_prepared_contract(workspace, monkeypatch, boundary) -> None:
     root, board, source = workspace
     previous = create_epoch(root, board)
-    stage_recommendation(root, "accepted-change")
     boundaries = {
         "intent": (EpochPublication, "write"),
         "directory": (lifecycle, "publish_directory"),
         "lineage": (lineage, "register_epoch"),
         "marker": (lifecycle, "switch_epoch"),
         "closure": (lifecycle, "_close_epoch_prelude"),
-        "recommendations": (lifecycle, "acknowledge_staged_recommendations"),
     }
     with acquire_workspace_lock(root, "publication-test") as writer:
         with monkeypatch.context() as fault:
@@ -102,7 +98,6 @@ def test_epoch_recovery_finishes_same_prepared_contract(workspace, monkeypatch, 
         assert pending is not None
         closed_at = pending.predecessor_closed_at
         assert closed_at
-        stage_recommendation(root, "subsequent-change")
         # The source bytes remain in the prepared tree before the live edit.
         seed = BaselineSeed.read(
             root,
@@ -125,7 +120,6 @@ def test_epoch_recovery_finishes_same_prepared_contract(workspace, monkeypatch, 
     assert lifecycle.current_epoch_id(root) == pending.epoch_id
     prior = lifecycle.load_epoch(root, previous.id)
     assert prior.closed and prior.closed_at == closed_at
-    assert staged_recommendations(root) == ("subsequent-change",)
     rows = lineage.load_lineage(root).to_dict()["epochs"]
     assert [row["id"] for row in rows] == [previous.id, pending.epoch_id]
 
@@ -360,3 +354,17 @@ def test_invalid_publication_record_cannot_change_current_epoch(workspace, body)
     assert lifecycle.current_epoch_id(root) == previous.id
     assert not lifecycle.load_epoch(root, previous.id).closed
     assert record.read_text() == body
+
+
+def test_closing_epoch_preserves_historical_proposer_provenance(workspace):
+    import json
+
+    root, board, _ = workspace
+    epoch = create_epoch(root, board)
+    path = root / "epochs" / epoch.id / "config.json"
+    record = json.loads(path.read_text())
+    assert "applied_proposer_recommendations" not in record
+    record["applied_proposer_recommendations"] = ["accepted-edit"]
+    path.write_text(json.dumps(record))
+    lifecycle._close_epoch_prelude(root, epoch.id)
+    assert json.loads(path.read_text())["applied_proposer_recommendations"] == ["accepted-edit"]

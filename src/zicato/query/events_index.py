@@ -15,6 +15,7 @@ from zicato.core.measurement import (
 )
 from zicato.core.workspace import measurement_from_run_id, run_coordinates_from_dir, run_id_for_unit
 from zicato.epoch._storage import RecordError
+from zicato.epoch.contract import read_component_hashes
 from zicato.epoch.journal import read_experiment_body
 from zicato.proposer.brief import brief_goal
 from zicato.query._sqlite import open_index_ro_or_none
@@ -689,10 +690,14 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
                 raw_goal = cfg.get("goal")
                 if isinstance(raw_goal, str) and raw_goal.strip():
                     goal = raw_goal.strip()
+            brief_unreadable: str | None = None
             if goal is None:
-                distilled = brief_goal(_read_epoch_brief(epoch_dir))
-                if distilled:
-                    goal = _preview(distilled)
+                try:
+                    distilled = brief_goal(_read_epoch_brief(epoch_dir))
+                    if distilled:
+                        goal = _preview(distilled)
+                except RecordError as exc:
+                    brief_unreadable = str(exc)
 
             # Walk this epoch's generations from the on-disk lineage —
             # not from the analytical index, which is a best-effort
@@ -766,6 +771,8 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
             # keeps its prior payload byte for byte.
             if unreadable_generations:
                 row["unreadable_generations"] = unreadable_generations
+            if brief_unreadable is not None:
+                row["unreadable"] = brief_unreadable
             rows.append(row)
             sparkline.append({"epoch_id": epoch_id, "scalar": best_scalar})
 
@@ -787,9 +794,8 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
     }
 
 
-# Component names recorded in ``contract_components.json`` (mirrors the
-# orchestrator's :func:`_changed_components` set). Pinned here so a stray
-# / unknown key on disk does not silently change the diff output shape.
+# The contract view displays these evaluation components. Proposer identity
+# appears in the ledger; future stored keys remain readable without widening this view.
 _CONTRACT_COMPONENT_NAMES = (
     "board",
     "brief",
@@ -800,21 +806,14 @@ _CONTRACT_COMPONENT_NAMES = (
 )
 
 
-def _read_contract_components(paths: WorkspacePaths, epoch_id: str) -> dict[str, str]:
-    """Return the per-component contract sub-hashes for one epoch.
-
-    Mirrors the orchestrator's ``_stored_component_hashes`` reader: the
-    breakdown is written next to ``config.json`` as
-    ``contract_components.json`` when an epoch is created or rolled.
-    Returns an empty dict when the file is missing or unreadable so the
-    diff caller can render a "no breakdown available" state for an epoch
-    that has no breakdown file.
-    """
-    path = layout_of(paths).contract_components(epoch_id)
-    raw = _read_json_value(path)
-    if not isinstance(raw, dict):
-        return {}
-    return {str(k): str(v) for k, v in raw.items()}
+def _read_contract_components(
+    paths: WorkspacePaths, epoch_id: str
+) -> tuple[dict[str, str], str | None]:
+    """Project accepted hashes and retain a refusal for the consuming view."""
+    try:
+        return read_component_hashes(layout_of(paths).contract_components(epoch_id)) or {}, None
+    except RecordError as exc:
+        return {}, str(exc)
 
 
 def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
@@ -845,7 +844,7 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
     The first epoch on disk reports ``predecessor_epoch_id = None`` and
     every component as not-changed: there is nothing to diff against.
     """
-    cur = _read_contract_components(paths, epoch_id)
+    cur, error = _read_contract_components(paths, epoch_id)
 
     # Resolve predecessor: the epoch immediately before ``epoch_id`` in the
     # CANONICAL (timestamp-first) order — the same single authority every
@@ -860,7 +859,8 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
 
     prev: dict[str, str] = {}
     if predecessor is not None:
-        prev = _read_contract_components(paths, predecessor)
+        prev, previous_error = _read_contract_components(paths, predecessor)
+        error = "; ".join(filter(None, (error, previous_error))) or None
 
     components: list[dict[str, Any]] = []
     any_changed = False
@@ -889,6 +889,7 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
         "predecessor_epoch_id": predecessor,
         "components": components,
         "any_changed": any_changed,
+        **({"error": error} if error else {}),
     }
 
 
@@ -989,6 +990,7 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
     layout = layout_of(paths)
     with open_index_ro_or_none(paths.index_db) as conn:
         prev_hashes: dict[str, str] = {}
+        previous_error: str | None = None
         prev_structure: str | None = None
         for idx, epoch_id in enumerate(epoch_ids):
             epoch_dir = layout.epoch_dir(epoch_id)
@@ -1022,7 +1024,8 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
                 except ValueError:
                     champion_index = None
 
-            cur_hashes = _read_contract_components(paths, epoch_id)
+            cur_hashes, current_error = _read_contract_components(paths, epoch_id)
+            error = "; ".join(filter(None, (current_error, previous_error)))
             structure = _epoch_structure(paths, epoch_id)
 
             # Component-change map vs the PREDECESSOR. The first epoch has
@@ -1059,10 +1062,12 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
                     "changed_components": changed,
                     "changed_list": changed_list,
                     "soft": bool(changed.get("structure")),
+                    **({"error": error} if error else {}),
                 }
             )
 
             prev_hashes = cur_hashes
+            previous_error = current_error
             prev_structure = structure
 
     return {"current_epoch_id": current, "epochs": rows}

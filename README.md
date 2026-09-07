@@ -117,7 +117,7 @@ through the ones the loop turns on.
 
 Model-backed adapters use named `target` and `evaluation` engines; a target is
 adapter-defined and may consume no LLM at all. Advanced judge, emulator,
-builder, and proposer overrides and execution capabilities are documented in
+and proposer overrides and execution capabilities are documented in
 [`MODEL-CONFIG.md`](docs/design/MODEL-CONFIG.md).
 
 Goldfive owns plans; zicato owns the prompts and structure that *produce* the
@@ -162,7 +162,7 @@ against an interpreter that cannot import Goldfive.
 
 The base install keeps the evolve loop and canonical JSONL telemetry while
 leaving operator interfaces optional. Install `zicato[observability]` for the
-dashboard, builder route, terminal renderer, and live execution telemetry, or
+dashboard and live execution telemetry, or
 `zicato[all]` for every shipped runtime feature. See
 [`INSTALL-PROFILES.md`](docs/design/INSTALL-PROFILES.md) for the smaller
 interface-specific profiles and degraded behavior.
@@ -248,9 +248,8 @@ The full design lives under [`docs/design/`](docs/design/). Read
 - [`docs/design/EMULATOR.md`](docs/design/EMULATOR.md) — the multi-turn user emulator: the two-callable rule (hard error on identity match), sealed context construction, answer-leak heuristic, audit-trail spans.
 - [`docs/design/DOGFOOD-TARGETS.md`](docs/design/DOGFOOD-TARGETS.md) — the three targets zicato is aimed at in order (a presentation agent, then goldfive's steering layer, then zicato itself) and the design commitments each one forces before it can be attempted.
 - [`docs/design/RUNTIME.md`](docs/design/RUNTIME.md) — `.zicato/runtime/` state file layout, the two processes `zicato evolve` auto-spawns (a Rust watchdog supervisor on :7920 and a separate Python dashboard service on :7892), heartbeat protocol, signal escalation, single-writer concurrency model.
-- [`docs/design/DASHBOARD.md`](docs/design/DASHBOARD.md) — the live console for an in-flight epoch: Starlette HTTP + SSE architecture, the home view's cross-epoch meta-loop ledger, the live racing hero (full-width scalar track + rung stepper, champion-gate rows, WHAT'S RUNNING / LIVE ACTIVITY), the first-class tournament **Builder** view (`#/builder`) and the routed Settings drawer (Contract tab reuses the builder's live preview), per-entry continuous score + precision/recall, the full GET API surface, and the control-file protocol for operator actions.
+- [`docs/design/DASHBOARD.md`](docs/design/DASHBOARD.md) — the live browser console: epoch and tournament views, execution traces, read-only contract and model settings, appearance controls, HTTP and event-stream APIs, and operator run controls.
 - [`docs/design/CONVERSATION-EXECUTION.md`](docs/design/CONVERSATION-EXECUTION.md) — the inline execution outline beneath conversation turns: explicit agent branches, turn-scoped tool observations, fidelity rules, live digest behavior, and the boundary with the full Harmonograf trace.
-- [`docs/design/TUI.md`](docs/design/TUI.md) — `zicato tui`, the Console in the terminal: a read-only, keyboard-driven review surface over the *same* served payloads the browser dashboard renders (a second renderer over the server's decisions, which computes none of its own — enforced by an import contract and a shared render cross-pin against `ui.js`), the lens set (Home / Standings / Instrument built; Candidate / Board / Health designed and deferred), glyph microtypography (braille sparklines, shared-scale CI whiskers, the round lifeline), the two-gate repaint discipline (the SSE `seq` cursor outside, a content digest inside), the four-absence vocabulary, and the explicit render-conformance list of what defers and what stays in the browser.
 - [`docs/design/PROPOSER.md`](docs/design/PROPOSER.md) — the proposer as a first-class contract input: the default tool-using ADK agent (skill-composed is the explicit opt-in), the read-only proposer tool registry, the board-anonymized train-slice-only failure-mode feedback channel (`outcome_summarizer_spec`), and why a proposer/skills change rolls the epoch.
 - [`docs/design/ROBUSTNESS.md`](docs/design/ROBUSTNESS.md) — the six-layer defense model (per-call timeouts → structured cancellation → the subprocess worker boundary → the orchestrator watchdog → the consecutive-bad circuit breaker → atomic writes plus resume markers), what each layer catches, failure-mode tables, and the GIL discussion that makes subprocess isolation load-bearing.
 - [`docs/design/LOOP-HEALTH.md`](docs/design/LOOP-HEALTH.md) — loop-health diagnostics: detecting a running-but-meaningless loop (a degenerate, toothless evaluation), the five detectors and severities, the `LoopHealth` report, the `zicato health` CLI, and how the orchestrator surfaces critical findings.

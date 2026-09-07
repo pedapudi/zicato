@@ -47,6 +47,7 @@ per-run absolute workspace root.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import sqlite3
 from collections.abc import Mapping, Sequence
@@ -54,6 +55,8 @@ from pathlib import Path
 from typing import Any
 
 from tests._reader_parity_harness import _MASK, _normalize_root, mask_volatile
+from zicato.core.mutation import MutationPoint
+from zicato.mutation.inventory import write_mutation_inventory
 
 # ---------------------------------------------------------------------------
 # Fixture shape
@@ -218,7 +221,6 @@ def _epoch_config(ws: Path, epoch_id: str) -> dict[str, Any]:
             if rich
             else None
         ),
-        "applied_proposer_recommendations": [],
     }
 
 
@@ -938,23 +940,23 @@ def _write_epoch(ws: Path, epoch_id: str) -> None:
             "proposer": "proposer-const",
         },
     )
-    _write_json(
+    write_mutation_inventory(
         edir / "mutations.json",
         [
-            {
-                "id": "prompt.system",
-                "kind": "text_block",
-                "file": "src/pkg/agent.py",
-                "line": 12,
-                "preview": "You are a release-notes assistant.",
-            },
-            {
-                "id": "prompt.planner",
-                "kind": "text_block",
-                "file": "src/pkg/planner.py",
-                "line": 40,
-                "preview": "Plan before answering.",
-            },
+            MutationPoint(
+                id=mid,
+                kind="span",
+                file=Path(filename),
+                source_root=Path("src/pkg"),
+                line_start=line,
+                line_end=line,
+                content=content,
+                content_hash=hashlib.sha256(content.encode()).hexdigest(),
+            )
+            for mid, filename, line, content in (
+                ("prompt.system", "src/pkg/agent.py", 12, "You are a release-notes assistant."),
+                ("prompt.planner", "src/pkg/planner.py", 40, "Plan before answering."),
+            )
         ],
     )
 
@@ -1130,8 +1132,8 @@ def _capture_analyzer(ws: Path, snap: dict[str, Any]) -> None:
     from zicato.analyzer import aggregate_decision_events, gather_epoch_report_data
     from zicato.analyzer.insights import _collect_events_jsonl_paths, load_latest_insights
     from zicato.analyzer.process_exemplars import extract_process_exemplars
-    from zicato.analyzer.report_data import load_mutation_surface
     from zicato.core.patterns import Pattern
+    from zicato.mutation.inventory import read_mutation_inventory
     from zicato.workspace import WorkspaceLayout
 
     layout = WorkspaceLayout.from_root(ws)
@@ -1139,8 +1141,8 @@ def _capture_analyzer(ws: Path, snap: dict[str, Any]) -> None:
         snap[f"zicato.analyzer.gather_epoch_report_data::{epoch_id}"] = gather_epoch_report_data(
             ws, epoch_id
         )
-        snap[f"zicato.analyzer.load_mutation_surface::{epoch_id}"] = load_mutation_surface(
-            layout, epoch_id
+        snap[f"zicato.mutation.read_mutation_inventory::{epoch_id}"] = read_mutation_inventory(
+            layout.mutations(epoch_id)
         )
         snap[f"zicato.analyzer.load_latest_insights::{epoch_id}"] = load_latest_insights(
             ws, epoch_id
@@ -1309,7 +1311,7 @@ def _capture_health(ws: Path, snap: dict[str, Any]) -> None:
         # and per-round health reports carry a ``checked_at`` of their own that
         # is read off disk and must stay pinned.
         snap[f"zicato.health.assess_loop_health::{epoch_id}"] = dict(
-            to_jsonable(report), checked_at=_MASK
+            report.to_json(), checked_at=_MASK
         )
 
 

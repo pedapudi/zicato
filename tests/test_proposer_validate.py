@@ -459,8 +459,8 @@ def test_static_checks_report_only_the_delta(tmp_path: Path) -> None:
     errors, notes = run_static_checks(["ruff"], parent, scratch)
     assert notes == []
     joined = "\n".join(errors)
-    assert "sys" in joined, errors
-    assert "os" not in joined, errors
+    assert "`sys`" in joined, errors
+    assert "`os`" not in joined, errors
 
 
 def test_baseline_check_results_are_memoized_per_parent_tree(tmp_path: Path) -> None:

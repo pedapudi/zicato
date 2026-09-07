@@ -1,36 +1,8 @@
-"""Pillar 4 — ranked, evidence-linked findings with executable edits.
+"""Derive operator findings from observations, judge checks and calibration.
 
-The end of the pipeline: fold the scorecards + adjudications + the consumed
-reliability floor into a ranked list of :class:`Finding` objects, each one
-transcript-span-grounded (the operator verifies in seconds) and carrying — when
-a mechanical fix exists — a ``proposed_op`` that names a REAL builder op whose
-args are VALIDATED against that op's signature at emit time
-(:func:`validate_proposed_op`, via :func:`inspect.signature`). No prose-only
-recommendation stands in for a payload the builder could apply, and no payload
-is emitted that the builder would reject (BOARD-REFLECTION.md verdict 6).
-
-Concrete emitters
------------------
-* **Margin below the noise floor** → ``set_gate`` lifting ``promote_margin`` to
-  the value :func:`zicato.tournament.calibration.assess_margin_against_floor`
-  recommends — promoting on noise; lift the margin clear of the floor. The
-  emitter renders that assessment rather than deriving its own.
-* **Redundant judge** (``redundant_with`` at corr ≈ 1) → ``set_weights
-  {per_judge_weights: {judge: 0.0}}`` — the judge carries no independent
-  signal; zero its weight. (``remove_judge`` is reserved for pure-cost
-  duplicates and surfaced as recommendation TEXT rather than an op — zeroing the
-  weight is the reversible, slot-coherent edit.)
-* **False-fire-heavy judge** (precision < ½) → ``set_weights
-  {per_judge_weights: {judge: 0.5}}`` — a down-weight suggestion, evidence-
-  linked to the FP pile.
-* **Missed-fire pile** (recall < 1, FN present) → recommendation only, but the
-  finding NAMES the adjudicated span the judge slept through (no auto-op:
-  broadening a criterion is an authoring decision).
-* **Untested judge** (never fired) and **ambiguous pile** → recommendation
-  only.
-
-Loss-weight FITTING stays a non-goal — no emitter ever proposes fitted weights.
-Findings are OPERATOR-ONLY output; nothing here crosses into the proposer.
+Suggestions name configuration operations and validate their arguments against
+:mod:`zicato.contract_draft.operations`. Findings do not edit the workspace or
+supply feedback to the proposer.
 """
 
 from __future__ import annotations
@@ -38,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -45,6 +18,7 @@ from typing import Any
 from zicato.core.workspace import reflection_findings_path
 from zicato.epoch._storage import RecordError
 from zicato.reflection.adjudication import VERDICT_FN, VERDICT_FP, JudgeAdjudication
+from zicato.reflection.corpus import ObservationRun, judge_answered
 from zicato.reflection.scorecards import JudgeScorecard
 from zicato.storage import atomic_write_json
 from zicato.workspace.projection import mark_epoch_changed
@@ -193,12 +167,12 @@ def write_findings(workspace_root: Path, epoch_id: str, record: Findings) -> Pat
 
 
 def _op_function(op_name: str) -> Any:
-    """Resolve a builder op by name; raise on an unknown op."""
+    """Resolve a configuration operation by name; raise on an unknown op."""
     from zicato.contract_draft import operations as ops  # noqa: PLC0415
 
     fn = getattr(ops, op_name, None)
     if fn is None or not callable(fn):
-        raise ValueError(f"proposed_op names an unknown builder op {op_name!r}")
+        raise ValueError(f"proposed_op names an unknown configuration operation {op_name!r}")
     return fn
 
 
@@ -210,7 +184,7 @@ def validate_proposed_op(op_name: str, args: dict[str, Any]) -> dict[str, Any]:
     keyword parameter of the op (the leading ``draft`` receiver excluded). An
     unknown key — or an unknown op name — raises :class:`ValueError` at emit
     time, so a mis-authored emitter fails loudly rather than shipping a payload
-    the builder would reject when the operator applies it.
+    the configuration library would reject.
     """
     fn = _op_function(op_name)
     sig = inspect.signature(fn)
@@ -233,8 +207,7 @@ def validate_proposed_op(op_name: str, args: dict[str, Any]) -> dict[str, Any]:
 def _finding_id(pillar: str, subject: str, kind: str) -> str:
     """Content-stable finding id (independent of ranking order).
 
-    Deterministic so ``zicato inspect reflection apply <finding_id>`` resolves the same
-    finding across re-derivations of an immutable reflection.
+    The same immutable observations produce the same finding identifier.
     """
     digest = hashlib.sha256(f"{pillar}|{subject}|{kind}".encode()).hexdigest()[:8]
     return f"find-{digest}"
@@ -293,10 +266,66 @@ def _evidence(
     return tuple(out)
 
 
+def _critical_firing_findings(corpus: Sequence[ObservationRun]) -> list[Finding]:
+    """Describe critical firings across the observed candidate set without judging reachability."""
+    candidates = {observation.candidate_id for observation in corpus}
+    if len(candidates) < 2:
+        return []
+    observed_runs = set()
+    critical_runs: dict[str, set[tuple[str, str, int]]] = {}
+    for observation in corpus:
+        unit = (observation.candidate_id, observation.entry_id, observation.replicate)
+        observed_runs.add(unit)
+        for decision in observation.judge_decisions:
+            name = decision.get("judge_name")
+            if (
+                isinstance(name, str)
+                and name
+                and judge_answered(decision)
+                and decision.get("fired") is True
+                and decision.get("severity") == SEVERITY_CRITICAL
+            ):
+                critical_runs.setdefault(name, set()).add(unit)
+    findings = []
+    for name, runs in sorted(critical_runs.items()):
+        if {candidate for candidate, _, _ in runs} != candidates:
+            continue
+        findings.append(
+            Finding(
+                finding_id=_finding_id("discrimination", name, "critical_on_every_candidate"),
+                pillar="discrimination",
+                severity=SEVERITY_INFO,
+                title=f"Judge {name!r} fired at critical severity on every observed candidate",
+                detail=(
+                    f"Judge {name!r} fired at critical severity in {len(runs)} of "
+                    f"{len(observed_runs)} observed runs, covering all {len(candidates)} "
+                    "observed candidates. This does not establish that the task is impossible "
+                    "or the judge is incorrect. The task may remain a useful regression check."
+                ),
+                evidence=(
+                    {
+                        "judge_name": name,
+                        "candidate_ids": sorted(candidates),
+                        "candidate_count": len(candidates),
+                        "critical_run_count": len(runs),
+                        "observed_run_count": len(observed_runs),
+                    },
+                ),
+                recommendation=(
+                    "Inspect the recorded critical decisions and task requirements before "
+                    "changing the task or judge."
+                ),
+                proposed_op=None,
+            )
+        )
+    return findings
+
+
 def derive_findings(
     *,
     scorecards: list[JudgeScorecard],
     adjudications: list[JudgeAdjudication],
+    corpus: Sequence[ObservationRun] = (),
     promote_margin: float | None = None,
     noise_floor_max_abs_delta: float | None = None,
     noise_floor_delta_std: float | None = None,
@@ -304,7 +333,7 @@ def derive_findings(
     epoch_id: str | None = None,
     reflection_id: str | None = None,
 ) -> list[Finding]:
-    """Fold scorecards + adjudications + the floor into ranked findings.
+    """Fold observations, scorecards, adjudications and the floor into ranked findings.
 
     ``noise_floor_delta_std`` is the draw-count-stable A/A dispersion
     (:attr:`zicato.tournament.calibration.NoiseFloor.delta_std`), additive
@@ -329,7 +358,7 @@ def derive_findings(
         assess_margin_against_floor,
     )
 
-    findings: list[Finding] = []
+    findings = _critical_firing_findings(corpus)
 
     # --- calibration: promote margin below the noise floor -----------------
     margin_noise = assess_margin_against_floor(

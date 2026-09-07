@@ -830,9 +830,8 @@ validator-failure rate per check, the screen-veto rate, the gate margins
 on children that reached the gate, and the promotion rate; across epochs
 it reports the trend. Every rate carries its sample count, is null when
 nothing was observed, and is marked provisional below a minimum sample.
-Rendered by `zicato proposer scorecard`; `zicato proposer reflect` reads
-it to draft edits to the proposer's skills. See
-[PROPOSER.md §6](PROPOSER.md#6-the-proposer-scorecard--recommend-only-self-reflection).
+Rendered by the read-only `zicato proposer scorecard` command. See
+[PROPOSER.md §6](PROPOSER.md#6-the-proposer-scorecard).
 
 ## Racing
 

@@ -80,7 +80,6 @@ from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.paths import (
     active_runs_dir,
     active_tournament_log_path,
-    active_tournament_path,
     heartbeat_path,
 )
 from zicato.workspace import (
@@ -167,8 +166,7 @@ def _latest_generation_id(workspace_root: Path, epoch_id: str) -> str | None:
 def clear_runtime_state(workspace_root: Path) -> None:
     """Discard the live ``runtime/`` state of a prior, dead evolve.
 
-    Removes ``heartbeat.json``, the active-tournament event log AND any
-    ``active_tournament.json`` snapshot beside it, and every
+    Removes ``heartbeat.json``, the active-tournament event log, and every
     ``active_runs/{run_id}.json`` — the files RUNTIME.md §4.1 lists as
     "discarded on restart". The workspace lock is NOT touched here; the
     orchestrator's lock acquisition already stole any stale lock before
@@ -183,7 +181,6 @@ def clear_runtime_state(workspace_root: Path) -> None:
     """
     for path in (
         heartbeat_path(workspace_root),
-        active_tournament_path(workspace_root),
         active_tournament_log_path(workspace_root),
     ):
         try:

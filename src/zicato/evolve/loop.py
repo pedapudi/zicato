@@ -11,6 +11,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -277,6 +278,11 @@ async def _apply_rubric_replacement(
         auto_epoch=auto_epoch,
         writer=invocation.writer,
         workspace_config=invocation.workspace_config,
+        execution_roles=(
+            invocation.runtime_config.execution_roles
+            if invocation.runtime_config is not None
+            else None
+        ),
         aux_call_llm=aux_call_llm,
         aux_config=invocation.configuration.values.aux,
         epoch_name=epoch_name,
@@ -465,35 +471,42 @@ async def _evolve_n_rounds(
     )
     from zicato.evolve.round_api import DEFERRED_INFRA_DECISION  # noqa: PLC0415
     from zicato.evolve.round_entry import _evolve_once  # noqa: PLC0415
+    from zicato.models_config import execution_roles_for_runtime  # noqa: PLC0415
     from zicato.runtime.control_consumer import (  # noqa: PLC0415
         block_while_paused,
         claim_rubric_replacement,
         claim_skip_round,
     )
-    from zicato.runtime_factory import resolve_role_call_llm  # noqa: PLC0415
+    from zicato.runtime_factory import make_runtime_config  # noqa: PLC0415
 
     def _set_stop_reason(reason: str) -> None:
         if stop_reason_out is not None:
             stop_reason_out.append(reason)
 
-    # Resolve the two roles a round always needs. This is the spend
-    # boundary, and auto-epoching below already calls the evaluation
-    # model, so both must be in hand before the first round rather than
-    # per round. An argument the caller passed wins; otherwise the
-    # workspace configuration answers, which is the only way ``zicato
-    # evolve`` supplies them.
-    if target_call_llm is None or evaluation_call_llm is None:
-        role_config = invocation.workspace_config
-        if invocation.execution_contract is not None:
-            role_config.update(invocation.execution_contract.adapter_configuration)
-        if target_call_llm is None:
-            target_call_llm = resolve_role_call_llm(
-                role_config, role="target", workspace_root=workspace_root
-            )
-        if evaluation_call_llm is None:
-            evaluation_call_llm = resolve_role_call_llm(
-                role_config, role="evaluation", workspace_root=workspace_root
-            )
+    role_config = invocation.workspace_config
+    selected_roles = None
+    if invocation.execution_contract is not None:
+        role_config.update(invocation.execution_contract.adapter_configuration)
+        selected_roles = invocation.execution_contract.execution_roles
+    invocation.runtime_config = make_runtime_config(
+        role_config,
+        workspace_root=workspace_root,
+        target_call_llm=target_call_llm,
+        evaluation_call_llm=evaluation_call_llm,
+        configuration=invocation.configuration,
+        telemetry=invocation.telemetry,
+        execution_roles=selected_roles,
+    )
+    if invocation.execution_contract is not None:
+        from zicato.epoch.execution import bind_runtime_to_epoch  # noqa: PLC0415
+
+        invocation.runtime_config = bind_runtime_to_epoch(
+            invocation.runtime_config, workspace_root, invocation.execution_contract.epoch_id
+        )
+    target_call_llm = invocation.runtime_config.target_call_llm
+    evaluation_call_llm = invocation.runtime_config.evaluation_call_llm
+    execution_roles = execution_roles_for_runtime(invocation.runtime_config)
+    invocation.runtime_config = replace(invocation.runtime_config, execution_roles=execution_roles)
 
     if max_consecutive_rejections <= 0:
         # 0 / negative effectively disables early-stop — protect against
@@ -552,6 +565,7 @@ async def _evolve_n_rounds(
             aux_call_llm=evaluation_call_llm,
             aux_config=invocation.configuration.values.aux,
             workspace_config=invocation.workspace_config,
+            execution_roles=execution_roles,
             epoch_name=epoch_name,
             before_contract_roll=discard_resume_before_roll,
         )
@@ -765,28 +779,30 @@ async def _evolve_n_rounds(
                 # variable.
                 _epoch_id: str | None = epoch_id,
             ) -> EvolveRoundOutcome:
-                from zicato.telemetry.meta_loop import SPAN_ROUND, meta_span  # noqa: PLC0415
-
                 # The round span frames every phase / matchup / worker / slot
                 # of this round on the meta-loop timeline (HARMONOGRAF.md §7).
-                async with meta_span(
-                    f"round {_round_idx}",
-                    kind=SPAN_ROUND,
-                    meta={"round_index": _round_idx, "epoch_id": _epoch_id or ""},
-                ):
-                    return await _evolve_once(
-                        invocation=invocation,
-                        epoch_id=_epoch_id,
-                        target_call_llm=target_call_llm,
-                        evaluation_call_llm=evaluation_call_llm,
-                        fast_mode=fast_mode,
-                        max_proposer_retries=max_proposer_retries,
-                        beater=beater,
-                        round_index=_round_idx,
-                        total_rounds=rounds,
-                        meta_loop_emitter=meta_loop_emitter,
-                        resume_plan=_resume_plan,
-                    )
+                from zicato.logging_stream import round_log_context
+                from zicato.telemetry.meta_loop import SPAN_ROUND, meta_span  # noqa: PLC0415
+
+                with round_log_context(_epoch_id, _round_idx):
+                    async with meta_span(
+                        f"round {_round_idx}",
+                        kind=SPAN_ROUND,
+                        meta={"round_index": _round_idx, "epoch_id": _epoch_id or ""},
+                    ):
+                        return await _evolve_once(
+                            invocation=invocation,
+                            epoch_id=_epoch_id,
+                            target_call_llm=target_call_llm,
+                            evaluation_call_llm=evaluation_call_llm,
+                            fast_mode=fast_mode,
+                            max_proposer_retries=max_proposer_retries,
+                            beater=beater,
+                            round_index=_round_idx,
+                            total_rounds=rounds,
+                            meta_loop_emitter=meta_loop_emitter,
+                            resume_plan=_resume_plan,
+                        )
 
             try:
                 if not budget.enabled:

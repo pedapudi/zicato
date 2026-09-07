@@ -47,12 +47,6 @@ impl WorkspacePaths {
         self.runtime.join("active_runs")
     }
 
-    /// The LEGACY active-tournament snapshot. Retained for the compat
-    /// reader; the live producer now writes the event log below.
-    pub fn active_tournament(&self) -> PathBuf {
-        self.runtime.join("active_tournament.json")
-    }
-
     /// The active-tournament EVENT LOG (RUNTIME-V2 Phase 3): an
     /// append-only JSONL the orchestrator/runner publish live state onto.
     /// `read_active_tournament` folds it into the live view.
@@ -130,17 +124,15 @@ pub fn read_lock(paths: &WorkspacePaths) -> Option<Lock> {
     read_json(&paths.lock())
 }
 
-/// Fold the active-tournament EVENT LOG (RUNTIME-V2 Phase 3) into the
-/// live view, or fall back to the legacy snapshot when no log exists.
+/// Fold the active-tournament event log into the live view.
 ///
 /// The log is single-writer append-only JSONL: a full-envelope `Snapshot`
 /// event (the authoritative base/reset) plus `EntryUpdate` /
 /// `PartialAggregate` / `ProjectedUpdate` deltas. We fold from the LAST
 /// `Snapshot` forward, applying the deltas that affect this view's
 /// (coarse) fields — entry transitions + the partial aggregate — so the
-/// supervisor's tournament panel matches what the mutable snapshot held.
-/// Best-effort: a missing/empty/malformed log yields the snapshot
-/// fallback (or `None`).
+/// supervisor's tournament panel reflects the recorded transitions.
+/// A missing, empty or unusable log yields `None`.
 pub fn read_active_tournament(paths: &WorkspacePaths) -> Option<ActiveTournament> {
     read_active_tournament_with_stats(paths).0
 }
@@ -150,18 +142,11 @@ pub fn read_active_tournament(paths: &WorkspacePaths) -> Option<ActiveTournament
 /// non-monotonic-`seq` gaps). The supervisor accumulates these into the
 /// shared [`crate::fold_stats::FoldDiagnostics`] for `/statusz`; callers
 /// that do not care can use the thin [`read_active_tournament`] wrapper.
-///
-/// On the compat path (no event log, falling back to the legacy snapshot)
-/// the stats are zero — there is no JSONL to tear.
 pub fn read_active_tournament_with_stats(
     paths: &WorkspacePaths,
 ) -> (Option<ActiveTournament>, crate::fold_stats::FoldStats) {
-    let (mut tournament, stats) =
-        match fold_active_tournament_value_with_stats(&paths.active_tournament_log()) {
-            (Some(value), stats) => (serde_json::from_value(value).ok(), stats),
-            // No event log → the compat path: a pre-RUNTIME-V2 snapshot file.
-            (None, stats) => (read_json(&paths.active_tournament()), stats),
-        };
+    let (value, stats) = fold_active_tournament_value_with_stats(&paths.active_tournament_log());
+    let mut tournament = value.and_then(|value| serde_json::from_value(value).ok());
     // The served ELIM MODEL rides the live payload (the Rust half of the
     // Python `attach_elim_states` wiring): an elim tournament's rounds are
     // canonicalized and the `gen_states` fold attached, so the dashboard
@@ -771,16 +756,15 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_the_legacy_snapshot_when_no_log() {
-        // The compat path: no event log → the pre-RUNTIME-V2 snapshot file.
+    fn absent_log_ignores_saved_snapshot() {
         let (_t, p) = make_ws();
-        std::fs::write(
-            p.active_tournament(),
-            r#"{"tournament_id":"legacy","entries":[]}"#,
-        )
-        .unwrap();
-        let at = read_active_tournament(&p).expect("the compat snapshot");
-        assert_eq!(at.tournament_id.as_deref(), Some("legacy"));
+        let path = p.runtime.join("active_tournament.json");
+        let saved = r#"{"tournament_id":"saved","entries":[]}"#;
+        std::fs::write(&path, saved).unwrap();
+        let (at, stats) = read_active_tournament_with_stats(&p);
+        assert!(at.is_none());
+        assert_eq!(stats, crate::fold_stats::FoldStats::default());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), saved);
     }
 
     #[test]
@@ -788,8 +772,8 @@ mod tests {
         let (_t, p) = make_ws();
         std::fs::write(p.heartbeat(), r#"{"pid":1,"phase":"running"}"#).unwrap();
         std::fs::write(
-            p.active_tournament(),
-            r#"{"tournament_id":"t1","entries":[]}"#,
+            p.active_tournament_log(),
+            r#"{"seq":1,"ts":"t","type":"Snapshot","payload":{"tournament_id":"t1","entries":[]}}"#,
         )
         .unwrap();
         std::fs::write(p.current_epoch_marker(), "2026-05-14_test").unwrap();
@@ -866,20 +850,5 @@ mod tests {
         let (_at, stats) = read_active_tournament_with_stats(&p);
         assert_eq!(stats.parse_failures, 0);
         assert_eq!(stats.seq_gaps, 2);
-    }
-
-    #[test]
-    fn compat_snapshot_path_reports_zero_stats() {
-        // No event log → legacy snapshot fallback. There is no JSONL to
-        // tear, so both counters are zero.
-        let (_t, p) = make_ws();
-        std::fs::write(
-            p.active_tournament(),
-            r#"{"tournament_id":"legacy","entries":[]}"#,
-        )
-        .unwrap();
-        let (at, stats) = read_active_tournament_with_stats(&p);
-        assert_eq!(at.unwrap().tournament_id.as_deref(), Some("legacy"));
-        assert_eq!(stats, crate::fold_stats::FoldStats::default());
     }
 }

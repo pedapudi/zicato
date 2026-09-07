@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +69,16 @@ from zicato.core.types import BoardEntry, validate_board_entry
 #: Discriminant key that marks a JSONL line as the board-level metadata
 #: header rather than a :class:`BoardEntry` row.
 _BOARD_META_KEY = "board_meta"
+
+
+@dataclass(frozen=True)
+class BoardDocument:
+    """One accepted board, retaining typed entries and the original JSON rows."""
+
+    entries: list[BoardEntry]
+    disable_drift: tuple[DriftKind, ...]
+    judge_only: bool
+    rows: list[dict[str, Any]]
 
 
 def _coerce_disable_drift(raw: Any, where: str) -> tuple[DriftKind, ...]:
@@ -162,8 +172,32 @@ def parse_board_with_meta(
     text: str, *, source: Path | str = "board"
 ) -> tuple[list[BoardEntry], tuple[DriftKind, ...], bool]:
     """Validate captured board bytes with the file loader's line diagnostics."""
+    board = _parse_board(text, source=source)
+    return board.entries, board.disable_drift, board.judge_only
+
+
+def load_board_document(path: Path) -> BoardDocument | None:
+    """Read one board; absence returns None, present corruption raises RecordError."""
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
+
+    try:
+        return _parse_board(path.read_text(encoding="utf-8"), source=path)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, TypeError) as exc:
+        raise RecordError(f"board {path} cannot be read: {exc}") from exc
+
+
+def load_board_rows(path: Path) -> list[dict[str, Any]] | None:
+    """Return accepted source rows, retaining metadata, omissions and extensions."""
+    board = load_board_document(path)
+    return board.rows if board is not None else None
+
+
+def _parse_board(text: str, *, source: Path | str) -> BoardDocument:
     path = source
     entries: list[BoardEntry] = []
+    rows: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     disable_drift: tuple[DriftKind, ...] = ()
     judge_only = False
@@ -182,6 +216,8 @@ def parse_board_with_meta(
                 f"{path}: line {line_no}: expected a JSON object, got {type(payload).__name__}"
             )
 
+        rows.append(payload)
+        payload = dict(payload)
         # Board-level metadata header. Must be the first non-blank
         # line; anything later is a structural error.
         if payload.get(_BOARD_META_KEY) is True:
@@ -210,14 +246,14 @@ def parse_board_with_meta(
         _reject_legacy_expectation(payload, f"{path}: line {line_no}")
         try:
             entry = validate_board_entry(payload)
-        except (KeyError, ValueError) as exc:
+        except (KeyError, ValueError, TypeError, AttributeError) as exc:
             raise ValueError(f"{path}: line {line_no}: invalid entry: {exc}") from exc
         if entry.id in seen_ids:
             raise ValueError(f"{path}: line {line_no}: duplicate entry id {entry.id!r}")
         seen_ids.add(entry.id)
         entries.append(entry)
 
-    return entries, disable_drift, judge_only
+    return BoardDocument(entries, disable_drift, judge_only, rows)
 
 
 def load_board(path: Path) -> list[BoardEntry]:
@@ -243,7 +279,7 @@ def board_meta_to_dict(
     only ``disable_drift`` (or that predates the judge-only flag) keeps
     a header that is byte-identical to the pre-judge_only format.
 
-    Public because the builder's board canonicalizer
+    Shared because the configuration draft canonicalizer
     (:func:`zicato.contract_draft.draft._board_canon`) must emit the SAME header
     object :func:`save_board` writes, so the draft diff agrees with the
     on-disk bytes the contract hash sees.
@@ -472,6 +508,8 @@ __all__ = [
     "board_meta_to_dict",
     "load_board",
     "load_board_with_meta",
+    "load_board_rows",
+    "load_board_document",
     "save_board",
     "append_entry",
     "remove_entry",

@@ -37,7 +37,7 @@ from zicato.core.types import (
 )
 from zicato.runtime.paths import (
     active_runs_dir,
-    active_tournament_path,
+    active_tournament_log_path,
     ensure_runtime_dirs,
     heartbeat_path,
 )
@@ -633,18 +633,21 @@ def test_clear_runtime_state_removes_live_files(tmp_path: Path) -> None:
     workspace.mkdir()
     ensure_runtime_dirs(workspace)
     heartbeat_path(workspace).write_text("{}")
-    active_tournament_path(workspace).write_text("{}")
+    active_tournament_log_path(workspace).write_text("{}")
     (active_runs_dir(workspace) / "run_a.json").write_text("{}")
     lock = workspace / "runtime" / "lock.json"
     lock.write_text("{}")
+    saved_snapshot = workspace / "runtime" / "active_tournament.json"
+    saved_snapshot.write_text('{"tournament_id":"saved"}')
 
     clear_runtime_state(workspace)
 
     assert not heartbeat_path(workspace).exists()
-    assert not active_tournament_path(workspace).exists()
+    assert not active_tournament_log_path(workspace).exists()
     assert not (active_runs_dir(workspace) / "run_a.json").exists()
     # The lock is owned by the live orchestrator — never cleared here.
     assert lock.exists()
+    assert saved_snapshot.read_text() == '{"tournament_id":"saved"}'
 
 
 def test_prepare_resume_clears_runtime_state(tmp_path: Path) -> None:

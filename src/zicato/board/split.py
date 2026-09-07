@@ -127,8 +127,8 @@ def rotation_seed(cfg: OverfittingConfig, epoch_id: str | None) -> str | None:
     and an epoch id is available, so the hash-derived holdout rotates across
     epochs (stable within one). Returns ``None`` — the unseeded,
     byte-identical split — when rotation is disabled or no epoch id is known
-    (e.g. a builder preview). Callers thread this into ``split_board(seed=...)``
-    so the rotation policy lives in exactly one place (OVERFITTING.md §12 #6).
+    (for example, during configuration preparation). Pass the result to
+    ``split_board(seed=...)`` to share the rotation policy (OVERFITTING.md §12 #6).
     """
     if not cfg.rotate_holdout or not epoch_id:
         return None

@@ -19,7 +19,7 @@ See ``docs/design/TOURNAMENT-STRUCTURES.md`` for the full spec.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Literal
@@ -528,7 +528,7 @@ def rung_for_match_id(match_id: str | None) -> str | None:
     return mid
 
 
-def _param_int(params: dict[str, Any], key: str, default: int) -> int:
+def _param_int(params: Mapping[str, Any], key: str, default: int) -> int:
     """Read an int param defensively (semantics validation is the strategy's)."""
     try:
         return int(params.get(key, default))
@@ -536,7 +536,7 @@ def _param_int(params: dict[str, Any], key: str, default: int) -> int:
         return default
 
 
-def _param_float(params: dict[str, Any], key: str, default: float) -> float:
+def _param_float(params: Mapping[str, Any], key: str, default: float) -> float:
     """Read a float param defensively."""
     try:
         return float(params.get(key, default))

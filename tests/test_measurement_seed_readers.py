@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._workspace_support import write_tournament
 from zicato.core import ScoringWeights
 from zicato.core.measurement import (
     UNKNOWN_SEED,
@@ -251,8 +252,7 @@ def test_selected_conversation_uses_its_seed(tmp_path: Path, seed: int | None) -
     layout.gen_score("e0", "v0").write_text(
         json.dumps({"generation_id": "v0", "base_seed": seed, "scalar": 0.0})
     )
-    layout.active_tournament.parent.mkdir(parents=True, exist_ok=True)
-    layout.active_tournament.write_text(json.dumps({"parent_generation_id": "v0", "entries": []}))
+    write_tournament(tmp_path, {"parent_generation_id": "v0", "entries": []})
     paths = WorkspacePaths(tmp_path)
     run_id = run_id_for_unit("v0", "entry", base_seed=seed)
     assert find_generation_run(paths, "v0", "entry") == (run_id, selected.with_name("events.jsonl"))

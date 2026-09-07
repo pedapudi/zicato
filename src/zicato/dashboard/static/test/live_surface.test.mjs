@@ -218,7 +218,7 @@ test('live-status: a heartbeat OLDER than STALE_HEARTBEAT_MS reads NOT live (the
 test('live-status: a DEAD run (stale phase + frozen active_tournament phase:running, 0 in-flight) reads NOT live — the repro', () => {
   const now = 1_780_455_964_000;
   // the exact on-disk shape a killed run leaves: a stale heartbeat with an
-  // active-looking phase, an orphaned active_tournament.json still saying
+  // active-looking phase, an orphaned active_tournament.events.jsonl still saying
   // phase:"running", and ZERO in-flight board-units. The frozen tournament
   // file must NOT keep it live now that the orchestrator heartbeat is stale.
   const dead = livestatus.deriveLiveStatus({
@@ -492,8 +492,7 @@ test('live tournament: during a racing RUN the match-ups ladder fills from /api/
 });
 
 // ====================================================================
-// PROGRESSIVE LIVE RACING LADDER — buildLiveRacingModel() over the UNIFIED
-// buildLiveModel path.
+// Progressive racing rounds with active board progress.
 //
 // The backend now PUBLISHES the live tournament topology on
 // /api/active-tournament DURING the run: `rounds` with each rung's matches (an
@@ -508,15 +507,15 @@ test('live tournament: during a racing RUN the match-ups ladder fills from /api/
 // overlaid from active-runs; NOT the "being seeded" empty state.
 test('live racing model: published rung-0 (pending) renders the field with active-runs progress overlaid — not the "being seeded" empty state', () => {
   const at = liveRacingField();
-  const model = STRUCT.buildLiveRacingModel({
+  const model = STRUCT.buildLiveModel(
     at,
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
-    activeRuns: [
+    { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
+    [
       { generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 },
       { generation_id: 'v6', entry_id: 'b1', run_id: 'r1', progress: 0.9 },
     ],
-    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
-  });
+    ['v0', 'v5', 'v6', 'v7', 'v8'],
+  );
   assert(model, 'a live racing model was built from the published rounds');
   assertEqual(model.live, true, 'the model is marked live');
   const rungRounds = model.rounds.filter((r) => String(r.matches[0].match_id) !== 'racing-final');
@@ -541,15 +540,15 @@ test('live racing model: an in-flight rung shows per-lane "k/N boards" progress 
   // the backend writes `partial_*_agg` as DICTS ({scalar, ...}); the model
   // reads `.scalar` (the dead `svg.isNum(dict)` plumbing has been fixed).
   const at = liveRacingField({ partial_champion_agg: { scalar: 12.0 }, partial_challenger_agg: { scalar: 9.5 } });
-  const model = STRUCT.buildLiveRacingModel({
+  const model = STRUCT.buildLiveModel(
     at,
-    heartbeat: { phase: 'tournament:round_0:rung0_m2', generation_id: 'v5' },
-    activeRuns: [
+    { phase: 'tournament:round_0:rung0_m2', generation_id: 'v5' },
+    [
       { generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.5 },  // 1 of 2 board units done-ish
       { generation_id: 'v5', entry_id: 'b1', run_id: 'r1', progress: 0.0 },
     ],
-    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
-  });
+    ['v0', 'v5', 'v6', 'v7', 'v8'],
+  );
   const r0 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung0').matches[0];
   const laneV5 = r0.live_progress.v5;
   assertEqual(laneV5.inflight, 2, 'v5 has two in-flight board units this rung');
@@ -578,12 +577,12 @@ test('live racing model: a completed rung ACCUMULATES — when rung-1 starts, ru
       { round_index: 2, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0'], board_fraction: 1.0, winner: null, pending: true }] },
     ],
   });
-  const model = STRUCT.buildLiveRacingModel({
+  const model = STRUCT.buildLiveModel(
     at,
-    heartbeat: { phase: 'tournament:round_1:rung1_m0', generation_id: 'v7' },
-    activeRuns: [{ generation_id: 'v7', entry_id: 'b0', run_id: 'r0', progress: 0.3 }],
-    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
-  });
+    { phase: 'tournament:round_1:rung1_m0', generation_id: 'v7' },
+    [{ generation_id: 'v7', entry_id: 'b0', run_id: 'r0', progress: 0.3 }],
+    ['v0', 'v5', 'v6', 'v7', 'v8'],
+  );
   const r0 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung0').matches[0];
   // the COMPLETED rung-0 is carried verbatim — survivors/cuts persist.
   assertDeep([...r0.cut].sort(), ['v5', 'v6'], 'the completed rung-0 cuts (v5,v6) persist when rung-1 starts');
@@ -607,17 +606,17 @@ test('live racing model: a no-op heartbeat (same progress) yields a STABLE diges
   const heartbeat = { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' };
   const activeRuns = [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 }];
   const epochGens = ['v0', 'v5', 'v6', 'v7', 'v8'];
-  const a = STRUCT.buildLiveRacingModel({ at: liveRacingField(), heartbeat, activeRuns, epochGens });
-  const b = STRUCT.buildLiveRacingModel({ at: liveRacingField(), heartbeat, activeRuns, epochGens });
+  const a = STRUCT.buildLiveModel(liveRacingField(), heartbeat, activeRuns, epochGens);
+  const b = STRUCT.buildLiveModel(liveRacingField(), heartbeat, activeRuns, epochGens);
   assertEqual(STRUCT.structureDigest(a), STRUCT.structureDigest(b), 'two identical live ticks produce the SAME digest (digest-gated — no DOM rebuild)');
 
   // a REAL change (a board landed → done count grows) MUST change the digest.
-  const c = STRUCT.buildLiveRacingModel({
-    at: liveRacingField(),
+  const c = STRUCT.buildLiveModel(
+    liveRacingField(),
     heartbeat,
-    activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 1.0 }],
+    [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 1.0 }],
     epochGens,
-  });
+  );
   assert(STRUCT.structureDigest(a) !== STRUCT.structureDigest(c), 'a board landing (progress advanced) DOES change the digest');
 
   // node-identity check: a gated re-render with the same digest keeps the ladder node.
@@ -632,12 +631,12 @@ test('live racing model: a no-op heartbeat (same progress) yields a STABLE diges
 
 // (e) champion-gate pending vs decided renders correctly (pending ≠ rejected).
 test('live racing model: the champion-gate is PENDING (deciding…) during the race — never "rejected"', () => {
-  const model = STRUCT.buildLiveRacingModel({
-    at: liveRacingField(),
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
-    activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 }],
-    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
-  });
+  const model = STRUCT.buildLiveModel(
+    liveRacingField(),
+    { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
+    [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 }],
+    ['v0', 'v5', 'v6', 'v7', 'v8'],
+  );
   const gate = model.rounds.find((r) => String(r.matches[0].match_id) === 'racing-final');
   assert(gate, 'a champion-gate round is present');
   assert(!gate.matches[0].decision, 'the live gate has NO committed decision (not promoted/rejected)');
@@ -738,12 +737,12 @@ test('live racing model (issue #8): a degenerate published rung-0 is widened to 
     ],
     standings: [], champion_lineage: ['v0'],
   };
-  const model = STRUCT.buildLiveRacingModel({
+  const model = STRUCT.buildLiveModel(
     at,
-    heartbeat: { phase: 'tournament:round_0:rung0_m0', generation_id: 'v5' },
-    activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 }],
-    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
-  });
+    { phase: 'tournament:round_0:rung0_m0', generation_id: 'v5' },
+    [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 }],
+    ['v0', 'v5', 'v6', 'v7', 'v8'],
+  );
   const r0 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung0').matches[0];
   // the entering rung-0 field is widened to the FULL challenger field — v0 (the
   // champion/benchmark) is NOT a rung lane.
@@ -782,11 +781,12 @@ test('live racing model (issue #8): a degenerate published rung-0 is widened to 
 // the DICT-BUG fix: `partial_*_agg` is a DICT — buildLiveModel reads `.scalar`.
 test('projected — buildLiveModel reads partial_*_agg.scalar (the dead svg.isNum(dict) plumbing is fixed)', () => {
   const at = liveRacingField({ partial_champion_agg: { scalar: 8.0 }, partial_challenger_agg: { scalar: 5.0 } });
-  const model = STRUCT.buildLiveRacingModel({
-    at, heartbeat: { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
-    activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
-    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
-  });
+  const model = STRUCT.buildLiveModel(
+    at,
+    { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
+    [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
+    ['v0', 'v5', 'v6', 'v7', 'v8'],
+  );
   const r0 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung0').matches[0];
   // partialDelta = challenger.scalar − champion.scalar = 5.0 − 8.0 = −3.0 (was
   // ALWAYS null when the code mis-read the dict as a number).
@@ -802,11 +802,12 @@ test('projected (racing): an in-flight lane shows its projected scalar (~proj) +
       v6: { scalar: 7.5, boards_done: 1, boards_total: 2, pass_rate: 1.0 },
     },
   });
-  const model = STRUCT.buildLiveRacingModel({
-    at, heartbeat: { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
-    activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
-    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
-  });
+  const model = STRUCT.buildLiveModel(
+    at,
+    { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5' },
+    [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
+    ['v0', 'v5', 'v6', 'v7', 'v8'],
+  );
   const r0 = model.rounds.find((r) => String(r.matches[0].match_id) === 'rung0').matches[0];
   assertEqual(r0.live_progress.v5.projected, true, 'v5 lane carries the projected flag');
   assertEqual(r0.live_progress.v5.projected_scalar, 6.0, 'the lane carries its projected scalar');
@@ -850,11 +851,12 @@ test('projected (swiss): an in-flight pairing marks the row projected but does N
   const at = projSwissField({
     projected: { v2: { scalar: 0.01, boards_done: 4, boards_total: 5, pass_rate: 1.0 } },
   });
-  const model = STRUCT.buildLiveSwissModel({
-    at, heartbeat: { phase: 'tournament:round_1:r1m0', generation_id: 'v2' },
-    activeRuns: [{ generation_id: 'v2', entry_id: 'b0', run_id: 'r0', progress: 0.8 }],
-    epochGens: ['v0', 'v1', 'v2'],
-  });
+  const model = STRUCT.buildLiveModel(
+    at,
+    { phase: 'tournament:round_1:r1m0', generation_id: 'v2' },
+    [{ generation_id: 'v2', entry_id: 'b0', run_id: 'r0', progress: 0.8 }],
+    ['v0', 'v1', 'v2'],
+  );
   const sm = STRUCT.swissModel(model);
   const v1 = sm.standings.find((s) => s.id === 'v1');
   const v2 = sm.standings.find((s) => s.id === 'v2');
@@ -881,11 +883,12 @@ test('projected (swiss): equal wins → the projected mean-scalar tiebreak appli
       v2: { scalar: 1.0, boards_done: 2, boards_total: 5, pass_rate: 1.0 },
     },
   });
-  const model = STRUCT.buildLiveSwissModel({
-    at, heartbeat: { phase: 'tournament:round_0:r0m0', generation_id: 'v2' },
-    activeRuns: [{ generation_id: 'v2', entry_id: 'b0', run_id: 'r0', progress: 0.4 }],
-    epochGens: ['v0', 'v1', 'v2'],
-  });
+  const model = STRUCT.buildLiveModel(
+    at,
+    { phase: 'tournament:round_0:r0m0', generation_id: 'v2' },
+    [{ generation_id: 'v2', entry_id: 'b0', run_id: 'r0', progress: 0.4 }],
+    ['v0', 'v1', 'v2'],
+  );
   // v2 (lower projected scalar) wins the tiebreak among equal (0) wins.
   const order = model.standings.map((s) => String(s.generation_id));
   assertEqual(order[0], 'v2', 'on equal wins the lower projected scalar ranks first (mean-scalar tiebreak)');
@@ -919,11 +922,12 @@ test('projected (elim): an in-flight match re-ranks standings on the projected s
       v1: { scalar: 1.0, boards_done: 3, boards_total: 5, pass_rate: 1.0 },
     },
   });
-  const model = STRUCT.buildLiveElimModel({
-    at: elimPayload('lone_final_pending', at), heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
-    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
-    epochGens: ['v0', 'v1'],
-  });
+  const model = STRUCT.buildLiveModel(
+    elimPayload('lone_final_pending', at),
+    { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
+    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
+    ['v0', 'v1'],
+  );
   const top = model.standings.slice().sort((a, b) => a.rank - b.rank)[0];
   assertEqual(String(top.generation_id), 'v1', 'elim re-ranks the in-flight leader on its projected scalar');
   assertEqual(top.in_flight, true, 'the leading row is marked in-flight/projected');
@@ -941,11 +945,12 @@ test('projected (standings table): an in-flight row renders the projected treatm
   const at = projElimField({
     projected: { v1: { scalar: 1.0, boards_done: 3, boards_total: 5, pass_rate: 1.0 } },
   });
-  const model = STRUCT.buildLiveElimModel({
-    at: elimPayload('lone_final_pending', at), heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
-    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
-    epochGens: ['v0', 'v1'],
-  });
+  const model = STRUCT.buildLiveModel(
+    elimPayload('lone_final_pending', at),
+    { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
+    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
+    ['v0', 'v1'],
+  );
   const nodes = STRUCT.renderStructure(model, { navigate() {}, href: router.href }, EPOCH_ID);
   const host = document.createElement('div');
   for (const n of nodes) host.appendChild(n);
@@ -958,12 +963,12 @@ test('projected (standings table): an in-flight row renders the projected treatm
 // DIGEST STABILITY (anti-flash): an identical rounded projection → identical
 // digest → no repaint; a board landing → a different digest.
 test('projected (digest): identical projection yields an identical digest (no repaint); a board landing changes it', () => {
-  const mk = (proj) => STRUCT.buildLiveElimModel({
-    at: projElimField({ projected: proj }),
-    heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
-    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
-    epochGens: ['v0', 'v1'],
-  });
+  const mk = (proj) => STRUCT.buildLiveModel(
+    projElimField({ projected: proj }),
+    { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
+    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
+    ['v0', 'v1'],
+  );
   const p = { v0: { scalar: 2.0, boards_done: 3, boards_total: 5 }, v1: { scalar: 1.0, boards_done: 3, boards_total: 5 } };
   const a = mk(p);
   const b = mk({ v0: { scalar: 2.0, boards_done: 3, boards_total: 5 }, v1: { scalar: 1.0, boards_done: 3, boards_total: 5 } });
@@ -975,12 +980,12 @@ test('projected (digest): identical projection yields an identical digest (no re
 
 test('projected (no-op beat): two identical projected ticks leave the rendered node identity unchanged (gated swap)', () => {
   const proj = { v0: { scalar: 2.0, boards_done: 3, boards_total: 5 }, v1: { scalar: 1.0, boards_done: 3, boards_total: 5 } };
-  const mk = () => STRUCT.buildLiveElimModel({
-    at: projElimField({ projected: proj }),
-    heartbeat: { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
-    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
-    epochGens: ['v0', 'v1'],
-  });
+  const mk = () => STRUCT.buildLiveModel(
+    projElimField({ projected: proj }),
+    { phase: 'tournament:round_0:WB-R0-0', generation_id: 'v1' },
+    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.6 }],
+    ['v0', 'v1'],
+  );
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
   const a = mk();
@@ -993,7 +998,7 @@ test('projected (no-op beat): two identical projected ticks leave the rendered n
 
 // ====================================================================
 // SWISS + ELIM — completed structure visuals (swissLadder / elimBracket)
-// and progressive LIVE models (buildLiveSwissModel / buildLiveElimModel),
+// and progressive live models from buildLiveModel,
 // parallel to the racing ladder/funnel. The completed views build a model
 // from /api/tournament-structure rounds/standings; the live models
 // accumulate completed rounds, fill the active round board-by-board, and
@@ -1102,15 +1107,15 @@ function liveSwissField(extra) {
 }
 
 test('live swiss model: the active published round fills in board-by-board (overlaid progress), later published rounds queue', () => {
-  const model = STRUCT.buildLiveSwissModel({
-    at: liveSwissField(),
-    heartbeat: { phase: 'tournament:round_0', generation_id: 'v1' },
-    activeRuns: [
+  const model = STRUCT.buildLiveModel(
+    liveSwissField(),
+    { phase: 'tournament:round_0', generation_id: 'v1' },
+    [
       { generation_id: 'v0', entry_id: 'b0', run_id: 'r0', progress: 0.5 },
       { generation_id: 'v1', entry_id: 'b1', run_id: 'r1', progress: 0.0 },
     ],
-    epochGens: ['v0', 'v1', 'v2', 'v3'],
-  });
+    ['v0', 'v1', 'v2', 'v3'],
+  );
   assert(model && model.live, 'a live swiss model built from the published rounds');
   const m = STRUCT.swissModel(model);
   assert(m.rounds.length >= 2, 'the published swiss rounds present (active + queued)');
@@ -1143,11 +1148,12 @@ test('live swiss model: a completed round PERSISTS when the next round starts (a
       ] },
     ],
   });
-  const model = STRUCT.buildLiveSwissModel({
-    at, heartbeat: { phase: 'tournament:round_1', generation_id: 'v1' },
-    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.3 }],
-    epochGens: ['v0', 'v1', 'v2', 'v3'],
-  });
+  const model = STRUCT.buildLiveModel(
+    at,
+    { phase: 'tournament:round_1', generation_id: 'v1' },
+    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.3 }],
+    ['v0', 'v1', 'v2', 'v3'],
+  );
   const m = STRUCT.swissModel(model);
   // round 0 is carried verbatim — its winners persist.
   const r0 = m.rounds[0];
@@ -1162,10 +1168,10 @@ test('live swiss model: a no-op repeat render leaves the swiss-ladder node ident
   const heartbeat = { phase: 'tournament:round_0', generation_id: 'v1' };
   const activeRuns = [{ generation_id: 'v0', entry_id: 'b0', run_id: 'r0', progress: 0.5 }];
   const epochGens = ['v0', 'v1', 'v2', 'v3'];
-  const a = STRUCT.buildLiveSwissModel({ at: liveSwissField(), heartbeat, activeRuns, epochGens });
-  const b = STRUCT.buildLiveSwissModel({ at: liveSwissField(), heartbeat, activeRuns, epochGens });
+  const a = STRUCT.buildLiveModel(liveSwissField(), heartbeat, activeRuns, epochGens);
+  const b = STRUCT.buildLiveModel(liveSwissField(), heartbeat, activeRuns, epochGens);
   assertEqual(STRUCT.structureDigest(a), STRUCT.structureDigest(b), 'two identical live swiss ticks share a digest');
-  const c = STRUCT.buildLiveSwissModel({ at: liveSwissField(), heartbeat, activeRuns: [{ generation_id: 'v0', entry_id: 'b0', run_id: 'r0', progress: 1.0 }], epochGens });
+  const c = STRUCT.buildLiveModel(liveSwissField(), heartbeat, [{ generation_id: 'v0', entry_id: 'b0', run_id: 'r0', progress: 1.0 }], epochGens);
   assert(STRUCT.structureDigest(a) !== STRUCT.structureDigest(c), 'a board landing changes the swiss digest');
 
   const host = document.createElement('div');
@@ -1181,12 +1187,12 @@ test('live swiss model: a no-op repeat render leaves the swiss-ladder node ident
 
 
 test('live elim model: an undecided round fills in board-by-board (active round, not empty)', () => {
-  const model = STRUCT.buildLiveElimModel({
-    at: liveElimField(),
-    heartbeat: { phase: 'tournament:round_0', generation_id: 'v1' },
-    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
-    epochGens: ['v0', 'v1', 'v2', 'v3'],
-  });
+  const model = STRUCT.buildLiveModel(
+    liveElimField(),
+    { phase: 'tournament:round_0', generation_id: 'v1' },
+    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
+    ['v0', 'v1', 'v2', 'v3'],
+  );
   assert(model && model.live, 'a live elim model built from the field');
   const m = STRUCT.elimModel(model);
   assert(m.hasMatches, 'the active round has matches');
@@ -1213,11 +1219,12 @@ test('live elim model: a completed round PERSISTS when the next round starts (ac
       ] },
     ],
   });
-  const model = STRUCT.buildLiveElimModel({
-    at, heartbeat: { phase: 'tournament:round_1', generation_id: 'v1' },
-    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.3 }],
-    epochGens: ['v0', 'v1', 'v2', 'v3'],
-  });
+  const model = STRUCT.buildLiveModel(
+    at,
+    { phase: 'tournament:round_1', generation_id: 'v1' },
+    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.3 }],
+    ['v0', 'v1', 'v2', 'v3'],
+  );
   const m = STRUCT.elimModel(model);
   const r0 = m.winners[0];
   assert(r0.matches.every((mm) => mm.winner && !mm.pending), 'the completed semifinal matches persist with their winners (no blanking)');
@@ -1229,10 +1236,10 @@ test('live elim model: a no-op repeat render leaves the bracket node identity un
   const heartbeat = { phase: 'tournament:round_0', generation_id: 'v1' };
   const activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.5 }];
   const epochGens = ['v0', 'v1', 'v2', 'v3'];
-  const a = STRUCT.buildLiveElimModel({ at: liveElimField(), heartbeat, activeRuns, epochGens });
-  const b = STRUCT.buildLiveElimModel({ at: liveElimField(), heartbeat, activeRuns, epochGens });
+  const a = STRUCT.buildLiveModel(liveElimField(), heartbeat, activeRuns, epochGens);
+  const b = STRUCT.buildLiveModel(liveElimField(), heartbeat, activeRuns, epochGens);
   assertEqual(STRUCT.structureDigest(a), STRUCT.structureDigest(b), 'two identical live elim ticks share a digest');
-  const c = STRUCT.buildLiveElimModel({ at: liveElimField(), heartbeat, activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 1.0 }], epochGens });
+  const c = STRUCT.buildLiveModel(liveElimField(), heartbeat, [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 1.0 }], epochGens);
   assert(STRUCT.structureDigest(a) !== STRUCT.structureDigest(c), 'a board landing changes the elim digest');
 
   const host = document.createElement('div');

@@ -107,13 +107,6 @@ ENVIRONMENT_BOUNDARIES = (
         "operating-system",
         "Locate the operating system's per-user runtime directory for worker permits.",
     ),
-    EnvironmentBoundary(
-        "zicato/tui/app.py",
-        ("degrade_to_ascii",),
-        ("LC_ALL", "LANG"),
-        "operating-system",
-        "Read the terminal locale to select characters the terminal can display.",
-    ),
 )
 
 

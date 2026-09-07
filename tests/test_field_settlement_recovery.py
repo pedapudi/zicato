@@ -17,9 +17,9 @@ from typing import Any
 import pytest
 
 from tests._orchestrator_harness import (
+    evaluation_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
 )
 from tests.test_orchestrator_multi_challenger import (
@@ -41,7 +41,7 @@ from zicato.health.inputs import epoch_settlement_receipt_attention
 from zicato.index.ingest import ensure_index, rebuild_index, validate_index
 from zicato.query.gate_view import build_health_report
 from zicato.query.paths import WorkspacePaths
-from zicato.runtime.paths import active_tournament_path
+from zicato.runtime.paths import active_tournament_log_path
 from zicato.runtime.resume import prepare_resume
 
 
@@ -96,7 +96,7 @@ def _prepare_pending_receipt(
         run_evolve_once(
             workspace,
             epoch_id,
-            make_aux_responder([]),
+            evaluation_call_llm,
         )
     receipt_path = field_settlement_intent_path(workspace, epoch_id, 0)
     receipt: dict[str, Any] = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -299,7 +299,7 @@ def test_recovery_preserves_a_rejected_field_receipt(
         run_evolve_once(
             workspace,
             epoch_id,
-            make_aux_responder([]),
+            evaluation_call_llm,
         )
 
     pending = json.loads(
@@ -343,7 +343,7 @@ def test_recovery_preserves_a_single_challenger_receipt_without_a_field_bracket(
         run_evolve_once(
             workspace,
             epoch_id,
-            make_aux_responder([]),
+            evaluation_call_llm,
         )
 
     pending = json.loads(
@@ -381,7 +381,7 @@ def test_recovery_preserves_an_operator_multi_promotion_receipt(
         run_evolve_once(
             workspace,
             epoch_id,
-            make_aux_responder([]),
+            evaluation_call_llm,
         )
 
     prepare_resume(workspace, epoch_id)
@@ -435,7 +435,7 @@ def test_recovery_preserves_a_deferred_field_receipt(
         run_evolve_once(
             workspace,
             epoch_id,
-            make_aux_responder([]),
+            evaluation_call_llm,
         )
 
     pending = json.loads(
@@ -543,7 +543,7 @@ def test_resume_discards_an_entire_field_when_no_receipt_was_persisted(
         run_evolve_once(
             workspace,
             epoch_id,
-            make_aux_responder([]),
+            evaluation_call_llm,
         )
 
     receipt_path = field_settlement_intent_path(workspace, epoch_id, 0)
@@ -560,7 +560,7 @@ def test_resume_discards_an_entire_field_when_no_receipt_was_persisted(
     assert plan.classification == "discard_unrecorded_field"
     assert not receipt_path.exists()
     assert not in_progress_path.exists()
-    assert not active_tournament_path(workspace).exists()
+    assert not active_tournament_log_path(workspace).exists()
     assert not (workspace / "epochs" / epoch_id / "rounds" / "0").exists()
     for generation_id in ("v1", "v2"):
         assert not (workspace / "epochs" / epoch_id / "generations" / generation_id).exists()
@@ -595,7 +595,7 @@ def test_unrecorded_field_cleanup_includes_a_sibling_missing_its_experiment(
         run_evolve_once(
             workspace,
             epoch_id,
-            make_aux_responder([]),
+            evaluation_call_llm,
         )
 
     # Candidate creation writes pending lineage before experiment.json. Model
@@ -643,7 +643,7 @@ def test_unrecorded_field_cleanup_recovers_from_each_durability_boundary(
         run_evolve_once(
             workspace,
             epoch_id,
-            make_aux_responder([]),
+            evaluation_call_llm,
         )
 
     def stop_cleanup(boundary: str) -> None:
@@ -695,7 +695,7 @@ def test_unrecorded_field_cleanup_uses_the_strategy_default_width(
         run_evolve_once(
             workspace,
             epoch_id,
-            make_aux_responder([]),
+            evaluation_call_llm,
         )
 
     plan = prepare_resume(workspace, epoch_id)
@@ -720,7 +720,7 @@ def test_wide_field_with_one_applied_candidate_is_discarded_after_proposal_failu
 
     monkeypatch.setattr(settlement_module, "commit_field_settlement", stop_before_receipt)
     with pytest.raises(_InjectedCrash, match="before receipt"):
-        run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+        run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     plan = prepare_resume(workspace, epoch_id)
     assert plan.classification == "discard_unrecorded_field"
@@ -749,7 +749,7 @@ def test_unrecorded_field_cleanup_preserves_a_terminal_diversity_rejection(
 
     monkeypatch.setattr(settlement_module, "commit_field_settlement", stop_before_receipt)
     with pytest.raises(_InjectedCrash, match="before receipt"):
-        run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+        run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     before = next(
         row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
@@ -796,7 +796,7 @@ def test_crash_during_promotion_hook_delivery_is_not_retried(
         run_evolve_once(
             workspace,
             epoch_id,
-            make_aux_responder([]),
+            evaluation_call_llm,
         )
     receipt_path = field_settlement_intent_path(workspace, epoch_id, 0)
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))

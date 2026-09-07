@@ -48,6 +48,7 @@ from zicato.core.workspace import (
 )
 from zicato.epoch.journal import experiment_body, read_epoch_experiments
 from zicato.epoch.lineage import load_lineage
+from zicato.storage import atomic_write_text
 from zicato.workspace import ScalarStep, WorkspaceLayout, cumulative_scalars, generation_ids
 
 # A goldfive-compatible evaluation call_llm.
@@ -1142,8 +1143,7 @@ async def generate_analysis(
     composed.append("")
 
     out_path = analysis_path(workspace_root, epoch_id)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("\n".join(composed))
+    atomic_write_text(out_path, "\n".join(composed), mode=None)
 
     write_html_companion(workspace_root, epoch_id, out_path)
     return out_path
@@ -1174,8 +1174,7 @@ def write_html_companion(workspace_root: Path, epoch_id: str, md_path: Path) -> 
     html_path = md_path.with_suffix(".html")
     try:
         data = gather_epoch_report_data(workspace_root, epoch_id)
-        html_path.parent.mkdir(parents=True, exist_ok=True)
-        html_path.write_text(render_report_html(epoch_id, report_md, data=data), encoding="utf-8")
+        atomic_write_text(html_path, render_report_html(epoch_id, report_md, data=data), mode=None)
     except Exception as exc:  # noqa: BLE001 — HTML is non-critical
         logging.getLogger(__name__).debug("skipping analysis.html (render raised): %s", exc)
         return None

@@ -203,6 +203,9 @@ class _RoundLogEmitter:
         try:
             self._log.append(event, scope=coordinates)
         except OSError as exc:
+            from zicato.util.best_effort import report_optional_failure
+
+            report_optional_failure("round-log event append", exc)
             log.debug("round-log emit %s skipped: %s", type_token, exc)
 
 
@@ -434,16 +437,6 @@ def _is_real_number(value: Any) -> TypeGuard[int | float]:
 # ---------------------------------------------------------------------------
 # Per-round loop-health assessment
 # ---------------------------------------------------------------------------
-
-
-def _health_round_report_path(workspace_root: Path, epoch_id: str, round_n: int) -> Path:
-    """Return the path of one round's loop-health report JSON.
-
-    Layout: ``epochs/{epoch}/health/round_{N}.json``. ``N`` is the
-    round number derived from the child generation id (``vN``); a
-    non-``vN`` id (defensive) falls back to ``0``.
-    """
-    return WorkspaceLayout.from_root(workspace_root).health_dir(epoch_id) / f"round_{round_n}.json"
 
 
 def _collect_epoch_health_inputs(

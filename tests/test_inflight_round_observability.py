@@ -54,13 +54,7 @@ from zicato.epoch.lifecycle import new_epoch
 
 
 def _distinct_proposer_response(core_idea: str, new_word: str) -> str:
-    """A valid proposer response with a distinct ``core_idea`` + replacement.
-
-    The field-diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3)
-    soft-rejects a challenger that duplicates an in-flight sibling, so a field
-    of N distinct challengers needs N distinct proposals — these tests intend
-    a full field (v1..v4 etc.), so each proposer call gets a unique idea.
-    """
+    """Encode the response whose first integer selects a reviewed candidate."""
     return json.dumps(
         {
             "hypothesis": {
@@ -85,37 +79,21 @@ def _distinct_proposer_response(core_idea: str, new_word: str) -> str:
     )
 
 
-def _infinite_proposer_responder() -> Any:
-    """An aux callable that returns a DISTINCT valid proposer response per call.
+_review_index = 0
 
-    These tests run several outer evolve rounds, each minting a field of
-    challengers and ending in the epoch analyzer — so the number of aux
-    calls is not easily counted ahead of time (proposer retries + the
-    per-round analyzer all draw on the aux LLM). A fixed-length responder
-    would run dry and narrow a field, perturbing the birth-round scenario.
 
-    Every PROPOSER call (the one carrying the mutation manifest) gets a
-    UNIQUE ``core_idea`` so the field-diversity constraint keeps the whole
-    field — two byte-identical proposals would, correctly, collapse. A
-    non-proposer (analyzer) call gets a benign placeholder; the analyzer
-    tolerates a proposer-shaped reply (it falls back to placeholder prose),
-    so this never aborts a round.
-    """
-    counter = {"n": 0}
-
-    async def _aux(system: str, user: str, model: str) -> str:
-        del system, model
-        if "## Mutation points" not in user:
-            # Non-proposer (analyzer) call — a benign placeholder.
-            return "report placeholder"
-        i = counter["n"]
-        counter["n"] = i + 1
-        return _distinct_proposer_response(
-            core_idea=f"swap the greeting string (variant {i})",
-            new_word=f"word{i}",
-        )
-
-    return _aux
+async def evaluation_call_llm(system: str, user: str, model: str) -> str:
+    """Preserve indexed reviewer replies and the report placeholder."""
+    global _review_index
+    del system, model
+    if "## Mutation points" not in user:
+        return "report placeholder"
+    index = _review_index
+    _review_index += 1
+    return _distinct_proposer_response(
+        core_idea=f"swap the greeting string (variant {index})",
+        new_word=f"word{index}",
+    )
 
 
 def _bootstrap_single_elim_workspace(tmp_path: Path, *, field_size: int) -> tuple[Path, str]:
@@ -125,6 +103,8 @@ def _bootstrap_single_elim_workspace(tmp_path: Path, *, field_size: int) -> tupl
     but stamps a ``single_elim`` structure so ``evolve_once`` takes the
     multi-challenger path with a real bracket.
     """
+    global _review_index
+    _review_index = 0
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     (workspace / "config.json").write_text(
@@ -138,6 +118,12 @@ def _bootstrap_single_elim_workspace(tmp_path: Path, *, field_size: int) -> tupl
                 # tags this fixture never writes.
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
+                "runtime": {
+                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
+                    "evaluation_call_llm": (
+                        "tests.test_inflight_round_observability:evaluation_call_llm"
+                    ),
+                },
             }
         )
     )
@@ -244,7 +230,7 @@ def test_birth_round_index_stamped_per_round_end_to_end(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=_infinite_proposer_responder(),
+            evaluation_call_llm=evaluation_call_llm,
             auto_epoch=False,
         )
     )
@@ -352,7 +338,7 @@ def test_inflight_round_visible_in_every_store_before_settle(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=_infinite_proposer_responder(),
+            evaluation_call_llm=evaluation_call_llm,
             auto_epoch=False,
         )
     )
@@ -409,7 +395,7 @@ def test_field_record_finalises_to_settled_after_round(
         canned_pass_by_gen={f"v{i}": True for i in range(5)},
     )
 
-    run_evolve_once(workspace, epoch_id, _infinite_proposer_responder())
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     field_dir = workspace / "epochs" / epoch_id / "tournaments"
     records = sorted(field_dir.glob("field-*.json"))

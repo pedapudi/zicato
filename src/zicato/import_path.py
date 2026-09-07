@@ -152,4 +152,29 @@ def import_dotted_path(path: str, *, label: str = "dotted path") -> Any:
     return obj
 
 
-__all__ = ["explain_attribute_error", "import_dotted_path"]
+def _callable_dotted_path(fn: Any) -> str:
+    """Return a re-importable ``module:qualname`` dotted path for ``fn``.
+
+    The worker subprocess re-imports the target / evaluation LLM
+    callables from these paths. A callable must therefore be a
+    module-level (or class-attribute) object; a closure-local callable
+    has ``<locals>`` in its ``__qualname__`` and cannot be re-imported —
+    we surface that as a clear :class:`ValueError` at spawn time rather
+    than letting the worker fail opaquely.
+    """
+    module = getattr(fn, "__module__", None)
+    qualname = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", None)
+    if not module or not qualname:
+        raise ValueError(
+            f"cannot derive an import path for callable {fn!r}: it has no __module__/__qualname__"
+        )
+    if "<locals>" in qualname:
+        raise ValueError(
+            f"callable {module}:{qualname} is defined inside a function "
+            "(closure-local) and cannot be re-imported by a subprocess "
+            "worker; pass a module-level callable instead"
+        )
+    return f"{module}:{qualname}"
+
+
+__all__ = ["_callable_dotted_path", "explain_attribute_error", "import_dotted_path"]

@@ -175,7 +175,6 @@ def initialize_workspace(
                     "user_emulator": "constrained text role playing the user",
                     "judge": "constrained text/structured role scoring behavior",
                     "adjudicator": "independent constrained role auditing judges",
-                    "builder": "interactive configuration assistant",
                     "proposer_generate/review": "candidate generation / critique and revision",
                     "revision": (
                         "operator-declared logical deployment identity, unlike a transport URL"

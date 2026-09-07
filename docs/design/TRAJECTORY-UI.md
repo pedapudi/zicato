@@ -1,38 +1,24 @@
-# Trajectory-bootstrap UI — visualising foreign traces + the board being created
+# Imported trace views and suggestion provenance
 
-> **Status.** Built and in the tree. This document specifies how an operator
-> sees an imported foreign trace and the board being drafted from it. It
-> covers three surfaces: the Traces view, which renders imported trajectories
-> as information-dense timeline strips with mined-episode overlays and the
-> reconstructed conversation; the suggestion visuals, which make the
-> provenance chain visible through upgraded inbox cards and ghost rows for
-> pending suggested entries in the Evals matrix; and the readers and
-> endpoints that serve both. The engine behind them — the importer, the
-> imported-trace miner source, the bootstrap synthesis tier, and the
-> foreign-source inbox — is specified in
-> [`TRAJECTORY-BOOTSTRAP.md`](TRAJECTORY-BOOTSTRAP.md).
->
-> Everything here is read-side: no contract surface, no parity artifact, and
-> recommend-only. Nothing on these surfaces seals a contract; every
-> affordance terminates at a builder draft the operator seals
-> (TRAJECTORY-BOOTSTRAP.md §1).
+The Traces view renders imported trajectories as timeline strips with mined
+episodes and reconstructed conversations. Read-only trace and suggestion
+provenance readers connect an episode to the evaluation artifact it motivated.
+These views do not edit the board or publish a contract. The importer, miner,
+and synthesis pipeline are specified in
+[`TRAJECTORY-BOOTSTRAP.md`](TRAJECTORY-BOOTSTRAP.md).
 
 Companion to [`TRAJECTORY-BOOTSTRAP.md`](TRAJECTORY-BOOTSTRAP.md) (the engine
 contract — the persisted `ImportedTrace`/suggestion/episode shapes this UI
 reads), [`CONSOLE-DESIGN-LANGUAGE.md`](CONSOLE-DESIGN-LANGUAGE.md) +
 [`DESIGN-LANGUAGE.md`](DESIGN-LANGUAGE.md) (the house visual language these
 surfaces are built from), and [`EVAL-VIEW.md`](EVAL-VIEW.md) (the Evals
-matrix the ghost rows are appended to).
+matrix of measured board entries).
 
-## 1. The design thesis — the trajectory strip as the atomic visual
+## 1. Trajectory strips show imported traces
 
-The atom of this whole program is **one compact horizontal figure per trace —
-the trajectory strip**. A foreign trace is a linear thing (turns, tool calls,
-a budget spent, a few adverse signals); the strip renders that whole story in
-**~120 px of height**, legible at a glance, in the shipped `svg.js` figure
-grammar. It is the thumbnail in the trace list, the hero of the trace detail,
-and — segmented — the provenance mini-strip on a suggestion card. One figure,
-three sizes, one grammar.
+Each trace is rendered as a compact horizontal figure showing turns, tool
+calls, budget use and adverse signals. The trace list and detail view share
+this SVG representation, with a designed height of about 120 pixels.
 
 ### 1.1 What the strip draws (three rows + a shaded ground)
 
@@ -132,7 +118,7 @@ decimals (byte-stable); the JS multiplies by its pane width. This is the same
 discipline the racing/gauntlet figures already follow (a pre-computed model,
 `digestOpts`-gated) — the strip joins it.
 
-## 2. The three surfaces (each specified for a sibling)
+## 2. The Traces surface
 
 ### 2.1 The Traces view
 
@@ -164,65 +150,6 @@ host; the page body never scrolls horizontally, §5).
   an interleaved log).
 - **Navigation lives in the shell** (design-language §4.4) — the Traces route
   + the tree node, never an internal nav rail.
-
-### 2.2 The suggestion and board-creation visuals
-
-Three coordinated upgrades, all recommend-only, all reusing the shipped
-admission vocabulary.
-
-**(a) Inbox rows → cards with a provenance mini-strip + admission visuals.**
-The suggestions inbox (`views/builder.js` `suggestionRow`, EVAL-SYNTHESIS.md
-§6) already renders the foreign-source caption (TRAJECTORY-BOOTSTRAP.md §6). A
-**bootstrap** suggestion (its `provenance.foreign_source` is present) upgrades
-to a card carrying:
-- **the provenance mini-strip** — the episode's trace **segment strip-model**
-  (from `build_suggestion_provenance`), the §1 figure at card size, with the
-  motivating episode's bracket emphasized (`focus_episode_id` set). This is the
-  chain trace region → episode → this suggestion, in one figure.
-- **admission visuals** — the admission stats rendered as marks, reusing the
-  **BT-whisker / pip vocabulary** the standings already speak (the `elo` /
-  `elo_se` whisker, design-language): a **flip-rate whisker** (the A/A flip
-  rate as a point with its advisory-ceiling reference rule — over-ceiling rides
-  `--v2-caution`, the noisy-eval signal), **discrimination dots** (`separated`
-  of `pairs` as filled/empty pips — a dead channel is all-empty), and an
-  **evidence-tier** marker (`probed` = a firm mark, `planned`/unmeasured = a
-  `dn-faint` mark — the shade-by-evidence rule, EVAL-VIEW.md §4 #1). Numbers
-  ride the marks with their `n` (the honesty rule — a measured number always
-  carries its `n`; `unmeasured` is never a fabricated `0.0`,
-  EVAL-SYNTHESIS.md §5 / suggestions.`format_admission`).
-- the **roll-honesty note** — a bootstrap entry defaults to `train` (a
-  regression suite, TRAJECTORY-BOOTSTRAP.md §5.3); the card carries the
-  one-line self-trace caveat already embedded in the suggestion rationale, so
-  the operator sees the advice to keep the entry in the training slice unless
-  the trace is foreign to this harness, before promoting it out.
-
-**(b) The Evals matrix gains GHOST ROWS for suggested entries — the "board
-being created".** The Evals matrix (EVAL-VIEW.md §3.1 `build_eval_matrix`, the
-`views/evals.js` `dn-mtx` grid) renders the *existing* board. A bootstrap
-suggestion drafts a **new** board entry that does not exist yet — the board
-*being created*. Each pending suggested entry renders as a **ghost row**
-appended below the real rows:
-- **pending-styled** — the row rides the shipped `pending` vocabulary
-  (neutral and never `bad`, because a suggested entry is not a regression;
-  design-language §2.1), and is visually distinct through a `dn-faint` dashed
-  treatment so it never reads as a scored channel.
-- **admission stats where cells would be** — a ghost row has no candidate
-  scores (nothing ran it); its cells show the **admission visuals** from (a)
-  (the flip whisker and the discrimination pips) so the operator reads *what
-  the instrument would measure* rather than a fabricated verdict. Where a real row shows
-  evidence-shaded outcomes, the ghost row shows admission evidence.
-- **the apply affordance** — a "stage to draft" control on the row (the same
-  `add_board_entry` op the inbox card stages, TRAJECTORY-BOOTSTRAP.md §5),
-  making the matrix itself the place you grow the board. Recommend-only:
-  staging forks a builder draft the operator seals.
-- **the roll-honesty note** — a caption states that these rows are drafts
-  rather than scored entries, and that they default to `train`.
-
-The ghost rows are fed by `build_eval_matrix` together with the suggestion
-feed the inbox already loads; the view joins the two in the browser, keeping
-the suggested entries whose `draft_artifact.id` is not already a matrix row.
-The ghost rows need no reader beyond §3's provenance reader for the
-mini-strip.
 
 ## 3. The reader contracts (LITERAL shapes — copy verbatim, do not reinterpret)
 
@@ -448,35 +375,13 @@ design-language §2 contract.
 
 ## 4. Render discipline + register (the house rules, restated for the siblings)
 
-- **Digest-gated repaint, structural data only.** A no-op SSE heartbeat
-  produces zero DOM (the flashing-render bug class, design-language §6). The
-  Traces view, each inbox card, and the ghost-rows block each compute a stable
-  content digest (`digestOpts` over the strip-model / suggestion feed) and
-  gate their own host. The strip-model carries no timestamp/heartbeat field, so
-  it is a clean digest input.
-- **The hovercard is a transient overlay** outside the gated render
-  (design-language §4.3) — a mark's detail (`hov(node, tip)`) toggles a class,
-  never a repaint.
-- **Own-container scroll.** The trace list, the reconstructed conversation, and
-  the widened Evals matrix each scroll inside their own `dn-table-scroll`; the
-  page body never scrolls horizontally (§5).
-- **Quiet precision — no new chip vocabulary.** `dialect`, turn/signal counts,
-  admission numbers, the reconstruction note are **captions** (`dn-faint`) or
-  `dn-stat`, never chips (design-language §4.4). The only chips are the ones
-  the inbox already pills (the suggestion type). The strip reuses the `dn-`
-  namespace; a new `dn-strip` layout class is the sole addition (the `dn-mtx`
-  precedent).
-- **No fabricated numbers.** `unmeasured` renders as "unmeasured", never `0.0`
-  (EVAL-VIEW.md §4 #4 / suggestions.`format_admission`). A ghost row shows
-  admission evidence, never a scored verdict.
-- **Read-side only.** No contract or parity exposure; nothing in
-  `tools/parity.sh` moves. A new view grows the JS bundle — the house rationale
-  (a read-only surface that pays for itself in operator time) covers the
-  envelope bump; record it, don't fight it.
+- **Keep provenance separate from measurement.** A suggested artifact is not
+  a scored board entry. Admission results describe the suggestion; missing
+  measurements remain unknown.
 
 ### 4.1 The real-payload composition check
 
-**The node tests for the Traces view and the suggestion visuals render from
+**The node tests for the Traces view render from
 payloads produced by the real readers over a seeded workspace, never from
 hand-authored mock shapes.** A fixture generator makes this possible:
 
@@ -490,11 +395,10 @@ hand-authored mock shapes.** A fixture generator makes this possible:
   `build_suggestion_provenance` and writes their payloads verbatim as JSON
   fixtures under `src/zicato/dashboard/static/test/fixtures/trace_view/`
   (`list.json`, `detail.json`, `provenance.json`).
-- The **node suite** loads those files and renders the strip, the trace
-  detail, the inbox card and the ghost rows from them, so a drift between a
-  reader field and what the browser reads turns a test red and the shapes
-  cannot silently diverge. The generator is re-runnable, and its `--check`
-  mode asserts byte-stability, because the readers are deterministic.
+- The **node suite** renders the strip and trace detail from those fixtures.
+  A mismatch between reader fields and browser consumption fails the test.
+  The generator's `--check` mode verifies byte stability because the readers
+  are deterministic.
 
 ## 5. Where the parts live, and what is deferred
 
@@ -503,8 +407,7 @@ The readers, the pure `build_strip_model`, and the pure helpers are in
 three endpoints sit in the reflection-endpoints block, each wrapping its
 reader in `run_in_threadpool` behind an `_is_safe_id` degrade, and are routed
 in `server.py`. The Traces view is `views/traces.js`, drawing the strip from
-the `svg.js` primitives; the suggestion visuals are the inbox card upgrade and
-the Evals ghost rows. The fixture generator and the captured fixtures back the
+the `svg.js` primitives. The fixture generator and the captured fixtures back the
 node render tests of §4.1.
 
 **Deferred and recorded:**
@@ -529,6 +432,6 @@ node render tests of §4.1.
 | --- | --- |
 | The engine contract (ImportedTrace / suggestion / episode shapes) | [`TRAJECTORY-BOOTSTRAP.md`](TRAJECTORY-BOOTSTRAP.md) |
 | The house visual language (tokens, figures, render discipline) | [`CONSOLE-DESIGN-LANGUAGE.md`](CONSOLE-DESIGN-LANGUAGE.md) · [`DESIGN-LANGUAGE.md`](DESIGN-LANGUAGE.md) |
-| The Evals matrix the ghost rows are appended to | [`EVAL-VIEW.md`](EVAL-VIEW.md) |
-| The suggestion / admission / inbox engine | [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md) |
+| The Evals matrix of measured board entries | [`EVAL-VIEW.md`](EVAL-VIEW.md) |
+| The suggestion and admission engine | [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md) |
 | The reduced `DialectSignals` the strip reads | [`TELEMETRY-DIALECTS.md`](TELEMETRY-DIALECTS.md) |

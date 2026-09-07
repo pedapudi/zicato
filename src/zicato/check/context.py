@@ -80,6 +80,7 @@ class CheckContext:
         )
         self._temporary_snapshot: TemporaryDirectory[str] | None = None
         self._imports = ExitStack()
+        self._config_error: str | None = None
 
     def _require_live_snapshot(self) -> None:
         if not self._live_contract:
@@ -151,7 +152,8 @@ class CheckContext:
         self._require_live_snapshot()
         try:
             config = read_workspace_config(self.workspace_root)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            self._config_error = str(exc)
             return WorkspaceConfig.absent(self.workspace_root)
         if self.execution_contract is not None:
             raw = {**config.raw, **self.execution_contract.adapter_configuration}
@@ -163,6 +165,12 @@ class CheckContext:
             self._live_digests[config.path] = ""
             self._require_live_snapshot()
         return config
+
+    @property
+    def config_error(self) -> str | None:
+        """The original configuration failure, before dependent checks run."""
+        _ = self.config
+        return self._config_error
 
     @cached_property
     def health_config(self) -> HealthConfig:
@@ -357,6 +365,25 @@ class CheckContext:
     def uses_temporary_snapshot(self) -> bool:
         """Whether this check materialised the would-be fresh ``v0``."""
         return self._temporary_snapshot is not None
+
+    def source_paths(self, *paths: Path) -> tuple[Path, ...]:
+        """Translate temporary check paths to the registered source locations."""
+        snapshot = self.generation_snapshot
+        if not self.uses_temporary_snapshot or snapshot is None:
+            return paths
+        result: list[Path] = []
+        for path in paths:
+            if path == snapshot:
+                result.extend(self.registered_trees)
+                continue
+            for source in self.registered_trees:
+                mounted = snapshot / source.resolve().name
+                if path.is_relative_to(mounted):
+                    result.append(source / path.relative_to(mounted))
+                    break
+            else:
+                result.append(path)
+        return tuple(dict.fromkeys(result))
 
     @cached_property
     def mutable_trees(self) -> tuple[Path, ...]:

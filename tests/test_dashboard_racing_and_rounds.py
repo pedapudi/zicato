@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from tests._workspace_support import write_tournament
 from zicato.dashboard.server import create_app
 from zicato.query import (
     WorkspacePaths,
@@ -845,8 +846,8 @@ def test_round_timeline_drops_a_numerically_stamped_seed(tmp_path: Path) -> None
 
 def test_round_timeline_owns_live_field_overlay(tmp_path: Path) -> None:
     ws = _gauntlet_workspace(tmp_path)
-    _write_json(
-        ws / "runtime" / "active_tournament.json",
+    write_tournament(
+        ws,
         {
             "epoch_id": EPOCH,
             "round_index": 2,
@@ -855,7 +856,7 @@ def test_round_timeline_owns_live_field_overlay(tmp_path: Path) -> None:
                 {"generation_id": "v3", "status": "applied"},
                 {"generation_id": "v4", "status": "proposing"},
             ],
-            "projected_standings": {"v3": {"scalar": 0.25, "boards_done": 2, "boards_total": 4}},
+            "projected": {"v3": {"scalar": 0.25, "boards_done": 2, "boards_total": 4}},
         },
     )
 
@@ -989,8 +990,8 @@ def test_active_tournament_serves_the_elim_model(tmp_path: Path, static_dir: Pat
     (crates/supervisor/src/elim_states.rs) so the two dashboards agree.
     """
     ws = _base_workspace(tmp_path)
-    _write_json(
-        ws / "runtime" / "active_tournament.json",
+    write_tournament(
+        ws,
         {
             "structure": "single_elim",
             "phase": "running",

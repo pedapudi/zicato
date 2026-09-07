@@ -65,8 +65,6 @@ ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     ("heartbeat", "/api/heartbeat"),
     ("config", "/api/config"),
     ("live_pipeline", "/api/live/pipeline"),
-    ("live_execution_plan", "/api/live/execution-plan"),
-    ("proposer_recommendations", "/api/proposer/recommendations"),
     # -- reads taking the optional ?epoch= scope -----------------------
     ("epoch/current", "/api/epoch"),
     ("epoch/scoped", "/api/epoch?epoch=e1"),
@@ -100,8 +98,6 @@ ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     ("racing_field/rejected", f"/api/epoch/{REJECTED}/racing-field"),
     ("round_timeline", "/api/epoch/e1/round-timeline"),
     ("round_timeline/rejected", f"/api/epoch/{REJECTED}/round-timeline"),
-    ("execution_plan", "/api/epoch/e1/execution-plan"),
-    ("execution_plan/rejected", f"/api/epoch/{REJECTED}/execution-plan"),
     ("experiments_ledger", "/api/epoch/e1/experiments-ledger"),
     ("experiments_ledger/rejected", f"/api/epoch/{REJECTED}/experiments-ledger"),
     ("contract_diff", "/api/contract-diff/e1"),

@@ -327,13 +327,13 @@ def test_files_diff_reconstructs_spans_for_a_pruned_generation(
     populated_workspace: Path, tmp_path: Path
 ) -> None:
     """The diff's real subject — what the patches changed — survives the prune."""
-    from zicato.evolve.round_baseline import _dump_mutations_snapshot
     from zicato.mutation.enumerator import enumerate_mutations
+    from zicato.mutation.inventory import write_mutation_inventory
+    from zicato.workspace import WorkspaceLayout
 
     store = DirectoryGenerationStore(populated_workspace)
-    _dump_mutations_snapshot(
-        populated_workspace,
-        "e1",
+    write_mutation_inventory(
+        WorkspaceLayout.from_root(populated_workspace).mutations("e1"),
         list(enumerate_mutations([Path(store.materialize_snapshot("e1", "v0"))])),
     )
     _record_experiment(populated_workspace, "v1", "v0", _patch("p1", '"""rewritten"""'))

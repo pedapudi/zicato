@@ -42,6 +42,7 @@ from zicato.analyzer.prompts import (
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.settings import AuxConfig
 from zicato.core.workspace import epoch_dir
+from zicato.storage import atomic_write_text
 from zicato.workspace import is_events_file
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
@@ -182,10 +183,9 @@ async def analyze_epoch_telemetry(
     summary = aggregate_decision_events(events_paths)
 
     target = _insight_target(workspace_root, epoch_id, round_n)
-    target.parent.mkdir(parents=True, exist_ok=True)
 
     if summary.total_events_seen == 0:
-        target.write_text(_empty_insight_body(epoch_id, summary), encoding="utf-8")
+        atomic_write_text(target, _empty_insight_body(epoch_id, summary), mode=None)
         return target
 
     user_prompt = render_insight_user_prompt(summary, epoch_id, mutation_ids)
@@ -213,12 +213,13 @@ async def analyze_epoch_telemetry(
             timeout=aux_call_timeout_s(aux_config),
         )
     except TimeoutError:
-        target.write_text(
+        atomic_write_text(
+            target,
             _error_insight_body(
                 epoch_id,
                 f"timeout after {aux_call_timeout_s(aux_config):.1f}s",
             ),
-            encoding="utf-8",
+            mode=None,
         )
         if meta_loop_emitter is not None and invocation_id is not None:
             try:
@@ -234,12 +235,13 @@ async def analyze_epoch_telemetry(
                 pass
         return target
     except Exception as exc:  # noqa: BLE001 — opaque LLM errors are common
-        target.write_text(
+        atomic_write_text(
+            target,
             _error_insight_body(
                 epoch_id,
                 f"{type(exc).__name__}: {exc}",
             ),
-            encoding="utf-8",
+            mode=None,
         )
         if meta_loop_emitter is not None and invocation_id is not None:
             try:
@@ -275,7 +277,7 @@ async def analyze_epoch_telemetry(
     # constrains it to a markdown shape; we don't second-guess by
     # post-processing.
     body = response.strip() + "\n" if response else _empty_insight_body(epoch_id, summary)
-    target.write_text(body, encoding="utf-8")
+    atomic_write_text(target, body, mode=None)
     return target
 
 

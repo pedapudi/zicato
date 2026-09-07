@@ -332,6 +332,28 @@ def make_capture_blocked_adapter() -> CaptureBlockedAdapter:
     return CaptureBlockedAdapter()
 
 
+class _LossBlockedSession(_CompletingSession):
+    async def run(self, entry: Any, sinks: Any, config: Any) -> Any:
+        from zicato.core.measurement import artifact_replicate_index, unit_artifact_name
+
+        capture = config.judge_io_sink.path
+        index = artifact_replicate_index(capture.name, "judge_io")
+        assert index is not None
+        capture.with_name(unit_artifact_name("loss", index)).mkdir(parents=True)
+        return await super().run(entry, sinks, config)
+
+
+class LossBlockedAdapter(CompletingAdapter):
+    """Obstruct authoritative loss publication after prior artifacts are archived."""
+
+    def load(self, generation_root: Path) -> _CompletingSession:
+        return _LossBlockedSession()
+
+
+def make_loss_blocked_adapter() -> LossBlockedAdapter:
+    return LossBlockedAdapter()
+
+
 class _ArtifactWritingSession:
     """Write files with names known only at run time into the supplied scratch tree."""
 

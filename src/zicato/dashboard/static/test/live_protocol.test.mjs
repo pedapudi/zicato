@@ -730,9 +730,12 @@ test('racing multi-survivor — the Match-ups view renders ALL lanes of an in-fl
   const at = racingMultiInflight('inflight');
   // build the live model the Match-ups view consumes (published rounds + active
   // -runs overlay), then render it via the SAME renderStructure dispatch.
-  const built = STRUCT.buildLiveRacingModel({ at, heartbeat: hb({ phase: 'tournament:rung1' }),
-    activeRuns: [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r5' }, { generation_id: 'v7', entry_id: 'b1', run_id: 'r7' }],
-    epochGens: ['v0', 'v5', 'v7'] });
+  const built = STRUCT.buildLiveModel(
+    at,
+    hb({ phase: 'tournament:rung1' }),
+    [{ generation_id: 'v5', entry_id: 'b0', run_id: 'r5' }, { generation_id: 'v7', entry_id: 'b1', run_id: 'r7' }],
+    ['v0', 'v5', 'v7'],
+  );
   const host = document.createElement('div');
   for (const n of STRUCT.renderStructure(built, CTX, EPOCH)) if (n) host.appendChild(n);
 

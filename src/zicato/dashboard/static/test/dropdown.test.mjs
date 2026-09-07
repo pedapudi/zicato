@@ -12,6 +12,7 @@ import { installDom, makeEvent, test, run, assert, assertEqual } from './harness
 
 installDom();
 
+const { DEFAULT_TYPE } = await import('../js/ui.js');
 const { buildSwatchDropdown, syncSwatchDropdowns } = await import('../js/swatchdropdown.js');
 const { buildTypefaceDropdown, syncTypefaceDropdowns, syncFontSizeSegments } = await import('../js/typefacedropdown.js');
 
@@ -123,16 +124,15 @@ test('a colour choice reaches every mounted swatch picker', () => {
   assertEqual(selected(b, 'data-theme').join(','), 'monokai', 'an unknown theme normalises to the default');
 });
 
-test('a typeface choice reaches every mounted picker, and a mode id migrates', () => {
+test('a typeface choice reaches every mounted picker, and retired aliases use the default', () => {
   const a = buildTypefaceDropdown('google-sans-mono', () => {});
   const b = buildTypefaceDropdown('google-sans-mono', () => {});
   syncTypefaceDropdowns('archivo-narrow');
   assertEqual(selected(a, 'data-type').join(','), 'archivo-narrow', 'the first picker follows the fan-out');
   assertEqual(selected(b, 'data-type').join(','), 'archivo-narrow', 'so does the second');
-  // A stored MODE id is not itself an option id; it migrates to that group's
-  // first face rather than snapping back to the global default.
   syncTypefaceDropdowns('editorial');
-  assertEqual(selected(b, 'data-type').join(','), 'fraunces', 'a mode id resolves to its group\'s first face');
+  assertEqual(selected(a, 'data-type').join(','), DEFAULT_TYPE, 'the first picker uses the default for a retired alias');
+  assertEqual(selected(b, 'data-type').join(','), DEFAULT_TYPE, 'the second picker uses the same default');
 });
 
 test('the text-size segment in the typeface popover chooses and syncs', () => {

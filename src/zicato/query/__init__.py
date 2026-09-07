@@ -92,7 +92,6 @@ from zicato.query.paths import (
     read_current_epoch,
 )
 from zicato.query.proposer_view import (
-    build_proposer_recommendations,
     build_proposer_scorecard,
 )
 from zicato.query.racing_view import build_racing_field
@@ -180,7 +179,6 @@ __all__ = [
     "build_per_judge_trend",
     "build_practice_review",
     "build_proposal_episode_export",
-    "build_proposer_recommendations",
     "build_proposer_scorecard",
     "build_racing_field",
     "build_reflection_summary",

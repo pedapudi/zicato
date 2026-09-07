@@ -30,6 +30,7 @@ from tests._workspace_support import (
     write_json,
     write_jsonl,
     write_run,
+    write_tournament,
 )
 from zicato.core import run_id_for_unit
 from zicato.query import (
@@ -330,7 +331,12 @@ def test_build_run_transcript_stamps_coordinates(
 ) -> None:
     layout = _base_workspace(tmp_path)
     run_dir = write_run(layout, EPOCH, GEN, ENTRY, events=[{"runId": "r1"}])
-    write_json(run_dir / "artifacts.json", {"files": [{"path": "report.html", "size": 42}]})
+    from zicato.tournament.artifacts import capture_run_artifacts
+
+    scratch = tmp_path / "artifact-scratch"
+    scratch.mkdir()
+    (scratch / "report.html").write_bytes(b"x" * 42)
+    capture_run_artifacts(scratch, run_dir / "loss.json")
     payload = {"run_id": "", "turns": [{"role": "user"}], "annotations": [], "event_count": 1}
     _install_fake_reconstruct(monkeypatch, payload)
     out = build_run_transcript(WorkspacePaths(layout.root), EPOCH, GEN, ENTRY)
@@ -533,8 +539,8 @@ def test_matchup_conversations_shape_both_sides(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     layout = _base_workspace(tmp_path)
-    write_json(
-        layout.active_tournament,
+    write_tournament(
+        layout.root,
         {
             "tournament_id": "t1",
             "parent_generation_id": "v0",
@@ -570,8 +576,8 @@ def test_matchup_conversations_failed_reconstruction_still_serves_results(
 ) -> None:
     """DQ3: a failed reconstruction degrades that transcript, not the payload."""
     layout = _base_workspace(tmp_path)
-    write_json(
-        layout.active_tournament,
+    write_tournament(
+        layout.root,
         {
             "tournament_id": "t1",
             "parent_generation_id": "v0",

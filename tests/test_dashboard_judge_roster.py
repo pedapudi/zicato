@@ -2,8 +2,7 @@
 
 Two readers, deliberately kept apart:
 
-* ``_parse_board_judges`` — the AUTHORED half. A sibling of ``_parse_board``
-  (never a widening of it) projecting each entry's declared process judges
+* ``_project_board_judges`` — the authored half, projecting accepted process judges
   onto the epoch view as ``board_judges``. Omitted when the board declares
   none, so a judge-free epoch's payload stays byte-identical.
 * ``build_judge_roster`` — the DERIVED half. goldfive's built-in judge set
@@ -26,9 +25,10 @@ from starlette.testclient import TestClient
 
 from tests._reflection_support import scorecard_body
 from tests.test_no_goldfive_import import _ok, _run_without_goldfive
+from zicato.board.jsonl import load_board_rows
 from zicato.dashboard.server import create_app
 from zicato.query import WorkspacePaths, build_epoch_view, build_judge_roster
-from zicato.query.epoch_view import _parse_board_judges
+from zicato.query.epoch_view import _project_board_judges
 from zicato.query.judge_roster import NO_GOLDFIVE_NOTE
 from zicato.reflection.plan import ReflectionPlan, write_plan
 from zicato.reflection.scorecards import Scorecards, write_scorecards
@@ -48,6 +48,7 @@ def _board(*rows: dict) -> str:
 _ENTRY_WITH_BOTH_MODES = {
     "id": "transformers_lay_audience",
     "kind": "single_turn",
+    "wall_clock_budget_seconds": 1,
     "input": "Build slides explaining transformers.",
     "expectation": {"kind": "predicate", "spec": "pkg.preds:mentions"},
     "judges": [
@@ -69,6 +70,7 @@ _ENTRY_WITH_BOTH_MODES = {
 _ENTRY_WITHOUT_JUDGES = {
     "id": "waffles_single",
     "kind": "single_turn",
+    "wall_clock_budget_seconds": 1,
     "input": "Make a presentation about waffles.",
     "expectation": {"kind": "predicate", "spec": "pkg.preds:waffles"},
 }
@@ -98,7 +100,7 @@ def workspace(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# _parse_board_judges — the authored half
+# Declared judges
 # ---------------------------------------------------------------------------
 
 
@@ -109,7 +111,9 @@ def test_projects_names_and_metadata_only(workspace: Path) -> None:
     the wire. A python judge's is a dotted import path, which is the only
     thing telling two python judges apart on screen.
     """
-    judges = _parse_board_judges(workspace / "epochs" / EPOCH / "board.jsonl")
+    judges = _project_board_judges(
+        load_board_rows(workspace / "epochs" / EPOCH / "board.jsonl") or []
+    )
     assert judges is not None
     assert list(judges) == ["transformers_lay_audience"]  # the judge-free entry is absent
     inline, python = judges["transformers_lay_audience"]
@@ -130,31 +134,11 @@ def test_empty_when_no_entry_declares_a_judge(tmp_path: Path) -> None:
     """A judge-free board yields ``None`` so the epoch key is omitted."""
     board = tmp_path / "board.jsonl"
     _write(board, _board({"board_meta": True, "judge_only": True}, _ENTRY_WITHOUT_JUDGES))
-    assert _parse_board_judges(board) is None
-
-
-def test_degrades_per_row_not_per_file(tmp_path: Path) -> None:
-    """A torn line, a non-object judge, and an unnamed judge drop; siblings survive."""
-    board = tmp_path / "board.jsonl"
-    _write(
-        board,
-        json.dumps({"id": "a", "judges": [{"name": "keeps", "mode": "inline", "severity": "info"}]})
-        + "\n{not json at all\n"
-        + json.dumps({"id": "b", "judges": ["a bare string", {"mode": "inline"}]})
-        + "\n"
-        + json.dumps({"id": "c", "judges": "not a list"})
-        + "\n"
-        + json.dumps({"judges": [{"name": "no_entry_id"}]})
-        + "\n",
-    )
-    judges = _parse_board_judges(board)
-    # ``b`` declared only unusable judges, so it contributes no row at all —
-    # an entry key mapping to [] would read as "judges configured, none shown".
-    assert judges == {"a": [{"name": "keeps", "mode": "inline", "severity": "info"}]}
+    assert _project_board_judges(load_board_rows(board) or []) is None
 
 
 def test_missing_board_is_not_an_error(tmp_path: Path) -> None:
-    assert _parse_board_judges(tmp_path / "nope.jsonl") is None
+    assert _project_board_judges(load_board_rows(tmp_path / "nope.jsonl") or []) is None
 
 
 def test_epoch_view_carries_board_judges_and_omits_them_when_absent(workspace: Path) -> None:
@@ -162,7 +146,7 @@ def test_epoch_view_carries_board_judges_and_omits_them_when_absent(workspace: P
     view = build_epoch_view(WorkspacePaths(workspace), EPOCH)
     assert set(view["board_judges"]) == {"transformers_lay_audience"}
     # ``board`` itself is untouched — the projection is a SIBLING, so no board
-    # row gained a key and every _parse_board consumer reads what it always did.
+    # row gained a key.
     assert all("judges" not in row for row in view["board"])
 
     _write(

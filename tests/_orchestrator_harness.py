@@ -1,11 +1,8 @@
 """Scripted-orchestrator harness: the stubs an evolve-loop test runs against.
 
-Twenty-two test modules drive :mod:`zicato.orchestrator` end to end with
-every external dependency replaced — the two LLM callables, the harness
-adapter, the telemetry sink and the loss reducer — so a round completes
-with no model traffic, no google-adk and no goldfive. The stubs that make
-that possible live here rather than inside any one test module, because
-they are shared scaffolding and not the subject of any single suite.
+Evolve-loop tests replace model calls, the adapter, the telemetry sink and
+loss reduction with deterministic implementations. The module-level callables
+are declared before epoch preparation so their frozen roles match execution.
 
 Three of the stubs carry decisions that are easy to undo by accident:
 
@@ -48,6 +45,7 @@ from zicato.core.types import (
 )
 from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.lifecycle import new_epoch
+from zicato.import_path import _callable_dotted_path
 from zicato.tournament.worker_transport import _entry_replicate_index
 
 
@@ -56,19 +54,10 @@ async def target_call_llm(system: str, user: str, model: str) -> str:
     return ""
 
 
-def make_aux_responder(responses: list[str]) -> Any:
-    """Return a fresh async aux callable that yields ``responses`` in order."""
-    state = {"i": 0}
-
-    async def _aux(system: str, user: str, model: str) -> str:
-        del system, user, model
-        i = state["i"]
-        if i >= len(responses):
-            raise AssertionError("stub aux LLM ran out of responses")
-        state["i"] = i + 1
-        return responses[i]
-
-    return _aux
+async def evaluation_call_llm(system: str, user: str, model: str) -> str:
+    """Refuse an unexpected evaluation call in a scripted round."""
+    del system, user, model
+    raise AssertionError("stub aux LLM ran out of responses")
 
 
 def bootstrap_workspace(
@@ -76,6 +65,8 @@ def bootstrap_workspace(
     *,
     weights: ScoringWeights | None = None,
     mutable_trees: tuple[str, ...] = (),
+    target_call_llm: Any = target_call_llm,
+    evaluation_call_llm: Any = evaluation_call_llm,
     **proposer: Any,
 ) -> tuple[Path, str]:
     """Create a workspace + one epoch + a v0 baseline snapshot.
@@ -104,6 +95,10 @@ def bootstrap_workspace(
                 # generations from git tags this fixture never writes.
                 "generation_source_backend": "directory",
                 "mutable_trees": list(mutable_trees),
+                "runtime": {
+                    "target_call_llm": _callable_dotted_path(target_call_llm),
+                    "evaluation_call_llm": _callable_dotted_path(evaluation_call_llm),
+                },
                 "adapter": {
                     "kind": "import",
                     "factory": "tests._stub_adapter:make_stub_adapter",
@@ -391,9 +386,9 @@ def run_evolve_once(
     """Run one scripted evolve round and return its outcome.
 
     Every scripted caller drives the round the same way: the same target
-    callable, the workspace and epoch the bootstrap just produced, and a
-    scripted evaluation callable that stands in for the proposer. Only the
-    scripted responses differ, so only they are passed.
+    callable, the workspace and epoch the bootstrap just produced, and the
+    evaluator declared before epoch preparation. The proposal runtime supplies
+    the candidate episode.
 
     ``evolve_once`` is imported inside this function rather than at module
     scope, which is how the callers did it. It matters: a caller has

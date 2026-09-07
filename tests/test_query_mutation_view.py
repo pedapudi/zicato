@@ -232,9 +232,12 @@ def _record_surface(ws: Path, epoch_id: str, roots: list[Path]) -> None:
     dashboard reads what that writer produces, and a fixture that spelled
     the record itself could keep passing while the two drifted apart.
     """
-    from zicato.evolve.round_baseline import _dump_mutations_snapshot
+    from zicato.mutation.inventory import write_mutation_inventory
+    from zicato.workspace import WorkspaceLayout
 
-    _dump_mutations_snapshot(ws, epoch_id, list(enumerate_mutations(roots)))
+    write_mutation_inventory(
+        WorkspaceLayout.from_root(ws).mutations(epoch_id), list(enumerate_mutations(roots))
+    )
 
 
 def _prune_trees(ws: Path, epoch_id: str, *generation_ids: str) -> None:

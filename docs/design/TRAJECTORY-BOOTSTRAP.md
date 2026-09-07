@@ -7,11 +7,11 @@
 > `reflect suggest --from-trajectories` wiring that runs the chain and
 > persists its output (§6). The seam signatures the three call across are
 > stated once, in §7. Everything is recommend-only: nothing here auto-edits a
-> sealed contract, and every path terminates at a builder draft the operator
-> seals.
+> sealed contract. Suggested artifacts and their evidence remain reports for
+> operator review.
 
 Companion to [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md) (this feeds the same
-suggestion, admission and inbox path as an additional source for that engine
+suggestion, admission, and report path as an additional source for that engine
 rather than as a second engine), [`TELEMETRY-DIALECTS.md`](TELEMETRY-DIALECTS.md) (the
 `LossProfile`-convergence dialects this program reduces foreign traces
 through), and [`BOARD-FORMAT.md`](BOARD-FORMAT.md) (the entry / predicate /
@@ -31,7 +31,7 @@ board from traces before any loop exists*:
 > Point zicato at a directory of foreign trace files — production logs from
 > **any** agent, captured with zero zicato involvement — and it mines
 > signal-episodes, drafts board entries with drafted expectations, and feeds
-> them into the same admission → suggestion → inbox surface eval synthesis
+> them into the same admission and suggestion reports eval synthesis
 > already ships. The operator starts from a measured draft board rather than
 > a blank one.
 
@@ -55,7 +55,7 @@ already structurally true one layer down — TELEMETRY-DIALECTS.md made
 that seam: it reduces each foreign trace through the **existing** dialect
 reducer for its sniffed format and mines the resulting signals. The
 zero-goldfive path is pinned by a test (§9): the whole
-import → mine → synthesise → persist → apply chain runs with no goldfive
+import → mine → synthesise → persist chain runs with no goldfive
 artifact anywhere.
 
 ### 1.2 Relationship to eval synthesis
@@ -67,14 +67,13 @@ everything else eval synthesis built:
 - the internal `Suggestion` → surface `Suggestion` bridge (`synthesis.py`);
 - the persisted `suggestions.json` shape + the admission render
   (`suggestions.py`);
-- the `reflect apply` → builder-draft seam (`apply.py`);
 - the operator-only envelope (EVAL-SYNTHESIS.md §7 — foreign traces are
   operator-side artifacts and NEVER enter the proposer's prompt).
 
 A bootstrap suggestion is indistinguishable, on the surface, from an
 eval-synthesis suggestion except for its provenance block (§5) naming a
-foreign source. The inbox, the admission stats, and the apply path are
-unchanged.
+foreign source. Both sources use the same admission statistics and persisted
+suggestion format.
 
 ## 2. The accepted trace formats + format sniffing
 
@@ -205,9 +204,8 @@ carved (EVAL-SYNTHESIS.md §6 "Mint-mode reflection dirs"):
   suggestions.json              # the mint-mode output (existing)
 ```
 
-Such a dir carries no `plan.json`, so `list_reflections` skips it and the
-builder inbox scans `reflections/*/suggestions.json` directly — identical to
-the eval-synthesis mint-mode contract. **Import timestamp policy:** the
+Such a directory carries no `plan.json`, so `list_reflections` skips it.
+Suggestion readers inspect the canonical suggestion files directly. **Import timestamp policy:** the
 records carry **no wall-clock field** and the ids are content hashes, so the
 persisted layout is byte-stable across re-imports; GC of suggest-minted dirs
 stays deferred (EVAL-SYNTHESIS.md §8), inherited unchanged.
@@ -369,7 +367,7 @@ Bootstrap entries thus default to **`train`** (like regression entries,
 EVAL-SYNTHESIS.md §4's stated exception), and admission's leakage check (§4 of
 eval-synthesis) trivially passes because `source_lineage_ids` is empty — there
 is no proposer whose slice could have been seen. The operator may still route
-a bootstrap entry into rotation from the inbox; the *default* is train because
+a bootstrap entry into rotation when authoring a contract; the *default* is train because
 the collusion hazard the default guards against does not exist for a foreign
 trace.
 
@@ -387,7 +385,7 @@ directory alone — it depends on operator knowledge of the source), so the
 caveat cannot be enforced mechanically; instead it is surfaced where the
 operator decides slice routing: the caveat text is embedded in the **suggestion
 rationale of every bootstrap entry** (one sentence, `_SELF_TRACE_CAVEAT`), so an
-operator reading a draft in the inbox sees the warning before promoting it out
+operator reading the suggestion sees the warning before promoting it out
 of train.
 
 ## 6. The `reflect suggest --from-trajectories` wiring
@@ -415,15 +413,12 @@ of train.
   4. persists `suggestions.json` + the `imported/` records; renders the table.
 - **Admission unchanged.** The four probes (EVAL-SYNTHESIS.md §5) run as-is; a
   bootstrap suggestion's empty `source_lineage_ids` makes the leakage check a
-  clean pass, and the foreign-source block renders in the inbox row.
-- **The inbox renders foreign-source provenance** — the suggestion row shows
-  `dialect` + `source_file` as a quiet caption beside the admission banner (the
-  findings-panel treatment, EVAL-SYNTHESIS.md §6), so the operator sees a
-  suggestion came from `prod-run-01.jsonl` in the `adk_events` dialect rather
-  than from a champion's own reign.
-- **The command reference** — [`CLI.md`](CLI.md) is generated from
-  `zicato --help`, so it carries the `--from-trajectories` row, and
-  `tools/parity/golden/cli_help.txt` is captured to match.
+  clean pass. The suggestion retains the foreign-source provenance.
+- **Foreign-source provenance** records the trace dialect and source file.
+  These identify the observations that motivated each suggestion.
+- **The command reference** — [`CLI.md`](CLI.md) describes command locations.
+  The generated `tools/parity/golden/cli_help.txt` records the complete
+  `--from-trajectories` help.
 - **The un-mocked composition test** (§9) is
   `tests/test_trajectory_bootstrap_composition.py`. It is capability-guarded
   on the §7 bootstrap symbols (`synthesize_bootstrap_suggestions` and
@@ -584,8 +579,8 @@ prompt-injection surface and is disclosed here explicitly:
 **Delimiting reduces, it does not eliminate, the risk.** A determined injection
 can still attempt to break the fence. The standing mitigations remain: the
 operator **curates the trace directory** (only pointing zicato at traces they
-trust as a source) **and reviews every drafted suggestion** in the inbox before
-sealing it (recommend-only, nothing auto-edits a sealed contract, §1). Full
+trust as a source) **and reviews every drafted suggestion** before authoring
+a contract change. Suggestions do not edit the contract (§1). Full
 trace anonymisation / injection-scrubbing stays deferred (below).
 
 **Deferred and recorded:**
@@ -643,15 +638,15 @@ transcript / adk_events dir, no goldfive install assumed). **The un-mocked compo
 §7 bootstrap symbols) closes the chain: a real foreign-trace fixture directory
 runs through the real `import_trajectories`, the real `mine_episodes`, the
 real `synthesize`, a persisted `suggestions.json` carrying a non-empty
-`draft_artifact` and `proposed_op`, and a real `reflect apply` into a builder
-draft. No resolver monkeypatching.
+`draft_artifact` and `proposed_op`. The test preserves the artifact and
+provenance through persistence without patching the resolver.
 
 ## 10. Cross-references
 
 | Topic | Document |
 |---|---|
 | The UI visualising these traces + the board being created | [`TRAJECTORY-UI.md`](TRAJECTORY-UI.md) |
-| The suggestion / admission / inbox engine this feeds | [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md) |
+| The suggestion and admission engine this feeds | [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md) |
 | `LossProfile` convergence + the three dialect producers | [`TELEMETRY-DIALECTS.md`](TELEMETRY-DIALECTS.md) |
 | The entry / predicate / judge schema the drafts obey | [`BOARD-FORMAT.md`](BOARD-FORMAT.md) |
 | The emulator persona a multi-turn bootstrap entry scripts | [`EMULATOR.md`](EMULATOR.md) |

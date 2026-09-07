@@ -9,11 +9,20 @@ import os
 import shutil
 import stat
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 from zicato.core.lineage import ArtifactFile, ArtifactSet
-from zicato.core.measurement import artifact_replicate_index, unit_artifact_name
+from zicato.core.loss import LossProfile, capture_matches_loss
+from zicato.core.measurement import (
+    MeasurementDraw,
+    artifact_replicate_index,
+    recorded_measurement,
+    unit_artifact_name,
+)
+from zicato.epoch._storage import RecordFormatError, check_record_format
+from zicato.storage import atomic_write_text
 
 ARTIFACT_FORMAT_VERSION = 1
 MAX_ARTIFACT_FILES = 1_000
@@ -99,12 +108,130 @@ def archive_unit_artifacts(loss_path: Path) -> Path | None:
 
 def artifact_paths(loss_path: Path) -> tuple[Path, Path]:
     """Return the replicate-keyed ``(tree, manifest)`` paths for a loss slot."""
-    name = loss_path.name
-    slot = "" if name == "loss.json" else name[len("loss") : -len(".json")]
-    return (
-        loss_path.with_name(f"artifacts{slot}"),
-        loss_path.with_name(f"artifacts{slot}.json"),
-    )
+    index = artifact_replicate_index(loss_path.name)
+    if index is None:
+        raise ValueError("artifact capture requires a measurement loss path")
+    manifest = loss_path.with_name(unit_artifact_name("artifacts", index))
+    return manifest.with_suffix(""), manifest
+
+
+def _relative_artifact_path(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or "\\" in value
+        or "\0" in value
+        or any(part in {"", ".", ".."} for part in value.split("/"))
+    ):
+        raise ValueError("artifact paths must be normalized relative paths")
+    return value
+
+
+def artifact_manifest_from_payload(payload: object) -> dict[str, Any]:
+    """Validate the complete manifest shape while retaining extension fields.
+
+    Copied-file access and paired measurement identity belong to the reader.
+    This codec neither changes copied bytes nor fills missing provenance.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("artifact manifest must be an object")
+    try:
+        check_record_format(
+            payload,
+            "artifact manifest",
+            expected_version=ARTIFACT_FORMAT_VERSION,
+            allow_missing=False,
+        )
+    except RecordFormatError as exc:
+        raise ValueError(str(exc)) from exc
+    files, skipped = payload.get("files"), payload.get("skipped")
+    if not isinstance(files, list) or not isinstance(skipped, list):
+        raise ValueError("artifact files and skipped entries must be lists")
+    paths: set[str] = set()
+    total = 0
+    for item in files:
+        if not isinstance(item, dict):
+            raise ValueError("artifact file must be an object")
+        path = _relative_artifact_path(item.get("path"))
+        size, sha256, media_type = item.get("size"), item.get("sha256"), item.get("media_type")
+        if (
+            path in paths
+            or type(size) is not int
+            or size < 0
+            or not isinstance(sha256, str)
+            or len(sha256) != 64
+            or any(char not in "0123456789abcdef" for char in sha256)
+            or not isinstance(media_type, str)
+            or not media_type
+        ):
+            raise ValueError("invalid or repeated artifact file metadata")
+        paths.add(path)
+        total += size
+    limited = False
+    for item in skipped:
+        if not isinstance(item, dict):
+            raise ValueError("skipped artifact must be an object")
+        path = _relative_artifact_path(item.get("path"))
+        reason = item.get("reason")
+        if path in paths or not isinstance(reason, str) or not reason:
+            raise ValueError("invalid or repeated skipped artifact")
+        paths.add(path)
+        limited |= reason == "capture_limit"
+    if type(payload.get("total_bytes")) is not int or payload["total_bytes"] != total:
+        raise ValueError("artifact total differs from its file inventory")
+    if type(payload.get("truncated")) is not bool or payload["truncated"] != limited:
+        raise ValueError("artifact truncation differs from its skipped inventory")
+    if "measurement" in payload:
+        MeasurementDraw.from_json(payload["measurement"])
+        if not isinstance(payload.get("run_id"), str) or not payload["run_id"]:
+            raise ValueError("artifact measurement requires its run identity")
+    elif "run_id" in payload:
+        raise ValueError("artifact run identity requires its measurement")
+    return deepcopy(payload)
+
+
+def read_artifact_manifest(
+    loss_path: Path, *, expected: LossProfile | None = None
+) -> dict[str, Any] | None:
+    """Read one exact companion; absence returns None and defects raise ValueError.
+
+    Unpaired historical inventories remain available for audit. A paired loss
+    with a known seed requires matching measurement and run provenance. Invalid
+    records and copied files remain untouched for inspection.
+    """
+    artifact_root, manifest_path = artifact_paths(loss_path)
+    try:
+        metadata = manifest_path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError(f"unreadable artifact manifest: {exc}") from exc
+    try:
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("artifact manifest must be a regular file")
+        body = artifact_manifest_from_payload(json.loads(manifest_path.read_text(encoding="utf-8")))
+        if not capture_matches_loss(body, expected):
+            raise ValueError("artifact provenance differs from the paired loss")
+        if "measurement" in body:
+            index = artifact_replicate_index(loss_path.name)
+            assert index is not None  # artifact_paths validated the physical slot.
+            recorded_measurement(
+                index,
+                measurement=MeasurementDraw.from_json(body["measurement"]),
+            )
+        if not stat.S_ISDIR(artifact_root.lstat().st_mode):
+            raise ValueError("artifact root must be a directory without a link")
+        root = artifact_root.resolve(strict=True)
+        for item in body["files"]:
+            path = root / item["path"]
+            if path.resolve(strict=True) != path or not path.is_relative_to(root):
+                raise ValueError("copied artifact path resolves outside its recorded location")
+            metadata = path.lstat()
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != item["size"]:
+                raise ValueError("copied artifact differs from its recorded file metadata")
+        return body
+    except (OSError, UnicodeError, TypeError, ValueError) as exc:
+        raise ValueError(f"unreadable artifact manifest: {exc}") from exc
 
 
 def _media_type(path: str) -> str:
@@ -134,16 +261,9 @@ def _copy_regular_file(source: Path, destination: Path) -> tuple[int, str]:
 
 
 def _write_manifest(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    tmp = Path(raw_tmp)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
-            handle.write("\n")
-        os.replace(tmp, path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    atomic_write_text(
+        path, json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", mode=0o600
+    )
 
 
 def capture_run_artifacts(
@@ -152,6 +272,8 @@ def capture_run_artifacts(
     *,
     max_files: int = MAX_ARTIFACT_FILES,
     max_total_bytes: int = MAX_ARTIFACT_BYTES,
+    measurement: MeasurementDraw | None = None,
+    run_id: str | None = None,
 ) -> ArtifactSet:
     """Persist and inventory regular files found beneath ``scratch_root``.
 
@@ -161,6 +283,10 @@ def capture_run_artifacts(
     and never followed.
     """
     artifact_root, manifest_path = artifact_paths(loss_path)
+    if measurement is not None:
+        index = artifact_replicate_index(loss_path.name)
+        assert index is not None  # artifact_paths validated the physical slot.
+        recorded_measurement(index, measurement=measurement)
     loss_path.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{artifact_root.name}.", dir=loss_path.parent))
     files: list[ArtifactFile] = []
@@ -208,9 +334,7 @@ def capture_run_artifacts(
             )
             total_bytes += size
 
-        shutil.rmtree(artifact_root, ignore_errors=True)
-        os.replace(staging, artifact_root)
-        payload = {
+        payload: dict[str, Any] = {
             "format_version": ARTIFACT_FORMAT_VERSION,
             "files": [
                 {
@@ -225,6 +349,13 @@ def capture_run_artifacts(
             "total_bytes": total_bytes,
             "truncated": truncated,
         }
+        if measurement is not None:
+            payload["measurement"] = measurement.to_json()
+        if run_id is not None:
+            payload["run_id"] = run_id
+        payload = artifact_manifest_from_payload(payload)
+        shutil.rmtree(artifact_root, ignore_errors=True)
+        os.replace(staging, artifact_root)
         _write_manifest(manifest_path, payload)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
@@ -244,5 +375,7 @@ __all__ = [
     "MAX_ARTIFACT_BYTES",
     "MAX_ARTIFACT_FILES",
     "artifact_paths",
+    "artifact_manifest_from_payload",
     "capture_run_artifacts",
+    "read_artifact_manifest",
 ]

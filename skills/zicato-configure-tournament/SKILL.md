@@ -12,7 +12,7 @@ skill: how the within-round bracket and the across-round loop fit together, how
 the proposer accumulates memory, what it costs, and how to prove it is actually
 evolving.
 
-It composes — it does not restate — the structure and builder skills. Defer:
+It composes — it does not restate — the structure and board-authoring skills. Defer:
 
 - **Which structure, its params, the noise/incumbent design principles, the
   `scoring.json` `tournament` block** → [`zicato-design-tournament-structure`](../zicato-design-tournament-structure/SKILL.md).
@@ -23,7 +23,6 @@ It composes — it does not restate — the structure and builder skills. Defer:
   the live-run gate** → [`zicato-evolve`](../zicato-evolve/SKILL.md).
 - **The epoch → round → generation hierarchy and the two senses of "round"** →
   [`zicato-manage-epochs-and-rounds`](../zicato-manage-epochs-and-rounds/SKILL.md).
-- **Assembling the whole contract through the GUI builder** → [`zicato-build-tournament`](../zicato-build-tournament/SKILL.md).
 - **The mandatory pre-run hypothesis (per experiment)** → [`zicato-design-experiment`](../zicato-design-experiment/SKILL.md).
 - **Reading the proposer's memory channels in telemetry** → [`zicato-read-telemetry`](../zicato-read-telemetry/SKILL.md).
 
@@ -191,7 +190,7 @@ wall_clock ≈ board_runs × per_entry_budget ÷ parallelism
   `2` — gauntlet, swiss, and both elim brackets — and only `racing` pins `1`.
   So even a plain gauntlet already costs ~2× a single duel before you touch the
   knob; pin `"replicates": 1` explicitly for the historical single-run duel (a
-  deterministic harness can). The cost estimator and the builder read those same
+  deterministic harness can). The cost estimator reads those same
   defaults, so an estimate is honest even when `replicates` is unspecified.
 - `rounds` is the OUTER evolve loop — total cost scales linearly in it.
 - `parallelism` is `RuntimeConfig.parallelism` (the run fan-out semaphore);

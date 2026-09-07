@@ -299,7 +299,7 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
                         or ((last or {}).get("champion") or {}).get("id")
                         or seed_id
                     )
-                    projected = active.get("projected_standings")
+                    projected = active.get("projected")
                     projected = projected if isinstance(projected, dict) else {}
                     status = {
                         str(row.get("generation_id")): row.get("status")

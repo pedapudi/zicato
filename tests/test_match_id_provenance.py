@@ -17,10 +17,11 @@ Three layers are exercised, all without a live evolve run:
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import zicato.tournament.runner as runner_mod
-from tests._runtime_builders import seed_promoted_lineage
+from tests._runtime_builders import prepare_tournament_epoch, seed_promoted_lineage
 from zicato.core import (
     BoardEntry,
     Generation,
@@ -102,35 +103,42 @@ def test_run_matchup_threads_match_id_to_each_run(monkeypatch, tmp_path) -> None
     async def fake_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, config, workspace_root, epoch_id, side
+        del adapter, weights, config, workspace_root, side
         seen.append(match_id)
-        return LossProfile(
-            run_id=f"run-{generation.id}-{entry.id}",
-            entry_id=entry.id,
-            generation_id=generation.id,
-            epoch_id="e0",
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
-            plan_revisions=0,
-            task_failure_ratio=0.0,
-            runtime_ms=1000,
-            wall_clock_budget_exceeded=False,
-            expectation_result=ExpectationResult(kind="predicate", passed=True),
-            drift_loss=1.0,
-            pass_fail=True,
-            match_id=match_id,
+        return replace(
+            LossProfile(
+                run_id=f"run-{generation.id}-{entry.id}",
+                entry_id=entry.id,
+                generation_id=generation.id,
+                epoch_id="e0",
+                drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+                plan_revisions=0,
+                task_failure_ratio=0.0,
+                runtime_ms=1000,
+                wall_clock_budget_exceeded=False,
+                expectation_result=ExpectationResult(kind="predicate", passed=True),
+                drift_loss=1.0,
+                pass_fail=True,
+                match_id=match_id,
+            ),
+            epoch_id=epoch_id,
         )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    board = _board()
+    weights = ScoringWeights()
+    config = _config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
-            board=_board(),
-            weights=ScoringWeights(),
-            config=_config(tmp_path),
+            left_gen=replace(_gen(tmp_path, "v0"), epoch_id=epoch_id),
+            right_gen=replace(_gen(tmp_path, "v1"), epoch_id=epoch_id),
+            board=board,
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             match_id="rung0_m2",
         )
     )
@@ -155,34 +163,41 @@ def test_run_matchup_stamps_judge_only_onto_each_entry(monkeypatch, tmp_path) ->
     async def fake_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, generation, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, generation, weights, config, workspace_root, side, match_id
         seen_contexts.append(dict(entry.context))
-        return LossProfile(
-            run_id="run-x",
-            entry_id=entry.id,
-            generation_id="v0",
-            epoch_id="e0",
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
-            plan_revisions=0,
-            task_failure_ratio=0.0,
-            runtime_ms=1000,
-            wall_clock_budget_exceeded=False,
-            expectation_result=ExpectationResult(kind="predicate", passed=True),
-            drift_loss=1.0,
-            pass_fail=True,
+        return replace(
+            LossProfile(
+                run_id="run-x",
+                entry_id=entry.id,
+                generation_id="v0",
+                epoch_id="e0",
+                drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+                plan_revisions=0,
+                task_failure_ratio=0.0,
+                runtime_ms=1000,
+                wall_clock_budget_exceeded=False,
+                expectation_result=ExpectationResult(kind="predicate", passed=True),
+                drift_loss=1.0,
+                pass_fail=True,
+            ),
+            epoch_id=epoch_id,
         )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    board = _board()
+    weights = ScoringWeights()
+    config = _config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
-            board=_board(),
-            weights=ScoringWeights(),
-            config=_config(tmp_path),
+            left_gen=replace(_gen(tmp_path, "v0"), epoch_id=epoch_id),
+            right_gen=replace(_gen(tmp_path, "v1"), epoch_id=epoch_id),
+            board=board,
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             judge_only=True,
         )
     )
@@ -198,34 +213,41 @@ def test_run_matchup_default_leaves_judge_only_unset(monkeypatch, tmp_path) -> N
     async def fake_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, generation, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, generation, weights, config, workspace_root, side, match_id
         seen_contexts.append(dict(entry.context))
-        return LossProfile(
-            run_id="run-x",
-            entry_id=entry.id,
-            generation_id="v0",
-            epoch_id="e0",
-            drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
-            plan_revisions=0,
-            task_failure_ratio=0.0,
-            runtime_ms=1000,
-            wall_clock_budget_exceeded=False,
-            expectation_result=ExpectationResult(kind="predicate", passed=True),
-            drift_loss=1.0,
-            pass_fail=True,
+        return replace(
+            LossProfile(
+                run_id="run-x",
+                entry_id=entry.id,
+                generation_id="v0",
+                epoch_id="e0",
+                drift_counts=(DriftCount(kind="off_topic", severity="info", count=0),),
+                plan_revisions=0,
+                task_failure_ratio=0.0,
+                runtime_ms=1000,
+                wall_clock_budget_exceeded=False,
+                expectation_result=ExpectationResult(kind="predicate", passed=True),
+                drift_loss=1.0,
+                pass_fail=True,
+            ),
+            epoch_id=epoch_id,
         )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    board = _board()
+    weights = ScoringWeights()
+    config = _config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
-            board=_board(),
-            weights=ScoringWeights(),
-            config=_config(tmp_path),
+            left_gen=replace(_gen(tmp_path, "v0"), epoch_id=epoch_id),
+            right_gen=replace(_gen(tmp_path, "v1"), epoch_id=epoch_id),
+            board=board,
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
     assert seen_contexts, "no board runs were scheduled"

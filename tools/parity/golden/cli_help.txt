@@ -15,15 +15,13 @@ Primary commands:
              loop.
   dashboard  Advanced: serve the dashboard for an existing workspace (evolve
              auto-spawns it).
-  tui        Advanced: review a workspace in the terminal (the dashboard's peer
-             surface).
   health     Advanced: report whether the evolve loop has real optimization
              signal.
 
 Advanced namespaces:
   board       Advanced: inspect / hand-edit a per-epoch board.jsonl.
   epoch       Advanced: inspect / force epochs (evolve auto-epochs for you).
-  proposer    Advanced: score, diagnose, and improve the proposer itself.
+  proposer    Advanced: inspect proposal quality.
   tournament  Run isolated tournament operations.
   inspect     Inspect workspace state and derived analysis.
   repair      Rebuild or repair derived and legacy workspace data.
@@ -185,21 +183,18 @@ Usage: zicato dashboard [OPTIONS]
   (Ctrl-C).
 
 Options:
-  --view [overview|builder]  Initial dashboard view; builder opens the contract
-                             editor.  [default: overview]
-  --workspace PATH           Path to the zicato workspace root to serve.
-                             [default: .zicato]
-  --host TEXT                Host/bind address for the dashboard HTTP server.
-                             [default: 127.0.0.1]
-  --port INTEGER RANGE       Port for the dashboard HTTP server.  [default:
-                             7892; 1<=x<=65535]
-  --static-dir DIRECTORY     Filesystem path to the dashboard static-asset
-                             directory. Overrides dashboard.static_dir in
-                             workspace config. Relative flag paths use the
-                             current directory; relative config paths use the
-                             workspace parent. An empty configuration serves the
-                             bundled assets.
-  --help                     Show this message and exit.
+  --workspace PATH        Path to the zicato workspace root to serve.  [default:
+                          .zicato]
+  --host TEXT             Host/bind address for the dashboard HTTP server.
+                          [default: 127.0.0.1]
+  --port INTEGER RANGE    Port for the dashboard HTTP server.  [default: 7892;
+                          1<=x<=65535]
+  --static-dir DIRECTORY  Filesystem path to the dashboard static-asset
+                          directory. Overrides dashboard.static_dir in workspace
+                          config. Relative flag paths use the current directory;
+                          relative config paths use the workspace parent. An
+                          empty configuration serves the bundled assets.
+  --help                  Show this message and exit.
 
 ===== zicato epoch --help =====
 Usage: zicato epoch [OPTIONS] COMMAND [ARGS]...
@@ -703,28 +698,12 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  apply      Carry a finding/suggestion edit to a builder draft.
   practices  Cheap tier: the practice review over the contract + history (no
              corpus).
   report     Render a stored reflection's report.
   run        Build + analyse an observation corpus; emit ranked findings.
   suggest    Synthesise measured eval suggestions from mined episodes
              (generative reflection).
-
-===== zicato inspect reflection apply --help =====
-Usage: zicato inspect reflection apply [OPTIONS] REFLECTION_ID ITEM_ID
-
-  Fork a builder draft from the live contract and stage a finding's or
-  suggestion's op.
-
-  ``item_id`` is a finding id (``find-…``) or an eval-suggestion id (``sug-…``).
-  NEVER writes the sealed contract — the operator reviews the staged draft and
-  seals it through the builder, which is the gated step that rolls the epoch.
-
-Options:
-  --workspace TEXT  Workspace root.  [default: .zicato]
-  --epoch TEXT      Epoch owning the reflection.
-  --help            Show this message and exit.
 
 ===== zicato inspect reflection practices --help =====
 Usage: zicato inspect reflection practices [OPTIONS]
@@ -799,8 +778,8 @@ Usage: zicato inspect reflection suggest [OPTIONS]
   admission probes SPEND real champion budget and are endpoint-gated — they run
   ONLY under ``--probe`` (default OFF: plan-mode shows what they would spend,
   spending nothing). Suggestions persist beside ``findings.json`` and render
-  through ``zicato inspect reflection report``. Recommend-only: apply stages a
-  builder draft, never the sealed contract.
+  through ``zicato inspect reflection report``. Operators review the suggestions
+  and edit workspace configuration files before a subsequent evaluation.
 
   ``--from-trajectories <dir>`` bootstraps the instrument from a directory of
   foreign agent trace files (TRAJECTORY-BOOTSTRAP.md §6): the traces are
@@ -859,50 +838,14 @@ Options:
 ===== zicato proposer --help =====
 Usage: zicato proposer [OPTIONS] COMMAND [ARGS]...
 
-  Advanced: the proposer's scorecard and its recommend-only self-reflection.
-
-  The evolve loop improves the TARGET. This command surface improves the
-  PROPOSER — it reads the proposal-quality signals the loop already records,
-  diagnoses mechanism-level weaknesses, and drafts edits to the proposer dir for
-  the operator to apply at an epoch boundary.
-
-  Nothing here ever applies an edit on its own, and nothing here runs mid-epoch:
-  the proposer is frozen for its epoch, so a change to it is structurally an
-  epoch-boundary event.
+  Inspect proposal quality by epoch.
 
 Options:
   --help  Show this message and exit.
 
 Commands:
-  apply-recommendation  Write one drafted edit into the proposer dir (rolls the
-                        epoch).
-  propose               Advanced: generate one Experiment for the next
-                        generation.
-  recommendations       The pending queue: drafted, carries a diff, not yet
-                        applied.
-  reflect               Recommend-only: diagnose the proposer and draft edits to
-                        it.
-  scorecard             Per-epoch proposal quality + the trend.
-
-===== zicato proposer apply-recommendation --help =====
-Usage: zicato proposer apply-recommendation [OPTIONS] RECOMMENDATION_ID
-
-  Apply one recommendation's drafted edit to the proposer dir.
-
-  This is the operator's gate — the only path that writes a recommendation into
-  the proposer. Because the proposer dir folds into the contract hash, the edit
-  is contract drift: the next `zicato evolve` closes the current epoch and opens
-  a fresh one before proposing anything, and that new epoch's record carries
-  this recommendation id.
-
-Options:
-  --workspace TEXT              Workspace root.  [default: .zicato]
-  --epoch TEXT                  Epoch owning the recommendation.
-  --proposer-path TEXT          Proposer dir to write into (default: the
-                                workspace's registered one).
-  --show-diff / --no-show-diff  Print the remedy's unified diff before writing.
-                                [default: show-diff]
-  --help                        Show this message and exit.
+  propose    Advanced: generate one Experiment for the next generation.
+  scorecard  Per-epoch proposal quality + the trend.
 
 ===== zicato proposer propose --help =====
 Usage: zicato proposer propose [OPTIONS]
@@ -923,41 +866,6 @@ Options:
   --max-retries INTEGER RANGE  How many times to ask the proposer to fix a
                                malformed response.  [default: 2; 0<=x<=10]
   --help                       Show this message and exit.
-
-===== zicato proposer recommendations --help =====
-Usage: zicato proposer recommendations [OPTIONS]
-
-  List every drafted recommendation that has not been applied.
-
-  This is the same list the epoch boundary prints — the boundary is when
-  applying one is free, because the epoch is rolling anyway.
-
-Options:
-  --workspace TEXT  Workspace root.  [default: .zicato]
-  --json            Emit the raw records.
-  --help            Show this message and exit.
-
-===== zicato proposer reflect --help =====
-Usage: zicato proposer reflect [OPTIONS]
-
-  Diagnose the proposer from its own scorecard and draft edits to its skills.
-
-  Recommend-only, in the strong sense: this command has no code path to applying
-  anything. It reads aggregate mechanism evidence — never board content — and
-  writes findings whose remedy is a ready-to-apply diff. The operator applies
-  one, at an epoch boundary, with `zicato proposer apply-recommendation`.
-
-Options:
-  --workspace TEXT       Workspace root.  [default: .zicato]
-  --epoch TEXT           Epoch to reflect on (default: current).
-  --persist / --dry-run  Write the findings record, or derive and print it
-                         without touching disk.  [default: persist]
-  --draft-with-llm TEXT  Dotted path to an evaluation call_llm used to REFINE
-                         each remedy's prose. Optional — the drafted edits are
-                         complete without it.
-  --model TEXT           Model name passed to --draft-with-llm's callable.
-  --json                 Emit the raw record.
-  --help                 Show this message and exit.
 
 ===== zicato proposer scorecard --help =====
 Usage: zicato proposer scorecard [OPTIONS]
@@ -1203,33 +1111,4 @@ Options:
                         Defaults to the contract's resolved structure value
                         (what `zicato evolve` uses) — pass this only to force a
                         different count for this one invocation.
-  --help                Show this message and exit.
-
-===== zicato tui --help =====
-Usage: zicato tui [OPTIONS]
-
-  Review a zicato workspace from the terminal.
-
-  The browser dashboard's peer surface: the same served payloads, rendered for a
-  terminal. Three lenses -- Home, Standings, Instrument -- with 1-3 to jump, j/k
-  to move, enter to drill, b to go back, and ? for help. Open candidate details
-  from Standings, board evidence from Instrument, and health findings and logs
-  from Home.
-
-  READ-ONLY. The console mutates nothing and runs nothing: the Instrument lens
-  prints the exact `zicato inspect reflection apply ...` line for you to run.
-
-Options:
-  --workspace PATH      Path to the zicato workspace root to review.  [default:
-                        .zicato]
-  --url TEXT            URL of a running dashboard service to attach to (e.g.
-                        http://127.0.0.1:7892). Unset: attach to this
-                        workspace's service if one is running, else start one.
-  --view TEXT           Open a browser path such as
-                        `/e/<epoch>/gen/<generation>`, `/e/<epoch>/evals` or
-                        `/logs`, or a shorthand such as `standings`.
-  --port INTEGER RANGE  Preferred port when starting a dashboard service (it
-                        walks +1 if taken).  [default: 7892; 1<=x<=65535]
-  --ascii               Force the ASCII, weight-only rendering (also on under
-                        NO_COLOR / a non-UTF-8 locale).
   --help                Show this message and exit.

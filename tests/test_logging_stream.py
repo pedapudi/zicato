@@ -401,7 +401,8 @@ def test_cursor_append_correctness_across_offsets(tmp_path: Path) -> None:
     assert all(r["cursor"] > cursor for r in recs3)
 
 
-def test_bounded_tail_tolerates_torn_trailing_line(tmp_path: Path) -> None:
+@pytest.mark.parametrize("completed_rows", [0, 2])
+def test_bounded_tail_tolerates_torn_trailing_line(tmp_path: Path, completed_rows: int) -> None:
     """A partial (no-newline) trailing write is not emitted; complete lines are."""
     from zicato.query.log_stream import tail_records
 
@@ -409,10 +410,15 @@ def test_bounded_tail_tolerates_torn_trailing_line(tmp_path: Path) -> None:
     logs.mkdir(parents=True)
     stream = logs / "20260101T000000Z-1.jsonl"
     good = json.dumps({"ts": "t", "level": "INFO", "component": "z", "message": "done"})
-    # Two complete lines + a torn trailing record still being written (no \n).
-    stream.write_text(good + "\n" + good + "\n" + '{"partial": ', encoding="utf-8")
+    prefix = (good + "\n") * completed_rows
+    stream.write_text(prefix + '{"partial": ', encoding="utf-8")
     recs, cursor = tail_records(stream, limit=100)
-    assert [r["message"] for r in recs] == ["done", "done"]
-    # cursor stays the EOF byte offset; the follower re-reads from there once
-    # the torn line completes.
+    assert [r["message"] for r in recs] == ["done"] * completed_rows
+    assert cursor == len(prefix.encode())
+    assert tail_records(stream, limit=100, after=cursor) == ([], cursor)
+
+    with stream.open("a", encoding="utf-8") as writer:
+        writer.write("true}\n")
+    recs, cursor = tail_records(stream, limit=100, after=cursor)
+    assert recs == [{"partial": True, "cursor": stream.stat().st_size}]
     assert cursor == stream.stat().st_size

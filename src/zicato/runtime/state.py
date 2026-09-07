@@ -25,6 +25,7 @@ implementation — a caller cannot tell the difference.
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -35,7 +36,6 @@ from typing import Any
 from zicato.runtime._storage import (
     active_run_key,
     active_runs_prefix,
-    active_tournament_key,
     heartbeat_key,
     kill_request_key,
 )
@@ -51,6 +51,47 @@ from zicato.storage import workspace_backend
 # Kept under this module's historical name so tests can monkeypatch
 # ``zicato.runtime.state._utc_now_iso`` and in-module writers stay unchanged.
 from zicato.util.iso_time import now_iso as _utc_now_iso
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardEndpoint:
+    """The address a dashboard service has actually bound."""
+
+    host: str
+    port: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.host, str) or not self.host:
+            raise ValueError("dashboard endpoint host must be a nonempty string")
+        if type(self.port) is not int or not 1 <= self.port <= 65535:
+            raise ValueError("dashboard endpoint port must be an integer between 1 and 65535")
+
+    def to_json(self) -> dict[str, Any]:
+        return {"host": self.host, "port": self.port}
+
+    @classmethod
+    def from_json(cls, raw: Any) -> DashboardEndpoint:
+        if not isinstance(raw, dict):
+            raise ValueError("dashboard endpoint must be an object")
+        return cls(raw.get("host") or "127.0.0.1", raw.get("port", 0))
+
+
+def read_dashboard_endpoint(path: Path) -> DashboardEndpoint | None:
+    """Treat absent or malformed convenience records as unavailable."""
+    try:
+        return DashboardEndpoint.from_json(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return None
+
+
+def write_dashboard_endpoint(workspace_root: Path, endpoint: DashboardEndpoint) -> None:
+    """Publish the address atomically without a partially written record."""
+    from zicato.runtime.paths import dashboard_endpoint_path
+    from zicato.storage import atomic_write_text
+
+    atomic_write_text(
+        dashboard_endpoint_path(workspace_root), json.dumps(endpoint.to_json()) + "\n"
+    )
 
 
 class RunStatus(StrEnum):
@@ -564,8 +605,8 @@ class ActiveTournamentEntry:
     # ``side`` stays ``"parent"``/``"child"`` for a gauntlet; for every
     # other structure the runner passes the competitor's generation id as
     # ``side`` (an opaque key), and ``match_id`` links the row to a
-    # ``rounds[].matches[]`` entry. Default ``""`` so an old
-    # active_tournament.json loads unchanged.
+    # ``rounds[].matches[]`` entry. Default ``""`` so a
+    # Snapshot payload without this field loads unchanged.
     match_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -672,8 +713,8 @@ def drift_count_snapshot_from_profile(profile: Any) -> dict[str, int]:
 class ActiveTournament:
     """Snapshot of an in-progress tournament.
 
-    One file at :func:`zicato.runtime.paths.active_tournament_path`. The
-    orchestrator writes the initial shape (every entry × every side at
+    Reconstructed from :func:`zicato.runtime.paths.active_tournament_log_path`.
+    The orchestrator appends the initial shape (every entry × every side at
     ``status="queued"``) before kicking off the first run; per-entry
     transitions go through :func:`update_tournament_entry`.
 
@@ -714,8 +755,8 @@ class ActiveTournament:
         tournament runs rather than 0.00 until the round ends. Empty
         dict before the first board unit completes; old readers ignore
         the fields. ``from_dict`` also accepts the
-        ``partial_parent_agg`` / ``partial_child_agg`` spellings, so an
-        ``active_tournament.json`` using either name loads.
+        ``partial_parent_agg`` / ``partial_child_agg`` spellings, so a
+        ``Snapshot`` payload using either name loads.
     projected:
         The **live projected standing** per in-flight competitor, keyed by
         ``generation_id``. Each value is ``{scalar, boards_done,
@@ -727,9 +768,7 @@ class ActiveTournament:
         standings rows + pending matches and marks them "projected"
         (visually distinct from a settled scalar) so an in-flight candidate
         shows a live, climbing standing. Empty before the first board unit
-        completes; old readers ignore the field, and an old
-        ``active_tournament.json`` with no ``projected`` key loads
-        byte-identical.
+        completes. Missing ``projected`` fields decode to an empty dictionary.
     """
 
     tournament_id: str
@@ -743,9 +782,8 @@ class ActiveTournament:
     total_rounds: int = 0
     partial_champion_agg: dict[str, Any] = field(default_factory=dict)
     partial_challenger_agg: dict[str, Any] = field(default_factory=dict)
-    # ── NEW: the structure envelope (data-model §2.2) ──
-    # All default to the gauntlet reading so an old active_tournament.json
-    # loads unchanged. For ``structure == "gauntlet"`` the runner keeps
+    # Missing structure fields decode to gauntlet defaults.
+    # For ``structure == "gauntlet"`` the runner keeps
     # writing ``parent_generation_id`` / ``child_generation_id`` and MAY
     # leave these empty; a non-gauntlet structure
     # populates them as the authoritative field set.
@@ -754,20 +792,17 @@ class ActiveTournament:
     competitors: list[dict[str, Any]] = field(default_factory=list)
     rounds: list[dict[str, Any]] = field(default_factory=list)
     standings: list[dict[str, Any]] = field(default_factory=list)
-    # ── NEW: per-challenger proposing-step outcomes ──
     # The minting outcome for every challenger the proposer attempted this
     # round: ``{generation_id, status: "applied"|"rejected", reason, seed?}``.
     # Lets the dashboard render the candidate-generation step (the field
     # forming) live and post-hoc — a field where every challenger failed
-    # reads as "N proposed · 0 applied". Defaults empty so an old
-    # active_tournament.json (and the gauntlet path) loads byte-identical.
+    # reads as "N proposed · 0 applied". Missing fields decode to an empty list.
     field_status: list[dict[str, Any]] = field(default_factory=list)
-    # ── NEW: live projected standing per in-flight competitor ──
     # ``{generation_id: {scalar, boards_done, boards_total, pass_rate}}`` —
     # the running aggregate over the boards settled so far for an in-flight
     # competitor, rewritten by the runner as each board unit settles. The
     # dashboard marks these "projected" (distinct from a settled scalar).
-    # Defaults empty so an old active_tournament.json loads byte-identical.
+    # Missing fields decode to an empty dictionary.
     projected: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -795,8 +830,8 @@ class ActiveTournament:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ActiveTournament:
         # Accept the `partial_parent_agg` / `partial_child_agg` spellings
-        # alongside the champion/challenger names, so an
-        # active_tournament.json using either pair loads.
+        # alongside the champion/challenger names, so a
+        # Snapshot payload using either pair loads.
         raw_champion = d.get("partial_champion_agg", d.get("partial_parent_agg"))
         raw_challenger = d.get("partial_challenger_agg", d.get("partial_child_agg"))
         return cls(
@@ -827,26 +862,12 @@ class ActiveTournament:
         )
 
 
-def read_active_tournament_snapshot(workspace_root: Path) -> ActiveTournament | None:
-    """Read the ``active_tournament.json`` snapshot alone, or ``None``.
-
-    The fallback the event-log fold uses when no log exists beside the
-    snapshot. Nothing writes this file; for the live view use
-    :func:`read_active_tournament`, which folds the event log.
-    """
-    raw = workspace_backend(workspace_root, start=False).read_json(active_tournament_key())
-    if raw is None:
-        return None
-    return ActiveTournament.from_dict(raw)
-
-
 def read_active_tournament(workspace_root: Path) -> ActiveTournament | None:
     """Read the live active tournament by FOLDING the event log, or ``None``.
 
     The live state is an append-only single-writer event log
     (:mod:`zicato.runtime.tournament_log`); this folds it into an
-    :class:`ActiveTournament`. Falls back to reading the plain
-    ``active_tournament.json`` snapshot when no log exists.
+    :class:`ActiveTournament`. A missing log returns ``None``.
     """
     from zicato.runtime import tournament_log  # noqa: PLC0415
 
@@ -1097,12 +1118,7 @@ def _fold_one_lane(lane: dict[str, Any], proj: dict[str, Any], *, is_champion: b
 
 
 def clear_active_tournament(workspace_root: Path) -> None:
-    """Clear the active tournament (event log and snapshot). Idempotent.
-
-    Removes the event log so a folded read returns ``None``, and drops any
-    ``active_tournament.json`` snapshot so the fallback reader cannot
-    resurrect a stale tournament.
-    """
+    """Clear the active tournament event log. Idempotent."""
     from zicato.runtime import tournament_log  # noqa: PLC0415
 
     tournament_log.clear_log(workspace_root)
@@ -1124,7 +1140,6 @@ __all__ = [
     "clear_worker_kill_request",
     "touch_active_run_progress",
     "read_active_tournament",
-    "read_active_tournament_snapshot",
     "write_active_tournament",
     "update_tournament_entry",
     "update_tournament_partial_aggregate",

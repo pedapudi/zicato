@@ -616,18 +616,18 @@ def test_base_proposer_model_is_available_to_native_and_process_agents(
 ) -> None:
     _install_models_callables(monkeypatch)
 
-    def resolve(spec: object, *, role: str):  # type: ignore[no-untyped-def]
-        del spec
+    def resolve(spec: object, *, role: str, transport=None):  # type: ignore[no-untyped-def]
+        del spec, transport
         return _stub_target if role == "target" else _stub_aux
 
-    monkeypatch.setattr("zicato.runtime_factory.resolve_text_call_llm", resolve)
+    monkeypatch.setattr("zicato.models_config.resolve_text_call_llm", resolve)
     cfg = make_runtime_config(
         {
             "models": {
                 "engines": {
                     "target": {"call_llm": "fake_models_mod:target_fn"},
                     "evaluation": {"call_llm": "fake_models_mod:aux_fn"},
-                    "strong": {"model": "house-strong"},
+                    "strong": {"model": "house-strong", "endpoint": "http://127.0.0.1:1"},
                 },
                 "roles": {"proposer": "strong"},
             }

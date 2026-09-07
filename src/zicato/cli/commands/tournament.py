@@ -128,6 +128,12 @@ def tournament_cmd(
 
     try:
         workspace_config = loader.load_workspace_config(workspace_root)
+        from zicato.epoch.execution import load_epoch_execution_contract  # noqa: PLC0415
+
+        selected = load_epoch_execution_contract(
+            workspace_root, resolved_epoch_id, workspace_config=workspace_config
+        )
+        workspace_config.update(selected.adapter_configuration)
         board, disable_drift, judge_only, weights = _load_epoch_contract(
             workspace_root, resolved_epoch_id
         )
@@ -147,7 +153,9 @@ def tournament_cmd(
             workspace_config, workspace_root=workspace_root
         )
         config = runtime_factory.make_runtime_config(
-            workspace_config, workspace_root=workspace_root
+            workspace_config,
+            workspace_root=workspace_root,
+            execution_roles=selected.execution_roles,
         )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc

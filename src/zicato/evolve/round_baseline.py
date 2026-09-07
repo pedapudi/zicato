@@ -31,7 +31,6 @@ from zicato.evolve.lifecycle_services import (
     _now_iso,
 )
 from zicato.tournament.scoring import read_gen_score, write_gen_score
-from zicato.util import best_effort
 from zicato.workspace.layout import WorkspaceLayout
 
 if TYPE_CHECKING:
@@ -61,58 +60,6 @@ def _atomic_write_text(path: Path, text: str) -> None:
     from zicato.storage._atomic import atomic_write_text as _atomic_write_text_impl  # noqa: PLC0415
 
     _atomic_write_text_impl(path, text)
-
-
-def _dump_mutations_snapshot(
-    workspace_root: Path,
-    epoch_id: str,
-    mutations: list[Any],
-) -> None:
-    """Serialize the round's enumerated mutation points to ``mutations.json``.
-
-    Writes a JSON array of objects ``{id, kind, file, line_start,
-    line_end, content, content_hash}`` — i.e. :func:`dataclasses.asdict`
-    of each :class:`zicato.core.types.MutationPoint` with the ``Path``
-    fields stringified — to ``epochs/{epoch_id}/mutations.json``. The
-    write is atomic (``.tmp`` + :func:`os.replace`).
-
-    Best-effort: any failure (a serialisation error, an I/O error) is
-    swallowed at ``debug`` level so a broken snapshot can never abort the
-    evolve round. The proposer has already been fed the in-memory
-    ``mutations`` list by the time this runs; the on-disk file is purely
-    for the dashboard.
-    """
-    import dataclasses as _dataclasses  # noqa: PLC0415
-    import os as _os  # noqa: PLC0415
-
-    from zicato.core.workspace import mutations_json_path  # noqa: PLC0415
-
-    with best_effort(
-        "mutations.json snapshot",
-        on_error=lambda exc: log.debug("mutations.json snapshot skipped: %s", exc),
-    ):
-        payload: list[dict[str, Any]] = []
-        for point in mutations:
-            raw = _dataclasses.asdict(point)
-            payload.append(
-                {
-                    "id": raw["id"],
-                    "kind": raw["kind"],
-                    "file": str(raw["file"]),
-                    "line_start": raw["line_start"],
-                    "line_end": raw["line_end"],
-                    "content": raw["content"],
-                    "content_hash": raw["content_hash"],
-                }
-            )
-        target = mutations_json_path(workspace_root, epoch_id)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(target.name + ".tmp")
-        tmp.write_text(
-            json.dumps(payload, indent=2, sort_keys=False) + "\n",
-            encoding="utf-8",
-        )
-        _os.replace(tmp, target)
 
 
 def _ensure_baseline_snapshot(

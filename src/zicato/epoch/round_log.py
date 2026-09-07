@@ -499,7 +499,7 @@ class RoundEventScope:
     into its named field once a later reader knows that name. It holds
     COORDINATES ONLY, never content: a scope is subject to the same redaction
     denylist as every other durable record
-    (:func:`zicato.proposer.reflection.assert_redacted`), so board text,
+    so board text,
     prompts and transcripts must never travel here.
 
     All fields default to the empty scope, so a log whose writer emitted no

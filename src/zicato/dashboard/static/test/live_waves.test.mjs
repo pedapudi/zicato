@@ -283,11 +283,12 @@ test('live elim model: PUBLISHED single_elim rounds render the bracket (not "bei
     ],
     standings: [], champion_lineage: ['v0'],
   };
-  const model = STRUCT.buildLiveElimModel({
-    at, heartbeat: { phase: 'tournament:round_0', generation_id: 'v1' },
-    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
-    epochGens: ['v0', 'v1', 'v2', 'v3'],
-  });
+  const model = STRUCT.buildLiveModel(
+    at,
+    { phase: 'tournament:round_0', generation_id: 'v1' },
+    [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 0.5 }],
+    ['v0', 'v1', 'v2', 'v3'],
+  );
   assert(model && model.live, 'a live elim model built from the published rounds');
   const m = STRUCT.elimModel(model);
   assert(m.hasMatches, 'the published round has matches');
@@ -517,15 +518,15 @@ const LIVE_SWISS_BLOCK = {
 };
 
 test('Task 1 — match blocks (swiss): one block per IN-FLIGHT match, two sides, with per-board progress; settled rounds are NOT blocks', () => {
-  const model = STRUCT.buildLiveSwissModel({
-    at: LIVE_SWISS_BLOCK,
-    heartbeat: { phase: 'tournament:round_1', generation_id: 'v1', epoch_id: HERO_EPOCH },
-    activeRuns: [
+  const model = STRUCT.buildLiveModel(
+    LIVE_SWISS_BLOCK,
+    { phase: 'tournament:round_1', generation_id: 'v1', epoch_id: HERO_EPOCH },
+    [
       { generation_id: 'v1', entry_id: 'b0', run_id: 'r0', progress: 2.0 }, // 2 of 4 boards done
       { generation_id: 'v1', entry_id: 'b1', run_id: 'r1', progress: 0.0 },
     ],
-    epochGens: ['v0', 'v1', 'v2', 'v3'],
-  });
+    ['v0', 'v1', 'v2', 'v3'],
+  );
   const blocks = STRUCT.liveMatchBlocks(model);
   // round 0 is settled (winners decided) → no block; round 1 is the active round
   // with TWO pending pairings → two blocks.
@@ -543,15 +544,15 @@ test('Task 1 — match blocks (swiss): one block per IN-FLIGHT match, two sides,
 });
 
 test('Task 1 — match blocks (elim): blocks group by in-flight WB match, named WB-R0-0 · v0 vs v3', () => {
-  const model = STRUCT.buildLiveElimModel({
-    at: liveElimField(),
-    heartbeat: { phase: 'tournament:round_0', generation_id: 'v1', epoch_id: HERO_EPOCH },
-    activeRuns: [
+  const model = STRUCT.buildLiveModel(
+    liveElimField(),
+    { phase: 'tournament:round_0', generation_id: 'v1', epoch_id: HERO_EPOCH },
+    [
       { generation_id: 'v0', entry_id: 'b0', run_id: 'r0', progress: 0.25 },
       { generation_id: 'v1', entry_id: 'b1', run_id: 'r1', progress: 0.75 },
     ],
-    epochGens: ['v0', 'v1', 'v2', 'v3'],
-  });
+    ['v0', 'v1', 'v2', 'v3'],
+  );
   const blocks = STRUCT.liveMatchBlocks(model);
   assertEqual(blocks.length, 2, 'two in-flight WB-R0 matches → two blocks');
   const wb0 = blocks.find((b) => /WB-R0-0/.test(b.label));
@@ -560,15 +561,15 @@ test('Task 1 — match blocks (elim): blocks group by in-flight WB match, named 
 });
 
 test('Task 1 — match blocks (racing): a rung-FIELD block (one entry per lane), header "rung 0 · field of N"', () => {
-  const model = STRUCT.buildLiveRacingModel({
-    at: liveRacingField(),
-    heartbeat: { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5', epoch_id: '2026-06-02_eR' },
-    activeRuns: [
+  const model = STRUCT.buildLiveModel(
+    liveRacingField(),
+    { phase: 'tournament:round_0:rung0_m1', generation_id: 'v5', epoch_id: '2026-06-02_eR' },
+    [
       { generation_id: 'v5', entry_id: 'b0', run_id: 'r0', progress: 0.4 },
       { generation_id: 'v6', entry_id: 'b1', run_id: 'r1', progress: 0.9 },
     ],
-    epochGens: ['v0', 'v5', 'v6', 'v7', 'v8'],
-  });
+    ['v0', 'v5', 'v6', 'v7', 'v8'],
+  );
   const blocks = STRUCT.liveMatchBlocks(model);
   const rung = blocks.find((b) => b.kind === 'rung');
   assert(rung, 'racing yields a rung-field block (not a pairwise block)');
@@ -581,12 +582,12 @@ test('Task 1 — match blocks (racing): a rung-FIELD block (one entry per lane),
 test('Task 1 — the match-grouped block RENDERS: one DOM block per match, a progress bar + a state per side; clickable', () => {
   let opened = null;
   const node = live.liveMatchGroupedBlocks(
-    STRUCT.liveMatchBlocks(STRUCT.buildLiveSwissModel({
-      at: LIVE_SWISS_BLOCK,
-      heartbeat: { phase: 'tournament:round_1', epoch_id: HERO_EPOCH },
-      activeRuns: [{ generation_id: 'v1', entry_id: 'b0', progress: 0.5 }],
-      epochGens: ['v0', 'v1', 'v2', 'v3'],
-    })),
+    STRUCT.liveMatchBlocks(STRUCT.buildLiveModel(
+      LIVE_SWISS_BLOCK,
+      { phase: 'tournament:round_1', epoch_id: HERO_EPOCH },
+      [{ generation_id: 'v1', entry_id: 'b0', progress: 0.5 }],
+      ['v0', 'v1', 'v2', 'v3'],
+    )),
     (id) => { opened = id; },
   );
   const host = document.createElement('div');
@@ -604,11 +605,12 @@ test('Task 1 — the match-grouped block RENDERS: one DOM block per match, a pro
 
 test('Task 1 — the block is digest-gated on the live CONTENT: a no-op heartbeat is a no-op; a progress-bucket change re-stamps', () => {
   const at = LIVE_SWISS_BLOCK;
-  const beat = (progress) => STRUCT.liveMatchBlocksDigest(STRUCT.liveMatchBlocks(STRUCT.buildLiveSwissModel({
-    at, heartbeat: { phase: 'tournament:round_1', epoch_id: HERO_EPOCH },
-    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', progress }],
-    epochGens: ['v0', 'v1', 'v2', 'v3'],
-  })));
+  const beat = (progress) => STRUCT.liveMatchBlocksDigest(STRUCT.liveMatchBlocks(STRUCT.buildLiveModel(
+    at,
+    { phase: 'tournament:round_1', epoch_id: HERO_EPOCH },
+    [{ generation_id: 'v1', entry_id: 'b0', progress }],
+    ['v0', 'v1', 'v2', 'v3'],
+  )));
   // board_size 4: progress 0.5 → done 0 vs 0.55 → still bucket 0 (no rebuild),
   // but a real bucket jump (progress that lands a board) re-stamps.
   assertEqual(beat(0.0), beat(0.0), 'identical state → identical digest (a no-op heartbeat writes ZERO DOM)');
@@ -713,12 +715,12 @@ test('the elim figure is the radial bracket (elimRadial), the seat/box tree and 
 });
 
 test('a LIVE radial bracket draws in-flight spokes as DASHED (pending convention) from the published rounds', () => {
-  const model = STRUCT.elimModel(STRUCT.buildLiveElimModel({
-    at: elimPayload('semifinals_undecided', liveElimField()),
-    heartbeat: { phase: 'tournament:round_0', epoch_id: HERO_EPOCH },
-    activeRuns: [{ generation_id: 'v1', entry_id: 'b0', progress: 0.5 }],
-    epochGens: ['v0', 'v1', 'v2', 'v3'],
-  }));
+  const model = STRUCT.elimModel(STRUCT.buildLiveModel(
+    elimPayload('semifinals_undecided', liveElimField()),
+    { phase: 'tournament:round_0', epoch_id: HERO_EPOCH },
+    [{ generation_id: 'v1', entry_id: 'b0', progress: 0.5 }],
+    ['v0', 'v1', 'v2', 'v3'],
+  ));
   const bracket = svg.elimRadial({
     rounds: model.rounds, gen_states: model.gen_states, championId: model.championId, benchmarkId: model.benchmarkId,
     gateState: model.gateState, live: true,

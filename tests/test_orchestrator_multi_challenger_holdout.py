@@ -34,9 +34,9 @@ import pytest
 from tests._contract_pins import experimental_for, pin_deterministic
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
+    evaluation_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
 )
 from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile
@@ -143,7 +143,12 @@ def _bootstrap(
                 # tags this fixture never writes.
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
-                "runtime": {"parallelism": 2, "propose_parallelism": 2},
+                "runtime": {
+                    "parallelism": 2,
+                    "propose_parallelism": 2,
+                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
+                    "evaluation_call_llm": "tests._orchestrator_harness:evaluation_call_llm",
+                },
             }
         )
     )
@@ -257,7 +262,7 @@ def test_holdout_confirms_a_true_win_and_persists_records(
         pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "promoted", structure
     crowned = outcome.proposed_generation_id
@@ -309,7 +314,7 @@ def test_holdout_regression_flips_a_bracket_leaders_win_to_reject(
 
     from zicato.evolve.generation_phase import current_generation
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "rejected", structure
     assert "holdout_not_confirmed" in outcome.rejection_reason
@@ -351,7 +356,7 @@ def test_per_epoch_ladder_budget_is_shared_and_decremented(
 
     from zicato.core.workspace import ladder_state_path
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     state_path = ladder_state_path(workspace, epoch_id)
     assert state_path.exists(), "the crowning confirmation must persist the shared ladder state"
@@ -395,7 +400,7 @@ def test_empty_holdout_degrades_to_whole_board(
 
     from zicato.core.workspace import ladder_state_path
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "promoted", structure
     crowned = outcome.proposed_generation_id
@@ -436,7 +441,7 @@ def test_settled_promotion_agrees_with_champion_and_lineage(
 
     from zicato.evolve.generation_phase import current_generation
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "promoted", structure
     crowned = outcome.proposed_generation_id
@@ -478,7 +483,7 @@ def test_holdout_flip_persists_a_rejected_bracket_not_a_phantom_promotion(
 
     from zicato.evolve.generation_phase import current_generation
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "rejected", structure
     # Champion stands.
@@ -521,4 +526,4 @@ def test_crowning_invariant_raises_when_champion_pointer_cannot_advance(
     )
 
     with pytest.raises(RuntimeError, match="crowning invariant violated"):
-        run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+        run_evolve_once(workspace, epoch_id, evaluation_call_llm)

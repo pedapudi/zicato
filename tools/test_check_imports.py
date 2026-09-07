@@ -110,19 +110,18 @@ def test_root_facade_has_no_driver_exemption(tmp_path: Path) -> None:
 
 def test_existing_driver_permissions_remain_accepted(tmp_path: Path) -> None:
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    driver_contracts = config["tool"]["zicato"]["importlinter"]["contracts"][:4]
+    driver_contracts = config["tool"]["zicato"]["importlinter"]["contracts"][:1]
     _project(
         tmp_path,
-        {name: "driver" for name in ("cli", "dashboard", "builder", "tui")},
+        {name: "driver" for name in ("cli", "dashboard")},
         {
-            "cli/__init__.py": "import zicato.dashboard\nimport zicato.tui\n",
-            "dashboard/__init__.py": "import zicato.builder\n",
+            "cli/__init__.py": "import zicato.dashboard\n",
         },
         driver_contracts,
     )
     result = _run(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Contracts: 4 kept, 0 broken" in result.stdout
+    assert "Contracts: 1 kept, 0 broken" in result.stdout
 
 
 def test_renamed_and_duplicate_namespaces_are_rejected(tmp_path: Path) -> None:

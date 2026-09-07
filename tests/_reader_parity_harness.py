@@ -139,20 +139,22 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
             },
             # Board: a meta header + two entries.
             board=[
-                {"board_meta": True, "disable_drift": False},
+                {"board_meta": True, "disable_drift": []},
                 {
                     "id": "t1",
                     "kind": "single_turn",
+                    "wall_clock_budget_seconds": 1,
                     "input": "Say hello.",
-                    "expectation": {"kind": "rubric"},
+                    "expectation": {"kind": "rubric", "spec": "Answer the task."},
                     "weight": 1.0,
                     "tags": ["smoke"],
                 },
                 {
                     "id": "t2",
                     "kind": "single_turn",
+                    "wall_clock_budget_seconds": 1,
                     "input": "Say goodbye.",
-                    "expectation": {"kind": "predicate"},
+                    "expectation": {"kind": "predicate", "spec": "fixture:check"},
                     "weight": 2.0,
                     "tags": [],
                 },

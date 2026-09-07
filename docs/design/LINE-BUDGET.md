@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 503,805 | +95,144 |
-| Production | 197,702 | 213,273 | +15,571 |
-| Production logic | 110,276 | 123,728 | +13,452 |
+| Total | 408,661 | 480,626 | +71,965 |
+| Production | 197,702 | 199,101 | +1,399 |
+| Production logic | 110,276 | 114,323 | +4,047 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,51 +84,49 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 70,733 | 37,657 | 26,343 | 30.0% |
-| src/zicato/query | 20,721 | 20,721 | 12,605 | 39.2% |
-| src/zicato/epoch | 15,028 | 15,028 | 8,272 | 45.0% |
-| src/zicato/evolve | 11,971 | 11,971 | 7,395 | 38.2% |
-| src/zicato/reflection | 10,300 | 10,300 | 6,762 | 34.3% |
-| crates/supervisor | 16,420 | 13,989 | 6,525 | 53.4% |
-| src/zicato/tournament | 11,580 | 11,580 | 6,518 | 43.7% |
-| src/zicato/proposer | 11,166 | 11,166 | 5,827 | 47.8% |
-| src/zicato/cli | 8,167 | 8,167 | 5,348 | 34.5% |
-| src/zicato/analyzer | 7,619 | 7,619 | 4,800 | 37.0% |
-| src/zicato/core | 7,672 | 7,672 | 3,244 | 57.7% |
-| src/zicato/tui | 4,394 | 4,394 | 3,136 | 28.6% |
+| src/zicato/dashboard | 62,698 | 32,787 | 22,512 | 31.3% |
+| src/zicato/query | 20,472 | 20,472 | 12,586 | 38.5% |
+| src/zicato/epoch | 15,028 | 15,028 | 8,307 | 44.7% |
+| src/zicato/evolve | 11,844 | 11,844 | 7,336 | 38.1% |
+| src/zicato/reflection | 10,016 | 10,016 | 6,627 | 33.8% |
+| src/zicato/tournament | 11,669 | 11,669 | 6,620 | 43.3% |
+| crates/supervisor | 16,390 | 13,958 | 6,519 | 53.3% |
+| src/zicato/cli | 7,638 | 7,638 | 4,976 | 34.9% |
+| src/zicato/proposer | 9,761 | 9,761 | 4,897 | 49.8% |
+| src/zicato/analyzer | 7,563 | 7,563 | 4,757 | 37.1% |
+| src/zicato/core | 7,545 | 7,545 | 3,180 | 57.9% |
 | src/zicato/selection | 5,393 | 5,393 | 3,093 | 42.6% |
 | src/zicato/index | 5,451 | 5,451 | 2,822 | 48.2% |
-| src/zicato/runtime | 5,374 | 5,374 | 2,485 | 53.8% |
-| src/zicato/telemetry | 4,640 | 4,640 | 2,290 | 50.6% |
-| src/zicato/contract_draft | 3,190 | 3,190 | 1,979 | 38.0% |
-| src/zicato/mutation | 2,888 | 2,888 | 1,346 | 53.4% |
-| src/zicato/builder | 2,177 | 2,177 | 1,283 | 41.1% |
-| src/zicato/health | 2,316 | 2,316 | 1,267 | 45.3% |
-| src/zicato/check | 1,736 | 1,736 | 1,114 | 35.8% |
-| src/zicato/board | 2,363 | 2,363 | 1,056 | 55.3% |
-| src/zicato/workspace | 2,074 | 2,074 | 976 | 52.9% |
-| src/zicato/adapters | 2,168 | 2,168 | 793 | 63.4% |
-| src/zicato/_tournament_worker.py | 1,400 | 1,400 | 770 | 45.0% |
+| src/zicato/runtime | 5,349 | 5,349 | 2,494 | 53.4% |
+| src/zicato/telemetry | 4,639 | 4,639 | 2,290 | 50.6% |
+| src/zicato/contract_draft | 2,510 | 2,510 | 1,647 | 34.4% |
+| src/zicato/health | 2,620 | 2,620 | 1,522 | 41.9% |
+| src/zicato/mutation | 2,954 | 2,954 | 1,399 | 52.6% |
+| src/zicato/check | 1,771 | 1,771 | 1,146 | 35.3% |
+| src/zicato/board | 2,430 | 2,430 | 1,099 | 54.8% |
+| src/zicato/workspace | 1,995 | 1,995 | 944 | 52.7% |
+| src/zicato/adapters | 2,188 | 2,188 | 814 | 62.8% |
+| src/zicato/_tournament_worker.py | 1,398 | 1,398 | 769 | 45.0% |
 | src/zicato/testing | 1,447 | 1,447 | 760 | 47.5% |
 | src/zicato/judge_runtime | 1,772 | 1,772 | 755 | 57.4% |
 | src/zicato/synthetic | 1,139 | 1,139 | 544 | 52.2% |
+| src/zicato/models_config.py | 656 | 656 | 511 | 22.1% |
 | src/zicato/scoring | 1,395 | 1,395 | 469 | 66.4% |
 | src/zicato/patterns | 804 | 804 | 417 | 48.1% |
-| src/zicato/models_config.py | 465 | 465 | 345 | 25.8% |
-| src/zicato/storage | 994 | 994 | 341 | 65.7% |
+| src/zicato/storage | 1,008 | 1,008 | 354 | 64.9% |
+| src/zicato/logging_stream.py | 627 | 627 | 333 | 46.9% |
 | src/zicato/emulator | 675 | 675 | 306 | 54.7% |
 | src/zicato/example_workspace | 657 | 657 | 300 | 54.3% |
-| src/zicato/logging_stream.py | 445 | 445 | 215 | 51.7% |
 | hatch_build.py | 205 | 205 | 169 | 17.6% |
 | src/zicato/driver_imports.py | 206 | 206 | 161 | 21.8% |
-| src/zicato/runtime_factory.py | 262 | 262 | 149 | 43.1% |
-| src/zicato/workspace_loader.py | 332 | 332 | 134 | 59.6% |
-| src/zicato/config.py | 162 | 162 | 121 | 25.3% |
-| src/zicato/util | 253 | 253 | 103 | 59.3% |
+| src/zicato/runtime_factory.py | 232 | 232 | 149 | 35.8% |
+| src/zicato/workspace_loader.py | 318 | 318 | 127 | 60.1% |
+| src/zicato/config.py | 155 | 155 | 114 | 26.5% |
 | src/zicato/integrations | 143 | 143 | 100 | 30.1% |
+| src/zicato/util | 175 | 175 | 94 | 46.3% |
 | src/zicato/adapter_factory.py | 120 | 120 | 89 | 25.8% |
 | src/zicato/reasoning.py | 112 | 112 | 83 | 25.9% |
-| src/zicato/import_path.py | 155 | 155 | 60 | 61.3% |
+| src/zicato/import_path.py | 180 | 180 | 74 | 58.9% |
 | src/zicato/__init__.py | 67 | 67 | 41 | 38.8% |
 | src/zicato/orchestrator.py | 14 | 14 | 11 | 21.4% |
 | src/zicato/aux_timeout.py | 15 | 15 | 6 | 60.0% |

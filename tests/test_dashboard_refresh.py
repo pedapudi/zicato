@@ -11,6 +11,20 @@ from zicato.dashboard import sse
 from zicato.query import WorkspacePaths
 
 
+@pytest.mark.parametrize(
+    ("name", "kind"),
+    [
+        ("active_tournament.events.jsonl", "active_tournament"),
+        ("active_tournament.json", "unknown"),
+        ("progress.events.jsonl", "progress"),
+    ],
+)
+def test_runtime_change_classification_uses_canonical_logs(tmp_path, name, kind):
+    paths = WorkspacePaths(tmp_path)
+    path = paths.progress_log if kind == "progress" else paths.runtime / name
+    assert sse._classify(path, paths) == kind
+
+
 @pytest.mark.parametrize("watchdog", [True, False])
 async def test_content_rewrite_advances_revision_without_progress(tmp_path, monkeypatch, watchdog):
     if watchdog and not sse._HAVE_WATCHDOG:

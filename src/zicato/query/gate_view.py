@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 from zicato.epoch._storage import RecordError
@@ -31,25 +30,6 @@ from zicato.query.tournament_view import (
     _gen_score_view,
     _read_run_loss_files,
 )
-
-
-def _latest_round_report(directory: Path) -> Path | None:
-    if not directory.is_dir():
-        return None
-    best: tuple[int, Path] | None = None
-    for entry in directory.iterdir():
-        name = entry.name
-        if not name.startswith("round_") or not name.endswith(".json"):
-            continue
-        num = name[len("round_") : -len(".json")]
-        try:
-            n = int(num)
-        except ValueError:
-            continue
-        if best is None or n > best[0]:
-            best = (n, entry)
-    return best[1] if best is not None else None
-
 
 # ---------------------------------------------------------------------------
 # Score trajectory — the environment-wide evolution curve
@@ -346,31 +326,37 @@ def build_health_report(paths: WorkspacePaths) -> dict[str, Any]:
     }
     if epoch_id is None:
         return healthy_empty
-    latest = _latest_round_report(paths.epoch_health_dir(epoch_id))
-    if latest is None:
-        return _overlay_settlement_health(paths, healthy_empty, epoch_id)
-    value = _read_json_value(latest)
-    if not isinstance(value, dict):
-        return _overlay_settlement_health(paths, healthy_empty, epoch_id)
+    from zicato.health.diagnostics import read_latest_loop_health
+
+    try:
+        health = read_latest_loop_health(paths.root, epoch_id)
+    except (RecordError, OSError) as exc:
+        return _overlay_live_diagnostics(
+            paths, {**healthy_empty, "healthy": None, "unreadable": str(exc)}, epoch_id
+        )
+    if health is None:
+        return _overlay_live_diagnostics(paths, healthy_empty, epoch_id)
     report: dict[str, Any] = {
-        "epoch_id": value.get("epoch_id") if isinstance(value.get("epoch_id"), str) else epoch_id,
-        "findings": value.get("findings") if isinstance(value.get("findings"), list) else [],
-        "healthy": value.get("healthy") if isinstance(value.get("healthy"), bool) else True,
+        "epoch_id": health.epoch_id,
+        "findings": [finding.to_json() for finding in health.findings],
+        "healthy": health.healthy,
+        "checked_at": health.checked_at,
     }
-    checked_at = value.get("checked_at")
-    if isinstance(checked_at, str):
-        report["checked_at"] = checked_at
-    return _overlay_settlement_health(paths, report, epoch_id)
+    return _overlay_live_diagnostics(paths, report, epoch_id)
 
 
-def _overlay_settlement_health(
+def _overlay_live_diagnostics(
     paths: WorkspacePaths,
     report: dict[str, Any],
     epoch_id: str,
 ) -> dict[str, Any]:
-    """Replace saved receipt-derived findings with a fresh receipt scan."""
-    from zicato.health.diagnostics import detect_settlement_receipt_attention  # noqa: PLC0415
+    """Refresh receipt state and merge each retained operational warning once."""
+    from zicato.health.diagnostics import (  # noqa: PLC0415
+        detect_optional_failures,
+        detect_settlement_receipt_attention,
+    )
     from zicato.health.inputs import (  # noqa: PLC0415
+        epoch_optional_failures,
         epoch_settlement_receipt_attention,
     )
 
@@ -387,6 +373,23 @@ def _overlay_settlement_health(
     ]
     attention = epoch_settlement_receipt_attention(paths.root, epoch_id)
     fresh = detect_settlement_receipt_attention(attention)
+    saved_events = {
+        (detail["invocation"], detail["cursor"])
+        for finding in saved
+        if finding.get("code") == "optional_operation_failed"
+        and isinstance(detail := finding.get("detail"), dict)
+        and isinstance(detail.get("invocation"), str)
+        and type(detail.get("cursor")) is int
+    }
+    fresh.extend(
+        detect_optional_failures(
+            tuple(
+                record
+                for record in epoch_optional_failures(paths.root, epoch_id)
+                if (record["invocation"], record["cursor"]) not in saved_events
+            )
+        )
+    )
     saved.extend(
         {
             "code": finding.code,
@@ -404,6 +407,8 @@ def _overlay_settlement_health(
         )
     elif any(finding.severity in {"warning", "critical"} for finding in fresh):
         report["healthy"] = False
+    if report.get("unreadable"):
+        report["healthy"] = None
     return report
 
 
@@ -823,7 +828,8 @@ def build_gate_breakdown(
     ``unknown`` rather than guessing.
     """
     from zicato.tournament.gate import (  # noqa: PLC0415
-        PASS_RATE_MONOTONICITY_TOLERANCE,
+        _mean_score,
+        _pass_rate_regression_reason,
         _regressed_entries,
         evaluate_gate,
         regressed_namespaces,
@@ -1038,21 +1044,15 @@ def build_gate_breakdown(
     regressed_entries = _regressed_entries(parent_agg, child_agg) if pass_mono_enabled else []
     regressed_ns = regressed_namespaces(parent_agg, child_agg, weights) if ns_mono_enabled else []
 
-    # The pass-rate monotonicity rule's granularity is operator-selected.
-    # Under "aggregate" the rule fires on an overall pass-rate drop rather
-    # than a per-entry flip — mirror the gate's own predicate
-    # (delta_pass_rate < -tolerance) here so the dashboard never
-    # re-implements a threshold of its own.
+    # Read the same continuous outcome and monotonicity predicate as execution.
+    # Historical binary aggregates use the gate's fallback.
     pass_mono_scope = str(getattr(weights, "pass_rate_monotonicity_scope", "per_entry"))
-    parent_pass_rate = float(parent_agg.get("pass_rate", 1.0))
-    child_pass_rate = float(child_agg.get("pass_rate", 1.0))
-    delta_pass_rate = child_pass_rate - parent_pass_rate
-    if pass_mono_scope == "aggregate":
-        pass_mono_regressed = pass_mono_enabled and (
-            delta_pass_rate < -PASS_RATE_MONOTONICITY_TOLERANCE
-        )
-    else:
-        pass_mono_regressed = bool(pass_mono_enabled and regressed_entries)
+    parent_score = _mean_score(parent_agg)
+    child_score = _mean_score(child_agg)
+    delta_score = child_score - parent_score
+    pass_mono_regressed = pass_mono_enabled and bool(
+        _pass_rate_regression_reason(parent_agg, child_agg, weights)
+    )
 
     # The fired rule is the first that rejects, in gate order. Regression
     # suite is a pre-gate the dashboard cannot replay (no recorded
@@ -1136,12 +1136,10 @@ def build_gate_breakdown(
             "fired": False,
         }
     elif pass_mono_scope == "aggregate":
-        # Aggregate scope: render the overall pass-rate movement rather than
-        # the per-entry regressed list — a strictly-better aggregate is allowed
-        # to reshuffle which entries pass.
+        # Aggregate scope permits entry tradeoffs when the mean score holds.
         rate_detail = (
-            f"overall {parent_pass_rate:.2f} → {child_pass_rate:.2f} "
-            f"({delta_pass_rate:+.2f}; aggregate scope)"
+            f"overall {parent_score:.2f} → {child_score:.2f} "
+            f"({delta_score:+.2f}; aggregate scope)"
         )
         pass_rule = {
             "id": "pass_rate_monotonicity",

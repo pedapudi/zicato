@@ -49,6 +49,8 @@ from zicato.core.adapter_config import (
 )
 from zicato.core.scoring_config import omit_at_default_fields
 from zicato.driver_imports import driver_import_scope, with_workspace_imports
+from zicato.epoch._storage import RecordError
+from zicato.storage._atomic import atomic_write_text
 from zicato.workspace.config_io import read_workspace_config
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
@@ -137,11 +139,38 @@ class ContractInputs:
     #: configures the feature — is OMITTED from the canonical form, so the
     #: proposer component hashes byte-identically to before this field existed.
     proposer_static_checks: tuple[str, ...] = ()
+    #: Canonical worker-role documents captured before execution.
+    execution_roles: bytes | None = None
 
 
 # ---------------------------------------------------------------------------
 # Per-component canonicalization
 # ---------------------------------------------------------------------------
+
+
+def component_hashes_from_payload(raw: object) -> dict[str, str]:
+    """Accept the recorded component map without restricting component names."""
+    if not isinstance(raw, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in raw.items()
+    ):
+        raise ValueError("expected a JSON object of string component hashes")
+    return raw
+
+
+def read_component_hashes(path: Path) -> dict[str, str] | None:
+    """Preserve absence and refuse malformed present component hashes."""
+    try:
+        return component_hashes_from_payload(json.loads(path.read_text(encoding="utf-8")))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise RecordError(f"{path}: {exc}") from exc
+
+
+def write_component_hashes(path: Path, hashes: dict[str, str]) -> None:
+    """Publish the existing sorted component map without recalculating identity."""
+    component_hashes_from_payload(hashes)
+    atomic_write_text(path, json.dumps(hashes, indent=2, sort_keys=True) + "\n")
 
 
 def _canon_board(board_path: Path) -> str:
@@ -158,8 +187,8 @@ def _canon_board(board_path: Path) -> str:
     ``disable_drift`` kind list. Both are canonicalized here so swapping
     a judge — or changing which drift kinds are disarmed — correctly
     rolls the epoch.
-    They are read defensively (see :func:`_canon_board_meta`) so a board
-    that predates those fields still hashes deterministically.
+    Entries and metadata come from one accepted board document. Missing
+    metadata retains its default canonical form.
     """
     if not board_path.exists():
         log.warning(
@@ -167,9 +196,15 @@ def _canon_board(board_path: Path) -> str:
             board_path,
         )
         return ""
-    from zicato.board.jsonl import entry_to_dict, load_board  # noqa: PLC0415
+    from zicato.board.jsonl import entry_to_dict, load_board_document  # noqa: PLC0415
 
-    entries = load_board(board_path)
+    try:
+        board = load_board_document(board_path)
+    except RecordError as exc:
+        raise ValueError(str(exc)) from exc
+    if board is None:
+        return ""
+    entries = board.entries
     canon_entries = [
         json.dumps(
             _fold_entry_grading_source(entry_to_dict(entry)),
@@ -178,7 +213,7 @@ def _canon_board(board_path: Path) -> str:
         )
         for entry in sorted(entries, key=lambda e: e.id)
     ]
-    meta = _canon_board_meta(board_path)
+    meta = _canon_board_meta(board.rows)
     # Prepend the board-level metadata line so it participates in the
     # hash; the leading marker keeps it from colliding with an entry row.
     return "\n".join(["\x00board-meta\x00" + meta, *canon_entries])
@@ -247,97 +282,17 @@ def _canon_disable_drift(raw: object) -> object:
     return sorted({kind_to_wire_string(kind) for kind in raw}) or False
 
 
-def _canon_board_meta(board_path: Path) -> str:
-    """Canonical form of the board-level ``judges`` + ``disable_drift``.
-
-    The board carries two pieces of contract beyond its entry rows: the
-    list of configured judges and a board-level ``disable_drift`` kind
-    list (both introduced alongside multi-judge scoring). This helper
-    reduces them to a stable, sorted-key JSON string.
-
-    The board-level fields are resolved defensively — the loader API for
-    them is owned by :mod:`zicato.board` and is reconciled at
-    integration time:
-
-    * If :mod:`zicato.board.jsonl` exposes a ``load_board_meta`` callable
-      it is used directly.
-    * Otherwise the raw JSONL is scanned for a board-level object (a line
-      that carries ``judges`` / ``disable_drift`` but no entry ``id``).
-    * A board with neither canonicalizes to the empty-meta form, so
-      boards written before these fields existed keep a stable hash.
-    """
-    judges: object = []
-    disable_drift: object = ()
-    judge_only = False
-
-    from zicato.board import jsonl as _board_jsonl  # noqa: PLC0415
-
-    loader = getattr(_board_jsonl, "load_board_meta", None)
-    if callable(loader):
-        try:
-            meta = loader(board_path)
-        except Exception:  # noqa: BLE001 — defensive: board API may evolve
-            meta = None
-        if meta is not None:
-            judges = _meta_get(meta, "judges", [])
-            disable_drift = _meta_get(meta, "disable_drift", ())
-            judge_only = bool(_meta_get(meta, "judge_only", False))
-    else:
-        judges, disable_drift, judge_only = _scan_raw_board_meta(board_path)
-
+def _canon_board_meta(rows: list[dict[str, Any]]) -> str:
+    """Canonical metadata from the same accepted board as its entry rows."""
+    header = rows[0] if rows and rows[0].get("board_meta") is True and "id" not in rows[0] else {}
     canon: dict[str, object] = {
-        "judges": _canon_judges(judges),
-        "disable_drift": _canon_disable_drift(disable_drift),
+        "judges": _canon_judges(header.get("judges", [])),
+        "disable_drift": _canon_disable_drift(header.get("disable_drift", ())),
     }
-    # ``judge_only`` is folded into the contract hash so flipping it opens
-    # a new epoch. It is added ONLY when True so a board that never set it
-    # — every board written before the flag existed — hashes byte-for-byte
-    # identically to before, keeping stored epoch hashes stable.
-    if judge_only:
+    # Omit false to preserve the canonical form of boards without this flag.
+    if header.get("judge_only", False):
         canon["judge_only"] = True
     return json.dumps(canon, sort_keys=True, ensure_ascii=False)
-
-
-def _meta_get(meta: object, key: str, default: object) -> object:
-    """Read ``key`` off a board-meta object that may be a dict or struct."""
-    if isinstance(meta, Mapping):
-        return meta.get(key, default)
-    return getattr(meta, key, default)
-
-
-def _scan_raw_board_meta(board_path: Path) -> tuple[object, object, bool]:
-    """Best-effort scan for a board-level metadata object in raw JSONL.
-
-    A board-level object is a JSON line carrying ``judges`` and/or
-    ``disable_drift`` / ``judge_only`` but no entry ``id`` (entry rows
-    always have one). Returns ``([], (), False)`` when no such line
-    exists; ``disable_drift`` is handed back raw for
-    :func:`_canon_disable_drift` to normalize.
-    """
-    judges: object = []
-    disable_drift: object = ()
-    judge_only = False
-    try:
-        text = board_path.read_text(encoding="utf-8")
-    except OSError:
-        return judges, disable_drift, judge_only
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(payload, dict) or "id" in payload:
-            continue
-        if "judges" in payload:
-            judges = payload["judges"]
-        if "disable_drift" in payload:
-            disable_drift = payload["disable_drift"]
-        if "judge_only" in payload:
-            judge_only = bool(payload["judge_only"])
-    return judges, disable_drift, judge_only
 
 
 def _canon_dotted_spec(spec: str) -> dict[str, object]:
@@ -662,6 +617,22 @@ def _canon_adapter(inputs: ContractInputs) -> str:
         if not _dotted_spec_is_within_mutable_trees(dotted, inputs.mutable_trees)
     ]
     canon: dict[str, object] = {"worker_spec": spec, "implementation_sources": sources}
+    if inputs.execution_roles is not None:
+        roles = json.loads(inputs.execution_roles)
+        if roles:
+            canon["execution_roles"] = roles
+            implementations = []
+            for _role, document in sorted(roles.items()):
+                dotted = document["models_role"].get("call_llm")
+                if dotted and not _dotted_spec_is_within_mutable_trees(
+                    dotted, inputs.mutable_trees
+                ):
+                    implementations.append(_canon_dotted_spec(dotted))
+                for name in ("model_factory", "client_factory"):
+                    dotted = document.get("transport", {}).get(name)
+                    if dotted:
+                        implementations.append(_canon_dotted_spec(dotted))
+            canon["execution_sources"] = implementations
     if inputs.adapter_declaration is not None:
         declared = _canon_adapter_document(inputs.adapter_declaration)
         _require_declared_factory_source(declared, sources)
@@ -1002,7 +973,10 @@ def _sha(text: str) -> str:
 
 @with_workspace_imports
 def resolve_contract_inputs(
-    workspace_root: Path, *, workspace_config: Mapping[str, Any] | None = None
+    workspace_root: Path,
+    *,
+    workspace_config: Mapping[str, Any] | None = None,
+    execution_roles: bytes | None = None,
 ) -> ContractInputs:
     """Resolve the contract inputs for a workspace from ``config.json``.
 
@@ -1051,7 +1025,7 @@ def resolve_contract_inputs(
     brief_path = Path(
         contract.get("brief_path")
         or contract.get("rubric_path")
-        or _default_brief_path(workspace_root)
+        or _default_contract_path(workspace_root, "brief.md")
     )
     scoring_path = Path(
         contract.get("scoring_path") or _default_contract_path(workspace_root, "scoring.json")
@@ -1095,6 +1069,7 @@ def resolve_contract_inputs(
 
     # ``runtime.proposer_agent`` is optional — absent ⇒ no external
     # proposer and a canonical form byte-identical to before this seam.
+    from zicato.models_config import capture_execution_roles  # noqa: PLC0415
     from zicato.proposer.external import external_proposer_config  # noqa: PLC0415
 
     # ``contract.proposer_static_checks`` is read through the validator's
@@ -1123,6 +1098,9 @@ def resolve_contract_inputs(
         proposer_path=proposer_path,
         external_proposer=external_proposer_config(config, workspace_root),
         proposer_static_checks=declared_static_checks(workspace_root, workspace_config=config),
+        execution_roles=(
+            capture_execution_roles(config) if execution_roles is None else execution_roles
+        ),
     )
 
 
@@ -1143,7 +1121,7 @@ def default_contract_paths(workspace_root: Path) -> dict[str, Path | None]:
     built-in default proposer. A workspace opts into a proposer dir by
     setting ``contract.proposer_path`` explicitly.
     """
-    brief_default = Path(_default_brief_path(workspace_root))
+    brief_default = Path(_default_contract_path(workspace_root, "brief.md"))
     return {
         "board_path": Path(_default_contract_path(workspace_root, "board.jsonl")),
         "brief_path": brief_default,
@@ -1151,22 +1129,6 @@ def default_contract_paths(workspace_root: Path) -> dict[str, Path | None]:
         "scoring_path": Path(_default_contract_path(workspace_root, "scoring.json")),
         "proposer_path": None,
     }
-
-
-def _default_brief_path(workspace_root: Path) -> str:
-    """The conventional location of the operator's live proposer brief.
-
-    Prefers ``brief.md`` next to the ``.zicato/`` directory. When that
-    file is absent but a ``rubric.md`` exists in the same place, the
-    ``rubric.md`` wins, so a workspace holding one keeps resolving without
-    an operator-side file rename.
-    """
-    brief = workspace_root.parent / "brief.md"
-    if not brief.exists():
-        legacy = workspace_root.parent / "rubric.md"
-        if legacy.exists():
-            return str(legacy.resolve())
-    return str(brief.resolve())
 
 
 def _default_contract_path(workspace_root: Path, filename: str) -> str:

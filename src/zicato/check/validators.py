@@ -175,7 +175,7 @@ def dead_surface(ctx: CheckContext) -> Iterator[Defect]:
         yield (
             "empty_mutation_surface",
             "the active surface enumerates to zero mutation points",
-            {"trees": [str(tree) for tree in roots]},
+            {"trees": [str(tree) for tree in ctx.source_paths(*roots)]},
         )
         return
 
@@ -187,11 +187,12 @@ def dead_surface(ctx: CheckContext) -> Iterator[Defect]:
                 counts[prefix] += 1
     for prefix, count in sorted(counts.items(), key=lambda item: str(item[0])):
         if count == 0:
-            yield (
-                "tree_enumerates_to_nothing",
-                f"mutable tree {prefix} contributes no mutation point",
-                {"tree": str(prefix)},
-            )
+            for source in ctx.source_paths(prefix):
+                yield (
+                    "tree_enumerates_to_nothing",
+                    f"mutable tree {source} contributes no mutation point",
+                    {"tree": str(source)},
+                )
 
     yield from _unbound_span_markers(ctx)
 
@@ -345,10 +346,9 @@ def _kill_process_group(proc: subprocess.Popen[str]) -> None:
 def model_roles(ctx: CheckContext) -> Iterator[Defect]:
     """Every configured model role must resolve.
 
-    A configured ``models.<role>`` block wins over the callable the CLI
-    was given: the worker re-resolves the role from its secret-free spec
-    in its own interpreter (``worker_transport._role_worker_spec``). Two
-    things about such a role are provable here, both free:
+    The execution contract captures each effective role through
+    ``models_config.capture_execution_roles``. Two properties of authored
+    role declarations are provable here without model requests:
 
     * a ``call_llm`` dotted path either imports to a callable or does not;
     * a model spec naming an ``api_key_env`` either finds that variable
@@ -615,6 +615,7 @@ def frozen_epoch_contract_identity(ctx: CheckContext) -> Iterator[Defect]:
     from zicato.epoch.contract import (  # noqa: PLC0415
         compute_component_hashes,
         compute_contract_hash,
+        read_component_hashes,
         resolve_contract_inputs,
     )
     from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
@@ -625,11 +626,9 @@ def frozen_epoch_contract_identity(ctx: CheckContext) -> Iterator[Defect]:
         stored_path = WorkspaceLayout.from_root(ctx.workspace_root).contract_components(
             ctx.epoch_id
         )
-        raw_components = json.loads(stored_path.read_text(encoding="utf-8"))
-        if not isinstance(raw_components, dict) or not all(
-            isinstance(key, str) and isinstance(value, str) for key, value in raw_components.items()
-        ):
-            raise ValueError("expected a JSON object of string component hashes")
+        stored_components = read_component_hashes(stored_path)
+        if stored_components is None:
+            raise ValueError("recorded contract component hashes are missing")
         current = resolve_contract_inputs(ctx.workspace_root)
         frozen = replace(
             current,
@@ -648,7 +647,6 @@ def frozen_epoch_contract_identity(ctx: CheckContext) -> Iterator[Defect]:
         )
         return
 
-    stored_components = {str(key): str(value) for key, value in raw_components.items()}
     changed = sorted(
         name
         for name in set(stored_components) | set(required_components)

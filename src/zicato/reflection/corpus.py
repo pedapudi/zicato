@@ -426,7 +426,10 @@ def _read_loss(loss_path: Path) -> Any | None:
     """Read one ``loss.json`` via the reducer; ``None`` on any defect."""
     from zicato.tournament.unit_cache import read_capture_loss  # noqa: PLC0415
 
-    return read_capture_loss(loss_path)
+    try:
+        return read_capture_loss(loss_path)
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------

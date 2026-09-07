@@ -34,7 +34,7 @@ export async function render(host, ctx) {
   // a sibling of `epochs` on the SAME /api/workspace read, so no extra fan-out.
   const ledger = (ws && Array.isArray(ws.ledger)) ? ws.ledger : [];
   // Liveness is the served tri-state, never raw presence of
-  // active_tournament.json — a torn-down run leaves that file on disk, and
+  // active_tournament.events.jsonl — a torn-down run leaves that file on disk, and
   // reading it as "LIVE / tournament running" forever is the stale-live bug
   // class (issue #194 §1).
   const live = livenessFor(state).liveness.live;
@@ -99,7 +99,12 @@ export async function render(host, ctx) {
     // builder digest so a no-op heartbeat (identical trend) churns no DOM — a
     // new scored prediction flips it, a steady tick stays byte-identical.
     calib: calib ? svg.calibrationTrendDigest(calib) : null,
-    health: health ? (Array.isArray(health.findings) ? health.findings.length : 0) : -1,
+    health: health ? {
+      epoch: health.epoch_id, healthy: health.healthy, unreadable: health.unreadable,
+      findings: (Array.isArray(health.findings) ? health.findings : []).map((f) => [
+        f.code, f.severity, f.summary,
+      ]),
+    } : null,
   });
 
   gatedSwap(host, digest, () => {
@@ -267,7 +272,7 @@ function goalLine(m) {
 
 function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost, goalModel) {
   // "running" requires the GATED live flag (fresh heartbeat) — not just an
-  // active_tournament.json whose epoch_id matches. A stale file must not paint
+  // active_tournament.events.jsonl whose epoch_id matches. A stale file must not paint
   // the current epoch's chip "running" after the orchestrator has exited.
   const liveHere = isCurrent && !!live && state.activeTournament && state.activeTournament.epoch_id === row.epoch_id;
   const st = isCurrent ? (liveHere ? 'live' : 'open') : (row.closed ? 'closed' : 'open');
@@ -362,17 +367,20 @@ function epochTrajectoryValues(traj) {
 
 function healthPanel(hr) {
   const findings = Array.isArray(hr.findings) ? hr.findings : [];
-  const healthy = hr.healthy !== false && findings.length === 0;
+  const healthy = !hr.unreadable && hr.healthy === true && findings.length === 0;
   const body = el('div');
+  if (hr.unreadable) {
+    body.appendChild(el('div', { class: 'dn-faint', text: 'Health report unreadable: ' + hr.unreadable }));
+  }
   if (healthy) {
     body.appendChild(el('div', { class: 'dn-good-t', text: '✓ loop is healthy — the evaluation distinguishes candidates.' }));
   } else {
     for (const f of findings) {
-      const sev = String((f && (f.severity || f.level)) || 'info').toLowerCase();
+      const sev = String((f && f.severity) || 'info').toLowerCase();
       body.appendChild(el('div', { class: 'dn-finding' }, [
         chip(sev === 'critical' ? 'closed' : 'open', sev),
-        el('span', { class: 'dn-mono', style: 'margin-left:8px', text: f.detector || f.name || 'finding' }),
-        el('div', { class: 'dn-faint', style: 'margin-top:4px', text: f.summary || f.message || '' }),
+        el('span', { class: 'dn-mono', style: 'margin-left:8px', text: f.code || 'finding' }),
+        el('div', { class: 'dn-faint', style: 'margin-top:4px', text: f.summary || '' }),
       ]));
     }
   }

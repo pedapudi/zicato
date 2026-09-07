@@ -129,33 +129,10 @@ def round_indices(layout: WorkspaceLayout, epoch_id: str) -> list[int]:
 
 
 def read_board(layout: WorkspaceLayout, epoch_id: str) -> list[dict[str, Any]] | None:
-    """One epoch's board as the raw parsed JSONL line dicts (header included).
+    """Read accepted board rows, including the optional metadata header."""
+    from zicato.board.jsonl import load_board_rows  # noqa: PLC0415
 
-    Returns the list of per-line dict objects from ``board.jsonl`` (the
-    ``board_meta`` header line is included as-is; callers that want only
-    entries filter it). Returns ``None`` when the file is missing or
-    unreadable, and silently skips blank / non-JSON / non-dict lines —
-    mirroring the dashboard's prior inline board parsing.
-    """
-    try:
-        text = layout.board(epoch_id).read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None
-    except OSError:
-        return None
-    lines: list[dict[str, Any]] = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(obj, dict):
-            continue
-        lines.append(obj)
-    return lines
+    return load_board_rows(layout.board(epoch_id))
 
 
 def generation_base_seed(layout: WorkspaceLayout, epoch_id: str, generation_id: str) -> BaseSeed:

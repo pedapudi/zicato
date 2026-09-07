@@ -1340,7 +1340,7 @@ def _structure_from_index(
 def _structure_from_active(
     paths: WorkspacePaths, epoch_id: str, tournament_id: str
 ) -> dict[str, Any] | None:
-    """The structure state from the live ``active_tournament.json``.
+    """The structure state from the live ``active_tournament.events.jsonl``.
 
     Returns ``None`` unless the live record matches the requested
     ``(epoch_id, tournament_id)`` coordinate.
@@ -1453,7 +1453,7 @@ def build_tournament_structure(
 
     1. the SQLite ``tournaments`` row's structure columns (``source:
        "index"``);
-    2. the live ``active_tournament.json`` when it matches the coordinate
+    2. the live ``active_tournament.events.jsonl`` when it matches the coordinate
        (``source: "active"``);
     3. a degenerate single-match reconstruction from the per-run
        ``loss.json`` / ``gen_score.json`` files (``source: "loss_files"``).
@@ -1546,7 +1546,7 @@ def _enrich_field_status(
 
     The per-experiment index row carries the settled bracket but not the
     proposing-step outcomes (the per-challenger applied/rejected records
-    live only on ``active_tournament.json``, which the multi-challenger
+    live only on ``active_tournament.events.jsonl``, which the multi-challenger
     path retains with ``phase="completed"``). So when the winning resolver
     is the index (or any source whose ``field_status`` is empty) but the
     live envelope still matches this coordinate, lift its ``field_status``
@@ -1706,7 +1706,7 @@ def _enrich_standings_ratings(
     Settled-vs-live: the structure payload is request-scoped (the GET handler
     calls this reader once per fetch — there is no SSE/heartbeat recompute),
     and the rating join reads only the SETTLED index. A LIVE field's standings
-    (resolved off ``active_tournament.json``) simply carry whatever the index
+    (resolved off ``active_tournament.events.jsonl``) simply carry whatever the index
     derived at the last ingest — typically the null triple for brand-new
     challengers — and the live overlay (projected scalars, in-flight bars)
     keeps riding the active envelope untouched. The rating is visibility-only;

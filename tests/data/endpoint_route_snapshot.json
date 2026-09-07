@@ -63,7 +63,7 @@
             "kind": "single_turn",
             "input_preview": "Say hello.",
             "expectation_kind": "rubric",
-            "budget_s": null,
+            "budget_s": 1.0,
             "weight": 1.0,
             "tags": [
               "smoke"
@@ -74,7 +74,7 @@
             "kind": "single_turn",
             "input_preview": "Say goodbye.",
             "expectation_kind": "predicate",
-            "budget_s": null,
+            "budget_s": 1.0,
             "weight": 2.0,
             "tags": []
           }
@@ -353,95 +353,6 @@
       "generated_at": "<masked>"
     }
   },
-  "live_execution_plan": {
-    "status": 200,
-    "body": {
-      "epoch_id": "e0",
-      "generated_at": "<masked>",
-      "board": {
-        "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
-        "entry_count": 2
-      },
-      "note": "",
-      "stages": [
-        {
-          "id": "e:e0/baseline",
-          "kind": "baseline",
-          "label": "Baseline",
-          "purpose": "Evaluate the incoming champion before the loop proposes anything.",
-          "status": "skipped",
-          "provenance": "partial",
-          "started_at": null,
-          "ended_at": null,
-          "duration_ms": null,
-          "progress": {
-            "done": 1,
-            "total": 1
-          },
-          "coordinates": {
-            "epoch_id": "e0"
-          },
-          "outcome": {
-            "generation_ids": [
-              "v0"
-            ]
-          },
-          "children": [
-            {
-              "id": "e:e0/baseline/v0",
-              "kind": "board_sweep",
-              "label": "Board sweep — v0",
-              "purpose": "Every board entry executed against one candidate.",
-              "status": "skipped",
-              "provenance": "partial",
-              "started_at": null,
-              "ended_at": null,
-              "duration_ms": null,
-              "progress": {
-                "done": 0,
-                "total": 2
-              },
-              "coordinates": {
-                "epoch_id": "e0",
-                "generation_id": "v0"
-              },
-              "outcome": {
-                "unit_count": 0,
-                "entries_without_units": [
-                  "t1",
-                  "t2"
-                ]
-              },
-              "children": [],
-              "active": false
-            }
-          ],
-          "active": false
-        }
-      ],
-      "liveness": {
-        "state": "settled"
-      },
-      "overlay": {
-        "in_flight": 0,
-        "placed": 0,
-        "unplaced": 0,
-        "other_epoch": 0,
-        "active_path": [],
-        "phase": null,
-        "round_index": null,
-        "note": "workspace is not live; overlay withheld"
-      }
-    }
-  },
-  "proposer_recommendations": {
-    "status": 200,
-    "body": {
-      "found": true,
-      "pending": [],
-      "count": 0
-    }
-  },
   "epoch/current": {
     "status": 200,
     "body": {
@@ -461,7 +372,7 @@
           "kind": "single_turn",
           "input_preview": "Say hello.",
           "expectation_kind": "rubric",
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": [
             "smoke"
@@ -472,7 +383,7 @@
           "kind": "single_turn",
           "input_preview": "Say goodbye.",
           "expectation_kind": "predicate",
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 2.0,
           "tags": []
         }
@@ -573,7 +484,7 @@
           "kind": "single_turn",
           "input_preview": "Say hello.",
           "expectation_kind": "rubric",
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": [
             "smoke"
@@ -584,7 +495,7 @@
           "kind": "single_turn",
           "input_preview": "Say goodbye.",
           "expectation_kind": "predicate",
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 2.0,
           "tags": []
         }
@@ -1167,113 +1078,6 @@
       "waterfall": []
     }
   },
-  "execution_plan": {
-    "status": 200,
-    "body": {
-      "epoch_id": "e1",
-      "generated_at": "<masked>",
-      "board": {
-        "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
-        "entry_count": 2
-      },
-      "note": "",
-      "stages": [
-        {
-          "id": "e:e1/baseline",
-          "kind": "baseline",
-          "label": "Baseline",
-          "purpose": "Evaluate the incoming champion before the loop proposes anything.",
-          "status": "skipped",
-          "provenance": "partial",
-          "started_at": null,
-          "ended_at": null,
-          "duration_ms": null,
-          "progress": {
-            "done": 2,
-            "total": 2
-          },
-          "coordinates": {
-            "epoch_id": "e1"
-          },
-          "outcome": {
-            "generation_ids": [
-              "v0",
-              "v1"
-            ]
-          },
-          "children": [
-            {
-              "id": "e:e1/baseline/v0",
-              "kind": "board_sweep",
-              "label": "Board sweep — v0",
-              "purpose": "Every board entry executed against one candidate.",
-              "status": "skipped",
-              "provenance": "partial",
-              "started_at": null,
-              "ended_at": null,
-              "duration_ms": null,
-              "progress": {
-                "done": 0,
-                "total": 2
-              },
-              "coordinates": {
-                "epoch_id": "e1",
-                "generation_id": "v0"
-              },
-              "outcome": {
-                "unit_count": 0,
-                "entries_without_units": [
-                  "t1",
-                  "t2"
-                ]
-              },
-              "children": []
-            },
-            {
-              "id": "e:e1/baseline/v1",
-              "kind": "board_sweep",
-              "label": "Board sweep — v1",
-              "purpose": "Every board entry executed against one candidate.",
-              "status": "skipped",
-              "provenance": "partial",
-              "started_at": null,
-              "ended_at": null,
-              "duration_ms": null,
-              "progress": {
-                "done": 0,
-                "total": 2
-              },
-              "coordinates": {
-                "epoch_id": "e1",
-                "generation_id": "v1"
-              },
-              "outcome": {
-                "unit_count": 0,
-                "entries_without_units": [
-                  "t1",
-                  "t2"
-                ]
-              },
-              "children": []
-            }
-          ]
-        }
-      ]
-    }
-  },
-  "execution_plan/rejected": {
-    "status": 200,
-    "body": {
-      "epoch_id": "bad~id",
-      "generated_at": "<masked>",
-      "board": {
-        "digest": "",
-        "entry_count": 0
-      },
-      "note": "unknown epoch",
-      "stages": []
-    }
-  },
   "experiments_ledger": {
     "status": 200,
     "body": {
@@ -1378,8 +1182,30 @@
       "epoch_id": "e1",
       "found": true,
       "candidates": [],
-      "entries": [],
-      "cells": [],
+      "entries": [
+        {
+          "entry_id": "t1",
+          "slice": "train",
+          "tag": null,
+          "flip_rate": null,
+          "flip_rate_measured": false,
+          "calibration_runs": 0,
+          "calibration_generation": null
+        },
+        {
+          "entry_id": "t2",
+          "slice": "train",
+          "tag": null,
+          "flip_rate": null,
+          "flip_rate_measured": false,
+          "calibration_runs": 0,
+          "calibration_generation": null
+        }
+      ],
+      "cells": [
+        [],
+        []
+      ],
       "calibration": {
         "measured": false,
         "generation_id": null,
@@ -1410,7 +1236,7 @@
     "body": {
       "epoch_id": "e1",
       "entry_id": "t1",
-      "found": false,
+      "found": true,
       "slice": "train",
       "tag": null,
       "instrument": {
@@ -1418,8 +1244,8 @@
         "flip_rate_measured": false,
         "calibration_runs": 0,
         "calibration_generation": null,
-        "discrimination": null,
-        "discrimination_pairs": 0,
+        "discrimination": 0.0,
+        "discrimination_pairs": 1,
         "runtime_ms_mean": null,
         "runtime_ms_p50": null,
         "runtime_ms_max": null,
@@ -1427,15 +1253,14 @@
         "cached_share": null
       },
       "trajectory": [],
-      "trajectory_reason": "No records for this epoch and entry were found.",
+      "trajectory_reason": "This epoch has no generations on record.",
       "attribution": {
         "first_passed_by": null,
         "regressed_by": [],
-        "first_passed_reason": "No records for this epoch and entry were found.",
-        "regressed_reason": "No records for this epoch and entry were found."
+        "first_passed_reason": "No generation was promoted in this epoch, so nothing could pass it.",
+        "regressed_reason": "No generation was promoted in this epoch, so nothing could regress it."
       },
-      "reflection_findings": [],
-      "note": "no such epoch / entry"
+      "reflection_findings": []
     }
   },
   "eval_dossier/rejected-epoch": {
@@ -7366,7 +7191,7 @@
           "kind": "single_turn",
           "input_preview": "Task b1.",
           "expectation_kind": "predicate",
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         },
@@ -7375,7 +7200,7 @@
           "kind": "single_turn",
           "input_preview": "Task b2.",
           "expectation_kind": "predicate",
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         },
@@ -7384,7 +7209,7 @@
           "kind": "single_turn",
           "input_preview": "Task b3.",
           "expectation_kind": "predicate",
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         },
@@ -7393,7 +7218,7 @@
           "kind": "single_turn",
           "input_preview": "Task q3_metrics_outline.",
           "expectation_kind": "predicate",
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -8260,7 +8085,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -9747,7 +9572,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -11188,7 +11013,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -11468,7 +11293,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -12329,7 +12154,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -12650,7 +12475,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -14170,7 +13995,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -14672,9 +14497,17 @@
     "status": 200,
     "body": {
       "tournament_id": "2026-05-30_e0:field:v1",
+      "parent_generation_id": "",
+      "child_generation_id": "",
       "epoch_id": "2026-05-30_e0",
-      "structure": "racing",
+      "started_at": "",
       "phase": "tournament:round_1:running",
+      "round_index": 1,
+      "total_rounds": 0,
+      "entries": [],
+      "partial_champion_agg": {},
+      "partial_challenger_agg": {},
+      "structure": "racing",
       "structure_params": {
         "board_fraction": 0.5,
         "eta": 2,
@@ -14759,7 +14592,7 @@
         }
       ],
       "field_status": [],
-      "state": "in_progress"
+      "projected": {}
     }
   },
   "single_elim/epoch": {
@@ -14781,7 +14614,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -16332,7 +16165,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -17480,7 +17313,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -19109,7 +18942,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -19807,7 +19640,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -20222,9 +20055,17 @@
     "status": 200,
     "body": {
       "tournament_id": "2026-05-30_e0:field:v1",
+      "parent_generation_id": "",
+      "child_generation_id": "",
       "epoch_id": "2026-05-30_e0",
-      "structure": "swiss",
+      "started_at": "",
       "phase": "proposing",
+      "round_index": 1,
+      "total_rounds": 0,
+      "entries": [],
+      "partial_champion_agg": {},
+      "partial_challenger_agg": {},
+      "structure": "swiss",
       "structure_params": {
         "rounds": 2
       },
@@ -20263,7 +20104,7 @@
           "seed": 5
         }
       ],
-      "state": "in_progress"
+      "projected": {}
     }
   },
   "swiss_all_applied/epoch": {
@@ -20285,7 +20126,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -20939,7 +20780,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -22064,7 +21905,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }
@@ -24036,7 +23877,7 @@
           "kind": "single_turn",
           "input_preview": "Draft.",
           "expectation_kind": null,
-          "budget_s": null,
+          "budget_s": 1.0,
           "weight": 1.0,
           "tags": []
         }

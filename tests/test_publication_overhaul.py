@@ -475,7 +475,8 @@ async def test_round_report_regeneration_is_best_effort(
     — the freshness hook must NEVER abort the round."""
     import zicato.analyzer as analyzer_pkg
     from zicato.evolve.round_reporting import _regenerate_epoch_report
-    from zicato.util.best_effort import best_effort_failures, reset_best_effort_failures
+    from zicato.health.inputs import epoch_optional_failures
+    from zicato.logging_stream import install_log_stream, round_log_context
 
     async def _unused_llm(system: str, user: str, model: str) -> str:  # pragma: no cover
         return ""
@@ -484,10 +485,19 @@ async def test_round_report_regeneration_is_best_effort(
         raise RuntimeError("report generation wedged")
 
     monkeypatch.setattr(analyzer_pkg, "regenerate_epoch_report_deterministic", _boom)
-    reset_best_effort_failures()
 
     ws = _base_epoch(tmp_path, scoring={"promote_margin": 0.01})
     # Does NOT raise, even though the underlying regeneration blew up.
-    await _regenerate_epoch_report(ws, "2026-07-12_pub", _unused_llm, "")
-    # The swallow is observable via the best-effort failure tally.
-    assert best_effort_failures().get("epoch analysis report regeneration", 0) >= 1
+    handle = install_log_stream(ws)
+    try:
+        with round_log_context("2026-07-12_pub", 4):
+            await _regenerate_epoch_report(ws, "2026-07-12_pub", _unused_llm, "")
+    finally:
+        handle.close()
+    records = epoch_optional_failures(ws, "2026-07-12_pub")
+    assert len(records) == 1
+    assert records[0]["fields"] == {
+        "operation": "epoch analysis report regeneration",
+        "exception_type": "RuntimeError",
+        "round_index": 4,
+    }

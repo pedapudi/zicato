@@ -29,7 +29,9 @@ import json
 import statistics
 from typing import Any
 
+from zicato.board.jsonl import BoardDocument
 from zicato.core.types import TournamentStructure
+from zicato.epoch._storage import RecordError
 from zicato.query.inputs import EpochInputs
 from zicato.query.paths import (
     WorkspacePaths,
@@ -270,7 +272,7 @@ def _score_from_loss_json(row: Any) -> float | None:
 
 
 def _load_board_entries(paths: WorkspacePaths, epoch_id: str) -> list[Any]:
-    """Load the epoch's board as ``BoardEntry`` objects (``[]`` on any defect).
+    """Load validated entries; absence yields [], corruption raises RecordError.
 
     Reads through the shared canonical board reader
     (:func:`zicato.workspace.read_board_entries`), which the analysis report
@@ -684,7 +686,10 @@ def build_eval_matrix(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
         return _empty_matrix(epoch_id)
 
     candidates = _candidate_axis(paths, resolved)
-    board_entries = _load_board_entries(paths, resolved)
+    try:
+        board_entries = _load_board_entries(paths, resolved)
+    except RecordError as exc:
+        return {**_empty_matrix(resolved), "unreadable": str(exc)}
     holdout = _holdout_ids(paths, resolved, board_entries)
     calibration = _calibration(paths, resolved)
     flips = _per_entry_flip_rates(paths, resolved, calibration)
@@ -924,7 +929,10 @@ def build_eval_dossier(
         return _empty_dossier(epoch_id, entry_id)
 
     candidates = _candidate_axis(paths, resolved)
-    board_entries = _load_board_entries(paths, resolved)
+    try:
+        board_entries = _load_board_entries(paths, resolved)
+    except RecordError as exc:
+        return {**_empty_dossier(resolved, entry_id), "unreadable": str(exc)}
     holdout = _holdout_ids(paths, resolved, board_entries)
     calibration = _calibration(paths, resolved)
     flips = _per_entry_flip_rates(paths, resolved, calibration)
@@ -1291,7 +1299,10 @@ def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
         return _empty_health(epoch_id)
 
     candidates = _candidate_axis(paths, resolved)
-    board_entries = _load_board_entries(paths, resolved)
+    try:
+        board_entries = _load_board_entries(paths, resolved)
+    except RecordError as exc:
+        return {**_empty_health(resolved), "unreadable": str(exc)}
     holdout = _holdout_ids(paths, resolved, board_entries)
     calibration = _calibration(paths, resolved)
     flips = _per_entry_flip_rates(paths, resolved, calibration)
@@ -1395,20 +1406,15 @@ __all__ = [
 FACET_TAG_PREFIX = "facet:"
 
 
-def facets_by_entry(paths: WorkspacePaths, epoch_id: str) -> dict[str, tuple[str, ...]]:
-    """``{entry_id: (facet_name, ...)}`` off the frozen board, best-effort.
-
-    Reads through the tolerant raw scan, so one stale entry costs its own
-    row rather than the whole payload.
-    """
+def facets_by_entry(board: BoardDocument | None) -> dict[str, tuple[str, ...]]:
+    """Project facet tags from an already accepted board."""
     from zicato.query.board_scan import (  # noqa: PLC0415
         board_entry_id,
         board_entry_tags,
-        iter_board_rows,
     )
 
     out: dict[str, tuple[str, ...]] = {}
-    for row in iter_board_rows(layout_of(paths).board(epoch_id)):
+    for row in board.rows if board is not None else ():
         entry_id = board_entry_id(row)
         if entry_id is None:
             continue
@@ -1492,7 +1498,7 @@ def facet_scores_for_generation(
     paths: WorkspacePaths,
     epoch_id: str,
     generation_id: str,
-    facets_by_entry_map: dict[str, tuple[str, ...]] | None = None,
+    board: BoardDocument | None,
     *,
     inputs: EpochInputs | None = None,
 ) -> dict[str, Any]:
@@ -1563,9 +1569,8 @@ def facet_scores_for_generation(
     threshold; making one drive a decision means first measuring that
     decision's error rates (04-evaluation-statistics.md §3.2).
 
-    ``facets_by_entry_map`` is an optional prebuilt
-    ``{entry_id: (facet, ...)}`` — pass it when the caller already read the
-    board, so one request does not walk ``board.jsonl`` twice.
+    The caller supplies the accepted board so facet membership and the
+    holdout split use the same observation.
 
     Best-effort: an unreadable board or absent run files yield ``{"facets": {},
     "overall": None}`` and the dossier's facet table simply does not paint.
@@ -1573,10 +1578,9 @@ def facet_scores_for_generation(
     from zicato.tournament.scoring import aggregate_generation_score  # noqa: PLC0415
 
     empty: dict[str, Any] = {"facets": {}, "overall": None}
-    # The caller may already hold the map (the dossier feed stamps each entry
-    # row with its facets), so accept it and skip a second board read.
-    if facets_by_entry_map is None:
-        facets_by_entry_map = facets_by_entry(paths, epoch_id)
+    if board is None:
+        return empty
+    facets_by_entry_map = facets_by_entry(board)
     if not facets_by_entry_map:
         return empty
     losses = _generation_loss_profiles(paths, epoch_id, generation_id)
@@ -1587,16 +1591,14 @@ def facet_scores_for_generation(
     # The gate's split, read the way every other eval_view surface reads it,
     # so a facet row and the per-entry `slice` badge beside it can never
     # disagree about which entries are held out.
-    board_entries = _load_board_entries(paths, epoch_id)
+    board_entries = board.entries
     holdout = _holdout_ids(paths, epoch_id, board_entries)
     board_ids = {e.id for e in board_entries}
 
     def _is_train(entry_id: str) -> bool:
         """Does this entry feed the scored (train) slice?
 
-        An id the board load did not yield is treated as train: the loader
-        VALIDATES, so it blanks on one stale row, and a blank board must not
-        silently reclassify the whole workspace as held out.
+        A measured id absent from the accepted board is not a held-out entry.
         """
         return entry_id not in holdout
 

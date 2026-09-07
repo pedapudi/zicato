@@ -329,7 +329,7 @@ is the replicate mean, the latter replicate 0's raw values.
 
 ### Apply
 
-A plain `ScoringWeights` field — hand-edit `scoring.json`. No builder op, no CLI
+A plain `ScoringWeights` field — hand-edit `scoring.json`. No CLI
 flag. Default `""` means no hook; both dotted forms resolve as in §2.
 
 ```json

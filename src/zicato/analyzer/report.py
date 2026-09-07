@@ -84,6 +84,7 @@ from zicato.analyzer.report_sections import (
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.settings import AuxConfig
 from zicato.core.workspace import analysis_path
+from zicato.storage import atomic_write_text
 
 log = logging.getLogger("zicato.analyzer.report")
 
@@ -1494,12 +1495,12 @@ def regenerate_epoch_report_deterministic(workspace_root: Path, epoch_id: str) -
     if _mask_regen_timestamp(new_md) == _mask_regen_timestamp(existing):
         return False
 
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-    md_path.write_text(new_md, encoding="utf-8")
+    atomic_write_text(md_path, new_md, mode=None)
     try:
-        md_path.with_suffix(".html").write_text(
+        atomic_write_text(
+            md_path.with_suffix(".html"),
             render_report_html(epoch_id, new_md, data=data),
-            encoding="utf-8",
+            mode=None,
         )
     except Exception as exc:  # noqa: BLE001 — HTML is non-critical
         log.debug("epoch report: deterministic analysis.html refresh skipped (%s)", exc)
@@ -1527,11 +1528,12 @@ def restamp_persisted_report(workspace_root: Path, epoch_id: str) -> bool:
     new_md = restamp_masthead(report_md, data)
     if new_md == report_md:
         return False
-    md_path.write_text(new_md, encoding="utf-8")
+    atomic_write_text(md_path, new_md, mode=None)
     try:
-        md_path.with_suffix(".html").write_text(
+        atomic_write_text(
+            md_path.with_suffix(".html"),
             render_report_html(epoch_id, new_md, data=data),
-            encoding="utf-8",
+            mode=None,
         )
     except Exception as exc:  # noqa: BLE001 — HTML is non-critical
         log.debug("epoch report: analysis.html re-stamp skipped (%s)", exc)
@@ -1614,18 +1616,14 @@ async def generate_epoch_report(
     report_md = assemble_report_markdown(data, prose, deterministic)
 
     md_path = analysis_path(workspace_root, epoch_id)
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-    md_path.write_text(report_md, encoding="utf-8")
+    atomic_write_text(md_path, report_md, mode=None)
 
     # The HTML companion is best-effort within the best-effort pass —
     # the markdown is the canonical artifact, but the dashboard endpoint
     # serves the HTML, so a render failure must not lose the markdown.
     try:
         html_path = md_path.with_suffix(".html")
-        html_path.write_text(
-            render_report_html(epoch_id, report_md, data=data),
-            encoding="utf-8",
-        )
+        atomic_write_text(html_path, render_report_html(epoch_id, report_md, data=data), mode=None)
     except Exception as exc:  # noqa: BLE001 — HTML is non-critical
         log.debug("epoch report: analysis.html render skipped (%s)", exc)
 

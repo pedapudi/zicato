@@ -6,8 +6,8 @@ this module turns each one into a **suggestion** — a drafted BOARD-FORMAT entr
 or :class:`~zicato.core.JudgeSpec`, a §4 provenance block (source episodes,
 lineage ids, miner/synth versions, the per-type target-set rule), a
 deterministic ``suggestion_id``, and a one-paragraph rationale. Nothing here
-edits a sealed contract: every path terminates at a draft the operator carries
-into the builder.
+edits a sealed contract. Operators review the suggested artifacts before
+editing workspace files.
 
 Two tiers, cleanly partitioned by the miner's ``suggestion_hint`` (EVAL-SYNTHESIS.md §7):
 
@@ -1528,9 +1528,7 @@ def _to_surface_suggestion(
         artifact_kind = surface.ARTIFACT_RUBRIC_REVISION
         draft_artifact = _judge_to_json(s.judge)
         proposed_op = None
-        proposed_op_reason = (
-            "rubric revision edits an existing judge — no builder judge-edit op yet"
-        )
+        proposed_op_reason = "rubric revision requires manual editing of the existing judge"
     elif s.judge is not None:
         artifact_kind = surface.ARTIFACT_JUDGE
         draft_artifact = _judge_to_json(s.judge)

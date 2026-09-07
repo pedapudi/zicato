@@ -486,11 +486,8 @@ the rounds page and the live band draw), `boardstatus.js` and `ledger.js`
   with the selected cell's patch diffed side by side.
 - **publication** — the epoch write-up, typeset with live figures
   spliced in at the `<!-- FIGURE:NAME -->` markers.
-- **builder** — the tournament builder: a rail of contract sections, the
-  active section's controls, a live preview with a cost estimate, and a
-  copilot chat pane. It edits a draft and writes only on confirmation.
-- **settings** — the contract roll-up, the model-engine configuration,
-  and appearance (theme, typeface, scale).
+- **settings** — read-only contract and model-engine configuration,
+  plus editable appearance preferences (theme, typeface, scale).
 - **logs** — the operator-log pane: one structured stream per `evolve`
   or `reflect` invocation, tailed through the query layer. It sits at
   workspace level rather than inside an epoch, because the streams are
@@ -535,7 +532,6 @@ an unrecognised hash resolves to home so a stale link never lands blank.
 #/e/<epochId>/instrument[/<reflectionId>[/<judge>[/<runRef>]]]
 #/e/<epochId>/traces[/<reflectionId>[/<traceId>]]
 #/e/<epochId>/paper                    the epoch publication
-#/builder                              the tournament builder
 #/logs                                 the operator-log pane
 #/settings[/<section>]                 contract / models / appearance
 ```
@@ -575,7 +571,7 @@ and the **zicato-level** builders `harmonografMetaSession()`,
 `harmonografIsLive()` is true when EITHER (a) a run is in flight (an
 active tournament or any active run) — the evolve-launched server lives
 only then — OR (b) the heartbeat carries `harmonograf_persistent: true`.
-The latter is set by the STANDALONE dashboard / builder, which reuses-or-
+The latter is set by the standalone dashboard, which reuses-or-
 launches ONE persistent per-workspace harmonograf bound to the workspace's
 `.harmonograf/harmonograf.db` (`ensure_workspace_harmonograf`) and injects
 its `web_url` into the heartbeat payload (`state_reader.read_heartbeat_dict`)

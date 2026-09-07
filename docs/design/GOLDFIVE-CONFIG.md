@@ -69,13 +69,11 @@ defaults. Zicato supplies one additional default: wrapped agent calls may run
 for 1,800,000 milliseconds. An explicit
 `goldfive.agent.call_timeout_ms` value takes precedence.
 
-The Builder's Weights section can enable, edit, or remove the object. Enabling
-it with `{}` asks Goldfive to apply every default and stores the complete
-normalized document. Later edits merge into that document and pass through
-Goldfive's validator. Opening the Builder section does not enable the
-integration.
+Configure the object in `scoring.json`. An empty object `{}` enables the
+integration with its defaults; omitting the object leaves it disabled.
+Validation uses Goldfive's configuration-document API.
 
-Run `zicato check` after editing the configuration. The check verifies that the
+Run `zicato inspect setup` after editing the configuration. The check verifies that the
 selected adapter and scoring object agree, asks Goldfive to validate and
 normalize the document, checks optional runtime capabilities, and checks named
 credentials. It performs no endpoint request.

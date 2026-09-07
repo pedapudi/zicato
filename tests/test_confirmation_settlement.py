@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from tests._orchestrator_harness import (
+    evaluation_call_llm,
     install_stub_adapter_factory,
-    make_aux_responder,
     run_evolve_once,
 )
 from tests.test_driver_evidence_pregate import _replicate_result
@@ -101,7 +101,7 @@ def test_required_confirmation_settles_without_advancing_lineage(
             lambda _run: None if cause == "missing_runner" else replicate,
         )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     expected = "rejected" if cause == "holdout_failure" else "deferred"
     assert outcome.tournament_decision == expected
     assert (workspace / "epochs" / epoch_id / "current_generation").read_text().strip() == "v0"

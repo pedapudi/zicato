@@ -60,6 +60,23 @@ def test_atomic_write_text_roundtrip(tmp_path: Path) -> None:
     assert list(target.parent.iterdir()) == [target]
 
 
+@pytest.mark.parametrize("existing_mode", [None, 0o600, 0o640])
+def test_atomic_write_without_explicit_mode_retains_report_permissions(tmp_path, existing_mode):
+    target = tmp_path / "report.md"
+    reference = tmp_path / "reference.md"
+    reference.write_text("default creation mode")
+    expected_mode = stat.S_IMODE(reference.stat().st_mode)
+    if existing_mode is not None:
+        target.write_text("previous report")
+        target.chmod(existing_mode)
+        expected_mode = existing_mode
+
+    atomic_write_text(target, "complete report", mode=None)
+
+    assert target.read_text() == "complete report"
+    assert stat.S_IMODE(target.stat().st_mode) == expected_mode
+
+
 def test_atomic_write_json_roundtrip(tmp_path: Path) -> None:
     target = tmp_path / "state.json"
     atomic_write_json(target, {"b": 2, "a": 1})

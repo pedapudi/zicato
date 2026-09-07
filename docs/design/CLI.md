@@ -13,18 +13,17 @@ zicato init
 zicato evolve
 ```
 
-The root exposes exactly five direct commands and six advanced namespaces:
+The root exposes four direct commands and six advanced namespaces:
 
 | Root command | Purpose |
 |---|---|
 | `init` | Scaffold a workspace. |
 | `evolve` | Resolve the contract and run the loop. |
-| `dashboard` | Serve the browser view; `--view builder` opens contract authoring. |
-| `tui` | Review the workspace in a terminal. |
+| `dashboard` | Serve the browser view. |
 | `health` | Report whether the loop has useful optimization signal. |
 | `board` | Inspect or edit a frozen board. |
 | `epoch` | Inspect or force evaluation-contract boundaries. |
-| `proposer` | Generate candidates and improve the proposer. |
+| `proposer` | Generate candidates or read the proposer scorecard. |
 | `tournament` | Run an isolated tournament operation. |
 | `inspect` | Read workspace state and derived analysis. |
 | `repair` | Rebuild derived data or repair legacy artifacts. |
@@ -39,18 +38,19 @@ board
 epoch
   close | gc | list | new | register | rounds | set-goal | switch
 proposer
-  apply-recommendation | propose | recommendations | reflect | scorecard
+  propose | scorecard
 tournament
   run
 inspect
-  environment | logs | mutations | reflection | setup | telemetry
+  config | environment | logs | mutations | reflection | setup | telemetry
 repair
   epoch-goals | generation-source-backend | generations | index |
   judge-losses | report | tournament-fk | v0-baseline
 ```
 
-`inspect reflection` retains its `run`, `practices`, `suggest`, `report`, and
-`apply` operations. See the generated help record for their full flags.
+`inspect reflection` provides `run`, `practices`, `suggest`, and `report`.
+Suggestions are reports for operator review. See the generated help record
+for the full flags.
 
 ## Moved commands
 
@@ -71,12 +71,6 @@ repair
 | Run targeted migrations | `zicato repair epoch-goals`, `judge-losses`, `tournament-fk`, or `v0-baseline` |
 | Set the generation source backend on an existing workspace | `zicato repair generation-source-backend --backend <git\|directory>` |
 
-The standalone builder launcher was removed. The same view is served by:
-
-```sh
-zicato dashboard --view builder
-```
-
 ## Design rules
 
 - `evolve` remains self-orchestrating; advanced commands are debugging and
@@ -90,8 +84,6 @@ zicato dashboard --view builder
   moves.
 - The root is explicitly assembled. Adding a module under `cli/commands` does
   not publish a new command accidentally.
-- The dashboard builder focus uses the dashboard server and loopback default;
-  it does not duplicate launch plumbing.
 - Any CLI change regenerates `tools/parity/golden/cli_help.txt` and updates this
   document and every command-bearing operator skill in the same change.
 

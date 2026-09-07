@@ -192,15 +192,15 @@ test('detail: full strip + reconstructed conversation + episode anchors', async 
   assertEqual(allByClass(host, 'dn-trace-ep').length, DETAIL.episodes.length, 'an anchor per episode');
 });
 
-test('detail: episode anchors link their suggestions to the builder inbox', async () => {
+test('detail: episode anchors show their suggestion IDs without links', async () => {
   fresh();
   installFixtureMap(traceMap());
   const host = document.createElement('div');
   await traces.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFL_ID, traceId: TRACE_ID });
-  const sugLinks = allByClass(host, 'dn-trace-ep-sug');
-  assert(sugLinks.length >= 1, 'at least one suggestion link');
-  assertEqual(sugLinks[0].getAttribute('href'), router.href('builder', {}), 'links into the builder inbox');
-  assert(sugLinks.some((a) => a.getAttribute('text') === 'sug-14ffa7e6' || textOf(a) === 'sug-14ffa7e6'), 'names the drafted suggestion');
+  const suggestions = allByClass(host, 'dn-trace-ep-sug');
+  assert(suggestions.length >= 1, 'at least one suggestion ID');
+  assert(suggestions.every((node) => node.tagName.toLowerCase() === 'span' && !node.getAttribute('href')), 'suggestion IDs are plain text');
+  assert(suggestions.some((node) => node.getAttribute('text') === 'sug-14ffa7e6' || textOf(node) === 'sug-14ffa7e6'), 'names the drafted suggestion');
 });
 
 // ====================================================================

@@ -47,7 +47,7 @@ visibility-gated ``proposer/prompts.py`` machinery, never raw reflection output
 (BOARD-REFLECTION.md §"the proposer envelope").
 
 Running reflection never rolls the epoch: it measures rather than evolves.
-Only ACTING on a recommendation (a contract edit through the builder) does.
+Editing the evaluation contract does.
 """
 
 from __future__ import annotations

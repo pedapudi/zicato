@@ -30,12 +30,19 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from tests._contract_pins import deterministic_weights
+from tests._runtime_builders import (
+    empty_evaluation_call,
+    empty_target_call,
+    prepare_tournament_epoch,
+    record_tournament_score,
+)
 from zicato.core.board import BoardEntry
 from zicato.core.runtime import RoundTokenLedger, RuntimeConfig
 from zicato.core.types import Generation, LossProfile
@@ -61,17 +68,11 @@ def _board(size: int) -> list[BoardEntry]:
 
 
 def _config(*, parallelism: int, token_ledger: RoundTokenLedger | None = None) -> RuntimeConfig:
-    async def _harness(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def _evaluation(system: str, user: str, model: str) -> str:
-        return ""
-
     return RuntimeConfig(
         instance_id="t",
         workspace_root=Path("/nonexistent"),
-        target_call_llm=_harness,
-        evaluation_call_llm=_evaluation,
+        target_call_llm=empty_target_call,
+        evaluation_call_llm=empty_evaluation_call,
         parallelism=parallelism,
         token_ledger=token_ledger,
     )
@@ -445,25 +446,36 @@ async def _run_fast_mode(
     async def _fake_overlapped(**kwargs: Any) -> list[dict[str, LossProfile]]:
         used.append("overlapped")
         count = int(kwargs["replicate_count"])
-        return [{entry.id: _loss(entry.id, r) for entry in board} for r in range(count)]
+        return [
+            {entry.id: replace(_loss(entry.id, r), epoch_id=epoch_id) for entry in board}
+            for r in range(count)
+        ]
 
     async def _fake_sequential(**kwargs: Any) -> dict[str, LossProfile]:
         used.append("sequential")
         replicate_index = int(kwargs["replicate_index"])
-        return {entry.id: _loss(entry.id, replicate_index) for entry in board}
+        return {
+            entry.id: replace(_loss(entry.id, replicate_index), epoch_id=epoch_id)
+            for entry in board
+        }
 
     monkeypatch.setattr(runner, "_run_replicate_slots_fast", _fake_overlapped)
     monkeypatch.setattr(runner, "_run_board_units_fast", _fake_sequential)
 
+    config = replace(_config(parallelism=2, token_ledger=token_ledger), workspace_root=tmp_path)
+    weights = deterministic_weights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    parent_score = {"generation_id": "v0", "scalar": 1.0, "base_seed": None}
+    record_tournament_score(tmp_path, epoch_id, "v0", parent_score)
     await runner.run_fast_mode(
         adapter=None,
-        child_gen=_generation("v1"),
+        child_gen=replace(_generation("v1"), epoch_id=epoch_id),
         board=board,
-        weights=deterministic_weights(),
-        config=_config(parallelism=2, token_ledger=token_ledger),
+        weights=weights,
+        config=config,
         workspace_root=tmp_path,
-        epoch_id="e1",
-        parent_historical_agg={"generation_id": "v0", "scalar": 1.0, "base_seed": None},
+        epoch_id=epoch_id,
+        parent_historical_agg=parent_score,
         parent_generation_id="v0",
         replicates=3,
     )

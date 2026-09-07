@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.drift_kinds import DriftKind
-from zicato.core.types import BoardEntry, ProposerSkill, ProposerSpec, ScoringWeights
+from zicato.core.types import BoardEntry, ProposerSkill, ProposerSpec, RuntimeConfig, ScoringWeights
 from zicato.epoch.contract import ContractInputs, compute_recorded_contract_hash
 from zicato.proposer.brief import ProposerBrief
 from zicato.proposer.external import ExternalProposerConfig
@@ -17,6 +17,30 @@ from zicato.proposer.external import ExternalProposerConfig
 
 class ExecutionContractError(ValueError):
     """The selected epoch cannot reproduce its recorded execution contract."""
+
+
+def bind_runtime_to_epoch(
+    config: RuntimeConfig, workspace_root: Path, epoch_id: str
+) -> RuntimeConfig:
+    """Require prepared execution settings before durable tournament reuse or work."""
+    from zicato.core.configuration import ConfigurationError
+    from zicato.models_config import execution_roles_for_runtime
+
+    try:
+        selected = load_epoch_execution_contract(workspace_root, epoch_id, workspace_config={})
+        expected = selected.execution_roles
+        if expected is None:
+            raise ValueError("the epoch has no captured execution roles")
+        actual = execution_roles_for_runtime(config)
+        if actual != expected:
+            raise ValueError("runtime execution roles differ from the selected epoch")
+    except (OSError, ValueError) as exc:
+        raise ConfigurationError(
+            "tournament.epoch",
+            "value",
+            f"{exc}; prepare an epoch with new_epoch(contract=resolved_inputs) before execution",
+        ) from exc
+    return replace(config, execution_roles=expected)
 
 
 def _object(value: Any, name: str) -> dict[str, Any]:
@@ -58,6 +82,11 @@ def capture_execution_bindings(inputs: ContractInputs) -> tuple[bytes, ProposerS
             "options": dict(external.options),
             "workspace_config": dict(external.workspace_config),
         },
+        **(
+            {"execution_roles": json.loads(inputs.execution_roles)}
+            if inputs.execution_roles is not None
+            else {}
+        ),
     }
     return (json.dumps(body, sort_keys=True, ensure_ascii=False) + "\n").encode(), spec
 
@@ -83,7 +112,7 @@ class EpochExecutionContract:
         body = _object(json.loads(self.bindings_bytes), "bindings")
         if type(body.get("format")) is not int or body["format"] != 1:
             raise ExecutionContractError("unsupported execution contract format")
-        optional = {"mutable_tree_identities"}
+        optional = {"mutable_tree_identities", "execution_roles"}
         if set(body) - optional != {
             "format",
             "entrypoint",
@@ -194,6 +223,19 @@ class EpochExecutionContract:
         return result
 
     @property
+    def execution_roles(self) -> bytes | None:
+        """Return captured worker settings without reconstructing missing history."""
+        body = self._bindings()
+        if "execution_roles" not in body:
+            return None
+        roles = _object(body["execution_roles"], "execution_roles")
+        raw = json.dumps(roles, sort_keys=True, separators=(",", ":")).encode()
+        from zicato.models_config import execution_roles_from_json
+
+        execution_roles_from_json(raw)
+        return raw
+
+    @property
     def mutable_trees(self) -> tuple[str, ...]:
         return _strings(self._bindings().get("mutable_trees"), "mutable_trees")
 
@@ -224,6 +266,7 @@ class EpochExecutionContract:
             adapter_declaration=body.get("adapter_declaration"),
             external_proposer=self.external_proposer,
             proposer_static_checks=self.static_checks,
+            execution_roles=self.execution_roles,
         )
 
     def verify_implementation(self) -> None:

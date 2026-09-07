@@ -288,7 +288,7 @@ def test_param_key_order_does_not_move_hash(tmp_path: Path) -> None:
 
 
 def test_old_active_tournament_loads_with_gauntlet_defaults() -> None:
-    # A gauntlet-era active_tournament.json (no structure envelope).
+    # A gauntlet-era Snapshot event envelope (no structure envelope).
     legacy = {
         "tournament_id": "t1",
         "parent_generation_id": "v3",

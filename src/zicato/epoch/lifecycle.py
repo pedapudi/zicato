@@ -64,7 +64,6 @@ from zicato.epoch.publication import (
     prepared_directory,
 )
 from zicato.epoch.seed_sources import seed_content_identity
-from zicato.proposer.staging import acknowledge_staged_recommendations, staged_recommendations
 from zicato.storage import (
     atomic_write_json,
     durable_unlink,
@@ -195,10 +194,11 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         # Contract pre-flight verdict (runtime measurement, never hashed).
         # ``None`` ⇒ never run; written as null so it round-trips.
         "preflight": cfg.preflight,
-        # Applied proposer-reflection recommendation ids (proposer lineage,
-        # never hashed). Empty list ⇒ the proposer was not changed by an
-        # applied recommendation.
-        "applied_proposer_recommendations": list(cfg.applied_proposer_recommendations),
+        **(
+            {"applied_proposer_recommendations": list(cfg.applied_proposer_recommendations)}
+            if cfg.applied_proposer_recommendations
+            else {}
+        ),
     }
 
 
@@ -250,11 +250,8 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
         # ``preflight`` defaults to ``None`` (never run) so epochs written
         # before the pre-flight surface landed load cleanly.
         preflight=raw_preflight if isinstance(raw_preflight, dict) else None,
-        # ``applied_proposer_recommendations`` defaults to ``()`` so epochs
-        # written before proposer reflection existed load as "no applied
-        # recommendation", which is what they are.
         applied_proposer_recommendations=tuple(
-            str(x) for x in (d.get("applied_proposer_recommendations") or [])
+            str(item) for item in (d.get("applied_proposer_recommendations") or [])
         ),
     )
 
@@ -496,6 +493,7 @@ def _prepare_epoch(
             compute_component_hashes,
             compute_contract_hash,
             evaluation_implementation_identity,
+            write_component_hashes,
         )
 
         if contract is None and not entrypoint and not mutable_trees and proposer_path is None:
@@ -523,20 +521,22 @@ def _prepare_epoch(
                 brief_path=target_brief,
                 scoring_path=target_scoring,
             )
+        if contract.execution_roles is None:
+            from zicato.models_config import capture_execution_roles
+            from zicato.workspace.config_io import read_workspace_config
+
+            contract = replace(
+                contract,
+                execution_roles=capture_execution_roles(read_workspace_config(workspace_root).raw),
+            )
         from zicato.epoch.execution import capture_execution_bindings
 
         execution_bytes, proposer_spec = capture_execution_bindings(contract)
         (epoch_content / "execution.json").write_bytes(execution_bytes)
         contract_hash = compute_contract_hash(contract, proposer_spec=proposer_spec)
-        component_path = epoch_content / "contract_components.json"
-        component_path.write_text(
-            json.dumps(
-                compute_component_hashes(contract, proposer_spec=proposer_spec),
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
+        write_component_hashes(
+            epoch_content / "contract_components.json",
+            compute_component_hashes(contract, proposer_spec=proposer_spec),
         )
 
         # Recommendation ids remain pending until the epoch is durably published.
@@ -556,7 +556,6 @@ def _prepare_epoch(
             # proposer this epoch's rounds are built with is the one its hash
             # was taken over.
             proposer_path=contract.proposer_path,
-            applied_proposer_recommendations=staged_recommendations(workspace_root),
         )
         atomic_write_json(epoch_content / "config.json", _config_to_dict(cfg))
         if baseline_sources is not None:
@@ -600,7 +599,7 @@ def _prepare_epoch(
             content_identity=seed_content_identity(epoch_content),
             predecessor_id=prev_id,
             predecessor_closed_at=closed_at,
-            recommendation_ids=cfg.applied_proposer_recommendations,
+            recommendation_ids=(),
         )
         if before_contract_roll is not None and prev_id is not None:
             before_contract_roll(prev_id)
@@ -663,7 +662,6 @@ def recover_epoch_publication(workspace_root: Path, *, writer: WorkspaceLock) ->
             operation.predecessor_id,
             closed_at=operation.predecessor_closed_at,
         )
-    acknowledge_staged_recommendations(workspace_root, operation.recommendation_ids)
     durable_unlink(epoch_publication_path(workspace_root))
     with suppress(OSError):
         prepared.parent.rmdir()

@@ -1,62 +1,16 @@
-"""Tolerant raw scan of a frozen ``board.jsonl``.
-
-The query layer reads the board for two different reasons — to union the
-judge names an epoch declares (``judge_view``) and to slice per-entry
-outcomes by tag (``tournament_view``). Neither reader wants
-:func:`zicato.board.jsonl.load_board`: that function VALIDATES, so one
-stale entry anywhere on the board raises and blanks the whole payload.
-A read model must degrade one row at a time rather than one file at a
-time (09-dashboard-and-query.md §9.3.1).
-
-So both readers walk the raw JSONL and skip what they cannot parse. This
-module owns that walk once. It never raises: an absent, unreadable, or
-non-UTF-8 board yields an empty list, and a malformed or non-object line
-is dropped while its siblings survive.
-
-The scan drops the ``board_meta`` header row, which carries board-level
-metadata rather than an entry, and returns every other object verbatim.
-Callers pick the fields they need with their own type guards; this module
-knows nothing about the entry schema by design.
-"""
+"""Board entry projections after canonical whole-file acceptance."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
-#: The board-level metadata header key (mirrors
-#: ``zicato.board.jsonl._BOARD_META_KEY``). A row carrying it holds
-#: board-level metadata rather than an entry. The raw scan does not
-#: enforce the "must be first line" rule the
-#: validating loader does — a read model reports what is on disk.
-BOARD_META_KEY = "board_meta"
+from zicato.board.jsonl import load_board_rows
 
 
 def iter_board_rows(path: Path) -> list[dict[str, Any]]:
-    """Return the raw entry objects of a ``board.jsonl``, best-effort.
-
-    Every failure mode degrades to a shorter list, never an exception:
-    a missing file, an unreadable one, a non-UTF-8 one, a malformed
-    line, a non-object line, and the ``board_meta`` header all drop out.
-    """
-    try:
-        text = Path(path).read_text(encoding="utf-8")
-    except Exception:  # noqa: BLE001 — best-effort, mirrors sibling readers
-        return []
-    rows: list[dict[str, Any]] = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(obj, dict) or obj.get(BOARD_META_KEY) is True:
-            continue
-        rows.append(obj)
-    return rows
+    """Return accepted entry rows, preserving source fields and extensions."""
+    return [row for row in load_board_rows(path) or [] if row.get("board_meta") is not True]
 
 
 def board_entry_id(row: dict[str, Any]) -> str | None:

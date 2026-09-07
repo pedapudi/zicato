@@ -41,10 +41,7 @@ export function scoreFmt(v, n) {
 }
 
 // truncate(s, n) — the ONE clip/shorten home. Coerces to string, returns the
-// first n-1 chars + '…' when longer than n, else the string verbatim. Replaces
-// the four hand-copied clip/shorten helpers (dag.js / candidate.js /
-// boardstatus.js and builder.js's '—'-defaulting variant via the `fallback`
-// option).
+// first n-1 chars + '…' when longer than n, else the string verbatim.
 export function truncate(s, n, opts) {
   const o = opts || {};
   const str = (s == null) ? (o.fallback != null ? o.fallback : '') : String(s);
@@ -254,24 +251,9 @@ export const TYPE_THEMES = TYPE_OPTIONS.map((o) => [o.id, o.label]);
 export const DEFAULT_TYPE = 'google-sans-mono';
 const TYPE_PREF = 'typeface';
 
-// Values that are not option ids but must still resolve to a face, so a
-// preference persisted under one keeps the voice it selected. Two kinds live
-// here: the three MODE ids (technical / editorial / display), which name a
-// group rather than a face and resolve to that group's first option; and the
-// opaque ids the options carried before they were named after their faces.
-// This map exists to retire both — nothing else may spell them.
-const LEGACY_TYPE_MAP = {
-  technical: 'google-sans-mono', editorial: 'fraunces', display: 'archivo-narrow',
-  T7: 'google-sans-mono', T9: 'source-sans-3', T12: 'inconsolata', T14: 'ubuntu',
-  E5: 'fraunces', E7: 'bitter', E8: 'literata', E15: 'domine',
-  D2: 'archivo-narrow', D12: 'hanken-grotesk', D14: 'barlow-condensed', D5: 'bricolage-grotesque',
-};
-
-// Normalise any stored or passed value to a known option id. A value the
-// legacy map names yields the face it selected; anything else yields the default.
+// Unsupported stored values resolve to the default typeface.
 export function normaliseType(t) {
   if (TYPE_IDS.includes(t)) return t;
-  if (t && LEGACY_TYPE_MAP[t]) return LEGACY_TYPE_MAP[t];
   return DEFAULT_TYPE;
 }
 // Resolve a value to its full option object (real font stacks). Useful for the
@@ -510,8 +492,8 @@ export function loading(text) {
 
 // The FULL entry-kind vocabulary (core/board.py::BoardEntryKind) — the five
 // labels every board surface prints, so one entry never reads as two different
-// things on two surfaces. The two synthetic kinds are settable from the builder
-// and serialized by the board writer, so a view that knows only three renders
+// things on two surfaces. The board writer supports two synthetic kinds;
+// a view that knows only three kinds renders
 // them unlabelled and counts them nowhere. An unknown key renders the raw
 // token; the caller falls back.
 export const ENTRY_KIND_LABEL = {

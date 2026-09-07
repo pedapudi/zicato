@@ -97,7 +97,7 @@ def _classify(path: Path, paths: WorkspacePaths) -> str:
             return "heartbeat"
         if path == paths.lock:
             return "lock"
-        if path == paths.active_tournament or path == paths.active_tournament_log:
+        if path == paths.active_tournament_log:
             return "active_tournament"
         if path == paths.progress_log:
             # The orchestrator progress event log: a write to it is a

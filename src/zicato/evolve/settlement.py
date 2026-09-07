@@ -125,29 +125,31 @@ def _publish_field_observations(
     commit before this function runs.
     """
 
+    prepared = field_round.prepared
+
     record_round_frontier(
-        workspace_root=field_round.workspace_root,
-        epoch_id=field_round.epoch_id,
-        round_index=field_round.round_index,
-        weights=field_round.weights,
+        workspace_root=prepared.workspace_root,
+        epoch_id=prepared.epoch_id,
+        round_index=prepared.round_index,
+        weights=prepared.weights,
         champion_generation_id=verdict.promoted_id or field_round.parent_id,
         aggregates=execution.aggregates,
         placebo_generation_ids=[
             c.generation_id for c in candidates.challengers if is_placebo_experiment(c.experiment)
         ],
-        round_log=field_round.round_log,
+        round_log=prepared.round_log,
     )
     _settle_active_tournament(
-        field_round.workspace_root,
+        prepared.workspace_root,
         tournament_id=candidates.tournament_id,
-        epoch_id=field_round.epoch_id,
-        structure=field_round.tournament_spec.structure,
-        structure_params=dict(field_round.tournament_spec.params),
+        epoch_id=prepared.epoch_id,
+        structure=prepared.tournament_spec.structure,
+        structure_params=dict(prepared.tournament_spec.params),
         competitors=candidates.competitors,
-        strategy=field_round.strategy,
+        strategy=prepared.strategy,
         decision=verdict.effective_decision,
-        round_index=field_round.round_index,
-        total_rounds=field_round.total_rounds,
+        round_index=prepared.round_index,
+        total_rounds=prepared.total_rounds,
         field_status=candidates.field_status,
     )
 
@@ -229,6 +231,8 @@ def _build_field_settlement(
     reject reason carries the override note, and a forced promote clears it.
     """
 
+    prepared = field_round.prepared
+
     decision = execution.decision
     rank_by_id = {s.generation_id: s.rank for s in decision.standings}
     matches_by_gen = _match_records(decision, [c.generation_id for c in candidates.challengers])
@@ -300,7 +304,7 @@ def _build_field_settlement(
                     rejection_reason=rejection_reason,
                     operator_override=operator_override,
                     operator_override_reason=operator_override_reason,
-                    structure=field_round.tournament_spec.structure,
+                    structure=prepared.tournament_spec.structure,
                     final_rank=rank_by_id.get(gid),
                     match_record=tuple(matches_by_gen.get(gid, ())),
                     champion_eval_mode=execution.champion_eval_mode,
@@ -386,6 +390,8 @@ async def _commit_field_settlement(
     the adapter's out-of-tree state has to track.
     """
 
+    prepared = field_round.prepared
+
     _assert_crowning_agrees(settlement, candidates)
     receipt = _field_settlement_receipt(
         field_round,
@@ -394,22 +400,22 @@ async def _commit_field_settlement(
         verdict,
         settlement,
     )
-    commit_field_settlement(field_round.workspace_root, receipt)
+    commit_field_settlement(prepared.workspace_root, receipt)
 
     on_promote_failure: tuple[str, str, str] | None = None
     promoted_id = settlement.primary_promoted_generation_id
     if promoted_id is not None:
         settlement_id = str(receipt["settlement_id"])
-        hook = getattr(field_round.adapter, "on_promote", None)
+        hook = getattr(prepared.adapter, "on_promote", None)
         adapter_name = str(
-            getattr(field_round.adapter, "name", None) or type(field_round.adapter).__name__
+            getattr(prepared.adapter, "name", None) or type(prepared.adapter).__name__
         )
         if hook is not None and callable(hook):
             try:
                 record_promotion_hook_delivery(
-                    field_round.workspace_root,
-                    epoch_id=field_round.epoch_id,
-                    round_index=field_round.round_index,
+                    prepared.workspace_root,
+                    epoch_id=prepared.epoch_id,
+                    round_index=prepared.round_index,
                     settlement_id=settlement_id,
                     state="delivery_unknown",
                     adapter_name=adapter_name,
@@ -418,15 +424,15 @@ async def _commit_field_settlement(
                 log.error(
                     "on_promote hook skipped for %s/%s because its delivery state "
                     "could not be persisted",
-                    field_round.epoch_id,
+                    prepared.epoch_id,
                     promoted_id,
                     exc_info=exc,
                 )
                 return (adapter_name, promoted_id, type(exc).__name__)
             on_promote_failure = await fire_on_promote(
-                field_round.adapter,
-                workspace_root=field_round.workspace_root,
-                epoch_id=field_round.epoch_id,
+                prepared.adapter,
+                workspace_root=prepared.workspace_root,
+                epoch_id=prepared.epoch_id,
                 generation_id=promoted_id,
                 parent_generation_id=field_round.parent_id,
                 snapshot_root=candidates.by_id[promoted_id].snapshot_root,
@@ -437,9 +443,9 @@ async def _commit_field_settlement(
             failure_type = on_promote_failure[2] if on_promote_failure is not None else ""
             try:
                 record_promotion_hook_delivery(
-                    field_round.workspace_root,
-                    epoch_id=field_round.epoch_id,
-                    round_index=field_round.round_index,
+                    prepared.workspace_root,
+                    epoch_id=prepared.epoch_id,
+                    round_index=prepared.round_index,
                     settlement_id=settlement_id,
                     state=delivery_state,
                     adapter_name=adapter_name,
@@ -449,7 +455,7 @@ async def _commit_field_settlement(
                 log.error(
                     "on_promote hook delivery result for %s/%s could not be persisted; "
                     "the receipt remains delivery_unknown and recovery will not retry it",
-                    field_round.epoch_id,
+                    prepared.epoch_id,
                     promoted_id,
                     exc_info=exc,
                 )
@@ -467,6 +473,8 @@ def _field_settlement_receipt(
     settlement: RoundSettlement,
 ) -> dict[str, Any]:
     """Serialize every fact needed to validate, replay, and audit settlement."""
+
+    prepared = field_round.prepared
     champion_agg = _first_aggregate_for(field_round.parent_id, execution.decision)
     candidate_records: list[SettlementCandidate] = []
     for candidate in settlement.candidates:
@@ -485,12 +493,12 @@ def _field_settlement_receipt(
         )
 
     field_record = field_tournament_record(
-        field_tournament_id=f"{field_round.epoch_id}:field:{candidates.first_challenger_id}",
-        epoch_id=field_round.epoch_id,
-        structure=field_round.tournament_spec.structure,
-        structure_params=dict(field_round.tournament_spec.params),
+        field_tournament_id=f"{prepared.epoch_id}:field:{candidates.first_challenger_id}",
+        epoch_id=prepared.epoch_id,
+        structure=prepared.tournament_spec.structure,
+        structure_params=dict(prepared.tournament_spec.params),
         competitors=candidates.competitors,
-        rounds=_serialise_rounds(field_round.strategy.rounds()),
+        rounds=_serialise_rounds(prepared.strategy.rounds()),
         standings=_serialise_standings(settlement.decision.standings),
         field_status=candidates.field_status or [],
         decision=settlement.decision,
@@ -504,9 +512,9 @@ def _field_settlement_receipt(
     # The nonce prevents proposer-authored journal prose from forging the
     # replay marker. Persisting it in the intent makes it stable across replay.
     settlement_id = uuid4().hex
-    hook = getattr(field_round.adapter, "on_promote", None)
+    hook = getattr(prepared.adapter, "on_promote", None)
     hook_adapter_name = str(
-        getattr(field_round.adapter, "name", None) or type(field_round.adapter).__name__
+        getattr(prepared.adapter, "name", None) or type(prepared.adapter).__name__
     )
     hook_is_applicable = (
         settlement.primary_promoted_generation_id is not None
@@ -515,8 +523,8 @@ def _field_settlement_receipt(
     )
     return new_settlement_receipt(
         settlement_id=settlement_id,
-        epoch_id=field_round.epoch_id,
-        round_index=field_round.round_index,
+        epoch_id=prepared.epoch_id,
+        round_index=prepared.round_index,
         primary_id=settlement.primary_promoted_generation_id,
         candidates=tuple(candidate_records),
         field_record=field_record.to_dict() if field_record is not None else None,
@@ -586,6 +594,8 @@ async def _close_field_round(
     the champion.
     """
 
+    prepared = field_round.prepared
+
     from zicato.runtime import progress_log  # noqa: PLC0415
 
     decision = execution.decision
@@ -593,36 +603,36 @@ async def _close_field_round(
     first_challenger_id = candidates.first_challenger_id
     if field_round.field_size == 1:
         await _maybe_run_placebo_arm_gauntlet(
-            writer=field_round.prepared.writer,
-            workspace_root=field_round.workspace_root,
-            epoch_id=field_round.epoch_id,
-            adapter=field_round.adapter,
+            writer=prepared.writer,
+            workspace_root=prepared.workspace_root,
+            epoch_id=prepared.epoch_id,
+            adapter=prepared.adapter,
             parent_gen=candidates.champion,
             parent_id=field_round.parent_id,
             round_id=candidates.base_generation_id,
-            mutations=field_round.mutations,
-            board=field_round.board,
-            weights=field_round.weights,
-            config=field_round.config,
-            disable_drift=field_round.disable_drift,
-            judge_only=field_round.judge_only,
-            fast_mode=field_round.fast_mode,
-            round_index=field_round.round_index,
-            total_rounds=field_round.total_rounds,
+            mutations=list(prepared.mutations),
+            board=list(prepared.board),
+            weights=prepared.weights,
+            config=prepared.config,
+            disable_drift=prepared.disable_drift,
+            judge_only=prepared.judge_only,
+            fast_mode=prepared.fast_mode,
+            round_index=prepared.round_index,
+            total_rounds=prepared.total_rounds,
         )
 
     health_summary, health_critical = await _round_epilogue(
-        workspace_root=field_round.workspace_root,
-        epoch_id=field_round.epoch_id,
-        board=field_round.board,
-        round_n=generation_round_number(first_challenger_id) or field_round.round_index,
+        workspace_root=prepared.workspace_root,
+        epoch_id=prepared.epoch_id,
+        board=list(prepared.board),
+        round_n=generation_round_number(first_challenger_id) or prepared.round_index,
         analyzer_round=generation_round_number(first_challenger_id),
-        mutations=field_round.mutations,
+        mutations=list(prepared.mutations),
         evaluation_call_llm=field_round.evaluation_call_llm,
         evaluation_model=field_round.evaluation_model,
-        configuration=field_round.config.operational_configuration(),
-        meta_loop_emitter=field_round.meta_loop_emitter,
-        token_clip=_token_clip_state(field_round.config),
+        configuration=prepared.config.operational_configuration(),
+        meta_loop_emitter=prepared.meta_loop_emitter,
+        token_clip=_token_clip_state(prepared.config),
         attributable_regressions=(
             _promoted_entry_regressions(execution.raw_results[decision.crowning_matchup_id])
             if promoted_id is not None and decision.crowning_matchup_id in execution.raw_results
@@ -639,20 +649,20 @@ async def _close_field_round(
         "progress-log field tournament-settle",
         on_error=lambda exc: log.debug("progress-log field tournament-settle skipped: %s", exc),
     ):
-        progress_log.append_progress(field_round.workspace_root, progress_log.TOURNAMENT_SETTLE)
+        progress_log.append_progress(prepared.workspace_root, progress_log.TOURNAMENT_SETTLE)
     _beat(
-        field_round.beater,
-        workspace_root=field_round.workspace_root,
+        prepared.beater,
+        workspace_root=prepared.workspace_root,
         progress=(
             progress_log.PROMOTE if bookkeeping_decision == "promoted" else progress_log.REJECT
         ),
-        epoch_id=field_round.epoch_id,
+        epoch_id=prepared.epoch_id,
         generation_id=promoted_id or first_challenger_id,
-        round_index=field_round.round_index,
-        phase=f"done:round_{field_round.round_index}:{candidates.tournament_id}:"
+        round_index=prepared.round_index,
+        phase=f"done:round_{prepared.round_index}:{candidates.tournament_id}:"
         f"{bookkeeping_decision}",
     )
-    field_round.round_log.emit("round_closed")
+    prepared.round_log.emit("round_closed")
 
     child_id, parent_scalar, child_scalar = _round_summary(
         field_round, candidates, execution, verdict, settlement

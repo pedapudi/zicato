@@ -54,8 +54,8 @@ callable is silently translated into a native model.
 - **Target LLM (`target` role)**: the optional model assignment injected into
   a model-capable target adapter. It must not share a named engine with
   evaluator-side roles.
-- **Evaluation**: the default internal engine. Judge, user emulator, proposer,
-  and builder inherit it unless overridden.
+- **Evaluation**: the default internal engine. Judge, user emulator, and
+  proposer inherit it unless overridden.
 - **Judge**: scores run behavior.
 - **Adjudicator**: independently audits judge decisions. When adjudication is
   enabled it must be independent of the judge.
@@ -65,8 +65,6 @@ callable is silently translated into a native model.
   engine than routine evaluation.
 - **Proposer generate**: generates the best-of-N candidate alternatives.
 - **Proposer review**: critiques, selects, and revises candidates.
-- **Builder**: assists an operator while editing the evaluation contract; it
-  does not run tournament units.
 
 ## Overrides
 
@@ -107,7 +105,7 @@ For example, cheap sampling with strong critique is:
 }
 ```
 
-Every other advanced role (`builder`, `judge`, `adjudicator`, and
+Every other advanced role (`judge`, `adjudicator`, and
 `user_emulator`) falls directly back to `evaluation`.
 
 ## Execution capabilities
@@ -128,19 +126,49 @@ or user emulator does not turn that role into a native proposer session.
 
 ## Logical identity and transport
 
-An engine name plus optional `revision` identifies an operator-chosen logical
-deployment. `endpoint` is only its transport address. Moving the same
-deployment does not necessarily change what is evaluated, while changing model
-weights behind a stable URL does. Change `revision` when a named deployment
-changes. Use distinct engine names for the target and evaluator trust domains
-even when their transport fields happen to match, because isolation is checked
-by engine name rather than by comparing connection fields. Credential values
-are read only when an engine is resolved and are not written to workspace
-files, worker argument files, logs, or dashboard responses.
+The evaluation contract captures every effective role after inheritance, including
+its model or callable, revision, and declared transport. Callable implementation
+source participates through the existing source hasher. Moving an endpoint changes
+the captured execution description. A deployment changed behind a stable endpoint
+still requires an operator-supplied revision change; the runtime cannot inspect
+remote model weights.
+
+Native connections also capture their resolved backend, project, location, endpoint,
+and API version. Workers reconstruct that connection from the captured settings.
+Credential values stay outside the contract. The native transport records either a
+credential environment-variable name, a credential-file path, or null for both
+references to select standard application-default credentials. The two references
+cannot both be set. Credentials are resolved through the selected source and passed
+explicitly to the client. Standard default credentials therefore remain available
+without letting an unrelated ambient key replace them. Native preparation requires
+the settings and credentials needed by the installed client to resolve its connection;
+resolving platform credentials may require access to that platform.
+
+An explicitly selected epoch rejects changed runtime roles before proposal work,
+measurement reuse, or worker execution. Historical epochs without captured roles
+remain readable but cannot authorize execution. Prepare a fresh epoch to execute
+those workspaces. Role-key order and equivalent inheritance do not change the hash.
+
+The standalone tournament APIs require a prepared epoch. Library callers can use
+existing owners to retain explicit callable overrides:
+
+```python
+runtime = make_runtime_config(configuration, workspace_root=workspace,
+                              target_call_llm=target, evaluation_call_llm=evaluator)
+inputs = replace(resolve_contract_inputs(workspace, workspace_config=configuration),
+                 execution_roles=execution_roles_for_runtime(runtime))
+epoch = new_epoch(workspace, "evaluation", inputs.board_path, inputs.brief_path,
+                  weights, contract=inputs)
+```
+
+Use the returned epoch and its generations for `run_tournament`, `run_matchup`, or
+`run_fast_mode`. The fast path accepts the parent aggregate only when it matches the
+selected epoch's canonical recorded score. These entry points do not create epochs
+implicitly, since epoch creation also publishes the baseline and changes lineage.
 
 The settings response includes effective role-to-engine resolution and whether
 each mapping was explicit or inherited. A scrubbed tournament worker receives
-only the credential variables named by configured engines.
+only credential variables required by its captured roles and scoring declarations.
 
 ## Session scope
 

@@ -112,7 +112,6 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _REPLICATE_INDEX_CONTEXT_KEY,
     _SIGTERM_TO_SIGKILL_GRACE_S,
     _aborted_loss_profile,
-    _callable_dotted_path,
     _checkout_run_snapshot,
     _configuration_spec,
     _discard_run_snapshot,
@@ -125,7 +124,6 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _now_iso_utc,
     _resolve_harmonograf_grpc,
     _resolve_harmonograf_url,
-    _role_worker_spec,
     _run_id_for,
     _runtime_state,
     _stamp_disable_drift,
@@ -598,23 +596,12 @@ async def _run_single(
             )
             ephemeral_snapshot = resources.checkout.working_dir
             scratch_dir = resources.checkout.scratch_dir
-            # The unified ``models`` block (runtime infra, NOT the contract)
-            # is the source of truth for how each role reaches a provider in
-            # the worker. For a configured role we pass its secret-free spec
-            # and let the worker re-resolve (so a model-spec closure need not
-            # cross the process boundary); for an unconfigured role we fall
-            # back to the resolved callable's dotted path.
-            from zicato import workspace_loader  # noqa: PLC0415
-            from zicato.models_config import ModelsConfig, load_models_config  # noqa: PLC0415
+            from zicato.models_config import (  # noqa: PLC0415
+                ModelsConfig,
+                execution_roles_for_runtime,
+            )
 
-            try:
-                _models = load_models_config(workspace_loader.load_workspace_config(workspace_root))
-            except (FileNotFoundError, ValueError):
-                # No / malformed workspace config.json ⇒ no ``models`` block;
-                # every role falls back to its resolved callable's dotted
-                # path. Ad-hoc callers (tests) that run a
-                # generation without a full workspace config still spawn.
-                _models = ModelsConfig()
+            roles = json.loads(config.execution_roles or execution_roles_for_runtime(config))
             # Run provenance for the harness under test: the worker mounts
             # an EPHEMERAL snapshot copy with a throwaway name, so the
             # session cannot recover WHICH generation it is measuring from
@@ -666,22 +653,10 @@ async def _run_single(
                 "entry": entry_dict,
                 "adapter": adapter_spec,
                 "driver_imports": config.driver_imports.document(),
-                "target_role": _role_worker_spec(
-                    "target", models=_models, fallback_callable=config.target_call_llm
-                ),
-                "evaluation_role": _role_worker_spec(
-                    "evaluation", models=_models, fallback_callable=config.evaluation_call_llm
-                ),
-                "judge_role": _role_worker_spec(
-                    "judge",
-                    models=_models,
-                    fallback_callable=config.effective_judge_call_llm(),
-                ),
-                "user_emulator_role": _role_worker_spec(
-                    "user_emulator",
-                    models=_models,
-                    fallback_callable=config.effective_user_emulator_call_llm(),
-                ),
+                "target_role": roles["target"],
+                "evaluation_role": roles["evaluation"],
+                "judge_role": roles["judge"],
+                "user_emulator_role": roles["user_emulator"],
                 # The parent is the ONE producer of the run id: it stamps the
                 # active_runs record the supervisor polices, so the worker must
                 # not re-derive it from its own view of the entry (issue #250).
@@ -776,8 +751,17 @@ async def _run_single(
 
                     goldfive_secret_names = secret_env_names(weights.goldfive)
                 worker_env = scrubbed_worker_env(
-                    models=_models,
-                    secret_env_keys=goldfive_secret_names,
+                    models=ModelsConfig(),
+                    secret_env_keys=goldfive_secret_names
+                    + tuple(
+                        name
+                        for document in roles.values()
+                        for name in (
+                            document.get("models_role", {}).get("api_key_env"),
+                            document.get("transport", {}).get("api_key_env"),
+                        )
+                        if name
+                    ),
                     extra_env_keys=tuple(config.worker_env_passthrough),
                 )
 
@@ -1178,6 +1162,9 @@ async def run_tournament(
         from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
         assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
+        from zicato.epoch.execution import bind_runtime_to_epoch  # noqa: PLC0415
+
+        config = bind_runtime_to_epoch(config, workspace_root, epoch_id)
 
         # Thread the board-level disable_drift onto each entry's context so
         # the adapter (running in a subprocess worker) can suppress the named
@@ -1460,7 +1447,21 @@ async def run_fast_mode(
         from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
         assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
+        from zicato.epoch.execution import bind_runtime_to_epoch  # noqa: PLC0415
 
+        config = bind_runtime_to_epoch(config, workspace_root, epoch_id)
+
+        from zicato.tournament.scoring import read_gen_score  # noqa: PLC0415
+        from zicato.workspace.layout import WorkspaceLayout  # noqa: PLC0415
+
+        stored_parent = read_gen_score(
+            WorkspaceLayout(workspace_root), epoch_id, parent_generation_id
+        )
+        if stored_parent is None or stored_parent.to_dict() != parent_historical_agg:
+            raise ValueError(
+                "champion aggregate does not match the selected epoch's recorded score"
+            )
+        parent_historical_agg = stored_parent.to_dict()
         if (
             "base_seed" not in parent_historical_agg
             or parent_historical_agg["base_seed"] != config.seed
@@ -1739,6 +1740,9 @@ async def run_matchup(
         from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
         assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
+        from zicato.epoch.execution import bind_runtime_to_epoch  # noqa: PLC0415
+
+        config = bind_runtime_to_epoch(config, workspace_root, epoch_id)
 
         board = _stamp_disable_drift(board, disable_drift)
         # Stamp the board-level judge_only flag onto each entry's

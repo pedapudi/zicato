@@ -68,8 +68,6 @@ def _knob(
     description: str | None = None,
     recorded_path: str | None = None,
     omit_at_default: bool = False,
-    builder_op: str | None = None,
-    builder_arg: str | None = None,
     constraint: KnobConstraint | None = None,
 ) -> dict[str, Any]:
     """Per-field knob metadata — the declarative source of truth.
@@ -88,33 +86,10 @@ def _knob(
     guard test pins the derived set so a metadata typo can never silently
     move the contract hash.
 
-    ``builder_op`` — the builder operation that exposes this knob (e.g.
-    ``"set_proposer_quality"``), or ``None`` for a field with no GUI knob.
-    ``builder_arg`` — the argument NAME the op / API dispatch / copilot tool
-    / GUI row use for this field WHEN it differs from the field name (e.g.
-    ``screen_entries`` is the ``entries`` arg of ``set_screening``); ``None``
-    means "same as the field name". A DOTTED value (``"ladder.threshold"``)
-    names a field the op takes as a SUBKEY of a partial-mapping argument.
-    The op, dispatch and copilot touchpoints are then checked against the
-    mapping argument (``ladder``), while the GUI row and node test must
-    additionally name the subkey. Without that, one row for one subkey
-    would vacuously cover every sibling — which is how ``ladder.threshold``
-    came to ship with no GUI row at all.
-
-    Three guard tests keep the registry honest. A completeness guard asserts
-    every ``builder_op`` knob is wired through all five touchpoints (op
-    signature, API dispatch, copilot tool, GUI row, node test), naming which
-    one is missing for which knob. A companion guard asserts every contract
-    knob field either CARRIES a ``builder_op`` or sits in an explicitly
-    justified exemption set, so a knob cannot skip the builder by omitting
-    this metadata. A third guard feeds every declared ``constraint`` an
-    inadmissible value and requires the loader and the builder to refuse it
-    with the same message.
-
     ``constraint`` — the values the knob admits
     (:class:`zicato.core.constraints.KnobConstraint`). ``__post_init__``
     applies it through :func:`~zicato.core.constraints.validate_knobs`, and
-    the builder consults the SAME declaration through
+    configuration edits consult the same declaration through
     :func:`~zicato.core.constraints.require_knob`, so an out-of-range value
     is refused with one wording whichever surface catches it. ``None`` means
     the field carries no machine-checkable domain (a bool, a mapping, a
@@ -128,8 +103,6 @@ def _knob(
         "description": description,
         "recorded_path": recorded_path,
         "omit_at_default": omit_at_default,
-        "builder_op": builder_op,
-        "builder_arg": builder_arg,
         "constraint": constraint,
     }
 
@@ -177,22 +150,16 @@ class LadderConfig:
         permits no holdout-confirmed promotion.
     """
 
-    enabled: bool = field(
-        default=True, metadata=_knob(builder_op="set_holdout", builder_arg="ladder.enabled")
-    )
+    enabled: bool = field(default=True, metadata=_knob())
     threshold: float | None = field(
         default=None,
         metadata=_knob(
-            builder_op="set_holdout",
-            builder_arg="ladder.threshold",
             constraint=KnobConstraint(minimum=0.0, allow_none=True, label="ladder.threshold"),
         ),
     )
     budget: int = field(
         default=16,
         metadata=_knob(
-            builder_op="set_holdout",
-            builder_arg="ladder.budget",
             constraint=KnobConstraint(minimum=0, label="ladder.budget"),
         ),
     )
@@ -226,8 +193,7 @@ class OverfittingConfig:
     explicit ``holdout`` tag) yields an empty holdout, and the loop then
     behaves as if no split were configured.
 
-    Each field entry below is served to the tournament builder as the
-    knob's help text.
+    Each field entry below describes the accepted value and its effect.
 
     Fields
     ------
@@ -268,12 +234,10 @@ class OverfittingConfig:
         is never rotated.
     """
 
-    enabled: bool = field(default=True, metadata=_knob(builder_op="set_holdout"))
+    enabled: bool = field(default=True, metadata=_knob())
     holdout_fraction: float = field(
         default=0.3,
         metadata=_knob(
-            builder_op="set_holdout",
-            builder_arg="fraction",
             constraint=KnobConstraint(
                 minimum=0, maximum=1, exclusive_minimum=True, exclusive_maximum=True
             ),
@@ -281,15 +245,11 @@ class OverfittingConfig:
     )
     min_board_size_for_split: int = field(
         default=6,
-        metadata=_knob(builder_op="set_holdout", constraint=KnobConstraint(minimum=0)),
+        metadata=_knob(constraint=KnobConstraint(minimum=0)),
     )
-    restrict_proposer_visibility: bool = field(
-        default=True, metadata=_knob(builder_op="set_holdout")
-    )
-    ladder: LadderConfig = field(
-        default_factory=_default_ladder_config, metadata=_knob(builder_op="set_holdout")
-    )
-    rotate_holdout: bool = field(default=True, metadata=_knob(builder_op="set_holdout"))
+    restrict_proposer_visibility: bool = field(default=True, metadata=_knob())
+    ladder: LadderConfig = field(default_factory=_default_ladder_config, metadata=_knob())
+    rotate_holdout: bool = field(default=True, metadata=_knob())
 
     def __post_init__(self) -> None:
         validate_knobs(self)
@@ -330,25 +290,25 @@ class ProposerQualityConfig:
 
     best_of_n: int = field(
         default=3,
-        metadata=_knob(builder_op="set_proposer_quality", constraint=KnobConstraint(minimum=1)),
+        metadata=_knob(constraint=KnobConstraint(minimum=1)),
     )
     critique_enabled: bool = field(
         default=True,
-        metadata=_knob(builder_op="set_proposer_quality"),
+        metadata=_knob(),
     )
     screen_entries: int = field(
         default=2,
         metadata=_knob(
             omit_at_default=True,
-            builder_op="set_screening",
-            builder_arg="entries",
             constraint=KnobConstraint(minimum=0),
         )
         | {"canonical_default": 0, "historical_default": 0},
     )
     screen_veto_only: bool = field(
         default=False,
-        metadata=_knob(omit_at_default=True, builder_op="set_screening", builder_arg="veto_only"),
+        metadata=_knob(
+            omit_at_default=True,
+        ),
     )
 
     def __post_init__(self) -> None:
@@ -408,7 +368,7 @@ class ExperimentalConfig:
 
     tournament_structures: bool = field(
         default=False,
-        metadata=_knob(builder_op="set_experimental"),
+        metadata=_knob(),
     )
 
     max_generations_per_contract: int | None = field(
@@ -416,7 +376,6 @@ class ExperimentalConfig:
         metadata=_knob(
             omit_at_default=True,
             recorded_path="overfitting.max_generations_per_contract",
-            builder_op="set_experimental",
             constraint=KnobConstraint(minimum=1, allow_none=True),
         ),
     )
@@ -425,7 +384,6 @@ class ExperimentalConfig:
         metadata=_knob(
             recorded_path="overfitting.random_baseline_every_n",
             omit_at_default=True,
-            builder_op="set_experimental",
             constraint=KnobConstraint(minimum=0),
         ),
     )
@@ -434,7 +392,6 @@ class ExperimentalConfig:
         metadata=_knob(
             recorded_path="proposer_quality.process_exemplars",
             omit_at_default=True,
-            builder_op="set_experimental",
             constraint=KnobConstraint(minimum=0),
         ),
     )
@@ -443,7 +400,6 @@ class ExperimentalConfig:
         metadata=_knob(
             recorded_path="proposer_quality.recombine",
             omit_at_default=True,
-            builder_op="set_experimental",
         ),
     )
     genealogy: int = field(
@@ -451,7 +407,6 @@ class ExperimentalConfig:
         metadata=_knob(
             recorded_path="proposer_quality.genealogy",
             omit_at_default=True,
-            builder_op="set_experimental",
             constraint=KnobConstraint(minimum=0),
         ),
     )
@@ -460,7 +415,6 @@ class ExperimentalConfig:
         metadata=_knob(
             recorded_path="proposer_quality.calibration_feedback",
             omit_at_default=True,
-            builder_op="set_experimental",
             constraint=KnobConstraint(minimum=0),
         ),
     )
@@ -469,7 +423,6 @@ class ExperimentalConfig:
         metadata=_knob(
             recorded_path="proposer_quality.recombine_merge",
             omit_at_default=True,
-            builder_op="set_experimental",
             constraint=KnobConstraint(choices=RECOMBINE_MERGE_MODES),
         ),
     )
@@ -478,7 +431,6 @@ class ExperimentalConfig:
         metadata=_knob(
             recorded_path="diff_complexity_weight",
             omit_at_default=True,
-            builder_op="set_experimental",
             constraint=KnobConstraint(minimum=0),
         ),
     )
@@ -487,7 +439,6 @@ class ExperimentalConfig:
         metadata=_knob(
             recorded_path="diff_complexity_ceiling",
             omit_at_default=True,
-            builder_op="set_experimental",
             constraint=KnobConstraint(minimum=0),
         ),
     )
@@ -495,7 +446,6 @@ class ExperimentalConfig:
         default=False,
         metadata=_knob(
             omit_at_default=True,
-            builder_op="set_experimental",
             recorded_path="experiment_memory.cross_epoch",
         ),
     )
@@ -503,7 +453,6 @@ class ExperimentalConfig:
         default="none",
         metadata=_knob(
             omit_at_default=True,
-            builder_op="set_experimental",
             recorded_path="tournament.params.rating",
         ),
     )
@@ -511,7 +460,6 @@ class ExperimentalConfig:
         default="none",
         metadata=_knob(
             omit_at_default=True,
-            builder_op="set_experimental",
             recorded_path="tournament.params.resolver",
         ),
     )
@@ -620,10 +568,7 @@ class ScoringWeights:
     of an epoch. Changing weights starts a new epoch; generations in
     different epochs are not directly comparable.
 
-    Each field entry below is served to the tournament builder as the
-    knob's help text (:func:`zicato.builder.knob_help.knob_help` reads
-    this section), so an entry is written for the operator who reads it
-    there.
+    Each field entry below describes the accepted value and its effect.
 
     Fields
     ------
@@ -693,8 +638,7 @@ class ScoringWeights:
         challenger must show to be promoted. A larger margin demands a
         more decisive win and resists noise; ``0`` promotes on any
         improvement. Without the evidence gate the margin must clear the
-        measured same-versus-same noise floor, which the builder's
-        preflight measures. Calibrated against the train slice; see
+        measured same-versus-same noise floor. Calibrated against the train slice; see
         :attr:`holdout_margin` for why the holdout needs its own bound.
         Must be ``>= 0``.
     holdout_margin:
@@ -861,8 +805,7 @@ class ScoringWeights:
         are enumerable at all, hence what the proposer may rewrite, so it
         is a contract input: declaring or removing a type rolls the epoch,
         and the empty default is omitted from the canonical form.
-        Validated by ``markers.syntax_table_from_config`` when installed or
-        set through the builder.
+        Validated by ``markers.syntax_table_from_config``.
     pass_transform:
         Optional declarative transform (one
         :data:`zicato.scoring.transforms.TransformSpec`,
@@ -881,35 +824,21 @@ class ScoringWeights:
         Validated at construction.
     """
 
-    pass_weight: float = field(
-        default=1.0, metadata=_knob(builder_op="set_weights", constraint=KnobConstraint())
-    )
+    pass_weight: float = field(default=1.0, metadata=_knob(constraint=KnobConstraint()))
     severity_weights: Mapping[str, float] = field(
         default_factory=_default_severity_weights,
-        metadata=_knob(builder_op="set_weights"),
+        metadata=_knob(),
     )
-    per_kind_weights: Mapping[str, float] = field(
-        default_factory=dict, metadata=_knob(builder_op="set_weights")
-    )
-    per_judge_weights: Mapping[str, float] = field(
-        default_factory=dict, metadata=_knob(builder_op="set_weights")
-    )
-    default_judge_weight: float = field(
-        default=1.0, metadata=_knob(builder_op="set_weights", constraint=KnobConstraint())
-    )
-    plan_revision_weight: float = field(
-        default=0.5, metadata=_knob(builder_op="set_weights", constraint=KnobConstraint())
-    )
+    per_kind_weights: Mapping[str, float] = field(default_factory=dict, metadata=_knob())
+    per_judge_weights: Mapping[str, float] = field(default_factory=dict, metadata=_knob())
+    default_judge_weight: float = field(default=1.0, metadata=_knob(constraint=KnobConstraint()))
+    plan_revision_weight: float = field(default=0.5, metadata=_knob(constraint=KnobConstraint()))
     # The two ``failure:`` channel magnitudes. They live on the contract (not
     # as module constants) so retuning them rolls the epoch through the normal
     # hash mechanism — a mid-epoch retune would otherwise let the unit cache
     # fold old- and new-formula losses together undetectably.
-    task_failure_weight: float = field(
-        default=10.0, metadata=_knob(builder_op="set_weights", constraint=KnobConstraint())
-    )
-    not_completed_weight: float = field(
-        default=50.0, metadata=_knob(builder_op="set_weights", constraint=KnobConstraint())
-    )
+    task_failure_weight: float = field(default=10.0, metadata=_knob(constraint=KnobConstraint()))
+    not_completed_weight: float = field(default=50.0, metadata=_knob(constraint=KnobConstraint()))
     # Omitted at the default so the parity goldens and every existing contract
     # hash hold (``epoch/contract.py::scoring_to_canon``).
     # A TOLERANCE the challenger must clear, so a negative value is not an
@@ -919,7 +848,7 @@ class ScoringWeights:
     # load, like every other out-of-domain knob.
     promote_margin: float = field(
         default=0.01,
-        metadata=_knob(builder_op="set_gate", constraint=KnobConstraint(minimum=0)),
+        metadata=_knob(constraint=KnobConstraint(minimum=0)),
     )
     # The holdout confirmation's own bounds. Both are inert at their default
     # and omitted from the canonical form there, so no contract hash moves.
@@ -927,54 +856,47 @@ class ScoringWeights:
         default=None,
         metadata=_knob(
             omit_at_default=True,
-            builder_op="set_gate",
             constraint=KnobConstraint(minimum=0, allow_none=True),
         ),
     )
     holdout_entry_regression_budget: int = field(
         default=0,
-        metadata=_knob(
-            omit_at_default=True, builder_op="set_gate", constraint=KnobConstraint(minimum=0)
-        ),
+        metadata=_knob(omit_at_default=True, constraint=KnobConstraint(minimum=0)),
     )
     pass_rate_monotonicity: bool = field(
         default=True,
-        metadata=_knob(builder_op="set_gate", builder_arg="monotonicity"),
+        metadata=_knob(),
     )
     pass_rate_monotonicity_scope: PassRateMonotonicityScope = field(
         default="per_entry",
         metadata=_knob(
-            builder_op="set_gate",
-            builder_arg="monotonicity_scope",
             # The accepted tokens come from the annotation itself, so the
             # closed set is stated once.
             constraint=KnobConstraint(choices=get_args(PassRateMonotonicityScope)),
         ),
     )
-    regression_gate_enabled: bool = field(default=False, metadata=_knob(builder_op="set_gate"))
+    regression_gate_enabled: bool = field(default=False, metadata=_knob())
     regression_test_command: tuple[str, ...] = field(
         default=("pytest", "tests/", "-q"),
-        metadata=_knob(builder_op="set_gate"),
+        metadata=_knob(),
     )
     regression_timeout_s: int = field(
         default=600,
-        metadata=_knob(builder_op="set_gate", constraint=KnobConstraint(minimum=1)),
+        metadata=_knob(constraint=KnobConstraint(minimum=1)),
     )
     # Multi-objective surface — see the helpers above for the rationale
     # behind the default coefficient choices.
     namespace_weights: Mapping[str, float] = field(
         default_factory=_default_namespace_weights,
-        metadata=_knob(builder_op="set_namespace_weights"),
+        metadata=_knob(),
     )
     namespace_monotonicity: Mapping[str, bool] = field(
         default_factory=_default_namespace_monotonicity,
-        metadata=_knob(builder_op="set_gate"),
+        metadata=_knob(),
     )
     tournament_structure: TournamentStructure = field(
         default_factory=_default_tournament_structure,
-        metadata=_knob(
-            builder_op="set_structure", builder_arg="structure", persisted_name="tournament"
-        )
+        metadata=_knob(persisted_name="tournament")
         | {"historical_default_factory": TournamentStructure.gauntlet},
     )
     # Anti-overfitting controls (train/holdout split + proposer leakage
@@ -1019,8 +941,6 @@ class ScoringWeights:
         default=None,
         metadata=_knob(
             omit_at_default=True,
-            builder_op="set_goldfive",
-            builder_arg="config",
         ),
     )
     # Optional operator outcome-summarizer hook (Capability 2 of issue #18,
@@ -1118,8 +1038,6 @@ class ScoringWeights:
         default=DIALECT_GOLDFIVE,
         metadata=_knob(
             omit_at_default=True,
-            builder_op="set_telemetry_dialect",
-            builder_arg="dialect",
             constraint=KnobConstraint(choices=tuple(sorted(KNOWN_TELEMETRY_DIALECTS))),
         ),
     )
@@ -1129,18 +1047,24 @@ class ScoringWeights:
     # their default.
     block_on_containment_violation: bool = field(
         default=False,
-        metadata=_knob(omit_at_default=True, builder_op="set_gate"),
+        metadata=_knob(
+            omit_at_default=True,
+        ),
     )
     block_on_gate_contradiction: bool = field(
         default=False,
-        metadata=_knob(omit_at_default=True, builder_op="set_gate"),
+        metadata=_knob(
+            omit_at_default=True,
+        ),
     )
     # Folded over ``zicato.mutation.markers.BUILTIN_SYNTAXES`` and validated
     # by ``markers.syntax_table_from_config`` alone: core must not import
     # mutation, so no second validator lives here.
     mutation_surface: Mapping[str, Mapping[str, Any]] = field(
         default_factory=dict,
-        metadata=_knob(omit_at_default=True, builder_op="set_mutation_surface"),
+        metadata=_knob(
+            omit_at_default=True,
+        ),
     )
 
     def __post_init__(self) -> None:
@@ -1321,8 +1245,6 @@ class ContractKnob:
     name: str
     default: object
     omit_at_default: bool
-    builder_op: str | None
-    builder_arg: str
 
     @property
     def key(self) -> str:
@@ -1347,8 +1269,6 @@ def contract_knobs() -> tuple[ContractKnob, ...]:
                     name=declared.name,
                     default=default,
                     omit_at_default=bool(declared.metadata.get("omit_at_default")),
-                    builder_op=declared.metadata.get("builder_op"),
-                    builder_arg=declared.metadata.get("builder_arg") or declared.name,
                 )
             )
     return tuple(knobs)

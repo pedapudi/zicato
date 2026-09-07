@@ -102,14 +102,12 @@ status is surfaced on :meth:`ADKRunnableHarness.tree_import_status`.
 Transcript extraction
 ---------------------
 
-goldfive's :class:`~goldfive.results.ExecutionOutcome` carries the
-session as ``outcome.session``; the user-facing assistant outputs
-land on ``session.completed_results`` keyed by task id. We treat the
-ordered values of that dict as the run's transcript and the last
-entry as :attr:`RunResult.final_output`. For trees that produce no
-``completed_results`` (e.g. when the planner short-circuited
-PassthroughPlanner with no LLM available), the transcript is empty
-and :attr:`final_output` is ``""``.
+Single-turn execution observes final root-agent text through the runtime's
+plugin callback. Intermediate text, thoughts, tool arguments, and child-agent
+output are excluded. The last captured turn is :attr:`RunResult.final_output`.
+Session ``completed_outputs`` supplies actual text when callbacks are absent;
+legacy results without captured output retain their task summaries for reading.
+A run with no captured or session output has an empty transcript and final output.
 
 Judges
 ------
@@ -460,21 +458,42 @@ def _default_mutable_trees(module_path: str) -> list[Path]:
 def _outcome_transcript(outcome: Any) -> tuple[str, ...]:
     """Return the ordered user-facing assistant outputs from ``outcome``.
 
-    goldfive 0.x represents per-task assistant text on
-    ``outcome.session.completed_results`` — a ``dict[str, str]`` keyed
-    by task id and ordered by completion. We treat those values, in
-    insertion order, as the run's transcript. For runs that produced
-    no ``completed_results`` (PassthroughPlanner with no LLM, or a
-    failed run that aborted before any task completed), the transcript
-    is empty.
+    ``completed_outputs`` contains actual assistant text, independently of
+    the task-completion summaries in ``completed_results``. Older results
+    may provide only summaries; use those only for tasks with no captured output.
     """
     session = getattr(outcome, "session", None)
     if session is None:
         return ()
-    completed = getattr(session, "completed_results", None)
-    if not completed:
-        return ()
-    return tuple(str(v) for v in completed.values())
+    completed = getattr(session, "completed_results", None) or {}
+    outputs = getattr(session, "completed_outputs", None) or {}
+    return tuple(str(value) for value in {**completed, **outputs}.values())
+
+
+def _root_output_capture(agent_name: str) -> Any:
+    """Observe final root-agent events without changing their content or delivery."""
+    from google.adk.plugins.base_plugin import BasePlugin  # noqa: PLC0415
+
+    class RootOutputCapture(BasePlugin):
+        def __init__(self) -> None:
+            super().__init__(name="root_output_capture")
+            self.outputs: list[str] = []
+
+        async def on_event_callback(self, *, invocation_context: Any, event: Any) -> None:
+            if event.author != agent_name or not event.is_final_response():
+                return
+            content = event.content
+            if content is None or content.role != "model":
+                return
+            text = [
+                part.text
+                for part in content.parts or ()
+                if part.text is not None and not part.thought
+            ]
+            if text:
+                self.outputs.append("".join(text))
+
+    return RootOutputCapture()
 
 
 def _unavailable_driver(run_id: str, entry_id: str, reason: str) -> RunResult:
@@ -1263,8 +1282,7 @@ class ADKRunnableHarness:
         Forwards :attr:`RuntimeConfig.target_call_llm` (not the
         evaluation callable — see the two-callable rule on
         :class:`RuntimeConfig`) and the entry's input. Returns a
-        :class:`RunResult` constructed from the outcome's session's
-        ``completed_results`` values.
+        :class:`RunResult` containing final root-agent text observed during execution.
 
         Judges (goldfive#437) are assembled per entry and passed into
         ``goldfive.run`` via its ``judges=`` parameter: goldfive's
@@ -1293,6 +1311,7 @@ class ADKRunnableHarness:
         # Goldfive's public judge-only mode judges without deriving goals,
         # replanning, or refining. Judges stay armed in both paths. The default
         # path keeps Goldfive steering enabled.
+        output_capture = _root_output_capture(self._agent.name)
         async with goldfive_run_context(
             config.goldfive,
             config.target_call_llm,
@@ -1307,10 +1326,11 @@ class ADKRunnableHarness:
                 sinks=sinks,
                 judges=judges,
                 runtime=gf_runtime,
+                plugins=[output_capture],
                 **goldfive_kwargs,
             )
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
-        transcript = _outcome_transcript(outcome)
+        transcript = tuple(output_capture.outputs) or _outcome_transcript(outcome)
         final_output = transcript[-1] if transcript else ""
         return RunResult(
             run_id=run_id,

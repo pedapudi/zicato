@@ -161,12 +161,6 @@ _STORAGE_KEYS: tuple[KeyDeclaration, ...] = (
         "runtime/lock.json",
     ),
     KeyDeclaration(
-        "active_tournament_key",
-        runtime_keys.active_tournament_key(),
-        lambda layout: layout.active_tournament,
-        "runtime/active_tournament.json",
-    ),
-    KeyDeclaration(
         "active_tournament_log_key",
         runtime_keys.active_tournament_log_key(),
         lambda layout: layout.active_tournament_log,

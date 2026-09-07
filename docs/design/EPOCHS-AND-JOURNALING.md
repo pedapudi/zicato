@@ -185,11 +185,11 @@ directory.
       analysis.html
 ```
 
-(The proposer-brief filename is `brief.md`. When no `brief.md` sits
-beside the `.zicato/` directory, the resolver falls back to `rubric.md`
-in the same place, and a workspace `config.json` is read for the brief
-path under either a `contract.brief_path` or a `contract.rubric_path`
-key.)
+The proposer-brief filename is `brief.md`; archived workspaces containing
+only the retired `rubric.md` filename are unsupported. The authored source
+path can still be set explicitly in workspace `config.json` under
+`contract.brief_path` or `contract.rubric_path`. These settings select the
+source copied into an epoch's `brief.md`; they do not enable filename fallback.
 
 A few specifics:
 
@@ -683,9 +683,7 @@ reads it verbatim into its system prompt each round.
 > is the per-entry `Rubric.score()` outcome check that grades one board
 > entry's output (see [BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.2).
 > The brief steers the proposer for a whole epoch; a rubric grades one
-> entry. A workspace whose steering file is named `rubric.md` still
-> resolves as the brief, and `config.json` still accepts the brief path
-> under a `contract.rubric_path` key.
+> entry. The frozen steering file is always `brief.md`.
 
 A typical structure:
 

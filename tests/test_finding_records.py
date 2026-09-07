@@ -14,7 +14,6 @@ from zicato.index.ingest import ingest_reflection
 from zicato.query.paths import WorkspacePaths
 from zicato.query.reflection_view import build_reflection_summary
 from zicato.reflection import findings as owner
-from zicato.reflection.apply import apply_finding_to_draft, find_finding
 
 
 def _body():
@@ -67,25 +66,6 @@ def test_invalid_findings_refuse_the_collection(defect):
         owner.Findings.from_json(body)
 
 
-def test_invalid_collection_refuses_before_draft_creation(tmp_path, monkeypatch):
-    from zicato.contract_draft.draft import DraftStore
-
-    body = _body()
-    body["findings"].append("corrupt member")
-    path = reflection_findings_path(tmp_path, EPOCH, REFL)
-    path.parent.mkdir(parents=True)
-    path.write_text(json.dumps(body))
-
-    def refuse_fork(*args, **kwargs):
-        pytest.fail("corrupt finding collection reached draft creation")
-
-    monkeypatch.setattr(DraftStore, "fork", refuse_fork)
-    with pytest.raises(RecordError):
-        apply_finding_to_draft(
-            workspace_root=tmp_path, epoch_id=EPOCH, reflection_id=REFL, finding_id="finding"
-        )
-
-
 def test_findings_absence_empty_corruption_and_index_refusal(tmp_path):
     assert owner.read_findings(tmp_path, EPOCH, REFL) is None
     _write_reflection_files(tmp_path, findings=[{"finding_id": "finding"}])
@@ -101,7 +81,7 @@ def test_findings_absence_empty_corruption_and_index_refusal(tmp_path):
         ingest_reflection(tmp_path, None, EPOCH, REFL)
     assert iq.reflection_row(paths.index_db, REFL) == before
     with pytest.raises(RecordError):
-        find_finding(tmp_path, EPOCH, REFL, "finding")
+        owner.read_findings(tmp_path, EPOCH, REFL)
 
 
 def test_finding_mark_failure_prevents_canonical_replacement(tmp_path, monkeypatch):

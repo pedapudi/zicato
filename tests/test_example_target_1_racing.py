@@ -208,22 +208,6 @@ RACING_SCORING_PATH = EXAMPLE_DIR / "scoring.racing.json"
 _CHALLENGER_IDS = ("v1", "v2", "v3", "v4")
 
 
-def _make_example_aux_responder() -> object:
-    """Return a fresh async aux callable backed by the example's mock.
-
-    The example's :func:`mocks.aux_llm` rotates proposer payloads across
-    rounds; we reset its module-level round counter first so the field
-    starts from challenger 0 regardless of test-ordering side effects.
-    """
-    _t1_mocks._AUX_STATE["proposer_round"] = 0
-
-    async def _aux(system: str, user: str, model: str) -> str:
-        reply: str = await _t1_mocks.aux_llm(system, user, model)
-        return reply
-
-    return _aux
-
-
 def _bootstrap_racing_workspace(tmp_path: Path) -> tuple[Path, str]:
     """Create a workspace + a racing epoch + a v0 snapshot of the example tree.
 
@@ -257,6 +241,7 @@ def bootstrap_example_workspace(
     (``tools/parity/lib/mock_evolve_capture.py``) drives both from here so
     every golden lane starts from one workspace definition.
     """
+    _t1_mocks._AUX_STATE["proposer_round"] = 0
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     (workspace / "config.json").write_text(
@@ -277,7 +262,11 @@ def bootstrap_example_workspace(
                 # behaviour; opt out of the default-on achievable-signal
                 # pre-flight (issue #84) whose A/A floor legitimately runs the
                 # champion and would otherwise pollute that run tracking.
-                "runtime": {"preflight_gate": "off"},
+                "runtime": {
+                    "preflight_gate": "off",
+                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
+                    "evaluation_call_llm": "zicato_examples.target_1_presentation.mocks:aux_llm",
+                },
             }
         )
     )
@@ -333,7 +322,7 @@ def test_presentation_racing_field_runs_end_to_end_and_promotes(
         canned_pass_by_gen={gid: True for gid in ("v0", *_CHALLENGER_IDS)},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, _make_example_aux_responder())
+    outcome = run_evolve_once(workspace, epoch_id, _t1_mocks.aux_llm)
 
     # --- A challenger from the field was crowned over the champion.
     assert outcome.tournament_decision == "promoted"
@@ -429,7 +418,7 @@ def test_presentation_racing_field_rejects_when_no_arm_beats_champion(
         canned_pass_by_gen={gid: True for gid in ("v0", *_CHALLENGER_IDS)},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, _make_example_aux_responder())
+    outcome = run_evolve_once(workspace, epoch_id, _t1_mocks.aux_llm)
 
     assert outcome.tournament_decision == "rejected"
 
@@ -477,7 +466,7 @@ def test_fast_racing_reuses_cached_champion_and_records_provenance(
         champion_run_log=champion_runs,
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, _make_example_aux_responder(), fast_mode=True)
+    outcome = run_evolve_once(workspace, epoch_id, _t1_mocks.aux_llm, fast_mode=True)
 
     # --- The champion (v0) was NEVER executed this round — every run that
     # fired was a challenger run. The cached per-board scalars stood in.
@@ -513,7 +502,7 @@ def test_fast_racing_degrades_to_full_without_cache(
         champion_run_log=champion_runs,
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, _make_example_aux_responder(), fast_mode=True)
+    outcome = run_evolve_once(workspace, epoch_id, _t1_mocks.aux_llm, fast_mode=True)
 
     # The champion ran live at least once (cache miss → degrade-to-full).
     assert "v0" in champion_runs, "the seed champion with no cache must run once"

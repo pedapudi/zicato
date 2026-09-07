@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import zicato.tournament.runner as runner_mod
-from tests._runtime_builders import runtime_config
+from tests._runtime_builders import prepare_tournament_epoch, runtime_config
 from zicato.core import (
     BoardEntry,
     Generation,
@@ -61,10 +61,10 @@ def _board() -> list[BoardEntry]:
     ]
 
 
-def _gen(tmp_path: Path, gen_id: str) -> Generation:
+def _gen(tmp_path: Path, gen_id: str, epoch_id: str) -> Generation:
     return Generation(
         id=gen_id,
-        epoch_id="e0",
+        epoch_id=epoch_id,
         parent_id=None,
         snapshot_root=tmp_path / f"snap_{gen_id}",
         created_at="2024-01-01T00:00:00Z",
@@ -75,10 +75,10 @@ def _stub_run_single(monkeypatch, canned, *, log: list | None = None):
     async def fake_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, weights, config, workspace_root, side, match_id
         if log is not None:
             log.append((generation.id, entry.id))
-        return canned[(generation.id, entry.id)]
+        return replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
@@ -102,16 +102,19 @@ def test_run_matchup_matches_run_tournament_gauntlet(monkeypatch, tmp_path):
     weights = ScoringWeights(promote_margin=0.01)
 
     _stub_run_single(monkeypatch, canned)
+    board = _board()
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     tour = asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=_gen(tmp_path, "v0"),
-            child_gen=_gen(tmp_path, "v1"),
-            board=_board(),
+            parent_gen=_gen(tmp_path, "v0", epoch_id),
+            child_gen=_gen(tmp_path, "v1", epoch_id),
+            board=board,
             weights=weights,
-            config=runtime_config(tmp_path),
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -119,13 +122,13 @@ def test_run_matchup_matches_run_tournament_gauntlet(monkeypatch, tmp_path):
     match = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
-            board=_board(),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
+            board=board,
             weights=weights,
-            config=runtime_config(tmp_path),
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -147,16 +150,20 @@ def test_run_matchup_honours_board_subset(monkeypatch, tmp_path):
         ),
     }
     _stub_run_single(monkeypatch, canned, log=log)
+    board = _board()
+    weights = ScoringWeights()
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
-            board=_board(),
-            weights=ScoringWeights(),
-            config=runtime_config(tmp_path),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
+            board=board,
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             board_subset=("entry_a",),
         )
     )
@@ -174,29 +181,38 @@ def test_run_matchup_replicates_average_losses(monkeypatch, tmp_path):
     async def fake_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, weights, config, workspace_root, side, match_id
         key = f"{generation.id}_{entry.id}"
         if generation.id == "v1":
             i = calls[key]
             calls[key] += 1
-            return _loss(
-                generation_id="v1", entry_id=entry.id, drift_loss=seq[key][i], pass_fail=True
+            return replace(
+                _loss(
+                    generation_id="v1", entry_id=entry.id, drift_loss=seq[key][i], pass_fail=True
+                ),
+                epoch_id=epoch_id,
             )
-        return _loss(generation_id="v0", entry_id=entry.id, drift_loss=2.0, pass_fail=True)
+        return replace(
+            _loss(generation_id="v0", entry_id=entry.id, drift_loss=2.0, pass_fail=True),
+            epoch_id=epoch_id,
+        )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
     board = [BoardEntry(id="entry_a", kind="single_turn", wall_clock_budget_seconds=60, input="x")]
+    weights = ScoringWeights()
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
             board=board,
-            weights=ScoringWeights(),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             replicates=2,
         )
     )
@@ -222,16 +238,20 @@ def test_run_matchup_applies_diff_complexity_to_the_correct_competitor(
     _stub_run_single(monkeypatch, canned)
     right_diff = {"added": 4, "removed": 1, "patches": 2}
 
+    board = _board()
+    weights = ScoringWeights(experimental=ExperimentalConfig(diff_complexity_weight=0.1))
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
-            board=_board(),
-            weights=ScoringWeights(experimental=ExperimentalConfig(diff_complexity_weight=0.1)),
-            config=runtime_config(tmp_path),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
+            board=board,
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             right_diff_size=right_diff,
         )
     )
@@ -242,21 +262,7 @@ def test_run_matchup_applies_diff_complexity_to_the_correct_competitor(
 
 
 def _config_seq(tmp_path: Path) -> RuntimeConfig:
-    """A config with ``parallelism=1`` so board units launch one batch at a time."""
-
-    async def harness_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def aux_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    return RuntimeConfig(
-        instance_id="test",
-        workspace_root=tmp_path,
-        target_call_llm=harness_call,
-        evaluation_call_llm=aux_call,
-        parallelism=1,
-    )
+    return replace(runtime_config(tmp_path), parallelism=1)
 
 
 def _big_board(n: int) -> list[BoardEntry]:
@@ -280,28 +286,36 @@ def test_run_matchup_budget_returns_partial_aggregate(monkeypatch, tmp_path):
     async def slow_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, workspace_root, epoch_id, side, match_id
+        del adapter, weights, workspace_root, side, match_id
         ran.append(entry.id)
         await asyncio.sleep(0.05)  # push the running total past the tiny budget
         return replace(
-            _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True),
-            run_id=run_id_for_unit(
-                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+            replace(
+                _loss(
+                    generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True
+                ),
+                run_id=run_id_for_unit(
+                    generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+                ),
             ),
+            epoch_id=epoch_id,
         )
 
     monkeypatch.setattr(runner_mod, "_run_single", slow_run_single)
 
+    weights = ScoringWeights()
+    config = _config_seq(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
             board=board,
-            weights=ScoringWeights(),
-            config=_config_seq(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             match_id="racing-final",
             matchup_budget_seconds=0.01,  # spent after the first unit's sleep
         )
@@ -329,13 +343,13 @@ def test_run_matchup_budget_returns_partial_aggregate(monkeypatch, tmp_path):
     asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
             board=board,
-            weights=ScoringWeights(),
-            config=_config_seq(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             match_id="racing-final",
             matchup_budget_seconds=1000.0,
             fast=True,  # cache-first reuse of every persisted unit
@@ -353,22 +367,28 @@ def test_run_matchup_unset_budget_runs_every_unit(monkeypatch, tmp_path):
     async def fast_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, weights, config, workspace_root, side, match_id
         ran.append((generation.id, entry.id))
-        return _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True)
+        return replace(
+            _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True),
+            epoch_id=epoch_id,
+        )
 
     monkeypatch.setattr(runner_mod, "_run_single", fast_run_single)
 
+    weights = ScoringWeights()
+    config = _config_seq(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
             board=board,
-            weights=ScoringWeights(),
-            config=_config_seq(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             # matchup_budget_seconds omitted ⇒ uncapped, byte-identical to today.
         )
     )
@@ -389,19 +409,7 @@ def test_run_matchup_unset_budget_runs_every_unit(monkeypatch, tmp_path):
 
 
 def _config_par(tmp_path: Path, parallelism: int) -> RuntimeConfig:
-    async def harness_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def aux_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    return RuntimeConfig(
-        instance_id="test",
-        workspace_root=tmp_path,
-        target_call_llm=harness_call,
-        evaluation_call_llm=aux_call,
-        parallelism=parallelism,
-    )
+    return replace(runtime_config(tmp_path), parallelism=parallelism)
 
 
 class _PeakConcurrencyProbe:
@@ -428,7 +436,7 @@ class _PeakConcurrencyProbe:
             side,
             match_id="",
         ):
-            del adapter, weights, config, workspace_root, epoch_id, side, match_id
+            del adapter, weights, config, workspace_root, side, match_id
             self.live += 1
             self.peak = max(self.peak, self.live)
             try:
@@ -438,8 +446,11 @@ class _PeakConcurrencyProbe:
                     await asyncio.sleep(0)
             finally:
                 self.live -= 1
-            return _loss(
-                generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True
+            return replace(
+                _loss(
+                    generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True
+                ),
+                epoch_id=epoch_id,
             )
 
         monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
@@ -459,16 +470,20 @@ def _run_two_concurrent_matchups(
     probe.install(monkeypatch)
     board = _big_board(4)
 
+    weights = ScoringWeights()
+    config = _config_par(tmp_path, parallelism)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+
     def _matchup(right_id: str, match_id: str, writer: WorkspaceLock):
         return run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, right_id),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, right_id, epoch_id),
             board=board,
-            weights=ScoringWeights(),
-            config=_config_par(tmp_path, parallelism),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             match_id=match_id,
             unit_semaphore=shared,
             writer=writer,

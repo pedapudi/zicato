@@ -4,9 +4,8 @@ The dashboard front-end (``index.html`` / ``app.js`` / ``style.css`` /
 ``icons.svg``) is the dashboard package's own asset bundle: it lives
 beside this module at ``zicato/dashboard/static/`` and is served
 straight off disk. The dashboard owns its assets, so it owns their
-resolution — the CLI commands (``zicato dashboard`` / ``zicato
-builder``) import :func:`resolve_static_dir` from here, a declared
-cli→dashboard edge in the import-linter contracts.
+resolution. The ``zicato dashboard`` command imports :func:`resolve_static_dir`
+from here through the declared CLI dependency on the dashboard.
 """
 
 from __future__ import annotations

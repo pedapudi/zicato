@@ -145,20 +145,8 @@ function evalMatrix() {
   };
 }
 
-const GHOST_FEED = {
-  epoch_id: EVAL_EPOCH, reflection_id: 'refl-x',
-  suggestions: [
-    { suggestion_id: 's1', artifact_kind: 'board_entry', target_slice: 'train',
-      draft_artifact: { id: 'ghost_probe' },
-      admission: { noise: { flip_rate: 0.1, runs: 5, measured: true },
-        discrimination: { separated: 2, pairs: 3, measured: true },
-        leakage: { target_slice_ok: true } } },
-  ],
-};
-
-test('evals matrix: the round groups, the verdict columns and the ghost row hold their recorded DOM', async () => {
+test('evals matrix: the round groups, the verdict columns hold their recorded DOM', async () => {
   data.invalidate();
-  evals._resetGhostFeedForTest();
   globalThis.window.location = { hash: '', search: '' };
   coreState.state.heartbeat = null;
   coreState.state.activeTournament = null;
@@ -168,7 +156,6 @@ test('evals matrix: the round groups, the verdict columns and the ghost row hold
     ? { ok: true, json: async () => evalMatrix() }
     : { ok: false, status: 404, json: async () => ({ error: 'nf' }) });
   const host = globalThis.document.createElement('div');
-  evals._setGhostFeedForTest(GHOST_FEED, EVAL_EPOCH);
   await evals.render(host, CTX, { epochId: EVAL_EPOCH });
   pin('evals', host);
 });

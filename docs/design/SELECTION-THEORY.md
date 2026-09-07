@@ -548,11 +548,13 @@ with no implementation anywhere in `src/`.
 1. **Ranked Pairs (Tideman) as the winner-resolution layer over
    swiss/round-robin.** Deterministic, Condorcet-consistent, margin-aware,
    cloneproof, and *auditable* (the lock/skip trace explains every
-   resolution). This is the default resolver.
-2. **Bradley–Terry rating as the noise backbone.** Strengths plus
-   confidence intervals from replicated or partial duels; **interval
-   overlap drives replication budgeting** (replicate the unresolved pairs,
-   stop on the separated ones).
+   resolution). It is an opt-in resolver; an absent `resolver` parameter
+   preserves the structure's own leader selection.
+2. **Bradley–Terry rating for measured comparisons.** Point ratings can
+   describe strategy results. Inferential intervals require independent
+   confirmation measurements and covariance-aware strength differences.
+   Confirmation spends its declared budget on the selected champion/challenger
+   pair; reused selection aggregates cannot increase its sample size.
 3. **Maximal lotteries for cycles that SURVIVE replication.** When a real
    (non-noise) cycle persists, return the Nash distribution over the cycle
    rather than an arbitrary deterministic pick; it degrades to the

@@ -17,6 +17,7 @@ from zicato.epoch.execution import EpochExecutionContract
 from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock, release_workspace_lock
 
 if TYPE_CHECKING:
+    from zicato.core.types import RuntimeConfig
     from zicato.logging_stream import LogStreamHandle
 
 log = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class InvocationContext:
     workspace_config_bytes: bytes
     resources: AsyncExitStack = field(default_factory=AsyncExitStack)
     execution_contract: EpochExecutionContract | None = None
+    runtime_config: RuntimeConfig | None = None
     telemetry: TelemetryEndpoints = TelemetryEndpoints()
     log_stream: LogStreamHandle | None = None
     _imports: ExitStack = field(default_factory=ExitStack)

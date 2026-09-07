@@ -69,7 +69,9 @@ server + the JS). Nothing in the library knows the driver exists.
 | `src/zicato/query/{judge,hypothesis,lineage,events_index,run_log}_view.py` | per-judge matrices, hypothesis/calibration accuracy, lineage feed, `/api/environment` coalescer + meta-loop ledger, the run-log tail. `judge_view.build_per_entry_for_generation` serves the dossier; its `facet_scores` block comes from `eval_view.facet_scores_for_generation` | — |
 | `src/zicato/query/transcript_reconstruction.py` | `reconstruct_transcript` — one goldfive `events.jsonl` or one Foe `episode.jsonl` → an ordered `Transcript` | 38 KB |
 | `src/zicato/query/foe_episode.py` | `is_episode_log`, `read_episode_log`, `derive_messages` — the envelope and the derived-message rule of the Foe episode log | 361 lines |
-| `src/zicato/query/board_scan.py` | `iter_board_rows` + the `board_entry_id` / `board_entry_tags` guards — the tolerant raw `board.jsonl` walk shared by the judge-name union and the facet-tag read. Per-ROW degrade: `load_board` VALIDATES, so one stale entry would blank a whole read model | ~75 lines |
+| `src/zicato/board/jsonl.py` | `load_board_document` owns whole-file board acceptance; query projections share its accepted entries and source rows. | — |
+| `src/zicato/mutation/inventory.py` | `read_mutation_inventory` accepts the recorded seven-field enumeration and preserves extensions; malformed present inventories carry a refusal into query views and prevent report publication. | — |
+| `src/zicato/epoch/contract.py` | `read_component_hashes` accepts one string-to-string mapping for checks, epoch rollover and query projections; future component names remain recorded. | — |
 | `src/zicato/dashboard/server.py` | `create_app` (routes + `read_only`), `run` (port walk + harmonograf), static serving with ETag revalidation | 575 lines |
 | `src/zicato/dashboard/endpoints.py` | `make_endpoints` (the per-surface factories), `_is_safe_id` / `_is_safe_tournament_id`, the control POST handlers | 62 KB |
 | `src/zicato/dashboard/sse.py` | `ChangeBroker` (coalescing file watcher), `sse_event_stream`, `_classify`, `_progress_signal` | 398 lines |
@@ -78,6 +80,7 @@ server + the JS). Nothing in the library knows the driver exists.
 | `src/zicato/dashboard/static/js/` | `router.js`, `shell.js` (dispatch + chrome + loop controls), `live.js` (the live engine + `pipelineStepper`), `livestatus.js` (the four run-states), `data.js` (null-degrading accessors), `svg.js` (the figure grammar), `ui.js` (`gatedSwap`) | — |
 | `src/zicato/dashboard/static/js/views/` | one module per page: `home.js`, `epoch.js`, `gens.js`, `candidate.js`, `board(s).js`, `mutations.js`, `instrument.js` (the board-reflection lens — landing / bill-of-health / judge-audit / x-ray), `diff.js`, … each an `async render(host, ctx, params)`; `structure.js`, `boardstatus.js` and `ledger.js` are panels the epoch page composes | — |
 | `src/zicato/dashboard/static/js/panels/` | page sections a view imports and mounts into hosts it owns, with no route: `evals_health.js` (the evals page's instrument-health strip and section) | — |
+
 
 Two orientation facts before anything else:
 
@@ -94,6 +97,18 @@ Two orientation facts before anything else:
   null-degrade the way the Rust side will serve it).
 
 ---
+
+Saved round health is owned by `health.diagnostics.LoopHealth`, including its
+epoch, round, assessment timestamps and derived summary. Readers verify recorded
+coordinates against the selected file. An absent report retains the empty state;
+a malformed present report returns `healthy: null` with an `unreadable` reason.
+Accepted extension fields and historical metadata omissions survive serialization.
+The browser renders that reason and includes finding content in its repaint digest.
+
+The bound dashboard address in `runtime/dashboard.json` is owned by
+`runtime.state.DashboardEndpoint`. The service publishes it atomically and the
+launching command uses the same decoder. An absent or malformed convenience
+record remains unavailable; it does not establish service readiness.
 
 ## 9.1 The library / driver split — `query` is a library, `dashboard` is a driver
 
@@ -618,10 +633,15 @@ The package docstring states it once for everyone:
 > file degrades to an empty / `None` value rather than raising, so no
 > endpoint built on top of this ever returns a 500.
 
-Every reader realises it the same way: catch the failure, return the
-same-shaped empty payload, and (where useful) attach a `note` naming the
-reason so the UI can say *why* it is empty rather than spin. The
-loop-view is the model — note the two distinct degrade notes:
+View builders catch unavailable input and preserve the response shape.
+A missing board remains absent; a malformed present board is refused in full
+with an `unreadable` reason. Execution, hashing, workspace readers and views
+share `board.jsonl` acceptance. Epoch and search responses project entries,
+metadata and judges from one accepted observation, preserving source omissions
+and extensions. The brief owner reads only `brief.md`; a retired filename
+cannot supply missing guidance.
+
+The loop view also explains unavailable input:
 
 ```python
     try:
@@ -836,8 +856,8 @@ chapter leans on:
 | `build_live_pipeline` (`query/live_execution_plan.py`) | `/api/live/pipeline` | `{running, stale, liveness, phase, epoch_id, round_index, steps[], epoch_open_step, active_step, decision, in_flight}` — the verdict `build_round_pipeline` decodes, projected out of the SAME read of the running epoch that serves the live execution plan, so the two surfaces cannot report different phases or different counts of the same records | every input degrades independently (§9.11); an unreadable phase serves `{}`, which the stepper reads as no stepper |
 | `build_racing_field` | `/api/epoch/{id}/racing-field` | `{present, structure, rounds[], standings, champion_lineage}` | `{present: false}` (§9.2.5) |
 | `build_round_timeline` | `/api/epoch/{id}/round-timeline` | `{rounds[], waterfall[]}` | empty rounds list |
-| `build_execution_plan` | `/api/epoch/{id}/execution-plan` | `{board:{digest, entry_count}, stages[]}` — the loop as one tree: baseline + per-round propose/apply/run/gate/decide steps from the round log, work units from the per-unit loss files (never from the log's `unit_completed` aggregate), plus one `measurement_band` step per stage for the reserved ranges that are not a cell's evidence (calibration, the pre-flight's deliberately-degraded probes, the candidate screen, reflection, admission, and anything `unclaimed`), each node stating `status` and `exact`/`partial` provenance | empty stages list + `note` |
-| `build_live_execution_plan` | `/api/live/execution-plan` | the durable plan for the epoch the heartbeat names, plus `liveness`, an `active` flag on every node, and `overlay: {in_flight, placed, unplaced, other_epoch, active_path, phase, round_index, note}` — the active path is the round plus the step `build_round_pipeline` names (never a second decoding of the phase), and each still-beating `active_runs` record becomes a `running` `board_entry_run` keyed `run:<run_id>` under its candidate's sweep, or under the `run_scope` stage when the plan cannot place it | durable plan + empty overlay when not `live`; empty plan shape + `note` on failure |
+| `build_execution_plan` | library only | `{board:{digest, entry_count}, stages[]}` — the loop as one tree: baseline + per-round propose/apply/run/gate/decide steps from the round log, work units from the per-unit loss files (never from the log's `unit_completed` aggregate), plus one `measurement_band` step per stage for the reserved ranges that are not a cell's evidence (calibration, the pre-flight's deliberately-degraded probes, the candidate screen, reflection, admission, and anything `unclaimed`), each node stating `status` and `exact`/`partial` provenance | empty stages list + `note` |
+| `build_live_execution_plan` | library only | the durable plan for the epoch the heartbeat names, plus `liveness`, an `active` flag on every node, and `overlay: {in_flight, placed, unplaced, other_epoch, active_path, phase, round_index, note}` — the active path is the round plus the step `build_round_pipeline` names (never a second decoding of the phase), and each still-beating `active_runs` record becomes a `running` `board_entry_run` keyed `run:<run_id>` under its candidate's sweep, or under the `run_scope` stage when the plan cannot place it | durable plan + empty overlay when not `live`; empty plan shape + `note` on failure |
 | `build_per_entry_for_generation` | `/api/generation/{e}/{g}/per-entry` | `{tournament_id, mean_score, facet_scores, entries[]}`; `facet_scores` is `{facets: {name: {scalar, mean_score, scored_count, entry_count, ran_count}}, overall}` — the candidate re-aggregated per `facet:` board tag at the epoch's frozen weights, so a facet scalar is comparable to the `overall` row | `{facets: {}, overall: null}` (always present) |
 | `build_snapshot` | `/api/state`, SSE `snapshot` | see above | each field independently `None` |
 | `read_active_runs_view` | `/api/active-runs` | `[{run_id, progress, elapsed_seconds, budget_seconds, last_progress_ts, fresh, …}]`; `fresh` is the server's per-row in-flight verdict — both of `fresh_run_count`'s gates, so the tally is the count of `fresh` rows | `[]` |
@@ -846,6 +866,14 @@ chapter leans on:
 | `build_reflection_summary` | `/api/reflection/{id}/summary` | `{found, pillars:{reliability, discrimination, validity, calibration}, findings[], fidelity_tiers}` | `found: false` same-shape empty |
 | `build_judge_scorecards` | `/api/reflection/{id}/scorecards` | `{judges:[{judge_name, tp/fp/fn/tn, ambiguous, precision, recall, f1, disagreement_rate, self_consistency_kappa, exercised, redundant_with}]}` | `{judges: []}` |
 | `build_adjudication_xray` | `/api/reflection/{id}/xray/{judge}/{run_ref}` | `{found, transcript:{fidelity, turns[]}, judge_verdict, adjudication}` | `found: false` + `fidelity: unavailable` |
+
+Execution event nodes carry the candidate and comparison coordinates recorded
+in the round log. Their identifiers use the record's sequence number, so
+interleaving or losing an event cannot assign its neighbor to another candidate.
+Proposal summaries group by the recorded generation, and each released holdout
+bit keeps its own generation. Missing required scope fields produce `partial`
+provenance and a reason. Unknown scope extensions are excluded from the response.
+The live reader overlays these facts in memory; it writes no execution records.
 
 ### 9.3.7 The shared canonical aggregations — `zicato.workspace.aggregates`
 
@@ -997,8 +1025,7 @@ last:
 
 > ⛔ NEVER add a route AFTER the `/{path:path}` catch-all. Starlette matches
 > in order; anything after the fallback is dead. A new API route goes into
-> the `routes` list above the builder/settings splice; the fallback is the
-> terminal.
+> the `routes` list before the settings routes and fallback.
 
 The **client** hash-route grammar (`router.js` `parseRoute`/`href`, one entry
 per `VIEWS` member) mirrors the same coordinate nesting under `#/e/<epochId>/`:
@@ -1965,22 +1992,13 @@ display, and the JS renders the verdict verbatim. `build_round_pipeline`
 projects it from the live tournament fold + heartbeat + active-runs count,
 staleness-gated the way the frontend gates.
 
-**Both live surfaces come from one read.** `/api/live/pipeline` and
-`/api/live/execution-plan` are the same reading of the running epoch at two
-altitudes: the pipeline names the step the loop is inside, and the plan
-marks that step in the tree of everything the epoch has run.
+The pipeline endpoint and the library's live plan share one calculation.
 `build_live_surfaces` (`live_execution_plan.py`) reads the workspace once,
-calls `build_round_pipeline`, projects that verdict onto plan nodes, and
-returns both; the two endpoints are its two projections. Serving them from
-one read is what keeps the stepper from reporting Gate while the plan marks
-Run active, and keeps the two from reporting different counts of the same
-in-flight records. Both readers run in the threadpool, as do all synchronous
-dashboard readers. The plan's scan of per-unit files therefore leaves the
-event loop available to sibling requests. Measured against the
-largest epoch available for measurement (`2026-06-07_e4`, 56 loss files, 64
-nodes) the served live payload is 41.7 KB, ~0.65 KB per node, well under the
-200 KB at which paging the tree would pay for its own complexity — so no
-`depth` parameter is built.
+calls `build_round_pipeline`, and projects that verdict onto plan nodes.
+`/api/live/pipeline` serves the pipeline projection. The execution-plan
+readers remain library functions; the dashboard exposes no plan route.
+The shared reader runs in the threadpool, leaving the event loop available
+to sibling requests while it scans per-unit files.
 
 The JS renderer is a straight transcription — one pip per server step, the
 active step's detail beside it, the decision word once the round settles.

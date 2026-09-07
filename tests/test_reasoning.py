@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from zicato.import_path import import_dotted_path
+from zicato.import_path import _callable_dotted_path, import_dotted_path
 from zicato.reasoning import (
     CallAttempt,
     EmptyModelContent,
@@ -12,7 +12,6 @@ from zicato.reasoning import (
     ReasoningCapabilities,
     reasoning_aware_call_llm,
 )
-from zicato.tournament.worker_transport import _callable_dotted_path
 
 CAPABILITIES = ReasoningCapabilities(True, True)
 

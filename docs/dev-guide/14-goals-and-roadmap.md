@@ -530,7 +530,7 @@ output, so every candidate scores the same.
   harness means the stamp/plumbing is broken — see bug #3, never "good
   news"); an explicit operator decision recorded for the margin: either
   `promote_margin` raised above the floor, or the evidence gate enabled with
-  a budget priced via the builder's cost meter. This item's output is a
+  a budget priced by the contract estimator. This item's output is a
   *contract change decision*, and contract changes roll the epoch — say so.
 
 ### Item 4 — judge test–retest on real judges
@@ -569,13 +569,13 @@ output, so every candidate scores the same.
   `examples/zicato_examples/target_0_convergence/scoring.effective.json`
   (racing, `field_size: 4`, `replicates: 2`,
   `promote_confidence_threshold: 0.8`,
-  `promote_confidence_replicates: 32`) or the builder's scaffold; the cost
+  `promote_confidence_replicates: 32`); the cost
   meter consulted and the bill acknowledged (the crowning confirm alone is
   hundreds of board runs); operator go-ahead.
 - **Commands:**
 
   ```bash
-  # publish the racing contract (or set via the builder), then:
+  # Publish the racing contract, then:
   zicato evolve --workspace .zicato --rounds <N>
   # dashboard URL reported; the racing ladder + evidence cockpit are the views to watch
   ```
@@ -965,10 +965,9 @@ named test that fails today and passes after.
 - **Per-branch vendor scan** before any push or PR: no model-vendor names,
   ids, or trailers anywhere in the diff or commit messages. This rule has no
   exceptions and no "it's just a comment" carve-out.
-- **Docs land with the change**: CLI.md is a generated artifact (regenerate
-  from `zicato --help` on CLI changes — `--help` stays canonical); design
-  docs whose claims your change stales get swept in the same PR (the
-  `docs: sweep stale default claims` commits are the precedent).
+- **Update documentation with behavior changes.** Reconcile the hand-authored
+  `docs/design/CLI.md` with command help, regenerate the help golden, and update
+  design documents whose claims the change affects.
 
 ### 5.6 The proposal template, minimally
 
@@ -1093,10 +1092,9 @@ buried in an unrelated feature diff.
 the code does not have is worse than no doc: a reader trusts it. Three specific
 disciplines:
 
-- **CLI.md is a GENERATED artifact.** `docs/design/CLI.md` is regenerated from
-  `zicato --help`, which is the canonical source. On any CLI change, regenerate;
-  never hand-edit CLI.md to match. A hand-edit that drifts from `--help` states
-  something false with the authority of a document.
+- **Keep the command contract and help snapshot aligned.** Edit
+  `docs/design/CLI.md` to describe the available commands and flags. Regenerate
+  `tools/parity/golden/cli_help.txt` from command help after a CLI change.
 - **Sweep the design docs your change stales.** If a change moves a default, a
   boundary, or an invariant a design doc asserts, that doc's claim is now false —
   sweep it in the SAME PR (the `docs: sweep stale default claims` commits are the
@@ -1115,11 +1113,9 @@ the noise-aware-defaults and contract-hash-fix entries established
 (03-contract-and-epochs.md §3.11 step 9). A default changed with no CHANGELOG entry is
 the kind of change the casebook records (§6, "no silent defaults changes").
 
-> ⚠️ TRAP — regenerating CLI.md is a mechanical step easy to forget in a CLI-flag
-> PR, and the drift is invisible until a reader follows the stale doc into a flag
-> that the CLI does not have. Regenerate inside the same change rather than as a
-> follow-up: the `--help` output is the source of truth, the doc is derived from
-> it, and a derived artifact that is not re-derived is stale by definition.
+> ⚠️ TRAP — command help, the generated help snapshot and the hand-authored
+> command contract must agree. Update all three in the same change so readers
+> can follow the documented commands.
 
 ---
 
@@ -1143,7 +1139,7 @@ make an autonomous loop safe to leave running.
 names, no model-id strings, no commit trailers. Mechanically: every LLM touch
 goes through the `CallLLM` callable seam (`(system, user, model) -> str`,
 dotted-path importable so it crosses the worker boundary), and model
-selection lives in operator-owned config (`models_config.py`, `builder.json`)
+selection lives in operator-owned config (`models_config.py`)
 — never in code, never in examples, never in mocks ("The mocks NEVER
 reference any specific model vendor" is written into the example sources).
 This is both a portability property and a durable repo rule; the per-branch
@@ -1193,7 +1189,7 @@ the PR:
 | Anti-goal | The mechanical check | Where it is enforced |
 |---|---|---|
 | No free-form source edits | every mutation goes through an enumerated mutation point + the validating applier's post-apply syntax gate | `zicato.mutation.applier`; `derive_generation` all-or-nothing (03-contract-and-epochs.md §3.9.2) |
-| No vendor coupling | the per-branch scan finds no model-vendor name / id / trailer in the diff or commit message; every LLM touch is the `CallLLM` seam | the vendor scan; `models_config.py` / `builder.json` own model selection, never code/mocks |
+| No vendor coupling | the per-branch scan finds no model-vendor name / id / trailer in the diff or commit message; every LLM touch is the `CallLLM` seam | the vendor scan; `models_config.py` owns model selection, never code/mocks |
 | No silent default change | a changed behavioral default carries a CHANGELOG `⚠️ BREAKING DEFAULTS` entry with the pin spelled out; omit-at-default canonicalization so non-pinners roll deliberately | `CHANGELOG.md`; 03-contract-and-epochs.md §3.4 |
 | No gate-bypassing shortcut | no test hook, resume path, repair tool, dashboard control, or override writes the promoted spine directly | every champion-pointer write goes through the gate + confirmation stack (§6) |
 | No agent-initiated live run | the run has recorded explicit operator go-ahead; the launch reported its dashboard URL | §3's standing rules; the gate-live-runs discipline |

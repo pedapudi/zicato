@@ -22,7 +22,7 @@
 //
 // The panel derives every field DEFENSIVELY from the build_eval_health reader,
 // degrades to honest empties (never a fabricated number — §4), and is
-// RECOMMEND-ONLY: a finding points into reflect or the builder and takes no
+// RECOMMEND-ONLY: a finding points into evaluation inspection and takes no
 // action itself.
 
 import { el } from '../core/dom.js';
@@ -157,10 +157,8 @@ export function evalHealthDigest(model) {
 
 // ---- render ---------------------------------------------------------
 //
-// Returns ONE <section>. Quiet-precision register: the floor/MDE strip is mono,
-// the ranked lists ride the dataTable idiom (no chip vocabulary — §6). Every
-// finding is recommend-only; `opts.onEntry` / `opts.reflectHref` /
-// `opts.builderHref` wire the (optional) pointers.
+// Returns one section. Findings require operator review; onEntry and reflectHref
+// provide optional links to the supporting observations.
 
 // A small recommend-only pointer — an <a> when a href is supplied, else quiet
 // text (never a dead link). Keeps the panel merge-safe with the parent router.
@@ -274,7 +272,7 @@ function deadPanel(dead, insufficient, opts) {
     }));
     nodes.push(el('p', { class: 'dn-faint dn-eh-rec' }, [
       el('span', { text: 'a dead channel never separated any two candidates — consider retiring or reworking it in the ' }),
-      pointer('board editor', opts.builderHref),
+      el('span', { text: 'workspace board file' }),
       el('span', { text: '.' }),
     ]));
   }
@@ -333,7 +331,6 @@ function lifecyclePanel(hb, rot, opts) {
   if (rot.refreshRecommended) {
     cadence.appendChild(el('div', { class: 'dn-bad-t dn-eh-rec' }, [
       el('span', { text: (rot.recommendation || 'contract mined to its cadence ceiling — consider refreshing the board') + ' ' }),
-      pointer('open the board editor', opts.builderHref),
     ]));
   }
   nodes.push(cadence);
@@ -447,8 +444,6 @@ function _mountOpts(ctx, epoch) {
   return {
     // Reflect owns the redundancy / judge detail (instrument.js is a shipped view).
     reflectHref: _safeHref(ctx, 'instrument', { epochId: epoch }),
-    // The builder's board editor is where a dead / redundant channel is reworked.
-    builderHref: _safeHref(ctx, 'builder', { epochId: epoch }) || _safeHref(ctx, 'builder', {}),
     onEntry,
   };
 }

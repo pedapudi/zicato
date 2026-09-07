@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from zicato.board.jsonl import load_board_document, load_board_rows
 from zicato.core.measurement import (
     iter_measurement_artifacts,
     measurement_artifact_path,
@@ -24,9 +25,8 @@ from zicato.query._sqlite import (
     open_index_ro_or_none,
     with_index_not_built_note,
 )
-from zicato.query.board_scan import iter_board_rows
 from zicato.query.epoch_view import (
-    _parse_board,
+    _project_board,
     build_epochs_summary,
 )
 from zicato.query.eval_view import facet_scores_for_generation, facets_by_entry
@@ -347,7 +347,14 @@ def build_per_entry_for_generation(
             return None, None
         return _opt_score(lj.get("score")), _opt_metrics(lj.get("metrics"))
 
-    entry_facets = facets_by_entry(paths, epoch_id)
+    unreadable: dict[str, str] = {}
+    try:
+        board = load_board_document(layout_of(paths).board(epoch_id))
+        entry_facets = facets_by_entry(board)
+    except RecordError as exc:
+        board = None
+        entry_facets = {}
+        unreadable["unreadable"] = str(exc)
     entries = []
     drift_present = False
     for r in rows:
@@ -400,7 +407,6 @@ def build_per_entry_for_generation(
     # predates the field, so the candidate view degrades to its pass-rate
     # summary. Folded alongside the per-entry scores so the dossier can
     # show a single board-level score number.
-    unreadable: dict[str, str] = {}
     try:
         gen_mean_score = _opt_score(
             _gen_score_view(paths, epoch_id, generation_id).get("mean_score")
@@ -426,7 +432,7 @@ def build_per_entry_for_generation(
         # the group-by off the client. Empty facets ⇒ the table does not
         # paint. Diagnostic: nothing downstream of this key feeds a decision.
         "facet_scores": facet_scores_for_generation(
-            paths, epoch_id, generation_id, entry_facets, inputs=inputs
+            paths, epoch_id, generation_id, board, inputs=inputs
         ),
         "entries": entries,
     }
@@ -953,12 +959,7 @@ def build_workspace_identity(
     if epoch_id is not None:
         layout = layout_of(paths)
         board_path = str(layout.board(epoch_id))
-        brief_path_candidate = layout.brief(epoch_id)
-        if not brief_path_candidate.exists():
-            legacy = layout.legacy_rubric(epoch_id)
-            brief_path = str(legacy) if legacy.exists() else str(brief_path_candidate)
-        else:
-            brief_path = str(brief_path_candidate)
+        brief_path = str(layout.brief(epoch_id))
         scoring_path = str(layout.scoring(epoch_id))
     else:
         board_path = None
@@ -1078,15 +1079,10 @@ def _empty_search_result() -> dict[str, Any]:
     }
 
 
-def _collect_judge_names_from_board_file(path: Path) -> set[str]:
-    """Walk a raw ``board.jsonl`` and union every judge name.
-
-    The tolerant row walk lives in :mod:`zicato.query.board_scan` — shared
-    with the matchup grid's facet-tag read so both readers degrade the same
-    way on a torn or non-UTF-8 board.
-    """
+def _collect_judge_names(rows: list[dict[str, Any]]) -> set[str]:
+    """Union judge names from accepted board rows."""
     names: set[str] = set()
-    for obj in iter_board_rows(path):
+    for obj in rows:
         judges = obj.get("judges")
         if not isinstance(judges, list):
             continue
@@ -1159,9 +1155,15 @@ def build_search_results(paths: WorkspacePaths, query: str) -> dict[str, Any]:
     # --- entries: walk the current epoch's board.jsonl ---------------
     layout = layout_of(paths)
     entry_hits: list[dict[str, Any]] = []
+    board_rows = None
     if epoch_id:
         board_path = layout.board(epoch_id)
-        board = _parse_board(board_path)
+        try:
+            board_rows = load_board_rows(board_path)
+            board = _project_board(board_rows or [])
+        except RecordError as exc:
+            board = None
+            result["unreadable"] = str(exc)
         if board:
             for entry in board:
                 eid = entry.get("entry_id")
@@ -1174,8 +1176,8 @@ def build_search_results(paths: WorkspacePaths, query: str) -> dict[str, Any]:
 
     # --- judges: board + index union ---------------------------------
     judge_names: set[str] = set()
-    if epoch_id:
-        judge_names |= _collect_judge_names_from_board_file(layout.board(epoch_id))
+    if board_rows:
+        judge_names |= _collect_judge_names(board_rows)
     judge_names |= _collect_judge_names_from_index(paths.index_db)
     judge_hits: list[dict[str, Any]] = [{"name": n} for n in judge_names if q_lower in n.lower()]
     judge_hits = _sort_by_match_quality(judge_hits, "name", q_lower)

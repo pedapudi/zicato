@@ -144,7 +144,9 @@ async def _aux_call_llm(system: str, user: str, model: str) -> str:
 def test_operation_timeout_is_not_invocation_budget_exhaustion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path, target_call_llm=_target_call_llm, evaluation_call_llm=_aux_call_llm
+    )
     _install_mock_evolve_once(monkeypatch, per_round_sleep=0)
 
     async def timed_out_operation(**_: Any) -> EvolveRoundOutcome:
@@ -186,7 +188,9 @@ def test_tiny_budget_stops_loop_early(monkeypatch: pytest.MonkeyPatch, tmp_path:
     check halts the loop. Either way, the loop runs strictly fewer
     rounds than the 8 requested and the stop reason is the budget.
     """
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path, target_call_llm=_target_call_llm, evaluation_call_llm=_aux_call_llm
+    )
     calls: list[int] = []
     _install_mock_evolve_once(monkeypatch, per_round_sleep=0.4, calls=calls)
 
@@ -221,7 +225,9 @@ def test_between_rounds_budget_stop(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     10s budget → the between-rounds check halts the loop. The three
     completed rounds are genuine (non-aborted) outcomes.
     """
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path, target_call_llm=_target_call_llm, evaluation_call_llm=_aux_call_llm
+    )
     clock = _FakeClock()
     calls: list[int] = []
     _install_clock_advancing_evolve_once(
@@ -256,7 +262,9 @@ def test_between_rounds_budget_stop(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
 def test_unbounded_budget_runs_all_rounds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """``max_wall_clock_seconds=None`` runs every requested round."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path, target_call_llm=_target_call_llm, evaluation_call_llm=_aux_call_llm
+    )
     calls: list[int] = []
     # Rounds that would each blow any small budget — but None disables
     # the ceiling entirely.
@@ -281,7 +289,9 @@ def test_unbounded_budget_runs_all_rounds(monkeypatch: pytest.MonkeyPatch, tmp_p
 
 def test_default_is_unbounded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Omitting ``max_wall_clock_seconds`` keeps the historical behaviour."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path, target_call_llm=_target_call_llm, evaluation_call_llm=_aux_call_llm
+    )
     _install_mock_evolve_once(monkeypatch, per_round_sleep=0.02)
 
     outcomes = asyncio.run(
@@ -310,7 +320,9 @@ def test_round_exceeding_remaining_budget_is_recorded_aborted(
     within-round ``asyncio.wait_for`` cancels it. The orchestrator then
     records a synthetic aborted :class:`EvolveRoundOutcome` and stops.
     """
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path, target_call_llm=_target_call_llm, evaluation_call_llm=_aux_call_llm
+    )
     calls: list[int] = []
     # 10s round, 1s budget → wait_for fires at ~1s, round 0 aborted.
     _install_mock_evolve_once(monkeypatch, per_round_sleep=10.0, calls=calls)
@@ -353,7 +365,9 @@ def test_per_entry_budget_still_applies_independently(
     """
     from zicato import workspace_loader
 
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path, target_call_llm=_target_call_llm, evaluation_call_llm=_aux_call_llm
+    )
     board_before = workspace_loader.load_current_board(workspace)
     assert board_before[0].wall_clock_budget_seconds == 60
 

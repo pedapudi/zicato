@@ -20,7 +20,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m zicato.dashboard")
     parser.add_argument("--workspace", type=Path, default=Path(".zicato"))
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=7892)
+    parser.add_argument("--port", type=int, default=DashboardConfig.DEFAULT_PORT)
     parser.add_argument("--static-dir", type=Path)
     args = parser.parse_args()
     workspace_root = _resolve_workspace(args.workspace).root

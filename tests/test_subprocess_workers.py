@@ -39,7 +39,7 @@ from pathlib import Path
 import pytest
 
 import zicato.tournament.runner as runner_mod
-from tests._runtime_builders import make_generation
+from tests._runtime_builders import make_generation, prepare_tournament_epoch
 from tests._subprocess_worker_support import (
     CompletingAdapter,
     EmittingThenSleepingAdapter,
@@ -361,6 +361,8 @@ def test_worker_captures_unknown_files_before_grading(tmp_path: Path) -> None:
     assert result["run_result"]["artifacts"]["manifest_path"] == str(manifest_path)
     loss = json.loads(loss_path.read_text(encoding="utf-8"))
     assert loss["expectation_result"]["passed"] is True
+    assert manifest["measurement"] == loss["measurement"]
+    assert manifest["run_id"] == loss["run_id"]
 
 
 def test_worker_penalises_aborted_run_in_loss_json(tmp_path: Path) -> None:
@@ -792,6 +794,15 @@ def test_full_tournament_persists_charge_before_real_holdout_worker(
     ]
     from zicato.core.measurement import MeasurementDraw
 
+    weights = ScoringWeights(
+        promote_margin=0.1,
+        overfitting=OverfittingConfig(ladder=LadderConfig(budget=1)),
+    )
+    config = _config(workspace)
+    epoch_id = prepare_tournament_epoch(workspace, config, board, weights)
+    parent = replace(parent, epoch_id=epoch_id)
+    child = replace(child, epoch_id=epoch_id)
+
     for entry in board:
         write_loss_profile(
             LossProfile(
@@ -799,7 +810,7 @@ def test_full_tournament_persists_charge_before_real_holdout_worker(
                 measurement=MeasurementDraw.from_index(0, base_seed=None),
                 entry_id=entry.id,
                 generation_id="v0",
-                epoch_id="e0",
+                epoch_id=epoch_id,
                 drift_counts=(DriftCount(kind="off_topic", severity="info", count=2),),
                 plan_revisions=0,
                 task_failure_ratio=0.0,
@@ -809,7 +820,9 @@ def test_full_tournament_persists_charge_before_real_holdout_worker(
                 drift_loss=2.0,
                 pass_fail=True,
             ),
-            loss_profile_path(workspace, "e0", "v0", entry.id).parent / "seed-none" / "loss.json",
+            loss_profile_path(workspace, epoch_id, "v0", entry.id).parent
+            / "seed-none"
+            / "loss.json",
         )
 
     launches: list[tuple[str, int | None]] = []
@@ -819,7 +832,7 @@ def test_full_tournament_persists_charge_before_real_holdout_worker(
         args_path = Path(str(argv[3]))
         args = json.loads(args_path.read_text(encoding="utf-8"))
         entry_id = str(args["entry"]["id"])
-        state_path = ladder_state_path(workspace, "e0")
+        state_path = ladder_state_path(workspace, epoch_id)
         remaining = None
         if state_path.exists():
             remaining = int(json.loads(state_path.read_text(encoding="utf-8"))["budget_remaining"])
@@ -827,10 +840,6 @@ def test_full_tournament_persists_charge_before_real_holdout_worker(
         return await real_create(*argv, **kwargs)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", observed_create)
-    weights = ScoringWeights(
-        promote_margin=0.1,
-        overfitting=OverfittingConfig(ladder=LadderConfig(budget=1)),
-    )
     result = asyncio.run(
         run_tournament(
             adapter=CompletingAdapter(),
@@ -838,9 +847,9 @@ def test_full_tournament_persists_charge_before_real_holdout_worker(
             child_gen=child,
             board=board,
             weights=weights,
-            config=_config(workspace),
+            config=config,
             workspace_root=workspace,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 

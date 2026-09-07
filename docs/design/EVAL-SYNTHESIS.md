@@ -1,13 +1,10 @@
 # Eval synthesis — generative reflection (the instrument's second loop)
 
-> **Status: implemented.** The episode extractor
-> (`src/zicato/reflection/mining.py`), the episode-to-suggestion synthesis
-> (`synthesis.py`), the admission pipeline (`admission.py`), and the
-> suggestion surface (the `inspect reflection suggest` CLI mode,
-> `suggestions.json` persistence, the `add_board_entry` builder operation, and
-> the builder's suggestions inbox) are all built. §8 names the work that is designed and not built.
-> Recommend-only end to end: nothing here ever auto-edits the sealed contract,
-> and every path terminates at a builder draft the operator seals.
+> **Status: implemented.** Episode extraction, synthesis, and admission produce
+> evaluation suggestions through `zicato inspect reflection suggest`. The
+> command persists `suggestions.json` for operator review. Suggestions do not
+> edit or stage changes to the evaluation contract. Section 8 records the
+> remaining qualification work.
 
 Companion to [`BOARD-REFLECTION.md`](BOARD-REFLECTION.md) (this is its **fifth
 pillar**, cross-referenced there), [`EVAL-VIEW.md`](EVAL-VIEW.md)
@@ -31,7 +28,7 @@ what the first loop observes.
 > The first loop optimises the candidate against a fixed instrument.
 > The second loop synthesises instrument improvements from the candidate
 > loop's observed behaviour — mined episodes → drafted entries/judges → a
-> statistical admission pipeline → operator review in the builder.
+> statistical admission pipeline → reports for operator review.
 
 **Evals are hypotheses too.** The overfitting work treats every *candidate*
 as a hypothesis that must clear a noise-aware gate before it is trusted. Eval
@@ -47,17 +44,11 @@ suggestion is the meta-overfitting the reflection non-goals forbid (§7); a
 
 ### Relationship to board reflection
 
-Reflection's four pillars *read* the instrument. This is the fifth pillar:
-it *writes* candidate improvements to the instrument, sourced from the same
-observation corpus and the same demand signals the four pillars surface. It
-reuses reflection's spine wholesale — the observation corpus
-(`reflection/corpus.py`), the adjudicated corpus
-(`reflection/adjudicator.py`), the findings→builder-draft apply seam
-(`reflection/apply.py`), and the **operator-only output rule** (§7). It adds
-one engine (the miner + synthesiser + admission pipeline) and one surface
-(the `reflect suggest` CLI mode + the builder suggestions inbox). It does
-**not** restructure reflection: BOARD-REFLECTION.md grows a short
-cross-reference section pointing here and is otherwise untouched.
+Reflection's four pillars diagnose the instrument. Synthesis drafts possible
+improvements from the same observation corpus (`reflection/corpus.py`) and
+adjudicated observations (`reflection/adjudicator.py`). The miner, synthesizer,
+and admission pipeline feed `zicato inspect reflection suggest`. Their output
+remains operator-only (§7).
 
 ## 2. The episode taxonomy the miner extracts
 
@@ -203,8 +194,8 @@ sort key = (−severity_rank, −recency_key, −coverage_key, episode_id)
 
 ## 3. The suggestion types
 
-A **suggestion** is a synthesised, admission-measured draft the operator can
-carry to a builder draft. Synthesis turns ranked episodes into these; each
+A **suggestion** is a proposed evaluation artifact with its admission results.
+The operator reviews it before authoring a contract change. Synthesis turns ranked episodes into these; each
 carries a **draft artifact** (a valid BOARD-FORMAT entry or `Judge` spec) and
 a **provenance block** (§4).
 
@@ -347,45 +338,23 @@ known-answer test with zero live spend.
 
 ## 6. Surfaces
 
-- **`zicato inspect reflection suggest`** — a `reflect` CLI mode, sibling of
-  `run` / `report` / `apply` / `practices` (`cli/commands/reflect.py`,
-  auto-discovered). It mines episodes (§2), synthesises suggestions (§3), and
-  runs admission (§5), with the live probes behind an operator go-ahead; a
-  `--no-probe` cheap tier mines, synthesises and validates artifacts only. It
-  then **persists findings the way reflection findings are persisted**: a
-  `suggestions.json` in the reflection directory beside `findings.json`, a
-  canonical file plus a tolerant reader that degrades on absence.
-  > **Reflection directories that hold suggestions alone.** A `reflect
-  > suggest` run that mints a fresh reflection id writes a directory carrying
-  > **only** a `suggestions.json` and no `plan.json`. The absent `plan.json`
-  > distinguishes such a directory from a full `reflect run` reflection, and
-  > the plan.json-keyed reflection discovery (`list_reflections`) skips it, so
-  > the builder suggestions inbox scans `reflections/*/suggestions.json`
-  > **directly** to surface that output. Pruning these directories is not
-  > built (see the unbuilt list in §8).
-- **`reflect apply` carries a suggestion into a builder draft.** The existing
-  `reflection/apply.py` mechanism forks a builder draft off the live contract
-  and applies a finding's `proposed_op` (verified: `apply_finding_to_draft`).
-  Two operation families carry the suggestions:
-  - **Edit operations** — `set_gate` and `set_weights` (findings), and, for a
-    new judge or a rubric revision, `add_judge` (`contract_draft/operations.py`,
-    `add_judge(draft, entry_id, judge: JudgeSpec)`), through which a judge
-    suggestion applies.
-  - **New-entry operations** — `add_board_entry(draft, entry: BoardEntry)`
-    (`contract_draft/operations.py`, mirroring `add_judge`'s validate-then-replace
-    shape), through which regression, coverage and harder-variant suggestions
-    apply at the same draft-fork seam. The suggestion's `proposed_op` is
-    `validate_proposed_op`-checked against that operation's signature at emit
-    time, the same as every finding.
-- **The builder's suggestions inbox and the Instrument-lens links.** The board
-  editor carries a **suggestions inbox**: the ranked suggestions as verdict-led
-  list rows, the loop-health findings-panel treatment BOARD-REFLECTION.md
-  §"UI — the Instrument lens" mandates rather than a bespoke card grid. Each row carries its
-  admission banner (flip rate and discrimination as `dn-stat` rather than
-  chips) and a "stage to draft" affordance. The Instrument lens links a
-  suggestion back to the x-ray of the episode that motivated it — the
-  false-negative span, or the false-positive transcript. The human stays at the
-  contract boundary: the inbox stages a draft, and only the operator seals it.
+`zicato inspect reflection suggest` mines episodes, synthesizes artifacts,
+and runs admission. Live probes require authorization to spend evaluation
+budget. `--no-probe` mines, synthesizes, and validates artifacts without those
+probes; its output must remain explicitly unmeasured.
+
+The command writes `suggestions.json` in a reflection directory. A suggestion
+retains its proposed artifact, provenance, admission results, and structured
+operation description. These reports preserve evidence for operator review.
+The operator can use an accepted artifact when authoring the next contract.
+
+A suggestion-only directory may contain no `plan.json`. Reflection discovery
+that keys on plans therefore does not enumerate every suggestion directory.
+Suggestion readers use the canonical suggestion files; pruning directories
+that contain only suggestions remains unimplemented (§8).
+
+The read-only trace and provenance views connect imported episodes to the
+artifacts they motivated. They do not stage or publish contract changes.
 
 ## 7. Envelope + cost
 
@@ -414,10 +383,9 @@ never raw suggestions.
 - **The live admission probes need the same go-ahead** — §5. The fixture and
   mock tier is free and covers the whole pipeline.
 
-The free, always-on tier therefore mines, synthesises mechanically, and
-validates artifacts. The metered tier drafts from a model and runs the live
-admission probes. The default posture is reflection's own: refuse to spend
-live budget without an explicit operator go-ahead.
+Mechanical synthesis mines episodes and validates artifacts without model
+calls. Model drafting and live admission probes require an explicit operator
+go-ahead before spending budget.
 
 ## 8. Review focus and unbuilt work
 
@@ -442,7 +410,7 @@ whether a cold workspace yields no fabricated episodes.
 - **Pruning reflection directories that hold suggestions alone** — a `reflect
   suggest` run that mints a fresh reflection id writes a directory with a
   `suggestions.json` and no `plan.json` (§6). Nothing prunes stale ones: they
-  are cheap and operator-visible, and the inbox surfaces only the freshest.
+  are retained for operator review.
 
 ## 9. The episode extractor
 
@@ -480,7 +448,7 @@ real `HypothesisGrade`) — never a synthetic shape the pipeline cannot emit.
 
 | Topic | Document |
 |---|---|
-| The four pillars + the apply→builder-draft seam + adjudicator independence | [`BOARD-REFLECTION.md`](BOARD-REFLECTION.md) |
+| The four pillars and adjudicator independence | [`BOARD-REFLECTION.md`](BOARD-REFLECTION.md) |
 | The instrument-quality readers (discrimination, flip rate, dead evals) | [`EVAL-VIEW.md`](EVAL-VIEW.md) |
 | `LossProfile` as the dialect convergence point | [`TELEMETRY-DIALECTS.md`](TELEMETRY-DIALECTS.md) |
 | The board entry + judge schema the drafts obey | [`BOARD-FORMAT.md`](BOARD-FORMAT.md) |

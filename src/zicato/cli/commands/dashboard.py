@@ -29,24 +29,10 @@ import click
 from zicato.config import DashboardConfig
 from zicato.dashboard.static_assets import resolve_static_dir
 
-BUILDER_FRAGMENT = "/#/builder"
-
-
-def dashboard_url(host: str, port: int, view: str) -> str:
-    """Return the requested dashboard deep link."""
-    return f"http://{host}:{port}{BUILDER_FRAGMENT if view == 'builder' else ''}"
-
 
 @click.command(
     name="dashboard",
     short_help="Advanced: serve the dashboard for an existing workspace (evolve auto-spawns it).",
-)
-@click.option(
-    "--view",
-    type=click.Choice(["overview", "builder"]),
-    default="overview",
-    show_default=True,
-    help="Initial dashboard view; builder opens the contract editor.",
 )
 @click.option(
     "--workspace",
@@ -63,7 +49,7 @@ def dashboard_url(host: str, port: int, view: str) -> str:
 )
 @click.option(
     "--port",
-    default=7892,
+    default=DashboardConfig.DEFAULT_PORT,
     show_default=True,
     type=click.IntRange(min=1, max=65535),
     help="Port for the dashboard HTTP server.",
@@ -80,9 +66,7 @@ def dashboard_url(host: str, port: int, view: str) -> str:
         "An empty configuration serves the bundled assets."
     ),
 )
-def dashboard_cmd(
-    workspace: str, host: str, port: int, view: str, static_dir_flag: str | None
-) -> None:
+def dashboard_cmd(workspace: str, host: str, port: int, static_dir_flag: str | None) -> None:
     """Serve the dashboard for an existing workspace over HTTP.
 
     Point this at any workspace — a completed epoch for a post-mortem,
@@ -118,8 +102,6 @@ def dashboard_cmd(
     # The definitive ``Dashboard:`` URL is printed by ``server.run`` once
     # the real bound port is known (``_pick_port`` may walk +1 off the
     # requested port on a TIME_WAIT bounce), so it is NOT pre-printed here.
-    if view == "builder":
-        click.echo(f"Open: {dashboard_url(host, port, view)}")
     click.echo(f"Serving workspace {workspace_root}", err=True)
     dashboard_server.run(
         workspace_root=workspace_root,
@@ -129,4 +111,4 @@ def dashboard_cmd(
     )
 
 
-__all__ = ["BUILDER_FRAGMENT", "dashboard_cmd", "dashboard_url"]
+__all__ = ["dashboard_cmd"]

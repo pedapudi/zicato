@@ -718,7 +718,7 @@ def test_the_episode_task_carries_the_context_s_process_exemplars() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_builder_set_experimental_gains_the_knob() -> None:
+def test_configuration_edit_sets_process_exemplar_options() -> None:
     from zicato.contract_draft.draft import TournamentDraft
     from zicato.contract_draft.operations import set_experimental
 

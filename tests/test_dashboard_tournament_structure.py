@@ -296,7 +296,7 @@ def test_structure_reader_pre_v5_index_field_status_empty(swiss_workspace: Path)
 
 def test_structure_reader_enriches_field_status_from_active(swiss_workspace: Path) -> None:
     """When the index row carries the settled bracket but no proposing
-    outcomes, a matching live ``active_tournament.json`` (retained with
+    outcomes, a matching live ``active_tournament.events.jsonl`` (retained with
     phase=completed) lifts its ``field_status`` onto the resolved
     structure — so a just-completed epoch's proposing step survives."""
     from zicato.runtime.state import ActiveTournament, write_active_tournament

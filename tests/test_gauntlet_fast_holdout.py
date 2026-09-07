@@ -25,8 +25,8 @@ from pathlib import Path
 import pytest
 
 from tests._orchestrator_harness import (
+    evaluation_call_llm,
     install_stub_adapter_factory,
-    make_aux_responder,
     run_evolve_once,
 )
 from tests.test_orchestrator_multi_challenger_holdout import (
@@ -44,7 +44,7 @@ _HOLDOUT_ENTRY = "h0"
 def _run_fast_round(workspace: Path, epoch_id: str) -> object:
     """Run one single-challenger round under fast mode."""
 
-    return run_evolve_once(workspace, epoch_id, make_aux_responder([]), fast_mode=True)
+    return run_evolve_once(workspace, epoch_id, evaluation_call_llm, fast_mode=True)
 
 
 def _losses(
@@ -170,7 +170,7 @@ def test_the_same_round_in_full_mode_reaches_the_same_verdicts(
 
     from zicato.evolve.generation_phase import current_generation
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]), fast_mode=False)
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm, fast_mode=False)
 
     assert outcome.tournament_decision != "promoted"
     assert current_generation(workspace, epoch_id) == "v0"

@@ -1,32 +1,7 @@
-"""The mutable draft state for an evaluation contract.
-
-A :class:`TournamentDraft` is the editable working copy of a whole
-evaluation **contract** — the scoring weights (structure + params +
-overfitting/holdout + gate + per-kind/per-judge weights), the board
-(entries with their judges / predicates / rubrics and ``holdout`` tags),
-the proposer brief text, and the proposer dir. Every edit reaches a draft
-through the operations in :mod:`zicato.contract_draft.operations`: the
-builder's form and its copilot drive the *same* draft, and the reflection
-adjudicator stages a finding's edit on a draft of its own. The draft is
-the single editable surface, and nothing done to it touches the live
-workspace until :func:`zicato.contract_draft.operations.apply` is called
-with ``confirm=True``.
-
-Unlike the frozen contract dataclasses in :mod:`zicato.core.types`, a
-:class:`TournamentDraft` is MUTABLE — operations mutate it in
-place and return a structured patch describing what changed. A
-:class:`DraftStore` keys independent drafts by ``session_id`` so two
-concurrent editing sessions never tread on each other.
-
-The draft can be initialised blank or, via
-:meth:`TournamentDraft.from_workspace`, pre-filled from the editable live
-contract, including changes awaiting the next execution.
-"""
+"""Editable evaluation inputs with their source revision and comparison to live files."""
 
 from __future__ import annotations
 
-import re
-from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -103,7 +78,7 @@ def _entry_with_holdout(entry: BoardEntry, *, holdout: bool) -> BoardEntry:
 
     The ``holdout`` tag is how an operator declares an explicit
     train/holdout split by hand (see :mod:`zicato.board.split`); the
-    builder edits it as a per-entry boolean. Idempotent — adding a tag an
+    edit supplies a boolean per entry. Adding a tag an
     entry already carries, or removing one it lacks, returns an
     equivalent entry.
     """
@@ -349,196 +324,8 @@ def _scoring_canon(weights: ScoringWeights) -> str:
     return json.dumps(scoring_contract_to_canon(weights), sort_keys=True)
 
 
-#: Slot names are path/JSON-safe short slugs — same spirit as epoch ids.
-_SLOT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-
-#: Bounded per-session undo depth. Deep enough for a whole authoring
-#: session's worth of missteps, small enough that history can never grow
-#: without bound in a long-lived dashboard process.
-_HISTORY_LIMIT = 20
-
-
-def _copy_draft(draft: TournamentDraft) -> TournamentDraft:
-    """A safe working copy of ``draft`` for a named slot.
-
-    ``scoring`` is a frozen dataclass and every operation REPLACES it (and
-    replaces board entries wholesale — entries themselves are never
-    mutated in place), so a shallow copy of the entries list is a real
-    fork: edits to either copy can never leak into the other.
-    ``disable_drift`` / ``judge_only`` are immutable values, carried
-    verbatim — a fork that dropped them would strip the board_meta header
-    from the variant.
-    """
-    return TournamentDraft(
-        scoring=draft.scoring,
-        entries=list(draft.entries),
-        brief=draft.brief,
-        proposer_path=draft.proposer_path,
-        disable_drift=draft.disable_drift,
-        judge_only=draft.judge_only,
-        source=draft.source,
-    )
-
-
-class DraftStore:
-    """In-memory store of editable drafts keyed by session id — plus SLOTS.
-
-    Concurrent builder sessions (multiple browser tabs, the form and the
-    copilot side by side) each get an independent :class:`TournamentDraft`
-    so their edits never collide. A session new to the store is lazily
-    initialised from the CURRENT live contract via
-    :meth:`TournamentDraft.from_workspace`, so the builder always opens
-    pre-filled with what is running.
-
-    NAMED SLOTS are the fork/compare lifecycle. :meth:`fork` snapshots a
-    session's working draft into a named slot and binds the session TO
-    that slot, so subsequent edits accumulate on it; :meth:`switch`
-    rebinds the session to another slot with its state intact. Named
-    drafts are how an operator iterates on contract variants WITHOUT
-    rolling the epoch: the write path is untouched, and ``apply`` still
-    writes whichever draft the session is on.
-
-    Slots persist exactly the way session drafts do — in this
-    process-local store (drafts have never outlived the dashboard
-    process; slots inherit that contract rather than inventing a second
-    persistence story). Everything lives until
-    :func:`zicato.contract_draft.operations.apply` writes one to the workspace,
-    or the process exits.
-
-    UNDO HISTORY: :meth:`remember` records a bounded (20) per-session
-    deque of pre-op draft snapshots — the seam both front doors call
-    before a write op — and :meth:`pop_undo` hands the ``undo`` op the
-    newest snapshot that differs from the current state. History is
-    process-local like everything else here.
-    """
-
-    def __init__(self) -> None:
-        self._drafts: dict[str, TournamentDraft] = {}
-        #: Named slots, store-global (shared across sessions — two tabs
-        #: naming the same slot see the same draft, exactly like two tabs
-        #: sharing a session id).
-        self._slots: dict[str, TournamentDraft] = {}
-        #: Per-session bounded undo history: value snapshots of the
-        #: session's draft, recorded by :meth:`remember` at both front
-        #: doors (the REST dispatch and the copilot's tool context)
-        #: BEFORE a write op mutates the draft. Newest last.
-        self._history: dict[str, deque[TournamentDraft]] = {}
-
-    def get(self, session_id: str, workspace_root: Path) -> TournamentDraft:
-        """Return the draft for ``session_id``, initialising it if new.
-
-        A session not yet in the store is initialised from the live
-        contract so it opens pre-filled. Subsequent calls return the same
-        mutable instance, so operations accumulate across requests.
-        """
-        draft = self._drafts.get(session_id)
-        if draft is None:
-            draft = TournamentDraft.from_workspace(workspace_root)
-            self._drafts[session_id] = draft
-        return draft
-
-    def reset(self, session_id: str, workspace_root: Path) -> TournamentDraft:
-        """Discard ``session_id``'s draft and re-init it from live."""
-        draft = TournamentDraft.from_workspace(workspace_root)
-        self._drafts[session_id] = draft
-        return draft
-
-    def has(self, session_id: str) -> bool:
-        """``True`` iff ``session_id`` already has a draft in the store."""
-        return session_id in self._drafts
-
-    # -- undo history (remember / pop_undo) ---------------------------------
-
-    def remember(self, session_id: str) -> None:
-        """Snapshot the session's CURRENT draft state onto its undo history.
-
-        The recording seam for step-undo: both front doors call this with
-        the PRE-op state — ``builder_op`` right before a write-op
-        dispatch, and :meth:`BuilderToolContext.draft` on every copilot
-        tool's draft fetch. Dedups against the newest snapshot by field
-        equality, so a read tool (or a no-op edit) records nothing.
-        Bounded to 20 snapshots per session — the oldest falls off. A
-        session with no draft yet is a no-op (there is no state to
-        remember).
-        """
-        draft = self._drafts.get(session_id)
-        if draft is None:
-            return
-        history = self._history.setdefault(session_id, deque(maxlen=_HISTORY_LIMIT))
-        if history and history[-1] == draft:
-            return
-        history.append(_copy_draft(draft))
-
-    def pop_undo(self, session_id: str) -> TournamentDraft | None:
-        """Pop the newest history snapshot that DIFFERS from the current draft.
-
-        Snapshots equal (by field equality) to the session's current
-        state are discarded on the way down — they would make undo a
-        visible no-op. Returns ``None`` when the history is exhausted;
-        the caller renders that as a "nothing to undo" patch note. The
-        returned snapshot is a value copy — the caller restores it INTO
-        the session's live draft object (in place) so slot bindings stay
-        coherent.
-        """
-        history = self._history.get(session_id)
-        current = self._drafts.get(session_id)
-        while history:
-            snapshot = history.pop()
-            if current is None or snapshot != current:
-                return snapshot
-        return None
-
-    # -- named slots (fork / list / switch) --------------------------------
-
-    def fork(self, session_id: str, name: str, workspace_root: Path) -> TournamentDraft:
-        """Snapshot the session's working draft into slot ``name`` and switch to it.
-
-        The fork is a COPY of the current working draft — the state the
-        operator has built up so far becomes the new slot's starting
-        point — and the session is bound to the slot, so subsequent edits
-        accumulate on it. Raises :class:`ValueError` on a malformed name
-        or a name already taken (fork never silently overwrites a
-        variant).
-        """
-        if not _SLOT_NAME_RE.match(name or ""):
-            raise ValueError(
-                f"invalid draft name {name!r}: use 1-64 chars of [A-Za-z0-9._-], "
-                "starting alphanumeric"
-            )
-        if name in self._slots:
-            raise ValueError(f"a draft named {name!r} already exists; switch to it instead")
-        forked = _copy_draft(self.get(session_id, workspace_root))
-        self._slots[name] = forked
-        self._drafts[session_id] = forked
-        return forked
-
-    def list_drafts(self) -> list[str]:
-        """The named slots, sorted."""
-        return sorted(self._slots)
-
-    def switch(self, session_id: str, name: str) -> TournamentDraft:
-        """Bind ``session_id`` to slot ``name`` (its state intact).
-
-        The session's previous working draft is left exactly where it was
-        (if it was a slot, that slot keeps every edit; a never-forked
-        working draft is simply left behind). Raises :class:`ValueError`
-        on an unknown name.
-        """
-        slot = self._slots.get(name)
-        if slot is None:
-            known = ", ".join(sorted(self._slots)) or "none"
-            raise ValueError(f"no draft named {name!r} (known: {known})")
-        self._drafts[session_id] = slot
-        return slot
-
-    def slot(self, name: str) -> TournamentDraft | None:
-        """The slot draft for ``name``, or ``None`` when absent."""
-        return self._slots.get(name)
-
-
 __all__ = [
     "ContractComponentDiff",
     "ContractDiff",
     "TournamentDraft",
-    "DraftStore",
 ]

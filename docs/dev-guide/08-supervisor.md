@@ -871,8 +871,7 @@ turns the runtime state files into typed snapshots, read FRESH each tick.
 Its `WorkspacePaths` struct is the Rust twin of `zicato.runtime.paths` — the same
 path map, in the other language:
 
-- `heartbeat()`, `lock()`, `active_runs_dir()`, `active_tournament()` +
-  `active_tournament_log()`, `lineage()`, `control_dir()`, `current_epoch_marker()`,
+- `heartbeat()`, `lock()`, `active_runs_dir()`, `active_tournament_log()`, `lineage()`, `control_dir()`, `current_epoch_marker()`,
   and the `runtime` / `epochs` / `workspace` roots. `watcher.rs::classify` and
   every reader resolve against these, so the Python and Rust sides agree on
   *where every file lives* by construction.

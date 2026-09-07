@@ -268,17 +268,6 @@ def _never_served(_paths: WorkspacePaths, _coordinates: dict[str, str]) -> dict[
     return {}
 
 
-def _degrade_execution_plan(_paths: WorkspacePaths, coordinates: dict[str, str]) -> dict[str, Any]:
-    """The empty plan, stamped with a read time like a resolved one."""
-    return {
-        "epoch_id": coordinates["epoch_id"],
-        "generated_at": _now_iso(),
-        "board": {"digest": "", "entry_count": 0},
-        "note": "unknown epoch",
-        "stages": [],
-    }
-
-
 def _degrade_matchup_detail(paths: WorkspacePaths, coordinates: dict[str, str]) -> dict[str, Any]:
     """ "No such matchup", still scoped to the epoch the workspace is on."""
     return {
@@ -397,20 +386,8 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         path="/api/live/pipeline",
         reader=query.build_live_pipeline,
         serves=(
-            "The propose → apply → run → gate position, projected from the same "
-            "read of the running epoch that serves the live execution plan, so "
-            "the two surfaces cannot disagree. The server owns the phase-string "
-            "inference; the stepper renders this verdict verbatim."
-        ),
-    ),
-    ReadEndpoint(
-        path="/api/live/execution-plan",
-        reader=query.build_live_execution_plan,
-        serves=(
-            "The running epoch's plan with a live overlay: the served liveness "
-            "verdict, the active path, and one node per still-beating in-flight "
-            "run. A workspace that is not live serves its plan with an empty "
-            "overlay."
+            "The propose → apply → run → gate position. The server owns the "
+            "phase-string inference; the stepper renders this verdict verbatim."
         ),
     ),
     # -- reads scoped by the optional ?epoch= parameter -----------------
@@ -481,11 +458,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         ),
         epoch_scope=SCOPE_IGNORE_MALFORMED_EPOCH,
     ),
-    ReadEndpoint(
-        path="/api/proposer/recommendations",
-        reader=query.build_proposer_recommendations,
-        serves="The pending proposer-recommendation queue, workspace-wide.",
-    ),
     # -- epoch-coordinate reads ----------------------------------------
     ReadEndpoint(
         path="/api/epoch/{epoch_id}/per-judge-trend",
@@ -551,18 +523,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         ),
         params=("epoch_id",),
         degrade=_echo(structure="gauntlet", source="none", rounds=[], waterfall=[]),
-    ),
-    ReadEndpoint(
-        path="/api/epoch/{epoch_id}/execution-plan",
-        reader=query.build_execution_plan,
-        serves=(
-            "The epoch's whole loop as one tree of stages, steps and work "
-            "units: what ran, under which candidate, in which round, and what "
-            "each step decided — so a reader answers what a run did without "
-            "joining four endpoints."
-        ),
-        params=("epoch_id",),
-        degrade=_degrade_execution_plan,
     ),
     ReadEndpoint(
         path="/api/epoch/{epoch_id}/experiments-ledger",

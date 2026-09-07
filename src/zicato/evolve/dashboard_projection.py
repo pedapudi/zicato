@@ -561,7 +561,7 @@ def _mark_run_terminal(workspace_root: Path) -> None:
 
     A normally-ended evolve loop already stamps a terminal heartbeat phase
     (``evolve_n_rounds:done``), which the dashboard treats as idle. But the
-    runtime ``active_tournament.json`` envelope can linger with
+    runtime ``active_tournament.events.jsonl`` envelope can linger with
     ``phase="running"`` (e.g. a mid-resolution structure whose settle write
     never ran) — and a frontend reading the heartbeat as fresh would then
     show a "LIVE" tournament on a closed epoch. As a defensive measure on

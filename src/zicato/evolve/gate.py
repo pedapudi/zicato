@@ -405,6 +405,8 @@ async def resolve_field_verdict(
       purely.
     """
 
+    prepared = field_round.prepared
+
     from zicato.tournament.runner import confirm_crowning_holdout  # noqa: PLC0415
 
     crowning = await _confirm_crowning_on_holdout(
@@ -412,17 +414,17 @@ async def resolve_field_verdict(
         parent_id=field_round.parent_id,
         champion_gen=candidates.champion,
         generation_for=candidates.generation,
-        adapter=field_round.adapter,
-        board=field_round.board,
-        weights=field_round.weights,
-        config=field_round.config,
-        workspace_root=field_round.workspace_root,
-        epoch_id=field_round.epoch_id,
-        disable_drift=field_round.disable_drift,
-        judge_only=field_round.judge_only,
-        fast_mode=field_round.fast_mode,
+        adapter=prepared.adapter,
+        board=list(prepared.board),
+        weights=prepared.weights,
+        config=prepared.config,
+        workspace_root=prepared.workspace_root,
+        epoch_id=prepared.epoch_id,
+        disable_drift=prepared.disable_drift,
+        judge_only=prepared.judge_only,
+        fast_mode=prepared.fast_mode,
         confirm_fn=confirm_crowning_holdout,
-        writer=field_round.prepared.writer,
+        writer=prepared.writer,
     )
     promoted_id = crowning.promoted_id
     reason_override = crowning.reason_override
@@ -431,7 +433,7 @@ async def resolve_field_verdict(
     # withheld. An exhausted Ladder also emits nothing because no query ran.
     released_confirmation = _released_holdout_confirmation(crowning.holdout_block)
     if released_confirmation is not None:
-        field_round.round_log.emit(
+        prepared.round_log.emit(
             "holdout_released",
             {"confirmed": released_confirmation},
             {"generation_id": crowning.challenger_id},
@@ -439,10 +441,10 @@ async def resolve_field_verdict(
 
     if promoted_id is not None:
         block_reason = _integrity_block_reason(
-            weights=field_round.weights,
+            weights=prepared.weights,
             parent_snapshot_root=candidates.champion.snapshot_root,
             child_snapshot_root=candidates.by_id[promoted_id].snapshot_root,
-            mutable_trees=_registered_mutable_trees(field_round.workspace_config),
+            mutable_trees=_registered_mutable_trees(prepared.workspace_config),
             delta_scalar=crowning.crowning_delta_scalar,
         )
         if block_reason is not None:
@@ -455,7 +457,7 @@ async def resolve_field_verdict(
             reason_override = block_reason
 
     overrides: dict[str, GateOverride] = claim_field_gate_overrides(
-        field_round.workspace_root, [c.generation_id for c in candidates.challengers]
+        prepared.workspace_root, [c.generation_id for c in candidates.challengers]
     )
     (
         promoted_id,
@@ -463,22 +465,22 @@ async def resolve_field_verdict(
         override_provenance,
         effective_decision,
     ) = _apply_field_overrides(
-        workspace_root=field_round.workspace_root,
+        workspace_root=prepared.workspace_root,
         decision=decision,
         promoted_id=promoted_id,
         crowning_reason_override=reason_override,
         crowning_decision_override=crowning.decision_override,
         field_overrides=overrides,
-        structure=field_round.tournament_spec.structure,
+        structure=prepared.tournament_spec.structure,
     )
     # The round's terminal decision + provenance (operator overrides
     # explicit, never silent) — the post-holdout/post-override truth.
-    field_round.round_log.emit(
+    prepared.round_log.emit(
         "decision_recorded",
         {
             "decision": str(effective_decision.decision),
             "provenance": {
-                "structure": field_round.tournament_spec.structure,
+                "structure": prepared.tournament_spec.structure,
                 "reason": effective_decision.reason,
                 "parent_generation_id": field_round.parent_id,
                 "promoted_generation_id": promoted_id,

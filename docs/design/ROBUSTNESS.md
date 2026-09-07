@@ -450,7 +450,7 @@ therefore guarantees both no torn writes and a conservative restart (see
 | File | Reader | What partial write would cause |
 |---|---|---|
 | `heartbeat.json` | supervisor | false "stalled" alarm |
-| `active_tournament.json` | dashboard, orchestrator on resume | UI flicker, resume confusion |
+| `active_tournament.events.jsonl` | dashboard, orchestrator on resume | UI flicker, resume confusion |
 | `active_runs/{run_id}.json` | supervisor, orchestrator | escalation on the wrong run |
 | `experiment.json` | journal, analysis pass | half-written outcome block; downstream parse failure |
 | `gen_score.json` | tournament, dashboard | wrong gate verdict on resume |
@@ -786,8 +786,7 @@ These wrappers add a timeout to sites that would otherwise rely on the
 system-under-test adapter to enforce its own. The importers are
 `src/zicato/proposer/proposer.py`, `src/zicato/emulator/emulator.py`,
 `src/zicato/board/rubric.py`, `src/zicato/epoch/analysis.py`,
-`src/zicato/analyzer/report.py`, `src/zicato/analyzer/insights.py`,
-`src/zicato/proposer/reflection.py`, and
+`src/zicato/analyzer/report.py`, `src/zicato/analyzer/insights.py`, and
 `src/zicato/reflection/adjudicator.py`.
 
 The wrappers are not a substitute for the worker boundary. They give a

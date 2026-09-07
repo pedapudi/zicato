@@ -3,9 +3,10 @@
 zicato writes one structured, append-only JSONL stream per `zicato evolve`
 invocation, under the workspace. Orchestrator and tournament-worker records
 share that one file, and each record carries the epoch, generation, and run
-it belongs to wherever that context is bound. A single query-layer reader
-parses the stream, and both the CLI and the dashboard consume it through that
-reader.
+it belongs to wherever that context is bound. `logging_stream.py` owns the saved
+row definition, parser and bounded reader. The query layer selects invocations
+for the CLI and dashboard; health uses the same reader for optional-operation
+warnings.
 
 > **The one invariant.** Logs are an observability sink. Nothing in
 > scoring, the promote gate, the journal, the analytical index, or any
@@ -79,9 +80,24 @@ touching any log statement:
 
 * the **worker** binds `(epoch_id, generation_id, run_id)` in `main()`
   from its args file — so every worker record is fully attributed;
-* the **round loop** binds `epoch_id` for the duration of a round.
+* each **round invocation** binds `epoch_id` and `fields.round_index`, restoring
+  its caller's context on exit.
 
 An unbound field is omitted from the record (never emitted as `null`).
+
+### Optional-operation failures
+
+`best_effort` writes a warning with `operation` and `exception_type` fields.
+Health presents these observations as warnings; they never change loss or gate
+outcomes. It reads up to 2,000 recent rows per retained invocation through the
+bounded log reader. A saved round report retains the findings assessed then.
+The health response merges later warnings by invocation and byte cursor, so a
+saved event appears once while distinct retry failures remain distinct.
+
+The existing capture floor and retention apply. At `ERROR` or `CRITICAL`,
+warning rows are suppressed and cannot be reconstructed. A missing or unwritable
+stream leaves process diagnostics only. This is diagnostic evidence, not a
+complete failure count or a prerequisite for accepting a measurement.
 
 ## 2. How records reach the stream
 
@@ -158,9 +174,9 @@ drive), the worker installs no file handler and writes to stderr only.
 
 ## 3. The read path — files-canonical
 
-The files are canonical. Exactly one reader
-(`zicato.query.log_stream`) parses them, and the CLI and the dashboard
-both call it — there is no second parser.
+The files are canonical. `zicato.logging_stream` defines and reads saved rows.
+`zicato.query.log_stream` assembles the invocation roster and response for the
+CLI and dashboard.
 
 `build_log_view(paths, *, limit, level, after, invocation)` mirrors the
 shape of `build_run_log`:
@@ -221,7 +237,7 @@ stream.
 
 ### Dashboard operator-log pane
 
-A workspace-level `#/logs` view is a peer of the builder and settings
+A workspace-level `#/logs` view is a peer of settings
 surfaces. Logs are per-invocation, so the view is not epoch-scoped. It
 reads the `/api/logs` endpoint backed by the same reader, and renders the
 tail as quiet mono rows, level-coloured via the `--v2-*` tone tokens, with

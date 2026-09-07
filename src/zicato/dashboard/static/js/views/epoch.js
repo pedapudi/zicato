@@ -291,8 +291,7 @@ export async function render(host, ctx, params) {
       ]),
       (tournament || contractHash) ? el('div', { class: 'dt-structure-line' }, [
         tournament ? structurePill(tournament.structure, tournament.params) : null,
-        // the frozen CONTRACT identity — shortened like every other hash in the
-        // tree (builder.js `shorten`), full value on hover.
+        // The full contract hash remains available on hover.
         contractHash ? el('span', {
           class: 'dt-contract-hash dn-mono dn-faint', title: contractHash,
           text: 'contract ' + shortHash(contractHash),
@@ -534,9 +533,7 @@ export async function render(host, ctx, params) {
   });
 }
 
-// A hash shortened for a header line — the same idiom the builder uses for
-// `new_contract_hash` (views/builder.js `shorten`): first 12 chars + an
-// ellipsis, with the caller putting the full value in a `title`.
+// Show a hash prefix; callers retain the full value in a title attribute.
 export function shortHash(h, n) {
   const s = String(h == null ? '' : h).trim();
   const len = n || 12;

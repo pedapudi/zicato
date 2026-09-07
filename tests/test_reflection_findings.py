@@ -10,12 +10,14 @@ raises at emit time. The oracle FN finding NAMES the adjudicated span.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from zicato.contract_draft import operations as ops
 from zicato.contract_draft.draft import TournamentDraft
 from zicato.reflection.adjudicator import VERDICT_FN, VERDICT_FP, JudgeAdjudication
-from zicato.reflection.corpus import FIDELITY_VERBATIM
+from zicato.reflection.corpus import FIDELITY_VERBATIM, ObservationRun
 from zicato.reflection.findings import Finding, derive_findings, validate_proposed_op
 from zicato.reflection.scorecards import JudgeScorecard
 from zicato.tournament.calibration import MARGIN_NOISE_MULTIPLE
@@ -74,6 +76,67 @@ def _adj(judge: str, run_ref: str, verdict: str, span: str) -> JudgeAdjudication
         fidelity=FIDELITY_VERBATIM,
         prompt_version=1,
         k_adj=1,
+    )
+
+
+def test_critical_firings_across_candidates_report_observed_counts() -> None:
+    observation = ObservationRun(
+        reflection_id="inspection",
+        candidate_id="v0",
+        entry_id="task",
+        replicate=0,
+        scalar=1.0,
+        drift_loss=1.0,
+        pass_fail=False,
+        runtime_ms=1,
+        aborted=False,
+        abort_cause=None,
+        fidelity=FIDELITY_VERBATIM,
+        has_result=False,
+        has_judge_io=True,
+        loss_ref=None,
+        transcript_ref=None,
+        judge_decisions=(
+            {"judge_name": "safety", "fired": True, "severity": "critical"},
+            {"judge_name": "advice", "fired": True, "severity": "warning"},
+            {"judge_name": "unknown", "fired": True, "severity": None},
+            {"judge_name": "failed", "fired": True, "severity": "critical", "errored": True},
+        ),
+    )
+    corpus = [
+        observation,
+        replace(observation, candidate_id="v1"),
+        replace(observation, entry_id="another", judge_decisions=()),
+    ]
+
+    findings = derive_findings(scorecards=[], adjudications=[], corpus=corpus)
+
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.severity == "info"
+    assert finding.title == "Judge 'safety' fired at critical severity on every observed candidate"
+    assert finding.evidence == (
+        {
+            "judge_name": "safety",
+            "candidate_ids": ["v0", "v1"],
+            "candidate_count": 2,
+            "critical_run_count": 2,
+            "observed_run_count": 3,
+        },
+    )
+    assert "2 of 3 observed runs" in finding.detail
+    assert "does not establish that the task is impossible" in finding.detail
+    assert "regression check" in finding.detail
+    assert "Inspect" in finding.recommendation
+    assert finding.proposed_op is None
+    assert derive_findings(scorecards=[], adjudications=[], corpus=corpus[:1]) == []
+    assert (
+        derive_findings(
+            scorecards=[],
+            adjudications=[],
+            corpus=[observation, replace(observation, candidate_id="v1", judge_decisions=())],
+        )
+        == []
     )
 
 

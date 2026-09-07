@@ -96,7 +96,7 @@ Python memory or only in the supervisor's memory.
 ├── lock.json                       # readable writer identity metadata
 ├── heartbeat.json                  # orchestrator pulse, bumped every 1-5s
 ├── dashboard.json                  # dashboard's actually-bound host/port
-├── active_tournament.json          # current tournament shape + per-entry status
+├── active_tournament.events.jsonl          # current tournament shape + per-entry status
 ├── active_runs/
 │   ├── {run_id}.json               # one file per in-flight tournament run
 │   └── ...
@@ -219,70 +219,22 @@ threshold is loose enough to absorb a slow disk sync or a
 paused-by-debugger orchestrator before it warns, and looser still
 before it escalates.
 
-### 2.3 `active_tournament.json` — current tournament shape
+### 2.3 `active_tournament.events.jsonl` — recorded tournament transitions
 
-A single file describing the in-progress tournament, refreshed on
-every entry-completion event. The dashboard's "active tournament"
-panel reads from this file; the supervisor uses the per-entry
-status to compute the predicted gate verdict (see
-[DASHBOARD.md](DASHBOARD.md) §4).
+The dashboard and supervisor fold the event log into the in-progress
+tournament view. Each record has `seq`, `ts`, `type` and `payload` fields.
+A `Snapshot` carries the full `ActiveTournament` envelope and resets the
+fold. `EntryUpdate`, `PartialAggregate` and `ProjectedUpdate` carry later
+changes. The runtime writer appends each transition once; readers apply
+these events in order from the last `Snapshot`.
 
-```json
-{
-  "round": 4,
-  "epoch": "hardened_research",
-  "parent_generation": "v4",
-  "candidate_generation": "v5",
-  "started_at": "2026-05-14T12:34:55.000Z",
-  "entries": [
-    {
-      "entry_id": "short_solar",
-      "weight": 1.0,
-      "parent_status": "done",
-      "parent_drift_loss": 0.42,
-      "parent_pass_fail": true,
-      "candidate_status": "done",
-      "candidate_drift_loss": 0.31,
-      "candidate_pass_fail": true,
-      "delta_drift_loss": -0.11,
-      "delta_pass_fail": "tie"
-    },
-    {
-      "entry_id": "long_solar_with_constraints",
-      "weight": 1.5,
-      "parent_status": "done",
-      "parent_drift_loss": 0.55,
-      "parent_pass_fail": false,
-      "candidate_status": "running",
-      "candidate_drift_loss": null,
-      "candidate_pass_fail": null,
-      "delta_drift_loss": null,
-      "delta_pass_fail": null
-    },
-    ...
-  ]
-}
-```
+An absent, empty or unusable log supplies no live tournament state.
+Saved files outside this event protocol are ignored and left untouched.
+Restart cleanup removes the event log. Settled tournament results live
+under the selected epoch and remain available after that cleanup.
 
-**Entry status values.** `queued | running | done | aborted | killed`.
-`aborted` distinguishes wall-clock-budget-exhausted from `killed`
-(operator force-kill via dashboard).
-
-**Update points.**
-
-- Tournament start: file written with all entries `queued`, both
-  sides null.
-- Each side of each entry transitions `queued → running → done`
-  (or `aborted` / `killed`). The orchestrator rewrites the file
-  atomically on every transition.
-- Tournament end: file is moved to
-  `.zicato/epochs/{epoch}/generations/v{N}/tournament.json` as a
-  durable record, and `active_tournament.json` is removed.
-
-The dashboard's predicted gate verdict (best/worst case for
-remaining entries) is computed from this file alone — no extra
-state needed. See [DASHBOARD.md](DASHBOARD.md) §4 for the
-projection function.
+The dashboard computes progress and predicted gate verdicts from the
+folded state. See [DASHBOARD.md](DASHBOARD.md) §4 for the projection.
 
 ### 2.4 `active_runs/{run_id}.json` — per-in-flight-run state
 
@@ -599,7 +551,7 @@ Inside `.zicato/runtime/` the writer rules are strict:
 | `lock.json` | Workspace writer publishes inspection metadata and removes its own record | supervisor |
 | `heartbeat.json` | orchestrator | supervisor, dashboard |
 | `dashboard.json` | dashboard service | orchestrator (URL readback) |
-| `active_tournament.json` | orchestrator | supervisor, dashboard |
+| `active_tournament.events.jsonl` | orchestrator | supervisor, dashboard |
 | `active_runs/{run_id}.json` | Tournament worker or proposal producer publishes its owned record; its parent finalizes after confirmed exit; the supervisor finalizes a confirmed orphan under the writer guard | supervisor, dashboard |
 | `control/<command>` | dashboard service | orchestrator, at its safe points |
 | `control_log/*` | orchestrator, on consume | dashboard |
@@ -642,7 +594,7 @@ loop continues from wherever it was when interrupted.
 | `experiment.json` (hypothesis + outcome) | per-generation file | **yes** — atomic update; the outcome block is either present or absent |
 | Per-run `events.jsonl` | per-entry files under `runs/{entry_id}/` | **yes** — but may be partial if the run was mid-flight |
 | Per-run `loss.json` | per-entry files under `runs/{entry_id}/` | **yes** if reducer ran |
-| `active_tournament.json` | runtime state | discarded on restart |
+| `active_tournament.events.jsonl` | runtime state | discarded on restart |
 | `active_runs/` | runtime state | discarded on restart |
 | `heartbeat.json` | runtime state | discarded on restart |
 
@@ -1340,7 +1292,7 @@ def atomic_write_text(path: pathlib.Path, content: str) -> None:
     tmp.replace(path)
 ```
 
-These helpers back `heartbeat.json`, `active_tournament.json`,
+These helpers back `heartbeat.json`,
 each `active_runs/{run_id}.json`, the control-file writes (the
 dashboard's POST handlers do the same temp-then-rename), and every
 other JSON/text file in `.zicato/`. The exception is `events.jsonl`,

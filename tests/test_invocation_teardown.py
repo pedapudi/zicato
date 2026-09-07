@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from tests._orchestrator_harness import bootstrap_workspace
+from tests._orchestrator_harness import bootstrap_workspace, evaluation_call_llm, target_call_llm
 from zicato.evolve import lifecycle_services, loop, round_entry
 from zicato.evolve.invocation import validated_invocation
 from zicato.runtime.heartbeat import HeartbeatBeater
@@ -100,8 +100,8 @@ def test_loop_failure_closes_every_acquired_resource(
                     rounds=1,
                     workspace_root=workspace,
                     epoch_id=epoch_id,
-                    target_call_llm=fail,
-                    evaluation_call_llm=fail,
+                    target_call_llm=target_call_llm,
+                    evaluation_call_llm=evaluation_call_llm,
                     stop_on_degenerate_health=False,
                 )
             assert raised.value is original
