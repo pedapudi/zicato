@@ -32,8 +32,8 @@ because breaking it caused a real failure.
   Verify: `git log -p <base>..HEAD | grep -icE "$pat"` with `$pat` assembled per `01-orientation.md §G1` → **0**. A leak in a pushed commit means a history rewrite.
 - **G2 — `uv sync --all-extras`, always.** Bare `uv sync` deletes pytest/mypy/ruff/uv from `.venv`.
 - **G3 — No live model run without explicit operator go-ahead.** The deterministic `examples/zicato_examples/target_0_convergence/RUN.md` is the sanctioned e2e vehicle. Every live run also reports its dashboard URL.
-- **G4 — The two oracles are green before ANY commit.** `tests/test_convergence_known_answer.py` (the loop converges to an exact floor) + `tests/test_decision_procedure_power.py` (the decision procedure's measured operating characteristics).
-- **G5 — Parity + import contracts + node.** `bash tools/parity.sh` (6 gates), `uv run lint-imports` (the import contracts), `make node-test`.
+- **G4 — The two oracles pass in complete validation.** `tests/test_convergence_known_answer.py` (the loop converges to an exact floor) + `tests/test_decision_procedure_power.py` (the decision procedure's measured operating characteristics).
+- **G5 — Parity, import contracts and JavaScript pass in complete validation.** `make check` runs their shared verification commands.
 - **G6 — Omit-at-default.** A new default-off contract field MUST declare `metadata=_knob(omit_at_default=True)` — `_SCORING_OMIT_AT_DEFAULT_FIELDS` is DERIVED from that flag — or every workspace spuriously rolls its epoch (`03-contract-and-epochs.md`).
 - **G7 — Reserved replicate-base ledger.** Duels `0..`, calibration `1000`, preflight `2000`, screening `3000/3001`, evidence `4000`. Squatting a base corrupts the unit cache — this was bugs #1 and #8 (`04-evaluation-statistics.md`).
 - **G8 — Restricted-visibility envelope.** Nothing entry-identifying (entry ids, task text, holdout data, raw per-entry outcomes) reaches the proposer; every channel is banded/aggregated/anonymized/redacted (`05-proposer.md`).
@@ -64,27 +64,17 @@ recipe **before** you start; if there isn't one, the closest is your template.
 
 ---
 
-## 3. The pre-commit ladder (full detail: `11-testing.md §11.11`)
+## 3. Complete verification (full detail: `11-testing.md §11.11`)
 
-Run in order before proposing any commit. A red rung blocks the commit — fix it,
-or justify it (a pinned operating-characteristic number needs a *measured*
-justification in the commit body; a legitimately-moved golden must honor the
-never-bake-a-sibling-change rule).
+Use `make check-fast` while iterating and `make check` before proposing a
+merge. The shared executable plan in `tools/verify.py` runs each required
+check once. Its Python selections include the known-answer and statistical
+oracles; parity owns the independent golden comparisons. A failing required
+check blocks the merge. A change after validation requires checking the
+revision proposed for merge.
 
-```bash
-uv run pytest tests/ -q                                  # 1. default tier (~1m45s)
-uv run pytest tests/ \
-  -m "not node and not cascade_oc" -q                   # 2. both tiers (~7m) — the gate
-uv run ruff format . && uv run ruff check .             # 3. style
-uv run mypy src/zicato/                                 # 4. types
-uv run lint-imports                                     # 5. import contracts (G5)
-bash tools/parity.sh                                    # 6. parity gates (G5)
-make node-test ; echo "node exit: $?"                   # 7. JS suite (G5/G10)
-uv run pytest tests/test_convergence_known_answer.py \
-             tests/test_decision_procedure_power.py -q  # 8. the two oracles (G4)
-cargo test -p zicato-supervisor                         # 9. if you touched a two-language contract
-git log -p <base>..HEAD | grep -icE "$pat"    # 10. vendor scan (G1): assemble $pat per 01-orientation §G1 → 0
-```
+Run the attribution scan described in `01-orientation.md §G1` before
+publishing prose, commits or pull requests.
 
 ---
 

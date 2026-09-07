@@ -1,6 +1,7 @@
 ROOT := $(shell pwd)
+VERIFY = uv run --no-sync python tools/verify.py
 
-.PHONY: help install install-hooks test test-fast test-affected node-test lint import-lint format typecheck parity check clean supervisor supervisor-test supervisor-check install-supervisor
+.PHONY: help install install-hooks test test-fast test-affected check-fast node-test lint import-lint format typecheck parity check clean supervisor supervisor-test supervisor-check install-supervisor
 
 # Path to the dashboard JS behaviour suite (run standalone under node).
 JS_TEST_DIR := $(ROOT)/src/zicato/dashboard/static/test
@@ -14,13 +15,13 @@ help:
 	@echo "  test-affected      Run only the tests the branch's change can reach"
 	@echo "  node-test          Run the dashboard JS behaviour suite under node"
 	@echo "  lint               Run ruff check"
-	@echo "  import-lint        Run the import-linter library/driver contracts"
+	@echo "  import-lint        Check architectural import contracts"
 	@echo "  format             Run ruff format"
 	@echo "  typecheck          Run mypy over src/zicato/"
 	@echo "  parity             Run the parity oracle's golden gates"
-	@echo "                     (skips PYTEST + MYPY, which 'make check' runs itself)"
-	@echo "  check              Run lint + import-lint + typecheck + test + node-test"
-	@echo "                     (independent gates: run 'make -j5 check' to parallelize)"
+	@echo "                     (Python suites and types have separate owners)"
+	@echo "  check-fast         Run checks affected by branch and worktree changes"
+	@echo "  check              Run the complete required verification plan"
 	@echo "  clean              Remove build, cache, and generated artifacts"
 	@echo "  supervisor         Build the Rust zicato-supervisor binary (release)"
 	@echo "  supervisor-test    Run the supervisor's cargo tests"
@@ -33,69 +34,42 @@ install:
 install-hooks:
 	@cd $(ROOT) && uv run pre-commit install
 
-# The FULL suite: both tiers, which is what a merge needs. The explicit -m
-# REPLACES the pyproject selector rather than intersecting with it, so this
-# line has to restate the two terms the full suite still excludes (the Node
-# shim, which `make node-test` owns, and the opt-in cascade measurement).
+# Iteration and complete verification share tools/verify.py with CI.
+# RANGE requests a committed-only comparison for test-affected.
+export AFFECTED_TEST_RANGE = $(RANGE)
+
 test:
-	@cd $(ROOT) && uv run pytest tests/ -m "not node and not cascade_oc"
+	@cd "$(ROOT)" && $(VERIFY) --only python-default,python-slow
 
-# The DEFAULT tier alone — the inner loop. A BARE `pytest` is what drops
-# the seven tests measured at 15 s or more alone (tests/conftest.py), so this
-# names no path: adding one would select it and run the tier too.
-# Run `make test` before merging; pull requests expose both tiers in separate
-# workflows so the quick result is available without hiding the slow result.
 test-fast:
-	@cd $(ROOT) && uv run pytest
+	@cd "$(ROOT)" && $(VERIFY) --only python-default
 
-# The tests the branch can reach, by static import graph — the inner loop
-# narrowed further. NOT a gate: `tools/affected_tests.py` answers with the
-# whole suite whenever it cannot establish what a change reaches, but a
-# graph is not a proof, so `make test` is still what a merge needs. Pass a
-# different range with `RANGE=HEAD~3`.
-RANGE ?= origin/main...HEAD
 test-affected:
-	@cd $(ROOT) && uv run pytest $$(uv run python tools/affected_tests.py --range "$(RANGE)")
+	@cd "$(ROOT)" && $(VERIFY) --only python-affected
 
-# The dashboard's JavaScript behaviour suite. The in-pytest shim
-# (tests/test_dashboard_js.py) carries the `node` marker and is EXCLUDED
-# from the default pytest run (`-m 'not node'` in pyproject) so it does
-# not duplicate this run inside every pytest invocation. This target is
-# the canonical standalone Node run and is wired into `make check`.
+check-fast:
+	@cd "$(ROOT)" && $(VERIFY) --mode iteration
+
+check:
+	@cd "$(ROOT)" && $(VERIFY) --mode complete
+
 node-test:
-	@cd $(JS_TEST_DIR) && node run-all.mjs
+	@cd "$(ROOT)" && $(VERIFY) --only dashboard-javascript
 
 lint:
-	@cd $(ROOT) && uv run ruff check .
+	@cd "$(ROOT)" && $(VERIFY) --only python-style
 
-# The library/driver import contracts ([tool.importlinter] in
-# pyproject.toml): lib packages never import the drivers; only the two
-# declared driver->driver edges exist.
 import-lint:
-	@cd $(ROOT) && uv run lint-imports
+	@cd "$(ROOT)" && $(VERIFY) --only import-boundaries
 
 format:
-	@cd $(ROOT) && uv run ruff format .
+	@cd "$(ROOT)" && uv run --no-sync ruff format .
 
 typecheck:
-	@cd $(ROOT) && uv run mypy src/zicato/
+	@cd "$(ROOT)" && $(VERIFY) --only python-types
 
-# The behavior-preserving refactor oracle (docs/dev-guide/11-testing.md §11.7).
-# PYTEST and MYPY are skipped because `make check` runs both as gates of their
-# own, and running them twice doubles the slowest part of the oracle for no
-# extra signal; what is left is the golden set — the contract hash, the CLI
-# help text, the index dump and the eight mock-evolve lanes. Pass
-# `PARITY_ARGS=` for the full thirteen-gate run, or any other `--only` /
-# `--skip` selection.
-PARITY_ARGS ?= --skip PYTEST,MYPY
 parity:
-	@cd $(ROOT) && bash tools/parity.sh $(PARITY_ARGS)
-
-# The five gates are independent (no shared state, distinct caches), so
-# they parallelize cleanly: `make -j5 check` runs them concurrently and
-# finishes in max(gate) instead of sum(gates). Sequential `make check`
-# still works exactly as before.
-check: lint import-lint typecheck test node-test
+	@cd "$(ROOT)" && $(VERIFY) --only parity
 
 clean:
 	@rm -rf $(ROOT)/dist $(ROOT)/build $(ROOT)/*.egg-info
@@ -110,10 +84,10 @@ supervisor:
 	@cd $(ROOT) && cargo build --release -p zicato-supervisor
 
 supervisor-test:
-	@cd $(ROOT) && cargo test -p zicato-supervisor
+	@cd "$(ROOT)" && $(VERIFY) --only rust-tests
 
 supervisor-check:
-	@cd $(ROOT) && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+	@cd "$(ROOT)" && $(VERIFY) --only rust-format,rust-clippy,rust-tests
 
 install-supervisor: supervisor
 	@mkdir -p $(HOME)/.local/bin

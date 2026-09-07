@@ -10,13 +10,13 @@ from typing import Any
 from zicato.core.workspace import replicate_index_from_run_id
 from zicato.epoch._storage import RecordError
 from zicato.epoch.journal import read_experiment_body
+from zicato.proposer.brief import brief_goal
 from zicato.query._sqlite import open_index_ro_or_none
 from zicato.query.decisions import (
     experiment_decision,
     promoted_tristate,
 )
 from zicato.query.epoch_view import (
-    _distill_brief_goal,
     _normalize_structure,
     _read_epoch_brief,
     _tournament_block_from_scoring,
@@ -26,6 +26,7 @@ from zicato.query.gate_view import _mean_drift_loss_per_generation
 from zicato.query.paths import (
     WorkspacePaths,
     _is_finite,
+    _preview,
     _read_json_value,
     layout_of,
     list_epoch_ids,
@@ -661,9 +662,9 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
                 if isinstance(raw_goal, str) and raw_goal.strip():
                     goal = raw_goal.strip()
             if goal is None:
-                distilled = _distill_brief_goal(_read_epoch_brief(epoch_dir))
+                distilled = brief_goal(_read_epoch_brief(epoch_dir))
                 if distilled:
-                    goal = distilled
+                    goal = _preview(distilled)
 
             # Walk this epoch's generations from the on-disk lineage —
             # not from the analytical index, which is a best-effort

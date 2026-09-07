@@ -28,7 +28,7 @@
 >
 > | ID | Name | Invariant |
 > |----|------|-----------|
-> | V1 | the both-tiers-before-a-merge rule | **A bare `pytest` is the fast tier; a merge needs BOTH tiers.** Only a bare `pytest` drops the `slow` tier (seven tests measured at 15 s or more ALONE) — naming a file, a test or a marker expression runs what it names. `make test` and `tools/parity.sh` run both tiers locally. Pull requests run the default tier and the `slow` tier as separate checks. An `integration` test's runtime IS its coverage, never a candidate for stubbing. |
+> | V1 | the both-tiers-before-a-merge rule | **A bare `pytest` is the fast tier; a merge needs BOTH tiers.** Only a bare `pytest` drops the `slow` tier (tests measured at 15 s or more ALONE) — naming a file, a test or a marker expression runs what it names. `make test` and `tools/parity.sh` run both tiers locally. Pull requests run the default tier and the `slow` tier as separate checks. An `integration` test's runtime IS its coverage, never a candidate for stubbing. |
 > | V2 | the must-fail-with-the-fix-stashed rule | **A regression test MUST fail with the fix stashed.** A test that passes both before and after a fix proves nothing about the fix. |
 > | V3 | the never-weaken-an-assertion rule | **Never weaken an assertion to make a test pass.** Fix the code, or pin the new value with a measured justification in the commit. A pinned number moves only with a measured reason. |
 > | V4 | the pin-off-and-carry-the-countermeasure rule | **Deterministic contracts pin interacting knobs OFF — AND carry the countermeasure.** Pinning best-of-1 / replicates-1 / gate-off makes a script deterministic, but every shipped default also needs a knob-ON adversarial test. Pinning alone is how the best-of-N tree-mismatch case and the evidence-gate replicate-reuse case hid (`12-bug-casebook.md` cases 6 and 8). |
@@ -57,7 +57,7 @@
 | `tools/parity.sh` | the behavior-preserving refactor gates (PYTEST / CONTRACT-HASH / CLI-HELP / REINDEX-DUMP / eight MOCK-GOLDEN lanes / MYPY) |
 | `tools/parity/lib/*.py` | the gate helpers: `contract_hash.py`, `cli_help.py`, `normalize.py`, `mock_evolve_capture.py`, `test_mock_golden.py`, `test_reindex_golden.py` |
 | `tools/parity/golden/` | the committed golden baselines |
-| `pyproject.toml` | `[tool.pytest.ini_options]` (markers, `addopts`), `[tool.importlinter]` (the five contracts), `[tool.ruff.lint...banned-api]` (the TID251 bans) |
+| `pyproject.toml` | `[tool.pytest.ini_options]` (markers, `addopts`), `[tool.zicato.importlinter]` (the five contracts), `[tool.ruff.lint...banned-api]` (the TID251 bans) |
 | `Makefile` | the targets (`test` = both tiers / `test-fast` = the default tier / `node-test` / `lint` / `import-lint` / `typecheck` / `check`) |
 | `.github/workflows/ci.yml` | the pull-request jobs (Python 3.12 running the DEFAULT tier, dashboard JavaScript, parity, and the Rust supervisor) |
 | `.github/workflows/slow-tier.yml` | the `slow` tier on pull requests, nightly against main, and on demand |
@@ -82,7 +82,7 @@ with no per-test fixes.
 ## 11.1 Tiers and markers
 
 The suite runs in two tiers. The DEFAULT tier is what a bare `pytest`
-gives you and what the inner loop uses; the SLOW tier is seven tests, each
+gives you and what the inner loop uses; the SLOW tier contains tests each
 measured at 15 s or more ON ITS OWN. Together they are about five of the
 six minutes a full run takes.
 
@@ -91,7 +91,7 @@ the whole suite locally, and the pre-commit checklist (§11.11) includes both.
 Pull requests run the default tier and the `slow` tier as separate checks,
 alongside the dashboard JavaScript and Rust checks. Repository policy requires
 every reported result to pass before merge. `.github/workflows/slow-tier.yml`
-also runs the seven slow tests nightly against main and on demand from the
+also runs the slow tests nightly against main and on demand from the
 Actions tab.
 
 ```
@@ -137,21 +137,9 @@ sits near the line.
 list of node ids and their measured seconds, so a mark added or dropped
 without its row reds a test instead of silently moving the tier.
 
-The Makefile targets:
-
-```make
-test:
-	@cd $(ROOT) && uv run pytest tests/ -m "not node and not cascade_oc"
-
-test-fast:
-	@cd $(ROOT) && uv run pytest tests/
-
-node-test:
-	@cd $(JS_TEST_DIR) && node run-all.mjs
-
-check: lint import-lint typecheck test node-test
-```
-— `Makefile`
+The Makefile routes `test` to both Python selections, `test-fast` to the
+default selection, and `node-test` to the independent JavaScript check.
+`check` runs the complete plan; `check-fast` uses changed inputs.
 
 **The rule for the `slow` tier, stated once.** A BARE `pytest` is the only
 invocation that drops it. Name anything and you get what you named:
@@ -190,9 +178,9 @@ zero and exited 0. `tests/test_slow_tier_registry.py` pins all four forms.
 > `slow` — that moves it to the tier CI still runs, which is the sanctioned
 > way to get it out of your way.
 
-`make check` runs `lint + import-lint + typecheck + test + node-test`; the
-gates are independent (distinct caches, no shared state) so `make -j5 check`
-runs them concurrently and finishes in `max(gate)` instead of `sum(gates)`.
+`make check` consumes the complete verification plan in `tools/verify.py`.
+It runs checks sequentially and bounds worker processes and native threads;
+CI invokes subsets under its separate visible job names.
 
 ### 11.1.1 Suite conventions
 
@@ -235,39 +223,57 @@ pythonpath = ["."]
 
 ### 11.1.2 Running only what a change can reach
 
-`tools/affected_tests.py` narrows the inner loop below the default tier. It
-diffs a ref range, builds the import graph of `zicato`, `zicato_examples`,
-`tests` and `tools` by PARSING (never importing), and prints the test files
-whose transitive imports reach a changed module:
+`make test-affected` runs the Python tests reached by branch changes,
+staged and unstaged edits, and untracked files. The selector parses imports
+in `zicato`, `zicato_examples`, `tests` and `tools`. Tests for repository
+tools participate even though pytest's default `testpaths` excludes them.
 
 ```bash
-make test-affected                      # origin/main...HEAD
-make test-affected RANGE=HEAD~3         # another range
-uv run python tools/affected_tests.py --explain   # why each file, on stderr
+make test-affected
+make test-affected RANGE=HEAD~3       # committed comparison only
+uv run python tools/affected_tests.py --explain
+uv run python tools/affected_tests.py --run -- -n0
 ```
 
-Three edges no `import` statement shows are added: a `"-m", "<module>"` pair
-read straight off a spawn's argv (how the tournament runner reaches the
-worker and the CLI reaches the dashboard server), an
-`importlib.import_module` call with a literal argument, and a dotted path a
-test names in its own text to point a fixture at an adapter it never
-imports. Reading the first off the argv rather than from a list of known
-entry points is what keeps a spawn added later from being missed.
+The command emits JSON unless `--run` executes its result. Each result
+includes a status, reasons, resolved revisions, changed paths by source,
+and a digest of the changed files' contents:
 
-Where the graph cannot establish what a change reaches, the answer is the
-WHOLE suite: a change to `tests/conftest.py`, to a `tests/_*.py` harness
-module, to `pyproject.toml`, `uv.lock` or `tools/parity/`, to a file that
-dynamically imports a name the parser cannot evaluate, or to any non-Python
-file whose readers are unknown. Prose is the exception — a document is inert
-unless a module NAMES it in executable string data, which is how editing
-`docs/design/LINE-BUDGET.md` still selects the budget tool's own tests.
+- `selected` names the Python test files reached by the change.
+- `known-empty` means no changed file reaches a Python test. The runner
+  reports the empty selection and starts no pytest process.
+- `unresolved-full` means some dependencies cannot be resolved. The runner
+  selects the Python suite and the tests for repository tools.
 
-> ⛔ NEVER treat this as a gate. An import graph is evidence about what a
-> change can reach; it falls short of a proof, which is why the selector is
-> absent from CI. It shortens the loop while you iterate; `make test`
-> (both tiers) is what a merge needs. `tools/test_affected_tests.py` pins the
-> escape hatches and the added edges, and asserts only in the direction that
-> matters — that a test the change could break is never left out.
+The default compares `origin/main...HEAD` and includes worktree changes.
+An explicit `--range`, or Make's `RANGE`, selects changed paths from that
+committed comparison alone. The import graph always uses files in the
+working checkout. Missing comparison bases and invalid selected paths
+fail visibly. The runner passes paths and pytest options as literal
+arguments; shell substitution is unnecessary.
+
+The graph includes literal dynamic imports, modules named after `-m` in
+subprocess arguments, and dotted paths named in test text. Changes to
+shared fixture modules reach their importers. A document reaches tests
+only when a module names its path in executable string data.
+
+Deletions, both sides of renames, unreadable imports, unknown file types,
+and untracked files outside prose trees require full Python coverage.
+Changes to pytest configuration or a `conftest.py` also require full
+coverage. Recognized prose without a reader can produce a known empty
+selection.
+
+Affected selection is an iteration command. The complete merge checks
+still require both Python test tiers and the applicable browser, Rust,
+prose and packaging checks. Other verification commands can consume
+`build_selection()` and `run_selection()` from `tools/affected_tests.py`.
+A Python selection cannot discharge checks for other languages.
+
+`tests/test_slow_tier_registry.py` uses one repository-wide collection to
+verify declared slow-test membership. Command forms use a four-test
+repository that imports the actual selection hook. File, node, keyword,
+and marker selection therefore retain slow tests without repeatedly
+collecting the application suite.
 
 ---
 
@@ -727,6 +733,14 @@ REAL board predicates. One test at the bottom drives the actual
 `NoisyPolicyAdapter` through real subprocess workers to prove the seeded
 draw crosses the process boundary intact.
 
+The power-curve test produces one immutable report per effect and contract.
+Each report contains every requested trial seed, the observed drift and pass
+results, the decision audit, rating eligibility, reasons, and comparison spend.
+Assertions consume this report; the small-effect comparison shares the power
+curve's report. Missing or duplicate seeds invalidate a report, and every seed
+contributes to the promotion-rate denominator. Each invocation recomputes the
+complete trial set once.
+
 **The four methodology pillars, each a pinned number:**
 
 1. **Seeded noise.** `NOISE_SIGMA = 0.22`, chosen so one full defect fix
@@ -1030,15 +1044,16 @@ test suite, three golden diffs (the contract hash, the CLI help text, the
 index dump), the eight mock-evolve lanes of §11.7.5, and the mypy error
 count. The sections below take them in that order, one kind at a time.
 
-Usage: `bash tools/parity.sh` runs every gate; `--only GATE` / `--skip GATE`
-scope it; `--update` re-captures every golden. `make parity` is the same
-script with `--skip PYTEST,MYPY`, because `make check` already runs the suite
-and mypy as gates of its own; `make parity PARITY_ARGS=` restores the full
-thirteen. Exit code is 0 only if every
-selected gate passed. Both scoping flags repeat (`--only A --only B`) and
-also take a comma list (`--only A,B`). A gate name that matches nothing is
-silent: the run prints an empty verdict and exits 0, so check the verdict
-lists the gates you asked for.
+`make parity` invokes the shared golden check with `--skip PYTEST,MYPY`.
+The complete plan owns those Python-suite and type-check results separately.
+For an individual golden comparison, use `bash tools/parity.sh --only`
+with its declared gate name. Both `--only` and `--skip` accept repeated
+options or comma-separated names. `--update` recaptures selected goldens.
+
+An unknown name, missing operand or empty selection fails before any gate
+runs. A successful exit requires every selected command to complete
+successfully. A checker failure cannot be accepted as an empty diagnostic
+count or written into a success baseline.
 
 ### 11.7.1 PYTEST
 
@@ -1277,7 +1292,7 @@ only reviewable if the re-capture contains ONLY the change under review.
 ## 11.8 The import contracts + the TID251 bans
 
 Two static gates keep the architecture from eroding: the import-linter
-contracts (`uv run lint-imports`) and the ruff TID251 banned-api list.
+contracts (`make import-lint`) and the ruff TID251 banned-api list.
 Neither is a pytest test — a violation reds the linter, so they run in
 `make check` and CI.
 
@@ -1506,138 +1521,56 @@ invokes it. The whole module skips when `node` is unavailable.
 
 ## 11.10 CI
 
-`.github/workflows/ci.yml` runs one job per gate family. Python 3.12 runs the
-gates in order: ruff → import contracts → mypy → the DEFAULT test tier. The
-step names its own marker expression rather than leaning on the default,
-because it names paths — and naming anything runs the `slow` tier (§11.1).
-Dependencies install with `--frozen` (exactly what `uv.lock` pins, failing if
-the lock is stale — reproducible CI). The project metadata supports Python
-3.11 and later, but pull requests use one interpreter so deterministic and
-statistical suites are not duplicated:
+`.github/workflows/ci.yml` and `.github/workflows/slow-tier.yml` invoke
+selected checks from `tools/verify.py`. Stable job names retain separate
+results for default Python tests, statistical and end-to-end oracles,
+parity, JavaScript, Rust, prose and line budgets. The check-plan tests
+require every complete check to appear once across those workflows.
 
-```yaml
-      - name: Sync dependencies
-        run: uv sync --all-extras --frozen
-      - name: Ruff
-        run: uv run ruff check .
-      - name: Import contracts
-        run: uv run lint-imports
-      - name: Mypy
-        run: uv run mypy src/zicato/
-      - name: Pytest (default tier)
-        run: >-
-          uv run pytest tests/ tools/test_prose_lint.py
-          -m "not node and not cascade_oc and not slow"
-```
-— `.github/workflows/ci.yml`
+The Python default and slow selections partition the required suite.
+Both discover tests under `tools/`; parity owns its separate golden test
+modules. Parity excludes its Python-suite and type-check copies because
+those checks have separate owners.
 
-The dashboard JavaScript job installs Node 22 and runs the same canonical
-command used locally:
+Each invocation runs checks sequentially with four pytest workers and
+one native-library thread per process. Cargo also uses four build jobs.
+`--workers` changes the worker bound. Per-check reports record wall time,
+status, command, selected tests and available process observations. Reports
+are evidence from an invocation and never suppress subsequent checks.
 
-```yaml
-  dashboard-javascript:
-    name: dashboard JavaScript behaviour (Node 22)
-    ...
-      - name: Dashboard JavaScript behaviour
-        run: make node-test
-```
-— `.github/workflows/ci.yml`
+The packaging check validates an installed supervisor from an isolated
+wheel installation locally. The parity job validates the wheel installed
+by its setup step, using `--installed-wheel` to avoid another build.
 
-The `slow` tier has a separate workflow so its result appears as a distinct
-pull-request check. The workflow also runs nightly and on demand:
+## 11.11 Complete validation before merge
 
-```yaml
-on:
-  pull_request:
-  schedule:
-    - cron: "0 7 * * *"
-  workflow_dispatch:
-...
-      - name: Pytest (slow tier)
-        run: uv run pytest tests/ -m "slow and not node and not cascade_oc"
-```
-— `.github/workflows/slow-tier.yml`
-
-`workflow_dispatch` lets collaborators with write access run the tier from the
-Actions tab. Its stable job name keeps the Python 3.12 result visible.
-Repository policy requires that result before merge; repository settings do
-not enforce that policy. The scheduled run tests main once a day even when no
-pull request is open.
-
-The Rust job builds and tests the supervisor: `cargo fmt --check`,
-`cargo clippy --all-targets -- -D warnings`, `cargo test`. A change that
-touches a two-language contract (the index schema, the runtime state serde,
-the `_is_safe_id` / `to_snake` / start-time twins) must pass BOTH of those
-jobs — CI is where the Python/Rust parity is enforced end to end. Two more
-jobs need no dependency install: the line-budget check and the prose gate,
-both plain-`python` runs of a stdlib-only tool.
-
-> ⚠️ TRAP — CI runs `ruff check .` and `lint-imports` over the WHOLE tree and
-> installs with `--frozen`. Two failure modes bite here that a local `make
-> test` misses: a whole-tree lint/import violation your changed-files
-> pre-commit did not see (§11.8.3), and a stale `uv.lock` (a dependency edit
-> that did not re-lock reds `--frozen`). Run `uv sync --all-extras` (never bare
-> `uv sync` — it deletes the dev tooling) and `make check` before pushing.
-
----
-
-## 11.11 The pre-commit checklist
-
-Copy-paste this before a nontrivial commit. The twelve steps run in order:
-the default tier for quick signal, both tiers together, format and lint,
-types, import contracts, the parity gates, the node suite, the two oracles,
-the Rust supervisor, the line budgets, and the vendor scan. Each step is a
-gate a real regression could hide behind.
-
-```bash
-# 1. Default tier — quick signal while you iterate. BARE: naming a path
-#    would select it and run the slow tier with it.
-uv run pytest -q
-
-# 2. Full suite — BOTH tiers, which repository policy requires before merge.
-uv run pytest tests/ -m "not node and not cascade_oc" -q
-
-# 3. Format + lint (whole tree, the way CI does).
-uv run ruff format . && uv run ruff check .
-
-# 4. Types.
-uv run mypy src/zicato/
-
-# 5. Import contracts (library/driver boundaries + TID251).
-uv run lint-imports
-
-# 6. Parity gates — read any RED diff before you --update.
-bash tools/parity.sh
-
-# 7. Node behaviour suite — verify by EXIT CODE, not the tail line.
-make node-test ; echo "node exit: $?"
-
-# 8. The two oracles, explicitly (they ride in step 2, pin them here too).
-#    Naming the files runs every test in them, slow tier included.
-uv run pytest tests/test_convergence_known_answer.py \
-    tests/test_decision_procedure_power.py -q
-
-# 9. Rust supervisor (if you touched a two-language contract).
-cargo test -p zicato-supervisor
-
-# 10. Simplification budgets — total, production, and production logic;
-#     reports language and subsystem totals too.
-python tools/line_budget.py --check
-
-# 11. Vendor scan — nothing in git may reference the model vendor (the
-#     durable repo rule). Scan the staged diff for the vendor's name and any
-#     product / model identifiers; VENDOR must be your local pattern, kept
-#     out of the tree. The diff must be clean.
-git diff --cached | grep -riE "$VENDOR" && echo "VENDOR LEAK" || echo "clean"
-
-# 12. Prose gate — no new hidden-context constructions in docs, README,
-#     docstrings, or comments (ratchet against the committed baseline).
-python tools/prose_lint.py --baseline tools/prose_lint_baseline.json
+```sh
+make check-fast       # iteration checks for branch and worktree changes
+make check            # all required checks for the revision being merged
 ```
 
-`make check` collapses steps 3–5 + 2 + 7 into one target
-(`lint import-lint typecheck test node-test`, parallelizable with `-j5`);
-run the parity gates and oracles alongside it.
+`tools/verify.py` owns required commands, languages, input paths and
+selection rules. `--list` reports the selected checks as JSON. `--only`
+requests a named subset for diagnosis or one CI step; a partial invocation
+is not complete validation. Unknown names, repeated names, missing
+programs and empty required selections fail.
+
+The complete plan runs both Python tiers once, including the known-answer
+and statistical oracles. It also runs style, type, import-boundary,
+golden, JavaScript, Rust, packaging, prose and line-budget checks. A
+separate ledger check prevents dropping recorded accounting rows.
+No additional oracle invocation is needed after the same complete
+revision passes. A source change invalidates that conclusion for the
+revision proposed for merge.
+
+Use `--report-dir PATH` to retain reports under a chosen directory. Each
+invocation creates its own directory; prior reports are never reused as
+passing results. The report includes the revision, worktree status,
+commands, worker bound and outcomes. The timing helper also records
+collection, setup, execution, teardown and available process counts.
+
+Before publishing, apply the attribution scan in `01-orientation.md §G1`
+to the staged diff and authored text.
 
 Treat `RuntimeWarning`, unclosed-resource output, and pending-task destruction
 as failures even when pytest exits zero. For server lifecycle changes, repeat
@@ -2343,12 +2276,11 @@ where to ADD) a test, by concern.
 | the CLI surface is canonical | `tools/parity/lib/cli_help.py` (regen: `--update`) |
 | the index projection is pure | `tools/parity/lib/test_reindex_golden.py` |
 | the whole end-to-end audit bytes | `tools/parity/lib/test_mock_golden.py` + `mock_evolve_capture.py` |
-| the library/driver + query-dashboard-free contracts | `pyproject.toml [tool.importlinter]` → `uv run lint-imports` |
+| the library/driver + query-dashboard-free contracts | `pyproject.toml [tool.zicato.importlinter]` → `make import-lint` |
 | the retired private paths stay retired | `pyproject.toml [tool.ruff...banned-api]` → `uv run ruff check` |
 | the digest / no-op / DOM-identity render discipline | `src/zicato/dashboard/static/test/*.test.mjs` → `make node-test` |
 | the node suite renders what the endpoints serve | `tests/_console_scenarios.py` + `tests/test_dashboard_endpoint_table.py` → `static/test/recorded.mjs` |
 | the whole thing, reproducibly, in Python, JavaScript, and Rust | `.github/workflows/ci.yml` (default Python tier + dashboard JavaScript + `cargo test`) and `.github/workflows/slow-tier.yml` (statistical and end-to-end oracles) |
 
-The single command that runs the most in one shot is `make check` (lint +
-import-lint + typecheck + both test tiers + node); the parity gates and the
-two oracles ride the pre-commit checklist (§11.11) alongside it.
+`make check` runs the complete verification plan, including parity and
+both oracle suites. `make check-fast` runs the iteration selection.

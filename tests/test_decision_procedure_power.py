@@ -57,10 +57,11 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import random
 import statistics
 import tempfile
-from dataclasses import replace
+from dataclasses import asdict, replace
 from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
@@ -71,6 +72,12 @@ import pytest
 import zicato.tournament.runner as runner_mod
 import zicato.tournament.scheduling as scheduling_mod
 import zicato_examples.target_0_convergence as _t0_pkg
+from tests._decision_report import (
+    DecisionObservation,
+    DecisionReport,
+    DecisionTrial,
+    implementation_digest,
+)
 from zicato.board.jsonl import load_board
 from zicato.core import (
     BoardEntry,
@@ -90,6 +97,7 @@ from zicato.selection.driver import (
     resolve_tournament,
 )
 from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE, rating_block
+from zicato.selection.standings_ext import audit_duels
 from zicato.selection.strategies.gauntlet import GauntletStrategy
 from zicato.selection.strategy import Contestant, Matchup, MatchupResult, SelectionDecision
 from zicato.tournament.runner import run_matchup
@@ -503,24 +511,72 @@ def test_margin_below_noise_floor_without_evidence_gate_is_unsound(monkeypatch, 
 # ---------------------------------------------------------------------------
 
 
-def _power(
+def _power_report(
     monkeypatch: pytest.MonkeyPatch,
     workspace: Path,
     challenger_tokens: tuple[str, ...],
     *,
     effective: bool,
-) -> float:
-    """Promotion rate over POWER_TRIALS seeded trials for one planted delta."""
+    seeds: tuple[int, ...] | None = None,
+) -> DecisionReport:
+    """Run a complete seeded trial set once; assertions consume its immutable report."""
+    seeds = tuple(range(POWER_TRIALS)) if seeds is None else seeds
     world = {"champion": BASE_TOKENS, "challenger": challenger_tokens}
-    _NoisyWorld(world, NOISE_SIGMA).install(monkeypatch)
-    promoted = 0
-    for trial in range(POWER_TRIALS):
-        if effective:
-            decision = _effective_decision(workspace, trial).decision
-        else:
-            decision = _naive_outcome(workspace, seed=trial, weights=NAIVE_WEIGHTS).decision
-        promoted += 1 if decision == "promoted" else 0
-    return promoted / POWER_TRIALS
+    evaluator = _NoisyWorld(world, NOISE_SIGMA)
+    observed: list[DecisionObservation] = []
+
+    async def record(**kwargs: Any) -> LossProfile:
+        loss = await evaluator._fake_run_single(**kwargs)
+        observed.append(
+            DecisionObservation(
+                int(kwargs["config"].seed),
+                loss.generation_id,
+                loss.entry_id,
+                int(kwargs["entry"].context.get(REPLICATE_INDEX_CONTEXT_KEY, "0") or 0),
+                loss.drift_loss,
+                loss.pass_fail,
+            )
+        )
+        return loss
+
+    rows = []
+    with monkeypatch.context() as patch:
+        evaluator.install(patch)
+        patch.setattr(runner_mod, "_run_single", record)
+        for seed in seeds:
+            observed.clear()
+            decision = (
+                _effective_decision(workspace, seed)
+                if effective
+                else _naive_outcome(workspace, seed=seed, weights=NAIVE_WEIGHTS)
+            )
+            eligible = (
+                tuple(bool(audit_duels((matchup,))) for matchup in decision.matchups)
+                if effective
+                else None
+            )
+            rows.append(
+                DecisionTrial(
+                    seed,
+                    tuple(observed),
+                    str(decision.decision),
+                    decision.reason,
+                    json.dumps(asdict(decision), sort_keys=True),
+                    eligible,
+                )
+            )
+    inputs = {
+        "weights": asdict(EFFECTIVE_WEIGHTS if effective else NAIVE_WEIGHTS),
+        "replicates": EFFECTIVE_REPLICATES if effective else 1,
+        "confirmation_threshold": EFFECTIVE_THRESHOLD if effective else None,
+        "confirmation_budget": EFFECTIVE_BUDGET if effective else None,
+        "noise_sigma": NOISE_SIGMA,
+        "tokens": world,
+        "board": [asdict(entry) for entry in _board()],
+    }
+    return DecisionReport(
+        json.dumps(inputs, sort_keys=True), implementation_digest(), seeds, tuple(rows)
+    )
 
 
 @pytest.mark.slow
@@ -533,15 +589,16 @@ def test_power_at_planted_deltas(monkeypatch, tmp_path):
     power must be monotone in the effect size.
     """
     floor_sd, _ = _measure_noise_floor(monkeypatch, tmp_path)
-    rates: dict[str, float] = {}
+    reports: dict[str, DecisionReport] = {}
     for name, (tokens, measured_delta) in DELTA_CASES.items():
-        rate = _power(monkeypatch, tmp_path, tokens, effective=True)
-        rates[name] = rate
+        report = _power_report(monkeypatch, tmp_path, tokens, effective=True)
+        reports[name] = report
         print(
             f"\n[power/effective] case={name} measured-delta={measured_delta:.3f} "
             f"(~{measured_delta / floor_sd:.2f}x floor {floor_sd:.3f}) "
-            f"power={rate:.2f} over {POWER_TRIALS} trials"
+            f"power={report.promotion_rate:.2f} over {POWER_TRIALS} trials"
         )
+    rates = {name: report.promotion_rate for name, report in reports.items()}
     # The planted effects really do sit near their advertised multiples of
     # the measured floor (loose bands: the floor itself is an estimate).
     assert 0.3 <= DELTA_CASES["small"][1] / floor_sd <= 0.8
@@ -551,24 +608,11 @@ def test_power_at_planted_deltas(monkeypatch, tmp_path):
     assert rates["large"] == 1.0
     # Power is monotone in the effect size.
     assert rates["small"] <= rates["medium"] <= rates["large"]
-
-
-@pytest.mark.slow
-def test_naive_default_misses_small_effects_the_evidence_gate_catches(monkeypatch, tmp_path):
-    """Executable documentation: why the effective contract exists.
-
-    A true improvement of ~0.5x the noise floor is real but small. The
-    naive default contract (one sample, fixed margin, per-entry
-    monotonicity, no evidence) rejects it in most seeded trials — a noisy
-    single sample regularly measures the better challenger as worse, and
-    one noise-flipped entry vetoes it besides. The effective contract
-    (replication + aggregate monotonicity + evidence loop) recovers a
-    large fraction of exactly those trials. Same seeds, same noise model,
-    same planted effect — only the decision procedure differs.
-    """
+    # Compare the single-sample contract with the same small-effect report
+    # that supplies the power curve. Neither assertion launches another trial.
     small_tokens = DELTA_CASES["small"][0]
-    naive_rate = _power(monkeypatch, tmp_path, small_tokens, effective=False)
-    effective_rate = _power(monkeypatch, tmp_path, small_tokens, effective=True)
+    naive_rate = _power_report(monkeypatch, tmp_path, small_tokens, effective=False).promotion_rate
+    effective_rate = reports["small"].promotion_rate
     print(
         f"\n[naive-vs-effective @ small delta] naive={naive_rate:.2f} "
         f"effective={effective_rate:.2f} over {POWER_TRIALS} seeded trials"

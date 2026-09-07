@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 472,446 | +63,785 |
-| Production | 197,702 | 204,430 | +6,728 |
-| Production logic | 110,276 | 113,621 | +3,345 |
+| Total | 408,661 | 474,157 | +65,496 |
+| Production | 197,702 | 204,443 | +6,741 |
+| Production logic | 110,276 | 113,717 | +3,441 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -85,15 +85,15 @@ production-logic series per subsystem along a branch's first-parent commits.
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
 | src/zicato/dashboard | 70,434 | 37,605 | 26,200 | 30.3% |
-| src/zicato/query | 20,300 | 20,300 | 12,052 | 40.6% |
+| src/zicato/query | 20,184 | 20,184 | 12,010 | 40.5% |
 | src/zicato/evolve | 12,662 | 12,662 | 7,533 | 40.5% |
 | src/zicato/reflection | 9,779 | 9,779 | 6,159 | 37.0% |
 | src/zicato/epoch | 12,287 | 12,287 | 5,704 | 53.6% |
-| src/zicato/proposer | 11,109 | 11,109 | 5,568 | 49.9% |
-| crates/supervisor | 14,561 | 12,130 | 5,498 | 54.7% |
+| src/zicato/proposer | 11,144 | 11,144 | 5,594 | 49.8% |
+| crates/supervisor | 14,560 | 12,130 | 5,498 | 54.7% |
 | src/zicato/tournament | 10,793 | 10,793 | 5,498 | 49.1% |
 | src/zicato/cli | 8,192 | 8,192 | 5,178 | 36.8% |
-| src/zicato/analyzer | 7,635 | 7,635 | 4,781 | 37.4% |
+| src/zicato/analyzer | 7,618 | 7,618 | 4,780 | 37.3% |
 | src/zicato/selection | 5,271 | 5,271 | 2,837 | 46.2% |
 | src/zicato/index | 5,513 | 5,513 | 2,773 | 49.7% |
 | src/zicato/tui | 3,839 | 3,839 | 2,535 | 34.0% |
@@ -121,13 +121,13 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/config.py | 679 | 679 | 225 | 66.9% |
 | src/zicato/logging_stream.py | 445 | 445 | 215 | 51.7% |
 | src/zicato/runtime_factory.py | 421 | 421 | 210 | 50.1% |
+| hatch_build.py | 199 | 199 | 163 | 18.1% |
 | src/zicato/workspace_loader.py | 362 | 362 | 143 | 60.5% |
 | src/zicato/integrations | 143 | 143 | 100 | 30.1% |
 | src/zicato/reasoning.py | 112 | 112 | 83 | 25.9% |
 | src/zicato/adapter_factory.py | 218 | 218 | 73 | 66.5% |
 | src/zicato/import_path.py | 155 | 155 | 60 | 61.3% |
-| hatch_build.py | 97 | 97 | 54 | 44.3% |
-| src/zicato/util | 173 | 173 | 50 | 71.1% |
+| src/zicato/util | 182 | 182 | 54 | 70.3% |
 | src/zicato/__init__.py | 74 | 74 | 48 | 35.1% |
 | src/zicato/orchestrator.py | 14 | 14 | 11 | 21.4% |
 | src/zicato/aux_timeout.py | 54 | 54 | 8 | 85.2% |
@@ -392,3 +392,6 @@ dropped rows named.
 | Record, feedback, and verification correctness (total) | 471,880 | +566 | 472,446 | Issues #463, #479, #485, and #494: reproduce concurrent record writes, partial writes, identity storage contamination, restricted-feedback disclosure, and false-success verification. Real detector and synchronization-order fixtures replace weaker synthetic cases. |
 | Record, feedback, and verification correctness (production) | 204,337 | +93 | 204,430 | Issues #463, #479, and #485: complete and exclusive record replacement, explicit telemetry identity ownership, and declared aggregate feedback fields. Configuration and prompt consumers share their respective owners. |
 | Record, feedback, and verification correctness (production logic) | 113,515 | +106 | 113,621 | Issues #463, #479, and #485: add 106 executable lines for complete writes, identity isolation, and permitted aggregate projection. These correctness repairs establish invariants that the implementation consolidation must preserve. |
+| Shared verification and native build validation (total) | 472,446 | +1,711 | 474,157 | Issues #410 and #497–#499: one check registry, exhaustive import-role validation, safe native build reuse, and timing evidence. Remove copied check commands and repeated full-suite collection; focused command and build regressions establish replacement coverage. |
+| Shared verification and native build validation (production) | 204,430 | +13 | 204,443 | Issues #410 and #497: remove the report-to-query dependency and shared text duplication; add the build hook checks that reject stale, absent, or foreign-target supervisor executables. |
+| Shared verification and native build validation (production logic) | 113,621 | +96 | 113,717 | Issues #410 and #497: executable growth belongs to build-input validation and wheel publication. Application import and text ownership are consolidated; verified executable reuse reduces repeated build work. |

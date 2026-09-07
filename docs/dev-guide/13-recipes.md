@@ -1018,7 +1018,7 @@ a different class of break.
    library (10-builder-cli-library.md §"The import-linter contracts"):
 
    ```bash
-   uv run lint-imports
+   make import-lint
    ```
 
 5. **The two oracles — however unrelated the change seems:**
@@ -1031,7 +1031,7 @@ a different class of break.
 6. **The full suite — both tiers.** Fans out across cores via `pytest-xdist`
    (`-n auto` is the default). The explicit selector is what makes this the
    FULL suite: a bare `uv run pytest -q` is the default tier alone, which
-   drops the seven tests measured at 15 s or more on their own.
+   drops the tests measured at 15 s or more on their own.
 
    ```bash
    uv run pytest -m "not node and not cascade_oc" -q
@@ -1079,7 +1079,7 @@ a different class of break.
 propose a commit.
 
 **Definition of done.** `uv run ruff check .`, `uv run mypy src/zicato/`,
-`uv run lint-imports`, both oracles, the full pytest suite, `bash
+`make import-lint`, both oracles, the full pytest suite, `bash
 tools/parity.sh`, and `make node-test` are all green — and, if the Rust crate
 changed, `cargo test -p zicato-supervisor`.
 

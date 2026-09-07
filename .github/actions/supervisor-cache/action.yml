@@ -1,0 +1,23 @@
+name: Restore supervisor build inputs
+description: Reuse release artifacts while Cargo validates their inputs during package installation.
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Restore Cargo release cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: python-supervisor-release
+
+    - name: Compute supervisor build identity
+      id: identity
+      shell: bash
+      run: echo "key=$(python hatch_build.py)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore verified supervisor executable
+      uses: actions/cache@v4
+      with:
+        path: .supervisor-cache
+        key: supervisor-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.identity.outputs.key }}

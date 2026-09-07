@@ -600,13 +600,25 @@ test`, which is what CI's Rust job runs.
 
 **Packaging.** A hatchling build hook (`hatch_build.py`, wired via
 `[tool.hatch.build.targets.wheel.hooks.custom]` in `pyproject.toml`)
-compiles the crate at wheel-build time and stages the binary at
-`src/zicato/_bin/zicato-supervisor` so it ships inside the wheel.
-Best-effort by design: no `cargo` on PATH, or an sdist without `crates/`,
-logs a warning and ships a wheel without the binary — the CLI still
-resolves one (below) or degrades to running without a supervisor. The sdist
-carries the crate source (`crates/`, `Cargo.toml`, `Cargo.lock`) so a
-downstream wheel build can run the hook.
+stages a verified executable at `src/zicato/_bin/zicato-supervisor` and declares
+native platform metadata. Source and editable installs require Rust. A missing
+compiler, missing crate, failed build, or missing executable fails installation.
+The sdist carries `crates/`, `Cargo.toml`, and `Cargo.lock` for downstream builds.
+
+The executable cache under `.supervisor-cache/` records its build-input identity
+and SHA-256 digest. Inputs include all crate files, manifests, the build hook,
+embedded Git revision, toolchain, host, release profile, Cargo configuration,
+compiler environment, and runner image. A cache miss runs Cargo with `--locked`
+and reads the executable path from its artifact report. Python CI jobs restore
+both this executable cache and Cargo's dependency cache before installation.
+Wheel builds require Cargo's configured target to match the compiler host;
+foreign architectures and alternative target C libraries are unsupported.
+
+`python tools/check_installed_supervisor.py --build` installs a wheel in an
+isolated environment and checks its resolver, executable digest, platform
+metadata, and version command outside the checkout. The parity job checks its
+installed wheel directly. The [build-cost measurement record](../reviews/supervisor-build-cost-2026-09-05.md)
+reports cold preparation, Cargo reuse, and executable-cache reuse separately.
 
 **Resolution order** — `_resolve_supervisor_binary` in
 `src/zicato/cli/commands/evolve.py`:

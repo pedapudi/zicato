@@ -34,9 +34,9 @@ You almost never read this book front-to-back. Instead:
 6. **Find your task in `13-recipes.md`.** Most changes are a named recipe with
    exact steps and a Verify block. If yours is not, the closest recipe is your
    template.
-7. **Before proposing any commit, run the pre-commit ladder** (§below, full
-   detail in `11-testing.md §11.11`). A change that has not passed it is not
-   done.
+7. **Run complete validation on the revision proposed for merge.**
+   `make check` owns that requirement (§below, full detail in
+   `11-testing.md §11.11`). Required failures block merge.
 
 > ⛔ **NEVER** treat this guide as authoritative *over the code*. If a symbol,
 > path, or line the guide names is not in the current tree, the code is right and
@@ -57,8 +57,8 @@ chapter 01.
 | **G1** | The vendor rule | Nothing in git — code, comments, docstrings, tests, fixtures, commit messages, PR bodies, or trailers — references the model vendor. | `git log -p <base>..HEAD \| grep -icE "$pat"` (assemble `$pat` per `01-orientation.md §G1`; the check never spells the stems) → **0** |
 | **G2** | `uv sync --all-extras`, always | A bare `uv sync` deletes the dev tooling (pytest/mypy/ruff/uv itself) from `.venv`. | `uv run pytest --version` |
 | **G3** | No live model run without go-ahead | Live runs cost money and need explicit operator sign-off; the deterministic convergence example is the sanctioned end-to-end vehicle. | run `examples/zicato_examples/target_0_convergence/RUN.md` rather than a real model |
-| **G4** | The two oracles are green before ANY commit | `test_convergence_known_answer` (the loop converges) + `test_decision_procedure_power` (the decision procedure's measured operating characteristics). | `uv run pytest tests/test_convergence_known_answer.py tests/test_decision_procedure_power.py -q` |
-| **G5** | Parity + import contracts + node | `bash tools/parity.sh` (13 gates), `uv run lint-imports` (the import contracts), `make node-test`. | all green |
+| **G4** | Both oracles pass in complete validation | `test_convergence_known_answer` (the loop converges) + `test_decision_procedure_power` (the decision procedure's measured operating characteristics). | `make check` |
+| **G5** | Parity + import contracts + node | The shared plan runs golden, import and JavaScript checks through `make check`. | all green |
 | **G6** | Omit-at-default contract discipline | A new default-off contract field MUST be registered in `_SCORING_OMIT_AT_DEFAULT_FIELDS`, or every existing workspace spuriously rolls its epoch. | `03-contract-and-epochs.md`; contract-hash parity gate |
 | **G7** | The reserved replicate-base ledger | Duels `0..`, calibration `1000`, preflight `2000`, screening `3000/3001`, evidence `4000`, board reflection `5000`, eval-synthesis admission `6000`. Squatting a base corrupts the unit cache (bugs #1, #8); a reader that globs `loss*.json` instead of filtering by base reads the preflight's degraded probes as real behaviour (`unit_cache.is_own_code_board_draw`). | `04-evaluation-statistics.md §8` |
 | **G8** | The restricted-visibility envelope | Nothing entry-identifying (entry ids, task text, holdout data, raw per-entry outcomes) may reach the proposer. Every channel is banded/aggregated/anonymized/redacted. | `05-proposer.md` §5.8; adversarial-identity fixtures |
@@ -81,7 +81,7 @@ chapter 01.
 | 08 | `08-supervisor.md` | the Rust watchdog/notary — heartbeat, reaping, the hash-chained ledger, diff-containment, the read-only index | you change the supervisor or a state file it reads |
 | 09 | `09-dashboard-and-query.md` | `zicato/query` (lib) vs `zicato/dashboard` (driver), **server-authority**, **digest gating**, the add-a-panel recipe | you change a reader, an endpoint, or a view |
 | 10 | `10-builder-cli-library.md` | the builder contract-IDE, the CLI + flag→pin, the library facade + import contracts | you change the builder, add a CLI flag, or extend the public API |
-| 11 | `11-testing.md` | the suites, the two oracles, the parity gates, the import contracts, the **pre-commit ladder** | before every commit; when you add a test |
+| 11 | `11-testing.md` | the suites, the two oracles, the parity gates, the import contracts, **complete validation** | before merge; when you add a test |
 | 12 | `12-bug-casebook.md` | the twelve shipped bugs as teaching cases + the meta-lessons | before touching any of the six bug-prone surfaces |
 | 13 | `13-recipes.md` | the cookbook — fourteen self-contained, copy-precise recipes | you are about to make a change (find yours first) |
 | 14 | `14-goals-and-roadmap.md` | the north star, the proof state, the endpoint-gated runbook, the deferred register, anti-goals | you are proposing new work or a live run |
@@ -145,33 +145,16 @@ its case; each ends with "you are about to reintroduce this if…".
 
 ---
 
-## The pre-commit ladder (full detail in `11-testing.md §11.11`)
+## Complete verification (full detail in `11-testing.md §11.11`)
 
-Run this, in order, before proposing any commit. A red rung is a blocked commit —
-fix it or justify it (a pinned-number change needs a measured justification in the
-commit body; a legitimately-moved golden needs the never-bake-a-sibling-change
-rule honored).
+Use `make check-fast` for iteration and `make check` for complete validation.
+`tools/verify.py` supplies the commands to both Make and CI. Its complete
+plan includes the known-answer and statistical oracles, independent golden
+comparisons, all language checks, packaging, prose and budget policy.
+Each check runs once per invocation. Any required failure blocks merge;
+validation must cover the revision proposed for merge.
 
-```bash
-uv run pytest tests/ -q                                 # 1. default tier (~1m45s) — quick signal
-uv run pytest tests/ \
-  -m "not node and not cascade_oc" -q                  # 2. both tiers (~7m) — what the gate runs
-uv run ruff format . && uv run ruff check .            # 3. style
-uv run mypy src/zicato/                                # 4. types
-uv run lint-imports                                    # 5. the import contracts
-bash tools/parity.sh                                   # 6. the parity gates
-make node-test ; echo "node exit: $?"                  # 7. the JS behaviour suite
-uv run pytest tests/test_convergence_known_answer.py \
-             tests/test_decision_procedure_power.py -q # 8. the two oracles
-python tools/line_budget.py --check                      # 9. simplification budgets
-git log -p <base>..HEAD | grep -icE "$pat"    # 10. vendor scan: assemble $pat per 01-orientation §G1 → 0
-python tools/prose_lint.py \
-  --baseline tools/prose_lint_baseline.json              # 11. prose gate (ratchet)
-```
-
-> ✅ **ALWAYS** run the vendor scan (rung 10). It is the cheapest rung and the one
-> whose failure is least recoverable: a vendor leak in a pushed commit means a
-> history rewrite.
+Run the attribution scan in `01-orientation.md §G1` before publishing.
 
 ---
 

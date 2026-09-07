@@ -1,18 +1,15 @@
-"""Triage pin for the truncated epoch objective (issue #107).
-
-``zicato.query.epoch_view._distill_brief_goal`` used to return the first
-PHYSICAL LINE of the ``## Goal`` section while its docstring promised a
-sentence. Every shipped example brief is hard-wrapped, so the dashboard's
-objective callout rendered truncated out of the box — sometimes mid-word, at
-a dangling hyphen. It now accumulates the whole first prose PARAGRAPH,
-joining hard-wrapped lines hyphen-aware and stopping at the next block.
-
-Display-only: no effect on scoring, gating or promotion.
-"""
+"""Goal extraction preserves Markdown paragraphs and view preview behavior."""
 
 from __future__ import annotations
 
-from zicato.query.epoch_view import _distill_brief_goal
+from pathlib import Path
+
+import pytest
+
+from zicato.analyzer.report_data import gather_epoch_report_data
+from zicato.proposer.brief import brief_goal
+from zicato.query.epoch_view import build_epochs_summary
+from zicato.query.paths import WorkspacePaths
 
 # The shipped presentation brief, verbatim: wrapped at ~74 columns with a
 # hyphen-split word across the break ("multi-" / "agent").
@@ -35,7 +32,7 @@ def test_hard_wrapped_goal_joins_the_whole_paragraph_hyphen_aware() -> None:
     A naive ``" ".join(lines)`` would produce ``"multi- agent"``; the join
     must close a hard-wrapped word instead.
     """
-    goal = _distill_brief_goal(_HARD_WRAPPED_BRIEF)
+    goal = brief_goal(_HARD_WRAPPED_BRIEF)
     assert goal is not None
     assert "multi-agent" in goal
     assert "multi- agent" not in goal
@@ -44,7 +41,7 @@ def test_hard_wrapped_goal_joins_the_whole_paragraph_hyphen_aware() -> None:
 
 def test_accumulation_stops_at_the_next_block() -> None:
     """A blank line, heading or list item closes the paragraph."""
-    goal = _distill_brief_goal(_HARD_WRAPPED_BRIEF)
+    goal = brief_goal(_HARD_WRAPPED_BRIEF)
     assert goal is not None
     assert "slide-shaped" not in goal, "the bullet list must not be absorbed"
     assert "Specifically" in goal, "the paragraph's own tail must survive"
@@ -53,52 +50,54 @@ def test_accumulation_stops_at_the_next_block() -> None:
 def test_soft_wrapped_goal_is_unchanged() -> None:
     """The already-correct case the #107 fix must leave byte-identical."""
     brief = "## Goal\n\nMake the agent stay on topic.\n\n## Style\n"
-    assert _distill_brief_goal(brief) == "Make the agent stay on topic."
+    assert brief_goal(brief) == "Make the agent stay on topic."
 
 
 def test_no_goal_section_still_returns_none() -> None:
-    assert _distill_brief_goal("## Style\n\nBe terse.\n") is None
-    assert _distill_brief_goal("") is None
+    assert brief_goal("## Style\n\nBe terse.\n") is None
+    assert brief_goal("") is None
 
 
-def test_publication_masthead_distils_the_same_goal_as_the_dashboard() -> None:
-    """The analyzer's masthead goal must not be a second implementation.
+@pytest.mark.parametrize(
+    ("brief", "expected"),
+    [
+        ("## Goal\n\n" + "x" * 125, "x" * 120 + "..."),
+        ("## Goal\n\nKeep multi-\nagent behavior.\n", "Keep multi-agent behavior."),
+        ("## Style\n\nBe terse.\n", None),
+    ],
+)
+def test_report_and_epoch_summary_preserve_goal_previews(
+    tmp_path: Path, brief: str, expected: str | None
+) -> None:
+    epoch = tmp_path / ".zicato" / "epochs" / "measured"
+    epoch.mkdir(parents=True)
+    (epoch / "brief.md").write_text(brief, encoding="utf-8")
+    (epoch / "config.json").write_text('{"id": "measured"}', encoding="utf-8")
+    root = epoch.parent.parent
+    assert build_epochs_summary(WorkspacePaths(root)) == [
+        {"epoch_id": "measured", "goal": expected}
+    ]
+    assert gather_epoch_report_data(root, "measured").goal == (expected or "")
 
-    ``analyzer.report_data`` carried its own copy of this distillation, which
-    is how #107 outlived its first fix: the dashboard learned to reassemble a
-    wrapped paragraph while the publication masthead still rendered the
-    shipped goal cut mid-word at the dangling hyphen.
-    """
-    from pathlib import Path
 
-    from zicato.analyzer.report_data import _distill_brief_goal as _masthead_goal
-
-    shipped = Path(__file__).resolve().parents[1] / (
-        "examples/zicato_examples/target_1_presentation/rubric.md"
-    )
-    brief = shipped.read_text(encoding="utf-8")
-
-    dashboard = _distill_brief_goal(brief)
-    assert dashboard is not None
-    assert _masthead_goal(brief) == dashboard
-    # The symptom itself: neither surface may end at the wrap hyphen.
-    assert not dashboard.endswith("multi-")
-    assert "multi-agent" in dashboard
+def test_goal_extraction_preserves_text_beyond_the_display_limit() -> None:
+    paragraph = "A" * 140
+    assert brief_goal("## Goal\n\n" + paragraph) == paragraph
 
 
 def test_a_numbered_list_is_a_block_not_prose() -> None:
     """An ordered list is a list — accumulating it yields a run-on sentence."""
     brief = "## Goal\n\n1. first item\n2. second item\n\n## Style\n"
-    assert _distill_brief_goal(brief) is None
+    assert brief_goal(brief) is None
 
     closed = "## Goal\n\nHold the line.\n1. first item\n\n## Style\n"
-    assert _distill_brief_goal(closed) == "Hold the line."
+    assert brief_goal(closed) == "Hold the line."
 
 
 def test_a_hyphen_used_as_punctuation_is_not_a_wrapped_word() -> None:
     """Only a hyphen a word character precedes closes across the wrap."""
     punct = "## Goal\n\nreach for this -\nnamely speed.\n\n## Style\n"
-    assert _distill_brief_goal(punct) == "reach for this - namely speed."
+    assert brief_goal(punct) == "reach for this - namely speed."
 
     wrapped = "## Goal\n\nreach for well-\nknown speed.\n\n## Style\n"
-    assert _distill_brief_goal(wrapped) == "reach for well-known speed."
+    assert brief_goal(wrapped) == "reach for well-known speed."

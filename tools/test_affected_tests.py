@@ -11,6 +11,7 @@ explicit argument `tools/test_prose_lint.py` does.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +23,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import affected_tests as at  # noqa: E402 — the sys.path pin above is what finds it
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_empty_committed_range_has_an_explicit_empty_result() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "tools/affected_tests.py"), "--range", "HEAD...HEAD"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    result = json.loads(completed.stdout)
+    assert result["status"] == "known-empty"
+    assert result["tests"] == []
 
 
 @pytest.fixture(scope="module")
@@ -207,49 +222,216 @@ def test_the_selection_is_a_subset_of_the_suite(
     assert all((ROOT / rel).exists() for rel in test_paths)
 
 
-def test_a_prose_only_change_reaches_no_test_and_still_prints_the_whole_suite(
+def test_a_prose_only_change_reaches_no_test(
     table: dict[str, str], graph: dict[str, set[str]]
 ) -> None:
-    """The documented answer for a documentation commit, both halves of it.
-
-    A `.md` under a prose tree is inert: no module reads it, so the graph
-    selects nothing. The tool then prints `tests/` regardless, because
-    `pytest $(...)` with an empty argument list collects everything — there
-    is no way to say "run nothing" through that substitution.
-
-    Both halves are pinned because they read as a contradiction otherwise,
-    and one review already reconciled them the wrong way round: a table
-    reported "0 files selected" for a range whose command printed the whole
-    suite.
-    """
     prose = ["README.md", "docs/design/SCORING.md", "docs/dev-guide/04-evaluation-statistics.md"]
-    for rel in prose:
-        assert (ROOT / rel).exists(), f"{rel} moved; update this case"
     selected, _reasons, full_suite = at.select(prose, table, graph)
-    assert not full_suite, f"prose should not be a full-suite REASON: {full_suite}"
-    assert selected == [], f"prose reached tests: {selected}"
+    assert not full_suite
+    assert selected == []
 
-    completed = subprocess.run(
-        [sys.executable, str(ROOT / "tools/affected_tests.py"), "--range", "HEAD...HEAD"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
+
+@pytest.fixture
+def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    files = {
+        "README.md": "Description.\n",
+        "src/zicato/unit.py": "VALUE = 1\n",
+        "src/zicato/worker.py": "VALUE = 1\n",
+        "src/zicato/loader.py": 'import importlib\nimportlib.import_module("zicato.unit")\n',
+        "tests/_fixture.py": "from zicato import unit\n",
+        "tests/test_unit.py": "from tests import _fixture\n",
+        "tests/test_loader.py": "from zicato import loader\n",
+        "tests/test_worker.py": 'ARGS = ["python", "-m", "zicato.worker"]\n',
+        "tools/test_tool.py": "def test_tool(): pass\n",
+    }
+    for rel, content in files.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    git(tmp_path, "init", "-q", "-b", "main")
+    git(tmp_path, "add", ".")
+    git(
+        tmp_path,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-qm",
+        "Fixture repository",
     )
-    assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == "tests/"
+    git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    monkeypatch.setattr(at, "ROOT", tmp_path)
+    at._facts.cache_clear()
+    at._path_literals.cache_clear()
+    yield tmp_path
+    at._facts.cache_clear()
+    at._path_literals.cache_clear()
 
 
-def test_the_whole_suite_prints_a_runnable_argument() -> None:
-    """The full-suite answer is `tests/`, which pytest accepts unchanged."""
-    completed = subprocess.run(
-        [sys.executable, str(ROOT / "tools/affected_tests.py"), "--range", "HEAD...HEAD"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
+def git(root: Path, *args: str) -> str:
+    result = subprocess.run(["git", *args], cwd=root, text=True, capture_output=True, check=True)
+    return result.stdout
+
+
+def test_default_combines_branch_staged_unstaged_and_untracked(repository: Path) -> None:
+    (repository / "src/zicato/worker.py").write_text("VALUE = 2\n")
+    git(repository, "add", ".")
+    git(
+        repository,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-qm",
+        "Change worker",
     )
-    assert completed.returncode == 0, completed.stderr
-    # An empty range changes nothing, which selects nothing, which prints the
-    # whole suite rather than an empty command line.
-    assert completed.stdout.strip() == "tests/"
+    (repository / "src/zicato/unit.py").write_text("VALUE = 2\n")
+    git(repository, "add", ".")
+    (repository / "tests/_fixture.py").write_text("from zicato import unit\nVALUE = 3\n")
+    (repository / "docs").mkdir()
+    (repository / "docs/note.md").write_text("Description.\n")
+    selection = at.build_selection()
+    assert selection.status == "selected"
+    assert set(selection.tests) == {
+        "tests/test_unit.py",
+        "tests/test_loader.py",
+        "tests/test_worker.py",
+    }
+    state = selection.comparison
+    assert state.branch == ("src/zicato/worker.py",)
+    assert state.staged == ("src/zicato/unit.py",)
+    assert state.unstaged == ("tests/_fixture.py",)
+    assert state.untracked == ("docs/note.md",)
+    assert state.head == git(repository, "rev-parse", "HEAD").strip()
+    assert state.revisions
+    assert state.include_worktree
+    assert len(state.content_digest) == 64
+
+    committed = at.build_selection("origin/main...HEAD")
+    assert committed.tests == ("tests/test_worker.py",)
+    assert not committed.comparison.include_worktree
+    assert committed.comparison.changed == ["src/zicato/worker.py"]
+    assert committed.comparison.staged == state.staged
+    assert committed.comparison.unstaged == state.unstaged
+    assert committed.comparison.untracked == state.untracked
+
+
+def test_prose_only_changes_are_known_empty_and_do_not_launch_pytest(
+    repository: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repository / "README.md").write_text("Updated description.\n")
+    selection = at.build_selection()
+    assert selection.status == "known-empty"
+    assert selection.comparison.changed == ["README.md"]
+
+    def unexpected(*args: object, **kwargs: object) -> None:
+        pytest.fail("a known empty selection launched a process")
+
+    monkeypatch.setattr(at.subprocess, "run", unexpected)
+    assert at.run_selection(selection) == 0
+    assert "known empty" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "change", ["delete", "rename", "untracked", "unknown", "docs-binary", "prose-prefix", "syntax"]
+)
+def test_unresolved_changes_select_full_python_coverage(repository: Path, change: str) -> None:
+    source = repository / "src/zicato/unit.py"
+    if change == "delete":
+        source.unlink()
+    elif change == "rename":
+        source.rename(source.with_name("renamed.py"))
+    elif change == "untracked":
+        (repository / "src/zicato/new_module.py").write_text("VALUE = 1\n")
+    elif change == "unknown":
+        (repository / "settings.bin").write_bytes(b"unknown")
+        git(repository, "add", ".")
+    elif change == "docs-binary":
+        (repository / "docs").mkdir()
+        (repository / "docs/data.bin").write_bytes(b"unknown")
+    elif change == "prose-prefix":
+        (repository / "README.md.data").write_bytes(b"unknown")
+    else:
+        source.write_text("invalid python !\n")
+    selection = at.build_selection()
+    assert selection.status == "unresolved-full"
+    assert selection.tests == ("tests/", "tools/test_tool.py")
+    assert selection.full_suite_reasons
+    if change == "rename":
+        assert "src/zicato/unit.py" in selection.comparison.unstaged
+        assert "src/zicato/renamed.py" in selection.comparison.untracked
+
+
+def test_staged_renames_keep_the_deleted_path(repository: Path) -> None:
+    git(repository, "mv", "src/zicato/unit.py", "src/zicato/renamed.py")
+    selection = at.build_selection()
+    assert selection.status == "unresolved-full"
+    assert selection.comparison.staged == ("src/zicato/renamed.py", "src/zicato/unit.py")
+
+
+def test_invalid_base_fails_visibly(repository: Path) -> None:
+    with pytest.raises(ValueError, match="git diff"):
+        at.build_selection("missing-base...HEAD")
+    git(repository, "update-ref", "-d", "refs/remotes/origin/main")
+    with pytest.raises(ValueError, match="git diff"):
+        at.build_selection()
+
+
+def test_changed_tool_tests_select_themselves(repository: Path) -> None:
+    (repository / "tools/test_tool.py").write_text("def test_tool(): assert True\n")
+    assert at.build_selection().tests == ("tools/test_tool.py",)
+
+
+def test_arguments_are_literal_and_checker_failure_is_preserved(
+    repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = "tests/test_name; $(touch marker).py"
+    (repository / path).write_text("def test_example(): pass\n")
+    git(repository, "add", ".")
+    selection = at.build_selection()
+    assert selection.status == "selected"
+    assert selection.tests == (path,)
+    calls = []
+
+    def record(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 7)
+
+    monkeypatch.setattr(at.subprocess, "run", record)
+    keyword = "name or $(touch marker)"
+    assert at.run_selection(selection, ["-k", keyword]) == 7
+    assert calls == [
+        ([sys.executable, "-m", "pytest", "-k", keyword, path], {"cwd": repository, "check": False})
+    ]
+    assert not (repository / "marker").exists()
+
+
+def test_missing_tests_and_malformed_selection_fail_before_execution(repository: Path) -> None:
+    from dataclasses import replace
+
+    empty = at.build_selection()
+    with pytest.raises(ValueError, match="status and test paths"):
+        at.run_selection(replace(empty, status="selected"))
+    with pytest.raises(ValueError, match="does not exist"):
+        at.run_selection(replace(empty, status="selected", tests=("tests/missing.py",)))
+    with pytest.raises(ValueError, match="unknown selection status"):
+        at.run_selection(replace(empty, status="invalid"))  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="unresolved dependency reason"):
+        at.run_selection(replace(empty, status="unresolved-full", tests=("tests/",)))
+
+
+def test_selection_refreshes_file_facts_in_one_process(repository: Path) -> None:
+    path = repository / "src/zicato/unit.py"
+    path.write_text("VALUE = 2\n")
+    first = at.build_selection()
+    path.write_text("import importlib\nimportlib.import_module(variable)\n")
+    second = at.build_selection()
+    assert first.status == "selected"
+    assert second.status == "unresolved-full"
+    assert first.comparison.content_digest != second.comparison.content_digest

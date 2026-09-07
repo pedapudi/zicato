@@ -53,6 +53,40 @@ _DOUBLE_QUOTE_RE = re.compile(r'"([^"]+)"')
 _FORBIDDEN_HEADING = "forbidden edits"
 _PREFERRED_HEADING = "preferred edits"
 
+_BLOCK_OPENER_RE = re.compile(r"^(?:[-*+>]|```|~~~|\d+[.)]\s)")
+
+
+def brief_goal(text: str) -> str | None:
+    """Return the goal section's first prose paragraph without display truncation.
+
+    Headings close the section. Blank lines, lists, blockquotes, and fences
+    close an accumulated paragraph. A word split after a trailing hyphen is
+    rejoined directly; punctuation hyphens retain the separating space.
+    """
+    in_goal = False
+    paragraph = ""
+    for raw in text.replace("\r\n", "\n").split("\n"):
+        line = raw.strip()
+        if line.startswith("#"):
+            if in_goal:
+                break
+            in_goal = line.lstrip("#").strip().lower() == "goal"
+            continue
+        if not in_goal:
+            continue
+        if not line or _BLOCK_OPENER_RE.match(line):
+            if paragraph:
+                break
+            continue
+        split_word = (
+            len(paragraph) >= 2
+            and paragraph.endswith("-")
+            and not paragraph.endswith("--")
+            and paragraph[-2].isalnum()
+        )
+        paragraph += (" " if paragraph and not split_word else "") + line
+    return paragraph or None
+
 
 @dataclass(frozen=True, slots=True)
 class ProposerBrief:
@@ -211,6 +245,7 @@ def enforce_forbidden(
 
 __all__ = [
     "ProposerBrief",
+    "brief_goal",
     "load_brief",
     "enforce_forbidden",
 ]

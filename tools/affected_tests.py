@@ -26,32 +26,31 @@ tooling, or a non-Python file whose readers are unknown.
 
 Usage:
 
-    python tools/affected_tests.py                   # origin/main...HEAD
-    python tools/affected_tests.py --range HEAD~3    # another range
-    python tools/affected_tests.py --explain         # why each file
-    uv run pytest $(python tools/affected_tests.py)  # run the selection
+    python tools/affected_tests.py                 # branch and worktree changes
+    python tools/affected_tests.py --range HEAD~3  # committed comparison only
+    python tools/affected_tests.py --explain       # JSON, with readable reasons
+    python tools/affected_tests.py --run -- -n0    # execute without shell expansion
 
-It prints pytest arguments on stdout and nothing else, so the last form
-works. `--explain` writes its reasoning to stderr, leaving stdout usable.
-
-TWO different answers print `tests/`, and `--explain` distinguishes them.
-One is "the graph cannot establish what this reaches"; the other is "this
-reaches no test at all", which is where a prose-only change lands. Both
-run the whole suite, because `pytest $(...)` with an empty argument list
-collects everything — there is no way to say "run nothing" through that
-substitution. So a documentation commit is answered conservatively rather
-than skipped, and the caller never has to special-case the output.
+The JSON result distinguishes selected tests, a known empty selection and
+unresolved dependencies requiring full Python coverage. It records the
+comparison and changed paths. The runner skips pytest for a known empty
+selection and preserves pytest's exit status for every executed selection.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
+import json
+import os
 import subprocess
 import sys
 from collections.abc import Iterable, Iterator
+from dataclasses import asdict, dataclass
 from functools import cache
 from pathlib import Path
+from typing import Literal
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -87,6 +86,13 @@ ALWAYS_FULL_SUITE: tuple[str, ...] = (
 #: starts reading stops being inert without an edit here.
 PROSE_TREES: tuple[str, ...] = ("docs/", "skills/", "README.md", "CHANGELOG.md")
 
+
+def _is_prose(rel: str) -> bool:
+    return Path(rel).suffix.lower() in {".md", ".rst", ".txt"} and any(
+        rel == tree or (tree.endswith("/") and rel.startswith(tree)) for tree in PROSE_TREES
+    )
+
+
 #: Non-Python files whose readers a full-path search finds COMPLETELY, so a
 #: change to one is traced through the graph rather than answered with the
 #: whole suite. Nothing else earns this: a module can name a path for a
@@ -120,14 +126,78 @@ def _run_git(*args: str) -> str:
         check=False,
     )
     if completed.returncode != 0:
-        raise SystemExit(f"git {' '.join(args)} failed: {completed.stderr.strip()}")
+        raise ValueError(f"git {' '.join(args)} failed: {completed.stderr.strip()}")
     return completed.stdout
 
 
 def changed_paths(ref_range: str) -> list[str]:
-    """Repository-relative paths the range touches, in git's order."""
-    out = _run_git("diff", "--name-only", ref_range)
-    return [line.strip() for line in out.splitlines() if line.strip()]
+    """Paths on both sides of renames, preserving spaces and shell syntax."""
+    if ref_range.startswith("-") or not ref_range:
+        raise ValueError("the comparison must name a revision or revision range")
+    return _git_paths("diff", "--name-only", "--no-renames", ref_range, "--")
+
+
+def _git_paths(*args: str) -> list[str]:
+    return sorted(filter(None, _run_git(args[0], "-z", *args[1:]).split("\0")))
+
+
+@dataclass(frozen=True)
+class Comparison:
+    """Resolved commits and the working files examined for this selection."""
+
+    ref_range: str
+    revisions: tuple[str, ...]
+    head: str
+    include_worktree: bool
+    branch: tuple[str, ...]
+    staged: tuple[str, ...]
+    unstaged: tuple[str, ...]
+    untracked: tuple[str, ...]
+    content_digest: str
+
+    @property
+    def changed(self) -> list[str]:
+        worktree = self.staged + self.unstaged + self.untracked if self.include_worktree else ()
+        return sorted(set(self.branch + worktree))
+
+
+@dataclass(frozen=True)
+class Selection:
+    """Python iteration coverage and the evidence used to choose it."""
+
+    status: Literal["selected", "known-empty", "unresolved-full"]
+    reason: str
+    tests: tuple[str, ...]
+    reasons: dict[str, list[str]]
+    full_suite_reasons: tuple[str, ...]
+    comparison: Comparison
+
+
+def _comparison(ref_range: str | None) -> Comparison:
+    comparison_range = ref_range or "origin/main...HEAD"
+    branch = tuple(changed_paths(comparison_range))
+    head = _run_git("rev-parse", "--verify", "HEAD").strip()
+    revisions = tuple(_run_git("rev-parse", "--revs-only", comparison_range, "HEAD").splitlines())
+    staged = tuple(_git_paths("diff", "--name-only", "--no-renames", "--cached", "--"))
+    unstaged = tuple(_git_paths("diff", "--name-only", "--no-renames", "--"))
+    untracked = tuple(_git_paths("ls-files", "--others", "--exclude-standard"))
+    digest = hashlib.sha256()
+    for rel in sorted(set(branch + staged + unstaged + untracked)):
+        path = ROOT / rel
+        digest.update(rel.encode() + b"\0")
+        digest.update(path.read_bytes() if path.is_file() else b"<missing>")
+        digest.update(b"\0")
+    return Comparison(
+        comparison_range,
+        revisions,
+        head,
+        ref_range is None,
+        branch,
+        staged,
+        unstaged,
+        untracked,
+        digest.hexdigest(),
+    )
 
 
 def _module_name(rel: str) -> str | None:
@@ -341,7 +411,21 @@ def test_files(table: dict[str, str]) -> list[str]:
     return sorted(
         rel
         for name, rel in table.items()
-        if name.startswith("tests.") and Path(rel).name.startswith("test_")
+        if name.startswith(("tests.", "tools."))
+        and Path(rel).name.startswith("test_")
+        and not rel.startswith("tools/parity/")
+    )
+
+
+def python_test_paths() -> tuple[str, ...]:
+    """Complete Python suite; parity owns its separate golden test modules."""
+    return (
+        "tests/",
+        *(
+            path.relative_to(ROOT).as_posix()
+            for path in sorted((ROOT / "tools").rglob("test_*.py"))
+            if not path.is_relative_to(ROOT / "tools/parity")
+        ),
     )
 
 
@@ -358,12 +442,13 @@ def _triage(changed: Iterable[str], table: dict[str, str]) -> tuple[list[str], s
         if not (ROOT / rel).exists():
             reasons.append(f"{rel} was deleted, so what depended on it cannot be read")
             continue
-        if any(rel == entry or rel.startswith(entry) for entry in ALWAYS_FULL_SUITE):
+        if Path(rel).name == "conftest.py" or any(
+            rel == entry or rel.startswith(entry) for entry in ALWAYS_FULL_SUITE
+        ):
             reasons.append(f"{rel} is depended on by every test")
             continue
         if not rel.endswith(".py"):
-            is_prose = any(rel == tree or rel.startswith(tree) for tree in PROSE_TREES)
-            if is_prose or rel in TRACED_DATA_FILES:
+            if _is_prose(rel) or rel in TRACED_DATA_FILES:
                 modules |= modules_naming(rel, table)
             else:
                 reasons.append(f"{rel} is not Python and its readers are not known")
@@ -416,66 +501,88 @@ def select(
     return sorted(reasons), reasons, full_suite
 
 
+def build_selection(ref_range: str | None = None) -> Selection:
+    """Choose iteration tests; an explicit range excludes worktree changes."""
+    _facts.cache_clear()
+    _path_literals.cache_clear()
+    comparison = _comparison(ref_range)
+    if not comparison.changed:
+        return Selection(
+            "known-empty", "No files changed in the comparison.", (), {}, (), comparison
+        )
+    table = _module_paths()
+    selected, reasons, full_suite = select(comparison.changed, table, build_graph(table))
+    for rel in comparison.untracked if comparison.include_worktree else ():
+        if not _is_prose(rel):
+            full_suite.append(f"{rel} is untracked and its dependencies are not established")
+    if full_suite:
+        status: Literal["selected", "known-empty", "unresolved-full"] = "unresolved-full"
+        selected = list(python_test_paths())
+        reason = "Some changed dependencies cannot be resolved; full Python coverage is required."
+    else:
+        status = "selected" if selected else "known-empty"
+        reason = (
+            "The selected tests reach changed files."
+            if selected
+            else "No changed file reaches a Python test."
+        )
+    return Selection(status, reason, tuple(selected), reasons, tuple(full_suite), comparison)
+
+
+def run_selection(selection: Selection, pytest_args: Iterable[str] = ()) -> int:
+    """Execute the selected Python tests with literal arguments and honest failures."""
+    if selection.status not in {"selected", "known-empty", "unresolved-full"}:
+        raise ValueError(f"unknown selection status: {selection.status!r}")
+    if bool(selection.tests) != (selection.status != "known-empty"):
+        raise ValueError("selection status and test paths disagree")
+    if selection.status == "unresolved-full" and not selection.full_suite_reasons:
+        raise ValueError("full coverage requires an unresolved dependency reason")
+    if selection.status == "known-empty":
+        print("No affected Python tests; the selection is known empty.")
+        return 0
+    for argument in selection.tests:
+        path = Path(argument.split("::", 1)[0])
+        if path.is_absolute() or ".." in path.parts or not (ROOT / path).exists():
+            raise ValueError(f"selected test path does not exist in the repository: {argument!r}")
+    print(f"Affected Python tests: {selection.status} ({len(selection.tests)} paths)", flush=True)
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", *pytest_args, *selection.tests], cwd=ROOT, check=False
+    )
+    return completed.returncode if completed.returncode >= 0 else 128 - completed.returncode
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--range",
-        default="origin/main...HEAD",
+        default=os.environ.get("AFFECTED_TEST_RANGE") or None,
         dest="ref_range",
-        help="git ref range to diff (default: origin/main...HEAD)",
+        help="committed comparison only (default includes origin/main...HEAD and worktree changes)",
     )
     parser.add_argument(
         "--explain",
         action="store_true",
         help="write the reason for each selected file to stderr",
     )
+    parser.add_argument("--run", action="store_true", help="run the selection with pytest")
+    parser.add_argument("pytest_args", nargs=argparse.REMAINDER, help="pytest arguments after --")
     args = parser.parse_args(argv)
-
-    changed = changed_paths(args.ref_range)
-    table = _module_paths()
-    graph = build_graph(table)
-    selected, reasons, full_suite = select(changed, table, graph)
-
-    if args.explain:
-        print(f"{len(changed)} changed file(s) in {args.ref_range}", file=sys.stderr)
-        for rel in changed:
-            print(f"  changed: {rel}", file=sys.stderr)
-        if full_suite:
-            print("\nthe whole suite, because:", file=sys.stderr)
-            for reason in full_suite:
+    if args.pytest_args and not args.run:
+        parser.error("pytest arguments require --run")
+    try:
+        selection = build_selection(args.ref_range)
+        if args.explain:
+            print(f"{selection.status}: {selection.reason}", file=sys.stderr)
+            for reason in selection.full_suite_reasons:
                 print(f"  {reason}", file=sys.stderr)
-            print(
-                f"\n(the graph alone would have selected {len(selected)} of "
-                f"{len(test_files(table))} test files)",
-                file=sys.stderr,
-            )
-        elif not selected:
-            print(
-                "\nno changed file reaches any test. The whole suite is printed "
-                "anyway, because an empty argument list would make pytest collect "
-                "everything: there is no way to say `run nothing` that survives "
-                "`pytest $(...)`. A prose-only change lands here.",
-                file=sys.stderr,
-            )
-        else:
-            print(
-                f"\nselected {len(selected)} of {len(test_files(table))} test files:",
-                file=sys.stderr,
-            )
-        for rel in selected:
-            print(f"  {rel}", file=sys.stderr)
-            for reason in reasons[rel]:
-                print(f"      {reason}", file=sys.stderr)
-
-    # An empty selection prints the whole suite for the same reason an
-    # unresolvable one does: `pytest $(tools/affected_tests.py)` with no
-    # argument collects everything, so "run nothing" cannot be expressed
-    # here. Both answers are conservative; only their reason differs, and
-    # --explain says which.
-    if full_suite or not selected:
-        print("tests/")
-    else:
-        print(" ".join(selected))
+            for rel, reasons in selection.reasons.items():
+                print(f"  {rel}: {'; '.join(reasons)}", file=sys.stderr)
+        if args.run:
+            extra = args.pytest_args[1:] if args.pytest_args[:1] == ["--"] else args.pytest_args
+            return run_selection(selection, extra)
+        print(json.dumps(asdict(selection), indent=2))
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
     return 0
 
 
