@@ -34,6 +34,10 @@ from zicato.core import (
     ScoringWeights,
     Side,
 )
+from zicato.core.measurement import (
+    MeasurementDraw,
+    validate_measurement_interval,
+)
 from zicato.epoch.genstore import EphemeralCheckout
 from zicato.logging_stream import current_log_stream_path
 from zicato.runtime.lock import WorkspaceLock
@@ -51,6 +55,7 @@ from zicato.tournament.governance import (  # noqa: F401
     _regression_rejection,
     _reserve_ladder_query,
 )
+from zicato.tournament.ladder import disabled_holdout_record
 from zicato.tournament.regression import run_regression_suite
 
 # The board-unit schedulers live in ``scheduling``. They evaluate each unit
@@ -303,6 +308,37 @@ class TournamentResult:
     #: ``champion_eval_mode`` provenance. A gauntlet/ad-hoc caller can
     #: ignore it. Empty when the caller passes no provenance.
     unit_provenance: dict[str, _UnitProvenance] = field(default_factory=dict)
+
+    @property
+    def measurement_draw(self) -> MeasurementDraw | None:
+        """Return a draw only when every scored entry on both sides proves it.
+
+        Replicate averages discard single-draw provenance. An aggregate cannot
+        recover that identity from a matchup name or a requested slot.
+        """
+        entries = set(self.per_entry_losses)
+        if (
+            not entries
+            or entries != set(self.parent_agg.get("per_entry", {}))
+            or entries != set(self.child_agg.get("per_entry", {}))
+            or self.parent_agg.get("incomplete_entries")
+            or self.child_agg.get("incomplete_entries")
+        ):
+            return None
+        draws: set[MeasurementDraw | None] = set()
+        for entry_id, pair in self.per_entry_losses.items():
+            for generation_id, loss in zip(
+                (self.parent_generation_id, self.child_generation_id), pair, strict=True
+            ):
+                if (
+                    not loss.execution_started
+                    or loss.entry_id != entry_id
+                    or loss.generation_id != generation_id
+                ):
+                    return None
+                draws.add(loss.measurement)
+        return draws.pop() if len(draws) == 1 else None
+
     #: The Ladder/holdout evidence block for THIS duel (OVERFITTING.md §12 #2),
     #: or ``None`` when no holdout was consulted (a small board, the split
     #: disabled, or a non-full-A/B path that does not gate on the holdout).
@@ -470,14 +506,8 @@ async def _run_single(
        Cancellation waits through bounded teardown. Unconfirmed termination
        retains ownership for :func:`retry_worker_cleanup`.
     """
-    sink_module, reducer_module = _telemetry_helpers()
-    sink_path = sink_module.make_run_sink_path(
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-        generation_id=generation.id,
-        entry_id=entry.id,
-        replicate_index=_entry_replicate_index(entry),
-    )
+    validate_measurement_interval(_entry_replicate_index(entry), 1)
+    _, reducer_module = _telemetry_helpers()
     # The worker writes its loss into the run's REPLICATE-keyed cache slot (the
     # stamped replicate index; see _stamp_replicate_index). Replicate 0 — every
     # single-replicate path — maps to the canonical ``runs/<entry>/loss.json``;
@@ -491,8 +521,14 @@ async def _run_single(
         generation.id,
         entry.id,
         _entry_replicate_index(entry),
+        base_seed=config.seed,
     )
-    run_id = _run_id_for(generation, entry)
+    from zicato.core.measurement import unit_artifact_name  # noqa: PLC0415
+    from zicato.tournament.artifacts import archive_unit_artifacts  # noqa: PLC0415
+
+    archive_unit_artifacts(loss_path)
+    sink_path = loss_path.with_name(unit_artifact_name("events", _entry_replicate_index(entry)))
+    run_id = _run_id_for(generation, entry, base_seed=config.seed)
     budget_s = float(entry.wall_clock_budget_seconds)
 
     rt = _runtime_state()
@@ -612,6 +648,9 @@ async def _run_single(
             from zicato.runtime.lock import pid_start_time  # noqa: PLC0415
 
             args_payload = {
+                "measurement": MeasurementDraw.from_index(
+                    _entry_replicate_index(entry), base_seed=config.seed
+                ).to_json(),
                 "workspace_root": str(workspace_root),
                 "epoch_id": epoch_id,
                 "generation_id": generation.id,
@@ -860,6 +899,13 @@ async def _run_single(
         loss_profile_path_str = str(result.get("loss_profile_path", loss_path))
         try:
             loss: LossProfile = reducer_module.read_loss_profile(Path(loss_profile_path_str))
+            index = _entry_replicate_index(entry)
+            expected = MeasurementDraw.from_index(index, base_seed=config.seed)
+            if "measurement" in result:
+                if MeasurementDraw.from_json(result["measurement"]) != expected:
+                    raise ValueError("worker result measurement differs from the requested draw")
+            if loss.measurement != expected:
+                raise ValueError("worker loss measurement differs from the requested draw")
         except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
             # The worker said it finished cleanly but its loss.json is
             # unreadable — treat as aborted rather than crashing.
@@ -1107,6 +1153,7 @@ async def run_tournament(
     # The check happens here (and not just at config construction) so a
     # caller who hand-built a RuntimeConfig can't slip a colluding pair
     # through to the runner.
+    validate_measurement_interval(0, replicates)
     async with workspace_writer(
         workspace_root,
         writer=writer,
@@ -1209,7 +1256,9 @@ async def run_tournament(
         holdout_child_losses: dict[str, LossProfile] = {}
         holdout_parent_agg: dict[str, Any] | None = None
         holdout_child_agg: dict[str, Any] | None = None
-        holdout_block: dict[str, Any] | None = None
+        holdout_block: dict[str, Any] | None = (
+            None if holdout_board else dict(disabled_holdout_record())
+        )
         try:
             # Train units execute first.  Only a train promotion can cross the
             # reservation boundary and schedule the holdout slice.
@@ -1290,7 +1339,9 @@ async def run_tournament(
             champion_eval_mode="full",
             holdout=holdout_block,
             holdout_child_scalar=(
-                None if holdout_child_agg is None else float(holdout_child_agg["scalar"])
+                None
+                if holdout_child_agg is None or holdout_child_agg.get("incomplete_entries")
+                else float(holdout_child_agg["scalar"])
             ),
         )
 
@@ -1305,6 +1356,7 @@ async def run_fast_mode(
     workspace_root: Path,
     epoch_id: str,
     parent_historical_agg: dict[str, Any],
+    parent_generation_id: str,
     disable_drift: tuple[Any, ...] = (),
     judge_only: bool = False,
     round_index: int = 0,
@@ -1336,11 +1388,10 @@ async def run_fast_mode(
     duel rests on one draw per side. With no token ledger bound the slots run
     OVERLAPPED against one shared semaphore
     (:func:`~zicato.tournament.scheduling._run_replicate_slots_fast`), as on
-    the full path. With one bound they run one at a time: a spent per-round
-    token budget stops scheduling further slots and the fold settles over the
-    completed ones, matching :func:`_run_replicated` — the alternative is
-    averaging synthesised worst-case skips into entries that already measured
-    cleanly.
+    the full path. With one bound they run one at a time. A spent per-round
+    token budget records each remaining slot as an unstarted attempt. The fold
+    retains these omissions, so an incomplete replicated entry cannot support
+    promotion. Omitted slots require fresh execution before cache reuse.
 
     The asymmetry is deliberate and is NOT variance reduction on both
     sides: the champion remains ONE frozen cached draw no matter how high
@@ -1383,6 +1434,7 @@ async def run_fast_mode(
     the cached aggregate so the running partial table is meaningful
     from the first frame.
     """
+    validate_measurement_interval(0, replicates)
     async with workspace_writer(
         workspace_root,
         writer=writer,
@@ -1392,6 +1444,15 @@ async def run_fast_mode(
         from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
         assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
+
+        if (
+            "base_seed" not in parent_historical_agg
+            or parent_historical_agg["base_seed"] != config.seed
+            or parent_historical_agg.get("generation_id") != parent_generation_id
+        ):
+            raise ValueError(
+                "champion aggregate does not establish the requested generation and seed"
+            )
 
         # The champion side stays ONE frozen cached aggregate no matter how high
         # ``replicates`` goes, so replicating here buys a replicated challenger
@@ -1515,27 +1576,8 @@ async def run_fast_mode(
                 )
             else:
                 for replicate_index in range(replicate_count):
-                    # Per-round token budget: stop scheduling FURTHER replicate
-                    # slots once the budget is spent, as ``_run_replicated``
-                    # does — and the reason a bound ledger
-                    # keeps the slots sequential at all. Without this the spent
-                    # budget makes the remaining slots' units SKIPS — synthesised
-                    # worst-case budget-exceeded losses, persisted to their cache
-                    # slots — which the fold then averages into entries that
-                    # already measured cleanly, degrading the challenger for the
-                    # rest of the epoch on units that were never attempted.
-                    # Settling with the completed slots is the honest reading.
-                    # Slot 0 always enters the loop (its own between-unit checks
-                    # skip-record if the budget was already spent) so the return
-                    # shape is intact. Inert with the knob off.
-                    if replicate_index > 0 and _token_budget_spent(config):
-                        log.warning(
-                            "fast-mode round: per-round token budget reached after %d/%d "
-                            "replicate slot(s); settling with the completed replicates",
-                            replicate_index,
-                            replicate_count,
-                        )
-                        break
+                    # Budget expiry records an omission for every missing draw,
+                    # so the fold cannot present partial execution as complete.
                     replicate_runs.append(
                         await _run_board_units_fast(
                             adapter=adapter,
@@ -1653,13 +1695,11 @@ async def run_matchup(
     ``matchup_budget_seconds`` is an OPT-IN wall-clock cap on the duel's
     TOTAL board-unit execution. ``None`` (the default) ⇒ uncapped: every
     board unit × replicate × side runs to completion. When set, the runner
-    tracks the running wall-clock total and,
-    once it exceeds the cap, STOPS launching further board units; each
-    un-run unit is recorded as a budget-exceeded
-    :class:`~zicato.core.types.LossProfile` via the SAME aborted-run path a
-    killed worker uses (so the partial aggregate scores consistently and the
-    skipped unit is a cache hit next time). The cut-short event is LOGGED
-    (how many units were skipped) — never silently truncated. This bounds
+    checks the deadline before launching each batch. After the deadline,
+    skipped units remain recorded as unstarted attempts and require fresh
+    execution. These omissions do not populate the measurement cache or enter
+    the aggregate as measured losses. An incomplete comparison cannot support
+    promotion. The scheduler logs how many units were skipped. This bounds
     the AGGREGATE of an unbounded board × replicates × both-sides sweep
     (e.g. a racing final rung), a different axis from the per-board
     :attr:`BoardEntry.wall_clock_budget_seconds` (which bounds ONE unit).
@@ -1672,6 +1712,7 @@ async def run_matchup(
     matchups run ``N × parallelism`` units at once). ``None`` gives the
     matchup its own semaphore.
     """
+    validate_measurement_interval(replicate_base, replicates)
     async with workspace_writer(
         workspace_root,
         writer=writer,
@@ -1765,43 +1806,17 @@ async def confirm_crowning_holdout(
     fast: bool = False,
     writer: WorkspaceLock | None = None,
 ) -> tuple[GateOutcome, dict[str, Any] | None, float | None]:
-    """Ladder-mediate the holdout confirmation of a crowning duel.
+    """Confirm the crowning training duel on the contract's holdout slice.
 
-    A strategy resolves its leader on the train slice and identifies a final
-    champion-gate duel. ``train_outcome``, ``train_parent_agg``, and
-    ``train_child_agg`` describe that train-slice duel.
+    No holdout slice records a disabled requirement and preserves the training
+    decision. A training rejection skips holdout access. Otherwise the runner
+    reserves a query before executing the holdout matchup and settles its
+    release decision. Exhausted allowance, withholding, or incomplete execution
+    defers promotion; a released negative result rejects it.
 
-    The confirmation procedure is:
-
-    1. Split the board into train / holdout via :func:`split_board` with the
-       epoch-id :func:`rotation_seed`. When
-       the holdout is empty (small board / split disabled / no tagged entry)
-       this returns ``(train_outcome, None, None)`` immediately, so the
-       train decision is returned unchanged.
-    2. Return a train rejection without holdout access. For a train promotion,
-       reserve one query in the shared epoch-local Ladder state. Exhaustion
-       returns the train decision without launching a matchup.
-    3. Run one additional champion-versus-survivor duel on the holdout slice,
-       then settle the Ladder release decision. A released non-confirmation
-       changes the promotion to ``rejected`` with reason
-       ``holdout_not_confirmed``.
-
-    Returns ``(final_outcome, holdout_block, holdout_child_scalar)``:
-
-    * ``final_outcome`` — the crowning verdict after holdout mediation (the
-      orchestrator promotes iff it is ``"promoted"``).
-    * ``holdout_block`` — the stable Ladder/holdout evidence dict (see
-      :func:`zicato.tournament.ladder.holdout_record`) to journal verbatim
-      under ``OutcomeRecord.holdout``. Exhaustion produces an unconsulted
-      block; an absent slice or train rejection produces ``None``.
-    * ``holdout_child_scalar`` — the challenger's holdout-slice scalar for the
-      per-generation ``generalization_gap``; ``None`` when no matchup ran.
-
-    Fast-mode note: ``fast`` is threaded to the holdout duel as the
-    internal matchups receive it, so the champion's holdout-slice board units
-    are reused from the cache when already evaluated — the holdout
-    confirmation is applied on the FULL path consistently, never silently
-    skipped under ``--mode fast``.
+    Returns the final gate outcome, its holdout record, and the challenger's
+    observed holdout scalar (or ``None`` when no complete measurement exists).
+    Full and fast execution use the same confirmation policy.
     """
     async with workspace_writer(
         workspace_root,
@@ -1815,7 +1830,7 @@ async def confirm_crowning_holdout(
         _train_ids, holdout_ids = split_board(board, weights.overfitting, seed=seed)
         if not holdout_ids:
             # No holdout slice: return the train decision unchanged.
-            return train_outcome, None, None
+            return train_outcome, dict(disabled_holdout_record()), None
 
         if train_outcome.decision != "promoted":
             # Holdout confirmation can only veto a train promotion.  A rejected
@@ -1865,7 +1880,11 @@ async def confirm_crowning_holdout(
             epoch_id=epoch_id,
             reservation=reservation,
         )
-        holdout_child_scalar = float(holdout_child_agg["scalar"])
+        holdout_child_scalar = (
+            None
+            if holdout_child_agg.get("incomplete_entries")
+            else float(holdout_child_agg["scalar"])
+        )
         return final_outcome, holdout_block, holdout_child_scalar
 
 

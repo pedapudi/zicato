@@ -42,7 +42,6 @@ import pytest
 
 from zicato.core import RunResult
 from zicato.core.workspace import (
-    events_jsonl_path,
     loss_profile_path,
     run_id_for_unit,
     run_result_path,
@@ -464,10 +463,14 @@ def _write_args(
     """
     gen_snap = workspace / "snap" / "v0"
     gen_snap.mkdir(parents=True, exist_ok=True)
-    sink_path = events_jsonl_path(workspace, "e0", "v0", "entry_a")
     loss = loss_path
     if loss is None:
         loss = loss_profile_path(workspace, "e0", "v0", "entry_a")
+    from zicato.core.measurement import artifact_replicate_index, unit_artifact_name
+
+    replicate = artifact_replicate_index(loss.name)
+    assert replicate is not None
+    sink_path = loss.with_name(unit_artifact_name("events", replicate))
     payload: dict[str, Any] = {
         "workspace_root": str(workspace),
         "epoch_id": "e0",
@@ -478,11 +481,12 @@ def _write_args(
             "kind": "single_turn",
             "wall_clock_budget_seconds": budget_s,
             "input": "hello",
+            "context": {"replicate_index": str(replicate)},
         },
         "adapter": {"kind": "import", "factory": adapter_factory},
         "target_role": {"dotted": "tests._subprocess_worker_support:target_call_llm"},
         "evaluation_role": {"dotted": "tests._subprocess_worker_support:evaluation_call_llm"},
-        "run_id": run_id_for_unit("v0", "entry_a"),
+        "run_id": run_id_for_unit("v0", "entry_a", replicate),
         "sink_events_path": str(sink_path),
         "loss_path": str(loss),
         "result_path": str(result_path),
@@ -498,21 +502,32 @@ def _write_args(
 
 @pytest.mark.integration
 def test_worker_writes_result_json_and_judge_io_on_clean_exit(tmp_path: Path) -> None:
-    """Default knobs (a legacy args file with NO knob keys): both artifacts land."""
+    """Default capture knobs retain both artifacts under the worker's unit identity."""
+    from zicato.core.measurement import MeasurementDraw, measurement_artifact_path
+    from zicato.telemetry.reducer import read_loss_profile
+
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
+    measurement = MeasurementDraw.from_index(0, base_seed=17)
+    expected_run_id = run_id_for_unit("v0", "entry_a", base_seed=17)
     loss_path = _write_args(
         tmp_path / "args.json",
         workspace=workspace,
         adapter_factory="tests._subprocess_worker_support:make_completing_adapter",
         result_path=tmp_path / "worker_result.json",
+        loss_path=measurement_artifact_path(
+            loss_profile_path(workspace, "e0", "v0", "entry_a").parent, "loss", 0, base_seed=17
+        ),
+        knobs={"seed": 17, "measurement": measurement.to_json(), "run_id": expected_run_id},
     )
     proc = _spawn_worker(tmp_path / "args.json")
     assert proc.returncode == 0
 
-    captured = read_run_result(unit_result_path(loss_path))
+    loss = read_loss_profile(loss_path)
+    captured = read_run_result(unit_result_path(loss_path), expected=loss)
     assert captured is not None
     assert captured["format_version"] == 1
+    assert captured["run_id"] == expected_run_id
     assert captured["entry_id"] == "entry_a"
     assert captured["final_output"] == "final answer text"
     assert captured["transcript"] == ["intermediate turn", "final answer text"]
@@ -521,7 +536,7 @@ def test_worker_writes_result_json_and_judge_io_on_clean_exit(tmp_path: Path) ->
 
     # The worker bound a live sink onto the config; the (stub) session
     # recorded one scripted judge call through it, landing beside loss.json.
-    records = read_judge_io(judge_io_path_for_loss(loss_path))
+    records = read_judge_io(judge_io_path_for_loss(loss_path), expected=loss)
     assert len(records) == 1
     assert records[0]["judge_name"] == "stub_judge"
     assert records[0]["raw_response"] == "OK looks fine"
@@ -638,14 +653,9 @@ def test_worker_capture_failure_is_best_effort(tmp_path: Path) -> None:
     loss_path = _write_args(
         tmp_path / "args.json",
         workspace=workspace,
-        adapter_factory="tests._subprocess_worker_support:make_completing_adapter",
+        adapter_factory="tests._subprocess_worker_support:make_capture_blocked_adapter",
         result_path=tmp_path / "worker_result.json",
     )
-    # Occupy BOTH capture paths with directories so the atomic rename and
-    # the sidecar append each fail with OSError inside the worker.
-    unit_result_path(loss_path).mkdir(parents=True)
-    judge_io_path_for_loss(loss_path).mkdir(parents=True)
-
     proc = _spawn_worker(tmp_path / "args.json")
     assert proc.returncode == 0, "capture failures must never fail the worker"
 

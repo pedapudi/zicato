@@ -27,11 +27,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: File -> test name -> the seconds it measured ALONE. Ordered by cost.
 SLOW_TIER: dict[str, dict[str, float]] = {
-    "tests/test_decision_procedure_power.py": {
-        "test_power_at_planted_deltas": 139.8,
-        "test_margin_below_noise_floor_without_evidence_gate_is_unsound": 36.7,
-        "test_aa_effective_contract_false_promotion_rate_is_zero": 32.6,
-    },
     "tests/test_gauntlet_evidence_gate_e2e.py": {
         "test_gauntlet_promote_confirmed_by_evidence_gate": 32.6,
     },

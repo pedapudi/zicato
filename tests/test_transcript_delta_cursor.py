@@ -298,10 +298,13 @@ def test_terminal_event_flips_complete_and_verbatim_is_reported(tmp_path: Path) 
 
 
 def test_verbatim_available_tracks_a_valid_result_json(tmp_path: Path) -> None:
+    from zicato.telemetry.reducer import write_loss_profile
+    from zicato.testing.fixtures import make_loss_profile
     from zicato.tournament.unit_cache import RUN_RESULT_FORMAT_VERSION
 
     path = _events_path(tmp_path)
     _opening(path)
+    write_loss_profile(make_loss_profile(), path.parent / "loss.json")
     result = path.parent / "result.json"
 
     # A truncated / wrong-version capture is NOT a verbatim capture.

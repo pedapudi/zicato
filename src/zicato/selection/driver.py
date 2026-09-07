@@ -8,14 +8,22 @@ which keeps it testable without a workspace or live harness.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from zicato.core.measurement import (
+    UNKNOWN_SEED,
+    MeasurementDraw,
+    MeasurementPurpose,
+    validate_measurement_interval,
+)
+from zicato.core.tournament import ConfirmationStatus
 from zicato.selection.evidence_gate import (
     EVIDENCE_REPLICATE_BASE,
+    EvidenceAttempt,
     EvidenceVerdict,
-    closest_ci_duel,
     evidence_verdict,
     rating_block,
 )
@@ -40,7 +48,7 @@ RunMatchup = Callable[[Matchup], Awaitable[MatchupResult]]
 #: ``replicate_duel(left_id, right_id)`` runs ONE extra duel between an
 #: already-seeded pair, to a :class:`MatchupResult`. Used only by the opt-in
 #: Bradley--Terry pre-gate's defer→replicate loop: when a crowning promote is
-#: not yet decisive, the driver spends a replicate on the closest-CI duel
+#: not yet decisive, the driver spends a replicate on the crowning pair
 #: through this callable, refits, and rechecks. ``None`` (the default) disables
 #: the loop entirely — the pre-gate then defers/inconclusive on its current
 #: evidence without scheduling any new duel.
@@ -93,6 +101,7 @@ def make_evidence_replicate_duel(run_reserved_matchup: RunReservedMatchup) -> Re
     async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
         nonlocal replicates_run
         replicate_slot = EVIDENCE_REPLICATE_BASE + replicates_run
+        validate_measurement_interval(replicate_slot, 1, purpose=MeasurementPurpose.CONFIRMATION)
         replicates_run += 1
         return await run_reserved_matchup(
             Matchup(
@@ -142,12 +151,17 @@ class EvidencePreGate:
     threshold:
         The probability bar ``P(theta_child > theta_champion)`` must reach.
     replicate_budget:
-        How many extra closest-CI replicates the defer→replicate loop may spend
+        How many extra crowning-pair replicates the defer→replicate loop may spend
         before going terminal (``inconclusive``).
     """
 
     threshold: float
     replicate_budget: int
+
+    def __post_init__(self) -> None:
+        validate_measurement_interval(
+            EVIDENCE_REPLICATE_BASE, self.replicate_budget, allow_empty=True
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,9 +215,9 @@ async def resolve_tournament(
     ``pre_gate`` runs the optional Bradley--Terry "crown on
     evidence" pre-gate AFTER the strategy resolves a ``"promoted"`` decision:
     the crowning win is held unless the fitted rating clears the confidence
-    threshold AND the CIs separate. While it defers and ``replicate_duel`` is
-    supplied with budget remaining, the driver spends a replicate on the
-    closest-CI duel, refits, and rechecks (the defer→replicate loop). With
+    threshold and its adjusted difference interval excludes zero. While it defers
+    and ``replicate_duel`` is supplied with budget remaining, the driver spends a replicate on the
+    crowning pair, refits, and rechecks (the defer→replicate loop). With
     ``pre_gate`` set to ``None`` returns the strategy's decision verbatim.
 
     Each batch runs under the caller's concurrency (the same semaphore the
@@ -235,7 +249,8 @@ async def evaluate_tournament(
 ) -> TournamentEvaluation:
     """Drive a strategy and retain evidence used to confirm its crown."""
 
-    champion, challengers = await request_field(strategy.field_size())
+    planned_candidates = strategy.field_size()
+    champion, challengers = await request_field(planned_candidates)
     strategy.seed(champion, list(challengers))
     while not strategy.resolved():
         batch = strategy.next_matchups()
@@ -259,6 +274,7 @@ async def evaluate_tournament(
         pre_gate=pre_gate,
         replicate_duel=replicate_duel,
         on_inconclusive=on_inconclusive,
+        planned_candidates=planned_candidates,
     )
     return TournamentEvaluation(confirmed, evidence)
 
@@ -270,116 +286,158 @@ async def confirm_promotion_with_evidence(
     pre_gate: EvidencePreGate,
     replicate_duel: ReplicateDuel | None,
     on_inconclusive: OnInconclusive | None = None,
+    planned_candidates: int = 1,
 ) -> tuple[SelectionDecision, EvidenceResolution | None]:
-    """Run the Bradley--Terry pre-gate (+ defer→replicate loop) over a decision.
+    """Confirm a proposed promotion, retaining every attempt and its eligibility.
 
-    Only a ``"promoted"`` decision with an identified crowning challenger is
-    eligible — a reject / defer / no-promotion passes straight through (the
-    pre-gate can only hold a promotion, never force one). The crowning pair is
-    ``(champion, promoted_generation_id)``; its evidence is the whole accumulated
-    duel audit (``decision.matchups``), which the loop extends in place by
-    replicating the closest-CI duel and re-fitting.
-
-    The loop has two phases that share one replicate budget:
-
-    * **Bootstrap.** A structure like the gauntlet produces a single crowning
-      duel — below :data:`~zicato.selection.evidence_gate.MIN_CREDIBLE_DUELS`,
-      so there is no trustworthy fit yet. When a ``replicate_duel`` runner is
-      supplied with budget remaining, the loop replicates the crowning pair up
-      to the credibility floor before judging. With no runner / no budget it
-      passes the gate verdict through unchanged (no fit to override it — safe).
-    * **Refine.** Once credible, the verdict gates: ``promoted`` (CIs cleared)
-      terminates with the crown; ``deferred`` spends another closest-CI
-      replicate and refits; budget exhausted with overlapping CIs terminates
-      ``inconclusive``.
-
-    Returns ``(decision, resolution)``. The decision carries the pre-gate's
-    verdict folded in: ``promoted`` (cleared on evidence) or a terminal hold —
-    ``deferred`` (the closed enum's token for "kept for analysis, lineage head
-    unchanged") on an inconclusive duel. The accumulated audit (including any
-    replicate duels) is stamped on ``matchups`` so the journal records the
-    full evidence trail. ``resolution`` is the terminal
-    :class:`EvidenceResolution` (verdict + CI history) when a credible
-    terminal was reached, or ``None`` on a pass-through (a non-promote
-    decision, or a fit that never reached credibility) — the caller journals
-    it as the round's evidence block. On an inconclusive terminal the
-    ``on_inconclusive`` callback additionally receives the same resolution so
-    the orchestrator can write the dead-letter record.
-
-    :func:`evaluate_tournament` uses this confirmation for every strategy,
-    including the gauntlet's single crowning duel. All structures therefore
-    share the same defer, replicate, and inconclusive adjudication.
+    Required but unresolved confirmation terminates inconclusive and preserves
+    the champion. The planned candidate family and replicate budget remain fixed
+    throughout confirmation. Strategy results select the pair and remain in the
+    audit but never supply inferential observations. Each attempted draw consumes
+    budget, including a duplicate, tie, incomplete measurement, or runner failure. Replayed and
+    unusable observations never contribute to fitted evidence. Generation and
+    draw identity conservatively reserve every entry in that draw: even disjoint
+    board subsets cannot present the same draw as another independent sample.
+    Historical purpose/draw records without a selected seed cannot establish
+    independent measurement identity.
     """
     promoted_id = decision.promoted_generation_id
     if decision.decision != "promoted" or promoted_id is None:
         return decision, None
 
     parent_id = champion.generation_id
-    audit: list[MatchupResult] = list(decision.matchups)
+    observed_matchups: list[MatchupResult] = []
+    audit: list[MatchupResult] = []
+    attempts: list[EvidenceAttempt] = []
     ci_history: list[dict[str, Any]] = []
-    replicates_spent = 0
-    # The audit must only ever accumulate DISTINCT draws: the replicate ids
-    # encode the reserved replicate index (see the ReplicateDuel contract),
-    # so a duplicate id is the same draw re-presented — appending it would
-    # shrink the fitted SE by pure repetition, never by new evidence.
-    seen_matchup_ids = {r.matchup_id for r in audit}
+    seen_matchup_ids: set[str] = set()
+    seen_draws: set[tuple[str, MeasurementDraw]] = set()
 
+    def retain(result: MatchupResult, *, budget_spent: int) -> None:
+        observed_matchups.append(result)
+        measurement = result.measurement_draw
+        units = (
+            {(gid, measurement) for gid in (result.left_id, result.right_id)}
+            if measurement
+            else set()
+        )
+        if not budget_spent:
+            eligibility = "selection_only"
+        elif result.matchup_id in seen_matchup_ids:
+            eligibility = "duplicate"
+        elif budget_spent and {result.left_id, result.right_id} != {parent_id, promoted_id}:
+            eligibility = "unexpected_pair"
+        elif not result.execution_complete:
+            eligibility = "incomplete"
+        elif not math.isfinite(result.outcome.delta_scalar):
+            eligibility = "nonfinite"
+        elif result.left_id == result.right_id:
+            eligibility = "self_comparison"
+        elif measurement is None or measurement.base_seed is UNKNOWN_SEED:
+            eligibility = "missing_provenance"
+        elif measurement.purpose != MeasurementPurpose.CONFIRMATION:
+            eligibility = "wrong_purpose"
+        elif units & seen_draws:
+            eligibility = "repeated_measurement"
+        elif result.outcome.delta_scalar == 0.0:
+            eligibility = "tie"
+        else:
+            eligibility = "eligible"
+        attempts.append(
+            EvidenceAttempt(
+                matchup_id=result.matchup_id,
+                left_id=result.left_id,
+                right_id=result.right_id,
+                eligibility=eligibility,
+                budget_spent=budget_spent,
+                delta_scalar=(
+                    result.outcome.delta_scalar
+                    if math.isfinite(result.outcome.delta_scalar)
+                    else None
+                ),
+                reason=result.outcome.reason,
+                measurement_draw=measurement,
+            )
+        )
+        seen_matchup_ids.add(result.matchup_id)
+        # Reserve identities even for ties or unusable draws. Admission order
+        # follows the fixed draw schedule and never selects a favorable reuse.
+        seen_draws.update(units)
+        if eligibility in {"eligible", "tie"}:
+            audit.append(result)
+
+    for observed in decision.matchups:
+        retain(observed, budget_spent=0)
+    replicates_spent = 0
     while True:
-        verdict = evidence_verdict(
-            "promoted",
-            decision.reason,
-            audit=audit,
-            parent_id=parent_id,
-            child_id=promoted_id,
-            threshold=pre_gate.threshold,
-            replicate_budget=pre_gate.replicate_budget,
-            replicates_spent=replicates_spent,
+        verdict = replace(
+            evidence_verdict(
+                "promoted",
+                decision.reason,
+                audit=audit,
+                parent_id=parent_id,
+                child_id=promoted_id,
+                threshold=pre_gate.threshold,
+                replicate_budget=pre_gate.replicate_budget,
+                replicates_spent=replicates_spent,
+                planned_candidates=planned_candidates,
+            ),
+            attempts=tuple(attempts),
         )
         ci_history.append(
             {
                 "p_stronger": verdict.p_stronger,
                 "ci_overlap": verdict.ci_overlap,
                 "replicates_spent": replicates_spent,
+                "confirmation_status": verdict.confirmation_status,
+                "n_duels": verdict.n_duels,
             }
         )
-
-        # A credible, already-decisive verdict (promoted) terminates here.
-        if verdict.credible and verdict.decision != "deferred":
-            return _finalize(decision, verdict, audit, ci_history, promoted_id, on_inconclusive)
-
-        # Either not yet credible (bootstrap toward the floor) or credibly
-        # deferred (refine toward separation): both want one more replicate.
-        # Without a runner or budget, or a closest-CI duel to spend on, we
-        # cannot gather more evidence.
-        has_budget = replicate_duel is not None and replicates_spent < pre_gate.replicate_budget
-        candidate = (
-            closest_ci_duel(audit, restrict_to=(parent_id, promoted_id)) if has_budget else None
-        )
-        if replicate_duel is None or candidate is None:
-            if not verdict.credible:
-                # Never reached the credibility floor → no trustworthy fit to
-                # override the gate; the strategy's promotion stands verbatim.
-                return decision, None
-            # Credible but unresolved with no way to spend more budget ⇒ the
-            # hold is terminal: a dead-letter inconclusive rather than a dangling defer.
-            terminal = replace(verdict, decision="inconclusive")
-            return _finalize(decision, terminal, audit, ci_history, promoted_id, on_inconclusive)
-
-        extra = await replicate_duel(candidate.left_id, candidate.right_id)
-        # The spend is counted regardless: the budget bounds duels RUN, and
-        # skipping the count on a duplicate would loop forever against a
-        # runner that keeps replaying one draw.
-        replicates_spent += 1
-        if extra.matchup_id in seen_matchup_ids:
-            log.warning(
-                "evidence pre-gate: replicate duel returned an already-audited "
-                "draw (matchup_id %r) — not appended to the Bradley--Terry "
-                "audit; identical data must never separate CIs",
-                extra.matchup_id,
+        if verdict.confirmation_status == ConfirmationStatus.SATISFIED:
+            return _finalize(
+                decision, verdict, observed_matchups, ci_history, promoted_id, on_inconclusive
             )
-            continue
-        seen_matchup_ids.add(extra.matchup_id)
-        audit.append(extra)
+
+        if replicate_duel is None or replicates_spent >= pre_gate.replicate_budget:
+            cause = "runner unavailable" if replicate_duel is None else "replicate budget exhausted"
+            terminal = replace(
+                verdict,
+                decision="inconclusive",
+                reason=f"confirmation incomplete: {cause}; {verdict.n_duels} resolved pair duels",
+            )
+            return _finalize(
+                decision, terminal, observed_matchups, ci_history, promoted_id, on_inconclusive
+            )
+
+        # The crowning pair is known before a fit exists. Ties and incomplete
+        # observations cannot prevent a fresh attempt to measure that pair.
+        replicates_spent += 1
+        try:
+            extra = await replicate_duel(parent_id, promoted_id)
+        except Exception as exc:  # cancellation remains a BaseException
+            log.exception("confirmation runner failed")
+            attempts.append(
+                EvidenceAttempt(
+                    matchup_id="",
+                    left_id=parent_id,
+                    right_id=promoted_id,
+                    eligibility="error",
+                    budget_spent=1,
+                    reason=type(exc).__name__,
+                )
+            )
+            terminal = replace(
+                verdict,
+                decision="inconclusive",
+                reason=f"confirmation incomplete: runner failed ({type(exc).__name__})",
+                replicates_spent=replicates_spent,
+                attempts=tuple(attempts),
+            )
+            ci_history.append({**ci_history[-1], "replicates_spent": replicates_spent})
+            return _finalize(
+                decision, terminal, observed_matchups, ci_history, promoted_id, on_inconclusive
+            )
+        retain(extra, budget_spent=1)
 
 
 def _finalize(
@@ -390,24 +448,17 @@ def _finalize(
     promoted_id: str,
     on_inconclusive: OnInconclusive | None,
 ) -> tuple[SelectionDecision, EvidenceResolution | None]:
-    """Fold a terminal pre-gate verdict into the crowned decision.
+    """Fold confirmed or inconclusive evidence into the terminal selection.
 
-    A ``promoted`` verdict keeps the crown; ``inconclusive`` maps to the
-    closed enum's ``DEFERRED`` token (the experiment is kept for analysis, the
-    lineage head unchanged) and fires ``on_inconclusive`` so the caller records
-    the dead-letter entry. A ``credible=False`` pass-through keeps the original
-    decision verbatim (no fit to override it). Returns the decision paired
-    with the terminal :class:`EvidenceResolution` (``None`` on pass-through).
+    Satisfied confirmation retains the crown. Inconclusive confirmation records
+    a deferred decision, preserves every accepted observation, and invokes the
+    dead-letter callback with all attempts and confidence checks.
     """
     from zicato.core import TournamentDecision  # noqa: PLC0415
 
-    if not verdict.credible:
-        # No trustworthy fit ⇒ the strategy's decision stands unchanged.
-        return decision, None
-
     resolution = EvidenceResolution(verdict=verdict, ci_history=tuple(ci_history))
 
-    if verdict.decision == "promoted":
+    if verdict.confirmation_status == ConfirmationStatus.SATISFIED:
         return (
             replace(
                 decision,

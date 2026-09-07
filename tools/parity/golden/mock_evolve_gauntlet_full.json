@@ -28,10 +28,15 @@
         "drift_loss_delta": -1.6,
         "drift_movements": [],
         "eliminated_in_round": null,
-        "evidence": null,
+        "evidence": {
+          "confirmation_status": "disabled",
+          "present": false,
+          "reason": "no promotion confidence threshold in the evaluation contract"
+        },
         "final_rank": 1,
         "generalization_gap": 0.0,
         "holdout": {
+          "confirmation_status": "satisfied",
           "confirmed": true,
           "holdout_consulted": true,
           "holdout_scalar": 0.4,
@@ -40,6 +45,7 @@
           "ladder_budget_total": 16,
           "ladder_query_reserved": true,
           "ladder_released": true,
+          "reason": "",
           "threshold": 0.01,
           "train_scalar": 0.4
         },
@@ -74,6 +80,7 @@
   "field_tournaments": {},
   "gen_scores": {
     "v0": {
+      "base_seed": null,
       "drift_loss_mean": 2.0,
       "entry_count": 2,
       "expectation_count": 2,
@@ -121,6 +128,7 @@
       "scalar_provenance": "builtin"
     },
     "v1": {
+      "base_seed": null,
       "drift_loss_mean": 0.4,
       "entry_count": 2,
       "expectation_count": 2,
@@ -198,7 +206,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "47ddda36cbc2b699220b08969db7adaff06bd31b4ce6576636f0213d8643de1e"
+          "contract_hash": "820beaf136b7db63d33646fcbef1f30e60d07a10a07dfcdaf556b40ed492e590"
         },
         "scope": {},
         "seq": 1,

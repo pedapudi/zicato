@@ -28,10 +28,15 @@
         "drift_loss_delta": -1.6,
         "drift_movements": [],
         "eliminated_in_round": null,
-        "evidence": null,
+        "evidence": {
+          "confirmation_status": "disabled",
+          "present": false,
+          "reason": "no promotion confidence threshold in the evaluation contract"
+        },
         "final_rank": 1,
         "generalization_gap": 0.0,
         "holdout": {
+          "confirmation_status": "satisfied",
           "confirmed": true,
           "holdout_consulted": true,
           "holdout_scalar": 0.4,
@@ -40,6 +45,7 @@
           "ladder_budget_total": 16,
           "ladder_query_reserved": true,
           "ladder_released": true,
+          "reason": "",
           "threshold": 0.01,
           "train_scalar": 0.4
         },
@@ -74,6 +80,7 @@
   "field_tournaments": {},
   "gen_scores": {
     "v0": {
+      "base_seed": null,
       "drift_loss_mean": 2.0,
       "entry_count": 5,
       "expectation_count": 5,
@@ -139,6 +146,7 @@
       "scalar_provenance": "builtin"
     },
     "v1": {
+      "base_seed": null,
       "drift_loss_mean": 0.4,
       "entry_count": 5,
       "expectation_count": 5,
@@ -230,7 +238,7 @@
     "format_version": 1
   },
   "losses": {
-    "v0/runs/every_expectation_kind_demo/loss.json": {
+    "v0/runs/every_expectation_kind_demo/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -244,6 +252,11 @@
       "generation_id": "v0",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -253,7 +266,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v0-every_expectation_kind_demo-r0",
+      "run_id": "seed-none.v0--every_expectation_kind_demo",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -266,7 +279,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/picky_stakeholder_emulated/loss.json": {
+    "v0/runs/picky_stakeholder_emulated/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -280,6 +293,11 @@
       "generation_id": "v0",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -289,7 +307,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v0-picky_stakeholder_emulated-r0",
+      "run_id": "seed-none.v0--picky_stakeholder_emulated",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -302,7 +320,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/q3_metrics_outline/loss.json": {
+    "v0/runs/q3_metrics_outline/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -316,6 +334,11 @@
       "generation_id": "v0",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -325,7 +348,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v0-q3_metrics_outline-r0",
+      "run_id": "seed-none.v0--q3_metrics_outline",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -338,7 +361,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/transformers_lay_audience/loss.json": {
+    "v0/runs/transformers_lay_audience/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -352,6 +375,11 @@
       "generation_id": "v0",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -361,7 +389,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v0-transformers_lay_audience-r0",
+      "run_id": "seed-none.v0--transformers_lay_audience",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -374,7 +402,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/transformers_progressive_scripted/loss.json": {
+    "v0/runs/transformers_progressive_scripted/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -388,6 +416,11 @@
       "generation_id": "v0",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -397,7 +430,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v0-transformers_progressive_scripted-r0",
+      "run_id": "seed-none.v0--transformers_progressive_scripted",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -410,7 +443,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/waffles_revision_scripted/loss.json": {
+    "v0/runs/waffles_revision_scripted/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -424,6 +457,11 @@
       "generation_id": "v0",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -433,7 +471,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v0-waffles_revision_scripted-r0",
+      "run_id": "seed-none.v0--waffles_revision_scripted",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -446,7 +484,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v0/runs/waffles_single/loss.json": {
+    "v0/runs/waffles_single/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -460,6 +498,11 @@
       "generation_id": "v0",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -469,7 +512,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v0-waffles_single-r0",
+      "run_id": "seed-none.v0--waffles_single",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -482,7 +525,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/every_expectation_kind_demo/loss.json": {
+    "v1/runs/every_expectation_kind_demo/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -508,6 +551,11 @@
       "generation_id": "v1",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -517,7 +565,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v1-every_expectation_kind_demo",
+      "run_id": "seed-none.v1--every_expectation_kind_demo",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -530,7 +578,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/picky_stakeholder_emulated/loss.json": {
+    "v1/runs/picky_stakeholder_emulated/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -556,6 +604,11 @@
       "generation_id": "v1",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -565,7 +618,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v1-picky_stakeholder_emulated",
+      "run_id": "seed-none.v1--picky_stakeholder_emulated",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -578,7 +631,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/q3_metrics_outline/loss.json": {
+    "v1/runs/q3_metrics_outline/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -604,6 +657,11 @@
       "generation_id": "v1",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -613,7 +671,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v1-q3_metrics_outline",
+      "run_id": "seed-none.v1--q3_metrics_outline",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -626,7 +684,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/transformers_lay_audience/loss.json": {
+    "v1/runs/transformers_lay_audience/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -652,6 +710,11 @@
       "generation_id": "v1",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -661,7 +724,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v1-transformers_lay_audience",
+      "run_id": "seed-none.v1--transformers_lay_audience",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -674,7 +737,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/transformers_progressive_scripted/loss.json": {
+    "v1/runs/transformers_progressive_scripted/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -700,6 +763,11 @@
       "generation_id": "v1",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -709,7 +777,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v1-transformers_progressive_scripted",
+      "run_id": "seed-none.v1--transformers_progressive_scripted",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -722,7 +790,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/waffles_revision_scripted/loss.json": {
+    "v1/runs/waffles_revision_scripted/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -742,6 +810,11 @@
       "generation_id": "v1",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -751,7 +824,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v1-waffles_revision_scripted",
+      "run_id": "seed-none.v1--waffles_revision_scripted",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -764,7 +837,7 @@
       "turns_completed": null,
       "wall_clock_budget_exceeded": false
     },
-    "v1/runs/waffles_single/loss.json": {
+    "v1/runs/waffles_single/seed-none/loss.json": {
       "abort_cause": null,
       "adk_session_id": "",
       "cached": false,
@@ -790,6 +863,11 @@
       "generation_id": "v1",
       "judge_errors": [],
       "match_id": "",
+      "measurement": {
+        "base_seed": null,
+        "draw": 0,
+        "purpose": "tournament"
+      },
       "memory_failure_count": null,
       "metric_counts": [],
       "metrics": null,
@@ -799,7 +877,7 @@
       "pass_fail": true,
       "per_judge_loss": [],
       "plan_revisions": 0,
-      "run_id": "r-v1-waffles_single",
+      "run_id": "seed-none.v1--waffles_single",
       "runtime_ms": "<RUNTIME>",
       "schema_failures": 0,
       "score": null,
@@ -817,7 +895,7 @@
     "0/round_log.jsonl": [
       {
         "payload": {
-          "contract_hash": "47ddda36cbc2b699220b08969db7adaff06bd31b4ce6576636f0213d8643de1e"
+          "contract_hash": "820beaf136b7db63d33646fcbef1f30e60d07a10a07dfcdaf556b40ed492e590"
         },
         "scope": {},
         "seq": 1,

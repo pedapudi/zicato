@@ -21,10 +21,11 @@ from pathlib import Path
 import pytest
 
 from zicato.core.loss import LossProfile
-from zicato.core.workspace import WorkspaceLayout, loss_profile_path
+from zicato.core.workspace import loss_profile_path
 from zicato.query.paths import WorkspacePaths
 from zicato.query.replicate_scores import standard_error
 from zicato.query.tournament_view import build_matchup_grid
+from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-08-17_signal"
 

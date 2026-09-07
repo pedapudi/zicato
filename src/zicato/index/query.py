@@ -192,13 +192,21 @@ def generations_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     degrade on a null. The rating triple (``elo`` / ``elo_se`` /
     ``elo_games``; v10 + v12, visibility-only) rides the same optional
     contract — present-but-null on an index at an earlier schema version, or
-    on an unplayed generation.
+    on an unplayed generation. ``elo_se`` is null even in historical indexes
+    that stored a value, because match-ledger rows lack independent provenance.
     """
     return _select_optional_columns(
         db_path,
         "generations",
-        ["epoch_id", "generation_id", "parent_generation_id", "promoted", "created_at"],
-        ["round_index", "elo", "elo_se", "elo_games"],
+        [
+            "epoch_id",
+            "generation_id",
+            "parent_generation_id",
+            "promoted",
+            "created_at",
+            "NULL AS elo_se",
+        ],
+        ["round_index", "elo", "elo_games"],
         "WHERE epoch_id = ? ORDER BY created_at, generation_id",
         (epoch_id,),
     )
@@ -945,23 +953,23 @@ def elo_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     FUNCTIONALITY-RECOMMENDATIONS.md §5): one row per generation carrying
     ``generation_id``, ``parent_generation_id``, ``elo`` (its batch-fit
     rating across the lineage's settled match ledger, on the Elo scale),
-    ``elo_se`` (the rating's standard error on the same scale), and
+    ``elo_se`` (always null without independent measurement provenance), and
     ``elo_games`` (how many settled duels contributed to it), oldest first.
 
     The rating is **read-only / for visibility** — it never gates
     promotion. ``elo`` / ``elo_games`` land in schema v10 and ``elo_se`` in
     v12: an index at an earlier schema version, opened read-only without the
     migration, still loads each row with all three fields present-but-null
-    (``elo IS NULL`` = rating not computed; ``elo_se IS NULL`` = uncertainty
-    not computed; run ``zicato repair index`` to derive them). A
+    (``elo IS NULL`` means the point rating has not been computed).
+    Repairing the index does not establish independent uncertainty. A
     generation that never played a settled duel also reads NULL (no games,
     no rating). A never-indexed workspace yields ``[]``.
     """
     return _select_optional_columns(
         db_path,
         "generations",
-        ["epoch_id", "generation_id", "parent_generation_id", "created_at"],
-        ["elo", "elo_se", "elo_games"],
+        ["epoch_id", "generation_id", "parent_generation_id", "created_at", "NULL AS elo_se"],
+        ["elo", "elo_games"],
         "WHERE epoch_id = ? ORDER BY created_at, generation_id",
         (epoch_id,),
     )

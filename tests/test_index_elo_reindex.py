@@ -103,23 +103,23 @@ def test_reindex_populates_elo_columns(tmp_path: Path) -> None:
     assert rows["v3"]["elo_games"] == 1  # beat v2
 
 
-def test_reindex_populates_elo_se_positive(tmp_path: Path) -> None:
-    # The v12 column: every rated generation carries a finite, strictly
-    # positive standard error from the fit's Fisher information.
+def test_reindex_keeps_descriptive_uncertainty_unknown(tmp_path: Path) -> None:
+    """Historical matchup rows retain ratings without independent uncertainty."""
     ws, eid = _build_chain_workspace(tmp_path)
     db = rebuild_index(ws)
     conn = sqlite3.connect(db)
     try:
         rows = conn.execute(
-            "SELECT generation_id, elo_se FROM generations WHERE epoch_id = ?",
+            "SELECT generation_id, elo_se, elo, elo_games FROM generations WHERE epoch_id = ?",
             (eid,),
         ).fetchall()
     finally:
         conn.close()
     assert {r[0] for r in rows} == {"v0", "v1", "v2", "v3"}
-    for gid, se in rows:
-        assert se is not None, f"{gid} missing elo_se"
-        assert se > 0.0
+    for _gid, se, rating, games in rows:
+        assert se is None
+        assert rating is not None
+        assert games > 0
 
 
 def test_reindex_elo_ordering_rewards_the_consistent_winner(tmp_path: Path) -> None:

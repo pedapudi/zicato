@@ -49,6 +49,7 @@ from zicato.tournament.detectable_effect import (
     students_t_upper_quantile,
 )
 from zicato.workspace import read_board_entries, read_loss, run_entry_ids
+from zicato.workspace.reads import generation_base_seed
 
 # The minimum-comparisons honesty threshold for the DEAD-eval finding
 # (EVAL-VIEW.md §5): an entry needs at least this many both-sides
@@ -342,13 +343,18 @@ def _per_entry_flip_rates(
     :func:`flip_rate`. Returns ``{entry_id: flip_rate | None}`` — empty when
     calibration was never measured.
     """
-    from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
+    from zicato.core.measurement import UNKNOWN_SEED, validate_measurement_interval  # noqa: PLC0415
     from zicato.tournament.calibration import CALIBRATION_REPLICATE_BASE  # noqa: PLC0415
-    from zicato.tournament.unit_cache import _unit_loss_path  # noqa: PLC0415
+    from zicato.tournament.unit_cache import _resolve_cached_unit  # noqa: PLC0415
 
     gen = calibration.get("generation_id")
     runs = calibration.get("runs") or 0
     if not calibration.get("measured") or not isinstance(gen, str) or runs < 2:
+        return {}
+
+    try:
+        validate_measurement_interval(CALIBRATION_REPLICATE_BASE, runs)
+    except ValueError:
         return {}
 
     # Discover which entries have a champion run dir (the calibration wrote one
@@ -358,11 +364,14 @@ def _per_entry_flip_rates(
         draws: list[bool | None] = []
         for i in range(runs):
             replicate = CALIBRATION_REPLICATE_BASE + i
-            path = _unit_loss_path(paths.root, epoch_id, gen, entry_id, replicate)
-            try:
-                profile = read_loss_profile(path)
-            except (OSError, ValueError, KeyError, json.JSONDecodeError):
-                profile = None
+            profile = _resolve_cached_unit(
+                workspace_root=paths.root,
+                epoch_id=epoch_id,
+                generation_id=gen,
+                entry_id=entry_id,
+                replicate_index=replicate,
+                base_seed=calibration.get("base_seed", UNKNOWN_SEED),
+            )
             if profile is None:
                 continue
             draws.append(getattr(profile, "pass_fail", None))
@@ -1433,8 +1442,18 @@ def _generation_loss_profiles(
 
     layout = layout_of(paths)
     out: list[Any] = []
+    try:
+        selected_seed = generation_base_seed(layout, epoch_id, generation_id)
+    except ValueError:
+        return []
     for entry_id in run_entry_ids(layout, epoch_id, generation_id):
-        raw = read_loss(layout, epoch_id, generation_id, entry_id)
+        raw = read_loss(
+            layout,
+            epoch_id,
+            generation_id,
+            entry_id,
+            base_seed=selected_seed,
+        )
         if raw is None:
             continue
         try:

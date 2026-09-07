@@ -10,6 +10,7 @@ subprocess ``_run_single`` is stubbed with canned losses — no live runs.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -24,8 +25,10 @@ from zicato.core import (
     ScoringWeights,
 )
 from zicato.core.types import DriftCount, ExpectationResult
+from zicato.core.workspace import run_id_for_unit
 from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock
 from zicato.tournament.runner import run_matchup, run_tournament
+from zicato.tournament.worker_transport import _entry_replicate_index
 from zicato.util.async_tasks import gather_owned
 
 
@@ -277,10 +280,15 @@ def test_run_matchup_budget_returns_partial_aggregate(monkeypatch, tmp_path):
     async def slow_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, weights, workspace_root, epoch_id, side, match_id
         ran.append(entry.id)
         await asyncio.sleep(0.05)  # push the running total past the tiny budget
-        return _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True)
+        return replace(
+            _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True),
+            run_id=run_id_for_unit(
+                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+            ),
+        )
 
     monkeypatch.setattr(runner_mod, "_run_single", slow_run_single)
 
@@ -307,17 +315,16 @@ def test_run_matchup_budget_returns_partial_aggregate(monkeypatch, tmp_path):
     # aggregate covers the full board, with skipped units synthesised.
     assert set(result.per_entry_losses) == {e.id for e in board}
 
-    # At least one skipped unit is marked budget-exceeded on BOTH sides.
+    # Both sides retain the scheduling omission without a task failure.
     skipped_ids = {e.id for e in board} - launched
     assert skipped_ids, "expected some units to be skipped"
     for entry_id in skipped_ids:
         left_loss, right_loss = result.per_entry_losses[entry_id]
-        assert left_loss.wall_clock_budget_exceeded is True
-        assert right_loss.wall_clock_budget_exceeded is True
+        assert left_loss.execution_started is False
+        assert right_loss.execution_started is False
+    assert result.outcome.decision == "deferred"
 
-    # A skipped unit is persisted (cache hit next time): re-running with the
-    # SAME (now generous) budget reuses every persisted unit and launches
-    # NOTHING new.
+    # A later matchup reuses completed measurements and runs the omitted units.
     ran.clear()
     asyncio.run(
         run_matchup(
@@ -334,7 +341,8 @@ def test_run_matchup_budget_returns_partial_aggregate(monkeypatch, tmp_path):
             fast=True,  # cache-first reuse of every persisted unit
         )
     )
-    assert ran == [], "persisted budget-exceeded units were not reused as cache hits"
+    assert set(ran) == skipped_ids
+    assert len(ran) == 2 * len(skipped_ids)
 
 
 def test_run_matchup_unset_budget_runs_every_unit(monkeypatch, tmp_path):

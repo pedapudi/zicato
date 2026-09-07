@@ -15,8 +15,8 @@ structure (OVERFITTING.md §3/§4):
   (``holdout_not_confirmed``) — the champion stands;
 * the per-epoch ladder budget is SHARED + decremented across the structure's
   confirmation;
-* an EMPTY holdout (small board / split disabled) is byte-identical to today's
-  whole-board non-gauntlet behaviour (a regression guard).
+* an empty holdout preserves the training decision and records confirmation
+  explicitly as disabled.
 
 The harness mock keys the canned per-board loss on ``(generation, entry)`` so
 the train and holdout slices can diverge for one challenger — the only thing
@@ -172,6 +172,7 @@ def _bootstrap(
     field_size: int,
     overfitting: OverfittingConfig | None = None,
     with_holdout_tag: bool = True,
+    confirmation_params: dict[str, object] | None = None,
 ) -> tuple[Path, str]:
     """Workspace + non-gauntlet epoch + a v0 baseline over a multi-entry board.
 
@@ -192,6 +193,7 @@ def _bootstrap(
                 # tags this fixture never writes.
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
+                "runtime": {"parallelism": 2, "propose_parallelism": 2},
             }
         )
     )
@@ -233,7 +235,8 @@ def _bootstrap(
             ScoringWeights(
                 promote_margin=0.1,
                 tournament_structure=TournamentStructure(
-                    structure=structure, params=_struct_params(structure, field_size)
+                    structure=structure,
+                    params={**_struct_params(structure, field_size), **(confirmation_params or {})},
                 ),
                 experimental=experimental_for(structure),
                 **({"overfitting": overfitting} if overfitting is not None else {}),
@@ -412,9 +415,8 @@ def test_empty_holdout_degrades_to_whole_board(
     structure: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """With the split disabled (empty holdout) the non-gauntlet path is
-    byte-identical to today: the holdout step is skipped, no ladder state is
-    written, and no holdout fields are persisted — even when one entry would
-    have regressed on a (now non-existent) holdout slice."""
+    the training decision is preserved, no query is charged, and the record
+    identifies confirmation as disabled."""
     workspace, epoch_id = _bootstrap(
         tmp_path,
         structure=structure,
@@ -447,9 +449,9 @@ def test_empty_holdout_degrades_to_whole_board(
     assert outcome.tournament_decision == "promoted", structure
     crowned = outcome.proposed_generation_id
     rec = _crowned_outcome(workspace, epoch_id, crowned)
-    # No holdout was consulted: no evidence block, no holdout/gap fields, and
+    # No holdout was consulted: a disabled block, no holdout/gap scalars, and
     # no ladder state file was written (no query charged).
-    assert rec["holdout"] is None
+    assert rec["holdout"]["confirmation_status"] == "disabled"
     assert rec["holdout_loss"] is None
     assert rec["generalization_gap"] is None
     assert not ladder_state_path(workspace, epoch_id).exists()

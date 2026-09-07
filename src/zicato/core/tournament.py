@@ -12,6 +12,7 @@ from enum import StrEnum
 from typing import Any, Literal
 
 from zicato.core.constraints import KnobConstraint
+from zicato.core.measurement import MeasurementPurpose, measurement_range
 
 # ---------------------------------------------------------------------------
 # Tournament decision / structure
@@ -38,6 +39,15 @@ class TournamentDecision(StrEnum):
     PROMOTED = "promoted"
     REJECTED = "rejected"
     DEFERRED = "deferred"
+
+
+class ConfirmationStatus(StrEnum):
+    """Whether a promotion requirement is disabled, satisfied, failed, or incomplete."""
+
+    DISABLED = "disabled"
+    SATISFIED = "satisfied"
+    FAILED = "failed"
+    INCOMPLETE = "incomplete"
 
 
 #: The keys a recorded ``outcome`` object may carry its decision token
@@ -186,7 +196,17 @@ def experimental_structure_refusal(structure: str) -> str:
 #: ``replicates`` is how many times a duel is re-run and averaged, so fewer
 #: than one is not a cheaper tournament but no measurement at all.
 TOURNAMENT_PARAM_CONSTRAINTS: Mapping[str, KnobConstraint] = {
-    "replicates": KnobConstraint(minimum=1, label='tournament params["replicates"]'),
+    "replicates": KnobConstraint(
+        minimum=1,
+        maximum=measurement_range(MeasurementPurpose.TOURNAMENT).span,
+        label='tournament params["replicates"]',
+    ),
+    "promote_confidence_replicates": KnobConstraint(
+        minimum=0,
+        maximum=measurement_range(MeasurementPurpose.CONFIRMATION).span,
+        allow_none=True,
+        label='tournament params["promote_confidence_replicates"]',
+    ),
 }
 
 

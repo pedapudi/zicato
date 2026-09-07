@@ -136,12 +136,8 @@ may break an entry by design. Both cases bake the loss into the lineage
 silently. This reports them and stops there: it is WARN-ONLY, it never vetoes,
 and it stays out of ``reason`` so the empty-reason-on-promote invariant holds.
 
-The gate uses ``decision="deferred"`` ONLY when called explicitly by a
-caller who has decided neither rule cleanly fired — the function in
-this module returns ``"promoted"`` or ``"rejected"``. (Deferral is a
-runner-level concept, kept in the :class:`TournamentDecision` literal
-type so callers can pre-merge their own deferral logic without a
-schema bump.)
+An aggregate with unstarted board units yields ``decision="deferred"``.
+Its partial scalar describes completed work and cannot support promotion.
 """
 
 from __future__ import annotations
@@ -225,8 +221,8 @@ class GateOutcome:
     ------
     decision:
         ``"promoted"`` | ``"rejected"`` | ``"deferred"``. The function
-        :func:`evaluate_gate` returns ``"promoted"`` or ``"rejected"``
-        only; deferral is reserved for higher-level callers.
+        :func:`evaluate_gate` defers incomplete execution and otherwise
+        returns a promotion or rejection under the scoring rules.
     reason:
         Human-readable explanation. Empty string when promoted. For
         rejections, identifies which rule fired and (for pass-rate
@@ -663,6 +659,8 @@ def _holdout_confirms(
     holdout a guard against board-memorization rather than a second,
     stricter promotion bar.
     """
+    if holdout_parent_agg.get("incomplete_entries") or holdout_child_agg.get("incomplete_entries"):
+        return "holdout_not_confirmed: incomplete execution of requested board units"
     margin = effective_holdout_margin(weights)
     parent_scalar = float(holdout_parent_agg["scalar"])
     child_scalar = float(holdout_child_agg["scalar"])
@@ -806,6 +804,20 @@ def evaluate_gate(
 
     delta_scalar = child_scalar - parent_scalar
     delta_pass_rate = child_pass - parent_pass
+
+    for label, aggregate in (
+        ("champion", parent_agg),
+        ("challenger", child_agg),
+        ("holdout champion", holdout_parent_agg),
+        ("holdout challenger", holdout_child_agg),
+    ):
+        if aggregate and aggregate.get("incomplete_entries"):
+            return GateOutcome(
+                decision=TournamentDecision.DEFERRED,
+                reason=f"incomplete execution: {label} has unstarted board units",
+                delta_scalar=delta_scalar,
+                delta_pass_rate=delta_pass_rate,
+            )
 
     # Per-entry regressions attributable to THIS duel, on every path and both
     # verdicts (issue #130). Observation only — it never changes a decision and

@@ -276,7 +276,7 @@ def test_oc_proof_noise_draws_land_at_base_6000_and_never_touch_r0(
     # reserved 6000 cache slots are.
     rundir = run_dir(workspace, EPOCH, CHAMPION, "noisy_probe")
     assert not loss_profile_path(workspace, EPOCH, CHAMPION, "noisy_probe").exists()
-    assert (rundir / f"loss.r{SYNTHESIS_REPLICATE_BASE}.json").exists()
+    assert (rundir / "seed-none" / f"loss.r{SYNTHESIS_REPLICATE_BASE}.json").exists()
 
 
 def test_oc_proof_noisy_entry_has_nonzero_measured_flip_rate(tmp_path: Path, monkeypatch) -> None:

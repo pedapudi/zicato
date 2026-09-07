@@ -18,7 +18,7 @@ import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import ModuleType
 from typing import Any, TypeGuard
@@ -32,6 +32,7 @@ from zicato.tournament.ladder import (
     LadderRelease,
     LadderState,
     decide_reserved_holdout,
+    disabled_holdout_record,
     effective_threshold,
     holdout_record,
     reserve_holdout_query,
@@ -322,8 +323,9 @@ def _settle_ladder_query(
     weights: ScoringWeights,
     train_parent_scalar: float,
     train_child_scalar: float,
-    holdout_scalar: float,
+    holdout_scalar: float | None,
     holdout_confirmed: bool,
+    observation_complete: bool = True,
 ) -> tuple[LadderRelease, int]:
     """Publish a reserved query's release decision without charging twice."""
     path = ladder_state_path(workspace_root, epoch_id)
@@ -345,15 +347,26 @@ def _settle_ladder_query(
             raise LadderStateError(
                 f"Ladder reservation was already settled or is unknown at {path}"
             )
-        release = decide_reserved_holdout(
-            record.state,
-            cfg=cfg,
-            weights=weights,
-            train_parent_scalar=train_parent_scalar,
-            train_child_scalar=train_child_scalar,
-            holdout_scalar=holdout_scalar,
-            holdout_confirmed=holdout_confirmed,
-        )
+        if observation_complete:
+            if holdout_scalar is None:
+                raise LadderStateError("complete holdout evidence requires a scalar")
+            release = decide_reserved_holdout(
+                record.state,
+                cfg=cfg,
+                weights=weights,
+                train_parent_scalar=train_parent_scalar,
+                train_child_scalar=train_child_scalar,
+                holdout_scalar=holdout_scalar,
+                holdout_confirmed=holdout_confirmed,
+            )
+        else:
+            release = LadderRelease(
+                released=False,
+                confirmed=record.state.best_confirmed,
+                holdout_scalar=record.state.best_holdout_scalar,
+                threshold=effective_threshold(cfg, weights),
+                state=record.state,
+            )
         remaining_pending = tuple(
             item
             for item in record.pending_reservations
@@ -377,8 +390,14 @@ def _ladder_exhausted_outcome(
     state: LadderState,
     weights: ScoringWeights,
 ) -> tuple[GateOutcome, dict[str, Any]]:
-    """Return the train decision when no further holdout query is affordable."""
-    return train_outcome, holdout_record(
+    """Retain the champion when no further holdout query is affordable."""
+    reason = (
+        "holdout confirmation incomplete: query allowance exhausted; "
+        "refresh the evaluation contract"
+    )
+    return replace(
+        train_outcome, decision=TournamentDecision.DEFERRED, reason=reason
+    ), holdout_record(
         confirmed=None,
         train_scalar=float(train_child_agg["scalar"]),
         holdout_scalar=None,
@@ -389,6 +408,7 @@ def _ladder_exhausted_outcome(
         budget_remaining=state.budget_remaining,
         query_reserved=False,
         threshold=effective_threshold(weights.overfitting.ladder, weights),
+        reason=reason,
     )
 
 
@@ -404,34 +424,20 @@ def _ladder_mediated_outcome(
     epoch_id: str,
     reservation: LadderQueryReservation | None = None,
 ) -> tuple[GateOutcome, dict[str, Any] | None]:
-    """Apply the Ladder governor to a train-decided gate outcome.
+    """Confirm a training promotion using complete, released holdout evidence.
 
-    ``train_outcome`` is :func:`~zicato.tournament.gate.evaluate_gate` run on
-    the TRAIN slice only (no holdout threaded). This function adds the
-    Ladder-mediated holdout confirmation on top and returns
-    ``(final_outcome, holdout_record)``:
-
-    * **No holdout** (both holdout aggs ``None``): the holdout step is skipped
-      entirely; the train outcome is returned with ``holdout=None``, which is
-      the decision the train rules alone reach.
-    * **Holdout, train rejected**: this is invalid because production callers
-      must reject before they execute the holdout.
-    * **Holdout, train promotes, Ladder disabled**: run the raw Phase-A
-      confirmation (``holdout_confirms``) directly — every query counts, no
-      budget. The block reflects that (``ladder_released`` mirrors whether the
-      bit was applied, budget left at its total since nothing is charged).
-    * **Holdout, train promotes, Ladder enabled**: require the caller's prior
-      durable reservation, then settle the release decision. A released
-      non-confirmation flips the promotion to a holdout rejection; a released
-      confirmation or withheld query leaves the training decision intact.
-      Exhaustion is handled before the matchup starts. The proposer receives
-      only the threshold-gated bit, never the raw per-entry result.
+    A released positive result satisfies confirmation; a released negative
+    result rejects the challenger. Withholding or incomplete execution defers
+    promotion without exposing the unreleased result. Each reserved attempt
+    remains charged, including incomplete execution, and settles exactly once.
+    Disabling the governor requires raw holdout confirmation without a query
+    allowance. No holdout slice is recorded explicitly as disabled.
     """
     from zicato.tournament.gate import holdout_confirms  # noqa: PLC0415
 
     # No holdout slice to consult → the train rules decide alone.
-    if holdout_parent_agg is None or holdout_child_agg is None:
-        return train_outcome, None
+    if holdout_parent_agg is None and holdout_child_agg is None and reservation is None:
+        return train_outcome, dict(disabled_holdout_record())
 
     cfg = weights.overfitting.ladder
     train_parent_scalar = float(parent_agg["scalar"])
@@ -445,39 +451,44 @@ def _ladder_mediated_outcome(
             "holdout evidence was observed after the training gate rejected the challenger"
         )
 
-    holdout_scalar = float(holdout_child_agg["scalar"])
+    observation_complete = all(
+        agg is not None
+        and not agg.get("incomplete_entries")
+        and isinstance(agg.get("scalar"), int | float)
+        and math.isfinite(agg["scalar"])
+        for agg in (holdout_parent_agg, holdout_child_agg)
+    )
+    holdout_scalar = None
+    raw_reason = "holdout confirmation incomplete: execution did not complete"
+    if observation_complete and holdout_parent_agg is not None and holdout_child_agg is not None:
+        holdout_scalar = float(holdout_child_agg["scalar"])
+        raw_reason = holdout_confirms(holdout_parent_agg, holdout_child_agg, weights)
+    raw_confirmed = observation_complete and not raw_reason
 
-    # The raw Phase-A confirmation bit (computed out of band; the Ladder
-    # decides whether it is released this round).
-    raw_reason = holdout_confirms(holdout_parent_agg, holdout_child_agg, weights)
-    raw_confirmed = not raw_reason
-
-    # Ladder disabled → raw Phase-A confirmation: every query counts, no budget.
+    # Without the governor, complete raw holdout confirmation is still required.
     if not cfg.enabled:
         if raw_reason:
-            final = GateOutcome(
-                decision=TournamentDecision.REJECTED,
+            final = replace(
+                train_outcome,
+                decision=TournamentDecision.REJECTED
+                if observation_complete
+                else TournamentDecision.DEFERRED,
                 reason=raw_reason,
-                delta_scalar=train_outcome.delta_scalar,
-                delta_pass_rate=train_outcome.delta_pass_rate,
-                # The per-entry regression report is an observation about the
-                # TRAIN duel; flipping the verdict on the holdout does not
-                # unmake it, so it travels with the rebuilt outcome.
-                attributable_regressions=train_outcome.attributable_regressions,
             )
         else:
             final = train_outcome
         block = holdout_record(
-            confirmed=raw_confirmed,
+            confirmed=raw_confirmed if observation_complete else None,
             train_scalar=train_child_scalar,
             holdout_scalar=holdout_scalar,
             consulted=True,
-            released=True,
+            released=observation_complete,
             budget_total=cfg.budget,
             budget_before_query=None,
             budget_remaining=cfg.budget,
             query_reserved=False,
             threshold=threshold,
+            reason=raw_reason,
         )
         return final, block
 
@@ -496,19 +507,24 @@ def _ladder_mediated_outcome(
         train_child_scalar=train_child_scalar,
         holdout_scalar=holdout_scalar,
         holdout_confirmed=raw_confirmed,
+        observation_complete=observation_complete,
     )
 
-    # A released non-confirmation flips the promote to a holdout reject. A
-    # released confirmation or a withheld query leaves the train promote
-    # intact. Budget exhaustion is handled before holdout execution and never
-    # reaches this decision function.
-    if release.released and not raw_confirmed:
-        final = GateOutcome(
+    # Only released evidence may confirm or reject. Withholding cannot
+    # authorize promotion or reveal whether the unreported result was negative.
+    if not release.released:
+        final = replace(
+            train_outcome,
+            decision=TournamentDecision.DEFERRED,
+            reason="holdout confirmation incomplete: result withheld"
+            if observation_complete
+            else raw_reason,
+        )
+    elif not raw_confirmed:
+        final = replace(
+            train_outcome,
             decision=TournamentDecision.REJECTED,
             reason=raw_reason,
-            delta_scalar=train_outcome.delta_scalar,
-            delta_pass_rate=train_outcome.delta_pass_rate,
-            attributable_regressions=train_outcome.attributable_regressions,
         )
     else:
         final = train_outcome
@@ -524,6 +540,7 @@ def _ladder_mediated_outcome(
         budget_remaining=release.state.budget_remaining,
         query_reserved=True,
         threshold=release.threshold,
+        reason=final.reason if final.decision != "promoted" else "",
     )
     return final, block
 

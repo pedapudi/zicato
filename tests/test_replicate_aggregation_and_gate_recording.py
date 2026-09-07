@@ -5,7 +5,7 @@ consumer reasonably believed was being measured was not the quantity
 recorded. Each is now FIXED, and these are the pins that keep it fixed — the
 original strict-xfail reproductions plus the properties the fixes establish.
 
-* **#108** — :func:`zicato.tournament.unit_cache._average_losses` folded
+* **#108** — :func:`zicato.tournament.scoring.average_replicate_losses` folded
   ``drift_loss`` and majority-voted ``pass_fail``, then took every other
   field from replicate 0. ``score`` was one of those, and ``score`` is what
   :func:`zicato.tournament.scoring.entry_score` reads FIRST, so the
@@ -41,6 +41,7 @@ from zicato.core import (
     MetricCount,
     ScoringWeights,
 )
+from zicato.tournament.scoring import average_replicate_losses as _average_losses
 
 
 def _loss(
@@ -92,7 +93,6 @@ def _loss(
 
 def test_average_losses_averages_score() -> None:
     """A 4-replicate list scoring [1, 0, 0, 0] averages to 0.25, not 1.0."""
-    from zicato.tournament.unit_cache import _average_losses
 
     runs = [{"e": _loss(score=s, pass_fail=bool(s))} for s in (1.0, 0.0, 0.0, 0.0)]
     out = _average_losses(runs)
@@ -106,7 +106,6 @@ def test_averaged_entry_score_reflects_every_replicate() -> None:
     read, so this — not the raw field — is the axis the duel turns on.
     """
     from zicato.tournament.scoring import entry_score
-    from zicato.tournament.unit_cache import _average_losses
 
     runs = [{"e": _loss(score=s, pass_fail=bool(s))} for s in (1.0, 0.0, 0.0, 0.0)]
     out = _average_losses(runs)
@@ -115,7 +114,6 @@ def test_averaged_entry_score_reflects_every_replicate() -> None:
 
 def test_average_losses_all_none_score_stays_none() -> None:
     """A board with no expectations must be unchanged by the #108 fix."""
-    from zicato.tournament.unit_cache import _average_losses
 
     runs = [{"e": _loss(score=None, pass_fail=None)} for _ in range(3)]
     out = _average_losses(runs)
@@ -124,7 +122,6 @@ def test_average_losses_all_none_score_stays_none() -> None:
 
 def test_average_losses_averages_namespace_bearing_counters() -> None:
     """``tokens_spent`` feeds the ``cost:`` namespace term of the scalar."""
-    from zicato.tournament.unit_cache import _average_losses
 
     runs = [{"e": _loss(tokens_spent=t, score=0.5)} for t in (400, 0, 0, 0)]
     out = _average_losses(runs)
@@ -140,7 +137,6 @@ def test_average_losses_score_means_only_the_replicates_that_have_one() -> None:
     ``test_average_losses_counts_an_aborted_replicate_as_a_miss``: a replicate
     that recorded a FAILURE without a score is not unmeasured and does vote.
     """
-    from zicato.tournament.unit_cache import _average_losses
 
     runs = [{"e": _loss(score=s)} for s in (1.0, None, 0.5, None)]
     out = _average_losses(runs)
@@ -171,7 +167,6 @@ def test_average_losses_counts_an_aborted_replicate_as_a_miss() -> None:
     from zicato.core import BoardEntry, Expectation, ExpectationKind
     from zicato.core import ScoringWeights as _Weights
     from zicato.tournament.scoring import aggregate_generation_score, entry_score
-    from zicato.tournament.unit_cache import _average_losses
     from zicato.tournament.worker_transport import _aborted_loss_profile
 
     entry = BoardEntry(
@@ -218,7 +213,6 @@ def test_average_losses_folds_the_outcome_on_a_score_less_bool_board() -> None:
     one field over.
     """
     from zicato.tournament.scoring import entry_score
-    from zicato.tournament.unit_cache import _average_losses
 
     runs = [{"e": _loss(pass_fail=p, score=None)} for p in (True, False, False, False)]
     out = _average_losses(runs)
@@ -235,7 +229,6 @@ def test_average_losses_no_expectation_board_still_folds_to_none() -> None:
     from ``mean_score`` — exactly as before replication existed.
     """
     from zicato.tournament.scoring import entry_score
-    from zicato.tournament.unit_cache import _average_losses
 
     out = _average_losses([{"e": _loss(score=None, pass_fail=None)} for _ in range(3)])
     assert out["e"].score is None
@@ -248,7 +241,6 @@ def test_average_losses_folds_the_metrics_decomposition() -> None:
     Per-key mean over the replicates REPORTING the key: ``recall`` is on
     two of the three replicates, so its mean is over those two.
     """
-    from zicato.tournament.unit_cache import _average_losses
 
     runs = [
         {"e": _loss(score=1.0, metrics={"precision": 1.0, "recall": 0.5})},
@@ -264,7 +256,6 @@ def test_average_losses_folds_the_metrics_decomposition() -> None:
 
 def test_average_losses_no_metrics_stays_none() -> None:
     """A board whose scorers expose no decomposition folds unchanged."""
-    from zicato.tournament.unit_cache import _average_losses
 
     out = _average_losses([{"e": _loss(score=0.5)} for _ in range(3)])
     assert out["e"].metrics is None
@@ -283,7 +274,6 @@ def test_folded_namespace_aggregate_matches_the_per_replicate_aggregate() -> Non
     """
     from zicato.core import MetricCount
     from zicato.tournament.scoring import aggregate_namespaced_metrics
-    from zicato.tournament.unit_cache import _average_losses
 
     weights = ScoringWeights(namespace_weights={"cost:": 1.0, "failure:": 1.0})
     profiles = [
@@ -307,7 +297,6 @@ def test_average_losses_folds_per_judge_loss() -> None:
     """
     from zicato.core import JudgeLoss
     from zicato.tournament.scoring import _per_judge_loss_aggregate
-    from zicato.tournament.unit_cache import _average_losses
 
     def _jl(raw: float) -> tuple[JudgeLoss, ...]:
         return (JudgeLoss(judge_name="tone", raw_loss=raw, weight=2.0, weighted_loss=raw * 2.0),)
@@ -328,7 +317,6 @@ def test_average_losses_leaves_the_raw_matcher_evidence_alone() -> None:
     fields that scoring and the gate read. Pinned so a later change that
     starts synthesising a fake ``ExpectationResult`` is a deliberate one.
     """
-    from zicato.tournament.unit_cache import _average_losses
 
     runs = [{"e": _loss(score=s, pass_fail=bool(s))} for s in (1.0, 0.0)]
     out = _average_losses(runs)
@@ -344,7 +332,6 @@ def test_replicated_mean_score_is_the_replicate_mean_end_to_end() -> None:
     passes 1 of 4 replicates must score 0.25 there, not replicate 0's 1.0.
     """
     from zicato.tournament.scoring import aggregate_generation_score
-    from zicato.tournament.unit_cache import _average_losses
 
     weights = ScoringWeights(namespace_weights={"drift:": 0.0, "failure:": 1.0}, pass_weight=1.0)
     runs = [{"e": _loss(drift_loss=0.0, score=s, pass_fail=bool(s))} for s in (1.0, 0.0, 0.0, 0.0)]

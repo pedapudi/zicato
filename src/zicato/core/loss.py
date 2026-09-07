@@ -6,10 +6,12 @@ Split out of :mod:`zicato.core.types`; re-exported from there and from
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from zicato.core.board import ExpectationKind
+from zicato.core.measurement import UNKNOWN_SEED, MeasurementDraw
 
 # ---------------------------------------------------------------------------
 # Telemetry / loss
@@ -541,6 +543,15 @@ class LossProfile:
     # enter the contract hash.
     started_at: str | None = None
     ended_at: str | None = None
+    # Whether the task started. False records an unmeasured scheduling
+    # omission. None preserves historical profiles with no explicit
+    # execution evidence. A replicate fold is False if any requested draw
+    # never started; its partial measurement cannot support a decision.
+    execution_started: bool | None = None
+    measurement: MeasurementDraw | None = None
+    # A fold retains every source draw; None marks a source without identity.
+    # Such a fold cannot claim that all inputs share a known execution seed.
+    source_measurements: tuple[MeasurementDraw | None, ...] = ()
 
     def unified_metrics(self) -> tuple[MetricCount, ...]:
         """Return the merged metric view across drift_counts + metric_counts.
@@ -663,3 +674,80 @@ def is_infra_abort_cause(abort_cause: str | None) -> bool:
     run is always cacheable).
     """
     return bool(abort_cause) and abort_cause != BUDGET_ABORT_CAUSE
+
+
+def has_execution_evidence(record: LossProfile | Mapping[str, Any]) -> bool:
+    """Apply one execution policy to decoded profiles and canonical JSON readers.
+
+    Historical budget failures need positive timing or token evidence when the
+    start marker is absent. Other historical completed profiles remain eligible.
+    """
+
+    def value(name: str) -> Any:
+        return record.get(name) if isinstance(record, Mapping) else getattr(record, name)
+
+    started = value("execution_started")
+    if started is not None:
+        return started is True
+    if value("abort_cause") != BUDGET_ABORT_CAUSE:
+        return True
+    return bool(value("started_at") or value("ended_at")) or any(
+        float(value(name) or 0) > 0 for name in ("runtime_ms", "tokens_spent")
+    )
+
+
+def validate_loss_identity(
+    record: LossProfile | Mapping[str, Any],
+    *,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    measurement: MeasurementDraw | None,
+) -> None:
+    """Require recorded coordinates to agree without inventing historical identity.
+
+    Historical mappings may omit coordinates and historical run labels need
+    not use the runtime encoding. Known seeds require complete coordinates
+    and the canonical runtime identifier for that exact draw.
+    """
+    from zicato.core.workspace import run_id_for_unit  # noqa: PLC0415
+
+    missing = object()
+
+    def value(name: str) -> Any:
+        return record.get(name, missing) if isinstance(record, Mapping) else getattr(record, name)
+
+    actual = tuple(value(name) for name in ("epoch_id", "generation_id", "entry_id"))
+    expected = (epoch_id, generation_id, entry_id)
+    if any(
+        found is not missing and found != wanted
+        for found, wanted in zip(actual, expected, strict=False)
+    ):
+        raise ValueError("recorded loss coordinates conflict with the requested cell")
+    if measurement is not None and measurement.base_seed is not UNKNOWN_SEED:
+        run_id = run_id_for_unit(
+            generation_id, entry_id, measurement.replicate_index, base_seed=measurement.base_seed
+        )
+        if actual != expected or value("run_id") != run_id:
+            raise ValueError("recorded loss runtime identity conflicts with the requested draw")
+
+
+def capture_matches_loss(body: Mapping[str, Any], expected: LossProfile | None) -> bool:
+    """Require complete capture identity for a loss with recorded seed provenance.
+
+    Unpaired reads and historical unknown seeds remain available for audit;
+    accepting their capture bytes does not establish a measurement match.
+    """
+    try:
+        draw = MeasurementDraw.from_json(body["measurement"]) if "measurement" in body else None
+    except (TypeError, ValueError):
+        return False
+    if expected is None or expected.measurement is None:
+        return True
+    if expected.measurement.base_seed is UNKNOWN_SEED:
+        return True
+    return (
+        bool(expected.run_id)
+        and draw == expected.measurement
+        and body.get("run_id") == expected.run_id
+    )

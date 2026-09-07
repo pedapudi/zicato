@@ -197,8 +197,8 @@ def test_placebo_alarm_without_calibration_still_reports_the_delta() -> None:
     assert finding.detail["noise_floor_max_abs_delta"] is None
 
 
-def test_evidence_gate_reports_the_measured_probability() -> None:
-    """The bar alone does not say how far the win fell short of it."""
+def test_required_evidence_reports_absent_measurement_and_defers() -> None:
+    """Required confirmation cannot promote without a measured probability."""
     verdict = evidence_verdict(
         "promoted",
         "ok",
@@ -208,9 +208,9 @@ def test_evidence_gate_reports_the_measured_probability() -> None:
         threshold=0.9,
         replicate_budget=3,
     )
-    # An empty audit fits nothing, so the gate's verdict stands untouched and
-    # the probability is absent rather than 0.0 — no measurement was made.
-    assert verdict.decision == "promoted"
+    # An empty audit leaves probability unknown and required confirmation incomplete.
+    assert verdict.decision == "deferred"
+    assert verdict.confirmation_status == "incomplete"
     assert verdict.credible is False
     assert verdict.p_stronger is None
 

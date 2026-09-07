@@ -29,10 +29,21 @@ import json
 import math
 import statistics
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
+from zicato.core.loss import has_execution_evidence, validate_loss_identity
+from zicato.core.measurement import (
+    MEASUREMENT_RANGES,
+    MeasurementPurpose,
+    artifact_replicate_index,
+    iter_measurement_artifacts,
+    measurement_range,
+    recorded_artifact_measurement,
+    recorded_measurement,
+    seed_qualifier,
+)
 from zicato.query.paths import WorkspacePaths
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -50,14 +61,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # probe), and reflection draws at 5000+ (a meta-evaluation of the judges rather
 # than of the candidate). Every one of those excluded ranges IS enumerated, as
 # its own measurement band: see :data:`MEASUREMENT_BANDS` below.
-CELL_EVIDENCE_REPLICATE_RANGES: tuple[tuple[int, int], ...] = ((0, 1000), (4000, 5000))
-
-
-#: The width the reserved-base ledger gives each owner (calibration and the
-#: contract pre-flight both declare spans of exactly this). Used for the last
-#: band, whose owner declares no span constant and has no successor to bound
-#: it — never as a substitute for a span an owner does declare.
-RESERVED_BAND_WIDTH: int = 1000
+CELL_EVIDENCE_REPLICATE_RANGES = tuple(
+    (allocation.start, allocation.stop)
+    for allocation in MEASUREMENT_RANGES
+    if allocation.cell_evidence
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,17 +114,7 @@ UNCLAIMED_BAND: MeasurementBand = MeasurementBand(
 def measurement_bands() -> tuple[MeasurementBand, ...]:
     """The reserved replicate bands that are NOT cell evidence, ascending.
 
-    The bounds are LITERAL MIRRORS of the owning modules' constants
-    (``CALIBRATION_REPLICATE_BASE``/``_SPAN``, ``PREFLIGHT_REPLICATE_BASE``/
-    ``_SPAN``, ``SCREEN_REPLICATE_BASE``, ``EVIDENCE_REPLICATE_BASE``,
-    ``REFLECTION_REPLICATE_BASE``, ``SYNTHESIS_REPLICATE_BASE``) rather than
-    imports of them: the owners pull in the pre-flight, screening, and reflection
-    machinery, and reflection reaches the dashboard — chains the query
-    layer's import contracts forbid. The correspondence test in
-    ``tests/test_query_execution_plan.py`` imports both sides and pins the
-    mirror to the owners, so a moved base fails a test instead of drifting.
-    The ledger itself is described at
-    :func:`zicato.tournament.unit_cache.is_own_code_board_draw`.
+    Bounds come from the dependency-safe measurement purpose registry.
     """
 
     return (
@@ -129,8 +127,8 @@ def measurement_bands() -> tuple[MeasurementBand, ...]:
                 "spread is the evaluation's noise floor — not evidence about any "
                 "candidate."
             ),
-            start=1000,
-            stop=2000,
+            start=measurement_range(MeasurementPurpose.CALIBRATION).start,
+            stop=measurement_range(MeasurementPurpose.CALIBRATION).stop,
         ),
         MeasurementBand(
             key="contract_preflight",
@@ -142,8 +140,8 @@ def measurement_bands() -> tuple[MeasurementBand, ...]:
                 "out-signal its own noise. A failure here is the probe working as "
                 "designed and says NOTHING about what this generation does."
             ),
-            start=2000,
-            stop=3000,
+            start=measurement_range(MeasurementPurpose.PREFLIGHT).start,
+            stop=measurement_range(MeasurementPurpose.PREFLIGHT).stop,
         ),
         MeasurementBand(
             key="candidate_screen",
@@ -154,8 +152,8 @@ def measurement_bands() -> tuple[MeasurementBand, ...]:
                 "ephemeral snapshot that never entered the lineage. It "
                 "disqualifies; it never ranks, and its scalar is never evidence."
             ),
-            start=3000,
-            stop=4000,
+            start=measurement_range(MeasurementPurpose.SCREEN).start,
+            stop=measurement_range(MeasurementPurpose.SCREEN).stop,
         ),
         MeasurementBand(
             key="board_reflection",
@@ -165,8 +163,8 @@ def measurement_bands() -> tuple[MeasurementBand, ...]:
                 "terms, the board entries themselves — rather than the generation "
                 "they were drawn from."
             ),
-            start=5000,
-            stop=6000,
+            start=measurement_range(MeasurementPurpose.REFLECTION).start,
+            stop=measurement_range(MeasurementPurpose.REFLECTION).stop,
         ),
         MeasurementBand(
             key="eval_synthesis_admission",
@@ -176,8 +174,8 @@ def measurement_bands() -> tuple[MeasurementBand, ...]:
                 "and how often it flips under noise, before it is admitted to the "
                 "board."
             ),
-            start=6000,
-            stop=7000,
+            start=measurement_range(MeasurementPurpose.ADMISSION).start,
+            stop=measurement_range(MeasurementPurpose.ADMISSION).stop,
         ),
     )
 
@@ -205,13 +203,7 @@ def replicate_index(name: str) -> int | None:
     is replicate ``N`` (the sibling slot the worker writes). Any other filename is
     not a replicate loss file.
     """
-    if name == "loss.json":
-        return 0
-    if name.startswith("loss.r") and name.endswith(".json"):
-        mid = name[len("loss.r") : -len(".json")]
-        if mid.isdigit():
-            return int(mid)
-    return None
+    return artifact_replicate_index(name)
 
 
 def _indexed_draws(
@@ -220,7 +212,7 @@ def _indexed_draws(
     generation_id: str,
     entry_id: str,
     keep: Callable[[int], bool],
-) -> list[tuple[int, LossProfile]]:
+) -> list[tuple[int, LossProfile, bool]]:
     """The persisted replicate slots of ONE cell that ``keep`` admits, ascending.
 
     THE walk of a run directory. Both the cell-evidence enumeration and the
@@ -239,20 +231,64 @@ def _indexed_draws(
     run_dir = loss_profile_path(paths.root, epoch_id, generation_id, entry_id).parent
     if not run_dir.is_dir():
         return []
-    draws: list[tuple[int, LossProfile]] = []
-    for child in sorted(run_dir.iterdir()):
+    draws: list[tuple[int, LossProfile, bool]] = []
+    seen = set()
+    for child in iter_measurement_artifacts(run_dir, include_aliases=True):
         if not child.is_file():
             continue
-        idx = replicate_index(child.name)
+        idx = artifact_replicate_index(child.name, canonical=False)
         if idx is None or not keep(idx):
             continue
         try:
             profile = read_loss_profile(child)
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             continue
-        draws.append((idx, profile))
-    draws.sort(key=lambda pair: pair[0])
+        try:
+            identity = recorded_artifact_measurement(
+                run_dir, child, profile.measurement, profile.match_id
+            )
+            validate_loss_identity(
+                profile,
+                epoch_id=epoch_id,
+                generation_id=generation_id,
+                entry_id=entry_id,
+                measurement=identity,
+            )
+        except ValueError:
+            draws.append((idx, profile, False))
+            continue
+        if identity in seen:
+            continue
+        seen.add(identity)
+        draws.append((idx, replace(profile, measurement=identity), True))
+    draws.sort(
+        key=lambda pair: (
+            pair[0],
+            seed_qualifier(pair[1].measurement.base_seed)
+            if pair[1].measurement is not None
+            else "",
+            pair[1].run_id,
+        )
+    )
     return draws
+
+
+AMBIGUOUS_BAND = MeasurementBand(
+    key="ambiguous",
+    label="Ambiguous measurement provenance",
+    purpose="The record does not establish its measurement purpose or actual execution. "
+    "These records remain visible but supply no reusable evidence.",
+    start=0,
+    stop=0,
+)
+
+
+def _eligible_identity(index: int, profile: LossProfile) -> bool:
+    try:
+        recorded_measurement(index, measurement=profile.measurement, match_id=profile.match_id)
+    except ValueError:
+        return False
+    return has_execution_evidence(profile)
 
 
 def cell_replicate_draws_indexed(
@@ -266,13 +302,17 @@ def cell_replicate_draws_indexed(
     it a second time is how two surfaces start disagreeing about which
     files count.
     """
-    return _indexed_draws(
-        paths,
-        epoch_id,
-        generation_id,
-        entry_id,
-        lambda idx: any(lo <= idx < hi for lo, hi in CELL_EVIDENCE_REPLICATE_RANGES),
-    )
+    return [
+        (index, profile)
+        for index, profile, valid in _indexed_draws(
+            paths,
+            epoch_id,
+            generation_id,
+            entry_id,
+            lambda idx: any(lo <= idx < hi for lo, hi in CELL_EVIDENCE_REPLICATE_RANGES),
+        )
+        if valid and _eligible_identity(index, profile)
+    ]
 
 
 def measurement_band_draws_indexed(
@@ -286,34 +326,43 @@ def measurement_band_draws_indexed(
     executions with other meanings — they are never a cell's evidence, and
     each one carries the band that says what it measured.
     """
-    indexed = _indexed_draws(
-        paths,
-        epoch_id,
-        generation_id,
-        entry_id,
-        lambda idx: not any(lo <= idx < hi for lo, hi in CELL_EVIDENCE_REPLICATE_RANGES),
-    )
     out: list[tuple[int, MeasurementBand, LossProfile]] = []
-    for idx, profile in indexed:
-        band = band_of(idx)
+    for index, profile, valid in _indexed_draws(
+        paths, epoch_id, generation_id, entry_id, lambda _: True
+    ):
+        band = band_of(index)
+        if band != UNCLAIMED_BAND and not (valid and _eligible_identity(index, profile)):
+            band = AMBIGUOUS_BAND
         if band is not None:
-            out.append((idx, band, profile))
+            out.append((index, band, profile))
     return out
 
 
 def cell_replicate_draws(
     paths: WorkspacePaths, epoch_id: str, generation_id: str, entry_id: str
 ) -> list[LossProfile]:
-    """The qualifying per-replicate loss profiles for ONE cell, in index order.
+    """Describe the cell's draws for the seed recorded by its generation score.
 
-    The DURABLE evidence source for a cell's replicate count: the loss files that
-    actually exist under the run directory, filtered to
-    :data:`CELL_EVIDENCE_REPLICATE_RANGES`. This is not the ``loss_profiles``
-    index row count, which is always 1 (that table's key is ``run_id`` = one row
-    per ``(generation, entry)``).
+    A score without seed provenance selects historical unknown-seed records.
+    All-seed audit enumeration remains available through
+    :func:`cell_replicate_draws_indexed`; descriptive visibility does not admit
+    a draw to a selected-seed decision.
     """
+    from zicato.workspace import WorkspaceLayout  # noqa: PLC0415
+    from zicato.workspace.reads import generation_base_seed  # noqa: PLC0415
+
+    try:
+        selected_seed = generation_base_seed(
+            WorkspaceLayout.from_root(paths.root), epoch_id, generation_id
+        )
+    except ValueError:
+        return []
     indexed = cell_replicate_draws_indexed(paths, epoch_id, generation_id, entry_id)
-    return [profile for _, profile in indexed]
+    return [
+        profile
+        for _, profile in indexed
+        if profile.measurement is not None and profile.measurement.base_seed == selected_seed
+    ]
 
 
 def _finite_score(value: Any) -> float | None:

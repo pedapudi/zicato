@@ -35,6 +35,9 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
+from zicato.core.measurement import CALIBRATION_REPLICATE_BASE as CALIBRATION_REPLICATE_BASE
+from zicato.core.measurement import CALIBRATION_REPLICATE_SPAN as CALIBRATION_REPLICATE_SPAN
+from zicato.core.measurement import UNKNOWN_SEED, BaseSeed, validate_measurement_interval
 from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.writer import workspace_writer
 
@@ -43,32 +46,6 @@ from zicato.runtime.writer import workspace_writer
 #: calibrating a very noisy harness can raise it.
 DEFAULT_CALIBRATION_RUNS: int = 5
 
-#: Replicate-index base for calibration draws. Deliberately far above any
-#: index a real duel schedules (duel replicates count up from 0), so the
-#: calibration's cache slots can never collide with — or pre-seed — the
-#: slots a tournament will actually read. This is the second row of the
-#: reserved-base ledger (dev-guide ``04-evaluation-statistics.md §8.1``): real
-#: duel replicates count up from 0, THIS calibration at 1000, the contract
-#: pre-flight across 2000..2999
-#: (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE` +
-#: :data:`~zicato.epoch.preflight.PREFLIGHT_REPLICATE_SPAN`), the candidate
-#: screen at 3000 (:data:`zicato.epoch.screen.SCREEN_REPLICATE_BASE`), the
-#: evidence gate at 4000
-#: (:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`), board
-#: reflection at 5000 (:data:`zicato.reflection.corpus.REFLECTION_REPLICATE_BASE`),
-#: and eval-synthesis admission at 6000
-#: (:data:`zicato.reflection.admission.SYNTHESIS_REPLICATE_BASE`).
-CALIBRATION_REPLICATE_BASE: int = 1000
-
-#: Width of the block :data:`CALIBRATION_REPLICATE_BASE` opens. Draw ``j``
-#: caches at ``CALIBRATION_REPLICATE_BASE + j``, so a run count above this span
-#: would walk into the contract pre-flight's block and its DEGRADED probes
-#: would be indistinguishable from clean A/A draws in either direction.
-#: :func:`measure_noise_floor` refuses rather than overlap — the mirror of the
-#: pre-flight's own probe-sample guard. It is also the span every reader of the
-#: calibration band tests against (:func:`zicato.tournament.unit_cache
-#: .is_own_code_board_draw`) instead of a bare literal.
-CALIBRATION_REPLICATE_SPAN: int = 1000
 
 #: The heartbeat ``phase`` segment that names a calibration in flight. The
 #: calibration is an epoch-open step running BEFORE the round it precedes has
@@ -114,6 +91,11 @@ class NoiseFloorInconclusive(RuntimeError):
 class NoiseFloor:
     """The measured A/A noise floor for one generation under one contract.
 
+    This is an identified estimate of the evaluation's noise distribution.
+    Its selected seed is retained for audit. A later seed choice may reuse
+    this estimate without treating its physical draws as draws under that
+    choice; changing a seed alone does not trigger automatic recalibration.
+
     Fields
     ------
     generation_id, epoch_id:
@@ -148,10 +130,11 @@ class NoiseFloor:
     max_abs_delta: float
     delta_std: float
     measured_at: str
+    base_seed: BaseSeed = UNKNOWN_SEED
 
     def to_json(self) -> dict[str, Any]:
         """The JSON shape persisted onto the epoch record."""
-        return {
+        value = {
             "generation_id": self.generation_id,
             "epoch_id": self.epoch_id,
             "runs": self.runs,
@@ -160,6 +143,9 @@ class NoiseFloor:
             "delta_std": self.delta_std,
             "measured_at": self.measured_at,
         }
+        if self.base_seed is not UNKNOWN_SEED:
+            value["base_seed"] = self.base_seed
+        return value
 
 
 def delta_spread(scalars: list[float] | tuple[float, ...]) -> tuple[float, float]:
@@ -229,24 +215,11 @@ async def measure_noise_floor(
     a hang. It is strictly an observability hook: it runs inside the draw loop,
     so it must be cheap and must not raise.
     """
+    validate_measurement_interval(CALIBRATION_REPLICATE_BASE, runs)
     from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
 
     if runs < 2:
         raise ValueError(f"noise-floor calibration needs at least 2 runs, got {runs!r}")
-    if runs > CALIBRATION_REPLICATE_SPAN:
-        # Draw j caches at CALIBRATION_REPLICATE_BASE + j, so a wider run count
-        # would squat the contract pre-flight's block: a later `board preflight`
-        # would read these clean A/A draws as its own cached degraded probes,
-        # and every reader of the calibration band would read the pre-flight's
-        # degraded probes as champion behaviour. Refuse rather than overlap.
-        block_end = CALIBRATION_REPLICATE_BASE + CALIBRATION_REPLICATE_SPAN - 1
-        raise ValueError(
-            f"noise-floor calibration: {runs} draws exceed the reserved replicate "
-            f"block of {CALIBRATION_REPLICATE_SPAN} "
-            f"({CALIBRATION_REPLICATE_BASE}..{block_end}); lower --runs "
-            '(or the "contract_preflight" run count in config.json)'
-        )
-
     async with workspace_writer(
         workspace_root,
         writer=writer,
@@ -316,6 +289,7 @@ async def measure_noise_floor(
             max_abs_delta=max_abs,
             delta_std=std,
             measured_at=_dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat(),
+            base_seed=config.seed,
         )
 
 

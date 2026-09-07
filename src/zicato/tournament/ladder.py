@@ -1,45 +1,17 @@
-"""The Ladder: a noisy, budgeted governor over the holdout query (OVERFITTING.md §4, §12 #2).
+"""Budget and release rules for adaptive holdout confirmation.
 
-The train/holdout split (:mod:`zicato.board.split`) and the
-holdout-*confirmation* step in the gate
-(:func:`zicato.tournament.gate.evaluate_gate`) together require a
-train-measured win to hold on a held-out slice the proposer never sees. That
-makes a *single* holdout query trustworthy. It does nothing about the deeper
-failure this note is written for: the proposer queries the *same* holdout every
-round of an epoch, adaptively, and a reused holdout "gets used up" — its
-confirmations become an optimistically-biased signal the optimizer can climb.
+One crowning comparison consumes one query, reserved before execution. The
+train-side improvement must clear the configured threshold for its holdout
+confirmation bit to be released. Withheld queries retain the previous released
+best as historical feedback; that prior result cannot confirm another candidate.
 
-[Blum & Hardt 2015][ladder] give the mechanism for this "submit, see
-score, submit again" loop. The Ladder releases a new holdout-based signal only
-when the submission improves on its previous best *beyond a noise threshold*;
-within the band it re-reports the previous best, so the analyst cannot chase
-fluctuations. Mediating every query this way keeps a reused holdout valid
-against an unbounded — even adversarial — number of submissions.
-
-This module is the parameter-free Ladder (Blum–Hardt's tuning-free variant):
-the noise threshold seeds from the gate's existing ``promote_margin`` and the
-default ``noise_scale`` is ``0`` (no DP-grade noise calibration yet). It owns
-the *pure* mechanism only — no filesystem, no clock, no randomness. The
-per-epoch state is passed in and a fresh state is returned (the runner
-persists it; see :func:`zicato.tournament.runner`).
-
-The two rules, applied per holdout query:
-
-1. **Release rule.** A new holdout-based signal is *released* (it can flip a
-   train-win to confirmed / rejected) only when the *train-measured*
-   improvement over the champion clears the threshold beyond the noise band.
-   Within the band, the Ladder withholds — it re-reports the previous best
-   confirmation and the holdout result does NOT count this round.
-2. **Budget.** Every query that *consults the holdout* charges one unit of the
-   per-epoch budget. When the budget is exhausted, no further holdout signals
-   are released. The runner stops consulting the holdout, and the train
-   decision stands without holdout gating.
-
-When the holdout is empty (a small board, the split disabled, no tagged
-entry) there is nothing to govern and the Ladder is never consulted, so the
-gate decides on the train rules alone. When ``LadderConfig.enabled`` is
-``False`` the runner runs the unmediated holdout confirmation (no budget, no
-release rule) directly.
+The governor limits feedback but supplies no distribution-free guarantee for
+arbitrary adaptive reuse. Its threshold comes from ``promote_margin`` unless
+configured explicitly; ``noise_scale`` adds a fixed band without random noise.
+This module owns pure decisions. Governance owns durable reservations and maps
+withheld, exhausted, or incomplete confirmation to a deferred promotion.
+An absent holdout disables confirmation. Disabling the governor still requires
+an unmediated holdout confirmation whenever the contract has a holdout slice.
 """
 
 from __future__ import annotations
@@ -47,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from zicato.core import ScoringWeights
+from zicato.core.tournament import ConfirmationStatus
 from zicato.core.types import LadderConfig
 
 #: The minimum budget remaining for a query to be answerable. The budget is
@@ -99,8 +72,8 @@ class LadderRelease:
         ``True`` when the holdout signal was released this round (the
         train-measured improvement cleared the threshold and the budget was
         not exhausted). When ``False`` the holdout result does NOT count: the
-        runner falls back to the train decision and re-reports the previous
-        best confirmation.
+        runner defers the promotion and retains the previous released best
+        as historical feedback.
     confirmed:
         The threshold-gated confirmation bit fed back downstream: ``True`` =
         the train-win held on the holdout, ``False`` = it did not. On a
@@ -128,33 +101,12 @@ class LadderRelease:
 
 
 def effective_threshold(cfg: LadderConfig, weights: ScoringWeights) -> float:
-    """The release threshold: ``cfg.threshold`` (or ``promote_margin``) + noise band.
+    """Return the train-side release threshold plus the configured fixed band.
 
-    Parameter-free by default — ``cfg.threshold is None`` reuses the gate's
-    existing ``promote_margin`` noise threshold, and ``cfg.noise_scale`` is
-    ``0`` so the band collapses to that bar. An operator can pin the bar or
-    widen the band explicitly.
-
-    ``promote_margin`` and NOT :attr:`ScoringWeights.holdout_margin`, even
-    though this sits on the holdout path. What :func:`query_holdout` compares
-    against this bar is the TRAIN-measured improvement
-    (``train_parent_scalar - train_child_scalar``), so the train-calibrated
-    bound is the commensurable one; ``holdout_margin`` is calibrated against
-    the holdout slice's own coarser quantization and would be the same
-    category error on this line that issue #118 fixed inside the gate.
-
-    Substituting it here would also invert the guard it belongs to. A
-    WITHHELD query does not gate: the train promote stands and the holdout's
-    veto is skipped for that round. Under the documented rule of thumb
-    ``holdout_margin ≈ promote_margin × N_train / N_holdout`` is the LARGER
-    number, so the substitution raises the release bar and every challenger
-    whose train improvement falls in ``[promote_margin, holdout_margin)`` —
-    which is the marginal band the scalar-margin rule admits — would promote without
-    the holdout ever being consulted. An operator who separates the two
-    bounds to unblock a promotable board would silently switch off
-    board-memorization confirmation for the promotions they just unblocked.
-    Widening the release band is a deliberate act; pin
-    :attr:`LadderConfig.threshold` to do it.
+    An unset threshold uses ``promote_margin`` because release tests the training
+    improvement. ``holdout_margin`` controls allowed holdout regression after
+    release and is measured on a different board slice. Raising the release
+    threshold can defer a challenger; it cannot authorize an unconfirmed one.
     """
     base = weights.promote_margin if cfg.threshold is None else cfg.threshold
     return base + cfg.noise_scale
@@ -285,31 +237,30 @@ def holdout_record(
     budget_remaining: int,
     query_reserved: bool,
     threshold: float,
+    confirmation_status: ConfirmationStatus | None = None,
+    reason: str = "",
 ) -> dict[str, object]:
-    """Assemble the stable ``record.holdout`` block the dashboard reads.
+    """Serialize holdout confirmation and its durable query accounting.
 
-    The shape is fixed (OVERFITTING.md §12 #2) so a parallel dashboard agent
-    can consume it without coupling to this module's internals::
+    ``confirmation_status`` distinguishes disabled, satisfied, failed, and
+    incomplete requirements. Only a released confirmation satisfies the current
+    candidate. Withholding may repeat a historical ``confirmed`` bit and scalar;
+    ``ladder_released=False`` and ``confirmation_status=incomplete`` identify
+    that case. The reason never reveals an unreleased negative result.
 
-        {
-            "confirmed": bool | None,
-            "train_scalar": float | None,
-            "holdout_scalar": float | None,
-            "holdout_consulted": bool,
-            "ladder_released": bool,
-            "ladder_budget_total": int,
-            "ladder_budget_before_query": int | None,
-            "ladder_budget_remaining": int,
-            "ladder_query_reserved": bool,
-            "threshold": float,
-        }
-
-    ``None`` for ``confirmed`` / ``train_scalar`` / ``holdout_scalar`` carries
-    "no value this round" (e.g. the Ladder withheld before any release). The
-    runner writes ``record.holdout = None`` entirely when there was no holdout
-    to consult, so a populated block always means a holdout existed.
+    A missing holdout slice produces an explicit disabled block. A training
+    rejection skips the conditional confirmation and has no holdout block.
     """
     return {
+        "confirmation_status": confirmation_status
+        or (
+            ConfirmationStatus.SATISFIED
+            if released and confirmed
+            else ConfirmationStatus.FAILED
+            if released
+            else ConfirmationStatus.INCOMPLETE
+        ),
+        "reason": reason,
         "confirmed": confirmed,
         "train_scalar": train_scalar,
         "holdout_scalar": holdout_scalar,
@@ -323,12 +274,31 @@ def holdout_record(
     }
 
 
+def disabled_holdout_record() -> dict[str, object]:
+    """Record that the evaluation contract has no holdout slice."""
+    return holdout_record(
+        confirmed=None,
+        train_scalar=None,
+        holdout_scalar=None,
+        consulted=False,
+        released=False,
+        budget_total=0,
+        budget_before_query=None,
+        budget_remaining=0,
+        query_reserved=False,
+        threshold=0.0,
+        confirmation_status=ConfirmationStatus.DISABLED,
+        reason="no holdout slice in the evaluation contract",
+    )
+
+
 __all__ = [
     "LadderRelease",
     "LadderState",
     "decide_reserved_holdout",
     "effective_threshold",
     "holdout_record",
+    "disabled_holdout_record",
     "query_holdout",
     "reserve_holdout_query",
 ]

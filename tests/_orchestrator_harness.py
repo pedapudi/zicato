@@ -45,7 +45,9 @@ from zicato.core.types import (
     ExpectationResult,
     LossProfile,
 )
+from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.lifecycle import new_epoch
+from zicato.tournament.worker_transport import _entry_replicate_index
 
 
 async def target_call_llm(system: str, user: str, model: str) -> str:
@@ -224,8 +226,15 @@ def install_telemetry_stubs(
     # best-effort try/except, which used to swallow the whole health check
     # silently — no round ever wrote health/round_*.json under this stub.
     from zicato.telemetry.reducer import (
+        loss_profile_from_dict,
+        loss_profile_to_dict,
+    )
+    from zicato.telemetry.reducer import (
         split_judge_attributed_kind as _real_split_judge_attributed_kind,
     )
+
+    reducer_mod.loss_profile_from_dict = loss_profile_from_dict  # type: ignore[attr-defined]
+    reducer_mod.loss_profile_to_dict = loss_profile_to_dict  # type: ignore[attr-defined]
 
     reducer_mod.split_judge_attributed_kind = (  # type: ignore[attr-defined]
         _real_split_judge_attributed_kind
@@ -325,7 +334,7 @@ def install_telemetry_stubs(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, side, match_id
+        del adapter, weights, side, match_id
         expectation_result = (
             ExpectationResult(kind="predicate", passed=True)
             if entry.expectation is not None
@@ -337,7 +346,9 @@ def install_telemetry_stubs(
         # reading the worker's loss.json.
         _runner_mod._ingest_run_into_index(workspace_root, epoch_id, generation.id, entry.id)
         return LossProfile(
-            run_id=f"r-{generation.id}-{entry.id}",
+            run_id=run_id_for_unit(
+                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+            ),
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,

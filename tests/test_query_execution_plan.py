@@ -29,7 +29,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.core.loss import LossProfile
-from zicato.core.workspace import WorkspaceLayout, loss_profile_path
+from zicato.core.measurement import MeasurementDraw, range_at
+from zicato.core.workspace import loss_profile_path
 from zicato.dashboard.server import create_app
 from zicato.epoch.round_log import (
     DecisionRecorded,
@@ -51,6 +52,7 @@ from zicato.query.execution_plan import PlanNode
 from zicato.query.replicate_scores import band_of, measurement_bands
 from zicato.telemetry import reducer
 from zicato.tournament.unit_cache import unit_result_path
+from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-08-18_plan"
 ENTRIES = ("login", "search")
@@ -109,6 +111,7 @@ def _write_loss(
         drift_loss=0.25,
         pass_fail=passes,
         match_id=match_id,
+        measurement=MeasurementDraw.from_index(replicate) if range_at(replicate) else None,
         not_completed_reason=not_completed_reason,
         started_at="2026-08-18T00:01:00Z" if timed else None,
         ended_at="2026-08-18T00:01:01Z" if timed else None,

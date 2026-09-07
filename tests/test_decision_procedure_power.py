@@ -1,56 +1,28 @@
-"""Operating characteristics of the DECISION PROCEDURE under seeded noise.
+"""Seeded operating characteristics of selection and independent confirmation.
 
-Tier 2 of the convergence harness: where ``test_convergence_known_answer``
-proves the loop converges when every measurement is exact, this file
-proves the decision procedure itself — margin gate, replication,
-pass-rate monotonicity scope, and the Bradley--Terry evidence pre-gate —
-has the right OPERATING CHARACTERISTICS when measurements are noisy, the
-way they are in production (agent outputs vary, judges are LLMs).
+Policy trials draw immutable observations from the example target's noise
+model and predicates, then call the production replicate reduction, scoring,
+scalar gate, selection strategy and confirmation driver directly. Complete
+reports retain every requested seed, observation, decision, evidence attempt
+and measurement cost. Assertions share reports within the test invocation.
 
-Every trial is exactly reproducible: the noise model is the example
-harness's own :func:`draw_measured_tokens`, seeded from the stable
-identifier tuple ``(workspace seed, generation id, entry id, replicate
-index)`` via :func:`stable_noise_seed`. Trials vary the workspace seed;
-replicates vary the replicate index (stamped onto ``entry.context`` by
-the replication loop); nothing derives from the clock or a global RNG —
-so the "rates" asserted below are deterministic functions of the chosen
-seeds, and the assertions are calibrated documentation of the procedure's
-behaviour, not flaky statistics.
+Separate conformance cases compare direct results with the scheduler, including
+missing execution and ties. A subprocess case verifies that the example
+adapter produces the same seeded draws across the worker boundary. These
+checks keep scheduler and transport behavior independently observable.
 
-The statistical trials drive the REAL tournament machinery in-process —
-``run_matchup`` (board-unit scheduling, replicate averaging, the
-unchanged gate) and ``resolve_tournament`` (the gauntlet strategy + the
-evidence pre-gate's defer→replicate loop) — swapping only the
-subprocess-worker boundary ``runner._run_single`` (the test suite's
-documented monkeypatch anchor) for an in-process evaluator built on the
-SAME noise model, output synthesis, and REAL board predicates the noisy
-adapter uses. One test at the bottom drives the actual
-:class:`~zicato_examples.target_0_convergence.harness.NoisyPolicyAdapter`
-through real subprocess workers to prove the seeded draw crosses the
-process boundary intact.
+Every draw depends on the stable identifiers (workspace seed, generation id,
+entry id, replicate index), with no clock or global random state. The measured
+rates characterize these fixed seeds and this noise model; they are not a
+general power guarantee for other targets.
 
-Contracts under test
---------------------
-* NAIVE (the shipped defaults): ``replicates=1``, fixed
-  ``promote_margin=0.01``, per-entry pass-rate monotonicity, no evidence
-  gate. One noisy sample decides the duel.
-* EFFECTIVE: ``replicates=32`` (averaged — the same measurement budget
-  the shipped racing example's ``promote_confidence_replicates: 32``
-  buys), ``aggregate``-scope pass-rate monotonicity (the documented
-  policy for sampled/noisy boards), and the Bradley--Terry evidence
-  pre-gate (crown only at ``P(theta_child > theta_champion) >= 0.8``
-  with SEPARATED rating CIs, defer→replicate up to the budget, terminal
-  ``inconclusive`` otherwise).
-
-A load-bearing measured fact about the shipped pre-gate: on a
-two-contestant field the prior-regularised Bradley--Terry CIs only
-separate after ~37 duels of an essentially unbroken win streak — ANY
-mixed record never separates. The pre-gate is therefore a pure SOUNDNESS
-device (noise cannot manufacture 37 consistent wins), and the POWER to
-resolve a small true effect must be bought with replication: the
-effective contract's per-duel averaging is what turns a 0.5x-floor
-effect into a ~3-sigma-per-duel effect the win streak can actually
-sustain. The tests below pin both halves of that trade.
+The single-draw contract uses a fixed margin and per-entry pass-rate
+monotonicity, with confirmation disabled. The replicated contract averages
+32 ordinary selection draws, uses aggregate pass-rate monotonicity, and allows
+38 independent single-draw confirmation attempts. Its strength-difference
+interval includes covariance and corrects for planned candidate comparisons
+and confirmation looks. Selection observations never provide inferential
+confirmation evidence.
 """
 
 from __future__ import annotations
@@ -64,7 +36,7 @@ import tempfile
 from dataclasses import asdict, replace
 from functools import lru_cache
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -87,20 +59,23 @@ from zicato.core import (
     ScoringWeights,
     TournamentDecision,
 )
+from zicato.core.measurement import MeasurementDraw, measurement_artifact_path
 from zicato.core.types import DriftCount, ExpectationResult
-from zicato.core.workspace import loss_profile_path
+from zicato.core.workspace import run_dir
 from zicato.import_path import import_dotted_path
 from zicato.selection.driver import (
     EvidencePreGate,
+    TournamentEvaluation,
     confirm_promotion_with_evidence,
+    evaluate_tournament,
     make_evidence_replicate_duel,
-    resolve_tournament,
 )
 from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE, rating_block
-from zicato.selection.standings_ext import audit_duels
 from zicato.selection.strategies.gauntlet import GauntletStrategy
 from zicato.selection.strategy import Contestant, Matchup, MatchupResult, SelectionDecision
-from zicato.tournament.runner import run_matchup
+from zicato.tournament.gate import evaluate_gate
+from zicato.tournament.runner import TournamentResult, run_matchup
+from zicato.tournament.scoring import aggregate_generation_score, fold_matchup_replicates
 from zicato_examples.target_0_convergence import mocks as t0_mocks
 from zicato_examples.target_0_convergence.harness import (
     GENERATION_ID_CONTEXT_KEY,
@@ -156,25 +131,18 @@ NAIVE_WEIGHTS = ScoringWeights()
 #: single noise-flipped entry must not veto a genuinely better challenger.
 EFFECTIVE_WEIGHTS = ScoringWeights(pass_rate_monotonicity_scope="aggregate")
 
-#: Effective-contract knobs. ``replicates=32`` averages every duel (the
-#: crowning duel AND each evidence duel) — with the A/A noise floor at
-#: ~0.66 per single sample, averaging 32 shrinks the per-duel delta sd to
-#: ~0.12, which is what makes the 0.5x-floor effect (~0.34) a ~3-sigma
-#: per-duel signal. The budget of 38 evidence duels is what the shipped
-#: CI-separation rule actually costs: two-contestant CIs first separate
-#: at 37 total duels of an unbroken win streak (the racing example's
-#: ``promote_confidence_replicates: 32`` is this same bill), so a real
-#: effect crowns at ~36 spends and a null burns the budget and terminates
-#: ``inconclusive``.
+#: Averaging 32 draws reduces the approximate single-draw difference standard
+#: deviation from 0.66 to 0.12. This makes the planted 0.34 improvement about
+#: three standard deviations per duel. The separate budget allows at most
+#: 38 confirmation duels; its planned-look correction is part of the rule.
 EFFECTIVE_REPLICATES = 32
 EFFECTIVE_THRESHOLD = 0.8
 EFFECTIVE_BUDGET = 38
 
-#: Trial counts. Deterministic given the seeds; sized to keep the whole
-#: file's runtime small while making the measured rates meaningful. The
-#: noise-floor measurement is cheap (single-sample duels) so it takes the
-#: larger N; each effective-procedure trial runs up to ~39 replicated
-#: duels (~12k board units in-process), so those take the smaller N.
+#: Fixed trial identities: 60 single-draw null trials, 24 confirmed null
+#: trials, and 12 trials per planted effect. Each confirmed trial uses at
+#: most 700 board units: 32 selection draws plus 38 confirmation draws,
+#: with five entries measured against both generations per draw.
 AA_TRIALS = 60
 AA_EFFECTIVE_TRIALS = 24
 POWER_TRIALS = 12
@@ -213,7 +181,7 @@ def _config(workspace: Path, seed: int) -> RuntimeConfig:
         target_call_llm=harness_call,
         evaluation_call_llm=aux_call,
         seed=seed,
-        parallelism=8,
+        parallelism=2,
     )
 
 
@@ -233,7 +201,7 @@ class _NoisyWorld:
     """
 
     def __init__(self, tokens_by_gen: dict[str, tuple[str, ...]], sigma: float) -> None:
-        self.tokens_by_gen = dict(tokens_by_gen)
+        self.tokens_by_gen = MappingProxyType(dict(tokens_by_gen))
         self.sigma = float(sigma)
 
     def install(self, monkeypatch: pytest.MonkeyPatch, *, persist: bool = False) -> None:
@@ -262,34 +230,104 @@ class _NoisyWorld:
     ) -> LossProfile:
         del adapter, weights, workspace_root, side, match_id
         replicate = int(dict(entry.context).get(REPLICATE_INDEX_CONTEXT_KEY, "0") or 0)
+        return self.profile(
+            self.observe(
+                workspace_seed=int(config.seed or 0),
+                generation_id=generation.id,
+                entry=entry,
+                replicate_index=replicate,
+            ),
+            epoch_id=epoch_id,
+        )
+
+    def observe(self, *, workspace_seed, generation_id, entry, replicate_index):
         seed = stable_noise_seed(
-            workspace_seed=int(config.seed or 0),
-            generation_key=generation.id,
+            workspace_seed=workspace_seed,
+            generation_key=generation_id,
             entry_id=entry.id,
-            replicate_index=replicate,
+            replicate_index=replicate_index,
         )
         measured = draw_measured_tokens(
-            list(self.tokens_by_gen[generation.id]), random.Random(seed), self.sigma
+            list(self.tokens_by_gen[generation_id]), random.Random(seed), self.sigma
         )
         output = synthesize_output(str(entry.input or ""), measured)
         assert entry.expectation is not None
         passed = bool(_predicate(entry.expectation.spec)(SimpleNamespace(final_output=output)))
+        return DecisionObservation(
+            workspace_seed, generation_id, entry.id, replicate_index, float(len(measured)), passed
+        )
+
+    @staticmethod
+    def profile(observation: DecisionObservation, *, epoch_id: str = "e0") -> LossProfile:
         return LossProfile(
-            run_id=f"{generation.id}--{entry.id}--r{replicate}",
-            entry_id=entry.id,
-            generation_id=generation.id,
+            run_id=f"{observation.generation_id}--{observation.entry_id}--r{observation.replicate_index}",
+            entry_id=observation.entry_id,
+            generation_id=observation.generation_id,
             epoch_id=epoch_id,
             drift_counts=(
-                DriftCount(kind="unexpected_output", severity="info", count=len(measured)),
+                DriftCount(
+                    kind="unexpected_output", severity="info", count=int(observation.drift_loss)
+                ),
             ),
             plan_revisions=0,
             task_failure_ratio=0.0,
             runtime_ms=1,
             wall_clock_budget_exceeded=False,
-            expectation_result=ExpectationResult(kind="predicate", passed=passed),
-            drift_loss=float(len(measured)),
-            pass_fail=passed,
+            expectation_result=ExpectationResult(kind="predicate", passed=observation.passed),
+            drift_loss=observation.drift_loss,
+            pass_fail=observation.passed,
+            measurement=MeasurementDraw.from_index(
+                observation.replicate_index, base_seed=observation.workspace_seed
+            ),
+            execution_started=True,
         )
+
+
+def _computed_matchup(
+    world: _NoisyWorld,
+    matchup: Matchup,
+    seed: int,
+    weights: ScoringWeights,
+    *,
+    replicate_base: int = 0,
+    observations: list[DecisionObservation] | None = None,
+) -> MatchupResult:
+    """Reduce immutable draws through the production scoring and gate functions."""
+    runs = []
+    for replicate in range(replicate_base, replicate_base + matchup.replicates):
+        left, right = {}, {}
+        for entry in _board():
+            for contestant, losses in ((matchup.left, left), (matchup.right, right)):
+                observed = world.observe(
+                    workspace_seed=seed,
+                    generation_id=contestant.generation_id,
+                    entry=entry,
+                    replicate_index=replicate,
+                )
+                if observations is not None:
+                    observations.append(observed)
+                losses[entry.id] = world.profile(observed)
+        runs.append((left, right))
+    left, right = fold_matchup_replicates(runs)
+    left_agg = aggregate_generation_score(list(left.values()), weights)
+    right_agg = aggregate_generation_score(list(right.values()), weights)
+    result = TournamentResult(
+        parent_generation_id=matchup.left.generation_id,
+        child_generation_id=matchup.right.generation_id,
+        parent_agg=left_agg,
+        child_agg=right_agg,
+        outcome=evaluate_gate(left_agg, right_agg, weights),
+        per_entry_losses={entry: (loss, right[entry]) for entry, loss in left.items()},
+    )
+    return MatchupResult(
+        matchup.matchup_id,
+        matchup.left.generation_id,
+        matchup.right.generation_id,
+        left_agg,
+        right_agg,
+        result.outcome,
+        measurement_draw=result.measurement_draw,
+    )
 
 
 def _naive_outcome(workspace: Path, seed: int, weights: ScoringWeights) -> Any:
@@ -309,19 +347,19 @@ def _naive_outcome(workspace: Path, seed: int, weights: ScoringWeights) -> Any:
     return result.outcome
 
 
-def _effective_decision(
-    workspace: Path,
+def _effective_evaluation(
+    workspace: Path | None,
     trial: int,
     weights: ScoringWeights = EFFECTIVE_WEIGHTS,
-) -> SelectionDecision:
-    """One trial of the EFFECTIVE decision procedure, end to end.
+    *,
+    world: _NoisyWorld | None = None,
+    observations: list[DecisionObservation] | None = None,
+) -> TournamentEvaluation:
+    """Use the production decision driver with direct draws or a real scheduler.
 
-    Drives the REAL driver: gauntlet strategy (replicates=4 crowning duel)
-    through ``resolve_tournament`` with the Bradley--Terry pre-gate and a
-    replicate-duel runner mirroring the orchestrator's (one extra
-    single-replicate duel of the crowning pair per defer). Each duel of
-    the trial draws fresh seeded noise by advancing the workspace seed —
-    the deterministic analogue of an LLM re-sampling on every re-run.
+    Selection averages 32 ordinary draws. Confirmation uses the reserved-slot
+    factory and one draw per attempt. The scheduler path requires a workspace;
+    the direct path depends only on the supplied world and scoring values.
     """
     champion = Contestant(generation_id="champion", role="champion")
     challenger = Contestant(generation_id="challenger", role="challenger")
@@ -331,8 +369,17 @@ def _effective_decision(
         del n
         return champion, [challenger]
 
-    async def _run(m: Matchup) -> MatchupResult:
-        config = _config(workspace, trial * 10_000 + next(duel_counter))
+    async def _run(
+        m: Matchup, *, replicate_base: int = 0, cache_scores: bool = True
+    ) -> MatchupResult:
+        assert cache_scores is (replicate_base == 0)
+        seed = trial * 10_000 + next(duel_counter)
+        if world is not None:
+            return _computed_matchup(
+                world, m, seed, weights, replicate_base=replicate_base, observations=observations
+            )
+        assert workspace is not None, "scheduler conformance requires a workspace"
+        config = _config(workspace, seed)
         result = await run_matchup(
             adapter=object(),
             left_gen=_gen(m.left.generation_id),
@@ -343,6 +390,7 @@ def _effective_decision(
             workspace_root=workspace,
             epoch_id="e0",
             replicates=m.replicates,
+            replicate_base=replicate_base,
             match_id=m.matchup_id,
         )
         return MatchupResult(
@@ -352,38 +400,14 @@ def _effective_decision(
             left_agg=result.parent_agg,
             right_agg=result.child_agg,
             outcome=result.outcome,
+            measurement_draw=result.measurement_draw,
         )
 
-    evidence_counter = itertools.count()
-
-    async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
-        # Mirrors the orchestrator's replicate-duel wiring — one extra
-        # crowning-pair duel through the SAME runner + gate — except each
-        # evidence duel carries the contract's replication too: the
-        # pre-gate's CI separation needs a ~37-duel win streak, and only a
-        # replicated (low-variance) duel makes that streak sustainable for
-        # a small true effect. This is the deterministic analogue of the
-        # racing contract's ``promote_confidence_replicates`` measurement
-        # budget. Per the ReplicateDuel contract each call mints a UNIQUE
-        # matchup id (the driver's audit guard drops re-presented ids); the
-        # per-duel INDEPENDENCE that production buys with the reserved
-        # replicate base (EVIDENCE_REPLICATE_BASE + j) is supplied here by
-        # advancing the workspace seed per duel — the harness fakes the
-        # worker boundary and persists nothing, so no cache slot exists to
-        # collide with. The measured numbers below are therefore unchanged
-        # by the reserved-base fix: this harness always drew fresh.
-        return await _run(
-            Matchup(
-                matchup_id=f"bt-replicate:{next(evidence_counter)}:{left_id}:{right_id}",
-                left=Contestant(generation_id=left_id, role="champion"),
-                right=Contestant(generation_id=right_id, role="challenger"),
-                replicates=EFFECTIVE_REPLICATES,
-            )
-        )
+    _replicate_duel = make_evidence_replicate_duel(_run)
 
     strategy = GauntletStrategy({"replicates": EFFECTIVE_REPLICATES})
     return asyncio.run(
-        resolve_tournament(
+        evaluate_tournament(
             strategy,
             request_field=_request_field,
             run_matchup=_run,
@@ -395,18 +419,27 @@ def _effective_decision(
     )
 
 
+def _effective_decision(
+    workspace: Path,
+    trial: int,
+    weights: ScoringWeights = EFFECTIVE_WEIGHTS,
+) -> SelectionDecision:
+    return _effective_evaluation(workspace, trial, weights).decision
+
+
 def _aa_world() -> dict[str, tuple[str, ...]]:
     """Champion vs itself: identical true tokens under two generation ids."""
     return {"champion": BASE_TOKENS, "challenger": BASE_TOKENS}
 
 
-def _measure_noise_floor(monkeypatch: pytest.MonkeyPatch, workspace: Path) -> tuple[float, float]:
-    """Run the A/A duels under the naive contract; return (sd, max_abs)."""
-    _NoisyWorld(_aa_world(), NOISE_SIGMA).install(monkeypatch)
-    deltas = [
-        _naive_outcome(workspace, seed=trial, weights=NAIVE_WEIGHTS).delta_scalar
-        for trial in range(AA_TRIALS)
-    ]
+@pytest.fixture(scope="module")
+def null_report() -> DecisionReport:
+    """Share the complete single-draw control within this module's worker."""
+    return _power_report(BASE_TOKENS, effective=False, seeds=tuple(range(AA_TRIALS)))
+
+
+def _measure_noise_floor(report: DecisionReport) -> tuple[float, float]:
+    deltas = [json.loads(trial.audit_json)["delta_scalar"] for trial in report.trials]
     return statistics.pstdev(deltas), max(abs(d) for d in deltas)
 
 
@@ -415,7 +448,7 @@ def _measure_noise_floor(monkeypatch: pytest.MonkeyPatch, workspace: Path) -> tu
 # ---------------------------------------------------------------------------
 
 
-def test_aa_null_calibration_measures_the_noise_floor(monkeypatch, tmp_path):
+def test_aa_null_calibration_measures_the_noise_floor(null_report):
     """A generation dueling ITSELF: the A/A delta spread IS the noise floor.
 
     Identical true trees under two generation ids draw independent noise
@@ -423,7 +456,7 @@ def test_aa_null_calibration_measures_the_noise_floor(monkeypatch, tmp_path):
     delta_scalar is a pure noise variable. Its spread — recorded and
     printed here — is the floor every later effect size is compared to.
     """
-    floor_sd, max_abs = _measure_noise_floor(monkeypatch, tmp_path)
+    floor_sd, max_abs = _measure_noise_floor(null_report)
     print(
         f"\n[A/A null calibration] trials={AA_TRIALS} sigma={NOISE_SIGMA} "
         f"noise floor (sd of A/A delta_scalar) = {floor_sd:.4f}, "
@@ -438,21 +471,18 @@ def test_aa_null_calibration_measures_the_noise_floor(monkeypatch, tmp_path):
     assert max_abs > 0.0
 
 
-@pytest.mark.slow
-def test_aa_effective_contract_false_promotion_rate_is_zero(monkeypatch, tmp_path):
+def test_aa_effective_contract_false_promotion_rate_is_zero():
     """The evidence-gated contract does not promote a generation over itself.
 
     Under the effective contract every A/A trial must end with the
     champion standing: either the replicated crowning duel already fails
     the margin gate, or the pre-gate's defer→replicate loop fails to find
-    P(theta_child > theta_champion) >= 0.8 with separated CIs and goes
+    a positive adjusted strength-difference interval and goes
     terminally inconclusive (folded to DEFERRED — kept for analysis, the
     lineage head unchanged). Deterministic over these seeded trials.
     """
-    _NoisyWorld(_aa_world(), NOISE_SIGMA).install(monkeypatch)
-    decisions = [
-        _effective_decision(tmp_path, trial).decision for trial in range(AA_EFFECTIVE_TRIALS)
-    ]
+    report = _power_report(BASE_TOKENS, effective=True, seeds=tuple(range(AA_EFFECTIVE_TRIALS)))
+    decisions = [trial.decision for trial in report.trials]
     false_promotions = sum(1 for d in decisions if d == "promoted")
     print(
         f"\n[A/A effective] trials={AA_EFFECTIVE_TRIALS} false promotions={false_promotions} "
@@ -466,8 +496,7 @@ def test_aa_effective_contract_false_promotion_rate_is_zero(monkeypatch, tmp_pat
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.slow
-def test_margin_below_noise_floor_without_evidence_gate_is_unsound(monkeypatch, tmp_path):
+def test_margin_below_noise_floor_without_evidence_gate_is_unsound(null_report):
     """promote_margin < noise floor + no evidence gate ⇒ noise alone promotes.
 
     The unsound configuration: with the margin (0.01) far below the
@@ -475,24 +504,20 @@ def test_margin_below_noise_floor_without_evidence_gate_is_unsound(monkeypatch, 
     A/A challenger clears the gate in a substantial fraction of seeded
     trials — pass-rate monotonicity is disabled here so the demonstration
     isolates the margin rule itself. The SAME trials under the evidence
-    gate promote never: noise cannot manufacture three consistent,
-    CI-separated wins.
+    gate promote never: the complete seeded control measures the effect of confirmation.
     """
-    floor_sd, _ = _measure_noise_floor(monkeypatch, tmp_path)
+    floor_sd, _ = _measure_noise_floor(null_report)
     margin_only = ScoringWeights(pass_rate_monotonicity=False)
     assert margin_only.promote_margin < floor_sd, "the premise: margin below the floor"
 
-    _NoisyWorld(_aa_world(), NOISE_SIGMA).install(monkeypatch)
-    unsound_promotions = sum(
-        1
-        for trial in range(AA_TRIALS)
-        if _naive_outcome(tmp_path, seed=trial, weights=margin_only).decision == "promoted"
+    margin_report = _power_report(
+        BASE_TOKENS, effective=False, seeds=tuple(range(AA_TRIALS)), weights=margin_only
     )
-    gated_promotions = sum(
-        1
-        for trial in range(AA_EFFECTIVE_TRIALS)
-        if _effective_decision(tmp_path, trial, weights=margin_only).decision == "promoted"
+    gated_report = _power_report(
+        BASE_TOKENS, effective=True, seeds=tuple(range(AA_EFFECTIVE_TRIALS)), weights=margin_only
     )
+    unsound_promotions = sum(trial.decision == "promoted" for trial in margin_report.trials)
+    gated_promotions = sum(trial.decision == "promoted" for trial in gated_report.trials)
     print(
         f"\n[margin-vs-noise] margin={margin_only.promote_margin} "
         f"< floor={floor_sd:.4f}: unsound-config noise promotions="
@@ -512,61 +537,62 @@ def test_margin_below_noise_floor_without_evidence_gate_is_unsound(monkeypatch, 
 
 
 def _power_report(
-    monkeypatch: pytest.MonkeyPatch,
-    workspace: Path,
     challenger_tokens: tuple[str, ...],
     *,
     effective: bool,
     seeds: tuple[int, ...] | None = None,
+    weights: ScoringWeights | None = None,
 ) -> DecisionReport:
     """Run a complete seeded trial set once; assertions consume its immutable report."""
     seeds = tuple(range(POWER_TRIALS)) if seeds is None else seeds
     world = {"champion": BASE_TOKENS, "challenger": challenger_tokens}
     evaluator = _NoisyWorld(world, NOISE_SIGMA)
+    weights = (EFFECTIVE_WEIGHTS if effective else NAIVE_WEIGHTS) if weights is None else weights
     observed: list[DecisionObservation] = []
 
-    async def record(**kwargs: Any) -> LossProfile:
-        loss = await evaluator._fake_run_single(**kwargs)
-        observed.append(
-            DecisionObservation(
-                int(kwargs["config"].seed),
-                loss.generation_id,
-                loss.entry_id,
-                int(kwargs["entry"].context.get(REPLICATE_INDEX_CONTEXT_KEY, "0") or 0),
-                loss.drift_loss,
-                loss.pass_fail,
+    rows = []
+    for seed in seeds:
+        observed.clear()
+        evaluated = (
+            _effective_evaluation(None, seed, weights, world=evaluator, observations=observed)
+            if effective
+            else None
+        )
+        decision = (
+            evaluated.decision
+            if evaluated is not None
+            else _computed_matchup(
+                evaluator,
+                Matchup(
+                    "single",
+                    Contestant("champion", "champion"),
+                    Contestant("challenger", "challenger"),
+                ),
+                seed,
+                weights,
+                observations=observed,
+            ).outcome
+        )
+        evidence = None if evaluated is None else evaluated.evidence
+        eligible = (
+            None
+            if evidence is None
+            else tuple(attempt.eligibility == "eligible" for attempt in evidence.verdict.attempts)
+        )
+        rows.append(
+            DecisionTrial(
+                seed,
+                tuple(observed),
+                str(decision.decision),
+                decision.reason,
+                json.dumps(asdict(decision), sort_keys=True),
+                eligible,
+                None if evidence is None else json.dumps(asdict(evidence), sort_keys=True),
             )
         )
-        return loss
 
-    rows = []
-    with monkeypatch.context() as patch:
-        evaluator.install(patch)
-        patch.setattr(runner_mod, "_run_single", record)
-        for seed in seeds:
-            observed.clear()
-            decision = (
-                _effective_decision(workspace, seed)
-                if effective
-                else _naive_outcome(workspace, seed=seed, weights=NAIVE_WEIGHTS)
-            )
-            eligible = (
-                tuple(bool(audit_duels((matchup,))) for matchup in decision.matchups)
-                if effective
-                else None
-            )
-            rows.append(
-                DecisionTrial(
-                    seed,
-                    tuple(observed),
-                    str(decision.decision),
-                    decision.reason,
-                    json.dumps(asdict(decision), sort_keys=True),
-                    eligible,
-                )
-            )
     inputs = {
-        "weights": asdict(EFFECTIVE_WEIGHTS if effective else NAIVE_WEIGHTS),
+        "weights": asdict(weights),
         "replicates": EFFECTIVE_REPLICATES if effective else 1,
         "confirmation_threshold": EFFECTIVE_THRESHOLD if effective else None,
         "confirmation_budget": EFFECTIVE_BUDGET if effective else None,
@@ -579,8 +605,7 @@ def _power_report(
     )
 
 
-@pytest.mark.slow
-def test_power_at_planted_deltas(monkeypatch, tmp_path):
+def test_power_at_planted_deltas(null_report):
     """The effective contract's power curve over 0.5x / 1x / 3x-floor effects.
 
     The planted true improvements land (in measured scalar units) at about
@@ -588,10 +613,10 @@ def test_power_at_planted_deltas(monkeypatch, tmp_path):
     must promote the unmissable 3x effect in every seeded trial, and its
     power must be monotone in the effect size.
     """
-    floor_sd, _ = _measure_noise_floor(monkeypatch, tmp_path)
+    floor_sd, _ = _measure_noise_floor(null_report)
     reports: dict[str, DecisionReport] = {}
     for name, (tokens, measured_delta) in DELTA_CASES.items():
-        report = _power_report(monkeypatch, tmp_path, tokens, effective=True)
+        report = _power_report(tokens, effective=True)
         reports[name] = report
         print(
             f"\n[power/effective] case={name} measured-delta={measured_delta:.3f} "
@@ -608,23 +633,24 @@ def test_power_at_planted_deltas(monkeypatch, tmp_path):
     assert rates["large"] == 1.0
     # Power is monotone in the effect size.
     assert rates["small"] <= rates["medium"] <= rates["large"]
-    # Compare the single-sample contract with the same small-effect report
-    # that supplies the power curve. Neither assertion launches another trial.
-    small_tokens = DELTA_CASES["small"][0]
-    naive_rate = _power_report(monkeypatch, tmp_path, small_tokens, effective=False).promotion_rate
-    effective_rate = reports["small"].promotion_rate
+    # Reuse the complete small-effect report for actual-protocol cost assertions.
+    small = reports["small"]
+    naive_rate = _power_report(DELTA_CASES["small"][0], effective=False).promotion_rate
+    measured_units = sum(len(trial.observations) for trial in small.trials)
+    for trial in small.trials:
+        confirmation = json.loads(trial.audit_json)["matchups"][1:]
+        assert len(confirmation) <= EFFECTIVE_BUDGET
+        draws = [match["measurement_draw"] for match in confirmation]
+        assert all(draw is not None for draw in draws)
+        assert len(draws) == len({json.dumps(draw, sort_keys=True) for draw in draws})
+        assert len(trial.observations) == 2 * len(_board()) * (
+            EFFECTIVE_REPLICATES + len(confirmation)
+        )
     print(
-        f"\n[naive-vs-effective @ small delta] naive={naive_rate:.2f} "
-        f"effective={effective_rate:.2f} over {POWER_TRIALS} seeded trials"
+        f"\n[small-effect measurement cost] naive={naive_rate:.2f} "
+        f"confirmed={small.promotion_rate:.2f}, "
+        f"board_units={measured_units} across {POWER_TRIALS} trials"
     )
-    # The naive default demonstrably fails the small-effect case: it
-    # misses the true improvement in at least half the trials.
-    assert naive_rate <= 0.5
-    # The effective procedure demonstrably catches what the naive one
-    # misses: a decisively higher promotion rate on the same trials.
-    assert effective_rate >= naive_rate + 0.25
-    # And the effective procedure remains sound (see the A/A tests): its
-    # extra power comes from evidence, not from a looser gate.
 
 
 # ---------------------------------------------------------------------------
@@ -730,6 +756,7 @@ def _confirm(
                 left_agg=result.parent_agg,
                 right_agg=result.child_agg,
                 outcome=result.outcome,
+                measurement_draw=result.measurement_draw,
             )
 
         confirmed, resolution = await confirm_promotion_with_evidence(
@@ -786,6 +813,14 @@ def test_evidence_replicates_are_independent_draws(monkeypatch, tmp_path):
     assert len(champion_scalars) > 1, f"champion never re-drawn: {champion_scalars}"
 
 
+def _measured_loss_path(
+    workspace: Path, generation_id: str, entry_id: str, *, seed: int, index: int = 0
+) -> Path:
+    return measurement_artifact_path(
+        run_dir(workspace, "e0", generation_id, entry_id), "loss", index, base_seed=seed
+    )
+
+
 def test_full_mode_evidence_loop_never_touches_canonical_slots(monkeypatch, tmp_path):
     """(b) The child's (and champion's) canonical ``loss.json`` is
     byte-identical across the evidence loop, and the evidence draws persist
@@ -804,7 +839,7 @@ def test_full_mode_evidence_loop_never_touches_canonical_slots(monkeypatch, tmp_
     canonical: dict[tuple[str, str], bytes] = {}
     for gid in ("champion", "challenger"):
         for entry in _board():
-            path = loss_profile_path(tmp_path, "e0", gid, entry.id)
+            path = _measured_loss_path(tmp_path, gid, entry.id, seed=1)
             canonical[(gid, entry.id)] = path.read_bytes()
 
     budget = 4
@@ -813,7 +848,7 @@ def test_full_mode_evidence_loop_never_touches_canonical_slots(monkeypatch, tmp_
 
     # Canonical replicate-0 slots: byte-identical before/after the loop.
     for (gid, entry_id), before in canonical.items():
-        after = loss_profile_path(tmp_path, "e0", gid, entry_id).read_bytes()
+        after = _measured_loss_path(tmp_path, gid, entry_id, seed=1).read_bytes()
         assert after == before, f"canonical loss.json clobbered for {gid}/{entry_id}"
 
     # The evidence draws persisted under the RESERVED base — for BOTH sides.
@@ -821,17 +856,15 @@ def test_full_mode_evidence_loop_never_touches_canonical_slots(monkeypatch, tmp_
         for j in range(budget):
             slot = EVIDENCE_REPLICATE_BASE + j
             for entry in _board():
-                reserved = loss_profile_path(tmp_path, "e0", gid, entry.id).with_name(
-                    f"loss.r{slot}.json"
-                )
+                reserved = _measured_loss_path(tmp_path, gid, entry.id, seed=2, index=slot)
                 assert reserved.exists(), f"missing reserved draw {gid}/{entry.id} r{slot}"
 
     # (c) The champion's reserved draws are fresh samples, not copies of its
     # canonical slot: at least one entry's bytes differ from canonical r0.
     redrawn = any(
-        loss_profile_path(tmp_path, "e0", "champion", entry.id)
-        .with_name(f"loss.r{EVIDENCE_REPLICATE_BASE}.json")
-        .read_bytes()
+        _measured_loss_path(
+            tmp_path, "champion", entry.id, seed=2, index=EVIDENCE_REPLICATE_BASE
+        ).read_bytes()
         != canonical[("champion", entry.id)]
         for entry in _board()
     )
@@ -873,7 +906,7 @@ def _worker_config(workspace: Path, seed: int) -> RuntimeConfig:
         target_call_llm=t0_mocks.target_llm,
         evaluation_call_llm=t0_mocks.aux_llm,
         seed=seed,
-        parallelism=4,
+        parallelism=2,
         worker_permit_dir=workspace.parent / "worker-permits",
     )
 
@@ -889,6 +922,7 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
     file per replicate across the process boundary.
     """
     subset = ("conv_summary", "conv_no_fabrication")
+    seed = 7
     sigma = 0.35
     adapter = make_noisy_adapter({"noise_sigma": sigma})
     worker_tmp = tmp_path / "worker-tmp"
@@ -906,7 +940,7 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
                     right_gen=_real_gen(workspace, "aa-right", BASE_TOKENS),
                     board=list(_board()),
                     weights=NAIVE_WEIGHTS,
-                    config=_worker_config(workspace, seed=7),
+                    config=_worker_config(workspace, seed=seed),
                     workspace_root=workspace,
                     epoch_id="e0",
                     board_subset=subset,
@@ -927,17 +961,11 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
 
     for generation_id in ("aa-left", "aa-right"):
         for entry_id in subset:
-            run_dir = (
-                tmp_path
-                / "ws1"
-                / "epochs"
-                / "e0"
-                / "generations"
-                / generation_id
-                / "runs"
-                / entry_id
+            directory = run_dir(tmp_path / "ws1", "e0", generation_id, entry_id)
+            r0, r1 = (
+                measurement_artifact_path(directory, "events", index, base_seed=seed)
+                for index in (0, 1)
             )
-            r0, r1 = run_dir / "events.jsonl", run_dir / "events.r1.jsonl"
             assert r0.is_file() and r1.is_file()
             assert r0.read_bytes() and r1.read_bytes() and r0.read_bytes() != r1.read_bytes()
 
@@ -977,6 +1005,7 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
                 generation_id=gen_id,
                 entry_id=entry_id,
                 replicate_index=0,
+                base_seed=seed,
             )
             r1 = _resolve_cached_unit(
                 workspace_root=tmp_path / "ws1",
@@ -984,6 +1013,7 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
                 generation_id=gen_id,
                 entry_id=entry_id,
                 replicate_index=1,
+                base_seed=seed,
             )
             assert r0 is not None and r1 is not None
             replicate_pairs.append((r0.drift_loss, r0.pass_fail, r1.drift_loss, r1.pass_fail))

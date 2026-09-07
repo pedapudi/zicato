@@ -105,6 +105,7 @@ class _CrowningHoldout:
 
     promoted_id: str | None
     reason_override: str | None = None
+    decision_override: TournamentDecision | None = None
     holdout_block: dict[str, Any] | None = None
     holdout_child_scalar: float | None = None
     challenger_id: str | None = None
@@ -153,10 +154,10 @@ async def _confirm_crowning_on_holdout(
     must ALSO confirm on the holdout — through the SAME Ladder-mediated
     machinery + per-epoch budget the gauntlet uses (``confirm_fn`` is
     :func:`zicato.tournament.runner.confirm_crowning_holdout`, injected so
-    the decision shape is unit-testable). A released non-confirmation flips
-    the crowning promote to a holdout reject: the champion stands and
-    ``reason_override`` carries the cause. No crowning duel / a
-    non-promote / an empty holdout ⇒ the decision passes through unchanged.
+    the decision shape is unit-testable). Released non-confirmation rejects;
+    withheld or incomplete confirmation defers. Both retain the champion and
+    preserve the reason and final decision through settlement. No crowning duel
+    or a non-promotion skips confirmation; an empty holdout records it disabled.
 
     The champion (parent) side is resolved defensively — ``left`` is the
     champion by the strategy's convention, but a future strategy that seeds
@@ -216,14 +217,16 @@ async def _confirm_crowning_on_holdout(
     )
     reason_override: str | None = None
     if crowning_outcome.decision != "promoted":
-        # The holdout flipped a bracket-leader's train win to a reject:
-        # the champion stands, the crowned generation is demoted to a
-        # dead branch, and the crowning reason carries the holdout cause.
+        # Both rejection and deferral preserve the champion. Their distinct
+        # terminal decisions must survive field and per-candidate settlement.
         promoted_id = None
         reason_override = crowning_outcome.reason
     return _CrowningHoldout(
         promoted_id=promoted_id,
         reason_override=reason_override,
+        decision_override=(
+            crowning_outcome.decision if crowning_outcome.decision != "promoted" else None
+        ),
         holdout_block=holdout_block,
         holdout_child_scalar=holdout_child_scalar,
         challenger_id=challenger_crown_id,
@@ -240,6 +243,7 @@ def _apply_field_overrides(
     crowning_reason_override: str | None,
     field_overrides: dict[str, GateOverride],
     structure: str,
+    crowning_decision_override: TournamentDecision | None = None,
 ) -> tuple[str | None, set[str], dict[str, dict[str, Any]], Any]:
     """Re-resolve the field's crowning under claimed operator overrides — PURE.
 
@@ -328,7 +332,11 @@ def _apply_field_overrides(
             decision=(
                 TournamentDecision.PROMOTED
                 if promoted_id is not None
-                else TournamentDecision.REJECTED
+                else (
+                    crowning_decision_override
+                    if crowning_decision_override is not None and override_decision_reason is None
+                    else TournamentDecision.REJECTED
+                )
             ),
             reason=_decision_reason,
         )
@@ -459,6 +467,7 @@ async def resolve_field_verdict(
         decision=decision,
         promoted_id=promoted_id,
         crowning_reason_override=reason_override,
+        crowning_decision_override=crowning.decision_override,
         field_overrides=overrides,
         structure=field_round.tournament_spec.structure,
     )

@@ -215,10 +215,10 @@ def test_evaluation_implementation_identity_is_explicit_and_capability_scoped() 
     )
 
     assert evaluation_implementation_identity(ScoringWeights()) == {
-        "zicato_evaluator_revision": 1,
+        "zicato_evaluator_revision": 2,
     }
     assert evaluation_implementation_identity(ScoringWeights(goldfive={})) == {
-        "zicato_evaluator_revision": 1,
+        "zicato_evaluator_revision": 2,
         "goldfive_version": GOLDFIVE_IMPLEMENTATION_VERSION,
         "zicato_goldfive_integration_revision": ZICATO_GOLDFIVE_INTEGRATION_REVISION,
     }

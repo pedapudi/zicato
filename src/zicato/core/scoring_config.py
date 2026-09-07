@@ -138,23 +138,20 @@ class LadderConfig:
 
     The train/holdout split and the holdout confirmation step live in
     :class:`OverfittingConfig`. This block governs how that holdout is
-    queried across an epoch's rounds, after Blum and Hardt's Ladder: a
-    reused holdout stays valid under a proposer that adapts to its answers
-    only when every query passes through a mechanism that limits the
-    information leaked back. Two rules do that:
+    queried across an epoch's rounds. Adaptive reuse can make confirmation
+    increasingly optimistic. Two rules limit the feedback channel:
 
     * Release rule. A holdout-based signal is released only when the
       train-measured improvement clears a threshold beyond the noise band.
       Within the band the previous best is reported again, so the proposer
       cannot chase board fluctuations.
     * Budget. Each holdout query charges a finite per-epoch budget. Once it
-      is spent, the runner schedules no further holdout comparison and the
-      training verdict decides the round.
+      is spent, the runner schedules no further holdout comparison. Required
+      confirmation stays incomplete and the champion is retained.
 
     Part of the contract hash through :class:`OverfittingConfig`, so a
     change to any field rolls the epoch. An empty holdout (a small board, or
-    the split switched off) leaves nothing to govern: every holdout query
-    is then answered directly.
+    the split switched off) disables holdout confirmation without a query.
 
     Each field entry below is served to the tournament builder as the
     knob's help text.
@@ -164,29 +161,28 @@ class LadderConfig:
     enabled:
         Switches the Ladder governor on. On by default. When off, the
         holdout confirmation runs unmediated: every query is answered, with
-        no budget and no release rule. The governor is what keeps a reused
-        holdout valid under a proposer that adapts to its answers.
+        no budget and no release rule. Disabling this governor leaves the
+        holdout confirmation requirement enabled.
     threshold:
         The train-side improvement a round must show before a holdout
         signal is released at all. Unset by default, which derives the bar
         from ``promote_margin`` so the Ladder reuses the gate's noise
         threshold; a number pins it. Raising it withholds the holdout query
         from a round that clears the gate on train, and that train promote
-        then stands unconfirmed. To widen the tolerance of the confirmation
+        then defers. To widen the tolerance of the confirmation
         that runs after release, set ``holdout_margin`` instead. Must be
         ``>= 0``.
     budget:
         Per-epoch holdout-query budget. Each round that consults the
         holdout charges one. When the budget is spent the runner stops
-        consulting the holdout and the training verdict decides the round.
-        The finite budget is what keeps a reused holdout statistically
-        valid under an adaptive proposer. Must be ``>= 0``; ``0`` schedules
-        no holdout comparison.
+        consulting the holdout and required confirmation defers promotion.
+        The finite budget limits adaptive feedback; it does not establish a
+        statistical validity guarantee by itself. Must be ``>= 0``; ``0``
+        permits no holdout-confirmed promotion.
     noise_scale:
         Width of the noise band added to the release threshold. ``0.0``
-        (default) is the parameter-free Ladder, which needs no calibration.
-        Reserved for differential-privacy-grade noise calibration; must be
-        ``>= 0``.
+        adds no band. The value is a fixed threshold increment. It introduces
+        no randomization or differential privacy guarantee. Must be ``>= 0``.
     """
 
     enabled: bool = field(
@@ -1544,26 +1540,13 @@ def omit_at_default_fields() -> frozenset[str]:
 
 
 def recommended_scaffold_weights() -> ScoringWeights:
-    """The FULL effective contract new-workspace scaffolds write out.
+    """Recommended settings shared by initialization and blank builder drafts.
 
-    Shared by ``zicato init`` (which writes it to the operator's live
-    ``scoring.json``) and the tournament builder's blank draft, so both
-    scaffolds spell the SAME recommended contract explicitly instead of
-    leaning on invisible defaults: the racing structure (field 4, eta 2,
-    board_fraction 0.4), two averaged replicates per duel, and the
-    Bradley--Terry evidence gate ENABLED EXPLICITLY (threshold 0.8 with a
-    32-replicate budget). The gate is NOT a silent in-code
-    default — its CIs separate only after a long unbroken win streak (~37
-    duels on a two-contestant pair), so it needs an honest budget the
-    operator can see and price: under racing the crowning-pair replicates
-    amortize through the per-unit cache, and the builder's cost meter
-    reflects the ``replicates`` knob. Everything else is the dataclass
-    default; the field-enumerating serializer then writes every applicable
-    field. Optional integration blocks remain absent until selected.
-
-    A pure recommendation for NEW workspaces — the in-code default
-    structure when a contract says nothing remains the gauntlet, with no
-    pre-gate.
+    Racing requests four candidates, halves survivors, and starts with 40% of
+    the board. Each duel averages two draws. Confirmation uses threshold 0.8
+    with at most 32 extra duels; its uncertainty rule includes the planned
+    candidate family and refits. Each confirmation duel measures both sides
+    freshly. Optional integration blocks remain absent until selected.
     """
     # Function-local import: core is the base layer; the selection package
     # (which imports core) owns the recommended evidence-gate bar.
@@ -1580,9 +1563,8 @@ def recommended_scaffold_weights() -> ScoringWeights:
                 "board_fraction": 0.4,
                 "replicates": 2,
                 "promote_confidence_threshold": DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
-                # An honest defer→replicate budget: CI separation on a
-                # two-contestant crowning pair needs ~32+ decisive duels,
-                # each a cheap cache-amortized re-read under racing.
+                # Confirmation draws both sides freshly at each additional
+                # duel; the budget also fixes the maximum number of refits.
                 "promote_confidence_replicates": 32,
             },
         ),

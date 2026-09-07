@@ -43,6 +43,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+from zicato.core.loss import has_execution_evidence, validate_loss_identity
+from zicato.core.measurement import (
+    UNKNOWN_SEED,
+    BaseSeed,
+    MeasurementDraw,
+    iter_measurement_attempts,
+    recorded_artifact_measurement,
+)
 from zicato.storage import workspace_backend
 from zicato.workspace.epochs import _read_json_value, natural_key
 from zicato.workspace.layout import WORKSPACE_RELATIVE_LAYOUT, WorkspaceLayout, storage_key
@@ -150,27 +158,52 @@ def read_board(layout: WorkspaceLayout, epoch_id: str) -> list[dict[str, Any]] |
     return lines
 
 
+def generation_base_seed(layout: WorkspaceLayout, epoch_id: str, generation_id: str) -> BaseSeed:
+    """Return the aggregate's selected seed; absent provenance remains unknown."""
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
+    from zicato.tournament.scoring import read_gen_score  # noqa: PLC0415
+
+    try:
+        record = read_gen_score(layout, epoch_id, generation_id)
+    except RecordError as exc:
+        raise ValueError(str(exc)) from exc
+    score = record.to_dict() if record is not None else {}
+    if "base_seed" in score and score.get("generation_id") != generation_id:
+        raise ValueError("generation score identity conflicts with its path")
+    seed = score.get("base_seed", UNKNOWN_SEED)
+    if seed is None or type(seed) is int or seed is UNKNOWN_SEED:
+        return seed
+    raise ValueError("generation score base_seed must be an integer or null")
+
+
 def read_events_history(
     layout: WorkspaceLayout,
     epoch_id: str,
     generation_id: str,
     entry_id: str,
     replicate_index: int = 0,
+    *,
+    base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> list[list[dict[str, Any]]]:
     """One replicate's retained raw telemetry, oldest measurement first.
 
-    Returns one element per retained events file for that replicate — the
-    archived predecessor (``events.prev.jsonl`` / ``events.r{n}.prev.jsonl``,
-    when a re-measurement displaced one) followed by the current file — each
-    element being that file's parsed JSONL records. A replicate measured
-    once yields a single element; one never measured yields ``[]``.
+    Committed measurement archives come first, followed by the historical
+    predecessor file and the current file. Each element contains one file's
+    parsed JSONL records. Pending archive copies are excluded. The seed argument
+    selects one measurement namespace; unknown history is distinct from null.
 
     Best-effort: unreadable files and malformed lines are skipped.
     """
     out: list[list[dict[str, Any]]] = []
+    loss_path = layout.loss(epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed)
+    archived_events = [
+        path.with_name(path.name.replace("loss", "events", 1)).with_suffix(".jsonl")
+        for path in iter_measurement_attempts(loss_path)
+    ]
     for path in (
-        layout.events_prev(epoch_id, generation_id, entry_id, replicate_index),
-        layout.events(epoch_id, generation_id, entry_id, replicate_index),
+        *archived_events,
+        layout.events_prev(epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed),
+        layout.events(epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed),
     ):
         try:
             text = path.read_text(encoding="utf-8")
@@ -192,11 +225,41 @@ def read_events_history(
 
 
 def read_loss(
-    layout: WorkspaceLayout, epoch_id: str, generation_id: str, entry_id: str
+    layout: WorkspaceLayout,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    *,
+    base_seed: BaseSeed = UNKNOWN_SEED,
+    replicate_index: int = 0,
 ) -> dict[str, Any] | None:
     """One run's ``loss.json`` as a dict, or ``None``.
 
-    Best-effort: a missing / malformed / non-object file yields ``None``.
+    Missing, malformed, unstarted, or conflicting measurements yield ``None``.
+    Raw files remain available to the execution audit.
     """
-    loss = _read_json_value(layout.loss(epoch_id, generation_id, entry_id))
-    return loss if isinstance(loss, dict) else None
+    path = layout.loss(epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed)
+    loss = _read_json_value(path)
+    if not isinstance(loss, dict):
+        return None
+    try:
+        if not has_execution_evidence(loss):
+            return None
+        identity = recorded_artifact_measurement(
+            layout.run_dir(epoch_id, generation_id, entry_id),
+            path,
+            measurement=MeasurementDraw.from_json(loss["measurement"])
+            if "measurement" in loss
+            else None,
+            match_id=str(loss.get("match_id") or ""),
+        )
+        validate_loss_identity(
+            loss,
+            epoch_id=epoch_id,
+            generation_id=generation_id,
+            entry_id=entry_id,
+            measurement=identity,
+        )
+    except (TypeError, ValueError):
+        return None
+    return loss

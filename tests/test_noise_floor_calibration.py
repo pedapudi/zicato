@@ -175,7 +175,7 @@ def test_run_count_may_not_walk_out_of_the_reserved_calibration_block() -> None:
             )
         )
 
-    with pytest.raises(ValueError, match="reserved replicate block"):
+    with pytest.raises(ValueError, match="measurement interval"):
         _measure(CALIBRATION_REPLICATE_SPAN + 1)
     # The existing lower bound is unmoved, and the widest in-block count is
     # refused by neither guard.

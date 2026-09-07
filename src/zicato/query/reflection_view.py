@@ -366,9 +366,16 @@ def _transcript_from_result(loss_ref: str | None) -> dict[str, Any] | None:
     """Reconstruct the transcript from ``result.json`` (the preferred source)."""
     if not loss_ref:
         return None
-    from zicato.tournament.unit_cache import read_run_result, unit_result_path  # noqa: PLC0415
+    from zicato.tournament.unit_cache import (  # noqa: PLC0415
+        read_capture_loss,
+        read_run_result,
+        unit_result_path,
+    )
 
-    body = read_run_result(unit_result_path(Path(loss_ref)))
+    loss = read_capture_loss(Path(loss_ref))
+    if loss is None:
+        return None
+    body = read_run_result(unit_result_path(Path(loss_ref)), expected=loss)
     if not isinstance(body, dict):
         return None
     turns = [str(t) for t in (body.get("transcript") or [])]
@@ -388,8 +395,12 @@ def _transcript_from_judge_io(loss_ref: str | None, judge_name: str) -> dict[str
         judge_io_path_for_loss,
         read_judge_io,
     )
+    from zicato.tournament.unit_cache import read_capture_loss  # noqa: PLC0415
 
-    for rec in read_judge_io(judge_io_path_for_loss(Path(loss_ref))):
+    loss = read_capture_loss(Path(loss_ref))
+    if loss is None:
+        return None
+    for rec in read_judge_io(judge_io_path_for_loss(Path(loss_ref)), expected=loss):
         if str(rec.get("judge_name", "")) != judge_name:
             continue
         inp = rec.get("input", {}) if isinstance(rec, dict) else {}
@@ -421,11 +432,12 @@ def build_adjudication_xray(
     if epoch_id is None:
         return _empty_xray(reflection_id, judge_name, run_ref)
 
+    from zicato.reflection.adjudicator import run_ref_for  # noqa: PLC0415
     from zicato.reflection.corpus import read_corpus  # noqa: PLC0415
 
     corpus = read_corpus(paths.root, epoch_id, reflection_id)
     match = next(
-        (o for o in corpus if f"{o.candidate_id}:{o.entry_id}:r{o.replicate}" == run_ref),
+        (o for o in corpus if run_ref_for(o) == run_ref),
         None,
     )
     if match is None:

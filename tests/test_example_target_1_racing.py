@@ -84,8 +84,9 @@ def _preseed_champion_cache(
     in ``sys.modules`` — it imports the REAL reducer's writer.
     """
     from zicato.board.jsonl import load_board as _load_board_file
+    from zicato.core.measurement import MeasurementDraw
     from zicato.core.types import LossProfile
-    from zicato.core.workspace import board_path
+    from zicato.core.workspace import board_path, run_id_for_unit
     from zicato.telemetry.reducer import write_loss_profile
     from zicato.tournament.runner import _unit_loss_path
 
@@ -93,7 +94,8 @@ def _preseed_champion_cache(
         for replicate_index in range(max(1, replicates)):
             write_loss_profile(
                 LossProfile(
-                    run_id=f"r-{champion_id}-{entry.id}-r{replicate_index}",
+                    run_id=run_id_for_unit(champion_id, entry.id, replicate_index, base_seed=None),
+                    measurement=MeasurementDraw.from_index(replicate_index, base_seed=None),
                     entry_id=entry.id,
                     generation_id=champion_id,
                     epoch_id=epoch_id,
@@ -106,7 +108,9 @@ def _preseed_champion_cache(
                     drift_loss=drift_loss,
                     pass_fail=pass_fail,
                 ),
-                _unit_loss_path(workspace, epoch_id, champion_id, entry.id, replicate_index),
+                _unit_loss_path(
+                    workspace, epoch_id, champion_id, entry.id, replicate_index, base_seed=None
+                ),
             )
 
 
@@ -132,9 +136,11 @@ def _install_caching_telemetry_stubs(
     import types as _types
 
     import zicato.tournament.runner as _runner_mod
+    from zicato.core.measurement import MeasurementDraw
     from zicato.core.types import DriftCount, ExpectationResult, LossProfile
-    from zicato.core.workspace import loss_profile_path
+    from zicato.core.workspace import run_id_for_unit
     from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
+    from zicato.tournament.unit_cache import _unit_loss_path
 
     # Keep the default stubs for sink path / harmonograf / adapter wiring.
     install_telemetry_stubs(
@@ -146,7 +152,7 @@ def _install_caching_telemetry_stubs(
     async def _fake_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, config, side, match_id
+        del adapter, weights, side, match_id
         if champion_run_log is not None:
             champion_run_log.append(generation.id)
         expectation_result = (
@@ -154,8 +160,10 @@ def _install_caching_telemetry_stubs(
             if entry.expectation is not None
             else None
         )
+        replicate = int(entry.context.get("replicate_index", "0"))
         profile = LossProfile(
-            run_id=f"r-{generation.id}-{entry.id}",
+            run_id=run_id_for_unit(generation.id, entry.id, replicate, base_seed=config.seed),
+            measurement=MeasurementDraw.from_index(replicate, base_seed=config.seed),
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,
@@ -172,7 +180,10 @@ def _install_caching_telemetry_stubs(
         # resolver can read it back on a later round, exactly like the real
         # subprocess worker does.
         write_loss_profile(
-            profile, loss_profile_path(workspace_root, epoch_id, generation.id, entry.id)
+            profile,
+            _unit_loss_path(
+                workspace_root, epoch_id, generation.id, entry.id, replicate, base_seed=config.seed
+            ),
         )
         return profile
 

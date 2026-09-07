@@ -45,27 +45,15 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
+from zicato.core.measurement import REFLECTION_REPLICATE_BASE as REFLECTION_REPLICATE_BASE
+from zicato.core.measurement import (
+    UNKNOWN_SEED,
+    BaseSeed,
+    MeasurementDraw,
+    validate_measurement_interval,
+)
 from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.writer import workspace_writer
-
-#: Replicate-index base for active board-reflection draws. Reserved far above
-#: every other owner in the partitioned replicate namespace so a reflection
-#: draw's cache slot can never collide with — or pre-seed — anything a
-#: tournament, calibration, preflight, screen, or evidence gate reads:
-#:
-#:   * ``0..``           tournament duels (r0 is the canonical ``loss.json``)
-#:   * ``1000``          A/A noise-floor calibration
-#:   * ``2000..2999``    contract pre-flight degraded probes (one per probed point)
-#:   * ``3000`` / ``3001`` candidate screen (+ confirm-before-veto)
-#:   * ``4000``          evidence gate (both-sides-fresh)
-#:   * ``5000``          board reflection (this owner)
-#:   * ``6000``          eval-synthesis admission probes
-#:                       (:data:`zicato.reflection.admission.SYNTHESIS_REPLICATE_BASE`)
-#:
-#: Draw ``j`` of a (candidate, entry) unit runs, caches, and stamps its harness
-#: noise draw at ``REFLECTION_REPLICATE_BASE + j``. See dev-guide ch. 04
-#: §"reserved bases" beside ``epoch/preflight.py``'s ``PREFLIGHT_REPLICATE_BASE``.
-REFLECTION_REPLICATE_BASE: int = 5000
 
 #: The three fidelity tiers, strongest first (the capture ladder).
 FIDELITY_VERBATIM: str = "verbatim"
@@ -146,6 +134,11 @@ class ObservationRun:
     drift_events: tuple[dict[str, Any], ...] = ()
     judge_decisions: tuple[dict[str, Any], ...] = ()
     loss_decomposition: dict[str, float] = field(default_factory=dict)
+    measurement: MeasurementDraw | None = None
+
+    def __post_init__(self) -> None:
+        if self.measurement is not None and self.measurement.replicate_index != self.replicate:
+            raise ValueError("observation measurement conflicts with replicate index")
 
     def to_json(self) -> dict[str, Any]:
         """The one-line ``corpus.jsonl`` shape."""
@@ -168,6 +161,7 @@ class ObservationRun:
             "drift_events": list(self.drift_events),
             "judge_decisions": list(self.judge_decisions),
             "loss_decomposition": dict(self.loss_decomposition),
+            **({"measurement": self.measurement.to_json()} if self.measurement is not None else {}),
         }
 
     @classmethod
@@ -192,6 +186,9 @@ class ObservationRun:
             drift_events=tuple(data.get("drift_events", ())),
             judge_decisions=tuple(data.get("judge_decisions", ())),
             loss_decomposition=dict(data.get("loss_decomposition", {})),
+            measurement=MeasurementDraw.from_json(data["measurement"])
+            if "measurement" in data
+            else None,
         )
 
 
@@ -396,6 +393,7 @@ def _build_observation(
         drift_events=_drift_events(loss),
         judge_decisions=_judge_decisions(loss, judge_io_records),
         loss_decomposition=_loss_decomposition(loss, weights),
+        measurement=getattr(loss, "measurement", None),
     )
 
 
@@ -411,7 +409,7 @@ def _unit_events_path_for(loss_path: Path) -> Path:
     return unit_events_path(loss_path)
 
 
-def _read_sidecars(loss_path: Path) -> tuple[bool, list[dict[str, Any]]]:
+def _read_sidecars(loss_path: Path, loss: Any) -> tuple[bool, list[dict[str, Any]]]:
     """``(result_present, judge_io_records)`` via the tolerant capture readers."""
     from zicato.judge_runtime.io_capture import (  # noqa: PLC0415
         judge_io_path_for_loss,
@@ -419,21 +417,16 @@ def _read_sidecars(loss_path: Path) -> tuple[bool, list[dict[str, Any]]]:
     )
     from zicato.tournament.unit_cache import read_run_result, unit_result_path  # noqa: PLC0415
 
-    result_present = read_run_result(unit_result_path(loss_path)) is not None
-    judge_io_records = read_judge_io(judge_io_path_for_loss(loss_path))
+    result_present = read_run_result(unit_result_path(loss_path), expected=loss) is not None
+    judge_io_records = read_judge_io(judge_io_path_for_loss(loss_path), expected=loss)
     return result_present, judge_io_records
 
 
 def _read_loss(loss_path: Path) -> Any | None:
     """Read one ``loss.json`` via the reducer; ``None`` on any defect."""
-    from zicato.telemetry import reducer  # noqa: PLC0415
+    from zicato.tournament.unit_cache import read_capture_loss  # noqa: PLC0415
 
-    if not loss_path.exists():
-        return None
-    try:
-        return reducer.read_loss_profile(loss_path)
-    except (OSError, KeyError, ValueError, json.JSONDecodeError):
-        return None
+    return read_capture_loss(loss_path)
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +468,7 @@ def ingest_lineage(
                 loss = _read_loss(loss_path)
                 if loss is None:
                     continue
-                result_present, judge_io_records = _read_sidecars(loss_path)
+                result_present, judge_io_records = _read_sidecars(loss_path, loss)
                 runs.append(
                     _build_observation(
                         reflection_id=reflection_id,
@@ -528,6 +521,7 @@ async def run_corpus(
     pre-registration resume seam. Returns the in-memory
     :class:`ObservationRun` list either way.
     """
+    validate_measurement_interval(REFLECTION_REPLICATE_BASE, plan.replicates)
     from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
 
     async with workspace_writer(
@@ -584,9 +578,14 @@ async def run_corpus(
                     if loss is None:
                         continue
                     loss_path = _active_loss_path(
-                        workspace_root, plan.epoch_id, generation.id, entry.id, replicate_index
+                        workspace_root,
+                        plan.epoch_id,
+                        generation.id,
+                        entry.id,
+                        replicate_index,
+                        base_seed=config.seed,
                     )
-                    result_present, judge_io_records = _read_sidecars(loss_path)
+                    result_present, judge_io_records = _read_sidecars(loss_path, loss)
                     runs.append(
                         _build_observation(
                             reflection_id=plan.reflection_id,
@@ -616,10 +615,14 @@ def _active_loss_path(
     generation_id: str,
     entry_id: str,
     replicate_index: int,
+    *,
+    base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> Path:
     from zicato.tournament.unit_cache import _unit_loss_path  # noqa: PLC0415
 
-    return _unit_loss_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
+    return _unit_loss_path(
+        workspace_root, epoch_id, generation_id, entry_id, replicate_index, base_seed=base_seed
+    )
 
 
 # ---------------------------------------------------------------------------

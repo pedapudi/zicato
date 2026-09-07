@@ -55,6 +55,10 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import BoardEntry, Generation, JudgeSpec, RuntimeConfig, ScoringWeights
+from zicato.core.measurement import SYNTHESIS_REPLICATE_BASE as SYNTHESIS_REPLICATE_BASE
+from zicato.core.measurement import (
+    validate_measurement_interval,
+)
 from zicato.query.eval_view import flip_rate
 from zicato.reflection.mining import (
     HINT_COVERAGE_ENTRY,
@@ -65,26 +69,6 @@ from zicato.reflection.mining import (
 )
 from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.writer import workspace_writer
-
-#: Replicate-index base for eval-synthesis admission probes — the A/A noise
-#: draws (``SYNTHESIS_REPLICATE_BASE + j``) and the discrimination-probe draws
-#: (each candidate side at :data:`SYNTHESIS_REPLICATE_BASE`, keyed distinct by
-#: generation, so cross-generation draws never collide). This is the NEXT FREE
-#: base in the reserved-replicate ledger (dev-guide ``04-evaluation-statistics.md
-#: §8.1``: 5000 is claimed by board reflection, 6000 is next free; CASCADE.md §6
-#: confirms 6000). Reserved far above every sibling base so the per-unit cache
-#: slots can never collide with — or pre-seed — a slot another owner reads: real
-#: duel replicates count up from 0, A/A calibration at 1000
-#: (:data:`zicato.tournament.calibration.CALIBRATION_REPLICATE_BASE`), contract
-#: pre-flight across 2000..2999 (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`
-#: + :data:`~zicato.epoch.preflight.PREFLIGHT_REPLICATE_SPAN`),
-#: candidate screen at 3000 (:data:`zicato.epoch.screen.SCREEN_REPLICATE_BASE`),
-#: evidence gate at 4000 (:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`),
-#: board reflection at 5000 (:data:`zicato.reflection.corpus.REFLECTION_REPLICATE_BASE`).
-#: Draws are STAMPED and KEYED with the same index (the §7.3 same-number rule),
-#: so a seeded harness draws fresh per slot and the canonical r0 ``loss.json``
-#: is never touched (proven by ``test_admission_probes_never_touch_r0``).
-SYNTHESIS_REPLICATE_BASE: int = 6000
 
 #: Default A/A noise draws for the flip-rate measurement. Five draws give a
 #: readable flip rate without burning a round's budget (mirrors
@@ -268,6 +252,7 @@ async def admit_suggestion(
     stage that cannot run degrades to ``unmeasured``; the pipeline never raises
     on a probe failure and never auto-rejects.
     """
+    validate_measurement_interval(SYNTHESIS_REPLICATE_BASE, max(2, noise_runs))
     cost = estimate_cost(
         experiments=experiments,
         noise_runs=noise_runs,
@@ -684,6 +669,7 @@ async def _execution_and_noise(
     unexecutable draw 0 marks ``execution.ran = false`` loudly, but the pipeline
     keeps its footing.
     """
+    validate_measurement_interval(SYNTHESIS_REPLICATE_BASE, max(2, noise_runs))
     try:
         entry.validate()
     except Exception as exc:  # noqa: BLE001 — an invalid draft is a loud non-execution

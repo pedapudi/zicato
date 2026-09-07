@@ -40,7 +40,7 @@
 >
 > | ID | Name | Invariant |
 > |----|------|-----------|
-> | T1 | the evaluate-once rule | A **board unit** `(generation_id, entry_id, replicate_index)` is immutable under a fixed contract and is evaluated AT MOST ONCE. `_run_unit_cache_first` is the single choke point every unit — champion, challenger, screen, evidence replicate — routes through. |
+> | T1 | the evaluate-once rule | A **board unit** includes generation, entry, purpose, draw, and selected seed under a fixed contract. Completed measurements are reused only when that full identity matches. `_run_unit_cache_first` is the single choke point every unit — champion, challenger, screen, evidence replicate — routes through. |
 > | T2 | the canonical-replicate-slot rule | Replicate 0 is the canonical `runs/<entry>/loss.json`; replicate r>0 is the sibling `loss.r<r>.json`. Nothing may write one replicate's sample onto another replicate's slot. |
 > | T3 | the cache-only-budget-exhaustion rule | Only a wall-clock-budget exhaustion is cache-eligible. An **infra abort** (`parent_kill` / `gone_no_result` / `nonzero_exit:{code}` / `prepare_failed` / `result_unreadable`) is NEVER persisted, so a transient blip cannot poison a unit's score for the epoch. |
 > | T4 | the importable-worker-callable rule | Every callable that crosses the worker boundary is a **module-level (or class-attribute) importable object**. A closure-local callable is rejected at spawn time (`_callable_dotted_path`) rather than surfacing later as an opaque worker failure. |
@@ -49,7 +49,7 @@
 > | T7 | the only-promotion-advances-the-champion rule | The champion pointer advances ONLY on a `"promoted"` `SelectionDecision`. Every layer above the gate (the Bradley–Terry pre-gate, the resolvers, the placebo) can only HOLD a promotion; none can force one. |
 > | T8 | the disjoint-reserved-bases rule | The reserved replicate bases are pairwise disjoint (duels `0..`, calibration `1000`, preflight `2000`, screen `3000`/`3001`, evidence `4000`) so an evaluation draw can neither read nor clobber a canonical replicate slot. |
 > | T9 | the mounted-tree-matches-the-chosen-candidate rule | The child snapshot the tournament mounts is derived from the patches of the experiment the round persists. The enforcing seam is 05-proposer.md §"5.6.5 Mounting the chosen candidate". |
-> | T10 | the distinct-draws-only rule | The Bradley–Terry audit only ever accumulates DISTINCT draws; a duplicate matchup id is refused, because identical data re-presented to the fit separates confidence intervals by repetition alone. |
+> | T10 | the distinct-draws-only rule | Confirmation excludes selection observations and requires a separately identified draw. Repeated generation/draw identities are refused even when matchup names differ. |
 > | T11 | the placebo-never-crowns rule | The placebo arm is a real lineage child scored by the unchanged gate, but it NEVER advances the champion pointer and is split out of the optimization-stream health detectors. |
 
 ---
@@ -165,31 +165,31 @@ separate duel after settlement instead of riding inside the slate.
 
 ## 6.1 The board unit and the reserved replicate ladder
 
-Everything in this chapter is built on ONE quantum. From the module docstring
-that owns it:
+A board unit is one generation, board entry, measurement purpose, draw number,
+and selected base seed under a sealed epoch contract. The generation fixes the
+candidate code; the purpose distinguishes tournament, calibration, preflight,
+screening, confirmation, reflection, and admission work. The selected seed is
+causal even when an adapter ignores it, so cache requests always include it.
 
-```python
-A **board unit** is the atomic, contract-fixed quantum
-``(generation_id, board_entry_id, replicate_index)``. Under a fixed
-contract its result is immutable, so it must be evaluated AT MOST ONCE
-and reused everywhere — every pairing, every round, every structure, the
-gate, and later evolve rounds.
-```
-— `src/zicato/tournament/unit_cache.py` (module docstring)
+`MeasurementDraw` owns purpose, draw, and base-seed provenance. Its integer
+replicate index remains the compatibility encoding passed through the entry's
+context to the harness. Explicit `null` records an unseeded execution. An
+omitted seed records unknown historical provenance and cannot satisfy a
+request for an integer seed or an explicitly unseeded execution.
 
-The harness session has that scope and no wider: one generation × entry ×
-replicate. It never spans the board. A workflow that intentionally needs
-state across several turns is represented as one compound entry, whose turns
-share the run session; separate entries and replicates remain isolated.
+A completed unit can be reused across matchups and rounds when its full identity
+matches. Changing the selected seed creates another physical measurement and
+does not change the epoch hash. Forced reruns bypass reuse, archive the prior
+artifacts, and serialize writes to the same seed and draw. Repeated or carried
+units do not become independent evidence merely because their run labels differ.
 
-Read that literally. A generation is immutable and belongs to exactly one
-epoch/contract; a board entry is fixed by the contract; a replicate index
-selects one noise draw. So the tuple names a value that can be computed once
-and cached forever *within the epoch* — and a different contract is a fresh
-epoch with fresh generation ids, a natural cache miss (no cross-contract
-reuse). This is **the evaluate-once rule**, and it is why the champion is scored once per
-epoch instead of once per round, why a competitor's board run is reused across
-every pairing of a swiss/elim field, and why crash-resume is nearly free.
+Execution-engine roles and callable revisions are not part of this cache
+identity or the epoch hash. Changing a target or evaluator callable within the
+same epoch can therefore reuse a result produced by its predecessor; seed
+provenance does not close that separate execution-identity gap.
+
+The harness session covers one board unit. A workflow that needs state across
+turns is one compound entry; separate entries and draws remain isolated.
 
 ### 6.1.1 The reserved replicate ladder
 
@@ -336,68 +336,48 @@ Three consequences an extender leans on:
    (`fast` / `fast-degraded` / `full`) can be derived from the LEFT side's
    tally (§6.5.2).
 
-### 6.2.2 The per-replicate slot map, and the replicate-cache clobbering case
+### 6.2.2 Physical artifacts and repeated attempts
 
-```python
-    Replicate 0 maps to the canonical ``runs/<entry>/loss.json`` the
-    worker writes (back-compat: existing caches, the seed champion's
-    full-board scoring, and every single-replicate run land there).
-    Replicate r>0 maps to a sibling ``runs/<entry>/loss.r<r>.json`` so
-    the additional noise samples cache per replicate without colliding
-    with the canonical file. The directory is the same per-entry run
-    directory either way; only the filename varies by replicate.
-```
-— `src/zicato/tournament/unit_cache.py`, `_unit_loss_path`
+The measurement owner resolves every loss, events file, result capture, and
+judge capture beneath the existing entry run directory. Historical files remain
+at their original paths. Recorded seeds receive separate child directories:
 
-```python
-    canonical = loss_profile_path(workspace_root, epoch_id, generation_id, entry_id)
-    if replicate_index <= 0:
-        return canonical
-    return canonical.with_name(f"loss.r{replicate_index}.json")
-```
-— `src/zicato/tournament/unit_cache.py`, `_unit_loss_path` (tail)
+| Selection | Example loss path within an entry directory |
+|---|---|
+| Unknown historical seed | `loss.r2.json` |
+| Explicitly unseeded | `seed-none/loss.r2.json` |
+| Integer seed 17 | `seed-17/loss.r2.json` |
+| Integer seed -17 | `seed--17/loss.r2.json` |
 
-This tail is what closes the replicate-cache clobbering case
-(`12-bug-casebook.md` case 1). The worker always writes *its own* replicate's
-loss to the slot the runner hands it, and the runner computes that slot from
-`_entry_replicate_index(entry)` — the stamped index. Without the sibling-file
-scheme every replicate's worker writes `loss.json`. Replicate 5's worker then
-silently overwrites the canonical replicate-0 sample that the cache, `zicato
-repair index`, and crash-resume all key on, and a "replicated" duel scores the
-*last* draw at slot 0 rather than an average. **The canonical-replicate-slot
-rule** states the requirement directly: one replicate's write must never land on
-another replicate's slot.
+The runtime run identifier uses the same seed qualifier. A persisted record
+must agree with the epoch, generation, entry, purpose, draw, and seed encoded
+by its path. Traversal is
+centralized in `iter_measurement_artifacts`; request-facing readers select the
+invocation's seed, while audit readers can enumerate every seed and historical
+record.
 
-> ⛔ NEVER derive the loss path from anything but `_unit_loss_path` with the
-> run's actual replicate index. A new caller that writes a run's loss "to
-> `loss.json`" directly reintroduces the clobbering the moment that caller runs
-> under replication. `_run_single` reads the index off the entry
-> (`_entry_replicate_index(entry)`) so the worker never has to know its own
-> replicate number.
+Before rerunning a slot, `archive_unit_artifacts` copies its loss, events,
+result, judge capture, and produced files into a staging directory. It flushes
+the copies and publishes the complete attempt with one directory rename. A
+failed copy leaves the originals intact. After publication it removes the loss
+first and then its companions, so interruption during cleanup leaves a cache
+miss and a complete recoverable archive. The worker starts after this boundary.
+`iter_measurement_attempts` exposes committed retained losses and skips pending
+copies; the archive's events and capture companions remain available for audit.
 
 ### 6.2.3 Reads, writes, and the unreadable-is-a-miss rule
 
 `_resolve_cached_unit` returns the cached `LossProfile` on a HIT or `None` on a
-MISS. An **unreadable file is a miss rather than a crash**:
+MISS. Missing or unreadable files are misses. A decoded record must also
+establish the requested purpose, draw, selected seed, and actual execution before reuse.
+The shared execution-evidence predicate applies to cached profiles, canonical
+loss readers and replicate evidence readers.
 
-```python
-    if not path.exists():
-        return None
-    try:
-        return reducer_module.read_loss_profile(path)
-    except (OSError, KeyError, ValueError, json.JSONDecodeError):
-        return None
-```
-— `src/zicato/tournament/unit_cache.py`, `_resolve_cached_unit` (tail)
-
-The caller re-runs the unit and re-persists, so the next need is a hit. This is
-the same "missing/corrupt is a valid state, re-derive it" posture the runtime
-layer takes for state files (07-runtime-and-durability.md §"The atomic-write
-contract"), with one asymmetry: a *cache* file is derived and disposable, so an
-unreadable one degrades to a miss, while a *canonical record* is neither derived
-nor disposable, so an unreadable one raises. `_persist_unit_loss` is best-effort in the other
-direction: a write failure degrades the next lookup to another (correct) MISS
-rather than aborting the tournament.
+Measurement files are canonical observations even when they also serve cache
+requests. A cache miss permits another execution; it does not permit discarding
+the previous record. The execution owner archives displaced artifacts before
+writing replacements. A cache publication failure leaves the next request a
+miss instead of turning an incomplete write into reusable evidence.
 
 ### 6.2.4 Infra aborts are never cached
 
@@ -443,13 +423,25 @@ a sample, and here a transient blip would poison a unit's score by being cached
 as a permanent worst-case hit. Both are answered by keeping a non-signal out of
 a slot.
 
-> ⚠️ TRAP — the `_skipped_unit_loss` path (a unit a spent budget never
-> launched) DOES cache, because it uses `abort_cause=BUDGET_ABORT_CAUSE`: a
-> budget skip is a budget exhaustion, the one cacheable abort cause
-> (`unit_cache.py`, `_skipped_unit_loss`). Do not "unify" the skip synthesis
-> with the infra-abort synthesis; they cache differently by design.
+Scheduling omissions carry `execution_started=False` and the reason
+`scheduling_budget_exhausted`. They persist only as attempt siblings, such as
+`loss.r2.a1.json`, and never fill measurement slots. They have no task-abort
+cause, task-failure result, or wall-clock timeout. Fresh-run counts exclude them.
 
-### 6.2.5 Averaging replicates: `_average_losses`
+A historical `budget_exhausted` profile remains reusable when its own runtime,
+timestamps, token spend, or explicit start fact proves execution. A profile
+without such evidence is ambiguous: the cache logs a warning and retries it.
+Canonical and replicate evidence readers exclude the same record; the execution
+plan retains it among ambiguous records. The original file remains on disk and
+is archived when a real measurement replaces it. Absence of evidence does not
+establish that a task timed out.
+
+The replicate fold preserves any unstarted draw. Generation aggregates exclude
+incomplete entries from measured scalars and list them in `incomplete_entries`.
+The gate defers those comparisons, and rating and resolver inputs exclude them.
+Complete measurements retain their cache and scoring policies.
+
+### 6.2.5 Averaging replicates: `average_replicate_losses`
 
 When a matchup runs R>1 replicates, the per-entry losses are folded to one map
 BEFORE aggregation. This is the replication primitive, and the invariant it
@@ -471,7 +463,7 @@ unaveraged.**
             per_judge_loss=_mean_per_judge_loss(profiles),
         )
 ```
-— `src/zicato/tournament/unit_cache.py`, `_average_losses`
+— `src/zicato/tournament/scoring.py`, `average_replicate_losses`
 
 The rule: a field the scalar or the gate reads is aggregated; a field neither
 reads carries the representative replicate (slot 0), and the docstring names
@@ -1069,9 +1061,8 @@ should abort a tournament; if one does, that is the bug.
 | `run … could not be prepared for a subprocess: …` | WARNING | `prepare_failed` — a closure-local callable (§6.3.1), a non-ADK adapter with no `worker_spec`, or a disk-full checkout | `_run_single` |
 | `run …: worker result loss.json unreadable: …` | WARNING | `result_unreadable` — the worker "finished" but its `loss.json` was corrupt; aborted | `_run_single` |
 | `run …/… rN aborted by infra (…); NOT caching — re-running will re-attempt the unit` | INFO | an infra abort was NOT persisted, under the cache-only-budget-exhaustion rule — the next need is a correct MISS | `_run_unit_cache_first` |
-| `matchup …: per-round token budget reached; skipped k/N board unit(s) …` | WARNING | the token ledger latched; remaining units recorded as budget-exceeded for both sides | `_run_board_units_full` |
+| `matchup …: per-round token budget reached; skipped k/N board unit(s) …` | WARNING | the token ledger latched; remaining units recorded as unstarted attempts for both sides | `_run_board_units_full` |
 | `matchup …: budget (wall-clock deadline or round token cap) reached after k/N board units; skipped m …` | WARNING | the matchup wall-clock cap (or token cap) tripped between batches | `_run_board_units_full_budgeted` |
-| `matchup …: per-round token budget reached after k/N replicate slot(s); settling with the completed replicates` | WARNING | replication stopped scheduling further slots; the completed replicates average as-is | `_run_replicated` |
 | `evidence pre-gate: replicate duel returned an already-audited draw (matchup_id …) — not appended …` | WARNING | the Bradley–Terry duplicate guard fired, under the distinct-draws-only rule — a replicate runner returned a duplicate draw | `confirm_promotion_with_evidence` |
 | `random-baseline placebo … was PROMOTED by the gate …` | WARNING | the placebo alarm — the gate promoted a no-op; the CRITICAL `placebo_promoted` health finding will fire; the champion pointer was NOT advanced, under the placebo-never-crowns rule | `_maybe_run_placebo_arm_gauntlet` |
 
@@ -1164,7 +1155,7 @@ def _token_budget_spent(config: RuntimeConfig) -> bool:
 `None` (the default) is always `False` with no ledger consulted, so a workspace
 that has not opted in follows the same path as one with no ledger at all. A spent budget latches the ledger's
 `clipped` flag (the health finding the orchestrator reads) and each remaining
-unit is recorded as a budget-exceeded loss for BOTH sides (never one side of a
+unit is recorded as an unstarted attempt for both sides (never one side of a
 pair — see the `_skip_unit_side` calls in `_run_board_units_full`). Token
 accounting is folded at the ONE choke point every fresh run passes through
 (`_run_unit_cache_first`: `config.token_ledger.add(loss.tokens_spent)` — only
@@ -1178,13 +1169,15 @@ board-unit wall-clock, distinct from a single entry's
 individually under budget but their sum grinds for hours (a racing final rung).
 When set, `_run_board_units_full_budgeted` launches units in board order,
 `parallelism` at a time, checking the deadline (and the token budget) between
-batches; once tripped, every remaining unit is a budget-exceeded loss via
+batches; once tripped, every remaining uncached unit is an unstarted attempt via
 `_skip_unit_side` and the cut is LOGGED at WARNING — never silently truncated.
 
 The three schedulers share `_skip_unit_side`, whose one subtlety is that a
 budget **never clobbers a good result**: a unit already in the cache costs no
-wall-clock, so it is reused verbatim; only a genuine MISS is synthesized as a
-budget-exceeded skip.
+wall-clock, so it is reused verbatim; a missing unit remains an unstarted
+attempt. Requested replicate slots are accounted for even after the budget
+expires, and their omissions prevent a partial comparison from supporting a
+promotion.
 
 ### 6.5.5 `_IncrementalScorer` — the live climbing standing
 
@@ -1393,8 +1386,8 @@ freshness + cost per duel.
 entry. It executes the training slice first and applies the training gate. A
 training rejection schedules no holdout work. A training promotion with an
 enabled Ladder durably reserves one query before the runner schedules the
-holdout slice. An exhausted budget schedules no holdout work and leaves the
-training decision unchanged.
+holdout slice. An exhausted budget schedules no holdout work and defers the
+promotion because required confirmation is incomplete.
 
 The child is force-fresh by default because a newly proposed generation has no
 prior evaluation. The champion is cache-read by default because it is immutable
@@ -1423,9 +1416,11 @@ champion-gate duel against the reigning champion. This function adds the
 shared Ladder-mediated confirmation. It splits the board, atomically reserves
 one query in the shared epoch-local `LadderState`, and then runs one extra duel
 with `board_subset=holdout_ids`. `_ladder_mediated_outcome` publishes the
-release decision after the duel. An empty holdout returns
-`(train_outcome, None, None)` immediately. An exhausted budget returns the
-training outcome with an unconsulted holdout block and launches no duel.
+release decision after the duel. An empty holdout preserves the training
+outcome with an explicit disabled record. An exhausted budget defers promotion
+with an unconsulted incomplete record and launches no duel. A withheld or
+incomplete result also defers; only released negative evidence rejects. These
+distinctions survive field settlement, experiment outcomes, and lineage.
 
 ### 6.7.4 One default gauntlet round, end to end (worked trace)
 
@@ -1771,15 +1766,13 @@ consume (`audit_duels` → BT outcomes; `audit_matrix` → the resolver matrix).
 | `rating` | `bradley_terry` | order the standings by fitted latent strength (`rating_order`) instead of Copeland/scalar; unrated contestants sort after rated ones | `zicato.selection.rating.fit_bradley_terry` |
 | `resolver` | `copeland` / `ranked_pairs` | propose the internal leader from the duel matrix (Condorcet fast path → Smith prune → the resolver) instead of the top standing | `zicato.selection.resolve.resolve_leader` (§6.12) |
 
-The rating backbone (`rating.py`) is a pure Bradley–Terry maximum-likelihood fit
-over the pairwise outcomes — a convex problem with a single global optimum, solved by a
-small pure-Python Newton step with an L2 ridge prior. The prior is what keeps
-the translation-invariant likelihood identifiable AND keeps a contestant with a
-perfect/empty record at a finite strength; it also guarantees the Fisher
-information is positive-definite, so the standard error is always finite. That
-SE is the operational payoff: `prob_stronger(theta_a, se_a, theta_b, se_b)`
-treats the two strengths as independent normals and returns `P(a > b)` — the
-quantity the evidence pre-gate of §6.11 thresholds.
+The pure rating fit (`rating.py`) maximizes the Bradley–Terry log likelihood
+with a Gaussian ridge prior. Centered strengths retain joint covariance.
+`RatingFit.difference` computes the challenger-parent mean and standard error,
+including covariance; jointly fitted contestants are not independent.
+The confirmation rule uses that difference and accounts for its planned
+candidate family and refits. See 04-evaluation-statistics.md §6.5 for the
+formula, approximation limits, and measured operating characteristics.
 
 Promotion confidence is that one layer's business. Neither knob here can hold a
 crowning promote: they order standings and nominate a finalist, and the gate
@@ -1806,32 +1799,27 @@ the ones that read these knobs. Its contract, from the code:
 
 ## 6.11 The Bradley–Terry evidence pre-gate + dead-letter
 
-The pre-gate (`evidence_gate.py`, driven from `driver.py`) is an opt-in device
-that crowns on accumulated evidence rather than on a single point estimate. It
-is **off by default**, and it buys soundness at the cost of power. Its own
-docstring is blunt about the tradeoff:
+The pre-gate (`evidence_gate.py`, driven from `driver.py`) requires accumulated
+evidence before confirming a scalar-gate promotion. An absent probability
+threshold disables it; workspace scaffolds enable it explicitly.
 
-```python
-* :func:`evidence_verdict` fits BT over the strategy's already-measured duel
-  audit and returns one of three verdicts for the crowning pair:
+- `promoted`: the adjusted strength-difference interval lies above zero and
+  the probability threshold is met.
+- `deferred`: more evidence is required and replicate budget remains.
+- `inconclusive`: the budget is exhausted without confirmation. The terminal
+  record retains the evidence and the champion stands.
 
-  - ``"promoted"`` — ``P(theta_child > theta_champion) >= threshold`` AND the
-    two rating CIs are *separated* (no overlap). Crown on evidence.
-  - ``"deferred"`` — the probability bar is unmet OR the CIs still overlap, and
-    there is replicate budget left to spend. Hold and replicate.
-  - ``"inconclusive"`` — the budget is exhausted and the CIs still overlap. A
-    terminal state recorded in the dead-letter queue
-    (:mod:`zicato.selection.dead_letter`); nothing is silently dropped.
-```
-— `src/zicato/selection/evidence_gate.py` (module docstring)
+Individual displayed confidence intervals can overlap even when a correlated
+strength difference is resolved. Their overlap does not determine the verdict.
 
 The pre-gate is consulted only on a gate `"promoted"`; a reject or defer passes
 straight through. **The pre-gate can hold a promotion and can never force one**, under
 the only-promotion-advances-the-champion rule, which the pre-gate therefore
 strictly strengthens. A fit is trusted only above
 `MIN_CREDIBLE_DUELS = 3` resolved duels for the pair (the Fisher-information SE
-blows up below that); below the minimum the verdict is `credible=False` and the
-gate's own decision stands.
+blows up below that). Below the minimum the verdict is `credible=False` and
+required confirmation remains incomplete. Missing runner, failed execution, or
+exhausted replication budget cannot authorize promotion.
 
 ### 6.11.1 The defer→replicate→inconclusive loop, and the duplicate refusal
 
@@ -1839,38 +1827,33 @@ The crowning confirmation used by every selection strategy is
 `confirm_promotion_with_evidence`. Its loop refits after each replicate and
 refuses duplicate draws:
 
-```python
-        extra = await replicate_duel(candidate.left_id, candidate.right_id)
-        replicates_spent += 1
-        if extra.matchup_id in seen_matchup_ids:
-            log.warning(
-                "evidence pre-gate: replicate duel returned an already-audited "
-                "draw (matchup_id %r) — not appended to the Bradley--Terry "
-                "audit; identical data must never separate CIs",
-                extra.matchup_id,
-            )
-            continue
-        seen_matchup_ids.add(extra.matchup_id)
-        audit.append(extra)
-```
-— `src/zicato/selection/driver.py`, `confirm_promotion_with_evidence`
+Every returned or failed attempt records its matchup identity, pair, measured
+draw, eligibility, budget charge, and reason. Strategy observations are marked
+`selection_only`: overlapping racing rungs and outcome-based finalist selection
+cannot supply independent confirmation evidence. The driver fixes the crowning
+pair before requesting confirmation and retains every subsequent attempt.
 
-This is **the distinct-draws-only rule**, and the centre of the evidence-gate
-replicate-slot reuse case (`12-bug-casebook.md` case 8). Each evidence replicate runs
-the crowning pair at `EVIDENCE_REPLICATE_BASE + j` (both sides drawn fresh,
-never a cache replay), encoding that index in the matchup id
-(`bt-replicate:r{index}:{left}:{right}`). The `ReplicateDuel` CONTRACT is that
-every call returns an INDEPENDENT fresh draw under a matchup id unique within
-the audit. The driver refuses to append a result whose id already appears —
-identical data re-presented to the fit would shrink the BT standard error by
-repetition alone, letting duplicate duels "separate" CIs without new evidence.
-The spend is counted regardless (the budget bounds duels RUN), so a runner that
-keeps replaying one draw cannot loop forever.
+The runner reports a `MeasurementDraw` only when every actual per-entry loss
+on both sides carries the same draw and covers the scored aggregate. Missing
+or mixed provenance is ineligible. Only the confirmation purpose is accepted.
+A generation/draw identity is reserved on first observation, including ties
+and incomplete attempts with known provenance. A different matchup name cannot
+make reused measurements independent. This conservative identity also excludes
+disjoint board subsets sharing one draw. Every attempted draw consumes budget.
+
+Complete, distinct, non-tied confirmation duels enter the fit. Ties and unusable
+results remain in the observational audit; runner failures remain in the attempt
+records. Confirmation uses reserved slots `EVIDENCE_REPLICATE_BASE + j`, and its
+aggregates do not replace ordinary generation scores. This is the
+**distinct-draws-only rule** from the replicate-slot reuse case
+(`12-bug-casebook.md` case 8).
 
 Two terminal folds (`_finalize`): a credible `"promoted"` keeps the crown; an
 `"inconclusive"` maps to the closed enum's `DEFERRED` token ("kept for analysis,
-lineage head unchanged"), fires `on_inconclusive`, and the champion stands. A
-`credible=False` pass-through returns the original decision verbatim.
+lineage head unchanged"), fires `on_inconclusive`, and the champion stands.
+This applies even before the credibility floor is reached. An absent threshold
+records confirmation explicitly as disabled. The evaluator revision included
+in the contract hash distinguishes these semantics from historical outcomes.
 
 ### 6.11.2 The dead-letter queue
 

@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from zicato.core.measurement import PREFLIGHT_REPLICATE_SPAN
+
 # ---------------------------------------------------------------------------
 # Runtime config
 # ---------------------------------------------------------------------------
@@ -64,20 +66,8 @@ PREFLIGHT_GATE_DEFAULT: str = "warn"
 #: calling a contract unmeasurable on a sample of one.
 PREFLIGHT_PROBE_POINTS_DEFAULT: int = 5
 
-#: CEILING on :attr:`RuntimeConfig.preflight_probe_points`. Probe ``j`` draws at
-#: ``PREFLIGHT_REPLICATE_BASE + j``, so a sample wider than the pre-flight's
-#: reserved replicate block would squat the candidate screen's range (base 3000)
-#: and make ITS cache idempotence a lie — the pre-flight already refuses such a
-#: sample, but only after enumerating the snapshot, whereas a knob validated at
-#: construction fails at the config that set it.
-#:
-#: Mirrors :data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_SPAN`, which owns
-#: the fact; duplicated as a plain int rather than imported so :mod:`zicato.core`
-#: keeps no dependency on :mod:`zicato.epoch` (and so validating a dataclass
-#: field does not drag the pre-flight's import graph into every worker). The two
-#: are pinned equal by
-#: ``tests/test_preflight_severity_and_config_gate.py``.
-PREFLIGHT_PROBE_POINTS_MAX: int = 1000
+#: The preflight sample must fit the registry allocation.
+PREFLIGHT_PROBE_POINTS_MAX: int = PREFLIGHT_REPLICATE_SPAN
 
 
 class RoundTokenLedger:
@@ -186,7 +176,9 @@ class RuntimeConfig:
     seed:
         Optional integer seed for any zicato-internal random number
         generators. Adapters may or may not honor it for the system
-        under test.
+        under test. The selected value identifies measurement artifacts and
+        cache reuse. None records an explicitly unseeded execution; missing
+        historical provenance never proves that selection.
     parallelism:
         Maximum number of **board units** the tournament runner keeps
         in flight at once — i.e. "how many boards run in parallel". The

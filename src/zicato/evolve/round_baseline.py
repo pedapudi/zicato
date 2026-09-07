@@ -11,6 +11,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from zicato.core.loss import has_execution_evidence, validate_loss_identity
+from zicato.core.measurement import (
+    artifact_replicate_index,
+    iter_measurement_artifacts,
+    measurement_artifact_path,
+    recorded_artifact_measurement,
+)
 from zicato.core.types import (
     Generation,
 )
@@ -320,6 +327,7 @@ def _materialize_carried_champion(
 
     layout = WorkspaceLayout.from_root(workspace_root)
     materialised_entries: list[str] = []
+    measurements_complete = True
     for entry_id in run_entry_ids(layout, source_epoch, source_generation):
         entry_dir = layout.run_dir(source_epoch, source_generation, entry_id)
         dst_run_dir = run_dir(workspace_root, epoch_id, generation_id, entry_id)
@@ -328,26 +336,50 @@ def _materialize_carried_champion(
         # Attempt siblings are excluded: they describe a superseded
         # execution in the SOURCE epoch, and carrying one forward would
         # present it as this generation's measurement.
-        for src_loss in sorted(entry_dir.glob("loss*.json")):
+        for src_loss in iter_measurement_artifacts(entry_dir):
             if is_unit_attempt_slot(src_loss):
                 continue
             try:
-                replicate = 0 if src_loss.name == "loss.json" else int(src_loss.stem[6:])
+                replicate = artifact_replicate_index(src_loss.name)
+                if replicate is None:
+                    continue
                 profile = read_loss_profile(src_loss)
+                measurement = recorded_artifact_measurement(
+                    entry_dir, src_loss, profile.measurement, profile.match_id
+                )
+                validate_loss_identity(
+                    profile,
+                    epoch_id=source_epoch,
+                    generation_id=source_generation,
+                    entry_id=entry_id,
+                    measurement=measurement,
+                )
+                if not has_execution_evidence(profile):
+                    measurements_complete = False
+                    continue
             except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
-                log.debug("materialise champion: unreadable %s: %s", src_loss, exc)
+                measurements_complete = False
+                log.debug("materialise champion: ineligible measurement %s: %s", src_loss, exc)
                 continue
             carried = replace(
                 profile,
+                measurement=measurement,
                 generation_id=generation_id,
                 epoch_id=epoch_id,
-                run_id=run_id_for_unit(generation_id, entry_id, replicate),
+                run_id=run_id_for_unit(
+                    generation_id, entry_id, replicate, base_seed=measurement.base_seed
+                ),
                 cached=True,
                 source_epoch=source_epoch,
                 source_run=profile.run_id,
             )
             try:
-                write_loss_profile(carried, dst_run_dir / src_loss.name)
+                write_loss_profile(
+                    carried,
+                    measurement_artifact_path(
+                        dst_run_dir, "loss", replicate, base_seed=measurement.base_seed
+                    ),
+                )
                 any_for_entry = True
             except OSError as exc:
                 log.debug("materialise champion: write %s skipped: %s", src_loss.name, exc)
@@ -357,7 +389,7 @@ def _materialize_carried_champion(
     # Carry the aggregate (gen_score.json) with the same provenance so a
     # fast first round reuses the champion rather than re-running it.
     score = read_gen_score(layout, source_epoch, source_generation)
-    if score is not None:
+    if measurements_complete and score is not None:
         raw = score.to_dict()
         raw.update(
             generation_id=generation_id,

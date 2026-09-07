@@ -354,6 +354,8 @@ def test_holdout_record_shape() -> None:
         threshold=0.1,
     )
     assert rec == {
+        "confirmation_status": "satisfied",
+        "reason": "",
         "confirmed": True,
         "train_scalar": 0.5,
         "holdout_scalar": 0.6,

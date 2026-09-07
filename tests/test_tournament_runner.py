@@ -40,6 +40,7 @@ from zicato.core import (
     ScoringWeights,
 )
 from zicato.core import BoardEntry as _BoardEntry
+from zicato.core.workspace import run_id_for_unit
 from zicato.tournament.gate import GateOutcome
 from zicato.tournament.runner import (
     TournamentResult,
@@ -435,6 +436,7 @@ def test_run_fast_mode_runs_only_child(monkeypatch: pytest.MonkeyPatch, tmp_path
 
     # Historical aggregate the operator saved off some time ago for v0.
     parent_historical = {
+        "base_seed": None,
         "drift_loss_mean": 2.0,
         "pass_rate": 1.0,
         "expectation_count": 2,
@@ -458,6 +460,7 @@ def test_run_fast_mode_runs_only_child(monkeypatch: pytest.MonkeyPatch, tmp_path
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            parent_generation_id="v0",
         )
     )
 
@@ -492,6 +495,7 @@ def test_run_fast_mode_never_runs_the_champion(
     call_log = _stub_run_single(monkeypatch, canned=canned)
 
     parent_historical = {
+        "base_seed": None,
         "drift_loss_mean": 2.0,
         "pass_rate": 1.0,
         "expectation_count": len(board),
@@ -512,6 +516,7 @@ def test_run_fast_mode_never_runs_the_champion(
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            parent_generation_id="v0",
             # Explicit: this test pins SINGLE-PASS arithmetic (one run per
             # board unit). The knob-ON companion is
             # test_run_fast_mode_honours_replicates.
@@ -578,6 +583,7 @@ def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
     parent_historical = {
+        "base_seed": None,
         "drift_loss_mean": 2.0,
         "pass_rate": 1.0,
         "mean_score": 1.0,
@@ -598,6 +604,7 @@ def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_p
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            parent_generation_id="v0",
             replicates=2,
         )
     )
@@ -638,16 +645,20 @@ def test_run_fast_mode_replicate_slots_reuse_the_unit_cache(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, weights, workspace_root, epoch_id, side, match_id
         call_log.append((entry.id, _entry_replicate_index(entry)))
         return dataclasses.replace(
             _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True),
+            run_id=run_id_for_unit(
+                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+            ),
             score=1.0,
         )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
     parent_historical = {
+        "base_seed": None,
         "drift_loss_mean": 2.0,
         "pass_rate": 1.0,
         "expectation_count": len(board),
@@ -668,6 +679,7 @@ def test_run_fast_mode_replicate_slots_reuse_the_unit_cache(
                 workspace_root=tmp_path,
                 epoch_id="e0",
                 parent_historical_agg=parent_historical,
+                parent_generation_id="v0",
                 replicates=replicates,
             )
         )
@@ -728,6 +740,7 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
     parent_historical = {
+        "base_seed": None,
         "drift_loss_mean": 2.0,
         "pass_rate": 1.0,
         "expectation_count": len(board),
@@ -750,6 +763,7 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            parent_generation_id="v0",
             replicates=2,
         )
     )
@@ -780,6 +794,7 @@ def test_run_fast_mode_single_replicate_is_byte_identical(
     call_log = _stub_run_single(monkeypatch, canned=canned)
 
     parent_historical = {
+        "base_seed": None,
         "drift_loss_mean": 2.0,
         "pass_rate": 1.0,
         "expectation_count": len(board),
@@ -799,6 +814,7 @@ def test_run_fast_mode_single_replicate_is_byte_identical(
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            parent_generation_id="v0",
             replicates=1,
         )
     )
@@ -871,6 +887,7 @@ def test_run_fast_mode_respects_parallelism_bound(
     monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
 
     parent_historical = {
+        "base_seed": None,
         "drift_loss_mean": 2.0,
         "pass_rate": 1.0,
         "expectation_count": len(board),
@@ -891,6 +908,7 @@ def test_run_fast_mode_respects_parallelism_bound(
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            parent_generation_id="v0",
             # Explicit: this test pins SINGLE-PASS arithmetic (one run per
             # board unit). The knob-ON companion is
             # test_run_fast_mode_honours_replicates.
@@ -1552,6 +1570,50 @@ def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(
 # runs, rather than 0.00 until the round ends.
 
 
+def test_absent_progress_consumer_only_computes_final_aggregates(monkeypatch, tmp_path):
+    import zicato.tournament.runner as runner
+    import zicato.tournament.scheduling as scheduling
+
+    board = _board_of(4)
+    parent = _make_generation(tmp_path, "v0", None)
+    child = _make_generation(tmp_path, "v1", "v0")
+    _stub_run_single(
+        monkeypatch,
+        canned={
+            (generation, entry.id): _loss(
+                generation_id=generation, entry_id=entry.id, drift_loss=loss, pass_fail=True
+            )
+            for generation, loss in (("v0", 2.0), ("v1", 1.0))
+            for entry in board
+        },
+    )
+    calls = []
+    original = runner.aggregate_generation_score
+
+    def aggregate(losses, *args, **kwargs):
+        calls.append(len(losses))
+        return original(losses, *args, **kwargs)
+
+    monkeypatch.setattr(scheduling, "_runtime_state", lambda: None)
+    monkeypatch.setattr(scheduling, "aggregate_generation_score", aggregate)
+    monkeypatch.setattr(runner, "aggregate_generation_score", aggregate)
+    result = asyncio.run(
+        runner.run_matchup(
+            adapter=object(),
+            left_gen=parent,
+            right_gen=child,
+            board=board,
+            weights=ScoringWeights(),
+            config=dataclasses.replace(runtime_config(tmp_path), parallelism=2),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+        )
+    )
+    assert calls == [4, 4]
+    assert result.outcome.decision == "promoted"
+    assert result.outcome.delta_scalar == -1.0
+
+
 def test_partial_aggregate_is_written_as_each_board_unit_completes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1732,6 +1794,7 @@ def test_fast_mode_persists_running_partial_aggregate(
     _stub_run_single(monkeypatch, canned=canned)
 
     parent_historical = {
+        "base_seed": None,
         "drift_loss_mean": 3.0,
         "pass_rate": 1.0,
         "scalar": 3.0,
@@ -1759,6 +1822,7 @@ def test_fast_mode_persists_running_partial_aggregate(
     monkeypatch.setattr(_state_mod, "clear_active_tournament", capturing_clear)
 
     config = runtime_config(tmp_path)
+    parent_historical["base_seed"] = config.seed
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -1769,6 +1833,7 @@ def test_fast_mode_persists_running_partial_aggregate(
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            parent_generation_id="v0",
             # Explicit: this test pins SINGLE-PASS arithmetic (one run per
             # board unit). The knob-ON companion is
             # test_run_fast_mode_honours_replicates.
@@ -1849,6 +1914,7 @@ def test_run_fast_mode_publishes_active_tournament(
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
     parent_historical = {
+        "base_seed": None,
         "drift_loss_mean": 2.0,
         "pass_rate": 1.0,
         "scalar": 2.0,
@@ -1874,6 +1940,7 @@ def test_run_fast_mode_publishes_active_tournament(
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            parent_generation_id="v0",
             round_index=1,
             total_rounds=3,
         )
@@ -1963,6 +2030,7 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
     monkeypatch.setattr(_state_mod, "clear_active_tournament", capturing_clear)
 
     parent_historical = {
+        "base_seed": None,
         "drift_loss_mean": 2.0,
         "pass_rate": 1.0,
         "scalar": 2.0,
@@ -1985,6 +2053,7 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
+            parent_generation_id="v0",
         )
     )
 
@@ -1999,7 +2068,7 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
 
 # ---------------------------------------------------------------------------
 # Ladder-mediated holdout confirmation (OVERFITTING.md §4 / §12 #2). The
-# Phase-A holdout confirmation now flows through the Ladder governor: it only
+# Required holdout confirmation flows through the governor: it only
 # *counts* under the release rule + per-epoch budget, and the round's
 # decision record carries the stable ``holdout`` block.
 # ---------------------------------------------------------------------------
@@ -2036,9 +2105,8 @@ def _reserve_ladder(tmp_path: Path, weights: ScoringWeights):
     return reservation
 
 
-def test_ladder_no_holdout_is_byte_identical(tmp_path: Path) -> None:
-    # No holdout slice → the Ladder is a no-op: the train outcome is returned
-    # unchanged and ``holdout`` is None (Phase-A / pre-split behaviour).
+def test_ladder_no_holdout_is_explicitly_disabled(tmp_path: Path) -> None:
+    # No holdout slice preserves the training outcome with explicit policy status.
     train = _promote_outcome()
     parent = _ladder_agg(1.0)
     child = _ladder_agg(0.5)
@@ -2053,7 +2121,8 @@ def test_ladder_no_holdout_is_byte_identical(tmp_path: Path) -> None:
         epoch_id="e0",
     )
     assert outcome is train
-    assert block is None
+    assert block is not None
+    assert block["confirmation_status"] == "disabled"
 
 
 def test_ladder_released_confirmation_keeps_promote(tmp_path: Path) -> None:
@@ -2085,6 +2154,8 @@ def test_ladder_released_confirmation_keeps_promote(tmp_path: Path) -> None:
         "ladder_budget_remaining",
         "ladder_query_reserved",
         "threshold",
+        "confirmation_status",
+        "reason",
     }
     assert block["confirmed"] is True
     assert block["ladder_released"] is True
@@ -2137,12 +2208,11 @@ def test_ladder_refuses_holdout_evidence_after_train_reject(
         )
 
 
-def test_ladder_budget_exhaustion_leaves_the_train_decision_unchanged(
+def test_ladder_budget_exhaustion_defers_confirmation(
     tmp_path: Path,
 ) -> None:
-    # With budget=1, the first release consumes it; a second train-win is no
-    # longer holdout-gated (it promotes on the train rules alone), even when
-    # the holdout would have rejected it.
+    # A successful confirmation consumes the only query. The next candidate
+    # cannot reuse that success to satisfy its own confirmation requirement.
     from zicato.core.types import LadderConfig, OverfittingConfig
 
     weights = ScoringWeights(
@@ -2164,7 +2234,7 @@ def test_ladder_budget_exhaustion_leaves_the_train_decision_unchanged(
     )
     assert out1.decision == "promoted"
 
-    # Budget now 0: the holdout is not observed, and the train decision stands.
+    # No remaining allowance means no holdout observation or promotion.
     state, reservation = runner_mod._reserve_ladder_query(
         tmp_path, "e0", weights.overfitting.ladder
     )
@@ -2175,8 +2245,9 @@ def test_ladder_budget_exhaustion_leaves_the_train_decision_unchanged(
         state=state,
         weights=weights,
     )
-    assert out2.decision == "promoted"
+    assert out2.decision == "deferred"
     assert block2 is not None
+    assert block2["confirmation_status"] == "incomplete"
     assert block2["confirmed"] is None
     assert block2["holdout_scalar"] is None
     assert block2["holdout_consulted"] is False
@@ -2184,8 +2255,8 @@ def test_ladder_budget_exhaustion_leaves_the_train_decision_unchanged(
     assert block2["ladder_budget_remaining"] == 0
 
 
-def test_ladder_disabled_runs_raw_phase_a_confirmation(tmp_path: Path) -> None:
-    # ladder.enabled=False ⇒ raw Phase-A confirmation: every holdout query
+def test_disabled_governor_still_requires_holdout_confirmation(tmp_path: Path) -> None:
+    # Disabling the governor preserves raw confirmation: every holdout query
     # counts, no budget, no release rule. A regressing holdout rejects.
     from zicato.core.types import LadderConfig, OverfittingConfig
 
@@ -2210,10 +2281,9 @@ def test_ladder_disabled_runs_raw_phase_a_confirmation(tmp_path: Path) -> None:
     assert block["ladder_budget_remaining"] == block["ladder_budget_total"]
 
 
-def test_ladder_withhold_within_band_keeps_promote(tmp_path: Path) -> None:
-    # A train-win whose improvement is WITHIN the noise band is withheld: the
-    # holdout result does not count this round, so a regressing holdout cannot
-    # reject — the train-promote stands and the prior best is re-reported.
+def test_ladder_withhold_within_band_defers_confirmation(tmp_path: Path) -> None:
+    # Withheld evidence cannot confirm the current candidate. A historical
+    # positive bit must not be mistaken for satisfaction of this requirement.
     weights = ScoringWeights(promote_margin=0.5)
     # First, a clear release establishes a confirming best.
     out1, _ = runner_mod._ladder_mediated_outcome(
@@ -2230,7 +2300,7 @@ def test_ladder_withhold_within_band_keeps_promote(tmp_path: Path) -> None:
     assert out1.decision == "promoted"
 
     # Now a tiny train-win (improvement 0.1 < 0.5 band) with a bad holdout:
-    # withheld → not released → cannot reject → promote stands.
+    # Withholding defers without revealing the negative result.
     out2, block2 = runner_mod._ladder_mediated_outcome(
         train_outcome=_promote_outcome(delta_scalar=-0.1),
         parent_agg=_ladder_agg(1.0),
@@ -2242,7 +2312,54 @@ def test_ladder_withhold_within_band_keeps_promote(tmp_path: Path) -> None:
         epoch_id="e0",
         reservation=_reserve_ladder(tmp_path, weights),
     )
-    assert out2.decision == "promoted"
+    assert out2.decision == "deferred"
     assert block2 is not None
+    assert block2["confirmation_status"] == "incomplete"
     assert block2["ladder_released"] is False
     assert block2["confirmed"] is True  # the prior best, re-reported
+
+
+@pytest.mark.parametrize("missing", ["parent", "child", "incomplete", "nonfinite"])
+@pytest.mark.parametrize("governor_enabled", [True, False])
+def test_incomplete_holdout_never_confirms_or_updates_released_best(
+    tmp_path: Path,
+    missing: str,
+    governor_enabled: bool,
+) -> None:
+    from zicato.core.types import LadderConfig, OverfittingConfig
+    from zicato.tournament.governance import _load_ladder_state
+
+    weights = ScoringWeights(
+        promote_margin=0.1,
+        overfitting=OverfittingConfig(
+            ladder=LadderConfig(enabled=governor_enabled, budget=2),
+        ),
+    )
+    parent = None if missing == "parent" else _ladder_agg(1.0)
+    child = None if missing == "child" else _ladder_agg(0.5)
+    if missing == "incomplete":
+        child = {"scalar": 0.0, "incomplete_entries": ["task"]}
+    elif missing == "nonfinite":
+        child = _ladder_agg(float("nan"))
+    outcome, block = runner_mod._ladder_mediated_outcome(
+        train_outcome=_promote_outcome(),
+        parent_agg=_ladder_agg(1.0),
+        child_agg=_ladder_agg(0.5),
+        holdout_parent_agg=parent,
+        holdout_child_agg=child,
+        weights=weights,
+        workspace_root=tmp_path,
+        epoch_id="e0",
+        reservation=_reserve_ladder(tmp_path, weights) if governor_enabled else None,
+    )
+    assert outcome.decision == "deferred"
+    assert block is not None
+    assert block["confirmation_status"] == "incomplete"
+    assert block["confirmed"] is None
+    assert block["holdout_scalar"] is None
+    assert block["ladder_released"] is False
+    assert block["ladder_budget_remaining"] == (1 if governor_enabled else 2)
+    if governor_enabled:
+        state = _load_ladder_state(tmp_path, "e0", weights.overfitting.ladder)
+        assert state.best_holdout_scalar is None
+        assert state.best_confirmed is None

@@ -1,33 +1,24 @@
-"""Bradley--Terry rating from pairwise duel outcomes.
+"""Fit latent strengths from pairwise wins or grouped rankings.
 
-The rating backbone described in ``docs/design/SELECTION-THEORY.md`` §7.1
-and ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`` §5. Each contestant
-``i`` has a latent strength ``theta_i``; the probability that ``i`` beats
-``j`` is the logistic ``sigma(theta_i - theta_j)``. The strengths are the
-maximum-likelihood fit over all observed (and replicated) duels — a convex
-problem with a single global optimum, solved here by a small pure-Python
-Newton / iteratively-reweighted step. The fit yields a standard error per
-contestant (from the Fisher information), which is the operational payoff:
-overlapping strength intervals are the duels worth replicating.
+Bradley--Terry assigns win probability logistic(theta_i - theta_j) to a
+pair. A Gaussian ridge prior keeps perfect records finite. The pure Python
+Newton fit returns strengths centered to sum to zero and their jointly
+centered covariance. Comparisons use the variance of a strength difference;
+individual standard errors alone discard necessary covariance.
 
-This module is **pure** — no IO, no strategy state, no external numerical
-dependency. It takes an opaque sequence of (winner, loser) duel outcomes
-and returns ``{generation_id: (theta, se)}``. It is **opt-in**: nothing in
-the default selection path imports it unless ``params["rating"]`` selects
-it. The gate is never involved; a rating only ever *proposes* an ordering.
-
-Replication is absorbed natively: feed each replicate of a duel as its own
-``(winner, loser)`` outcome and the likelihood weights it automatically.
-Partial / star schedules (elim, racing) are fine too — not every pair need
-be played.
+Repeated outcomes count as independent observations. Callers must exclude
+replayed measurements and exact ties. Partial schedules are supported.
+The related Plackett--Luce fit accepts grouped ranking observations.
 """
 
 from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from itertools import permutations
+from types import MappingProxyType
 
 _log = logging.getLogger(__name__)
 
@@ -54,6 +45,58 @@ RankGroup = tuple[Sequence[str], Sequence[str]]
 PL_MAX_SURVIVORS = 8
 
 
+@dataclass(frozen=True, eq=False)
+class RatingFit(Mapping[str, tuple[float, float]]):
+    """Centered strengths and their joint approximate posterior covariance.
+
+    Mapping entries retain the ``(theta, se)`` interface used for standings.
+    Pairwise comparisons must use the covariance of the shared fit.
+    """
+
+    estimates: Mapping[str, tuple[float, float]]
+    covariance: Mapping[tuple[str, str], float]
+
+    def __getitem__(self, key: str) -> tuple[float, float]:
+        return self.estimates[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.estimates)
+
+    def __len__(self) -> int:
+        return len(self.estimates)
+
+    def difference(self, left: str, right: str) -> tuple[float, float]:
+        """Return the mean and standard error of ``theta_left - theta_right``."""
+        variance = (
+            self.covariance[left, left]
+            + self.covariance[right, right]
+            - 2.0 * self.covariance[left, right]
+        )
+        return self[left][0] - self[right][0], math.sqrt(max(0.0, variance))
+
+
+def _centered_fit(
+    ids: Sequence[str], theta: Sequence[float], covariance: Sequence[Sequence[float]]
+) -> RatingFit:
+    """Apply the zero-sum constraint to both strengths and covariance."""
+    n = len(ids)
+    estimates: dict[str, tuple[float, float]] = {}
+    centered_covariance: dict[tuple[str, str], float] = {}
+    if n:
+        mean_theta = sum(theta) / n
+        row_means = [sum(row) / n for row in covariance]
+        overall_mean = sum(row_means) / n
+        # P = I - 11'/n centers a vector; P covariance P' centers its errors.
+        for i, left in enumerate(ids):
+            for j, right in enumerate(ids):
+                centered_covariance[left, right] = (
+                    covariance[i][j] - row_means[i] - row_means[j] + overall_mean
+                )
+            variance = centered_covariance[left, left]
+            estimates[left] = theta[i] - mean_theta, math.sqrt(max(0.0, variance))
+    return RatingFit(MappingProxyType(estimates), MappingProxyType(centered_covariance))
+
+
 def _logistic(x: float) -> float:
     """Numerically-stable logistic ``sigma(x) = 1 / (1 + e^-x)``."""
     if x >= 0.0:
@@ -69,7 +112,7 @@ def fit_bradley_terry(
     prior: float = 1.0,
     max_iter: int = 100,
     tol: float = 1e-9,
-) -> dict[str, tuple[float, float]]:
+) -> RatingFit:
     """Fit Bradley--Terry strengths from pairwise outcomes.
 
     Parameters
@@ -94,20 +137,20 @@ def fit_bradley_terry(
 
     Returns
     -------
-    A mapping ``{generation_id: (theta, se)}``. ``theta`` is the latent
-    strength (higher = stronger); ``se`` is its standard error from the
-    inverse Fisher information (the ridge prior guarantees the information
-    matrix is positive-definite, so the SE is always finite). An empty
+    A mapping ``{generation_id: (theta, se)}`` with joint ``covariance``.
+    ``theta`` is the latent strength (higher = stronger); ``se`` is its
+    centered standard error from the inverse penalized information. An empty
     input yields an empty mapping. A contestant who appears only as a
     ``winner`` or only as a ``loser`` still gets a finite strength because
     of the prior.
 
     Notes
     -----
-    The fit is centered so the strengths sum to zero (the natural gauge for
-    the translation-invariant model), which makes ``theta`` comparable
-    across calls of the same field. The SEs are *unaffected* by the
-    centering.
+    Strengths and covariance are projected onto the zero-sum constraint.
+    Use ``rating.difference(a, b)`` for a comparison: jointly fitted strengths
+    are correlated. The inverse penalized information is a local normal
+    approximation under the Gaussian ridge prior. It does not give an exact
+    probability.
     """
     if prior <= 0.0:
         raise ValueError(f"prior must be positive, got {prior!r}")
@@ -128,7 +171,7 @@ def fit_bradley_terry(
 
     n = len(ids)
     if n == 0:
-        return {}
+        return _centered_fit([], [], [])
 
     index = {gid: i for i, gid in enumerate(ids)}
     # Aggregate per unordered pair: total games and a's wins, so each pair
@@ -197,15 +240,7 @@ def fit_bradley_terry(
         info_matrix[j][i] -= info
     cov = _invert(info_matrix)
 
-    # Center the strengths to the zero-sum gauge for cross-call comparability.
-    mean_theta = sum(theta) / n
-    out: dict[str, tuple[float, float]] = {}
-    for gid in ids:
-        i = index[gid]
-        var = cov[i][i]
-        se = math.sqrt(var) if var > 0.0 else 0.0
-        out[gid] = (theta[i] - mean_theta, se)
-    return out
+    return _centered_fit(ids, theta, cov)
 
 
 def fit_plackett_luce(
@@ -215,7 +250,7 @@ def fit_plackett_luce(
     max_iter: int = 100,
     tol: float = 1e-9,
     max_survivors: int = PL_MAX_SURVIVORS,
-) -> dict[str, tuple[float, float]]:
+) -> RatingFit:
     """Fit Plackett--Luce strengths from grouped (and pairwise) rankings.
 
     A single likelihood over TWO observation shapes:
@@ -296,7 +331,7 @@ def fit_plackett_luce(
         ids.update(surv)
         ids.update(cut)
     if not norm:
-        return {}
+        return _centered_fit([], [], [])
     norm.sort()
 
     ordered_ids = sorted(ids)
@@ -338,14 +373,7 @@ def fit_plackett_luce(
     info = [[-hess[i][j] for j in range(n)] for i in range(n)]
     cov = _invert(info)
 
-    mean_theta = sum(theta) / n
-    out: dict[str, tuple[float, float]] = {}
-    for gid in ordered_ids:
-        i = index[gid]
-        var = cov[i][i]
-        se = math.sqrt(var) if var > 0.0 else 0.0
-        out[gid] = (theta[i] - mean_theta, se)
-    return out
+    return _centered_fit(ordered_ids, theta, cov)
 
 
 # ---------------------------------------------------------------------------
@@ -487,22 +515,19 @@ def prob_stronger(
     se_a: float,
     theta_b: float,
     se_b: float,
+    *,
+    covariance: float = 0.0,
 ) -> float:
-    """``P(theta_a > theta_b)`` under independent normal strength estimates.
+    """Approximate ``P(theta_a > theta_b)`` for jointly normal strengths.
 
-    Treats the two fitted strengths as independent normals with the given
-    standard errors; the difference is normal with mean ``theta_a -
-    theta_b`` and variance ``se_a^2 + se_b^2``. Returns the probability the
-    difference is positive. When both SEs are zero the answer is a hard
-    ``1.0`` / ``0.0`` / ``0.5`` (degenerate point estimates).
-
-    This is the quantity the opt-in evidence pre-gate
-    (:mod:`zicato.selection.evidence_gate`, FUNCTIONALITY-RECOMMENDATIONS.md
-    §5) thresholds: crown only if the child's strength is above the parent's
-    with enough confidence.
+    The difference has mean ``theta_a - theta_b`` and variance
+    ``se_a^2 + se_b^2 - 2*covariance``. The default covariance applies only
+    to independent estimates. A joint rating fit supplies its covariance,
+    or its difference can be compared with the constant zero. A zero-variance
+    difference returns ``1.0``, ``0.0``, or ``0.5`` according to its sign.
     """
     diff = theta_a - theta_b
-    var = se_a * se_a + se_b * se_b
+    var = se_a * se_a + se_b * se_b - 2.0 * covariance
     if var <= 0.0:
         if diff > 0.0:
             return 1.0

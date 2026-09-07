@@ -22,6 +22,7 @@ The serde change (change 4) is covered in :mod:`tests.test_subprocess_workers`.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,8 @@ from zicato.core import (
     ScoringWeights,
     is_infra_abort_cause,
 )
-from zicato.core.workspace import loss_profile_path
+from zicato.core.measurement import MeasurementDraw
+from zicato.core.workspace import loss_profile_path, run_id_for_unit
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import make_loss_profile
 from zicato.tournament.runner import (
@@ -47,6 +49,7 @@ from zicato.tournament.runner import (
     _run_unit_cache_first,
     run_tournament,
 )
+from zicato.tournament.worker_transport import _entry_replicate_index
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -185,15 +188,23 @@ def _stub_run_single_returning(monkeypatch: pytest.MonkeyPatch, profile: LossPro
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, weights, workspace_root, epoch_id, side, match_id
         call_log.append(generation.id)
-        return profile
+        return replace(
+            profile,
+            run_id=run_id_for_unit(
+                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+            ),
+        )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
     return call_log
 
 
-def test_infra_abort_is_not_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("cause", ["parent_kill", "prepare_failed"])
+def test_infra_abort_is_not_cached(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cause: str
+) -> None:
     """A parent/supervisor-kill / crash abort must NOT be persisted to the unit
     cache — the next need is a clean MISS so re-running re-attempts the unit."""
     ws = tmp_path / ".zicato"
@@ -207,7 +218,7 @@ def test_infra_abort_is_not_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         generation_id=gen.id,
         epoch_id="e0",
         wall_clock_budget_exceeded=True,
-        abort_cause="parent_kill",
+        abort_cause=cause,
     )
     assert is_infra_abort_cause(infra.abort_cause) is True
     _stub_run_single_returning(monkeypatch, infra)
@@ -225,7 +236,8 @@ def test_infra_abort_is_not_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         )
     )
     # The unit ran and returned the infra-abort profile...
-    assert loss.abort_cause == "parent_kill"
+    assert loss.abort_cause == cause
+    assert loss.execution_started is None
     # ...but it was NOT persisted: the next cache lookup is a MISS.
     assert (
         _resolve_cached_unit(
@@ -234,6 +246,7 @@ def test_infra_abort_is_not_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
             generation_id=gen.id,
             entry_id=entry.id,
             replicate_index=0,
+            base_seed=None,
         )
         is None
     )
@@ -254,9 +267,10 @@ def test_budget_abort_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
         epoch_id="e0",
         wall_clock_budget_exceeded=True,
         abort_cause=BUDGET_ABORT_CAUSE,
+        runtime_ms=0,
     )
     assert is_infra_abort_cause(budget.abort_cause) is False
-    _stub_run_single_returning(monkeypatch, budget)
+    calls = _stub_run_single_returning(monkeypatch, budget)
 
     asyncio.run(
         _run_unit_cache_first(
@@ -276,9 +290,24 @@ def test_budget_abort_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
         generation_id=gen.id,
         entry_id=entry.id,
         replicate_index=0,
+        base_seed=None,
     )
     assert cached is not None
     assert cached.abort_cause == BUDGET_ABORT_CAUSE
+    assert cached.execution_started is True
+    asyncio.run(
+        _run_unit_cache_first(
+            adapter=object(),
+            generation=gen,
+            entry=entry,
+            weights=ScoringWeights(),
+            config=runtime_config(ws),
+            workspace_root=ws,
+            epoch_id="e0",
+            side="parent",
+        )
+    )
+    assert calls == ["v0"]
 
 
 def test_clean_run_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -318,6 +347,7 @@ def test_clean_run_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
             generation_id=gen.id,
             entry_id=entry.id,
             replicate_index=0,
+            base_seed=None,
         )
         is not None
     )
@@ -332,14 +362,18 @@ def _seed_champion_cache(ws: Path, parent_gen: Generation, board: list[BoardEntr
     """Persist a per-board champion loss.json so the parent side is a cache HIT."""
     for entry in board:
         profile = make_loss_profile(
-            run_id=f"{parent_gen.id}--{entry.id}",
+            run_id=run_id_for_unit(parent_gen.id, entry.id, base_seed=None),
             entry_id=entry.id,
             generation_id=parent_gen.id,
             epoch_id="e0",
             drift_loss=2.0,
             pass_fail=True,
+            measurement=MeasurementDraw.from_index(0, base_seed=None),
         )
-        write_loss_profile(profile, loss_profile_path(ws, "e0", parent_gen.id, entry.id))
+        write_loss_profile(
+            profile,
+            loss_profile_path(ws, "e0", parent_gen.id, entry.id).parent / "seed-none" / "loss.json",
+        )
 
 
 def _stub_run_single_logging(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
@@ -359,10 +393,12 @@ def _stub_run_single_logging(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str,
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, weights, workspace_root, epoch_id, side, match_id
         call_log.append((generation.id, entry.id))
         return make_loss_profile(
-            run_id=f"{generation.id}--{entry.id}",
+            run_id=run_id_for_unit(
+                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+            ),
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id="e0",
@@ -482,6 +518,7 @@ def test_run_tournament_first_round_still_runs_champion(
             generation_id="v0",
             entry_id="entry_a",
             replicate_index=0,
+            base_seed=None,
         )
         is not None
     )

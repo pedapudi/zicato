@@ -178,6 +178,11 @@ from typing import Any
 from uuid import uuid4
 
 from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
+from zicato.core.measurement import PREFLIGHT_REPLICATE_BASE as PREFLIGHT_REPLICATE_BASE
+from zicato.core.measurement import PREFLIGHT_REPLICATE_SPAN as PREFLIGHT_REPLICATE_SPAN
+from zicato.core.measurement import (
+    validate_measurement_interval,
+)
 from zicato.core.mutation import MutationPoint, Patch
 from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.writer import workspace_writer
@@ -187,26 +192,6 @@ from zicato.tournament.calibration import (
     NoiseFloorInconclusive,
     measure_noise_floor,
 )
-
-#: Replicate-index base for the pre-flight's degraded draws. Reserved far
-#: above both real duel replicates (which count up from 0) and the A/A
-#: calibration draws (base 1000), so the pre-flight's cache slots can never
-#: collide with — or pre-seed — anything a tournament or audit reads. Probe
-#: ``j`` of the sample draws at ``PREFLIGHT_REPLICATE_BASE + j``: distinct
-#: slots per probe (so no probe replays another's cached result) and an
-#: idempotent HIT on a re-run, since :func:`select_probe_points` is
-#: deterministic.
-PREFLIGHT_REPLICATE_BASE: int = 2000
-
-#: Width of the pre-flight's reserved replicate block. The next owner in the
-#: ladder is the candidate screen at 3000
-#: (:data:`zicato.epoch.screen.SCREEN_REPLICATE_BASE`), so the pre-flight owns
-#: ``2000..2999`` and a sample may never grow past this many probes — squatting
-#: a neighbour's range would make their idempotence a lie (a re-run
-#: ``zicato board audit`` / screen would read the pre-flight's draws as its
-#: own). Far above any plausible mutable surface: the presentation target, the
-#: largest real harness, enumerates 15 points.
-PREFLIGHT_REPLICATE_SPAN: int = 1000
 
 #: The heartbeat ``phase`` segment that names a pre-flight in flight. The
 #: pre-flight is an epoch-open step running BEFORE the round it precedes has
@@ -1023,6 +1008,8 @@ async def run_contract_preflight(
                 "runtime.preflight_probe_points (or shorten "
                 "runtime.preflight_probe_mutation_ids)"
             )
+
+        validate_measurement_interval(PREFLIGHT_REPLICATE_BASE, len(sample))
 
         # Everything the measurement may spend is now known: K A/A draws plus one
         # draw per selected probe, each a serial pass over the whole board. That

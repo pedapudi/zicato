@@ -463,7 +463,8 @@ async def _run_fast_mode(
         config=_config(parallelism=2, token_ledger=token_ledger),
         workspace_root=tmp_path,
         epoch_id="e1",
-        parent_historical_agg={"generation_id": "v0", "scalar": 1.0},
+        parent_historical_agg={"generation_id": "v0", "scalar": 1.0, "base_seed": None},
+        parent_generation_id="v0",
         replicates=3,
     )
     return used

@@ -58,7 +58,7 @@ test('ratingTripleDigest: int tuple when rated, null when unrated (pre-rating sh
 // The rated swiss ladder (tests/_console_scenarios.py build_swiss_rated_workspace):
 // v1 won five games, so its rating is settled; v2 played twice, so its rating
 // is thin; v5 sits in the standings without a game.
-test('standings: the rating column renders mono value ±se, provisional suffix, and — for unrated', async () => {
+test('standings: descriptive ratings retain points and provisional status with unknown uncertainty', async () => {
   freshState();
   installFixtureMap(structureFixture('swiss_rated'));
   const gens = await import('../js/views/gens.js');
@@ -68,13 +68,14 @@ test('standings: the rating column renders mono value ±se, provisional suffix, 
   const table = allByClass(host, 'dt-standings')[0];
   assert(table, 'the standings leaderboard rendered');
   assert(table.textContent.includes('rating'), 'the standings carries a rating column header');
-  assert(table.textContent.includes('1716 ±132'), 'the credible rating renders mono `value ±se`');
-  assert(table.textContent.includes('1416 ±152'), 'the thin-sample rating still shows its estimate in the table');
+  assert(table.textContent.includes('1716'), 'the descriptive rating retains its point estimate');
+  assert(table.textContent.includes('1416'), 'the thin-sample rating retains its point estimate');
   const provs = allByClass(table, 'dt-rating-prov');
   assertEqual(provs.length, 1, 'exactly the thin-sample row carries the faint provisional suffix');
   assert(provs[0].textContent.includes('provisional'), 'the suffix reads provisional');
   // the unrated row renders the honest dash — and NO chip anywhere.
   const cells = allByClass(table, 'dt-rating');
+  assert(cells.every((c) => !c.textContent.includes('±')), 'descriptive records provide no uncertainty');
   assertEqual(cells.length, 4, 'every standings row carries a rating cell');
   assert(cells.some((c) => c.textContent === '—'), 'an unrated generation reads —');
 });

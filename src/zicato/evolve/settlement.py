@@ -247,7 +247,7 @@ def _build_field_settlement(
         gid_override = verdict.overrides.get(gid)
         if is_crowned:
             gen_decision = TournamentDecision.PROMOTED
-        elif is_crowning_challenger and decision.decision == "deferred":
+        elif is_crowning_challenger and verdict.effective_decision.decision == "deferred":
             gen_decision = TournamentDecision.DEFERRED
         else:
             gen_decision = TournamentDecision.REJECTED
@@ -630,7 +630,7 @@ async def _close_field_round(
         on_promote_failure=on_promote_failure,
     )
 
-    bookkeeping_decision = "promoted" if promoted_id is not None else "rejected"
+    bookkeeping_decision = verdict.effective_decision.decision
     # Progress transition: the field tournament settled — record the
     # crowning (TOURNAMENT_SETTLE) then the terminal verdict so the
     # liveness seq lands on a PROMOTE/REJECT at the round's true end.

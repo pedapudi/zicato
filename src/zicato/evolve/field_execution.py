@@ -261,6 +261,7 @@ async def run_field_matchup(
         outcome=result.outcome,
         stage_index=matchup.stage_index,
         bracket_slot=matchup.bracket_slot,
+        measurement_draw=result.measurement_draw,
     )
 
 
@@ -329,10 +330,10 @@ def record_inconclusive_duel(
     challenger_id = (
         verdict.challenger.generation_id
         if verdict.challenger is not None
-        else candidates.first_challenger_id
+        else verdict.challenger_id
     )
     champion_id = (
-        verdict.champion.generation_id if verdict.champion is not None else field_round.parent_id
+        verdict.champion.generation_id if verdict.champion is not None else verdict.champion_id
     )
     with best_effort(
         "dead-letter inconclusive record",
@@ -420,7 +421,7 @@ def _emit_evidence_trail(
     challenger_id = (
         evidence.verdict.challenger.generation_id
         if evidence.verdict.challenger is not None
-        else candidates.first_challenger_id
+        else evidence.verdict.challenger_id
     )
     for ci_row in evidence.ci_history:
         field_round.round_log.emit(
@@ -447,6 +448,7 @@ async def execute_field_tournament(
     from zicato.selection import EvidencePreGate, evaluate_tournament  # noqa: PLC0415
     from zicato.selection.driver import make_evidence_replicate_duel  # noqa: PLC0415
     from zicato.selection.evidence_gate import (  # noqa: PLC0415
+        disabled_rating_block,
         read_promote_confidence_threshold,
         read_replicate_budget,
     )
@@ -468,7 +470,7 @@ async def execute_field_tournament(
     # Opt-in Bradley--Terry promotion pre-gate (crown on evidence). When
     # ``promote_confidence_threshold`` is set in the structure params, the
     # driver holds a crowning promote until the fitted rating clears the
-    # confidence bar AND the CIs separate, spending closest-CI replicates in
+    # confidence bar and adjusted difference interval, spending fresh replicates in
     # between (the defer→replicate loop). Unset leaves the strategy's
     # decision unchanged.
     pre_gate: EvidencePreGate | None = None
@@ -519,6 +521,8 @@ async def execute_field_tournament(
         raise
 
     gate_evidence: dict[str, Any] | None = None
+    if pre_gate is None:
+        gate_evidence = disabled_rating_block()
     if evaluation.evidence is not None:
         gate_evidence = _emit_evidence_trail(field_round, candidates, evaluation.evidence)
     return FieldExecution(

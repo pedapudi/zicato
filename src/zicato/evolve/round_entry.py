@@ -469,9 +469,16 @@ async def _evolve_once(
     train_id_set = set(train_ids)
     train_board = [e for e in board if e.id in train_id_set]
     losses = _load_parent_losses(
-        workspace_root, resolved_epoch_id, parent_id, train_board, read_loss_profile
+        workspace_root,
+        resolved_epoch_id,
+        parent_id,
+        train_board,
+        read_loss_profile,
+        base_seed=config.seed,
     )
-    events_paths = _build_events_paths(workspace_root, resolved_epoch_id, parent_id, train_board)
+    events_paths = _build_events_paths(
+        workspace_root, resolved_epoch_id, parent_id, train_board, base_seed=config.seed
+    )
     detector_input = DetectorInput(
         losses=losses,
         entries={e.id: e for e in train_board},
@@ -520,6 +527,7 @@ async def _evolve_once(
         patterns=patterns,
         train_entry_ids=[e.id for e in train_board],
         weights=weights,
+        base_seed=config.seed,
     )
 
     # --- 5a'. Optional pre-tournament candidate screen (tryouts) ---

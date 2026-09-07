@@ -68,6 +68,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from zicato.core.loss import has_execution_evidence, validate_loss_identity
+from zicato.core.measurement import (
+    UNKNOWN_SEED,
+    iter_measurement_artifacts,
+    recorded_artifact_measurement,
+)
 from zicato.core.types import Experiment, LossProfile
 from zicato.core.workspace import loss_profile_path
 from zicato.epoch._storage import RecordError
@@ -79,12 +85,14 @@ from zicato.index.schema import (
     raise_if_newer,
     read_schema_version,
 )
+from zicato.telemetry.reducer import loss_profile_to_dict
 from zicato.workspace import (
     WorkspaceLayout,
     generation_ids,
     round_indices,
     run_entry_ids,
 )
+from zicato.workspace.reads import generation_base_seed
 
 log = logging.getLogger("zicato.index")
 
@@ -372,7 +380,7 @@ def _upsert_loss_profile(
         pass_fail=_bool_to_int_or_none(profile.pass_fail),
         runtime_ms=int(profile.runtime_ms),
         wall_clock_budget_exceeded=1 if profile.wall_clock_budget_exceeded else 0,
-        loss_json=json.dumps(asdict(profile), sort_keys=True),
+        loss_json=json.dumps(loss_profile_to_dict(profile), sort_keys=True),
         tournament_id=tournament_id,
         match_id=match_id,
         cached=cached,
@@ -817,56 +825,85 @@ def _ingest_run_into(
     generation_id: str,
     entry_id: str,
 ) -> bool:
-    """Ingest one run's rows into an open connection.
+    """Project a cell's complete measurement identities and selected ordinary draw.
 
-    Returns ``True`` when a ``loss.json`` was found and ingested,
-    ``False`` when the run directory has no loss profile yet (a run
-    that started but whose reducer has not run).
-
-    ``metric_counts`` is a pure projection of the run's ``loss.json``
-    (via :meth:`LossProfile.unified_metrics`): the reducer owns the
-    canonical metric surface, so the index never independently re-tallies
-    the run's events JSONL. A loss profile written by an older reducer
-    with an empty metric surface simply yields no metric_counts rows —
-    correct-by-construction rather than reconstructed from a second
-    source that could disagree with the file.
+    Runs, metrics, and judge losses retain every seed and purpose for audit.
+    Loss-profile rows retain only ordinary draw zero for the seed recorded by
+    the generation score. A score without seed provenance selects historical
+    unqualified records. Invalid records refuse the projection before any rows
+    are replaced; the canonical files remain available for inspection.
     """
-    lpath = loss_profile_path(workspace_root, epoch_id, generation_id, entry_id)
-    profile = _load_loss_profile(lpath)
-    if profile is None:
-        return False
+    layout = WorkspaceLayout.from_root(workspace_root)
+    run_directory = layout.run_dir(epoch_id, generation_id, entry_id)
+    try:
+        selected_seed = generation_base_seed(layout, epoch_id, generation_id)
+        selection_valid = True
+    except ValueError:
+        selected_seed = UNKNOWN_SEED
+        selection_valid = False
+    profiles = []
+    identities = set()
+    run_ids = set()
+    for path in iter_measurement_artifacts(run_directory):
+        profile = _load_loss_profile(path)
+        if profile is None:
+            raise ValueError(f"cannot index unreadable canonical loss {path}")
+        try:
+            identity = recorded_artifact_measurement(
+                run_directory, path, profile.measurement, profile.match_id
+            )
+        except ValueError:
+            if profile.measurement is not None or path.parent != run_directory:
+                raise
+            # Historical files can establish a physical slot without proving
+            # its purpose. Keep the record auditable without admitting evidence.
+            identity = None
+        identity_key = identity if identity is not None else path.name
+        if identity_key in identities or profile.run_id in run_ids:
+            raise ValueError(f"duplicate canonical measurement identity at {path}")
+        identities.add(identity_key)
+        run_ids.add(profile.run_id)
+        validate_loss_identity(
+            profile,
+            epoch_id=epoch_id,
+            generation_id=generation_id,
+            entry_id=entry_id,
+            measurement=identity,
+        )
+        profiles.append((identity, profile))
 
-    # Resolve the tournament round this run belongs to from the child
-    # generation's experiment.json. Returns ``None`` for v0 seed runs
-    # (no experiment) or runs whose experiment cannot be read; the
-    # upsert tolerates either case (NULL column, idempotent re-ingest
-    # via COALESCE).
     tournament_id = _tournament_id_for_run(workspace_root, epoch_id, generation_id)
-
-    _upsert_run(
-        conn,
-        run_id=profile.run_id,
-        epoch_id=epoch_id,
-        generation_id=generation_id,
-        entry_id=entry_id,
-        # The run's wall-clock span, as the worker stamped it (issue #242).
-        # Empty for a profile written before those fields existed and for a
-        # synthesised worst-case that never measured one; runtime_ms remains
-        # the authoritative DURATION either way.
-        started_at=(profile.started_at or ""),
-        ended_at=(profile.ended_at or ""),
-        aborted=profile.wall_clock_budget_exceeded,
-        runtime_ms=profile.runtime_ms,
-        tournament_id=tournament_id,
-        # Per-board-run tournament provenance (schema v4). The runner
-        # stamped the matchup id onto the profile + loss.json; "" means
-        # untagged (a gauntlet or ad-hoc run) -> stored NULL.
-        match_id=(profile.match_id or None),
+    # Selection changes replace this cell's aggregate projection. Other seeds
+    # remain in the audit tables and never join the selected loss rows.
+    conn.execute(
+        "DELETE FROM loss_profiles WHERE epoch_id = ? AND generation_id = ? AND entry_id = ?",
+        (epoch_id, generation_id, entry_id),
     )
-    _upsert_loss_profile(conn, profile, tournament_id=tournament_id)
-    _replace_metric_counts(conn, profile.run_id, profile)
-    _replace_judge_losses(conn, profile.run_id, profile)
-    return True
+    for identity, profile in profiles:
+        _upsert_run(
+            conn,
+            run_id=profile.run_id,
+            epoch_id=epoch_id,
+            generation_id=generation_id,
+            entry_id=entry_id,
+            started_at=profile.started_at or "",
+            ended_at=profile.ended_at or "",
+            aborted=profile.wall_clock_budget_exceeded,
+            runtime_ms=profile.runtime_ms,
+            tournament_id=tournament_id,
+            match_id=profile.match_id or None,
+        )
+        if (
+            selection_valid
+            and identity is not None
+            and identity.replicate_index == 0
+            and identity.base_seed == selected_seed
+            and has_execution_evidence(profile)
+        ):
+            _upsert_loss_profile(conn, profile, tournament_id=tournament_id)
+        _replace_metric_counts(conn, profile.run_id, profile)
+        _replace_judge_losses(conn, profile.run_id, profile)
+    return bool(profiles)
 
 
 def _ingest_experiment_into(
@@ -1300,15 +1337,10 @@ def _epoch_signals(
     generations, so it has to be affordable enough that nobody is tempted to
     turn it off; re-deriving row content to compare it would not be.
 
-    ``runs_count`` counts ``loss.json`` files under
-    ``generations/*/runs/*/``, and it is the signal that makes a CRASHED
-    DUAL-WRITE visible. Everything else an epoch accumulates is bracketed by
-    an experiment: if a round's runs reduced but the process died before
-    :func:`ingest_run` projected them, no other count here moves, and until
-    this signal existed such an epoch validated clean forever while the index
-    silently held no rows for those runs. It is one ``iterdir`` per generation
-    plus one ``is_file`` per run — the same order of cost as the experiment
-    count directly above it, and no file is parsed.
+    ``runs_count`` counts entry directories containing at least one canonical
+    measurement file, including seed-qualified draws. It detects newly recorded
+    cells; epoch revisions detect replacements and additional draws within a
+    cell. Archive attempts do not change this count.
 
     ``round_dirs_count`` is a signal the index has no table for — nothing
     projects ``epochs/{e}/rounds/``. It is carried anyway because it is the
@@ -1318,7 +1350,6 @@ def _epoch_signals(
     """
     from zicato.core.workspace import (  # noqa: PLC0415
         experiment_json_path,
-        loss_profile_path,
         reflections_dir,
     )
 
@@ -1329,7 +1360,10 @@ def _epoch_signals(
         if experiment_json_path(workspace_root, epoch_id, generation_id).is_file():
             experiments += 1
         for entry_id in _iter_run_entry_ids(workspace_root, epoch_id, generation_id):
-            if loss_profile_path(workspace_root, epoch_id, generation_id, entry_id).is_file():
+            run_directory = loss_profile_path(
+                workspace_root, epoch_id, generation_id, entry_id
+            ).parent
+            if next(iter_measurement_artifacts(run_directory), None) is not None:
                 runs += 1
 
     lineage_generations = len(lineage_entry.generations) if lineage_entry else 0
@@ -1683,6 +1717,10 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
             conn.execute("PRAGMA busy_timeout=5000")
             apply_schema(conn)
             _rebuild_all(conn, workspace_root)
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
+                ("measurement_projection", "seed-qualified"),
+            )
             # The read-only Elo analytics fold runs AFTER every tournament has
             # been ingested (it reads the full match ledger off the
             # ``tournaments`` rows). It only ever writes the additive
@@ -1726,9 +1764,8 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
 def _rebuild_reason(target: Path) -> str | None:
     """Why ``target`` needs a full build, or ``None`` when it does not.
 
-    One of ``"absent"``, ``"stale-schema"``, ``"unreadable"``. An
-    EQUAL-version database is never a reason: detecting that its *contents*
-    drifted from the workspace is :func:`heal_index`'s job rather than this one's.
+    Schema and measurement-projection versions require a complete rebuild.
+    Ordinary canonical mutations are checked by :func:`heal_index`.
 
     Raises :class:`~zicato.index.schema.IndexSchemaNewerError` for a database
     written by a NEWER build. Auto-deleting it is forbidden — its columns and
@@ -1742,6 +1779,13 @@ def _rebuild_reason(target: Path) -> str | None:
         return "unreadable"
     try:
         version = read_schema_version(conn)
+        raise_if_newer(version)
+        if version == SCHEMA_VERSION:
+            marker = conn.execute(
+                "SELECT value FROM schema_meta WHERE key = ?", ("measurement_projection",)
+            ).fetchone()
+            if marker is None or marker[0] != "seed-qualified":
+                return "stale-projection"
     except sqlite3.DatabaseError:
         # Not a SQLite database at all (truncated, or some other file that
         # ended up at this path). A rebuild is the recovery.

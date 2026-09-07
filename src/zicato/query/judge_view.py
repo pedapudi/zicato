@@ -8,7 +8,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from zicato.core.workspace import replicate_index_from_run_id
+from zicato.core.measurement import (
+    iter_measurement_artifacts,
+    measurement_artifact_path,
+    unit_artifact_name,
+)
+from zicato.core.workspace import measurement_from_run_id
 from zicato.epoch._storage import RecordError
 from zicato.query._sqlite import (
     _opt_json,
@@ -508,15 +513,17 @@ def _entry_loss_path(
     canonical = layout_of(paths).loss(epoch_id, generation_id, entry_id)
     run_dir = canonical.parent
     if run_id:
-        inferred = replicate_index_from_run_id(generation_id, entry_id, run_id)
+        inferred = measurement_from_run_id(generation_id, entry_id, run_id)
         if inferred is not None:
-            return canonical if inferred == 0 else canonical.with_name(f"loss.r{inferred}.json")
-        for candidate in sorted(run_dir.glob("loss*.json")):
+            return measurement_artifact_path(
+                run_dir, "loss", inferred.replicate_index, base_seed=inferred.base_seed
+            )
+        for candidate in iter_measurement_artifacts(run_dir):
             loss = _read_json_value(candidate)
             if isinstance(loss, dict) and loss.get("run_id") == run_id:
                 return candidate
     if replicate_index is not None and replicate_index > 0:
-        return canonical.with_name(f"loss.r{replicate_index}.json")
+        return canonical.with_name(unit_artifact_name("loss", replicate_index))
     return canonical
 
 

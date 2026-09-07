@@ -299,15 +299,12 @@ abort is no-signal (an outage must never disqualify a candidate). If you add a
 new consumer that reads `abort_cause`, route the classification through
 `is_infra_abort_cause` — do not string-match cause values yourself.
 
-Skipped units (a matchup whose wall-clock budget ran out before the unit
-launched) are synthesized as budget-exceeded losses by `_skipped_unit_loss`
-(`src/zicato/tournament/unit_cache.py`), through the SAME aborted-run path a
-killed worker uses. A partial aggregate therefore scores *consistently
-pessimistic* — worst-case for the side that got clipped — and the skipped unit
-is a cache hit next time. The statistical implication: a budget-clipped duel is
-biased *against* whichever side had more units pending. The cut-short event is
-always logged, so an operator comparing scalars across duels with different clip
-states can see that the two are not exchangeable.
+A unit that never starts because a scheduling budget expired carries
+`execution_started=False`. It is an attempt record with zero spend and no
+measured outcome. A later round can run the unit because no reusable cache
+slot was filled. The aggregate reports incomplete entries separately, the gate
+defers, and rating evidence excludes the incomplete comparison. Completed
+per-task timeouts retain their existing scored-failure and cache policies.
 
 ### 1.7 The dispatch layer — provenance and the plugin contract
 
@@ -547,7 +544,7 @@ make must not silently invalidate them.
 | # | Fact | Where measured / pinned |
 |---|---|---|
 | 1 | **A single naive duel promotes pure noise.** With `promote_margin=0.01` far below a measured A/A floor of ~0.66 (σ=0.22 harness) and no evidence gate, a challenger *identical* to the champion cleared the gate in **20 of 60** seeded A/A trials (the pinned test bound is ≥ 15/60). | `test_margin_below_noise_floor_without_evidence_gate_is_unsound` |
-| 2 | **The Bradley–Terry (BT) evidence gate's confidence intervals (CIs) separate only after ~37 duels of an essentially unbroken win streak** on a two-contestant field; ANY mixed record never separates. It is therefore a pure **soundness** device — noise cannot manufacture 37 consistent wins — and never a power device. | module docstring + `EFFECTIVE_BUDGET = 38` calibration in the power harness; `evidence_gate.py` docstring |
+| 2 | **Confirmation compares the fitted strength difference with zero using covariance and planned-comparison allocation.** Mixed records can resolve as evidence grows; cost depends on effect size, planned field, and budget. | §6.5; `test_selection_evidence_gate.py`; `test_decision_procedure_power.py` |
 | 3 | **Power is bought with replication.** Averaging 32 replicates shrinks the per-duel delta sd from ~0.66 to ~0.12, turning a 0.5×-floor true effect (~0.34) into a ~3-sigma-per-duel signal the win streak can sustain. | `EFFECTIVE_REPLICATES = 32` commentary + `test_power_at_planted_deltas` |
 | 4 | **The evidence-gated contract's false-promotion rate under the A/A null is zero** over the pinned seeded trials — either the replicated crowning duel fails the margin, or the defer→replicate loop terminates `inconclusive`. | `test_aa_effective_contract_false_promotion_rate_is_zero` |
 | 5 | **The naive default misses small true effects the effective contract catches**: at a ~0.5×-floor planted improvement, the naive contract promotes in ≤ half the trials; the effective contract's rate is pinned ≥ naive + 0.25 on the same seeds. | `test_power_at_planted_deltas` |
@@ -569,13 +566,10 @@ make must not silently invalidate them.
 - **Any claim of improved power needs the planted-delta measurement**, at
   effect sizes stated in multiples of the measured floor (the harness plants
   0.5×, 1×, 3×).
-- **Soundness may not be traded for power silently.** The evidence gate is
-  opt-in *in code* because its cost — a ~37-duel streak, ~32×2×board fresh runs
-  per crowning — would freeze a small-budget default. The scaffolded contracts
-  (`zicato init`, the builder's blank draft) enable it **explicitly** with an
-  honest replicate budget, so an operator sees that cost before paying it.
-  Making it default-on with a small budget freezes every true promotion at
-  `inconclusive` instead; that trade was measured and rejected.
+- **Statistical policy changes require explicit measurements.** Workspace
+  scaffolds enable confirmation with a visible budget. Its comparison allowance
+  depends on the planned field and number of refits (§6.5). Required null and
+  power tests measure the effect of changes to that rule.
 
 > ⛔ NEVER assert a statistical property in a docstring, commit message, or
 > test name without a pinned measurement behind it. The power harness states the
@@ -686,7 +680,12 @@ at a distinct reserved replicate index (`CALIBRATION_REPLICATE_BASE = 1000`,
 **Where it is persisted.** Onto the epoch record — `config.json`'s *additive*
 `noise_floor` field via `zicato.epoch.lifecycle.set_epoch_noise_floor`. It is
 a **runtime measurement, never a contract input, never hashed** (mirroring the
-`goal` field). Changing it does not — must not — roll the epoch.
+`goal` field). Changing it does not roll the epoch. The floor records the base seed selected
+for its calibration draws. It estimates an evaluation distribution, so a later
+seed choice may reuse the identified estimate without claiming those physical
+draws were executed under the later seed. A seed change alone does not trigger
+automatic recalibration; explicit calibration can replace the estimate. Historical
+floors without seed provenance retain that uncertainty.
 
 **When it runs.** Three wirings:
 
@@ -752,9 +751,10 @@ The train/holdout split (`src/zicato/board/split.py`) and the gate's
 holdout-confirmation rung (§2) make a *single* holdout query trustworthy. They
 do nothing about the deeper failure: the loop queries the *same* holdout every
 round, adaptively, and reuse spends a holdout — its confirmations become an
-optimistically-biased signal the optimizer can climb. The Ladder
-(`src/zicato/tournament/ladder.py`) is the Blum–Hardt 2015 mechanism for that
-"submit, see score, submit again" loop, in its parameter-free variant.
+optimistically biased signal. The governor in
+`src/zicato/tournament/ladder.py` limits feedback with a finite query allowance
+and a training-improvement release threshold. These practical controls do not
+inherit a distribution-free guarantee for arbitrary adaptive reuse.
 
 ### 5.1 What counts as a query, and the two rules
 
@@ -792,9 +792,10 @@ does not count. The threshold seeds from the gate's existing `promote_margin`
 per-epoch budget (`LadderConfig.budget`), charged *before* the release
 decision. A withheld query still pays, because the holdout was consulted to
 learn the gap was inside the band. When the budget is exhausted, nothing is
-released and the state is returned unchanged: the loop degrades to the
-train-only decision, in which a train-win is not holdout-gated at all — the same
-behaviour as holdout confirmation on an empty holdout.
+released. Required confirmation stays incomplete, the round defers, and the
+champion is retained. The operator must refresh the evaluation contract before
+more holdout-confirmed promotions can proceed; resetting a counter or merely
+rotating reused tasks does not supply fresh evaluation evidence.
 
 | Runner activity | Query charge |
 |---|---:|
@@ -814,7 +815,7 @@ and explicitly tagged holdout entries never rotate.
 The runner enforces the budget at the scheduling boundary. It serializes the
 epoch-local state, atomically publishes a one-query debit, and only then starts
 the holdout matchup. A zero balance skips the matchup, so no fresh holdout
-evidence exists to release. The train decision stands without holdout gating.
+evidence exists to release. The promotion remains deferred.
 
 The debit creates an opaque reservation identity bound to the epoch-local
 state. The pending record stores the budget before the charge, which later
@@ -830,16 +831,20 @@ an established state that disappeared, or a failed atomic write raises before
 the holdout runner starts. A crash after reservation may waste the charged
 query. It cannot restore the charge or expose holdout evidence first.
 
-### 5.2 The released-non-confirmation-is-the-only-flip rule
+### 5.2 Confirmation status and restricted feedback
 
-Put the two rules together and you get the invariant a weaker agent must not
-break: **the only thing that can flip a train-measured promotion to a reject
-via the holdout is a RELEASED non-confirmation.** A withheld query cannot flip
-anything, because its result does not count this round, and an exhausted budget
-cannot flip anything either. The proposer is only ever shown the
-threshold-gated confirmation *bit*, never the raw per-entry holdout result and
-never the raw holdout scalar of an unreleased round. `LadderRelease.confirmed` on a withheld
-query is the *previous best* bit, stale by design.
+Required holdout confirmation is `satisfied` only by complete, released
+positive evidence for the current challenger. A released negative result is
+`failed` and rejects the challenger. Withheld evidence, incomplete execution,
+or exhausted allowance is `incomplete` and defers promotion. An absent holdout
+slice is explicitly `disabled`. Disabling the query governor still requires
+raw holdout confirmation.
+
+The proposer receives only a released confirmation bit. A withheld result uses
+a generic reason that reveals neither its raw negative bit nor its scalar.
+`LadderRelease.confirmed` may repeat a historical best bit when withholding;
+that bit cannot satisfy the current candidate. Raising the release threshold
+can defer a candidate, never authorize one that failed confirmation.
 
 ### 5.3 The asymmetry rationale
 
@@ -878,9 +883,10 @@ reserved, and the budget before and after the decision.
 The concrete keys are `confirmed`, `train_scalar`, `holdout_scalar`,
 `holdout_consulted`, `ladder_released`, `ladder_budget_total`,
 `ladder_budget_before_query`, `ladder_budget_remaining`,
-`ladder_query_reserved`, and `threshold`.
+`ladder_query_reserved`, `threshold`, `confirmation_status`, and `reason`.
 
-The runner writes `record.holdout = None` when no holdout slice exists. An
+An absent holdout slice produces `confirmation_status=disabled`. A training
+rejection skips its conditional holdout confirmation and has no block. An
 exhausted budget produces a block with `holdout_consulted=false` and
 `ladder_query_reserved=false`; the block records why no comparison ran without
 claiming fresh evidence.
@@ -888,7 +894,7 @@ claiming fresh evidence.
 When the holdout is empty — a board under
 `overfitting.min_board_size_for_split` (default 6) with no explicit `holdout`
 tag, or the split disabled — the Ladder is never consulted and behavior is
-byte-identical to holdout confirmation without the Ladder. When
+the training decision is preserved with an explicit disabled record. When
 `LadderConfig.enabled` is `False`, the runner runs that raw confirmation
 directly, with no budget and no release rule.
 
@@ -919,23 +925,24 @@ byte-identical when the operator does not opt in.
 
 ### 6.1 The verdict
 
-`evidence_verdict` fits Bradley–Terry over the accumulated duel audit and
-answers for the crowning pair:
+`evidence_verdict` fits Bradley–Terry over admitted independent confirmation
+draws of the crowning pair. The strategy fixes that pair using separate
+observations. Those selection observations remain visible but never enter
+confirmation: racing rungs can overlap, and selecting their winner conditions
+on their outcomes. The verdict is:
 
-- **`promoted`** — `P(theta_child > theta_champion) >= threshold` AND the two
-  rating CIs (`theta ± CI_Z·se`, `CI_Z = 1.959963984540054`, the 95% normal
-  quantile) are **separated**. Crown on evidence.
-- **`deferred`** — the bar is unmet or CIs overlap, and replicate budget
-  remains. Hold and replicate the closest-CI duel.
-- **`inconclusive`** — budget exhausted, CIs still overlap. Terminal;
-  recorded to the dead-letter queue; the champion stands.
+- **`promoted`** — the adjusted strength-difference interval lies above zero
+  and the probability threshold is met.
+- **`deferred`** — confirmation remains unresolved and replicate budget remains.
+- **`inconclusive`** — the budget is exhausted without confirmation. The terminal
+  record retains the evidence and the champion stands.
 
-A fit is only trusted at `MIN_CREDIBLE_DUELS = 3` resolved duels for the pair.
-Below that, the standard error (SE) from the Fisher information is dominated by
-the prior, and a CI computed there would defer or crown on noise, so the verdict
-is the gate's own (`credible=False`, no override). The recommended threshold the
-scaffolds write is `0.8`, below the 0.95 the CI level speaks at, because CI
-separation is the stricter half of the test.
+The difference interval includes covariance and allocates its probability tail
+across the planned candidate family and possible refits; §6.5 defines the rule.
+A fit is trusted only at `MIN_CREDIBLE_DUELS = 3` resolved duels for the pair.
+Below that, the verdict reports `credible=False`. The configured probability
+threshold is subject to the minimum one-sided probability 0.975 and comparison
+allocation, so the scaffold value 0.8 does not imply a 20% error allowance.
 
 ### 6.2 The reserved base 4000 and both-sides-fresh
 
@@ -978,46 +985,28 @@ and together they form the evidence-gate replicate-slot reuse case
 
 ### 6.3 The duplicate-audit refusal
 
-The driver's loop enforces independence *structurally* rather than by trust:
+The driver records every attempt and charges each requested draw before
+calling the runner. A repeated matchup identity cannot enter the fit twice.
+The reserved draw index in `bt-replicate:r{slot}:{left}:{right}` identifies
+which independent measurement the runner was asked to produce. This guards
+against replay; actual draw independence still depends on correct execution.
 
-```python
-# src/zicato/selection/driver.py — confirm_promotion_with_evidence
-        extra = await replicate_duel(candidate.left_id, candidate.right_id)
-        # The spend is counted regardless: the budget bounds duels RUN, and
-        # skipping the count on a duplicate would loop forever against a
-        # runner that keeps replaying one draw.
-        replicates_spent += 1
-        if extra.matchup_id in seen_matchup_ids:
-            log.warning(
-                "evidence pre-gate: replicate duel returned an already-audited "
-                "draw (matchup_id %r) — not appended ... identical data must "
-                "never separate CIs", extra.matchup_id,
-            )
-            continue
-        seen_matchup_ids.add(extra.matchup_id)
-        audit.append(extra)
-```
-
-The matchup id encodes the reserved slot
-(`bt-replicate:r{slot}:{left}:{right}`), so "same id" means "same draw." A
-runner that replays one draw spends its budget but never grows the audit — the
-gate verdict passes through instead of a repetition-driven crown. Note the
-spend-counting rule: the budget bounds duels *run*, and a duplicate that did
-not count would loop forever.
+A runner that repeatedly returns one draw spends its finite budget and leaves
+confirmation incomplete. Ties, incomplete executions, nonfinite results,
+unexpected pairs, and errors remain auditable without counting as resolved
+pair evidence.
 
 ### 6.4 The two-phase loop and the dead-letter terminal
 
 `confirm_promotion_with_evidence` is part of `evaluate_tournament` for every
 selection strategy:
 
-- **Bootstrap** — a gauntlet produces one crowning duel, below the credibility
-  floor; the loop replicates the crowning pair up to `MIN_CREDIBLE_DUELS`
-  before judging. With no runner/budget, the gate verdict passes through
-  unchanged (no fit to override it — safe).
+- **Bootstrap** — confirmation begins with no admitted draws. The loop
+  measures the fixed crowning pair up to `MIN_CREDIBLE_DUELS` before judging. Missing runner or exhausted budget terminates inconclusive;
+  a lack of credible evidence cannot authorize promotion.
 - **Refine** — once credible: `promoted` terminates with the crown;
-  `deferred` spends another closest-CI replicate (`closest_ci_duel`, argmin of
-  the CI gap, restricted to the crowning pair) and
-  refits; budget exhausted with overlapping CIs terminates `inconclusive`.
+  `deferred` spends another fresh crowning-pair replicate and refits. Budget
+  exhaustion or runner failure without confirmation terminates `inconclusive`.
 
 An `inconclusive` terminal maps onto the closed decision enum's `DEFERRED`
 token, which keeps the duel for analysis and leaves the lineage head unchanged.
@@ -1025,9 +1014,17 @@ It also fires `on_inconclusive`, which the orchestrator wires to the
 dead-letter writer: one record per unresolved duel at
 `runtime/inconclusive/<generation_id>.json`
 (`src/zicato/selection/dead_letter.py`), carrying the full `gate.rating` block
-and the per-refit `ci_history`. **Nothing is silently dropped.** The record
-is additive: it exists only on runs that opted into the pre-gate and reached
-the terminal, so every other run's runtime tree is byte-identical.
+and the per-refit `ci_history`. Each returned or failed attempt records its
+pair, draw identity, eligibility, budget charge, and reason. Ties, duplicates,
+nonfinite results, incomplete executions, and runner errors remain auditable
+but cannot manufacture resolved pair evidence.
+
+Both confirmation records use explicit `disabled`, `satisfied`, `failed`, and
+`incomplete` statuses. Statistical insufficiency means confirmation is
+incomplete; it provides no negative holdout finding. Evaluator revision 2 includes these decision semantics and
+the covariance-aware rating contrast in the frozen contract hash. Upgrading
+rolls an epoch through the existing contract-drift mechanism; it does not
+rewrite historical decisions.
 
 > ✅ ALWAYS pass gate-rejects through the pre-gate untouched. The pre-gate is
 > consulted only on a gate-promote and can only *hold* a promotion
@@ -1035,51 +1032,83 @@ the terminal, so every other run's runtime tree is byte-identical.
 > that lets it manufacture a promotion — or a rejection — breaks the
 > protected-incumbent invariant.
 
-> ⚠️ TRAP: "the CIs aren't separating; let me widen `CI_Z` down / lower the
-> threshold / accept overlapping CIs after N tries." Each of those converts
-> the soundness device into a noise-promotion device. If separations are not
-> happening for *true* improvements, the deficiency is measurement variance —
-> raise per-duel `replicates` (fact #3 in §3.1) or the effect is below the
-> contract's resolvable floor (run `zicato board preflight`, §9).
+A confirmation rule change requires unchanged-system controls, planted
+improvements, and cost measurements. Changing uncertainty mathematics or its
+probability allowance cannot be validated by accepting a favorable sequence
+alone.
 
-### 6.5 Inside the fit — why ~37 wins, and what the prior is doing
+### 6.5 Strength differences and planned confirmation comparisons
 
-The fit itself (`src/zicato/selection/rating.py::fit_bradley_terry`) is a
-pure-Python Newton solve of the Bradley–Terry maximum likelihood. Contestant
-`i` has latent strength `theta_i`, and `P(i beats j) = sigma(theta_i −
-theta_j)`. Each duel outcome is one Bernoulli win, and a replicate of the same
-pairing is a separate outcome, which is how replication sharpens the fit
-natively. The properties a consumer must understand:
+The Bradley–Terry model assigns duel-win probability
+`logistic(theta_child - theta_parent)` to the challenger. The fitted quantity
+is the log odds of winning a duel. The scalar gate separately enforces the
+optimization objective and pass-rate requirements. Confirmation discards the
+magnitude of each scalar difference. A paired scalar model could use more
+information; adopting one requires its own distributional assumptions and
+operating-characteristic measurements.
 
-- **The ridge prior (`prior=1.0`) is what makes the model identifiable.** BT
-  strengths are only defined up to an additive constant, and a contestant
-  with a perfect (or empty) record would diverge to ±inf without shrinkage.
-  The prior keeps every strength finite and the Fisher information matrix
-  positive-definite (SEs always exist). The fit is then centered to the
-  zero-sum gauge for cross-call comparability.
-- **The prior is also why the SE shrinks slowly.** At small n the information
-  is prior-dominated (hence `MIN_CREDIBLE_DUELS`); each additional
-  *consistent* win adds `p(1−p)` information, but as the streak lengthens `p`
-  saturates toward 1 and each win adds *less*. The compounding effect on a
-  two-contestant field: the 95% CIs (`theta ± 1.96·se`) first separate at
-  ~37 duels of an essentially unbroken streak, and any mixed record never
-  separates — the measured fact #2 in §3.1. This is a *property of the shipped
-  fit with its shipped prior* rather than a tunable; if you change `prior`,
-  you have changed the soundness/cost point and must re-measure the
-  separation cost on the power harness.
-- **Ties are not observations.** `audit_duels` feeds only resolved
-  (`delta_scalar != 0.0`) duels; the continuous loss makes exact ties
-  measure-zero, and a tie fed to BT would be a modeling error.
-- `prob_stronger` treats the two fitted strengths as independent normals —
-  `P(theta_a > theta_b) = Phi((theta_a − theta_b)/sqrt(se_a² + se_b²))` —
-  with degenerate point estimates resolving to hard 1.0/0.0/0.5. This is the
-  probability the threshold speaks to; the CI-separation requirement is the
-  sharper, correlated-information-free half of the test.
+The fit maximizes the log likelihood with a Gaussian ridge prior of precision
+`prior=1.0`. The prior keeps perfect records finite. Its inverse penalized
+information is a local normal approximation to the posterior covariance.
+Strengths and covariance are centered together: with `P = I - 11'/n`, the
+reported covariance is `P C P'`, where `C` is the uncentered inverse information
+and `n` is the number of fitted contestants.
 
-The fit is opt-in as a *standings* device too (`params["rating"]` selects
-`theta_rank` ordering — see 06-tournament-and-selection.md §6.10.5, the opt-in
-rating and resolver layer);
-in that role it only ever proposes an ordering. The gate is never involved.
+For a challenger-parent difference `d`, the mean is
+`theta_child - theta_parent` and its variance is
+`C_child,child + C_parent,parent - 2*C_child,parent`. A common strength shift
+or shared location uncertainty therefore cancels. The returned rating remains
+a mapping of contestant ids to `(theta, standard_error)` and also retains
+joint covariance. Consumers use `RatingFit.difference` for comparisons.
+
+Independent reference tests reduce a balanced pair to the scalar parameter
+`theta_child=t`, `theta_parent=-t`. With `N` games its standard error is
+`1/sqrt(N + 2*prior)`. Mixed 80% winning records also resolve as their sample
+count grows. These tests protect uncertainty convergence rather than only
+checking that one small sample has a smaller error than another. Joint
+covariance is necessary when comparing fitted abilities; see
+[Turner and Firth's Bradley–Terry treatment](https://www.jstatsoft.org/article/view/v048i09).
+
+Confirmation applies two changes with distinct purposes:
+
+- Covariance correction measures uncertainty in the difference instead of
+  separating individual strength intervals.
+- Comparison allocation accounts for choosing a finalist and repeatedly
+  refitting confirmation evidence. The driver captures the planned candidate
+  count `K` before requesting candidates. Failed applications do not reduce it.
+  With `B` extra duels, at most `K*(B+1)` comparisons can produce a promotion.
+
+Let `q` be the authored probability threshold. The one-sided error allowance is
+`a = min(1-q, 0.025)`, retaining the positive endpoint of the existing two-sided
+95% standard. Each comparison uses tail `a/(K*(B+1))`. Its normal interval uses
+quantile `Phi^-1(1-a/(K*(B+1)))`, where `Phi` is the standard normal distribution
+function. The challenger is confirmed only when the lower bound is positive.
+The rating record includes the applied confidence level and comparison count.
+Individual 95% intervals and their overlap remain diagnostic.
+
+This is [Bonferroni allocation](https://www.itl.nist.gov/div898/handbook/prc/section4/prc473.htm).
+It does not require independence between looks, but its coverage claim depends
+on calibrated individual intervals. The normal approximation, ridge shrinkage,
+adaptive tournament schedules, and repeated rounds prevent treating the nominal
+allowance as a universal observed false-promotion guarantee. Seeded controls,
+planted improvements, and complete worker measurements remain required.
+
+At threshold 0.8 with 32 confirmation draws, an isolated pair with unanimous
+wins first confirms after 16 draws for one planned candidate and 21 for four.
+An exact Bernoulli stopping calculation gives conditional null promotion
+probabilities 0.00048793 and 0.00002545 respectively. These calculations begin
+with zero confirmation observations and assume independent, identically
+distributed duel outcomes with no ties. They do not establish the full racing
+procedure's error rate. The deterministic racing driver confirms one, two,
+and four applied candidates within the configured budget while retaining the
+four-candidate allocation.
+
+The recorded confirmation block declares `evidence_basis=independent_confirmation`.
+The dashboard reads that block, including its attempts and confidence history.
+Historical strategy summaries without that basis remain unknown or incomplete;
+matchup counts cannot reconstruct independent confidence intervals. See
+[confirmation power and cost](../design/CONFIRMATION-POWER.md) for measured
+operating characteristics and the finite-noise reference.
 
 ### 6.6 The visibility rating fold (index-side BT on the Elo scale)
 
@@ -1089,8 +1118,10 @@ engine as §6.5, in a different role: a **read-only analytics fold** over the
 persisted match ledger that writes each generation's
 `generations.elo` / `elo_se` / `elo_games` columns (schema v10 + v12). The
 fitted strength is mapped onto the conventional Elo scale for legibility —
-`elo = 1500 + theta·(400/ln 10)`, `elo_se = se·(400/ln 10)` — so a 400-point
-gap reads as 10:1 odds and the zero-sum gauge puts the field mean at 1500.
+`elo = 1500 + theta·(400/ln 10)` — so a 400-point gap reads as 10:1 modeled
+odds and the zero-sum gauge puts the field mean at 1500. These are descriptive
+ratings. The ledger lacks independent measurement provenance, so `elo_se` is
+stored and served as null, including reads of historical derived indexes.
 
 The doctrine, in one line: **the rating is for VISIBILITY, never the gate.**
 The fold writes the three columns and nothing gate-side ever reads them back
@@ -1101,7 +1132,7 @@ them; `evaluate_gate` / the selection strategies never touch them (pinned by
 - **Batch and order-independent.** The fold is a batch maximum-likelihood fit
   over the de-duplicated game list (crowning rows + field-bracket rows, keyed
   `(tournament_id, match_id, {sides})`), so the same ledger yields identical
-  ratings and SEs in any fold order — re-derived from scratch at every
+  point ratings in any fold order — re-derived from scratch at every
   ingest, never incrementally updated.
 - **Margins are ignored.** BT is fit on win/loss only; the
   `|delta_scalar|` magnitude rides the *gate* (§2), and folding it into the
@@ -1129,10 +1160,11 @@ them; `evaluate_gate` / the selection strategies never touch them (pinned by
   **unweighted**: a thin-slice rung is noisier evidence but weighs the same,
   which is acceptable because the rating never gates. Variance-aware weighting
   is registered as future work.
-- **Display honesty.** Below `MIN_RATING_GAMES = 5` games the surfaces
-  append a faint `provisional` suffix (the per-candidate analogue of §6.1's
-  `MIN_CREDIBLE_DUELS` honesty states); the SE always rides beside the
-  number (`1512 ±34`), never a bare point estimate.
+- **Display honesty.** Point ratings and observation counts remain
+  descriptive. Without independent measurement provenance, `elo_se` is null
+  and no uncertainty interval is drawn. The independent confirmation block is
+  the source of promotion confidence. The descriptive match ledger supplies
+  point ratings and counts.
 
 ---
 
@@ -1145,8 +1177,8 @@ Replication is the loop's power lever (§3, fact #3). Its mechanics:
 `run_matchup(..., replicates=N)` runs the paired board N times for every
 production tournament structure. The standalone `run_tournament` API also
 runs paired replicates; `run_fast_mode` remains a one-sided debug API.
-`_average_losses`
-(`src/zicato/tournament/unit_cache.py`) folds the N runs into one per-entry
+`average_replicate_losses`
+(`src/zicato/tournament/scoring.py`) folds the N runs into one per-entry
 loss map *before* aggregation.
 
 Scoring never sees the individual replicates, so a field the fold does not
@@ -1276,93 +1308,60 @@ earlier and evaluates only the challenger. Direct callers of that API have a one
 contrast and must not apply the paired-variance formula. The evolve pipeline
 does not call that API.
 
-Both replicate loops also stop scheduling FURTHER slots once the per-round
-token budget is spent, and settle the fold over the slots that completed.
-Scheduling the remaining slots anyway would corrupt the cache. A spent budget
-turns those units into skips, which are synthesised worst-case budget-exceeded
-losses, and `budget_exhausted` is the one cache-*persistable* abort cause. Those
-worst cases would be averaged into entries that already measured cleanly AND
-written to their cache slots, making the penalty a permanent HIT for the rest of
-the epoch on units that were never attempted.
+After the per-round token budget expires, requested replicate slots still
+receive explicit attempt records for missing units. Existing measurements can
+be reused at no cost. The fold preserves the incomplete-execution fact, so an
+omitted draw cannot turn a smaller sample into apparently complete evidence.
+Attempt records never populate measurement slots.
 
 ---
 
-## 8. THE RESERVED REPLICATE-BASE LEDGER
+## 8. Measurement purposes and compatible replicate indices
 
-This is a formal registry. The replicate-index space of every
-`(generation, entry)` unit is partitioned by convention, and the convention is
-enforced only by this ledger plus the cross-referencing docstring on
-`EVIDENCE_REPLICATE_BASE`. There is no runtime collision checker, so an
-unclaimed base is caught in review or not at all.
+`core/measurement.py` owns the measurement purposes, their allocated ranges,
+identity codec, and full-interval validation. A persisted draw has a named
+purpose and a zero-based draw number. The integer replicate index remains the
+compatible filename and harness-seed encoding; it is not a separate identity.
 
-| Base | Range in practice | Owner | Constant | Purpose |
-|---|---|---|---|---|
-| `0` | `0 .. replicates-1` | tournament duels | (implicit; `replicate_base=0`) | real matchup samples; r0 is the canonical `loss.json` |
-| `1000` | `1000 .. 1000+K-1` | A/A calibration | `zicato.tournament.calibration.CALIBRATION_REPLICATE_BASE` (block width `CALIBRATION_REPLICATE_SPAN` = 1000) | noise-floor draws; idempotent across `board audit` re-runs. `measure_noise_floor` refuses a run count wider than the block rather than walk into the pre-flight's degraded probes |
-| `2000` | `2000 + j` (probe `j` of the sample) | contract pre-flight | `zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE` (block width `PREFLIGHT_REPLICATE_SPAN` = 1000) | the degraded-copy probe draws (cached under the CHAMPION's id); one slot per probed mutation point so no probe replays another's result |
-| `3000` | `3000` + confirm at `3001` | candidate screen | `zicato.epoch.screen.SCREEN_REPLICATE_BASE` | tryout panel runs (`3000`); the confirm-before-veto re-run (`3001`) |
-| `4000` | `4000 .. 4000+budget-1` | evidence gate | `zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` | independent evidence draws of BOTH sides of the crowning pair |
-| `5000` | `5000 .. 5000+K-1` | board reflection (claimed; constant lands with `reflection/corpus.py`) | `zicato.reflection.corpus.REFLECTION_REPLICATE_BASE` | active observation-corpus replicates (BOARD-REFLECTION.md); infra-abort draws voided |
-| `6000` | `6000 .. 6000+K-1` | eval-synthesis admission | `zicato.reflection.admission.SYNTHESIS_REPLICATE_BASE` | drafted-suggestion admission probes (EVAL-SYNTHESIS.md §5): A/A noise draws (`6000+j`) + discrimination draws (each candidate side at `6000`, keyed distinct by generation); draw 0 is the execution probe |
+| Purpose | Allocated indices | Meaning |
+|---|---|---|
+| Tournament | 0–999 | Paired matchup samples; draw zero uses `loss.json` |
+| Calibration | 1000–1999 | Repeated own-code draws for the noise floor |
+| Contract preflight | 2000–2999 | One degraded-copy draw per selected mutation point |
+| Candidate screen | 3000–3999 | Panel screening, with draw one reserved for confirmation before veto |
+| Evidence confirmation | 4000–4999 | Additional paired draws for the promotion decision |
+| Board reflection | 5000–5999 | Active observation-corpus draws |
+| Eval-synthesis admission | 6000–6999 | Draft-entry noise and discrimination probes |
 
-Design properties of the ledger:
+Every request must fit completely inside one allocation. Authored replicate
+counts and direct runner APIs reject overflow before starting a worker or
+writing a unit record. An offset near the end of an allocation reduces the
+permitted count: base 4999 permits one confirmation draw. The screen's two
+draws, preflight sample, calibration count, reflection plan, and admission noise
+count use the same registry. Existing module-level base imports remain compatible
+re-exports from that owner.
 
-- Bases are spaced far apart so no plausible K (calibration runs, evidence
-  budget, screen panel) can walk one owner's range into another's.
-- Every reserved-base evaluation **stamps** its index onto the entries as well
-  as keying the cache with it (§7.3's same-number rule), so seeded harnesses
-  draw fresh per slot.
-- Reserved-base results are cache-idempotent: re-running the audit /
-  pre-flight / a resumed evidence confirm re-reads persisted draws instead of
-  burning new runs.
-- The screen additionally uses **ephemeral generation ids**
-  (`{parent}-screen-r{round}c{i}`, which can never match a real `v\d+` id) so
-  even its reserved-slot files live under phantom directories that are swept —
-  belt and suspenders on top of the base.
+Loss records, worker envelopes, and captured results carry `measurement` with
+`purpose` and `draw`. Events, loss, result, and judge-capture companions keep their
+existing filenames and derive their slot from the same identity encoding.
+The worker refuses a mismatch between its entry context and measurement slot.
+These output fields do not enter the evaluation contract or change its hash.
 
-### 8.1 The claiming procedure for a new base
+### 8.1 Historical records and additional purposes
 
-If you are building a new out-of-tournament evaluation (a new probe, a new
-audit, a new confirmation loop), follow this procedure exactly:
+The historical decoder accepts ordinary low-index draws and reserved draws
+whose recorded producer establishes the allocation: calibration, preflight,
+screen, evidence confirmation, reflection, or admission. Missing reserved
+provenance and conflicting identities remain visible as ambiguous records.
+They supply no cache hit, cell evidence, calibration statistic, or passive
+reflection observation. A replacement measurement archives the previous record;
+reading an ambiguous record does not rewrite it.
 
-1. **Pick the next free thousand** (`5000` is claimed by board reflection and
-   `6000` by eval-synthesis admission; the next free base is `7000`). Do not squat in
-   an owner's range and do not subdivide an existing owner's range without
-   that owner's module adopting the sub-slot explicitly (the screen's `+1`
-   confirm slot is declared in `SCREEN_REPLICATE_BASE`'s own docstring).
-2. **Declare a module-level constant** named `<PURPOSE>_REPLICATE_BASE` in the
-   owning module, with a docstring that states what runs there and why it can
-   never collide.
-3. **Cross-reference the ledger.** Update the reserved-ladder note on
-   `zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` (the canonical
-   in-code ledger) and every sibling docstring that enumerates the ladder
-   (`calibration.py`, `preflight.py`, `screen.py`, `reflection/corpus.py`,
-   `reflection/admission.py`) — and this table, and the reserved-replicate-base
-   row in `00-INDEX.md` (invariant `G7`).
-4. **Decide what READERS may do with your slots.** A slot cached under a real
-   generation id is visible to anything walking that generation's `runs/`
-   directory, so `zicato.tournament.unit_cache.is_own_code_board_draw` — the
-   allow-list the passive reflection corpus and the proposer's baseline reader
-   both filter through — must learn your base. It answers `False` for any
-   unclaimed index, so a new base is EXCLUDED until you admit it. Exclusion is
-   correct for a degraded probe (the 2000 block) or a panel-subset draw (the
-   3000 block). For a clean full-board draw of the generation's own code you
-   must admit the base explicitly.
-5. **Stamp AND key** with the same index (`_stamp_replicate_index` +
-   `replicate_index=`/`replicate_base=`), through the same board-unit runner
-   every duel uses.
-6. **Prove isolation with a test**: canonical r0 slots byte-identical across
-   your new evaluation (the pattern in
-   `test_full_mode_evidence_loop_never_touches_canonical_slots`), and your
-   draws persisted under your base for every side you run.
-
-**Verify** (the ledger self-audit — run after any change in this area):
-
-```bash
-grep -rn "REPLICATE_BASE\b *[:=]" src/zicato --include="*.py"
-# Expect exactly: 1000 (calibration), 2000 (preflight), 3000 (screen), 4000 (evidence),
-#                 5000 (reflection), 6000 (synthesis admission)
-```
+A new purpose must declare its allocation and reader eligibility in
+`core/measurement.py`, use the validated board-unit runner, and provide a query
+label describing what its draws measure. Add boundary and writer/reader tests
+that prove isolation from adjacent purposes. Do not duplicate the registry in
+producer docstrings or query modules.
 
 ### 8.2 The corruption that follows from squatting
 
@@ -2084,11 +2083,10 @@ uv run zicato board audit --workspace <ws>   # then inspect the epoch record + h
 
 1. Set both params together in the tournament structure block —
    `promote_confidence_threshold` (the scaffolds write `0.8`) AND
-   `promote_confidence_replicates` (an honest budget: the CI-separation cost
-   is ~37 unbroken wins on a two-contestant field; the shipped racing example
-   pairs budget 38 with per-duel `replicates: 32`). Setting the threshold
-   without a budget gets you `DEFAULT_REPLICATE_BUDGET = 3` — sound, but a
-   true improvement will usually terminate `inconclusive`.
+   `promote_confidence_replicates` (the scaffolds write 32). The planned field
+   and budget determine the interval's comparison allocation (§6.5). Setting
+   the threshold without a budget uses `DEFAULT_REPLICATE_BUDGET = 3`, which
+   can leave a true improvement inconclusive.
 2. Price it before running: each evidence replicate is a fresh
    2-sides × board sweep. The builder's cost meter line exists for this purpose
    (10-builder-cli-library.md §"The honest cost meter").

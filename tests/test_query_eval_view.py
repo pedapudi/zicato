@@ -23,6 +23,7 @@ from pathlib import Path
 from starlette.testclient import TestClient
 
 from zicato.core import LossProfile
+from zicato.core.measurement import MeasurementDraw
 from zicato.dashboard.server import create_app
 from zicato.index.schema import apply_schema
 from zicato.query import eval_view as ev
@@ -73,6 +74,7 @@ def _write_run_loss(
         expectation_result=None,
         drift_loss=drift,
         pass_fail=passes,
+        measurement=MeasurementDraw.from_index(replicate),
         cached=cached,
         score=score,
     )

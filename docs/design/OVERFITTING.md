@@ -83,8 +83,9 @@ The Ladder narrows this feedback channel:
    training improvement clears its release threshold.
 5. Every holdout consultation consumes one budget unit, including a query
    whose new result is withheld.
-6. After budget exhaustion, no new holdout result affects promotion. The
-   training verdict stands.
+6. Withheld, incomplete, or exhausted holdout confirmation defers promotion
+   and retains the champion. Only a released positive result satisfies the
+   current candidate; a released negative result rejects it.
 
 | Activity | Ladder queries charged |
 |---|---:|
@@ -717,8 +718,10 @@ confirmation rather than raw holdout entries or per-entry results. *Where:*
 comes from `promote_margin`; `ladder.noise_scale` can widen it. *Cost:* one
 additional holdout-slice comparison for each promotable crowning duel while
 queries remain available. The configured budget counts those adaptive
-consultations. *Behavior after exhaustion:* no new holdout result revises the
-training verdict. Depends on the train/holdout split. The practical accounting
+consultations. *Behavior after exhaustion:* required confirmation is incomplete
+and promotion defers until the evaluation contract is refreshed. A contract
+refresh must address the exhausted evaluation evidence; resetting the counter
+does not create fresh data. Depends on the train/holdout split. The practical accounting
 and durable reservation protocol are defined in
 [§"What query budget means"](#what-query-budget-means).
 

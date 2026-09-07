@@ -110,6 +110,24 @@ test('ratingBlock: a credible rating draws two θ̂ whiskers + the P(stronger) b
   assert(host.textContent.includes('thr 0.90'), 'the threshold value reads');
 });
 
+test('ratingBlock: shows the applied difference interval and refreshes when it changes', () => {
+  const rating = credibleDeferred();
+  rating.difference = {
+    mean: 0.5, se: 0.2, ci_lo: -0.21, ci_hi: 1.21,
+    confidence_level: 0.999621212, comparison_count: 132,
+  };
+  const host = mountInto(candidate.ratingBlock(rating));
+  assert(host.textContent.includes('strength difference'), 'names the measured comparison');
+  assert(host.textContent.includes('99.962% interval [-0.210, 1.210]'), 'renders the served confidence and bounds');
+  const before = JSON.stringify(candidate.ratingDigest(rating));
+  assertEqual(before, JSON.stringify(candidate.ratingDigest(structuredClone(rating))), 'unchanged response keeps the digest');
+  rating.difference.ci_lo = 0.031;
+  assert(before !== JSON.stringify(candidate.ratingDigest(rating)), 'changed difference interval refreshes the view');
+  const narrowed = JSON.stringify(candidate.ratingDigest(rating));
+  rating.difference.confidence_level = 0.999;
+  assert(narrowed !== JSON.stringify(candidate.ratingDigest(rating)), 'changed applied confidence refreshes the view');
+});
+
 test('ratingBlock: the challenger whisker earns its tone by θ̂ DIRECTION (no new hue)', () => {
   // challenger θ̂ ahead of champion → dn-good.
   const ahead = mountInto(candidate.ratingBlock(credibleDeferred()));

@@ -629,6 +629,7 @@ def test_probe_draws_use_distinct_reserved_cache_slots(tmp_path: Path) -> None:
             "v0",
             entry_id,
             PREFLIGHT_REPLICATE_BASE + ordinal,
+            base_seed=None,
         ).exists(), f"probe {ordinal} did not draw its own reserved cache slot"
 
 

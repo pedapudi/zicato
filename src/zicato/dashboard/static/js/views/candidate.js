@@ -2206,10 +2206,19 @@ export function ratingBlock(rating) {
     svg.isNum(rating.p_stronger) ? rating.p_stronger : null,
     svg.isNum(rating.threshold) ? rating.threshold : null));
 
+  const difference = rating.difference;
+  if (difference && svg.isNum(difference.ci_lo) && svg.isNum(difference.ci_hi)
+      && svg.isNum(difference.confidence_level)) {
+    wrap.appendChild(el('p', { class: 'dn-faint', text:
+      'strength difference · ' + (100 * difference.confidence_level).toFixed(3)
+      + '% interval [' + difference.ci_lo.toFixed(3) + ', '
+      + difference.ci_hi.toFixed(3) + ']' }));
+  }
+
   // a one-line read of the rating's own verdict + the credible / overlap flags.
   const dec = normaliseRatingDecision(rating);
   const flags = [];
-  if (rating.ci_overlap) flags.push('CIs overlap');
+  if (rating.ci_overlap) flags.push('individual CIs overlap');
   if (!rating.credible) flags.push('not yet credible (< ' + MIN_CREDIBLE_DUELS + ' duels)');
   wrap.appendChild(el('p', { class: 'dn-faint dn-bt-readout', text:
     'rating ' + dec + ' · ' + nDuels + ' duel' + (nDuels === 1 ? '' : 's') + ' resolved'
@@ -2248,6 +2257,12 @@ export function ratingDigest(rating) {
        rating.next_duel.right == null ? null : String(rating.next_duel.right)] : null;
   const hist = (Array.isArray(rating.ci_history) ? rating.ci_history : []).map((h) =>
     svg.isNum(h && h.p_stronger) ? h.p_stronger.toFixed(3) : null);
+  const difference = rating.difference;
+  const differenceDigest = difference ? [
+    svg.isNum(difference.ci_lo) ? difference.ci_lo.toFixed(3) : null,
+    svg.isNum(difference.ci_hi) ? difference.ci_hi.toFixed(3) : null,
+    svg.isNum(difference.confidence_level) ? difference.confidence_level.toFixed(5) : null,
+  ] : null;
   return [
     !!rating.credible, normaliseRatingDecision(rating),
     side(rating.champion), side(rating.challenger),
@@ -2256,7 +2271,7 @@ export function ratingDigest(rating) {
     !!rating.ci_overlap,
     svg.isNum(rating.n_duels) ? rating.n_duels : 0,
     svg.isNum(rating.replicates_spent) ? rating.replicates_spent : 0,
-    next, hist,
+    next, hist, differenceDigest,
   ];
 }
 

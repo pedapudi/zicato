@@ -202,5 +202,6 @@ def test_an_empty_holdout_leaves_fast_mode_scoring_the_whole_board(
     assert outcome.tournament_decision == "promoted"
     assert current_generation(workspace, epoch_id) == "v1"
     record = _crowned_outcome(workspace, epoch_id, "v1")
-    assert record["holdout"] is None
+    assert record["holdout"]["confirmation_status"] == "disabled"
+    assert record["holdout"]["holdout_consulted"] is False
     assert json.loads(json.dumps(record))["train_loss"] == pytest.approx(0.5)

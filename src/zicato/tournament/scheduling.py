@@ -38,6 +38,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -51,13 +52,22 @@ from zicato.core import (
     is_infra_abort_cause,
     run_id_for_unit,
 )
+from zicato.core.measurement import (
+    UNKNOWN_SEED,
+    BaseSeed,
+    MeasurementDraw,
+    validate_measurement_interval,
+)
 from zicato.tournament.scoring import aggregate_generation_score
+from zicato.tournament.scoring import (
+    fold_matchup_replicates as _fold_replicate_runs,
+)
 from zicato.tournament.unit_cache import (
-    _average_losses,
     _persist_unit_loss,
     _record_provenance,
     _resolve_cached_unit,
     _skipped_unit_loss,
+    _unit_loss_path,
     _UnitProvenance,
     record_unit_attempt,
 )
@@ -81,8 +91,8 @@ _UnitResultT = TypeVar("_UnitResultT")
 # of reuse: a waiter reuses a result iff that result was persisted, so an infra
 # abort (never cached, by design) is re-attempted rather than fanned out, and
 # a failed or cancelled evaluation leaves the waiter a correct MISS.
-# ``force_fresh`` evaluations never enter the map.
-_inflight_cacheable_units: dict[tuple[str, str, str, str, int], asyncio.Event] = {}
+# Forced reruns wait for the same slot's writer, then execute independently.
+_inflight_cacheable_units: dict[tuple[str, str, str, str, int, BaseSeed], asyncio.Event] = {}
 
 
 def _cacheable_unit_key(
@@ -91,9 +101,17 @@ def _cacheable_unit_key(
     generation_id: str,
     entry_id: str,
     replicate_index: int,
-) -> tuple[str, str, str, str, int]:
+    base_seed: BaseSeed = UNKNOWN_SEED,
+) -> tuple[str, str, str, str, int, BaseSeed]:
     """Return the in-process single-flight key for one cacheable board unit."""
-    return (str(workspace_root.resolve()), epoch_id, generation_id, entry_id, replicate_index)
+    return (
+        str(workspace_root.resolve()),
+        epoch_id,
+        generation_id,
+        entry_id,
+        replicate_index,
+        base_seed,
+    )
 
 
 async def _run_single(
@@ -214,6 +232,8 @@ class _IncrementalScorer:
         and persists the running partial aggregate onto the
         ``ActiveTournament`` record.
         """
+        if self._state is None:
+            return
         async with self._lock:
             if champion_loss is not None:
                 self._champion.append(champion_loss)
@@ -229,8 +249,6 @@ class _IncrementalScorer:
                 if self._challenger
                 else None
             )
-            if self._state is None:
-                return
             try:
                 self._state.update_tournament_partial_aggregate(
                     self._workspace_root,
@@ -353,6 +371,7 @@ async def _run_full_board_unit(
     # challenger: ``parent_force_fresh`` defaults to the shared ``force_fresh``
     # (uniform behaviour) but ``run_tournament`` overrides it to False so the
     # immutable champion is reused rather than re-run every round.
+    validate_measurement_interval(replicate_index, 1)
     effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
     parent_result, child_result = await gather_owned(
         _run_unit_cache_first(
@@ -425,6 +444,7 @@ async def _run_fast_board_unit(
     The side label is ``child`` for the rare case an ActiveTournament file
     does exist, and a benign no-op otherwise.
     """
+    validate_measurement_interval(replicate_index, 1)
     child_loss = await _run_unit_cache_first(
         adapter=adapter,
         generation=child_gen,
@@ -455,16 +475,15 @@ def _skip_unit_side(
     replicate_index: int,
     side_force_fresh: bool,
     provenance: dict[str, _UnitProvenance] | None,
+    base_seed: BaseSeed = UNKNOWN_SEED,
 ) -> tuple[LossProfile, bool]:
     """Record ONE side of an un-launched board unit under a spent budget.
 
     A unit ALREADY in the cache costs nothing, so it is reused verbatim (a
     budget never clobbers a good result and the cache stays consistent). A
-    genuine MISS is synthesized as a budget-exceeded loss
-    (:func:`_skipped_unit_loss`) and persisted, as the matchup
-    wall-clock deadline path records its skips. Returns ``(loss,
-    was_skipped)`` — ``was_skipped`` true only for a real synthesized skip,
-    so callers count genuine skips toward the log tally.
+    genuine miss records a scheduling omission in an attempt file. The
+    omission does not populate the measurement cache or count as a fresh run.
+    Returns ``(loss, was_skipped)`` for the scheduler's skip tally.
     """
     cached = (
         None
@@ -475,6 +494,7 @@ def _skip_unit_side(
             generation_id=generation.id,
             entry_id=entry.id,
             replicate_index=replicate_index,
+            base_seed=base_seed,
         )
     )
     if cached is not None:
@@ -486,18 +506,15 @@ def _skip_unit_side(
         epoch_id=epoch_id,
         match_id=match_id,
     )
-    _persist_unit_loss(
+    record_unit_attempt(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
         generation_id=generation.id,
         entry_id=entry.id,
         replicate_index=replicate_index,
         loss=loss,
+        base_seed=base_seed,
     )
-    # A skipped unit was not cache-reused — it produced a freshly
-    # synthesised loss — so it counts as a MISS in the provenance tally,
-    # mirroring a genuine (if budget-exceeded) evaluation.
-    _record_provenance(provenance, generation.id, cached=False)
     return loss, True
 
 
@@ -597,13 +614,12 @@ async def _run_board_units_full(
     :func:`asyncio.gather`. When a deadline IS
     set the units are launched in board order, ``config.parallelism`` at a
     time, and the deadline is checked between batches: once it has passed no
-    further unit is LAUNCHED — each remaining unit is recorded as a
-    budget-exceeded :class:`LossProfile` via the SAME aborted-run synthesis a
-    killed worker uses (:func:`_aborted_loss_profile`) and persisted via
-    :func:`_persist_unit_loss`, so the partial aggregate scores consistently
-    and the skipped unit is a cache hit next time. The cut is LOGGED (how
-    many units were skipped) — never silently truncated.
+    further unit launches. Each remaining unit is recorded as an unstarted
+    attempt; its measurement cache slot remains available for a later round.
+    The partial aggregate excludes omissions and cannot support promotion.
+    The scheduler logs how many units were skipped.
     """
+    validate_measurement_interval(replicate_index, 1)
     if matchup_deadline is not None:
         return await _run_board_units_full_budgeted(
             adapter=adapter,
@@ -671,6 +687,7 @@ async def _run_board_units_full(
                     replicate_index=replicate_index,
                     side_force_fresh=effective_parent_force_fresh,
                     provenance=provenance,
+                    base_seed=config.seed,
                 )
                 child_loss, _ = _skip_unit_side(
                     generation=child_gen,
@@ -682,6 +699,7 @@ async def _run_board_units_full(
                     replicate_index=replicate_index,
                     side_force_fresh=force_fresh,
                     provenance=provenance,
+                    base_seed=config.seed,
                 )
                 return parent_loss, child_loss
             return await _run_full_board_unit(
@@ -711,7 +729,7 @@ async def _run_board_units_full(
     if token_skipped:
         log.warning(
             "matchup %s: per-round token budget reached; skipped %d/%d board "
-            "unit(s) (recorded as budget-exceeded losses for both sides) — "
+            "unit(s) (recorded as unstarted attempts for both sides) — "
             "partial aggregate returned",
             match_id or "(untagged)",
             token_skipped,
@@ -756,16 +774,17 @@ async def _run_board_units_full_budgeted(
     in-flight units count against the round's ONE global concurrency cap
     rather than only against this matchup's per-batch ceiling. Once the
     deadline has passed no further unit is launched — every remaining unit
-    is recorded as a budget-exceeded :class:`LossProfile` (see
-    :func:`_skipped_unit_loss`), persisted via :func:`_persist_unit_loss`
-    for cache consistency, and counted as a fresh (genuinely-evaluated,
-    not cache-reused) board unit in ``provenance``.
+    is recorded as an unstarted attempt (:func:`_skipped_unit_loss`).
+    Only executed units count as fresh in ``provenance``. Attempt records
+    preserve omitted units without populating the reusable measurement cache.
 
     The number of skipped units is LOGGED at WARNING so a cut-short matchup
     is never mistaken for full coverage. Returns the SAME ``(parent_losses,
     child_losses)`` shape as the uncapped path, with one entry per board
-    entry — the partial aggregate that the gate scores.
+    entry. Aggregates exclude unstarted attempts and report incomplete entries;
+    the gate defers a comparison that lacks required measurements.
     """
+    validate_measurement_interval(replicate_index, 1)
     scorer = _IncrementalScorer(
         weights,
         workspace_root,
@@ -846,7 +865,7 @@ async def _run_board_units_full_budgeted(
         For each side, a unit ALREADY in the cache costs no wall-clock, so it
         is reused verbatim (the budget never clobbers a good result and the
         cache stays consistent). A genuine MISS — the unit would have had to
-        run — is recorded as a budget-exceeded loss instead. Returns ``True``
+        run — is recorded as an unstarted attempt instead. Returns ``True``
         iff at least one side was actually skipped (a real miss synthesised),
         so the caller only counts genuine skips toward the log tally.
         """
@@ -863,6 +882,7 @@ async def _run_board_units_full_budgeted(
                 replicate_index=replicate_index,
                 side_force_fresh=side_force_fresh,
                 provenance=provenance,
+                base_seed=config.seed,
             )
             any_skipped = any_skipped or was_skipped
             if gen is parent_gen:
@@ -880,7 +900,7 @@ async def _run_board_units_full_budgeted(
             # A cap is spent (the matchup wall-clock deadline, or — when a
             # round token ledger is bound — the per-round token budget):
             # stop LAUNCHING. Every unit from here on is recorded as a
-            # budget-exceeded loss instead of being run.
+            # unstarted attempt instead of being run.
             budget_tripped = True
         if budget_tripped:
             for entry in batch:
@@ -903,7 +923,7 @@ async def _run_board_units_full_budgeted(
         log.warning(
             "matchup %s: budget (wall-clock deadline or round token cap) "
             "reached after %d/%d board units; "
-            "skipped %d remaining unit(s) (recorded as budget-exceeded losses "
+            "skipped %d remaining unit(s) (recorded as unstarted attempts "
             "for both sides) — partial aggregate returned",
             match_id or "(untagged)",
             len(board) - skipped,
@@ -950,6 +970,7 @@ async def _run_board_units_fast(
     :class:`~zicato.runtime.state.ActiveTournament` as every unit
     finishes, concurrently with the boards still in flight.
     """
+    validate_measurement_interval(replicate_index, 1)
     semaphore = _effective_unit_semaphore(unit_semaphore, config)
     # Fast mode runs only the challenger; thread its generation id + the board
     # size so the live projected standing accrues for the in-flight challenger.
@@ -988,6 +1009,7 @@ async def _run_board_units_fast(
                     replicate_index=replicate_index,
                     side_force_fresh=force_fresh,
                     provenance=provenance,
+                    base_seed=config.seed,
                 )
                 return skipped_loss
             # Scored the instant it settles — concurrently with the sibling
@@ -1017,7 +1039,7 @@ async def _run_board_units_fast(
     if token_skipped:
         log.warning(
             "matchup %s: per-round token budget reached; skipped %d/%d "
-            "fast-mode board unit(s) (recorded as budget-exceeded losses) — "
+            "fast-mode board unit(s) (recorded as unstarted attempts) — "
             "partial aggregate returned",
             match_id or "(untagged)",
             token_skipped,
@@ -1070,11 +1092,8 @@ async def _run_unit_cache_first(
     abort (deliberately never persisted) is re-attempted by the waiter
     rather than fanned out across the rung, and a failed or cancelled
     evaluation leaves the waiter a correct MISS to run itself.
-    ``force_fresh`` callers are never coalesced: a deliberate re-sampling
-    must not be answered by somebody else's run. Coalescing spans one
-    process, which is where the duplication is — the runner schedules
-    every matchup of a round in the parent, one subprocess worker per
-    board unit below it.
+    Forced reruns serialize writes to the same seed and draw, then execute
+    independently. Different seeds own different files and may run together.
 
     ``provenance`` (when supplied) accumulates the per-generation
     cached-vs-fresh tally for the round. It counts what each caller DID:
@@ -1082,6 +1101,9 @@ async def _run_unit_cache_first(
     so it counts as cached — the tally stays a count of evaluations
     performed rather than of requests made.
     """
+
+    entry = _stamp_replicate_index([entry], replicate_index)[0]
+    validate_measurement_interval(replicate_index, 1)
 
     async def _evaluate() -> LossProfile:
         return await _run_unit_after_cache_miss(
@@ -1098,27 +1120,16 @@ async def _run_unit_cache_first(
             provenance=provenance,
         )
 
-    if force_fresh:
-        # The re-run's worker writes straight over the slot's loss.json and
-        # its result.json twin, so the measurement being superseded has to be
-        # copied aside HERE — before the run, the only point at which both
-        # files still describe the previous execution.
-        record_unit_attempt(
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            generation_id=generation.id,
-            entry_id=entry.id,
-            replicate_index=replicate_index,
-        )
-        return await _evaluate()
-
     def _cached() -> LossProfile | None:
+        if force_fresh:
+            return None
         return _resolve_cached_unit(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             generation_id=generation.id,
             entry_id=entry.id,
             replicate_index=replicate_index,
+            base_seed=config.seed,
         )
 
     cached = _cached()
@@ -1134,7 +1145,9 @@ async def _run_unit_cache_first(
     # cancellation) leaves the cache cold, so the loop falls through and this
     # caller becomes the one that evaluates. The re-check is a plain loop over
     # ``get`` because a settling caller pops its key before setting the event.
-    key = _cacheable_unit_key(workspace_root, epoch_id, generation.id, entry.id, replicate_index)
+    key = _cacheable_unit_key(
+        workspace_root, epoch_id, generation.id, entry.id, replicate_index, config.seed
+    )
     while (settled := _inflight_cacheable_units.get(key)) is not None:
         await settled.wait()
         cached = _cached()
@@ -1171,14 +1184,27 @@ async def _run_unit_after_cache_miss(
 ) -> LossProfile:
     """Run and persist one board unit after cache reuse has been ruled out."""
 
+    validate_measurement_interval(replicate_index, 1)
     from zicato.telemetry.meta_loop import SPAN_WORKER, meta_span  # noqa: PLC0415
+    from zicato.tournament.artifacts import archive_unit_artifacts  # noqa: PLC0415
+
+    archive_unit_artifacts(
+        _unit_loss_path(
+            workspace_root,
+            epoch_id,
+            generation.id,
+            entry.id,
+            replicate_index,
+            base_seed=config.seed,
+        )
+    )
 
     # Worker span: the parent-side lifecycle of ONE subprocess run (only on a
     # cache MISS — a hit above ran no worker). Its goldfive session id is
     # stamped on close so a harmonograf user can cross-jump into the run's own
     # trace (HARMONOGRAF.md §7). Nests under the matchup span via the ambient
     # context var.
-    run_id = run_id_for_unit(generation.id, entry.id, replicate_index)
+    run_id = run_id_for_unit(generation.id, entry.id, replicate_index, base_seed=config.seed)
     async with meta_span(
         run_id,
         kind=SPAN_WORKER,
@@ -1201,6 +1227,11 @@ async def _run_unit_after_cache_miss(
     # opportunistic token count into the round's ledger. This is the ONE
     # choke point every board unit (champion, challenger, screen, evidence
     # replicate) already routes through, so the tally spans the round.
+    loss = replace(
+        loss, measurement=MeasurementDraw.from_index(replicate_index, base_seed=config.seed)
+    )
+    if loss.execution_started is None and not is_infra_abort_cause(loss.abort_cause):
+        loss = replace(loss, execution_started=True)
     if config.token_ledger is not None:
         config.token_ledger.add(loss.tokens_spent)
     # Do NOT cache an INFRA abort (a parent/supervisor kill or a worker
@@ -1257,10 +1288,8 @@ def _overlap_replicate_slots(config: RuntimeConfig, matchup_deadline: float | No
     a permit freed by a finished unit is taken by the next slot's unit
     instead of idling until the whole slot drains.
 
-    When either knob IS engaged the sequential loop stays exactly as it is.
-    Overlapping there would launch slots the budget was meant to stop,
-    folding synthesised worst-case skip losses into entries that measured
-    cleanly.
+    With either budget enabled, slots run sequentially so each launch check
+    observes completed spend. Missing units become unstarted attempts.
     """
     return matchup_deadline is None and config.token_ledger is None
 
@@ -1378,6 +1407,7 @@ async def _run_replicate_slots_full(
     order — replicate 0 first — which is what the fold's
     representative-replicate rule reads.
     """
+    validate_measurement_interval(replicate_base, replicate_count)
     semaphore = _effective_unit_semaphore(unit_semaphore, config)
     scorer = _IncrementalScorer(
         weights,
@@ -1456,6 +1486,7 @@ async def _run_replicate_slots_fast(
     first); see :func:`_run_replicate_slots_full` on what the shared
     scorer's live scalar means.
     """
+    validate_measurement_interval(replicate_base, replicate_count)
     semaphore = _effective_unit_semaphore(unit_semaphore, config)
     scorer = _IncrementalScorer(
         weights,
@@ -1498,22 +1529,6 @@ async def _run_replicate_slots_fast(
             losses[entry.id] = chain[offset]
         runs.append(losses)
     return runs
-
-
-def _fold_replicate_runs(
-    runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]],
-) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
-    """Fold a matchup's per-slot loss maps into one pair of maps.
-
-    ``runs`` is SLOT-major — replicate 0 first — because
-    :func:`~zicato.tournament.unit_cache._average_losses` carries the
-    fields it cannot fold from the first map it is given, and that
-    representative has to be replicate 0 rather than whichever slot
-    happened to settle first. A single slot returns its maps unfolded.
-    """
-    if len(runs) == 1:
-        return runs[0][0], runs[0][1]
-    return _average_losses([r[0] for r in runs]), _average_losses([r[1] for r in runs])
 
 
 async def _run_replicated(
@@ -1595,6 +1610,7 @@ async def _run_replicated(
     unit_provenance)`` where ``unit_provenance`` is the per-generation
     cached-vs-fresh tally over both sides.
     """
+    validate_measurement_interval(replicate_base, replicates)
     force_fresh = not fast
     replicate_count = max(1, replicates)
     provenance: dict[str, _UnitProvenance] = {}
@@ -1618,6 +1634,7 @@ async def _run_replicated(
                 generation_id=left_gen.id,
                 entry_id=entry.id,
                 replicate_index=replicate_base + r,
+                base_seed=config.seed,
             )
             is not None
             for r in range(replicate_count)
@@ -1664,28 +1681,9 @@ async def _run_replicated(
         return left_folded, right_folded, mode, provenance
 
     for replicate_offset in range(replicate_count):
-        # Each replicate keys a distinct cache slot; the same board-unit runner
-        # handles champion + challenger cache-first, so an existing replicate
-        # is reused (incremental) and only missing slots run. Subprocess
-        # isolation, scoring, and failure surfacing are unchanged. The
-        # replicate index is stamped onto each entry's context (run provenance
-        # for the harness under test — a seeded/deterministic harness varies
-        # its noise draw by it); replicate 0 is left untouched, byte-identical
-        # to before. Per-round token budget: stop scheduling FURTHER replicate
-        # slots once the budget is spent — the completed slots average as-is
-        # ("settle with what it has"), rather than folding synthetic worst-case
-        # skips into entries that already measured cleanly. Slot 0 always runs
-        # (its own between-unit checks skip-record when the budget was already
-        # spent) so the return shape is intact.
-        if replicate_offset > 0 and _token_budget_spent(config):
-            log.warning(
-                "matchup %s: per-round token budget reached after %d/%d "
-                "replicate slot(s); settling with the completed replicates",
-                match_id or "(untagged)",
-                replicate_offset,
-                replicate_count,
-            )
-            break
+        # Every requested slot contributes either measurements or explicit
+        # omissions. The board scheduler records attempts after budget expiry;
+        # it launches no missing units and still reuses existing measurements.
         replicate_index = replicate_base + replicate_offset
         left_losses, right_losses = await _run_board_units_full(
             adapter=adapter,

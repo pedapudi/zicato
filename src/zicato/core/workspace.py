@@ -48,9 +48,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from zicato.workspace.layout import WorkspaceLayout
+from zicato.core.measurement import UNKNOWN_SEED, BaseSeed, MeasurementDraw, seed_qualifier
+
+if TYPE_CHECKING:
+    from zicato.workspace.layout import WorkspaceLayout
 
 
 def _normalise_workspace_root(workspace_root: Path) -> Path:
@@ -89,6 +92,8 @@ def _layout(workspace_root: Path) -> WorkspaceLayout:
     the ``.zicato/`` filename layout (read AND write). The descent must run
     first because the layout itself does no probing.
     """
+    from zicato.workspace.layout import WorkspaceLayout  # noqa: PLC0415
+
     return WorkspaceLayout.from_root(_normalise_workspace_root(workspace_root))
 
 
@@ -208,49 +213,84 @@ def proposer_staged_recommendations_path(workspace_root: Path) -> Path:
     return _layout(workspace_root).proposer_staged_recommendations()
 
 
-def run_id_for_unit(generation_id: str, entry_id: str, replicate_index: int = 0) -> str:
-    """Identify ``(generation, entry, replicate)`` for runtime artifacts.
+def run_id_for_unit(
+    generation_id: str,
+    entry_id: str,
+    replicate_index: int = 0,
+    *,
+    base_seed: BaseSeed = UNKNOWN_SEED,
+) -> str:
+    """Identify a generation, entry, draw, and selected seed for runtime records.
 
-    Replicate 0 keeps the historical ``{generation}--{entry}`` form, so a
-    single-replicate workspace is byte-identical to one written before the
-    replicate dimension existed. Replicate ``r>0`` prefixes that same form
-    with a reserved ``r{index}.`` marker.
-
-    The prefix cannot collide with any replicate-0 id: a replicate-0 id
-    begins with a generation id, and every generation id is ``v{n}``
-    (:func:`zicato.evolve.generation_phase.next_generation_id`), so none of
-    them can begin ``r`` followed by digits and a dot. The two id spaces are
-    therefore disjoint by construction, without reserving an entry-id suffix
-    the way a trailing ``--r{index}`` would have to.
-
-    The result is a legible operator-facing label — it names the unit in
-    ``runtime/active_runs``, in the kill-request marker, and in the run's
-    harmonograf span — and stays inside the shared 200-character id guard
-    (Rust ``routes::is_safe_id``, Python ``endpoints._is_safe_id``), which
-    admits ``.`` alongside the alphanumerics, ``-`` and ``_`` a replicate-0
-    id already uses.
+    Historical runs use ``v0--entry`` or ``r2.v0--entry``. Known seeds add
+    the same qualifier as their artifact directory, such as
+    ``seed-17.r2.v0--entry``; an explicitly unseeded run uses ``seed-none``.
+    The label keys active-run records and kill requests. Generation identifiers
+    begin with ``v``, so seed and replicate prefixes cannot collide with them.
     """
     canonical = f"{generation_id}--{entry_id}"
-    if replicate_index <= 0:
-        return canonical
-    return f"r{replicate_index}.{canonical}"
+    unit = canonical if replicate_index <= 0 else f"r{replicate_index}.{canonical}"
+    qualifier = seed_qualifier(base_seed)
+    return f"{qualifier}.{unit}" if qualifier else unit
 
 
 def replicate_index_from_run_id(generation_id: str, entry_id: str, run_id: str) -> int | None:
     """Recover a unit's replicate index from its validated runtime run id."""
+    coordinates = _coordinates_from_run_id(generation_id, entry_id, run_id)
+    return coordinates[0] if coordinates is not None else None
+
+
+def measurement_from_run_id(
+    generation_id: str, entry_id: str, run_id: str
+) -> MeasurementDraw | None:
+    """Decode the complete measurement identity from its canonical runtime id."""
+    coordinates = _coordinates_from_run_id(generation_id, entry_id, run_id)
+    if coordinates is None:
+        return None
+    index, base_seed = coordinates
+    try:
+        return MeasurementDraw.from_index(index, base_seed=base_seed)
+    except ValueError:
+        return None
+
+
+def _coordinates_from_run_id(
+    generation_id: str, entry_id: str, run_id: str
+) -> tuple[int, BaseSeed] | None:
+    from zicato.core.measurement import _seed_from_qualifier  # noqa: PLC0415
+
+    original = run_id
+    base_seed: BaseSeed = UNKNOWN_SEED
+    if run_id.startswith("seed-"):
+        qualifier, separator, run_id = run_id.partition(".")
+        try:
+            base_seed = _seed_from_qualifier(qualifier)
+        except ValueError:
+            return None
+        if not separator:
+            return None
     if run_id == run_id_for_unit(generation_id, entry_id):
-        return 0
-    prefix, separator, _rest = run_id.partition(".")
-    if separator != "." or not prefix.startswith("r") or not prefix[1:].isdigit():
-        return None
-    replicate_index = int(prefix[1:])
-    if replicate_index <= 0:
-        return None
+        index = 0
+    else:
+        prefix, separator, _rest = run_id.partition(".")
+        if separator != "." or not prefix.startswith("r") or not prefix[1:].isdigit():
+            return None
+        index = int(prefix[1:])
+        if index <= 0:
+            return None
     return (
-        replicate_index
-        if run_id == run_id_for_unit(generation_id, entry_id, replicate_index)
+        (index, base_seed)
+        if original == run_id_for_unit(generation_id, entry_id, index, base_seed=base_seed)
         else None
     )
+
+
+def run_coordinates_from_dir(path: Path) -> tuple[str, str, str] | None:
+    """Decode epoch, generation, and entry from a canonical run directory."""
+    parts = path.parts[-6:]
+    if len(parts) != 6 or parts[::2] != ("epochs", "generations", "runs"):
+        return None
+    return parts[1], parts[3], parts[5]
 
 
 def run_dir(
@@ -495,6 +535,8 @@ def assert_distinct_callables(
 
 
 __all__ = [
+    "run_coordinates_from_dir",
+    "measurement_from_run_id",
     "epoch_dir",
     "generations_dir",
     "generation_dir",
