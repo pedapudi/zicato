@@ -99,7 +99,7 @@ from zicato.epoch.genstore import (
     render_source_diff,
     source_tree_bytes,
 )
-from zicato.epoch.snapshot_scope import gitignore_lines
+from zicato.epoch.snapshot_scope import gitignore_lines, is_artifact
 
 #: Sentinel line separating the human commit subject from the machine
 #: metadata block in a generation commit message. Everything after this
@@ -602,6 +602,8 @@ class GitGenerationStore:
         parent_generation_id: str,
         child_generation_id: str,
         patches: Sequence[Patch],
+        *,
+        enumeration_roots: Sequence[Path] | None = None,
     ) -> Path:
         """Derive a child generation as a new commit on the epoch branch.
 
@@ -646,6 +648,7 @@ class GitGenerationStore:
                 source_root=parent_root,
                 patches=list(patches),
                 target_root=scratch,
+                enumeration_roots=enumeration_roots,
             )
             # Replace the repo working tree (minus .git) with the
             # patched tree, then commit.
@@ -684,6 +687,8 @@ class GitGenerationStore:
         parent_generation_id: str,
         patches: Sequence[Patch],
         scratch_root: Path,
+        *,
+        enumeration_roots: Sequence[Path] | None = None,
     ) -> Path:
         """Apply ``patches`` to the parent tree into ``scratch_root``, off-repo.
 
@@ -730,6 +735,7 @@ class GitGenerationStore:
             source_root=parent_root,
             patches=list(patches),
             target_root=scratch_root,
+            enumeration_roots=enumeration_roots,
         )
         return scratch_root
 
@@ -803,7 +809,9 @@ class GitGenerationStore:
     # GenerationStore protocol — read surface (dashboard)
     # ------------------------------------------------------------------
 
-    def list_tree(self, epoch_id: str, generation_id: str) -> list[TreeEntry]:
+    def list_tree(
+        self, epoch_id: str, generation_id: str, *, include_bookkeeping: bool = False
+    ) -> list[TreeEntry]:
         """List a generation's tree from its commit, via ``git ls-tree``.
 
         Reads the tree object directly — no worktree is materialised —
@@ -828,18 +836,20 @@ class GitGenerationStore:
             meta, _, path = record.partition("\t")
             if not path:
                 continue
-            if not is_generation_source_path(path):
+            if any(is_artifact(part) for part in path.split("/")):
+                continue
+            if not include_bookkeeping and not is_generation_source_path(path):
                 continue
             fields = meta.split()
             size = 0
             if len(fields) >= 4 and fields[3].isdigit():
                 size = int(fields[3])
-            files.append(TreeEntry(path=path, is_dir=False, size=size))
+            files.append(TreeEntry(path=path, is_dir=False, size=size, mode=int(fields[0], 8)))
             # Synthesise every parent directory.
             parts = path.split("/")
             for i in range(1, len(parts)):
                 dirs.add("/".join(parts[:i]))
-        entries = [TreeEntry(path=d, is_dir=True, size=0) for d in dirs]
+        entries = [TreeEntry(path=d, is_dir=True, size=0, mode=0o040000) for d in dirs]
         entries.extend(files)
         return sorted(entries, key=lambda e: e.path)
 

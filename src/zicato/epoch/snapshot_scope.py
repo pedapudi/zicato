@@ -33,6 +33,7 @@ is an artifact wherever it appears in a tree.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
@@ -49,32 +50,13 @@ from pathlib import Path
 #: something a correct generation tree can regenerate or simply does not
 #: need. Adding a name is a policy decision — it makes that name
 #: invisible to *every* generation copy and *every* git commit.
-ARTIFACT_NAMES: frozenset[str] = frozenset(
-    {
-        # --- run output -----------------------------------------------
-        "output",
-        ".zicato-scratch",
-        # --- tooling caches -------------------------------------------
-        "__pycache__",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".ruff_cache",
-        ".ipynb_checkpoints",
-        # --- VCS / dependency dirs ------------------------------------
-        # A registered mutable tree must never drag a nested git repo or
-        # an installed-dependency directory into a generation snapshot.
-        ".git",
-        ".hg",
-        "node_modules",
-        ".venv",
-        ".tox",
-    }
-)
+_SCOPE = json.loads(Path(__file__).with_name("source_scope.json").read_text(encoding="utf-8"))
+ARTIFACT_NAMES: frozenset[str] = frozenset(_SCOPE["artifact_names"])
 
 #: Filename suffixes that mark a compiled / transient artifact regardless
 #: of the containing directory. ``.pyc`` is the common one — a stray
 #: ``.pyc`` outside a ``__pycache__`` dir is still not source.
-ARTIFACT_SUFFIXES: tuple[str, ...] = (".pyc", ".pyo", ".pyd")
+ARTIFACT_SUFFIXES: tuple[str, ...] = tuple(_SCOPE["artifact_suffixes"])
 
 #: Environment variable the tournament worker sets to a per-run scratch
 #: directory **outside** the generation snapshot. A target that needs to

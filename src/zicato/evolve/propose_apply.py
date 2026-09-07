@@ -8,13 +8,14 @@ tournament scheduling and settlement remain outside this module.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from zicato.core.experiment import PriorExperiment
 from zicato.core.types import Experiment, Generation, OutcomeRecord
+from zicato.evolve import generation_phase
 from zicato.evolve.ingest import _ingest_experiment_into_index, _load_mutation_track_records
 from zicato.evolve.lifecycle_services import _beat, _now_iso
 from zicato.evolve.round import (
@@ -22,6 +23,7 @@ from zicato.evolve.round import (
     build_scratch_validator_factory,
     check_patch_manifest_and_forbidden,
 )
+from zicato.mutation.policy import MutationPolicy
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.lock import WorkspaceLock
 from zicato.selection.diversity import jaccard
@@ -131,6 +133,7 @@ async def _propose_child(
     recombine_pair: Any = None,
     scratch_validator_factory: Any = None,
     writer: WorkspaceLock | None = None,
+    mutation_policy: MutationPolicy | None = None,
 ) -> Experiment:
     """Build the :class:`ProposerContext` + propose ONE child of the champion.
 
@@ -188,6 +191,7 @@ async def _propose_child(
                     forbidden_ids=brief.forbidden_ids,
                     workspace_root=workspace_root,
                     generation_root=generation_root,
+                    mutation_policy=mutation_policy,
                     validate_experiment=validate_experiment,
                     meta_loop_emitter=meta_loop_emitter,
                     custom_judge_names=custom_judge_names,
@@ -205,6 +209,11 @@ async def _propose_child(
                     scratch_validator_factory=scratch_validator_factory,
                 )
             )
+            # Returning an experiment does not prove a custom proposer called
+            # its hook, or that the returned patches are the ones it checked.
+            findings = await validate_experiment(experiment)
+            if findings:
+                raise ProposerError(findings)
     except ProposerError as exc:
         if round_emitter is not None:
             for attempt_error in exc.attempts:
@@ -264,6 +273,7 @@ async def _propose_and_apply_challenger(
     recombine_pair: Any = None,
     resume_experiment: Experiment | None = None,
     writer: WorkspaceLock | None = None,
+    mutation_policy: MutationPolicy | None = None,
 ) -> CandidateAttempt:
     """Propose + apply ONE challenger child of the champion.
 
@@ -307,6 +317,14 @@ async def _propose_and_apply_challenger(
 
     genstore = default_generation_store(workspace_root)
     last_child_snapshot: dict[str, Path] = {}
+    from zicato.epoch.containment import write_mutation_policy  # noqa: PLC0415
+
+    policy = mutation_policy or MutationPolicy.capture(
+        genstore.materialize_snapshot(epoch_id, parent_id), mutations, brief.forbidden_ids
+    )
+    policy_sha256 = write_mutation_policy(
+        workspace_root, epoch_id=epoch_id, parent_generation_id=parent_id, policy=policy
+    )
 
     def _emit_status(record: dict[str, Any]) -> None:
         """Best-effort live publish of one challenger's proposal record."""
@@ -356,6 +374,7 @@ async def _propose_and_apply_challenger(
         beater=beater,
         round_index=round_index,
         last_child_snapshot=last_child_snapshot,
+        mutation_policy=policy,
     )
     # The per-slot scratch-validator factory (see the gauntlet path). The
     # field proposes challengers sequentially — sibling-conditioning is an
@@ -369,6 +388,7 @@ async def _propose_and_apply_challenger(
         mutations=mutations,
         beater=beater,
         round_index=round_index,
+        mutation_policy=policy,
     )
 
     experiment: Experiment | None = None
@@ -420,6 +440,7 @@ async def _propose_and_apply_challenger(
                 screen_candidates=screen_candidates,
                 recombine_pair=recombine_pair,
                 scratch_validator_factory=_scratch_validator_factory,
+                mutation_policy=policy,
             )
     except ProposerError as exc:
         reason = _short_reject_reason(exc.attempts) or str(exc)
@@ -470,6 +491,18 @@ async def _propose_and_apply_challenger(
     # (:func:`zicato.runtime.resume._discard_unrecorded_source`).
     append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id, pending=True)
     write_experiment(workspace_root, epoch_id, next_id, experiment)
+    from zicato.epoch.containment import write_containment_manifest  # noqa: PLC0415
+
+    write_containment_manifest(
+        workspace_root,
+        epoch_id=epoch_id,
+        parent_generation_id=parent_id,
+        generation_id=next_id,
+        policy=policy,
+        policy_sha256=policy_sha256,
+        experiment=experiment,
+        genstore=genstore,
+    )
     _ingest_experiment_into_index(workspace_root, epoch_id, next_id)
     applied_status = {
         "generation_id": next_id,
@@ -505,6 +538,7 @@ def _mint_placebo_challenger(
     next_id: str,
     point: Any,
     round_index: int,
+    enumeration_roots: Sequence[Path] | None = None,
 ) -> _AppliedChallenger:
     """Derive + persist the random-baseline placebo challenger.
 
@@ -534,6 +568,7 @@ def _mint_placebo_challenger(
         parent_id=parent_id,
         generation_id=next_id,
         patches=experiment.patches,
+        enumeration_roots=enumeration_roots,
     )
     child_gen = Generation(
         id=next_id,
@@ -612,6 +647,7 @@ async def _maybe_run_placebo_arm_gauntlet(
             next_id=placebo_id,
             point=mutations[0],
             round_index=round_index,
+            enumeration_roots=generation_phase.mutable_trees(adapter, parent_gen.snapshot_root),
         )
         result = await run_matchup(
             writer=writer,

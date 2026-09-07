@@ -64,6 +64,7 @@ from __future__ import annotations
 import difflib
 import re
 import shutil
+import stat
 import tempfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -99,7 +100,7 @@ EPHEMERAL_SCRATCH_DIRNAME = "run-scratch"
 
 @dataclass(frozen=True, slots=True)
 class TreeEntry:
-    """One node in a generation source tree, for the dashboard file browser.
+    """One stored source node, including its file type and permissions.
 
     The dashboard's file-tree view (``zicato/dashboard/``) renders a
     generation's source as a tree without knowing whether it is backed
@@ -116,11 +117,24 @@ class TreeEntry:
         ``True`` for a directory node, ``False`` for a file.
     size:
         File size in bytes; ``0`` for a directory.
+    mode:
+        File type and permission bits from filesystem metadata or the Git
+        tree. Source identity uses the regular-file type and executable
+        state; other permission bits are not portable across backends.
     """
 
     path: str
     is_dir: bool
     size: int
+    mode: int
+
+    @property
+    def is_regular_file(self) -> bool:
+        return stat.S_ISREG(self.mode)
+
+    @property
+    def executable(self) -> bool:
+        return bool(self.mode & 0o111)
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,8 +264,8 @@ _LINE = re.compile(rb".*\n|.+")
 def is_generation_source_path(rel_path: str) -> bool:
     """Return whether a ``/``-separated tree path is generation source.
 
-    Run artifacts and repository bookkeeping are not, so no tree read and
-    no diff reports them.
+    Ordinary source views and diffs exclude run artifacts and repository
+    bookkeeping. Integrity readers explicitly include bookkeeping.
     """
     return rel_path not in _NON_SOURCE_ROOT_FILES and not any(
         is_artifact(part) for part in rel_path.split("/")
@@ -404,8 +418,14 @@ class GenerationStore(Protocol):
         parent_generation_id: str,
         child_generation_id: str,
         patches: Sequence[Patch],
+        *,
+        enumeration_roots: Sequence[Path] | None = None,
     ) -> Path:
         """Materialise a child generation by applying ``patches`` to the parent.
+
+        ``enumeration_roots`` names selected paths in the materialized parent.
+        Both store backends forward the selection to the patch applier.
+        Omission selects the complete parent tree.
 
         This is the generation-level transaction boundary the record
         seam cannot express. The child's source tree is derived from the
@@ -432,6 +452,8 @@ class GenerationStore(Protocol):
         parent_generation_id: str,
         patches: Sequence[Patch],
         scratch_root: Path,
+        *,
+        enumeration_roots: Sequence[Path] | None = None,
     ) -> Path:
         """Materialise a THROWAWAY child tree at ``scratch_root``, off-namespace.
 
@@ -515,14 +537,18 @@ class GenerationStore(Protocol):
     # the snapshot directory; the git backend reads a commit's tree.
     # ------------------------------------------------------------------
 
-    def list_tree(self, epoch_id: str, generation_id: str) -> list[TreeEntry]:
+    def list_tree(
+        self, epoch_id: str, generation_id: str, *, include_bookkeeping: bool = False
+    ) -> list[TreeEntry]:
         """Return every file and directory in a generation's source tree.
 
         Each :class:`TreeEntry` carries a ``/``-separated path relative
         to the generation's source root. Run artifacts
         (:mod:`zicato.epoch.snapshot_scope`) are excluded — they are not
-        part of a generation. The list is sorted for a deterministic
-        render order.
+        part of a generation. Repository bookkeeping, such as the root
+        ``.gitignore``, is included only when ``include_bookkeeping`` is
+        true. Integrity checks include it because its bytes and mode
+        belong to the stored tree. The list is sorted by path.
 
         Raises :class:`FileNotFoundError` when the generation has no
         materialised source tree.
@@ -688,6 +714,8 @@ class DirectoryGenerationStore:
         parent_generation_id: str,
         child_generation_id: str,
         patches: Sequence[Patch],
+        *,
+        enumeration_roots: Sequence[Path] | None = None,
     ) -> Path:
         """Copy the parent snapshot and apply ``patches`` all-or-nothing.
 
@@ -728,6 +756,7 @@ class DirectoryGenerationStore:
             source_root=parent_root,
             patches=list(patches),
             target_root=child_root,
+            enumeration_roots=enumeration_roots,
         )
         return child_root
 
@@ -737,6 +766,8 @@ class DirectoryGenerationStore:
         parent_generation_id: str,
         patches: Sequence[Patch],
         scratch_root: Path,
+        *,
+        enumeration_roots: Sequence[Path] | None = None,
     ) -> Path:
         """Apply ``patches`` to the parent snapshot into ``scratch_root``.
 
@@ -763,6 +794,7 @@ class DirectoryGenerationStore:
             source_root=parent_root,
             patches=list(patches),
             target_root=scratch_root,
+            enumeration_roots=enumeration_roots,
         )
         return scratch_root
 
@@ -788,7 +820,9 @@ class DirectoryGenerationStore:
     # Read surface — the dashboard file-tree / file-browser API.
     # ------------------------------------------------------------------
 
-    def list_tree(self, epoch_id: str, generation_id: str) -> list[TreeEntry]:
+    def list_tree(
+        self, epoch_id: str, generation_id: str, *, include_bookkeeping: bool = False
+    ) -> list[TreeEntry]:
         """Walk the generation's ``snapshot/`` directory into :class:`TreeEntry` rows.
 
         Artifacts (:func:`zicato.epoch.snapshot_scope.is_artifact`) are
@@ -804,12 +838,16 @@ class DirectoryGenerationStore:
             # Skip anything whose path contains an artifact component.
             if any(is_artifact(part) for part in rel.parts):
                 continue
-            is_dir = path.is_dir()
+            if not include_bookkeeping and not is_generation_source_path(rel.as_posix()):
+                continue
+            metadata = path.lstat()
+            is_dir = stat.S_ISDIR(metadata.st_mode)
             entries.append(
                 TreeEntry(
                     path="/".join(rel.parts),
                     is_dir=is_dir,
-                    size=0 if is_dir else path.stat().st_size,
+                    size=0 if is_dir else metadata.st_size,
+                    mode=metadata.st_mode,
                 )
             )
         return entries

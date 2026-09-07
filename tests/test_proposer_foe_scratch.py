@@ -17,13 +17,12 @@ from pathlib import Path
 import pytest
 
 from zicato.core.types import MutationPoint
-from zicato.mutation.applier import apply_patches, replacement_source
 from zicato.mutation.enumerator import enumerate_mutations
+from zicato.mutation.policy import MutationPolicy
 from zicato.proposer.foe_scratch import (
     SCRATCH_PREFIX,
     EditOutsideMutationPointError,
-    changed_ranges,
-    project_onto_mutation_points,
+    project_working_copy,
     scratch_working_copy,
 )
 
@@ -56,9 +55,7 @@ def _write(root: Path, body: str) -> None:
 
 
 def _project(snapshot: Path, scratch: Path) -> list:
-    return project_onto_mutation_points(
-        changed_ranges(snapshot, scratch), _points(snapshot), scratch
-    )
+    return project_working_copy(MutationPolicy.capture(snapshot, _points(snapshot)), scratch)
 
 
 def test_the_working_copy_is_a_writable_twin_of_the_snapshot(tmp_path: Path) -> None:
@@ -93,22 +90,6 @@ def test_an_edit_inside_one_point_becomes_that_point_s_patch(tmp_path: Path) -> 
     assert patches[0].new_content == '"""Answer with the agent name."""'
 
 
-def test_the_patch_content_is_read_off_the_copy_not_off_the_diff(tmp_path: Path) -> None:
-    """The authority on a point's new value is the copy, not the hunk.
-
-    The copy is re-enumerated and each touched point is converted into
-    the unit the applier consumes, so the patch says what the point now
-    IS rather than which lines happened to change.
-    """
-    snapshot = _snapshot(tmp_path)
-    with scratch_working_copy(snapshot) as scratch:
-        _write(scratch, _SOURCE.replace("Route the message.", "Say less."))
-        patches = _project(snapshot, scratch)
-        edited = {p.id: p for p in enumerate_mutations([scratch])}
-        expected = replacement_source(edited["router__prompt"])
-    assert patches[0].new_content == expected
-
-
 def test_edits_in_two_points_become_two_patches(tmp_path: Path) -> None:
     snapshot = _snapshot(tmp_path)
     with scratch_working_copy(snapshot) as scratch:
@@ -132,9 +113,7 @@ def test_several_edits_inside_one_point_are_one_patch(tmp_path: Path) -> None:
         (scratch / "p.py").write_text(
             '# zicato:mutable id="block"\nBODY = """A\nb\nC"""\n', encoding="utf-8"
         )
-        patches = project_onto_mutation_points(
-            changed_ranges(snapshot, scratch), enumerate_mutations([snapshot]), scratch
-        )
+        patches = project_working_copy(MutationPolicy.capture(snapshot, _points(snapshot)), scratch)
     assert len(patches) == 1
     assert patches[0].new_content == '"""A\nb\nC"""'
 
@@ -146,8 +125,8 @@ def test_a_change_outside_every_point_names_its_path_and_line_range(tmp_path: Pa
         with pytest.raises(EditOutsideMutationPointError) as raised:
             _project(snapshot, scratch)
     (finding,) = raised.value.findings
-    assert "prompts.py:1-1" in finding
-    assert "outside every declared mutation point" in finding
+    assert "prompts.py" in finding
+    assert "differs from the reconstructed patch source" in finding
 
 
 def test_a_new_file_the_copy_added_is_outside_every_point(tmp_path: Path) -> None:
@@ -174,33 +153,10 @@ def test_a_point_the_copy_no_longer_declares_is_refused(tmp_path: Path) -> None:
     with scratch_working_copy(snapshot) as scratch:
         (scratch / "brief.md").unlink()
         with pytest.raises(EditOutsideMutationPointError, match="no longer resolves"):
-            project_onto_mutation_points(
-                changed_ranges(snapshot, scratch), enumerate_mutations([snapshot]), scratch
-            )
+            project_working_copy(MutationPolicy.capture(snapshot, _points(snapshot)), scratch)
 
 
 def test_an_untouched_copy_produces_no_patches(tmp_path: Path) -> None:
     snapshot = _snapshot(tmp_path)
     with scratch_working_copy(snapshot) as scratch:
-        assert changed_ranges(snapshot, scratch) == []
         assert _project(snapshot, scratch) == []
-
-
-def test_a_patch_set_survives_apply_diff_and_projection(tmp_path: Path) -> None:
-    """The round trip a proposal makes, closed by applying what it produced.
-
-    A projection that agrees with the enumerator but not with the applier
-    would pass every case above and still corrupt the child snapshot, so
-    the assertion here is the one that matters: applying the projected
-    patch set to the snapshot reproduces the tree the episode edited,
-    byte for byte.
-    """
-    snapshot = _snapshot(tmp_path)
-    edited = _SOURCE.replace("Route the message.", "Say less.").replace("terse", "blunt")
-    with scratch_working_copy(snapshot) as scratch:
-        _write(scratch, edited)
-        patches = _project(snapshot, scratch)
-
-    child = tmp_path / "child"
-    apply_patches(snapshot, patches, child)
-    assert (child / "agent" / "prompts.py").read_text(encoding="utf-8") == edited

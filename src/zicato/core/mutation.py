@@ -75,18 +75,11 @@ class MutationPoint:
     content_hash:
         Hex-encoded SHA-256 of :attr:`content`, stamped by the enumerator.
 
-        The applier does NOT read it. The staleness check this hash serves
-        lives one layer earlier, as the pre-image guard in
-        :func:`zicato.proposer.validate.validate_patches`: it compares this
-        hash between the manifest a proposal was drafted against and a
-        fresh enumeration of the parent snapshot, so a point rewritten
-        under the proposer is caught before the patch is applied rather
-        than after.
-
-        The applier is still not the site. It applies a patch
-        set that has already been validated, all-or-nothing, and a
-        staleness rejection there would surface as a failed derive with no
-        route back to the proposer that could fix it.
+        The mutation policy compares this hash and the point's other facts
+        with a fresh parent enumeration before accepting a proposal. It
+        also binds the complete parent source identity, including files
+        outside the edited points. The episode verifier and application
+        guards consume that policy; the applier owns patch semantics.
     metadata:
         Adapter-specific structured metadata. Common keys include
         ``"required_placeholders"`` (comma-separated f-string-style

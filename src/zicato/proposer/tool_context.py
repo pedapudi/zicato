@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from zicato.core.types import MutationPoint
+from zicato.mutation.policy import MutationPolicy
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,8 @@ class ProposerToolContext:
     epoch_id: str
     mutations: tuple[MutationPoint, ...]
     generation_id: str = ""
+    forbidden_ids: tuple[str, ...] = ()
+    mutation_policy: MutationPolicy | None = None
 
 
 _TOOL_CONTEXT: contextvars.ContextVar[ProposerToolContext | None] = contextvars.ContextVar(

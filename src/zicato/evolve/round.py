@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from zicato.evolve.lifecycle_services import _beat
+from zicato.mutation.policy import MutationPolicy, SourceFile, source_files
 
 if TYPE_CHECKING:
     from zicato.core.types import Experiment
@@ -121,6 +122,7 @@ def build_post_apply_validator(
     beater: HeartbeatBeater | None,
     round_index: int,
     last_child_snapshot: dict[str, Path],
+    mutation_policy: MutationPolicy | None = None,
 ) -> Callable[[Experiment], Awaitable[list[str]]]:
     """Build the proposer's ``validate_experiment`` post-apply hook.
 
@@ -148,7 +150,25 @@ def build_post_apply_validator(
     """
     from zicato.mutation.validator import validate_post_apply  # noqa: PLC0415
 
+    policy = mutation_policy or MutationPolicy.capture(
+        genstore.materialize_snapshot(epoch_id, parent_id), mutations
+    )
+    accepted_patches: tuple[Any, ...] | None = None
+    accepted_files: tuple[SourceFile, ...] | None = None
+
     async def _validate(candidate: Experiment) -> list[str]:
+        nonlocal accepted_patches, accepted_files
+        errors = policy.check_patches(candidate.patches)
+        previous = last_child_snapshot.pop("path", None)
+        if errors:
+            return errors
+        if previous is not None and accepted_patches == candidate.patches:
+            try:
+                if source_files(previous) == accepted_files:
+                    last_child_snapshot["path"] = previous
+                    return []
+            except (OSError, ValueError):
+                pass
         _beat(
             beater,
             epoch_id=epoch_id,
@@ -174,6 +194,7 @@ def build_post_apply_validator(
                     parent_generation_id=parent_id,
                     child_generation_id=next_id,
                     patches=list(candidate.patches),
+                    enumeration_roots=policy.enumeration_roots,
                 )
         except (ValueError, KeyError) as exc:
             # ``ValueError`` is the checked applier's single bad-patch-set
@@ -182,8 +203,18 @@ def build_post_apply_validator(
             # and a bad patch set must reject ONE candidate rather than
             # abort the whole evolve run (issue #83).
             return [f"derive_generation rejected the patch set: {exc}"]
-        last_child_snapshot["path"] = child
-        return validate_post_apply(child, list(candidate.patches), mutations)
+        errors = validate_post_apply(
+            child, list(candidate.patches), mutations, enumeration_roots=policy.roots_in(child)
+        )
+        errors.extend(policy.check_child(child))
+        if not errors:
+            try:
+                accepted_files = source_files(child)
+            except (OSError, ValueError) as exc:
+                return [f"cannot verify derived source: {exc}"]
+            accepted_patches = candidate.patches
+            last_child_snapshot["path"] = child
+        return errors
 
     return _validate
 
@@ -197,6 +228,7 @@ def build_scratch_validator_factory(
     mutations: list[Any],
     beater: HeartbeatBeater | None,
     round_index: int,
+    mutation_policy: MutationPolicy | None = None,
 ) -> ScratchValidatorFactory:
     """Build the per-slot scratch ``validate_experiment`` factory.
 
@@ -242,7 +274,8 @@ def build_scratch_validator_factory(
     # Pre-warm the parent source tree once so concurrent slot derives find it
     # materialised and only read it (git: the first materialization checks out the
     # parent worktree under the process worktree-admin lock).
-    genstore.materialize_snapshot(epoch_id, parent_id)
+    parent_source = genstore.materialize_snapshot(epoch_id, parent_id)
+    policy = mutation_policy or MutationPolicy.capture(parent_source, mutations)
 
     def _factory() -> ScratchValidatorLease:
         from zicato.epoch.genstore import discard_ephemeral_parent  # noqa: PLC0415
@@ -251,6 +284,9 @@ def build_scratch_validator_factory(
         scratch_root = parent / "child"
 
         async def _validate(candidate: Experiment) -> list[str]:
+            errors = policy.check_patches(candidate.patches)
+            if errors:
+                return errors
             _beat(
                 beater,
                 epoch_id=epoch_id,
@@ -268,13 +304,16 @@ def build_scratch_validator_factory(
                         parent_generation_id=parent_id,
                         patches=list(candidate.patches),
                         scratch_root=scratch_root,
+                        enumeration_roots=policy.enumeration_roots,
                     )
             except (ValueError, KeyError) as exc:
                 # Same unified bad-patch-set boundary as
                 # :func:`build_post_apply_validator` — see the note there
                 # on why ``KeyError`` is caught too (issue #83).
                 return [f"derive_generation rejected the patch set: {exc}"]
-            return validate_post_apply(child, list(candidate.patches), mutations)
+            return validate_post_apply(
+                child, list(candidate.patches), mutations, enumeration_roots=policy.roots_in(child)
+            ) + policy.check_child(child)
 
         def _cleanup() -> None:
             discard_ephemeral_parent(parent)

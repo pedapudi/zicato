@@ -266,7 +266,8 @@ class GenerationStore(Protocol):
     def derive_generation(self, epoch_id, parent_generation_id,
                           child_generation_id, patches) -> Path: ...
     # read surface — the dashboard file-tree / file-browser API
-    def list_tree(self, epoch_id, generation_id) -> list[TreeEntry]: ...
+    def list_tree(self, epoch_id, generation_id,
+                  *, include_bookkeeping=False) -> list[TreeEntry]: ...
     def read_file(self, epoch_id, generation_id, rel_path) -> bytes: ...
     def diff_generations(self, epoch_id, from_generation_id,
                          to_generation_id) -> str: ...
@@ -580,6 +581,13 @@ serves them straight from the object store (`git ls-tree`, `git show`) without
 a worktree checkout; the directory backend walks the snapshot directory.
 Patch views read `experiment.json` and per-patch records through
 `StorageBackend`, independently of the source backend.
+
+Stored tree entries retain file type and permission bits. Containment
+publication compares regular-file type, bytes, and executable state against
+the selected materialized source. It includes root repository bookkeeping
+with `list_tree(..., include_bookkeeping=True)`. Ordinary listings omit that
+bookkeeping, and the browser response contains only path, directory flag,
+and size. Other permission bits do not affect source identity.
 
 `diff_generations` is rendered rather than delegated. Each backend reads the
 two generations' whole source trees — the git backend with one `git archive`

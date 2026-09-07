@@ -316,6 +316,34 @@ def test_list_tree_raises_for_missing_generation(store: GenerationStore) -> None
         store.list_tree("e1", "v99")
 
 
+def test_list_tree_preserves_file_type_mode_and_explicit_bookkeeping(
+    store: GenerationStore, backend: str, tmp_path: Path
+) -> None:
+    tree = mutable_tree(tmp_path / "source")
+    executable = tree / "run.py"
+    executable.write_text("VALUE = 1\n")
+    executable.chmod(0o755)
+    plain = tree / "plain.py"
+    plain.write_text("VALUE = 2\n")
+    plain.chmod(0o600)
+    snapshot = store.seed_generation("e1", "v0", [tree])
+    if backend == "directory":
+        assert not (snapshot / ".gitignore").exists()
+        (snapshot / ".gitignore").write_text("output/\n")
+    entries = {entry.path: entry for entry in store.list_tree("e1", "v0")}
+    assert entries["agent/run.py"].is_regular_file
+    assert entries["agent/run.py"].executable
+    assert entries["agent/plain.py"].is_regular_file
+    assert not entries["agent/plain.py"].executable
+    assert not entries["agent"].is_regular_file
+    assert ".gitignore" not in entries
+    complete = {
+        entry.path: entry for entry in store.list_tree("e1", "v0", include_bookkeeping=True)
+    }
+    assert complete[".gitignore"].is_regular_file
+    assert not complete[".gitignore"].executable
+
+
 def test_read_file_returns_bytes(seeded_store: GenerationStore) -> None:
     data = seeded_store.read_file("e1", "v0", "agent/prompts.py")
     assert isinstance(data, bytes)

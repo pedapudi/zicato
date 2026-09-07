@@ -134,6 +134,9 @@ fn run_diff_containment_scan(
     previously_quarantined: &mut HashSet<(String, String)>,
 ) {
     let view = crate::diff_containment::scan_workspace(paths);
+    for finding in &view.range_attestations {
+        crate::range_containment::write_finding(paths, finding);
+    }
 
     // Persist a quarantine finding for each violating pair, and alert the
     // ledger only for generations not already quarantined in the prior scan.

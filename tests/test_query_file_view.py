@@ -119,6 +119,7 @@ def test_files_tree_lists_source(client: TestClient) -> None:
     assert resp.status_code == 200
     body = resp.json()
     paths = {e["path"] for e in body["entries"]}
+    assert all(set(entry) == {"path", "is_dir", "size"} for entry in body["entries"])
     assert "agent/prompts.py" in paths
     assert "agent/lib/util.py" in paths
 

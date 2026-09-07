@@ -47,7 +47,6 @@ the caption to render.
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any
 
 from zicato.epoch._storage import RecordError
@@ -275,7 +274,7 @@ def build_generation_tree(
     return {
         "epoch_id": epoch_id,
         "generation_id": generation_id,
-        "entries": [asdict(e) for e in entries],
+        "entries": [{"path": e.path, "is_dir": e.is_dir, "size": e.size} for e in entries],
     }
 
 

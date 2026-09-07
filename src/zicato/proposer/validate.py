@@ -74,29 +74,17 @@ in a tree that would not apply.
    subprocess with a timeout — the same call the tournament makes before
    any entry executes, one expensive round earlier.
 
-The pre-image guard
--------------------
-:attr:`~zicato.core.mutation.MutationPoint.content_hash` has existed since
-the enumerator was written, and its docstring claimed "the patch applier
-checks this before applying a patch so a stale proposer round cannot
-clobber an already-rewritten region". **The applier never read it** — the
-field was written by the enumerator, rendered by the CLI and the dashboard,
-and checked by nothing. :func:`_pre_image_problems` is the check that
-docstring described, and this module is now its only reader.
+The parent binding
+------------------
+The captured mutation policy checks the complete parent source identity and
+its mutation snapshot before application. A proposal cannot use a stale
+snapshot even when the changed parent file is outside its own patch. The
+policy also rejects forbidden targets and forbidden nested regions changed
+by an allowed whole-file replacement. These checks share the policy used by
+the episode verifier and the generation application guards.
 
-The comparison is between two enumerations zicato already computes: the
-manifest the proposal was drafted against
-(:attr:`ProposerToolContext.mutations`) and a fresh enumeration of the
-parent snapshot at validate time. A patched point whose ``content_hash``
-moved between them was rewritten under the proposer, so its draft is
-reasoning about text the tree no longer holds.
-
-Nothing is asked of the proposer, by design. Making the pre-image a digest
-the model declares per patch would make the guard opt-in — a model omitting
-the field would simply not be checked — and would ask the model for
-arithmetic it has no reason to get right. ``Patch`` carries
-no pre-image field and must not grow one — issue #147 is explicit that the
-``Experiment`` schema does not change.
+The proposer supplies no hashes or additional patch fields. The binding is
+computed from source and the frozen mutation snapshot held by the host.
 """
 
 from __future__ import annotations
@@ -113,8 +101,8 @@ from typing import Any
 
 import jsonschema
 
-from zicato.core.types import MutationPoint, Patch
-from zicato.mutation.enumerator import enumerate_mutations
+from zicato.core.types import Patch
+from zicato.mutation.policy import MutationPolicy
 from zicato.proposer.structured import (
     PATCHES_JSON_SCHEMA,
     ExperimentParseError,
@@ -410,59 +398,6 @@ def run_load_probe(workspace_root: Path, scratch_root: Path) -> TierResult:
     ], []
 
 
-def _pre_image_problems(
-    patches: Sequence[Patch],
-    drafted_against: Mapping[str, MutationPoint],
-    parent_root: Path,
-) -> list[str]:
-    """Reject patches whose target moved since the manifest was handed out.
-
-    THE actual pre-image guard, and the only thing in zicato that reads
-    :attr:`~zicato.core.mutation.MutationPoint.content_hash`. The bound
-    manifest (``drafted_against`` — :attr:`ProposerToolContext.mutations`)
-    is the enumeration the proposal was drafted against; a fresh
-    enumeration of ``parent_root`` is the tree as it stands now. A patched
-    point whose ``content_hash`` differs between the two is one the
-    proposer reasoned about in a version the tree no longer holds, and
-    rewriting it would clobber whatever changed it.
-
-    Nothing is asked of the proposer. Making the pre-image a digest the
-    model declares on each patch would be worse twice over: it would make
-    the guard opt-in, since a model omitting the field would simply not be
-    checked, and it would ask the model to do arithmetic it has no reason
-    to get right. Comparing two enumerations zicato already computes needs
-    no cooperation and no wire change — ``Patch`` carries no pre-image
-    field and must not grow one.
-
-    A point that has VANISHED from the fresh enumeration is left alone
-    here: A2 (:func:`~zicato.mutation.validator.validate_post_apply`)
-    reports that against the post-apply tree with a better message, and
-    double-reporting one fault as two costs the proposer a wasted fix.
-    """
-    problems: list[str] = []
-    try:
-        current = {p.id: p for p in enumerate_mutations([parent_root])}
-    except (OSError, ValueError, SyntaxError):
-        # Enumeration is best-effort here: the apply step re-enumerates and
-        # will fail loudly on a tree that cannot be walked. A guard that
-        # could not read the tree must not invent a staleness finding.
-        return []
-    for patch in patches:
-        drafted = drafted_against.get(patch.mutation_id)
-        live = current.get(patch.mutation_id)
-        if drafted is None or live is None:
-            continue
-        if drafted.content_hash != live.content_hash:
-            problems.append(
-                f"stale pre-image for {patch.mutation_id!r}: the manifest you "
-                f"drafted against has content_hash "
-                f"{drafted.content_hash[:16]}… but the parent snapshot now "
-                f"holds {live.content_hash[:16]}…. The point was rewritten "
-                "under you; re-read the file and re-draft before patching it"
-            )
-    return problems
-
-
 def _coerce_patch_array(patches_json: str) -> list[Any]:
     """Accept either a bare ``[...]`` array or ``{"patches": [...]}``.
 
@@ -516,14 +451,22 @@ def _validate_against_context(
             patches = parse_patch_list(raw_patches, mutations_by_id)
         except ExperimentParseError as exc:
             structure_errors.append(str(exc))
-        else:
-            structure_errors.extend(
-                _pre_image_problems(patches, mutations_by_id, ctx.generation_root.resolve())
-            )
+
+    policy = ctx.mutation_policy
+    if not structure_errors:
+        try:
+            if policy is None:
+                policy = MutationPolicy.capture(
+                    ctx.generation_root, ctx.mutations, ctx.forbidden_ids
+                )
+            structure_errors.extend(policy.check_patches(patches))
+        except (OSError, ValueError) as exc:
+            structure_errors.append(str(exc))
 
     tiers["structure"] = {"ran": True, "errors": structure_errors, "notes": []}
     if structure_errors:
         return _report(structure_errors, tiers)
+    assert policy is not None
 
     # --- Tier 1b: apply into a scratch copy, then A1-A4. ---
     from zicato.mutation.applier import apply_patches  # noqa: PLC0415
@@ -534,13 +477,21 @@ def _validate_against_context(
     scratch_root = parent / "child"
     try:
         try:
-            apply_patches(parent_root, patches, scratch_root)
+            apply_patches(
+                parent_root, patches, scratch_root, enumeration_roots=policy.enumeration_roots
+            )
         except (FileNotFoundError, ValueError, KeyError) as exc:
             apply_errors = [f"the patch set does not apply: {exc}"]
             tiers["apply"] = {"ran": True, "errors": apply_errors, "notes": []}
             return _report(apply_errors, tiers)
 
-        apply_errors = validate_post_apply(scratch_root, patches, list(ctx.mutations))
+        apply_errors = validate_post_apply(
+            scratch_root,
+            patches,
+            list(ctx.mutations),
+            enumeration_roots=policy.roots_in(scratch_root),
+        )
+        apply_errors.extend(policy.check_child(scratch_root))
         tiers["apply"] = {"ran": True, "errors": apply_errors, "notes": []}
         if apply_errors:
             return _report(apply_errors, tiers)

@@ -31,7 +31,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -44,8 +44,10 @@ from zicato.core.types import (
     FOE_BLOCKED_CODES,
     Experiment,
     MutationPoint,
+    Patch,
     ProposerSpec,
 )
+from zicato.mutation.policy import MutationPolicy
 from zicato.proposer.episode_process import EpisodeProcess
 from zicato.proposer.foe_config import (
     FoeProposerConfig,
@@ -62,8 +64,7 @@ from zicato.proposer.foe_request import (
 )
 from zicato.proposer.foe_scratch import (
     EditOutsideMutationPointError,
-    changed_ranges,
-    project_onto_mutation_points,
+    project_working_copy,
     scratch_working_copy,
 )
 from zicato.proposer.proposer import ProposerBlocked, ProposerError, ProposerExhausted
@@ -97,6 +98,7 @@ class EpisodeTools:
 
     mutation_usage: foe.HostTool
     validate_patches: foe.HostTool
+    read_patches: Callable[[], list[Patch]]
 
     def as_sequence(self) -> tuple[foe.HostTool, ...]:
         return (self.mutation_usage, self.validate_patches)
@@ -110,6 +112,8 @@ def build_episode_tools(
     epoch_id: str,
     generation_id: str,
     mutations: Sequence[MutationPoint],
+    forbidden_ids: Sequence[str] = (),
+    mutation_policy: MutationPolicy | None = None,
 ) -> EpisodeTools:
     """The host tools for one episode, bound to that episode's context.
 
@@ -131,7 +135,18 @@ def build_episode_tools(
         epoch_id=epoch_id,
         mutations=tuple(mutations),
         generation_id=generation_id,
+        forbidden_ids=tuple(forbidden_ids),
+        mutation_policy=mutation_policy,
     )
+
+    def read_patches() -> list[Patch]:
+        nonlocal mutation_policy
+        try:
+            if mutation_policy is None:
+                mutation_policy = MutationPolicy.capture(generation_root, mutations, forbidden_ids)
+            return project_working_copy(mutation_policy, scratch_root)
+        except (OSError, ValueError) as exc:
+            raise EditOutsideMutationPointError([str(exc)]) from exc
 
     def usage(mutation_id: str) -> str:
         from zicato.proposer.tools import mutation_usage as read_usage  # noqa: PLC0415
@@ -144,11 +159,7 @@ def build_episode_tools(
         from zicato.proposer.validate import validate_patches as lint  # noqa: PLC0415
 
         try:
-            patches = project_onto_mutation_points(
-                changed_ranges(generation_root, scratch_root),
-                mutations,
-                scratch_root,
-            )
+            patches = read_patches()
         except EditOutsideMutationPointError as exc:
             return list(exc.findings)
         if not patches:
@@ -167,6 +178,7 @@ def build_episode_tools(
         validate_patches=foe.tool(
             name="validate_patches", description=VALIDATE_PATCHES_DESCRIPTION
         )(verify),
+        read_patches=read_patches,
     )
 
 
@@ -261,6 +273,12 @@ class FoeProposerAgent:
         config = resolve_foe_config(self.config)
         generation_root = _require_generation_root(ctx)
         workspace_root = config.workspace_root or ctx.workspace_root or generation_root
+        try:
+            policy = ctx.mutation_policy or MutationPolicy.capture(
+                generation_root, ctx.mutations, ctx.forbidden_ids
+            )
+        except (OSError, ValueError) as exc:
+            raise ProposerError([str(exc)]) from exc
 
         with scratch_working_copy(generation_root) as scratch_root:
             tools = build_episode_tools(
@@ -270,6 +288,8 @@ class FoeProposerAgent:
                 epoch_id=ctx.epoch_id,
                 generation_id=ctx.parent_generation_id,
                 mutations=ctx.mutations,
+                forbidden_ids=ctx.forbidden_ids,
+                mutation_policy=policy,
             )
             request = build_request(
                 config,
@@ -283,7 +303,7 @@ class FoeProposerAgent:
             )
             _capture_request(ctx, config, request, workspace_root)
             outcome = await self._run_episode(ctx, config, request, workspace_root)
-            experiment = self._experiment_from(ctx, outcome, scratch_root, generation_root)
+            experiment = self._experiment_from(ctx, outcome, tools.read_patches)
 
         if ctx.validate_experiment is not None:
             findings = await ctx.validate_experiment(experiment)
@@ -394,9 +414,7 @@ class FoeProposerAgent:
         self,
         code: str,
         message: str,
-        ctx: ProposerContext,
-        scratch_root: Path,
-        generation_root: Path,
+        read_patches: Callable[[], list[Patch]],
     ) -> ProposerBlocked:
         """The zicato code for one Foe block, refined by the working copy.
 
@@ -410,9 +428,7 @@ class FoeProposerAgent:
         """
         if code == "verification-unsatisfiable":
             try:
-                patches = project_onto_mutation_points(
-                    changed_ranges(generation_root, scratch_root), ctx.mutations, scratch_root
-                )
+                patches = read_patches()
             except EditOutsideMutationPointError as exc:
                 return ProposerBlocked("edit-outside-mutation-point", "; ".join(exc.findings))
             if not patches:
@@ -426,13 +442,12 @@ class FoeProposerAgent:
         self,
         ctx: ProposerContext,
         outcome: foe.Outcome,
-        scratch_root: Path,
-        generation_root: Path,
+        read_patches: Callable[[], list[Patch]],
     ) -> Experiment:
         """Turn one episode's outcome into an experiment, or into a refusal."""
         match outcome:
             case foe.Blocked(code, message):
-                raise self._blocked_as(code, message, ctx, scratch_root, generation_root)
+                raise self._blocked_as(code, message, read_patches)
             case foe.Exhausted(limit):
                 raise ProposerExhausted(limit)
             case foe.Failed(error):
@@ -447,11 +462,7 @@ class FoeProposerAgent:
                 [f"the episode returned a {type(hypothesis).__name__}, expected a hypothesis"]
             )
         try:
-            patches = project_onto_mutation_points(
-                changed_ranges(generation_root, scratch_root),
-                ctx.mutations,
-                scratch_root,
-            )
+            patches = read_patches()
         except EditOutsideMutationPointError as exc:
             raise ProposerBlocked("edit-outside-mutation-point", "; ".join(exc.findings)) from exc
         if not patches:

@@ -336,6 +336,9 @@ def _append_placebo_arm(
             next_id=placebo_id,
             point=field_round.mutations[0],
             round_index=field_round.round_index,
+            enumeration_roots=generation_phase.mutable_trees(
+                field_round.adapter, field_round.prepared.parent_generation.snapshot_root
+            ),
         )
         applied.append(placebo)
         placebo_status = {

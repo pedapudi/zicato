@@ -1,239 +1,145 @@
-"""The proposer's disposable working copy, and the diff it is read back as.
+"""Project a disposable proposal copy into patches that reproduce its source.
 
-A proposal is an edit rather than a document about an edit. The proposer is
-granted write on a throwaway copy of the parent generation's snapshot,
-changes files in it with ordinary editing tools, checks its work, and
-answers when the checks pass. Zicato then reads the copy back as a patch
-set by diffing it against the snapshot and *projecting* each change onto
-the enumerated mutation points.
+The mutation enumerator and patch applier own the editable units. Acceptance
+requires the reconstructed tree to match the working copy's canonical files,
+bytes, and executable state. A line intersecting a mutation point alone is
+not evidence that the point owns every edit on that line.
 
-The projection is the rule that keeps a free-form edit loop inside the
-operator's declared surface. Every changed line range must fall entirely
-within one declared mutation point; a change outside every point blocks
-the round with the path and the line range, so the finding names a
-location rather than a verdict. What comes out is an ordinary
-:class:`~zicato.core.types.Patch` set over mutation ids — the
-:class:`~zicato.core.types.Experiment` schema is untouched, and everything
-downstream of the proposer sees what it always saw.
-
-The copy lives in the OS temp root under the ``ztw-pscratch-`` prefix,
-distinct from the ``ztw-pvalidate-`` trees the patch verifier writes and
-the ``ztw-slate-`` trees a best-of-N slate uses, so no sweep over one
-family reaps another. The proposal owner waits for host shutdown and process
-group termination before leaving the working-copy context. The copy is then
-removed on every exit path, including failure in the middle of an edit. The
-snapshot itself is never mounted writable.
+The proposal owner waits for host shutdown and process group termination
+before leaving the working-copy context. The copy is then removed on every
+exit path. The parent snapshot is never mounted writable.
 """
 
 from __future__ import annotations
 
-import difflib
 import shutil
 import tempfile
 import uuid
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 
-from zicato.core.types import MutationPoint, Patch
-from zicato.mutation.applier import replacement_source
+from zicato.core.types import Patch
+from zicato.epoch.snapshot_scope import copytree_ignore
+from zicato.mutation.applier import apply_patches, replacement_source
 from zicato.mutation.enumerator import enumerate_mutations
+from zicato.mutation.policy import MutationPolicy, SourceFile, source_files
+from zicato.mutation.validator import duplicate_mutation_ids
 
-#: Prefix of the proposer's working copies. Distinct from every other
-#: scratch family so a sweep over one cannot reap another.
 SCRATCH_PREFIX = "ztw-pscratch-"
 
 
 class EditOutsideMutationPointError(Exception):
-    """A change in the working copy lies outside every declared point.
-
-    :attr:`findings` names each offending change by path and line range,
-    which is what the round's blocked message carries.
-    """
+    """Working source cannot be reproduced under the captured mutation policy."""
 
     def __init__(self, findings: Sequence[str]) -> None:
         self.findings = tuple(findings)
         super().__init__("; ".join(self.findings))
 
 
-@dataclass(frozen=True, slots=True)
-class ChangedRange:
-    """One contiguous run of lines a working copy changed.
-
-    ``start`` and ``end`` are 1-indexed and inclusive, and address the
-    ORIGINAL file, because that is the coordinate system a mutation point
-    is declared in. A pure insertion changes no original line, so it is
-    attributed to the line it was inserted after, clamped into the file.
-    """
-
-    path: Path
-    start: int
-    end: int
-    replacement: str
-
-    def describe(self) -> str:
-        return f"{self.path}:{self.start}-{self.end}"
-
-
 @contextmanager
 def scratch_working_copy(snapshot_root: Path) -> Iterator[Path]:
-    """Yield a disposable writable copy of ``snapshot_root``.
-
-    The copy is removed when the block exits, however it exits. The
-    snapshot is only ever read here, so an episode that dies mid-edit
-    leaves the tree the round is about to patch untouched.
-    """
-    parent = Path(tempfile.gettempdir())
-    root = parent / f"{SCRATCH_PREFIX}{uuid.uuid4().hex[:12]}"
+    """Yield a writable source copy and remove it when its owner exits."""
+    root = Path(tempfile.gettempdir()) / f"{SCRATCH_PREFIX}{uuid.uuid4().hex[:12]}"
     try:
-        shutil.copytree(snapshot_root, root, symlinks=True)
+        shutil.copytree(snapshot_root, root, symlinks=True, ignore=copytree_ignore())
         yield root
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def changed_ranges(snapshot_root: Path, scratch_root: Path) -> list[ChangedRange]:
-    """Every line range the working copy changed, against the snapshot.
+def project_working_copy(policy: MutationPolicy, scratch_root: Path) -> list[Patch]:
+    """Read one patch per changed unit and prove that no source edit disappears.
 
-    Files the copy added or deleted are reported as whole-file changes,
-    so the projection refuses them unless a ``file`` mutation point
-    covers them — which is the same rule every other change follows.
+    Added or deleted files and executable-bit changes cannot be expressed by
+    the patch schema. Unchanged binary files remain source; changed binary
+    files fail reconstruction. Artifact names use the generation store's
+    scope. Read failures and unsupported file types are explicit findings.
     """
-    ranges: list[ChangedRange] = []
-    for relative in sorted(_union_of_files(snapshot_root, scratch_root)):
-        before = _read_lines(snapshot_root / relative)
-        after = _read_lines(scratch_root / relative)
-        if before == after:
+    try:
+        return _project(policy, scratch_root)
+    except (OSError, ValueError, SyntaxError) as exc:
+        raise EditOutsideMutationPointError([str(exc)]) from exc
+
+
+def _project(policy: MutationPolicy, scratch_root: Path) -> list[Patch]:
+    errors = policy.check_parent()
+    if errors:
+        raise EditOutsideMutationPointError(errors)
+    working_files = source_files(scratch_root)
+    edited = enumerate_mutations(policy.roots_in(scratch_root))
+    if duplicate_mutation_ids(edited):
+        raise ValueError("working copy contains ambiguous mutation ids")
+    edited_by_id = {point.id: point for point in edited}
+    replacements: dict[str, str] = {}
+    unresolved = []
+    for point in policy.points:
+        after = edited_by_id.get(point.id)
+        if after is None:
+            unresolved.append((point, "no longer resolves in the working copy"))
             continue
-        ranges.extend(_ranges_between(snapshot_root / relative, before, after))
-    return ranges
+        if point.kind != after.kind or point.file.relative_to(
+            policy.root
+        ) != after.file.relative_to(scratch_root):
+            unresolved.append((point, "changed its declared location or kind"))
+            continue
+        value = replacement_source(after)
+        if replacement_source(point) != value:
+            replacements[point.id] = value
 
-
-def project_onto_mutation_points(
-    ranges: Iterable[ChangedRange],
-    points: Iterable[MutationPoint],
-    scratch_root: Path,
-) -> list[Patch]:
-    """Turn changed ranges into one patch per touched mutation point.
-
-    A range inside a point makes that point a touched one, and the
-    point's new value is read from the working copy's OWN enumeration
-    rather than from its lines. The enumerator is the one authority on
-    what a point's content is — for a span it is the string literal's
-    body rather than the statement around it — so re-reading the copy through it
-    is what keeps a projected patch from splicing code into a literal.
-
-    A point is replaced as a unit, so several edits inside one point are
-    one patch rather than several conflicting ones. A range inside no
-    point raises :class:`EditOutsideMutationPointError` naming every
-    offender, so the proposer is told what to undo rather than which rule
-    it broke; so does an edit that made a declared point stop resolving,
-    because a marker absent from the copy is a change outside every
-    point that a line range cannot see.
-
-    What a patch carries is the applier's unit rather than the
-    enumerator's — :func:`~zicato.mutation.applier.replacement_source`
-    converts between them — so applying the projected set to the snapshot
-    reproduces the copy.
-    """
-    by_file: dict[Path, list[MutationPoint]] = {}
-    for point in points:
-        by_file.setdefault(Path(point.file).resolve(), []).append(point)
-
-    touched: list[str] = []
-    outside: list[str] = []
-    for changed in ranges:
-        owner = _owning_point(changed, by_file.get(Path(changed.path).resolve(), ()))
-        if owner is None:
-            outside.append(
-                f"{changed.describe()} lies outside every declared mutation point; "
-                "the proposer may only change what a declared point covers"
-            )
-        elif owner.id not in touched:
-            touched.append(owner.id)
-    if outside:
-        raise EditOutsideMutationPointError(outside)
-
-    edited = {point.id: point for point in enumerate_mutations([scratch_root])}
-    missing = [
-        f"mutation point {mutation_id!r} no longer resolves in the working copy; "
-        "the marker that declares it must survive the edit"
-        for mutation_id in sorted(touched)
-        if mutation_id not in edited
-    ]
-    if missing:
-        raise EditOutsideMutationPointError(missing)
-
-    return [
+    # A whole-file replacement carries changes to nested declarations. The
+    # policy still checks protected points, and reconstruction checks all bytes.
+    replaced_files = {
+        point.file for point in policy.points if point.kind == "file" and point.id in replacements
+    }
+    for point, reason in unresolved:
+        if point.kind == "file" or point.file not in replaced_files:
+            raise ValueError(f"mutation point {point.id!r} {reason}")
+    patches = [
         Patch(
             id=uuid.uuid4().hex,
-            mutation_id=mutation_id,
+            mutation_id=point.id,
             op="replace",
-            new_content=replacement_source(edited[mutation_id]),
+            new_content=replacements[point.id],
             new_numeric=None,
             new_enum=None,
             rationale="Read back from the proposer's working copy.",
         )
-        for mutation_id in sorted(touched)
+        for point in sorted(policy.points, key=lambda p: p.id)
+        if point.id in replacements and (point.kind == "file" or point.file not in replaced_files)
     ]
-
-
-def _owning_point(changed: ChangedRange, points: Iterable[MutationPoint]) -> MutationPoint | None:
-    """The one declared point whose line range wholly contains ``changed``."""
-    for point in points:
-        if point.line_start <= changed.start and changed.end <= point.line_end:
-            return point
-    return None
-
-
-def _union_of_files(left: Path, right: Path) -> set[Path]:
-    return _relative_files(left) | _relative_files(right)
-
-
-def _relative_files(root: Path) -> set[Path]:
-    if not root.is_dir():
-        return set()
-    return {p.relative_to(root) for p in root.rglob("*") if p.is_file()}
-
-
-def _read_lines(path: Path) -> list[str]:
-    """A file's lines with their endings, or empty when it is not there.
-
-    A file the working copy added reads as empty on the snapshot side and
-    a file it deleted reads as empty on the copy's side, so both appear
-    to the diff as an ordinary change and meet the same projection rule.
-    """
-    try:
-        return path.read_text(encoding="utf-8").splitlines(keepends=True)
-    except (OSError, UnicodeDecodeError):
+    errors = policy.check_patches(patches) + policy.check_child(scratch_root)
+    if errors:
+        raise EditOutsideMutationPointError(errors)
+    if not patches:
+        _require_same_files(policy.parent_files, working_files)
         return []
+    with tempfile.TemporaryDirectory(prefix="ztw-preconstruct-") as temporary:
+        child = Path(temporary) / "child"
+        apply_patches(policy.root, patches, child, enumeration_roots=policy.enumeration_roots)
+        _require_same_files(source_files(child), working_files)
+    errors = policy.check_parent()
+    if errors:
+        raise EditOutsideMutationPointError(errors)
+    return patches
 
 
-def _ranges_between(path: Path, before: list[str], after: list[str]) -> list[ChangedRange]:
-    """The changed line ranges between two versions of one file."""
-    ranges: list[ChangedRange] = []
-    matcher = difflib.SequenceMatcher(a=before, b=after, autojunk=False)
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            continue
-        # `i1`/`i2` are a half-open 0-indexed span of the ORIGINAL file.
-        # An insertion has i1 == i2 and so covers no original line; it is
-        # attributed to the line it follows, clamped into the file, so it
-        # still has to fall inside a declared point.
-        start = min(i1 + 1, max(len(before), 1))
-        end = max(i2, start)
-        ranges.append(
-            ChangedRange(path=path, start=start, end=end, replacement="".join(after[j1:j2]))
-        )
-    return ranges
+def _require_same_files(expected: tuple[SourceFile, ...], actual: tuple[SourceFile, ...]) -> None:
+    left = {entry.path: entry for entry in expected}
+    right = {entry.path: entry for entry in actual}
+    findings = [
+        f"{path}: working source differs from the reconstructed patch source; "
+        "restore edits outside the declared mutation units, file set, and executable state"
+        for path in sorted(left.keys() | right.keys())
+        if left.get(path) != right.get(path)
+    ]
+    if findings:
+        raise EditOutsideMutationPointError(findings)
 
 
 __all__ = [
     "SCRATCH_PREFIX",
-    "ChangedRange",
     "EditOutsideMutationPointError",
-    "changed_ranges",
-    "project_onto_mutation_points",
+    "project_working_copy",
     "scratch_working_copy",
 ]
