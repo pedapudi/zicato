@@ -29,14 +29,13 @@ fn main() {
         None => println!("cargo:rustc-env=ZICATO_GIT_SHA="),
     }
 
-    // Re-run if HEAD moves so the SHA stays current. The crate lives
-    // at crates/supervisor under a Cargo workspace, so a fixed
-    // ../.git relative path is wrong; ask git for the real git
-    // directory instead. `--git-common-dir` resolves to the shared
-    // .git even from a linked worktree (where .git is a gitlink file).
-    if let Some(git_dir) = git(&["rev-parse", "--git-common-dir"]) {
-        let git_dir = Path::new(&git_dir);
-        println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
-        println!("cargo:rerun-if-changed={}", git_dir.join("refs").display());
+    // HEAD belongs to this worktree; branch and packed refs are shared.
+    // A missing watched path makes Cargo rebuild on every invocation.
+    for name in ["HEAD", "refs", "packed-refs"] {
+        if let Some(path) = git(&["rev-parse", "--git-path", name]) {
+            if Path::new(&path).exists() {
+                println!("cargo:rerun-if-changed={path}");
+            }
+        }
     }
 }

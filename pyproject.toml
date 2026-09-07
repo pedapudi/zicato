@@ -123,7 +123,7 @@ dev = [
     "ruff == 0.5.7",
     "mypy >= 1.10",
     # Enforces the library/driver import contracts declared in
-    # [tool.importlinter] below (`uv run lint-imports`; wired into
+    # tools/check_imports.py (`make import-lint`; wired into
     # `make check` and CI).
     "import-linter >= 2.0",
     "types-jsonschema",
@@ -168,7 +168,7 @@ exclude = [
 
 # Custom build hook (hatch_build.py): compiles the Rust supervisor
 # crate and bundles the binary at zicato/_bin/zicato-supervisor so it
-# ships inside the wheel. Best-effort — see hatch_build.py.
+# ships inside each wheel. Source and editable installs require Rust.
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
 
@@ -335,285 +335,96 @@ markers = [
 # resolve via the installed/editable package consistently.
 pythonpath = ["."]
 
-# The import contracts (`uv run lint-imports`; wired into `make check`
-# and CI). zicato is a library first — the surface declared in
-# zicato/__init__.py — with three drivers on top: zicato.cli,
-# zicato.dashboard (the HTTP server), zicato.builder. The contracts pin:
-#
-# 1. No library package imports a driver. zicato.query is LIBRARY code
-#    (the workspace query layer the dashboard consumes) — it appears in
-#    the source list like every other lib package.
-# 2. The only driver->driver edges are the two declared ones:
-#    cli -> dashboard (the CLI launches the server and resolves its
-#    static bundle) and dashboard -> builder (server.py mounts the
-#    builder's REST routes). Everything else is forbidden.
-# 3. One cut runs through the library itself: the packages that model,
-#    execute, score and store import nothing in the packages that decide
-#    a round, render reports, diagnose a workspace, serve reads,
-#    adjudicate the evaluation contract, edit a contract as a draft, or
-#    drive a session.
-# 4. The shared primitives — the storage backend, the process
-#    configuration, the utilities, the import-path resolver, the
-#    evaluation-timeout helper, the log stream and the integration
-#    bridges — import nothing else in the library.
-#
-# Nothing here is an ordering. Contracts 3 and 4 declare two cuts; the
-# packages on either side of a cut stay free to import each other. The
-# library has real cycles between the epoch lifecycle, the round loop,
-# the proposer and the workspace layout, so no single order over the
-# packages would describe it honestly.
-[tool.importlinter]
+# tools/check_imports.py requires every production namespace to have one role.
+# Library roles cannot import drivers. Primitives and execution code cannot
+# import coordination code. Primitives may import only other primitives.
+# Mixed library packages retain their existing orchestration dependencies;
+# their role does not claim an execution boundary that the graph cannot prove.
+[tool.zicato.namespace_roles]
+_tournament_worker = "mixed_library"
+adapter_factory = "execution"
+adapters = "execution"
+analyzer = "coordination"
+aux_timeout = "primitive"
+board = "execution"
+builder = "driver"
+check = "coordination"
+cli = "driver"
+config = "primitive"
+contract_draft = "coordination"
+core = "execution"
+dashboard = "driver"
+emulator = "execution"
+epoch = "mixed_library"
+evolve = "coordination"
+example_workspace = "execution"
+health = "coordination"
+import_path = "primitive"
+index = "mixed_library"
+integrations = "primitive"
+judge_runtime = "execution"
+logging_stream = "primitive"
+models_config = "execution"
+mutation = "execution"
+orchestrator = "coordination"
+patterns = "execution"
+proposer = "mixed_library"
+query = "coordination"
+reasoning = "execution"
+reflection = "coordination"
+runtime = "mixed_library"
+runtime_factory = "execution"
+scoring = "execution"
+selection = "execution"
+storage = "primitive"
+synthetic = "execution"
+telemetry = "execution"
+testing = "execution"
+tournament = "mixed_library"
+tui = "driver"
+util = "primitive"
+workspace = "execution"
+workspace_loader = "mixed_library"
+
+[tool.zicato.importlinter]
 root_packages = ["zicato"]
 
-[[tool.importlinter.contracts]]
-name = "the library must not import the drivers (cli / dashboard / builder)"
-type = "forbidden"
-source_modules = [
-    "zicato._tournament_worker",
-    "zicato.adapter_factory",
-    "zicato.adapters",
-    "zicato.analyzer",
-    "zicato.aux_timeout",
-    "zicato.board",
-    "zicato.check",
-    "zicato.config",
-    "zicato.contract_draft",
-    "zicato.core",
-    "zicato.emulator",
-    "zicato.epoch",
-    "zicato.evolve",
-    "zicato.health",
-    "zicato.import_path",
-    "zicato.index",
-    "zicato.judge_runtime",
-    "zicato.models_config",
-    "zicato.mutation",
-    "zicato.orchestrator",
-    "zicato.patterns",
-    "zicato.proposer",
-    "zicato.query",
-    "zicato.reflection",
-    "zicato.runtime",
-    "zicato.runtime_factory",
-    "zicato.scoring",
-    "zicato.selection",
-    "zicato.storage",
-    "zicato.synthetic",
-    "zicato.telemetry",
-    "zicato.testing",
-    "zicato.tournament",
-    "zicato.util",
-    "zicato.workspace",
-    "zicato.workspace_loader",
-]
-forbidden_modules = [
-    "zicato.cli",
-    "zicato.dashboard",
-    "zicato.builder",
-    "zicato.tui",
-]
-
-# The terminal console is a FOURTH driver, and the strictest one: it reaches
-# the workspace ONLY over the dashboard service's HTTP API. Forbidding the
-# import of every other driver — including the dashboard itself — is what makes
-# "a second renderer, never a second brain" structural rather than a promise.
-# It spawns the service by argv (`python -m zicato.dashboard`), never by import.
-[[tool.importlinter.contracts]]
+[[tool.zicato.importlinter.contracts]]
 name = "tui driver: no import of the other drivers (it speaks HTTP, not Python)"
 type = "forbidden"
 source_modules = ["zicato.tui"]
 forbidden_modules = ["zicato.cli", "zicato.dashboard", "zicato.builder"]
 
-[[tool.importlinter.contracts]]
+[[tool.zicato.importlinter.contracts]]
 name = "dashboard driver: no import of the cli (dashboard -> builder mount is the declared edge)"
 type = "forbidden"
 source_modules = ["zicato.dashboard"]
 forbidden_modules = ["zicato.cli"]
 
-[[tool.importlinter.contracts]]
+[[tool.zicato.importlinter.contracts]]
 name = "builder driver: no import of the other drivers"
 type = "forbidden"
 source_modules = ["zicato.builder"]
 forbidden_modules = ["zicato.cli", "zicato.dashboard"]
 
-[[tool.importlinter.contracts]]
+[[tool.zicato.importlinter.contracts]]
 name = "cli driver: no direct import of the builder (cli -> dashboard is the declared edge)"
 type = "forbidden"
 source_modules = ["zicato.cli"]
 forbidden_modules = ["zicato.builder"]
-# Direct only: the cli legitimately reaches the builder TRANSITIVELY
-# through the two declared edges (cli -> dashboard.server -> builder.api
-# mount); what this contract forbids is the cli growing its own builder
-# dependency.
 allow_indirect_imports = true
 
-[[tool.importlinter.contracts]]
+[[tool.zicato.importlinter.contracts]]
 name = "the proposer's patch validator has no path to the board"
 type = "forbidden"
 source_modules = ["zicato.proposer.validate"]
-forbidden_modules = [
-    "zicato.board",
-    "zicato.judge_runtime",
-    "zicato.emulator",
-    "zicato.adapters",
-    "zicato.adapter_factory",
-    "zicato._tournament_worker",
-]
-# The governing principle of docs/design/PROPOSER.md: the proposer may
-# check its patch by any means that consumes no board data and produces no
-# scores, and may NEVER execute board entries. `validate_patches` is the
-# only proposer tool that writes anything at all, so the claim is pinned
-# structurally rather than by inspection.
-#
-# The forbidden set is exactly the CAPABILITY surface: `zicato.board` is
-# where entry text is loaded, `zicato.adapters` / `zicato.adapter_factory`
-# / `zicato._tournament_worker` are how a harness is loaded and run, and
-# `zicato.emulator` / `zicato.judge_runtime` are how an entry is judged.
-# The validator can reach none of them, transitively or otherwise.
-#
-# `zicato.scoring` and `zicato.tournament` are deliberately NOT listed:
-# they are reachable from every module in the repo through
-# `zicato.core.types` -> `zicato.core.scoring_config`, which imports them
-# for TYPE definitions. That edge is a type-model artifact, not a
-# capability — nothing on it reads a board entry or produces a score — and
-# listing them would make the contract unsatisfiable for reasons that say
-# nothing about this module. The capability claim is carried by the list
-# above and by the runtime closure pin in tests/test_proposer_validate.py.
-#
-# The tier-3 `adapter.load` probe reaches an adapter by SPAWNING
-# `zicato.proposer._load_probe` as a subprocess, which is exactly why the
-# probe lives in its own module: it keeps the adapter packages on this
-# forbidden list instead of forcing an exemption.
+forbidden_modules = ["zicato.board", "zicato.judge_runtime", "zicato.emulator", "zicato.adapters", "zicato.adapter_factory", "zicato._tournament_worker"]
 
-[[tool.importlinter.contracts]]
+[[tool.zicato.importlinter.contracts]]
 name = "the query layer stays dashboard-free"
 type = "forbidden"
 source_modules = ["zicato.query"]
 forbidden_modules = ["zicato.dashboard"]
-
-# The cut inside the library. The source list is the code that defines
-# the data model, loads and validates boards, runs harnesses, judges and
-# scores entries, enumerates mutations, rates and selects candidates,
-# writes telemetry, and reads and writes the workspace on disk. The
-# forbidden list is the code that decides a round (evolve, orchestrator,
-# check), renders reports (analyzer), diagnoses a workspace (health),
-# serves reads (query), adjudicates the evaluation contract (reflection),
-# edits a contract as a draft (contract_draft), and drives a session
-# (cli, dashboard, builder, tui).
-#
-# Seven library packages are deliberately absent from the source list,
-# because each imports something in the forbidden set: epoch and proposer
-# import the report renderer, index and runtime import the round loop's
-# crash-recovery helper, and tournament, workspace_loader and
-# _tournament_worker reach the renderer through those. Leaving them out
-# is what keeps the cut a checked property rather than a plan.
-#
-# The entry with the thinnest margin is runtime_factory. It clears the
-# contract because its only reach into the runtime package is
-# runtime.effective_settings; importing runtime.resume would break it,
-# because that module imports evolve.settlement_recovery. That break
-# would be the contract working: a factory that assembles a runtime has
-# no reason to reach the round loop.
-[[tool.importlinter.contracts]]
-name = "the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, the contract draft, or the drivers"
-type = "forbidden"
-source_modules = [
-    "zicato.adapter_factory",
-    "zicato.adapters",
-    "zicato.aux_timeout",
-    "zicato.board",
-    "zicato.config",
-    "zicato.core",
-    "zicato.emulator",
-    "zicato.import_path",
-    "zicato.integrations",
-    "zicato.judge_runtime",
-    "zicato.logging_stream",
-    "zicato.models_config",
-    "zicato.mutation",
-    "zicato.patterns",
-    "zicato.reasoning",
-    "zicato.runtime_factory",
-    "zicato.scoring",
-    "zicato.selection",
-    "zicato.storage",
-    "zicato.synthetic",
-    "zicato.telemetry",
-    "zicato.testing",
-    "zicato.util",
-    "zicato.workspace",
-]
-forbidden_modules = [
-    "zicato.analyzer",
-    "zicato.check",
-    "zicato.contract_draft",
-    "zicato.evolve",
-    "zicato.health",
-    "zicato.orchestrator",
-    "zicato.query",
-    "zicato.reflection",
-    "zicato.builder",
-    "zicato.cli",
-    "zicato.dashboard",
-    "zicato.tui",
-]
-
-# Seven packages carry no dependency on the rest of the library at all.
-# Keeping the storage backend usable against any workspace and the
-# configuration loader free of the code it configures is a design
-# constraint that this contract is the only record of. The seven may
-# import each other — aux_timeout imports config — so the forbidden list
-# is every other top-level package in the distribution.
-[[tool.importlinter.contracts]]
-name = "the shared primitives import nothing else in the library"
-type = "forbidden"
-source_modules = [
-    "zicato.aux_timeout",
-    "zicato.config",
-    "zicato.import_path",
-    "zicato.integrations",
-    "zicato.logging_stream",
-    "zicato.storage",
-    "zicato.util",
-]
-forbidden_modules = [
-    "zicato._tournament_worker",
-    "zicato.adapter_factory",
-    "zicato.adapters",
-    "zicato.analyzer",
-    "zicato.board",
-    "zicato.builder",
-    "zicato.check",
-    "zicato.cli",
-    "zicato.contract_draft",
-    "zicato.core",
-    "zicato.dashboard",
-    "zicato.emulator",
-    "zicato.epoch",
-    "zicato.evolve",
-    "zicato.health",
-    "zicato.index",
-    "zicato.judge_runtime",
-    "zicato.models_config",
-    "zicato.mutation",
-    "zicato.orchestrator",
-    "zicato.patterns",
-    "zicato.proposer",
-    "zicato.query",
-    "zicato.reasoning",
-    "zicato.reflection",
-    "zicato.runtime",
-    "zicato.runtime_factory",
-    "zicato.scoring",
-    "zicato.selection",
-    "zicato.synthetic",
-    "zicato.telemetry",
-    "zicato.testing",
-    "zicato.tournament",
-    "zicato.tui",
-    "zicato.workspace",
-    "zicato.workspace_loader",
-]
 
 # uv workspace: the vendored dogfood targets under examples/ are a
 # distinct distribution (zicato-examples). Declaring examples/ as a

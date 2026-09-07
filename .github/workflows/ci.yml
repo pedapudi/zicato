@@ -17,12 +17,12 @@ jobs:
           fetch-depth: 0
 
       - name: Report and enforce line budgets
-        run: python tools/line_budget.py --check
+        run: python tools/verify.py --only line-budget
 
       - name: Check the ledger's arithmetic and that no row was dropped
-        run: |
-          python tools/line_budget.py --check-ledger \
-            --base "origin/${{ github.base_ref || github.ref_name }}"
+        env:
+          VERIFICATION_BASE: origin/${{ github.base_ref || github.ref_name }}
+        run: python tools/verify.py --only ledger
 
       - name: Show production logic per subsystem in the job summary
         run: |
@@ -46,7 +46,7 @@ jobs:
         # A cleanup change lowers counts and leaves the file alone (a fall
         # is green); one later change regenerates it to the measured floor,
         # so parallel prose branches never contend for the baseline.
-        run: python tools/prose_lint.py --baseline tools/prose_lint_baseline.json
+        run: python tools/verify.py --only prose
 
   dashboard-javascript:
     name: dashboard JavaScript behaviour (Node 22)
@@ -62,7 +62,7 @@ jobs:
           node-version: "22"
 
       - name: Dashboard JavaScript behaviour
-        run: make node-test
+        run: python tools/verify.py --only dashboard-javascript
 
   lint-and-test:
     name: lint and default-tier tests (Python 3.12)
@@ -82,12 +82,15 @@ jobs:
       - name: Set up Python 3.12
         run: uv python install 3.12
 
+      - name: Restore supervisor build
+        uses: ./.github/actions/supervisor-cache
+
       - name: Sync dependencies
         # --frozen installs exactly what uv.lock pins (and fails if the
         # lock is stale) — reproducible CI. goldfive resolves from its
         # public git source recorded in the lock; the default
         # GITHUB_TOKEN is sufficient to clone a public repo.
-        run: uv sync --all-extras --frozen
+        run: uv sync --all-extras --frozen --reinstall-package zicato
 
       - name: Mypy cache
         # Mypy's incremental cache turns the from-scratch whole-tree check
@@ -102,53 +105,35 @@ jobs:
             mypy-3.12-
 
       - name: Ruff
-        run: uv run ruff check .
+        run: uv run --no-sync python tools/verify.py --only python-style
+
+      - name: Ruff formatting
+        run: uv run --no-sync python tools/verify.py --only python-format
 
       - name: Import contracts
-        # The library/driver boundaries ([tool.importlinter] in
-        # pyproject.toml): lib packages never import the drivers; only
-        # the declared driver->driver edges exist.
-        run: uv run lint-imports
+        # Every production namespace has a declared role. The shared
+        # checker derives forbidden imports and checks the root facade.
+        run: uv run --no-sync python tools/verify.py --only import-boundaries
 
       - name: Mypy
-        run: uv run mypy src/zicato/
+        run: uv run --no-sync python tools/verify.py --only python-types
 
       - name: Pytest (default tier)
-        # The default tier stays short enough for quick pull-request signal.
-        # .github/workflows/slow-tier.yml runs the seven statistical and
-        # end-to-end oracles as a separate pull-request check.
-        #
-        # The exclusion is stated here rather than inherited: the `slow`
-        # tier is deselected only for a BARE `pytest`, and this step names
-        # paths. Stating it is also the honest form for a gate — the step
-        # says what it runs. The four tools/ paths ride here because they
-        # live outside the `testpaths` root: the prose linter's own suite,
-        # the affected-tests selector's, and the guard that holds every
-        # workflow file to what the runner requires — unique step names,
-        # one `run` or `uses` per step, no repeated keys — and the console
-        # measurement passes, which pin the stylesheet free of dead rules.
-        run: >-
-          uv run pytest tests/ tools/test_prose_lint.py
-          tools/test_affected_tests.py tools/test_workflows.py
-          tools/test_console_measure.py
-          -m "not node and not cascade_oc and not slow"
+        # The shared plan discovers tool tests and excludes the slow tier.
+        # The statistical workflow reports that required tier separately.
+        run: uv run --no-sync python tools/verify.py --only python-default
 
   parity:
     name: parity gates (Python 3.12)
-    # PYTEST is skipped: lint-and-test's Pytest step already runs the
-    # default tier (pyproject testpaths = ["tests"]), and slow-tier.yml
-    # runs the other tier as its own check. Every other gate runs.
-    #
-    # Pull requests use one Python interpreter so the same deterministic
-    # gates are not paid for twice. Interpreter-independent aggregation is
-    # pinned directly by tests/test_scalar_aggregation_is_exact.py; package
-    # metadata continues to declare the wider supported-Python range.
+    # Python suites and type checking have separate required owners.
     runs-on: ubuntu-latest
     env:
       # tools/parity.sh shells out to `uv run`; --frozen keeps those from
       # re-resolving the lock mid-gate.
       UV_FROZEN: "1"
       UV_PYTHON: "3.12"
+      # Preserve the wheel installed and checked below.
+      UV_NO_SYNC: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -161,22 +146,18 @@ jobs:
       - name: Set up Python 3.12
         run: uv python install 3.12
 
+      - name: Restore supervisor build
+        uses: ./.github/actions/supervisor-cache
+
       - name: Sync dependencies
         # The gates import the tests/ helpers and the examples package.
-        run: uv sync --all-extras --frozen
+        run: uv sync --all-extras --frozen --reinstall-package zicato --no-editable
 
-      - name: Mypy cache
-        # Shares lint-and-test's key so the MYPY gate restores that cache
-        # instead of paying for a cold whole-tree check.
-        uses: actions/cache@v4
-        with:
-          path: .mypy_cache
-          key: mypy-3.12-${{ hashFiles('pyproject.toml', 'uv.lock') }}
-          restore-keys: |
-            mypy-3.12-
+      - name: Verify installed supervisor
+        run: .venv/bin/python tools/verify.py --only installed-supervisor --installed-wheel
 
       - name: Parity gates
-        run: bash tools/parity.sh --skip PYTEST
+        run: uv run --no-sync python tools/verify.py --only parity
 
   supervisor:
     name: supervisor (Rust)
@@ -193,10 +174,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Format
-        run: cargo fmt --check
+        run: python tools/verify.py --only rust-format
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: python tools/verify.py --only rust-clippy
 
       - name: Test
-        run: cargo test
+        run: python tools/verify.py --only rust-tests

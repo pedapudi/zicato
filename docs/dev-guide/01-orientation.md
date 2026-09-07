@@ -122,8 +122,8 @@ surface:
 
 Library packages never import the drivers; the only allowed driver→driver
 edges are `cli → dashboard` and `dashboard → builder`. Import-linter
-contracts in `pyproject.toml` (`[tool.importlinter]`) enforce both rules,
-and `uv run lint-imports` runs them. See §3 (repo map) for the per-package
+contracts in `pyproject.toml` (`[tool.zicato.importlinter]`) enforce both rules,
+and `make import-lint` runs them. See §3 (repo map) for the per-package
 rules and the green-gates rule (§4).
 
 ---
@@ -690,14 +690,14 @@ behavior-preserving refactor oracle), `docs/design/` (the design corpus),
 `tests/` (2800+ tests).
 
 Import rules below reflect the machine-enforced contracts in
-`pyproject.toml [tool.importlinter]`:
+`pyproject.toml [tool.zicato.importlinter]`:
 
 ```toml
 [[tool.importlinter.contracts]]
 name = "the library must not import the drivers (cli / dashboard / builder)"
 type = "forbidden"
 ```
-*(pyproject.toml, `[tool.importlinter]` — run `uv run lint-imports`)*
+*(pyproject.toml, `[tool.zicato.importlinter]` — run `make import-lint`)*
 
 Unless stated otherwise, "must never import" below means "forbidden by
 those contracts"; every library package is forbidden from importing
@@ -1083,18 +1083,12 @@ run, every launch enables the dashboard and you report its URL (default
 **Verify:** your change's end-to-end evidence cites `RUN.md` steps or
 oracle tests rather than a live endpoint.
 
-### G4 — The two-oracles rule: both suites pass before any commit
+### G4 — The two-oracles rule: both suites pass in complete validation
 
-> ✅ **ALWAYS** run both oracle suites before proposing a commit, no
-> matter how unrelated your change feels:
->
-> ```sh
-> uv run pytest tests/test_convergence_known_answer.py -q
-> uv run pytest tests/test_decision_procedure_power.py -q
-> ```
->
-> Naming a file runs every test in it, `slow` tier included — that is the
-> whole point of the rule in 11-testing.md §11.1.
+> The complete `make check` plan includes every test in both oracle files,
+> including their slow statistical cases. A successful complete invocation
+> satisfies this requirement once for that revision. Run either file directly
+> when diagnosing its behavior.
 
 **Why.** These two files are the repo's end-to-end truth anchors:
 
@@ -1121,13 +1115,9 @@ break; the next contributor bisects YOUR commit out of a red oracle.
 
 ### G5 — The green-gates rule: parity, import contracts, and the node suite
 
-> ✅ **ALWAYS** keep these three gates green alongside pytest:
->
-> ```sh
-> bash tools/parity.sh        # the behavior-preserving refactor oracle
-> uv run lint-imports         # the library/driver import contracts
-> make node-test              # the dashboard JS behaviour suite
-> ```
+> `make check` runs parity, import-boundary and JavaScript checks through
+> the shared verification plan. Python tests and type checks have their own
+> commands, so the parity invocation excludes its duplicate copies.
 
 **Why — parity.** `tools/parity.sh` runs six gates and diffs freshly
 computed artifacts against committed goldens under
@@ -1161,7 +1151,7 @@ means you moved observable behaviour: either that was the point (update the gold
 WITH a CHANGELOG entry) or it is a bug.
 
 **Why — import contracts.** The library/driver split (§1.3) only holds
-because `uv run lint-imports` enforces it. If you add an import from a
+because `make import-lint` enforces it. If you add an import from a
 library package to a driver, the contract fails; do not "fix" it by
 editing the contract — restructure the dependency (usually: the thing you
 want belongs in `zicato.query` or a library seam).
@@ -1412,38 +1402,26 @@ uv run zicato --help        # fast — the lazy-import discipline at work
 uv run pytest --version
 ```
 
-### 5.2 Run the default tier (about two minutes)
+### 5.2 Run the iteration checks
 
 ```sh
-uv run pytest -q
+make check-fast
 ```
 
-That is the fast tier — everything except the seven tests measured at
-15 s or more on their own, the node shim, and the opt-in cascade
-measurement. It fans
-out with `-n auto`; use `-n0` for a serial debug run of one test. Before
-you propose a commit, run both tiers:
+The iteration plan includes affected Python tests and the other checks
+whose inputs changed. It includes branch changes and worktree edits.
+An empty Python selection does not waive browser or Rust checks.
+
+### 5.3 Run complete validation
 
 ```sh
-uv run pytest -m "not node and not cascade_oc" -q
+make check
 ```
 
-A command-line `-m` REPLACES the pyproject default rather than
-intersecting with it, which is why that expression restates both terms.
-
-### 5.3 Run the two oracles and the other gates (10–20 min)
-
-```sh
-uv run pytest tests/test_convergence_known_answer.py -q
-uv run pytest tests/test_decision_procedure_power.py -q
-uv run lint-imports
-make node-test
-bash tools/parity.sh        # the full six-gate oracle (slowest; runs PYTEST too)
-```
-
-If you are iterating, `bash tools/parity.sh --skip PYTEST` runs just the
-golden gates; `--only CONTRACT-HASH` is the one to reach for whenever you
-touch anything near `ScoringWeights` or `epoch/contract.py`.
+The complete plan includes both Python tiers and independent golden,
+language, packaging, prose and budget checks. The known-answer and
+statistical oracles participate in the Python selections. Check failures
+must be resolved before merging the validated revision.
 
 ### 5.4 Run one deterministic end-to-end loop (10 min)
 
@@ -1494,10 +1472,8 @@ Read, in order:
    behaviour in executable form.
 4. Then chapter 02 of this guide with `evolve/` open in a split.
 
-> ✅ **ALWAYS** re-run §5.3's commands before proposing any commit, and run
-> the vendor rule's scan over your own diff. That is the whole pre-commit
-> ritual: the two oracles, the parity gates, the import contracts, the
-> node suite, and the vendor scan.
+Complete `make check` on the revision proposed for merge. Run the
+attribution scan in §G1 before publishing the diff or its description.
 
 ---
 

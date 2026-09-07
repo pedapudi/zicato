@@ -218,6 +218,9 @@ accounting rules, configuration guidance, and known enforcement limitation.
 
 ## Development setup
 
+Source and editable installs require a Rust toolchain with `cargo` on `PATH`.
+Prebuilt wheels include the supervisor executable and require no Rust compiler.
+
 ```sh
 uv sync --all-extras   # install package + dev tooling (ruff, mypy, pytest, pre-commit, ...)
 make install-hooks     # equivalent to `uv run pre-commit install`

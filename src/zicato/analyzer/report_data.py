@@ -55,6 +55,8 @@ from zicato.core.types import (
 )
 from zicato.core.workspace import _normalise_workspace_root
 from zicato.epoch.journal import read_epoch_experiments
+from zicato.proposer.brief import brief_goal
+from zicato.util.text import preview
 from zicato.workspace import (
     ScalarStep,
     WorkspaceLayout,
@@ -553,25 +555,6 @@ def _cumulate_scalar(generations: list[GenerationView]) -> list[GenerationView]:
 # ---------------------------------------------------------------------------
 
 
-def _distill_brief_goal(brief: str) -> str:
-    """The brief's ``## Goal`` paragraph, or ``""`` when there is none.
-
-    The operator's goal lives in the proposer brief's ``## Goal`` section,
-    not in ``config.json`` (whose ``goal`` field is usually empty). The
-    masthead must name the same goal the rest of the UI shows, so this
-    DELEGATES to the dashboard's distillation rather than restating it.
-
-    A second copy of that logic here would drift from the dashboard's: when
-    only one of the two learns to reassemble a hard-wrapped goal paragraph,
-    the other still returns the first PHYSICAL line and a masthead renders
-    the goal truncated mid-word at a dangling hyphen (issue #107). One
-    distiller, one behaviour — do not re-inline it.
-    """
-    from zicato.query.epoch_view import _distill_brief_goal as _distill  # noqa: PLC0415
-
-    return _distill(brief) or ""
-
-
 def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReportData:
     """Walk one epoch's workspace tree into a frozen :class:`EpochReportData`.
 
@@ -628,7 +611,7 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
         generations=tuple(generations),
         span_start=span_start,
         span_end=span_end,
-        goal=str(cfg.get("goal", "") or "") or _distill_brief_goal(brief_text),
+        goal=str(cfg.get("goal", "") or "") or preview(brief_goal(brief_text) or ""),
         telemetry_dialect=str(scoring.get("telemetry_dialect", "") or ""),
         tournament_structure=tournament_structure,
         proposer_quality=proposer_quality,

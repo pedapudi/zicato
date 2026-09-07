@@ -1,26 +1,7 @@
-"""Triage pins for issue #123 — the journal truncates the proposer's own reasoning.
+"""Journal entries retain complete proposer hypotheses and reasoning.
 
-``zicato.epoch.journal._render_section`` truncates at WRITE time:
-
-* ``why`` is reduced to its first sentence (``_first_sentence``, journal.py:126);
-* ``core_idea`` is reduced to its first physical line (journal.py:117).
-
-``experiment.json`` keeps both fields in full, but nothing read that record
-back: the journal was the one channel carrying prior reasoning forward, and
-it carried the already-truncated text. So the loss was permanent on the one
-surface that still holds a rejection reason when nothing is promoting.
-
-This is NOT the code path issue #107 fixed. #107 rewrote
-``zicato.query.epoch_view._distill_brief_goal`` (the epoch BRIEF's goal line,
-for the dashboard / analyzer masthead). #123 is the per-generation experiment
-record in ``zicato.epoch.journal``. Different module, different input,
-different consumer — only the shape rhymes.
-
-FIXED: ``_render_section`` now records ``why`` and ``core_idea`` in full,
-and the budget moved to the readers, where dropping text is recoverable —
-``epoch.analysis`` and ``analyzer.report_data`` each cap what they hand a
-model. Entries written before the fix stay truncated on disk; the journal
-is append-only and there is nothing left to recover them from.
+The persisted experiment and journal preserve the full hypothesis text.
+Readers apply their own input budgets without truncating canonical records.
 """
 
 from __future__ import annotations

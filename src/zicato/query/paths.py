@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.storage import read_json
+from zicato.util.text import preview
 from zicato.workspace import WorkspaceLayout
 from zicato.workspace import epochs as _ws_epochs
 
@@ -23,6 +24,7 @@ _NUM_RUN = _ws_epochs._NUM_RUN
 _natural_key = _ws_epochs.natural_key
 _epoch_created_at = _ws_epochs.epoch_created_at
 _epoch_sort_key = _ws_epochs.epoch_sort_key
+_preview = preview
 
 
 def _utc_now() -> _dt.datetime:
@@ -132,18 +134,6 @@ def _read_json_value(path: Path) -> Any | None:
         return read_json(path)
     except Exception:
         return None
-
-
-def _preview(text: str) -> str:
-    text = text.strip()
-    if len(text) <= _PREVIEW_CHARS:
-        return text
-    return text[:_PREVIEW_CHARS] + "..."
-
-
-# Char ceiling on truncated text previews (board input, mutation body),
-# matching the Rust ``epoch::PREVIEW_CHARS``.
-_PREVIEW_CHARS = 120
 
 
 def read_current_epoch(paths: WorkspacePaths) -> str | None:

@@ -1444,7 +1444,7 @@ touch-points, and the tests catch a half-done addition:
 
 ### 10.11.3 The import-linter contracts
 
-`import-linter` enforces the boundaries (`uv run lint-imports`, wired into
+`import-linter` enforces the boundaries (`make import-lint`, wired into
 `make check` and CI — the green-gates rule, `01-orientation.md §4`). Every
 contract in `pyproject.toml` is of type `forbidden`, and they fall into two
 groups. Prose cites a contract by its name, which is the string

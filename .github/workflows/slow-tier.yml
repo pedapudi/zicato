@@ -1,16 +1,8 @@
 name: statistical and end-to-end oracles
 
-# The seven tests measured at 15 s or more alone — the decision-procedure
-# power harness, the racing convergence oracle, the gauntlet evidence-gate
-# end-to-end run and the cascade smoke run. Together they are about five of
-# the six minutes a full suite takes. This separate workflow keeps their
-# pull-request result visible without delaying the default test job. It also
-# runs nightly against main and on demand from the Actions tab. The stable job
-# name keeps the Python 3.12 result visible. Repository policy requires this
-# result before merge.
-#
-# The local merge ladder runs the same tests: `make test` and
-# tools/parity.sh's PYTEST gate each run both tiers.
+# Required statistical and complete-loop tests report separately from the
+# default Python selection. Local verification selects the same cases through
+# tools/verify.py. Repository policy requires both results before merge.
 
 on:
   pull_request:
@@ -37,10 +29,13 @@ jobs:
       - name: Set up Python 3.12
         run: uv python install 3.12
 
+      - name: Restore supervisor build
+        uses: ./.github/actions/supervisor-cache
+
       - name: Sync dependencies
-        run: uv sync --all-extras --frozen
+        run: uv sync --all-extras --frozen --reinstall-package zicato
 
       - name: Pytest (slow tier)
         # A command-line -m REPLACES the pyproject selector, so `not node`
         # and `not cascade_oc` are restated rather than inherited.
-        run: uv run pytest tests/ -m "slow and not node and not cascade_oc"
+        run: uv run --no-sync python tools/verify.py --only python-slow

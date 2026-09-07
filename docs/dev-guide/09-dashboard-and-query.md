@@ -117,7 +117,7 @@ by the import-linter contracts).
 The enforcement is a forbidden-import contract (see 11-testing.md §11.8):
 
 ```
-[[tool.importlinter.contracts]]
+[[tool.zicato.importlinter.contracts]]
 name = "the query layer stays dashboard-free"
 type = "forbidden"
 source_modules = ["zicato.query"]
@@ -2432,7 +2432,7 @@ malformed epoch ⇒ empty, no raise). This is the best-effort-reader pin.
 
 ```bash
 uv run pytest tests/test_dashboard_server.py tests/test_promotion_cadence.py -q
-uv run lint-imports              # the reader must not import the dashboard
+make import-lint              # the reader must not import the dashboard
 make node-test                   # the no-op / null-degrade node assertions
 uv run mypy src/zicato/
 ```
@@ -2568,4 +2568,4 @@ Where to add (and what will catch) a regression, by concern:
 | which member of a promoted SET is the head — `gate.gen`, the round-timeline spine, and `current_champion` on a BRANCHING lineage | `tests/test_dashboard_promoted_head.py` |
 | the tree crown per epoch (the same client champion-scan defect across epochs, multi-epoch fixture) | node `epoch_scoping.test.mjs` |
 | the whole Node behaviour suite (digest / no-op / mock parity) | `src/zicato/dashboard/static/test/run-all.mjs` via `make node-test` |
-| the query layer stays dashboard-free | `uv run lint-imports` (the import-linter contract) |
+| the query layer stays dashboard-free | `make import-lint` (the import-linter contract) |
