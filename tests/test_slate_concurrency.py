@@ -390,6 +390,64 @@ class _BoomAndHoldAgent:
 
 
 @pytest.mark.asyncio
+async def test_repeated_slate_cancellation_joins_producers_before_scratch_release(
+    tmp_path: Path,
+) -> None:
+    started = [asyncio.Event(), asyncio.Event()]
+    cleaning = [asyncio.Event(), asyncio.Event()]
+    finish_cleanup = asyncio.Event()
+    directories: list[Path] = []
+
+    class HeldProducer:
+        async def propose(self, ctx: ProposerContext) -> Experiment:
+            slot = ctx.slot_index
+            started[slot].set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaning[slot].set()
+                await finish_cleanup.wait()
+            raise AssertionError("cancelled producer returned")
+
+    def lease():
+        directory = tmp_path / f"slot-{len(directories)}"
+        directory.mkdir()
+        directories.append(directory)
+
+        async def validate(_experiment: Experiment) -> list[str]:
+            return []
+
+        return validate, directory.rmdir
+
+    agent = BestOfNProposerAgent(
+        inner=HeldProducer(),
+        config=ProposerQualityConfig(best_of_n=2, critique_enabled=False),
+        propose_parallelism=2,
+    )
+    ctx = replace(_ctx(_FixedCritic("0"), []), scratch_validator_factory=lease)
+    task = asyncio.create_task(agent.propose(ctx))
+    try:
+        async with asyncio.timeout(_GATED_SLATE_TIMEOUT_S):
+            await asyncio.gather(*(event.wait() for event in started))
+            task.cancel("stop proposal slate")
+            await asyncio.gather(*(event.wait() for event in cleaning))
+        task.cancel("repeat stop proposal slate")
+        for _ in range(_SETTLE_TURNS):
+            await asyncio.sleep(0)
+        assert not task.done(), "slate cancellation interrupted producer cleanup"
+        assert all(directory.exists() for directory in directories)
+        finish_cleanup.set()
+        with pytest.raises(asyncio.CancelledError, match="stop proposal slate"):
+            await task
+        assert all(not directory.exists() for directory in directories)
+    finally:
+        finish_cleanup.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
 async def test_slate_raise_waits_for_every_sibling_lease_to_be_released() -> None:
     """The slate's exception must not outrun its siblings' scratch cleanup.
 

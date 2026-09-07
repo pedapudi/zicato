@@ -64,6 +64,8 @@ from zicato.core import (
 from zicato.core.loss import BUDGET_ABORT_CAUSE, is_infra_abort_cause
 from zicato.core.types import Experiment
 from zicato.proposer.best_of_n import CandidateScreenResult
+from zicato.runtime.lock import WorkspaceLock
+from zicato.runtime.writer import workspace_writer
 from zicato.util.iso_time import now_iso as _now_iso
 
 log = logging.getLogger("zicato.epoch.screen")
@@ -217,6 +219,7 @@ async def run_candidate_screen(
     round_index: int,
     disable_drift: tuple[Any, ...] = (),
     judge_only: bool = False,
+    writer: WorkspaceLock | None = None,
 ) -> list[CandidateScreenResult]:
     """Screen every slate candidate on the round's train panel.
 
@@ -243,33 +246,41 @@ async def run_candidate_screen(
     never fail (or empty) a propose step. Result strings carry counts
     only, never entry ids.
     """
-    sweep_stale_screen_dirs(workspace_root, epoch_id)
-    results: list[CandidateScreenResult] = []
-    for index, candidate in enumerate(candidates):
-        if not panel.entries:
-            results.append(_no_signal_result("empty screen panel"))
-            continue
-        try:
-            results.append(
-                await _screen_one_candidate(
-                    index=index,
-                    candidate=candidate,
-                    adapter=adapter,
-                    parent_gen=parent_gen,
-                    panel=panel,
-                    weights=weights,
-                    config=config,
-                    workspace_root=workspace_root,
-                    epoch_id=epoch_id,
-                    round_index=round_index,
-                    disable_drift=disable_drift,
-                    judge_only=judge_only,
+    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+
+    async with workspace_writer(
+        workspace_root,
+        writer=writer,
+        instance_id=config.instance_id,
+        cleanup=lambda: drain_worker_cleanup(workspace_root),
+    ) as writer:
+        sweep_stale_screen_dirs(workspace_root, epoch_id)
+        results: list[CandidateScreenResult] = []
+        for index, candidate in enumerate(candidates):
+            if not panel.entries:
+                results.append(_no_signal_result("empty screen panel"))
+                continue
+            try:
+                results.append(
+                    await _screen_one_candidate(
+                        index=index,
+                        candidate=candidate,
+                        adapter=adapter,
+                        parent_gen=parent_gen,
+                        panel=panel,
+                        weights=weights,
+                        config=config,
+                        workspace_root=workspace_root,
+                        epoch_id=epoch_id,
+                        round_index=round_index,
+                        disable_drift=disable_drift,
+                        judge_only=judge_only,
+                    )
                 )
-            )
-        except Exception as exc:  # noqa: BLE001 — a screen error must never veto or fail
-            log.debug("candidate screen: candidate %d not screened (%s)", index, exc)
-            results.append(_no_signal_result("screen error (no signal)"))
-    return results
+            except Exception as exc:  # noqa: BLE001 — a screen error must never veto or fail
+                log.debug("candidate screen: candidate %d not screened (%s)", index, exc)
+                results.append(_no_signal_result("screen error (no signal)"))
+        return results
 
 
 def _no_signal_result(reason: str) -> CandidateScreenResult:

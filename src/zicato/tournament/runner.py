@@ -36,10 +36,12 @@ from zicato.core import (
 )
 from zicato.epoch.genstore import EphemeralCheckout
 from zicato.logging_stream import current_log_stream_path
+from zicato.runtime.lock import WorkspaceLock
 
 # The HOST-WIDE worker permit (RUNTIME.md §5.5.7): the cross-orchestrator
 # bound ``config.parallelism``'s per-process semaphore cannot provide.
 from zicato.runtime.spawn_permit import OPEN_PERMIT, WorkerPermit, acquire_worker_permit
+from zicato.runtime.writer import workspace_writer
 from zicato.tournament.gate import GateOutcome, evaluate_gate
 
 # Governance helpers used by the scheduling boundary.
@@ -126,12 +128,128 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _telemetry_helpers,
     _terminate_worker,
     _weights_spec,
+    _worker_processes_gone,
     adapter_uses_integration,
     adapter_worker_spec,
     scrubbed_worker_env,
 )
+from zicato.util.async_tasks import finish_task as _finish_worker_task
 
 log = logging.getLogger("zicato.tournament.runner")
+
+
+@dataclass
+class _WorkerResources:
+    """Own one subprocess, its permit, and files until group exit is confirmed."""
+
+    workspace_root: Path
+    run_id: str
+    args_path: Path
+    result_path: Path
+    permit: WorkerPermit = field(default_factory=lambda: OPEN_PERMIT)
+    checkout: EphemeralCheckout | None = None
+    proc: asyncio.subprocess.Process | None = None
+    start_time: float | None = None
+    pgid: int | None = None
+    released: bool = False
+
+    def processes_gone(self) -> bool:
+        return self.proc is None or (
+            self.pgid is not None
+            and _worker_processes_gone(
+                self.proc, expected_start_time=self.start_time, pgid=self.pgid
+            )
+        )
+
+    def release(self) -> bool:
+        if self.released:
+            return False
+        self.released = True
+        self.permit.release()
+        _discard_run_snapshot(self.checkout)
+        for path in (self.args_path, self.result_path):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        rt = _runtime_state()
+        if rt is not None:
+            for cleanup in (rt[0].clear_worker_kill_request, rt[0].remove_active_run):
+                try:
+                    cleanup(self.workspace_root, self.run_id)
+                except Exception as exc:  # noqa: BLE001 — independent best-effort cleanup
+                    log.debug("run %s: resource cleanup failed: %s", self.run_id, exc)
+        return True
+
+
+_retained_worker_resources: dict[tuple[Path, int, float | None], _WorkerResources] = {}
+
+
+async def _stop_worker(resources: _WorkerResources, supervisor_wait_s: float) -> bool:
+    """Delegate termination, then use bounded fallback if the group remains alive."""
+    if resources.processes_gone():
+        return True
+    rt = _runtime_state()
+    if rt is not None:
+        try:
+            rt[0].request_worker_kill(resources.workspace_root, resources.run_id)
+        except Exception as exc:  # noqa: BLE001 — fallback still owns termination
+            log.debug("run %s: kill-request write failed: %s", resources.run_id, exc)
+    deadline = time.monotonic() + supervisor_wait_s
+    while time.monotonic() < deadline:
+        if resources.processes_gone():
+            return True
+        await asyncio.sleep(min(0.05, max(0, deadline - time.monotonic())))
+    assert resources.proc is not None
+    if resources.start_time is None or resources.pgid is None:
+        return False
+    return await _terminate_worker(
+        resources.proc, expected_start_time=resources.start_time, pgid=resources.pgid
+    )
+
+
+async def retry_worker_cleanup(workspace_root: Path) -> int:
+    """Retry retained ownership once per worker; return the number fully released."""
+    released = 0
+    workspace_root = workspace_root.resolve()
+    for key, resources in list(_retained_worker_resources.items()):
+        if key[0] != workspace_root:
+            continue
+        terminated, cancelled = await _finish_worker_task(
+            asyncio.create_task(_stop_worker(resources, supervisor_wait_s=0))
+        )
+        if terminated:
+            released += resources.release()
+            _retained_worker_resources.pop(key, None)
+        if cancelled is not None:
+            raise cancelled
+    return released
+
+
+async def drain_worker_cleanup(workspace_root: Path) -> None:
+    """Wait on the owning loop until every retained worker has stopped.
+
+    A bounded termination attempt can fail to confirm exit. The invocation
+    keeps its writer and services while retries remain necessary. Cancellation
+    propagates only after the retained owners have all been released.
+    """
+    workspace_root = workspace_root.resolve()
+    cancelled: asyncio.CancelledError | None = None
+    while any(key[0] == workspace_root for key in _retained_worker_resources):
+        try:
+            await retry_worker_cleanup(workspace_root)
+        except asyncio.CancelledError as exc:
+            cancelled = cancelled or exc
+        except Exception as exc:  # noqa: BLE001 — ownership remains retained for retry
+            log.debug("worker cleanup remains unconfirmed for %s: %s", workspace_root, exc)
+        if any(key[0] == workspace_root for key in _retained_worker_resources):
+            try:
+                await asyncio.sleep(0.1)
+            except asyncio.CancelledError as exc:
+                cancelled = cancelled or exc
+    if cancelled is not None:
+        raise cancelled
+
 
 #: Minimum interval (seconds) between successive ``last_progress`` bumps
 #: for a single in-flight run. The per-run sink is wrapped so every
@@ -348,10 +466,9 @@ async def _run_single(
        SUPERVISOR SIGKILLed a wedged worker), is ALSO an aborted run —
        not a crash. The tournament continues to the next entry either
        way.
-    7. Always clean up: the ephemeral snapshot working copy (even when
-       the run aborted or crashed), the temp args/result files, and — if
-       the worker was killed and could not remove its own ``active_runs``
-       file — that too.
+    7. Release the permit, checkout, and protocol files after worker-group exit.
+       Cancellation waits through bounded teardown. Unconfirmed termination
+       retains ownership for :func:`retry_worker_cleanup`.
     """
     sink_module, reducer_module = _telemetry_helpers()
     sink_path = sink_module.make_run_sink_path(
@@ -401,14 +518,9 @@ async def _run_single(
     os.close(args_fd)
     args_path = Path(args_name)
     result_path = Path(args_name[: -len(".json")] + ".result.json")
-    # The per-run ephemeral snapshot checkout; assigned once the store
-    # checkout below succeeds, discarded in this function's ``finally``.
-    checkout: EphemeralCheckout | None = None
-
-    # The HOST-WIDE worker permit (RUNTIME.md §5.5.7). Bound to the
-    # always-admitting permit up front so the ``finally`` can release
-    # unconditionally even if the acquire itself somehow raised.
-    permit: WorkerPermit = OPEN_PERMIT
+    resources = _WorkerResources(workspace_root, run_id, args_path, result_path)
+    teardown_task: asyncio.Task[bool] | None = None
+    cancelled: asyncio.CancelledError | None = None
 
     # The run's final LossProfile — assigned on every exit path (clean
     # finish OR abort) so the ``finally`` block can fold the loss summary
@@ -426,7 +538,7 @@ async def _run_single(
         # I/O worth bounding). AUTO by default and generous enough that a
         # single ordinary run never waits; degrades OPEN on any
         # infrastructure failure, so it can never block a run.
-        permit = await acquire_worker_permit(
+        resources.permit = await acquire_worker_permit(
             config.host_worker_permits,
             config.worker_permit_dir,
         )
@@ -440,13 +552,14 @@ async def _run_single(
             # runtime write the agent makes near its own code lands here
             # and is discarded with the checkout — the canonical tree
             # stays code-only and small.
-            checkout = _checkout_run_snapshot(
+            resources.checkout = _checkout_run_snapshot(
                 workspace_root=workspace_root,
                 epoch_id=epoch_id,
                 generation=generation,
                 run_id=run_id,
             )
-            ephemeral_snapshot, scratch_dir = checkout.working_dir, checkout.scratch_dir
+            ephemeral_snapshot = resources.checkout.working_dir
+            scratch_dir = resources.checkout.scratch_dir
             # The unified ``models`` block (runtime infra, NOT the contract)
             # is the source of truth for how each role reaches a provider in
             # the worker. For a configured role we pass its secret-free spec
@@ -496,6 +609,8 @@ async def _run_single(
             if match_id:
                 harmonograf_metadata["zicato.match_id"] = match_id
             adapter_spec = adapter_worker_spec(adapter)
+            from zicato.runtime.lock import pid_start_time  # noqa: PLC0415
+
             args_payload = {
                 "workspace_root": str(workspace_root),
                 "epoch_id": epoch_id,
@@ -524,6 +639,8 @@ async def _run_single(
                 # active_runs record the supervisor polices, so the worker must
                 # not re-derive it from its own view of the entry (issue #250).
                 "run_id": run_id,
+                "producer_pid": os.getpid(),
+                "producer_start_time": pid_start_time(os.getpid()),
                 "sink_events_path": str(sink_path),
                 "loss_path": str(loss_path),
                 "result_path": str(result_path),
@@ -610,14 +727,30 @@ async def _run_single(
                     secret_env_keys=goldfive_secret_names,
                     extra_env_keys=tuple(config.worker_env_passthrough),
                 )
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-m",
-                "zicato._tournament_worker",
-                str(args_path),
-                start_new_session=True,
-                env=worker_env,
-            )
+
+            async def spawn() -> asyncio.subprocess.Process:
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable,
+                    "-m",
+                    "zicato._tournament_worker",
+                    str(args_path),
+                    start_new_session=True,
+                    env=worker_env,
+                )
+                resources.proc = proc
+                # start_new_session establishes this group even if the leader
+                # exits before getpgid can observe it.
+                resources.pgid = proc.pid
+                resources.start_time = pid_start_time(proc.pid)
+                try:
+                    resources.pgid = os.getpgid(proc.pid)
+                except (AttributeError, OSError):
+                    pass
+                return proc
+
+            proc, cancelled = await _finish_worker_task(asyncio.create_task(spawn()))
+            if cancelled is not None:
+                raise cancelled
         except (AttributeError, ImportError, OSError, TypeError, ValueError) as exc:
             log.warning("run %s could not spawn its worker subprocess: %s", run_id, exc)
             final_loss = _aborted_loss_profile(
@@ -651,32 +784,10 @@ async def _run_single(
                 run_id,
                 budget_s + _PARENT_BUDGET_GRACE_S,
             )
-            if rt is not None:
-                state_mod, _ = rt
-                try:
-                    state_mod.request_worker_kill(workspace_root, run_id)
-                except Exception as exc:  # noqa: BLE001 — request is best-effort
-                    log.debug("run %s: kill-request write failed: %s", run_id, exc)
-            # Wait for the supervisor to escalate-kill the worker. The
-            # supervisor's escalation (SIGTERM→grace→SIGKILL) is bounded, so
-            # this wait is too. If the supervisor does NOT reap the worker
-            # within the window — no supervisor attached, or it died — the
-            # parent falls back to its own last-resort escalation so the
-            # worker is never leaked. The fallback fires only AFTER the whole
-            # supervisor window elapsed with the worker still alive, so it
-            # never races a healthy supervisor over the same pid. The window
-            # (config.supervisor_kill_wait_s) is the abort-latency floor when
-            # no supervisor is attached.
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=config.supervisor_kill_wait_s)
-            except TimeoutError:
-                log.warning(
-                    "run %s: supervisor did not reap the worker within %.0fs; "
-                    "parent escalating as a last resort",
-                    run_id,
-                    config.supervisor_kill_wait_s,
-                )
-                await _terminate_worker(proc)
+            teardown_task = asyncio.create_task(
+                _stop_worker(resources, config.supervisor_kill_wait_s)
+            )
+            await asyncio.shield(teardown_task)
 
         runtime_ms = int((time.monotonic() - spawn_started) * 1000)
         result = _load_worker_result(result_path)
@@ -784,39 +895,38 @@ async def _run_single(
         _ingest_run_into_index(workspace_root, epoch_id, generation.id, entry.id)
         final_loss = loss
         return final_loss
+    except asyncio.CancelledError as exc:
+        cancelled = exc
+        raise
     finally:
-        # --- 7. Cleanup. Discard the per-run ephemeral snapshot
-        # checkout (every runtime write the agent made is inside it — it
-        # must not survive the run); remove the temp args/result files;
-        # if the worker was killed before it could remove its own
-        # active_runs file, the parent removes it here. This block runs
-        # on every exit path — clean finish, abort, or crash.
-        #
-        # The host-wide permit is released FIRST: the worker is already
-        # gone, so the next queued board unit should not wait on this
-        # run's bookkeeping. ``release()`` never raises, so it cannot mask
-        # an exception unwinding through this block.
-        permit.release()
-        _discard_run_snapshot(checkout)
-        for tmp in (args_path, result_path):
+        terminated = resources.processes_gone()
+        if not terminated:
+            if teardown_task is None:
+                teardown_task = asyncio.create_task(
+                    _stop_worker(resources, config.supervisor_kill_wait_s)
+                )
             try:
-                if tmp.exists():
-                    tmp.unlink()
-            except OSError:
-                pass
-        if rt is not None:
+                terminated, repeated_cancel = await _finish_worker_task(teardown_task)
+                cancelled = cancelled or repeated_cancel
+            except asyncio.CancelledError as exc:
+                cancelled = cancelled or exc
+            except Exception as exc:  # noqa: BLE001 — retain ownership on failed cleanup
+                log.error("run %s: worker termination failed: %s", run_id, exc)
+        if terminated:
+            resources.release()
+        else:
+            assert resources.proc is not None
+            key = (workspace_root.resolve(), resources.proc.pid, resources.start_time)
+            _retained_worker_resources[key] = resources
+            log.error(
+                "run %s: worker group termination is unconfirmed; retaining process %s, "
+                "permit, checkout, and protocol files for retry_worker_cleanup",
+                run_id,
+                resources.proc.pid,
+            )
+        if rt is not None and terminated:
             state_mod, _ = rt
-            # Clear any kill-request marker this run wrote — the worker is
-            # gone now, and a recycled run id must not inherit a stale
-            # request (the supervisor would otherwise escalate a fresh,
-            # innocent pid). Best-effort + idempotent; a no-op when no kill
-            # was ever requested for this run.
             try:
-                state_mod.clear_worker_kill_request(workspace_root, run_id)
-            except Exception as exc:  # noqa: BLE001 — cleanup is best-effort
-                log.debug("run %s: kill-request clear skipped: %s", run_id, exc)
-            try:
-                state_mod.remove_active_run(workspace_root, run_id)
                 # Fold the run's per-entry loss summary into the live
                 # active-tournament record so the dashboard renders a per-entry
                 # score the instant the run finishes — rather than leaving
@@ -827,10 +937,10 @@ async def _run_single(
                 # it is ``None`` only after an unexpected hard crash, where we
                 # fall back to the bare status transition.
                 entry_updates: dict[str, Any] = {
-                    "status": "completed",
+                    "status": "aborted" if cancelled is not None else "completed",
                     "completed_at": _now_iso_utc(),
                 }
-                if final_loss is not None:
+                if final_loss is not None and cancelled is None:
                     entry_updates["loss_summary"] = state_mod.loss_summary_from_profile(final_loss)
                     entry_updates["drift_count_snapshot"] = (
                         state_mod.drift_count_snapshot_from_profile(final_loss)
@@ -852,6 +962,8 @@ async def _run_single(
                 )
             except Exception:  # noqa: BLE001
                 pass
+        if cancelled is not None:
+            raise cancelled
 
 
 async def _gate_with_regression(
@@ -924,6 +1036,7 @@ async def run_tournament(
     force_fresh: bool = True,
     child_diff_size: dict[str, int] | None = None,
     replicates: int = 1,
+    writer: WorkspaceLock | None = None,
 ) -> TournamentResult:
     """Run a full A/B tournament. See module docstring.
 
@@ -994,184 +1107,192 @@ async def run_tournament(
     # The check happens here (and not just at config construction) so a
     # caller who hand-built a RuntimeConfig can't slip a colluding pair
     # through to the runner.
-    from zicato.core import assert_distinct_callables  # noqa: PLC0415
+    async with workspace_writer(
+        workspace_root,
+        writer=writer,
+        instance_id=config.instance_id,
+        cleanup=lambda: drain_worker_cleanup(workspace_root),
+    ) as writer:
+        from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
-    assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
+        assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
 
-    # Thread the board-level disable_drift onto each entry's context so
-    # the adapter (running in a subprocess worker) can suppress the named
-    # built-in judges. A no-op when the board has no board_meta header.
-    board = _stamp_disable_drift(board, disable_drift)
-    # Same threading for the board-level judge_only flag: the adapter
-    # selects no-steering evaluation per entry off this context key. A
-    # no-op when judge_only is False (the default), so the steering path
-    # stays byte-identical.
-    board = _stamp_judge_only(board, judge_only)
+        # Thread the board-level disable_drift onto each entry's context so
+        # the adapter (running in a subprocess worker) can suppress the named
+        # built-in judges. A no-op when the board has no board_meta header.
+        board = _stamp_disable_drift(board, disable_drift)
+        # Same threading for the board-level judge_only flag: the adapter
+        # selects no-steering evaluation per entry off this context key. A
+        # no-op when judge_only is False (the default), so the steering path
+        # stays byte-identical.
+        board = _stamp_judge_only(board, judge_only)
 
-    # A Ladder-enabled holdout must not execute as part of the train board:
-    # the query charge is persisted only after the train gate says the duel is
-    # eligible for confirmation.  Keeping the slices separate also means a
-    # train rejection never consults or charges the holdout.
-    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
+        # A Ladder-enabled holdout must not execute as part of the train board:
+        # the query charge is persisted only after the train gate says the duel is
+        # eligible for confirmation.  Keeping the slices separate also means a
+        # train rejection never consults or charges the holdout.
+        from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
 
-    split_seed = rotation_seed(weights.overfitting, epoch_id)
-    train_ids, holdout_ids = split_board(board, weights.overfitting, seed=split_seed)
-    train_id_set = set(train_ids)
-    holdout_id_set = set(holdout_ids)
-    train_board = [entry for entry in board if entry.id in train_id_set]
-    holdout_board = [entry for entry in board if entry.id in holdout_id_set]
+        split_seed = rotation_seed(weights.overfitting, epoch_id)
+        train_ids, holdout_ids = split_board(board, weights.overfitting, seed=split_seed)
+        train_id_set = set(train_ids)
+        holdout_id_set = set(holdout_ids)
+        train_board = [entry for entry in board if entry.id in train_id_set]
+        holdout_board = [entry for entry in board if entry.id in holdout_id_set]
 
-    # Best-effort tournament-state publication for the live dashboard.
-    rt = _runtime_state()
-    if rt is not None:
-        state_mod, _ = rt
-        try:
-            from zicato.runtime.state import (  # noqa: PLC0415
-                ActiveTournament,
-                ActiveTournamentEntry,
-                RunStatus,
-                TournamentPhase,
-            )
-
-            now = _now_iso_utc()
-            entries = [
-                ActiveTournamentEntry(entry_id=e.id, side=Side.PARENT, status=RunStatus.QUEUED)
-                for e in board
-            ] + [
-                ActiveTournamentEntry(entry_id=e.id, side=Side.CHILD, status=RunStatus.QUEUED)
-                for e in board
-            ]
-            state_mod.write_active_tournament(
-                workspace_root,
-                ActiveTournament(
-                    tournament_id=f"tour-{parent_gen.id}-vs-{child_gen.id}-{now}",
-                    parent_generation_id=parent_gen.id,
-                    child_generation_id=child_gen.id,
-                    epoch_id=epoch_id,
-                    started_at=now,
-                    entries=entries,
-                    phase=TournamentPhase.RUNNING,
-                    round_index=round_index,
-                    total_rounds=total_rounds,
-                ),
-            )
-        except Exception:  # noqa: BLE001
-            pass
-
-    async def run_board_slice(
-        entries: list[BoardEntry],
-    ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
-        """Evaluate one board slice with the full runner's replicate policy."""
-        replicate_count = max(1, replicates)
-        replicate_runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
-        for replicate_index in range(replicate_count):
-            run_parent, run_child = await _run_board_units_full(
-                adapter=adapter,
-                parent_gen=parent_gen,
-                child_gen=child_gen,
-                board=entries,
-                weights=weights,
-                config=config,
-                workspace_root=workspace_root,
-                epoch_id=epoch_id,
-                replicate_index=replicate_index,
-                force_fresh=force_fresh,
-                parent_force_fresh=champion_force_fresh,
-            )
-            replicate_runs.append((run_parent, run_child))
-        if replicate_count == 1:
-            return replicate_runs[0]
-        return (
-            _average_losses([run[0] for run in replicate_runs]),
-            _average_losses([run[1] for run in replicate_runs]),
-        )
-
-    holdout_parent_losses: dict[str, LossProfile] = {}
-    holdout_child_losses: dict[str, LossProfile] = {}
-    holdout_parent_agg: dict[str, Any] | None = None
-    holdout_child_agg: dict[str, Any] | None = None
-    holdout_block: dict[str, Any] | None = None
-    try:
-        # Train units execute first.  Only a train promotion can cross the
-        # reservation boundary and schedule the holdout slice.
-        parent_losses, child_losses = await run_board_slice(train_board)
-        parent_agg = aggregate_generation_score(list(parent_losses.values()), weights)
-        child_agg = aggregate_generation_score(
-            list(child_losses.values()), weights, diff_size=child_diff_size
-        )
-        train_outcome = await _gate_with_regression(
-            parent_agg=parent_agg,
-            child_agg=child_agg,
-            child_snapshot_root=child_gen.snapshot_root,
-            weights=weights,
-        )
-        outcome = train_outcome
-
-        if train_outcome.decision == "promoted" and holdout_board:
-            reservation = None
-            ladder_cfg = weights.overfitting.ladder
-            if ladder_cfg.enabled:
-                ladder_state, reservation = _reserve_ladder_query(
-                    workspace_root, epoch_id, ladder_cfg
-                )
-                if reservation is None:
-                    outcome, holdout_block = _ladder_exhausted_outcome(
-                        train_outcome=train_outcome,
-                        train_child_agg=child_agg,
-                        state=ladder_state,
-                        weights=weights,
-                    )
-
-            if not ladder_cfg.enabled or reservation is not None:
-                holdout_parent_losses, holdout_child_losses = await run_board_slice(holdout_board)
-                holdout_parent_agg = aggregate_generation_score(
-                    list(holdout_parent_losses.values()), weights
-                )
-                holdout_child_agg = aggregate_generation_score(
-                    list(holdout_child_losses.values()),
-                    weights,
-                    diff_size=child_diff_size,
-                )
-                outcome, holdout_block = _ladder_mediated_outcome(
-                    train_outcome=train_outcome,
-                    parent_agg=parent_agg,
-                    child_agg=child_agg,
-                    holdout_parent_agg=holdout_parent_agg,
-                    holdout_child_agg=holdout_child_agg,
-                    weights=weights,
-                    workspace_root=workspace_root,
-                    epoch_id=epoch_id,
-                    reservation=reservation,
-                )
-    finally:
+        # Best-effort tournament-state publication for the live dashboard.
+        rt = _runtime_state()
         if rt is not None:
             state_mod, _ = rt
             try:
-                state_mod.clear_active_tournament(workspace_root)
+                from zicato.runtime.state import (  # noqa: PLC0415
+                    ActiveTournament,
+                    ActiveTournamentEntry,
+                    RunStatus,
+                    TournamentPhase,
+                )
+
+                now = _now_iso_utc()
+                entries = [
+                    ActiveTournamentEntry(entry_id=e.id, side=Side.PARENT, status=RunStatus.QUEUED)
+                    for e in board
+                ] + [
+                    ActiveTournamentEntry(entry_id=e.id, side=Side.CHILD, status=RunStatus.QUEUED)
+                    for e in board
+                ]
+                state_mod.write_active_tournament(
+                    workspace_root,
+                    ActiveTournament(
+                        tournament_id=f"tour-{parent_gen.id}-vs-{child_gen.id}-{now}",
+                        parent_generation_id=parent_gen.id,
+                        child_generation_id=child_gen.id,
+                        epoch_id=epoch_id,
+                        started_at=now,
+                        entries=entries,
+                        phase=TournamentPhase.RUNNING,
+                        round_index=round_index,
+                        total_rounds=total_rounds,
+                    ),
+                )
             except Exception:  # noqa: BLE001
                 pass
 
-    per_entry_losses: dict[str, tuple[LossProfile, LossProfile]] = {}
-    all_parent_losses = {**parent_losses, **holdout_parent_losses}
-    all_child_losses = {**child_losses, **holdout_child_losses}
-    for entry_id, parent_loss in all_parent_losses.items():
-        child_loss = all_child_losses.get(entry_id)
-        if child_loss is not None:
-            per_entry_losses[entry_id] = (parent_loss, child_loss)
+        async def run_board_slice(
+            entries: list[BoardEntry],
+        ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
+            """Evaluate one board slice with the full runner's replicate policy."""
+            replicate_count = max(1, replicates)
+            replicate_runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
+            for replicate_index in range(replicate_count):
+                run_parent, run_child = await _run_board_units_full(
+                    adapter=adapter,
+                    parent_gen=parent_gen,
+                    child_gen=child_gen,
+                    board=entries,
+                    weights=weights,
+                    config=config,
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    replicate_index=replicate_index,
+                    force_fresh=force_fresh,
+                    parent_force_fresh=champion_force_fresh,
+                )
+                replicate_runs.append((run_parent, run_child))
+            if replicate_count == 1:
+                return replicate_runs[0]
+            return (
+                _average_losses([run[0] for run in replicate_runs]),
+                _average_losses([run[1] for run in replicate_runs]),
+            )
 
-    return TournamentResult(
-        parent_generation_id=parent_gen.id,
-        child_generation_id=child_gen.id,
-        parent_agg=parent_agg,
-        child_agg=child_agg,
-        outcome=outcome,
-        per_entry_losses=per_entry_losses,
-        champion_eval_mode="full",
-        holdout=holdout_block,
-        holdout_child_scalar=(
-            None if holdout_child_agg is None else float(holdout_child_agg["scalar"])
-        ),
-    )
+        holdout_parent_losses: dict[str, LossProfile] = {}
+        holdout_child_losses: dict[str, LossProfile] = {}
+        holdout_parent_agg: dict[str, Any] | None = None
+        holdout_child_agg: dict[str, Any] | None = None
+        holdout_block: dict[str, Any] | None = None
+        try:
+            # Train units execute first.  Only a train promotion can cross the
+            # reservation boundary and schedule the holdout slice.
+            parent_losses, child_losses = await run_board_slice(train_board)
+            parent_agg = aggregate_generation_score(list(parent_losses.values()), weights)
+            child_agg = aggregate_generation_score(
+                list(child_losses.values()), weights, diff_size=child_diff_size
+            )
+            train_outcome = await _gate_with_regression(
+                parent_agg=parent_agg,
+                child_agg=child_agg,
+                child_snapshot_root=child_gen.snapshot_root,
+                weights=weights,
+            )
+            outcome = train_outcome
+
+            if train_outcome.decision == "promoted" and holdout_board:
+                reservation = None
+                ladder_cfg = weights.overfitting.ladder
+                if ladder_cfg.enabled:
+                    ladder_state, reservation = _reserve_ladder_query(
+                        workspace_root, epoch_id, ladder_cfg
+                    )
+                    if reservation is None:
+                        outcome, holdout_block = _ladder_exhausted_outcome(
+                            train_outcome=train_outcome,
+                            train_child_agg=child_agg,
+                            state=ladder_state,
+                            weights=weights,
+                        )
+
+                if not ladder_cfg.enabled or reservation is not None:
+                    holdout_parent_losses, holdout_child_losses = await run_board_slice(
+                        holdout_board
+                    )
+                    holdout_parent_agg = aggregate_generation_score(
+                        list(holdout_parent_losses.values()), weights
+                    )
+                    holdout_child_agg = aggregate_generation_score(
+                        list(holdout_child_losses.values()),
+                        weights,
+                        diff_size=child_diff_size,
+                    )
+                    outcome, holdout_block = _ladder_mediated_outcome(
+                        train_outcome=train_outcome,
+                        parent_agg=parent_agg,
+                        child_agg=child_agg,
+                        holdout_parent_agg=holdout_parent_agg,
+                        holdout_child_agg=holdout_child_agg,
+                        weights=weights,
+                        workspace_root=workspace_root,
+                        epoch_id=epoch_id,
+                        reservation=reservation,
+                    )
+        finally:
+            if rt is not None:
+                state_mod, _ = rt
+                try:
+                    state_mod.clear_active_tournament(workspace_root)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        per_entry_losses: dict[str, tuple[LossProfile, LossProfile]] = {}
+        all_parent_losses = {**parent_losses, **holdout_parent_losses}
+        all_child_losses = {**child_losses, **holdout_child_losses}
+        for entry_id, parent_loss in all_parent_losses.items():
+            child_loss = all_child_losses.get(entry_id)
+            if child_loss is not None:
+                per_entry_losses[entry_id] = (parent_loss, child_loss)
+
+        return TournamentResult(
+            parent_generation_id=parent_gen.id,
+            child_generation_id=child_gen.id,
+            parent_agg=parent_agg,
+            child_agg=child_agg,
+            outcome=outcome,
+            per_entry_losses=per_entry_losses,
+            champion_eval_mode="full",
+            holdout=holdout_block,
+            holdout_child_scalar=(
+                None if holdout_child_agg is None else float(holdout_child_agg["scalar"])
+            ),
+        )
 
 
 async def run_fast_mode(
@@ -1189,6 +1310,7 @@ async def run_fast_mode(
     round_index: int = 0,
     total_rounds: int = 0,
     replicates: int = 1,
+    writer: WorkspaceLock | None = None,
 ) -> TournamentResult:
     """Inline keep/discard against a historical aggregate.
 
@@ -1261,201 +1383,209 @@ async def run_fast_mode(
     the cached aggregate so the running partial table is meaningful
     from the first frame.
     """
-    from zicato.core import assert_distinct_callables  # noqa: PLC0415
+    async with workspace_writer(
+        workspace_root,
+        writer=writer,
+        instance_id=config.instance_id,
+        cleanup=lambda: drain_worker_cleanup(workspace_root),
+    ) as writer:
+        from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
-    assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
+        assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
 
-    # The champion side stays ONE frozen cached aggregate no matter how high
-    # ``replicates`` goes, so replicating here buys a replicated challenger
-    # against an unreplicated champion. Warn explicitly rather than letting
-    # an operator infer a symmetric noise reduction from the contract.
-    if replicates > 1:
-        log.warning(
-            "fast-mode duel: replicating the CHALLENGER board %d× (replicates=%d), "
-            "but the champion side is a single frozen cached aggregate — the noise "
-            "reduction is one-sided. Use --mode full for independent draws on both sides.",
-            replicates,
-            replicates,
-        )
-
-    # Same board-level disable_drift / judge_only threading as the full
-    # A/B path.
-    board = _stamp_disable_drift(board, disable_drift)
-    board = _stamp_judge_only(board, judge_only)
-
-    # Best-effort tournament-state publication for the live dashboard.
-    # Fast mode pre-fills both sides: the challenger rows are queued
-    # (they progress to running/completed via _run_single's existing
-    # update_tournament_entry calls), and the champion rows are stamped
-    # "cached" with the per-entry scalar already known from the cached
-    # aggregate. The dashboard hall renders the head-to-head delta the
-    # instant each challenger run settles, rather than staying blank
-    # until round end.
-    rt = _runtime_state()
-    parent_gen_id = str(parent_historical_agg.get("generation_id", ""))
-    if rt is not None:
-        state_mod, _ = rt
-        try:
-            from zicato.runtime.state import (  # noqa: PLC0415
-                ActiveTournament,
-                ActiveTournamentEntry,
-                RunStatus,
-                TournamentPhase,
+        # The champion side stays ONE frozen cached aggregate no matter how high
+        # ``replicates`` goes, so replicating here buys a replicated challenger
+        # against an unreplicated champion. Warn explicitly rather than letting
+        # an operator infer a symmetric noise reduction from the contract.
+        if replicates > 1:
+            log.warning(
+                "fast-mode duel: replicating the CHALLENGER board %d× (replicates=%d), "
+                "but the champion side is a single frozen cached aggregate — the noise "
+                "reduction is one-sided. Use --mode full for independent draws on both sides.",
+                replicates,
+                replicates,
             )
 
-            now = _now_iso_utc()
-            cached_per_entry = parent_historical_agg.get("per_entry") or {}
-            child_entries = [
-                ActiveTournamentEntry(entry_id=e.id, side=Side.CHILD, status=RunStatus.QUEUED)
-                for e in board
-            ]
-            parent_entries: list[ActiveTournamentEntry] = []
-            for e in board:
-                cached = cached_per_entry.get(e.id) if isinstance(cached_per_entry, dict) else None
-                loss_summary: dict[str, float] = {}
-                if isinstance(cached, dict):
-                    drift = cached.get("drift_loss")
-                    if isinstance(drift, int | float):
-                        loss_summary["drift_loss"] = float(drift)
-                    pf = cached.get("pass_fail")
-                    if pf is not None:
-                        loss_summary["pass_fail"] = 1.0 if pf else 0.0
-                parent_entries.append(
-                    ActiveTournamentEntry(
-                        entry_id=e.id,
-                        side=Side.PARENT,
-                        status=RunStatus.CACHED,
-                        completed_at=now,
-                        loss_summary=loss_summary,
-                    )
-                )
-            state_mod.write_active_tournament(
-                workspace_root,
-                ActiveTournament(
-                    tournament_id=f"tour-{parent_gen_id}-vs-{child_gen.id}-{now}",
-                    parent_generation_id=parent_gen_id,
-                    child_generation_id=child_gen.id,
-                    epoch_id=epoch_id,
-                    started_at=now,
-                    entries=parent_entries + child_entries,
-                    phase=TournamentPhase.RUNNING,
-                    round_index=round_index,
-                    total_rounds=total_rounds,
-                    # Seed the champion-side partial aggregate with the
-                    # cached aggregate so the running partial table is
-                    # meaningful from the first frame; the challenger
-                    # side fills in as boards settle (_IncrementalScorer).
-                    partial_champion_agg=dict(parent_historical_agg),
-                ),
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        # Same board-level disable_drift / judge_only threading as the full
+        # A/B path.
+        board = _stamp_disable_drift(board, disable_drift)
+        board = _stamp_judge_only(board, judge_only)
 
-    try:
-        # Board-unit scheduling: each board entry is one unit, and a
-        # fast-mode unit runs ONLY the challenger (child) — the
-        # champion's cached aggregate is reused. ``config.parallelism``
-        # bounds the number of board units in flight — up to
-        # ``parallelism`` run subprocesses at once (one challenger run
-        # per unit).
-        #
-        # Each replicate slot keys a distinct per-unit cache slot, so an
-        # already-evaluated replicate is reused and only missing slots run.
-        # The index is stamped onto each entry's context as run provenance
-        # for the harness under test (a seeded harness varies its noise draw
-        # by it); slot 0 is left untouched, byte-identical to before.
-        replicate_count = max(1, replicates)
-        replicate_runs: list[dict[str, LossProfile]] = []
-        if replicate_count > 1 and _overlap_replicate_slots(config, None):
-            # No budget knob is engaged, so no decision sits on the boundary
-            # between two slots and they run OVERLAPPED against ONE shared
-            # semaphore — a permit freed by a finished unit is taken by the
-            # next slot's unit instead of idling until the whole slot drains.
-            # The scheduler mints that one semaphore (this round supplies
-            # none), which is what keeps ``parallelism`` the ceiling.
-            replicate_runs = await _run_replicate_slots_fast(
-                adapter=adapter,
-                child_gen=child_gen,
-                board=board,
-                weights=weights,
-                config=config,
-                workspace_root=workspace_root,
-                epoch_id=epoch_id,
-                replicate_count=replicate_count,
-            )
-        else:
-            for replicate_index in range(replicate_count):
-                # Per-round token budget: stop scheduling FURTHER replicate
-                # slots once the budget is spent, as ``_run_replicated``
-                # does — and the reason a bound ledger
-                # keeps the slots sequential at all. Without this the spent
-                # budget makes the remaining slots' units SKIPS — synthesised
-                # worst-case budget-exceeded losses, persisted to their cache
-                # slots — which the fold then averages into entries that
-                # already measured cleanly, degrading the challenger for the
-                # rest of the epoch on units that were never attempted.
-                # Settling with the completed slots is the honest reading.
-                # Slot 0 always enters the loop (its own between-unit checks
-                # skip-record if the budget was already spent) so the return
-                # shape is intact. Inert with the knob off.
-                if replicate_index > 0 and _token_budget_spent(config):
-                    log.warning(
-                        "fast-mode round: per-round token budget reached after %d/%d "
-                        "replicate slot(s); settling with the completed replicates",
-                        replicate_index,
-                        replicate_count,
-                    )
-                    break
-                replicate_runs.append(
-                    await _run_board_units_fast(
-                        adapter=adapter,
-                        child_gen=child_gen,
-                        board=_stamp_replicate_index(board, replicate_index),
-                        weights=weights,
-                        config=config,
-                        workspace_root=workspace_root,
-                        epoch_id=epoch_id,
-                        replicate_index=replicate_index,
-                    )
-                )
-        if len(replicate_runs) == 1:
-            child_losses = replicate_runs[0]
-        else:
-            child_losses = _average_losses(replicate_runs)
-    finally:
+        # Best-effort tournament-state publication for the live dashboard.
+        # Fast mode pre-fills both sides: the challenger rows are queued
+        # (they progress to running/completed via _run_single's existing
+        # update_tournament_entry calls), and the champion rows are stamped
+        # "cached" with the per-entry scalar already known from the cached
+        # aggregate. The dashboard hall renders the head-to-head delta the
+        # instant each challenger run settles, rather than staying blank
+        # until round end.
+        rt = _runtime_state()
+        parent_gen_id = str(parent_historical_agg.get("generation_id", ""))
         if rt is not None:
             state_mod, _ = rt
             try:
-                state_mod.clear_active_tournament(workspace_root)
+                from zicato.runtime.state import (  # noqa: PLC0415
+                    ActiveTournament,
+                    ActiveTournamentEntry,
+                    RunStatus,
+                    TournamentPhase,
+                )
+
+                now = _now_iso_utc()
+                cached_per_entry = parent_historical_agg.get("per_entry") or {}
+                child_entries = [
+                    ActiveTournamentEntry(entry_id=e.id, side=Side.CHILD, status=RunStatus.QUEUED)
+                    for e in board
+                ]
+                parent_entries: list[ActiveTournamentEntry] = []
+                for e in board:
+                    cached = (
+                        cached_per_entry.get(e.id) if isinstance(cached_per_entry, dict) else None
+                    )
+                    loss_summary: dict[str, float] = {}
+                    if isinstance(cached, dict):
+                        drift = cached.get("drift_loss")
+                        if isinstance(drift, int | float):
+                            loss_summary["drift_loss"] = float(drift)
+                        pf = cached.get("pass_fail")
+                        if pf is not None:
+                            loss_summary["pass_fail"] = 1.0 if pf else 0.0
+                    parent_entries.append(
+                        ActiveTournamentEntry(
+                            entry_id=e.id,
+                            side=Side.PARENT,
+                            status=RunStatus.CACHED,
+                            completed_at=now,
+                            loss_summary=loss_summary,
+                        )
+                    )
+                state_mod.write_active_tournament(
+                    workspace_root,
+                    ActiveTournament(
+                        tournament_id=f"tour-{parent_gen_id}-vs-{child_gen.id}-{now}",
+                        parent_generation_id=parent_gen_id,
+                        child_generation_id=child_gen.id,
+                        epoch_id=epoch_id,
+                        started_at=now,
+                        entries=parent_entries + child_entries,
+                        phase=TournamentPhase.RUNNING,
+                        round_index=round_index,
+                        total_rounds=total_rounds,
+                        # Seed the champion-side partial aggregate with the
+                        # cached aggregate so the running partial table is
+                        # meaningful from the first frame; the challenger
+                        # side fills in as boards settle (_IncrementalScorer).
+                        partial_champion_agg=dict(parent_historical_agg),
+                    ),
+                )
             except Exception:  # noqa: BLE001
                 pass
 
-    # Fast mode compares the child against a cached whole-board historical
-    # aggregate, so it does NOT thread a holdout into the gate: a train-only
-    # child aggregate compared to a whole-board parent baseline would be an
-    # apples-to-oranges scalar and could wrongly flip a decision. The
-    # holdout-confirmation step lives on the full A/B path (the default
-    # gauntlet promotion path); fast mode consults no holdout.
-    child_agg = aggregate_generation_score(list(child_losses.values()), weights)
-    outcome = await _gate_with_regression(
-        parent_agg=parent_historical_agg,
-        child_agg=child_agg,
-        child_snapshot_root=child_gen.snapshot_root,
-        weights=weights,
-    )
+        try:
+            # Board-unit scheduling: each board entry is one unit, and a
+            # fast-mode unit runs ONLY the challenger (child) — the
+            # champion's cached aggregate is reused. ``config.parallelism``
+            # bounds the number of board units in flight — up to
+            # ``parallelism`` run subprocesses at once (one challenger run
+            # per unit).
+            #
+            # Each replicate slot keys a distinct per-unit cache slot, so an
+            # already-evaluated replicate is reused and only missing slots run.
+            # The index is stamped onto each entry's context as run provenance
+            # for the harness under test (a seeded harness varies its noise draw
+            # by it); slot 0 is left untouched, byte-identical to before.
+            replicate_count = max(1, replicates)
+            replicate_runs: list[dict[str, LossProfile]] = []
+            if replicate_count > 1 and _overlap_replicate_slots(config, None):
+                # No budget knob is engaged, so no decision sits on the boundary
+                # between two slots and they run OVERLAPPED against ONE shared
+                # semaphore — a permit freed by a finished unit is taken by the
+                # next slot's unit instead of idling until the whole slot drains.
+                # The scheduler mints that one semaphore (this round supplies
+                # none), which is what keeps ``parallelism`` the ceiling.
+                replicate_runs = await _run_replicate_slots_fast(
+                    adapter=adapter,
+                    child_gen=child_gen,
+                    board=board,
+                    weights=weights,
+                    config=config,
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    replicate_count=replicate_count,
+                )
+            else:
+                for replicate_index in range(replicate_count):
+                    # Per-round token budget: stop scheduling FURTHER replicate
+                    # slots once the budget is spent, as ``_run_replicated``
+                    # does — and the reason a bound ledger
+                    # keeps the slots sequential at all. Without this the spent
+                    # budget makes the remaining slots' units SKIPS — synthesised
+                    # worst-case budget-exceeded losses, persisted to their cache
+                    # slots — which the fold then averages into entries that
+                    # already measured cleanly, degrading the challenger for the
+                    # rest of the epoch on units that were never attempted.
+                    # Settling with the completed slots is the honest reading.
+                    # Slot 0 always enters the loop (its own between-unit checks
+                    # skip-record if the budget was already spent) so the return
+                    # shape is intact. Inert with the knob off.
+                    if replicate_index > 0 and _token_budget_spent(config):
+                        log.warning(
+                            "fast-mode round: per-round token budget reached after %d/%d "
+                            "replicate slot(s); settling with the completed replicates",
+                            replicate_index,
+                            replicate_count,
+                        )
+                        break
+                    replicate_runs.append(
+                        await _run_board_units_fast(
+                            adapter=adapter,
+                            child_gen=child_gen,
+                            board=_stamp_replicate_index(board, replicate_index),
+                            weights=weights,
+                            config=config,
+                            workspace_root=workspace_root,
+                            epoch_id=epoch_id,
+                            replicate_index=replicate_index,
+                        )
+                    )
+            if len(replicate_runs) == 1:
+                child_losses = replicate_runs[0]
+            else:
+                child_losses = _average_losses(replicate_runs)
+        finally:
+            if rt is not None:
+                state_mod, _ = rt
+                try:
+                    state_mod.clear_active_tournament(workspace_root)
+                except Exception:  # noqa: BLE001
+                    pass
 
-    # Fast mode has no parent-side run, so per_entry_losses is empty.
-    # Downstream code that wants to render per-entry deltas falls back
-    # to the child losses inside ``child_agg["per_entry"]``.
-    return TournamentResult(
-        parent_generation_id=parent_gen_id,
-        child_generation_id=child_gen.id,
-        parent_agg=parent_historical_agg,
-        child_agg=child_agg,
-        outcome=outcome,
-        per_entry_losses={},
-        champion_eval_mode="fast",
-    )
+        # Fast mode compares the child against a cached whole-board historical
+        # aggregate, so it does NOT thread a holdout into the gate: a train-only
+        # child aggregate compared to a whole-board parent baseline would be an
+        # apples-to-oranges scalar and could wrongly flip a decision. The
+        # holdout-confirmation step lives on the full A/B path (the default
+        # gauntlet promotion path); fast mode consults no holdout.
+        child_agg = aggregate_generation_score(list(child_losses.values()), weights)
+        outcome = await _gate_with_regression(
+            parent_agg=parent_historical_agg,
+            child_agg=child_agg,
+            child_snapshot_root=child_gen.snapshot_root,
+            weights=weights,
+        )
+
+        # Fast mode has no parent-side run, so per_entry_losses is empty.
+        # Downstream code that wants to render per-entry deltas falls back
+        # to the child losses inside ``child_agg["per_entry"]``.
+        return TournamentResult(
+            parent_generation_id=parent_gen_id,
+            child_generation_id=child_gen.id,
+            parent_agg=parent_historical_agg,
+            child_agg=child_agg,
+            outcome=outcome,
+            per_entry_losses={},
+            champion_eval_mode="fast",
+        )
 
 
 async def run_matchup(
@@ -1481,6 +1611,7 @@ async def run_matchup(
     unit_semaphore: asyncio.Semaphore | None = None,
     left_diff_size: dict[str, int] | None = None,
     right_diff_size: dict[str, int] | None = None,
+    writer: WorkspaceLock | None = None,
 ) -> TournamentResult:
     """Run one duel between two generations and apply the promotion gate.
 
@@ -1541,73 +1672,79 @@ async def run_matchup(
     matchups run ``N × parallelism`` units at once). ``None`` gives the
     matchup its own semaphore.
     """
-    from zicato.core import assert_distinct_callables  # noqa: PLC0415
+    async with workspace_writer(
+        workspace_root,
+        writer=writer,
+        instance_id=config.instance_id,
+        cleanup=lambda: drain_worker_cleanup(workspace_root),
+    ) as writer:
+        from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
-    assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
+        assert_distinct_callables(config.target_call_llm, config.evaluation_call_llm)
 
-    board = _stamp_disable_drift(board, disable_drift)
-    # Stamp the board-level judge_only flag onto each entry's
-    # context so the adapter selects no-steering evaluation per entry. A
-    # no-op when judge_only is False (the default), so the steering path
-    # stays byte-identical. (Stamped before board_subset filtering so the
-    # surviving slice carries it too.)
-    board = _stamp_judge_only(board, judge_only)
-    if board_subset is not None:
-        subset = set(board_subset)
-        board = [e for e in board if e.id in subset]
+        board = _stamp_disable_drift(board, disable_drift)
+        # Stamp the board-level judge_only flag onto each entry's
+        # context so the adapter selects no-steering evaluation per entry. A
+        # no-op when judge_only is False (the default), so the steering path
+        # stays byte-identical. (Stamped before board_subset filtering so the
+        # surviving slice carries it too.)
+        board = _stamp_judge_only(board, judge_only)
+        if board_subset is not None:
+            subset = set(board_subset)
+            board = [e for e in board if e.id in subset]
 
-    left_losses, right_losses, champion_eval_mode, unit_provenance = await _run_replicated(
-        adapter=adapter,
-        left_gen=left_gen,
-        right_gen=right_gen,
-        board=board,
-        weights=weights,
-        config=config,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-        replicates=replicates,
-        replicate_base=replicate_base,
-        match_id=match_id,
-        fast=fast,
-        matchup_budget_seconds=matchup_budget_seconds,
-        unit_semaphore=unit_semaphore,
-    )
+        left_losses, right_losses, champion_eval_mode, unit_provenance = await _run_replicated(
+            adapter=adapter,
+            left_gen=left_gen,
+            right_gen=right_gen,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            replicates=replicates,
+            replicate_base=replicate_base,
+            match_id=match_id,
+            fast=fast,
+            matchup_budget_seconds=matchup_budget_seconds,
+            unit_semaphore=unit_semaphore,
+        )
 
-    left_agg = aggregate_generation_score(
-        list(left_losses.values()),
-        weights,
-        diff_size=left_diff_size,
-    )
-    right_agg = aggregate_generation_score(
-        list(right_losses.values()),
-        weights,
-        diff_size=right_diff_size,
-    )
+        left_agg = aggregate_generation_score(
+            list(left_losses.values()),
+            weights,
+            diff_size=left_diff_size,
+        )
+        right_agg = aggregate_generation_score(
+            list(right_losses.values()),
+            weights,
+            diff_size=right_diff_size,
+        )
 
-    outcome = await _gate_with_regression(
-        parent_agg=left_agg,
-        child_agg=right_agg,
-        child_snapshot_root=right_gen.snapshot_root,
-        weights=weights,
-    )
+        outcome = await _gate_with_regression(
+            parent_agg=left_agg,
+            child_agg=right_agg,
+            child_snapshot_root=right_gen.snapshot_root,
+            weights=weights,
+        )
 
-    per_entry_losses: dict[str, tuple[LossProfile, LossProfile]] = {}
-    for entry_id, left_loss in left_losses.items():
-        right_loss = right_losses.get(entry_id)
-        if right_loss is not None:
-            per_entry_losses[entry_id] = (left_loss, right_loss)
+        per_entry_losses: dict[str, tuple[LossProfile, LossProfile]] = {}
+        for entry_id, left_loss in left_losses.items():
+            right_loss = right_losses.get(entry_id)
+            if right_loss is not None:
+                per_entry_losses[entry_id] = (left_loss, right_loss)
 
-    _ = (round_index, total_rounds)  # reserved for live-state publication
-    return TournamentResult(
-        parent_generation_id=left_gen.id,
-        child_generation_id=right_gen.id,
-        parent_agg=left_agg,
-        child_agg=right_agg,
-        outcome=outcome,
-        per_entry_losses=per_entry_losses,
-        champion_eval_mode=champion_eval_mode,
-        unit_provenance=unit_provenance,
-    )
+        _ = (round_index, total_rounds)  # reserved for live-state publication
+        return TournamentResult(
+            parent_generation_id=left_gen.id,
+            child_generation_id=right_gen.id,
+            parent_agg=left_agg,
+            child_agg=right_agg,
+            outcome=outcome,
+            per_entry_losses=per_entry_losses,
+            champion_eval_mode=champion_eval_mode,
+            unit_provenance=unit_provenance,
+        )
 
 
 async def confirm_crowning_holdout(
@@ -1626,6 +1763,7 @@ async def confirm_crowning_holdout(
     disable_drift: tuple[Any, ...] = (),
     judge_only: bool = False,
     fast: bool = False,
+    writer: WorkspaceLock | None = None,
 ) -> tuple[GateOutcome, dict[str, Any] | None, float | None]:
     """Ladder-mediate the holdout confirmation of a crowning duel.
 
@@ -1665,63 +1803,70 @@ async def confirm_crowning_holdout(
     confirmation is applied on the FULL path consistently, never silently
     skipped under ``--mode fast``.
     """
-    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
+    async with workspace_writer(
+        workspace_root,
+        writer=writer,
+        instance_id=config.instance_id,
+        cleanup=lambda: drain_worker_cleanup(workspace_root),
+    ) as writer:
+        from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
 
-    seed = rotation_seed(weights.overfitting, epoch_id)
-    _train_ids, holdout_ids = split_board(board, weights.overfitting, seed=seed)
-    if not holdout_ids:
-        # No holdout slice: return the train decision unchanged.
-        return train_outcome, None, None
+        seed = rotation_seed(weights.overfitting, epoch_id)
+        _train_ids, holdout_ids = split_board(board, weights.overfitting, seed=seed)
+        if not holdout_ids:
+            # No holdout slice: return the train decision unchanged.
+            return train_outcome, None, None
 
-    if train_outcome.decision != "promoted":
-        # Holdout confirmation can only veto a train promotion.  A rejected
-        # train duel therefore performs no holdout access and spends no query.
-        return train_outcome, None, None
+        if train_outcome.decision != "promoted":
+            # Holdout confirmation can only veto a train promotion.  A rejected
+            # train duel therefore performs no holdout access and spends no query.
+            return train_outcome, None, None
 
-    reservation = None
-    ladder_cfg = weights.overfitting.ladder
-    if ladder_cfg.enabled:
-        ladder_state, reservation = _reserve_ladder_query(workspace_root, epoch_id, ladder_cfg)
-        if reservation is None:
-            final, block = _ladder_exhausted_outcome(
-                train_outcome=train_outcome,
-                train_child_agg=train_child_agg,
-                state=ladder_state,
-                weights=weights,
-            )
-            return final, block, None
+        reservation = None
+        ladder_cfg = weights.overfitting.ladder
+        if ladder_cfg.enabled:
+            ladder_state, reservation = _reserve_ladder_query(workspace_root, epoch_id, ladder_cfg)
+            if reservation is None:
+                final, block = _ladder_exhausted_outcome(
+                    train_outcome=train_outcome,
+                    train_child_agg=train_child_agg,
+                    state=ladder_state,
+                    weights=weights,
+                )
+                return final, block, None
 
-    holdout_result = await run_matchup(
-        adapter=adapter,
-        left_gen=champion_gen,
-        right_gen=challenger_gen,
-        board=board,
-        weights=weights,
-        config=config,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-        board_subset=tuple(holdout_ids),
-        disable_drift=disable_drift,
-        judge_only=judge_only,
-        fast=fast,
-        match_id="holdout-confirm",
-    )
-    holdout_parent_agg = holdout_result.parent_agg
-    holdout_child_agg = holdout_result.child_agg
+        holdout_result = await run_matchup(
+            writer=writer,
+            adapter=adapter,
+            left_gen=champion_gen,
+            right_gen=challenger_gen,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            board_subset=tuple(holdout_ids),
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+            fast=fast,
+            match_id="holdout-confirm",
+        )
+        holdout_parent_agg = holdout_result.parent_agg
+        holdout_child_agg = holdout_result.child_agg
 
-    final_outcome, holdout_block = _ladder_mediated_outcome(
-        train_outcome=train_outcome,
-        parent_agg=train_parent_agg,
-        child_agg=train_child_agg,
-        holdout_parent_agg=holdout_parent_agg,
-        holdout_child_agg=holdout_child_agg,
-        weights=weights,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-        reservation=reservation,
-    )
-    holdout_child_scalar = float(holdout_child_agg["scalar"])
-    return final_outcome, holdout_block, holdout_child_scalar
+        final_outcome, holdout_block = _ladder_mediated_outcome(
+            train_outcome=train_outcome,
+            parent_agg=train_parent_agg,
+            child_agg=train_child_agg,
+            holdout_parent_agg=holdout_parent_agg,
+            holdout_child_agg=holdout_child_agg,
+            weights=weights,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            reservation=reservation,
+        )
+        holdout_child_scalar = float(holdout_child_agg["scalar"])
+        return final_outcome, holdout_block, holdout_child_scalar
 
 
 # Public surface
@@ -1731,6 +1876,8 @@ __all__ = [
     "run_tournament",
     "run_matchup",
     "confirm_crowning_holdout",
+    "retry_worker_cleanup",
+    "drain_worker_cleanup",
 ]
 
 

@@ -68,6 +68,7 @@ from zicato.core.workspace import (
     loss_profile_path,
     run_id_for_unit,
 )
+from zicato.runtime.lock import pid_start_time
 from zicato.runtime.paths import active_run_path
 from zicato.runtime.state import ActiveRun
 from zicato.tournament.runner import _run_single, run_tournament
@@ -180,6 +181,10 @@ def test_two_replicates_of_one_unit_hold_distinct_active_runs(tmp_path: Path) ->
             json.loads(path.read_text(encoding="utf-8")) for path in active_dir.glob("*.json")
         ]
         assert len(records) == 2, "concurrent replicates collapsed into one active-run slot"
+        assert {record["producer_pid"] for record in records} == {os.getpid()}
+        assert {record["producer_start_time"] for record in records} == {
+            pid_start_time(os.getpid())
+        }
         assert len({record["run_id"] for record in records}) == 2
         assert {Path(record["events_jsonl_path"]).name for record in records} == {
             "events.jsonl",
@@ -221,6 +226,8 @@ def _write_args_file(
         "target_role": {"dotted": "tests._subprocess_worker_support:target_call_llm"},
         "evaluation_role": {"dotted": "tests._subprocess_worker_support:evaluation_call_llm"},
         "run_id": run_id_for_unit(generation.id, entry.id),
+        "producer_pid": os.getpid(),
+        "producer_start_time": pid_start_time(os.getpid()),
         "sink_events_path": str(sink_path),
         "loss_path": str(loss_path),
         "result_path": str(result_path),
@@ -662,6 +669,8 @@ def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
         # parent test process's.
         assert record.pid == proc.pid
         assert record.pid != os.getpid()
+        assert record.producer_pid == os.getpid()
+        assert record.producer_start_time == pid_start_time(os.getpid())
         assert record.run_id == run_id
         assert record.entry_id == entry.id
         assert record.deadline  # deadline = started_at + budget
@@ -891,7 +900,7 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     # supervisor present, the parent waits supervisor_kill_wait_s before its
     # last-resort escalation — shrink that too so the fallback fires quickly.
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
-    monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
+    monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     started = time.monotonic()
     loss = asyncio.run(
@@ -954,7 +963,7 @@ def test_tournament_continues_after_a_budget_killed_run(
     generation = make_generation(workspace)
 
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
-    monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
+    monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     losses: dict[str, LossProfile] = {}
     for entry, adapter in (
@@ -1004,9 +1013,9 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
     fallback_fired = {"value": False}
     real_terminate = runner_mod._terminate_worker
 
-    async def _spy_terminate(proc: object) -> None:
+    async def _spy_terminate(proc: object, **identity: object) -> bool:
         fallback_fired["value"] = True
-        await real_terminate(proc)
+        return await real_terminate(proc, **identity)
 
     monkeypatch.setattr(runner_mod, "_terminate_worker", _spy_terminate)
 
@@ -1077,6 +1086,257 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
     assert fallback_fired["value"] is False
     # The kill-request marker was cleaned up on the run's finally block.
     assert not kill_request_path(workspace, run_id).exists()
+
+
+@pytest.mark.parametrize(
+    "cancel_during", ["running", "spawning", "delegation", "fallback", "unconfirmed"]
+)
+def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cancel_during: str
+) -> None:
+    """Repeated cancellation preserves the permit, record, and checkout until exit."""
+    from zicato.runtime.lock import pid_start_time
+    from zicato.runtime.paths import kill_request_path
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    generation = make_generation(workspace)
+    entry = _entry(budget_s=60)
+    run_id = f"{generation.id}--{entry.id}"
+    record_path = active_run_path(workspace, run_id)
+    kill_path = kill_request_path(workspace, run_id)
+    if cancel_during == "delegation":
+        monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", -59.0)
+    monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.05)
+
+    async def drive() -> None:
+        spawned = asyncio.Event()
+        allow_spawn_return = asyncio.Event()
+        captured: dict[str, object] = {}
+        real_create = asyncio.create_subprocess_exec
+        real_acquire = runner_mod.acquire_worker_permit
+        real_terminate = runner_mod._terminate_worker
+
+        async def cannot_confirm(*args: object, **kwargs: object) -> bool:
+            return False
+
+        if cancel_during == "unconfirmed":
+            monkeypatch.setattr(runner_mod, "_terminate_worker", cannot_confirm)
+
+        async def create(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+            proc = await real_create(*args, **kwargs)
+            captured["proc"] = proc
+            captured["start_time"] = pid_start_time(proc.pid)
+            captured["args_path"] = Path(str(args[-1]))
+            assert os.getpgid(proc.pid) == proc.pid
+            spawned.set()
+            if cancel_during == "spawning":
+                await allow_spawn_return.wait()
+            return proc
+
+        async def acquire(*args: object, **kwargs: object) -> object:
+            permit = await real_acquire(*args, **kwargs)
+            captured["permit"] = permit
+            return permit
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+        monkeypatch.setattr(runner_mod, "acquire_worker_permit", acquire)
+        task = asyncio.create_task(
+            _run_single(
+                adapter=SleepingAdapter(ignore_sigterm=cancel_during == "fallback"),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=replace(
+                    _config(
+                        workspace,
+                        supervisor_kill_wait_s=(
+                            0.05 if cancel_during in {"fallback", "unconfirmed"} else 20
+                        ),
+                    ),
+                    host_worker_permits=1,
+                ),
+                workspace_root=workspace,
+                epoch_id="e0",
+                side="parent",
+            )
+        )
+        try:
+            await asyncio.wait_for(spawned.wait(), timeout=10)
+            proc = captured["proc"]
+            args_path = captured["args_path"]
+            snapshot = Path(json.loads(args_path.read_text())["snapshot_root"])
+            deadline = time.monotonic() + 10
+            while not record_path.exists() and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+            assert record_path.exists()
+            if cancel_during == "fallback":
+                status_path = Path(f"/proc/{proc.pid}/status")
+                while time.monotonic() < deadline:
+                    ignored = next(
+                        line.split()[1]
+                        for line in status_path.read_text().splitlines()
+                        if line.startswith("SigIgn:")
+                    )
+                    if int(ignored, 16) & (1 << (signal.SIGTERM - 1)):
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    pytest.fail("worker did not install its SIGTERM handler")
+            if cancel_during == "delegation":
+                while not kill_path.exists() and time.monotonic() < deadline:
+                    await asyncio.sleep(0.01)
+                assert kill_path.exists()
+
+            task.cancel("invocation cancelled")
+            allow_spawn_return.set()
+            while not kill_path.exists() and not task.done() and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+
+            assert not task.done(), "cancellation released ownership before worker exit"
+            assert proc.returncode is None
+            assert captured["permit"].held
+            assert record_path.exists()
+            assert snapshot.exists()
+            assert args_path.exists()
+            task.cancel("repeated invocation cancellation")
+            await asyncio.sleep(0)
+            assert not task.done()
+            assert captured["permit"].held
+
+            if cancel_during not in {"fallback", "unconfirmed"}:
+                assert pid_start_time(proc.pid) == captured["start_time"]
+                assert os.getpgid(proc.pid) == proc.pid
+                os.killpg(proc.pid, signal.SIGKILL)
+            with pytest.raises(asyncio.CancelledError, match="invocation cancelled"):
+                await asyncio.wait_for(task, timeout=5)
+            if cancel_during == "unconfirmed":
+                key = (workspace.resolve(), proc.pid, captured["start_time"])
+                owner = runner_mod._retained_worker_resources[key]
+                assert owner.proc is proc
+                assert owner.permit is captured["permit"]
+                assert owner.permit.held
+                assert snapshot.exists() and args_path.exists() and record_path.exists()
+                assert await runner_mod.retry_worker_cleanup(tmp_path / "other-workspace") == 0
+                contender = asyncio.create_task(
+                    real_acquire(1, workspace.parent / "worker-permits")
+                )
+                try:
+                    with pytest.raises(TimeoutError):
+                        await asyncio.wait_for(asyncio.shield(contender), timeout=0.05)
+                finally:
+                    contender.cancel()
+                    await asyncio.gather(contender, return_exceptions=True)
+                monkeypatch.setattr(runner_mod, "_terminate_worker", real_terminate)
+                assert await runner_mod.retry_worker_cleanup(workspace) == 1
+                assert owner.released
+                assert key not in runner_mod._retained_worker_resources
+                assert await runner_mod.retry_worker_cleanup(workspace) == 0
+            assert proc.returncode is not None
+            if cancel_during == "fallback":
+                assert proc.returncode == -signal.SIGKILL
+            assert not captured["permit"].held
+            assert not record_path.exists()
+            assert not snapshot.exists()
+            assert not args_path.exists()
+            assert not kill_path.exists()
+            loss_path = runner_mod._unit_loss_path(workspace, "e0", generation.id, entry.id, 0)
+            assert not loss_path.exists()
+        finally:
+            allow_spawn_return.set()
+            proc = captured.get("proc")
+            if proc is not None and proc.returncode is None:
+                assert pid_start_time(proc.pid) == captured["start_time"]
+                assert os.getpgid(proc.pid) == proc.pid
+                os.killpg(proc.pid, signal.SIGKILL)
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            monkeypatch.setattr(runner_mod, "_terminate_worker", real_terminate)
+            await runner_mod.retry_worker_cleanup(workspace)
+
+    asyncio.run(drive())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="requires child adoption and process groups")
+def test_cancellation_reaps_a_resistant_descendant(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "tests._worker_cancellation_probe", str(tmp_path / ".zicato")],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=_worker_env(),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_invocation_cancellation_reaps_all_active_workers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from zicato.runtime.lock import pid_start_time
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    generation = make_generation(workspace)
+    captured = []
+    real_spawn = asyncio.create_subprocess_exec
+    monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.05)
+
+    async def spawn(*args: object, **kwargs: object) -> asyncio.subprocess.Process:
+        proc = await real_spawn(*args, **kwargs)
+        payload = json.loads(Path(str(args[-1])).read_text())
+        captured.append((proc, pid_start_time(proc.pid), Path(payload["snapshot_root"])))
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+
+    async def drive() -> None:
+        tasks = [
+            asyncio.create_task(
+                _run_single(
+                    adapter=SleepingAdapter(),
+                    generation=generation,
+                    entry=_entry(entry_id),
+                    weights=ScoringWeights(),
+                    config=replace(
+                        _config(workspace, supervisor_kill_wait_s=0.05), host_worker_permits=2
+                    ),
+                    workspace_root=workspace,
+                    epoch_id="e0",
+                    side="parent",
+                )
+            )
+            for entry_id in ("first", "second")
+        ]
+        try:
+            deadline = time.monotonic() + 10
+            records = workspace / "runtime" / "active_runs"
+            while len(list(records.glob("*.json"))) != 2 and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+            assert len(captured) == 2 and len(list(records.glob("*.json"))) == 2
+            for task in tasks:
+                task.cancel("invocation shutdown")
+            results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 5)
+            assert all(isinstance(result, asyncio.CancelledError) for result in results)
+            assert all(proc.returncode is not None for proc, _, _ in captured)
+            assert all(not snapshot.exists() for _, _, snapshot in captured)
+            assert not list(records.glob("*.json"))
+            assert not runner_mod._retained_worker_resources
+        finally:
+            for proc, start_time, _ in captured:
+                if proc.returncode is None:
+                    assert pid_start_time(proc.pid) == start_time
+                    assert os.getpgid(proc.pid) == proc.pid
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    await asyncio.wait_for(proc.wait(), 5)
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await runner_mod.retry_worker_cleanup(workspace)
+
+    asyncio.run(drive())
 
 
 # ---------------------------------------------------------------------------
@@ -1162,7 +1422,7 @@ def test_parent_escalates_to_sigkill_when_worker_ignores_sigterm(
     entry = _entry(budget_s=1)
 
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
-    monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
+    monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     started = time.monotonic()
     loss = asyncio.run(

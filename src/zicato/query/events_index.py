@@ -447,6 +447,8 @@ def find_proposal_episode_log(
     it the whole-generation directory is preferred and the lowest-numbered
     slot answers for a slate, so a caller that knows only the generation
     still reaches an episode.
+    Repeated attempts retain separate logs; the most recently written valid
+    attempt answers for its candidate or slot.
 
     A generation id is unique workspace-wide, so an ``epoch_id`` that does not
     hold the generation falls back to the epoch that does. The returned path
@@ -468,9 +470,16 @@ def find_proposal_episode_log(
                 layout.proposal_episode_dir(candidate_epoch, generation_id, slot_index)
             )
         for directory in directories:
-            log = directory / "episode.jsonl"
-            if log.exists() and is_episode_log(log):
-                return log
+            attempts: list[tuple[int, Path]] = []
+            for path in (directory / "attempts").glob("*/episode.jsonl"):
+                try:
+                    attempts.append((path.stat().st_mtime_ns, path))
+                except OSError:
+                    continue
+            attempts.sort(reverse=True)
+            for log in [*(path for _, path in attempts), directory / "episode.jsonl"]:
+                if log.exists() and is_episode_log(log):
+                    return log
     return None
 
 

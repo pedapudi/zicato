@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from zicato.core.types import Generation, TournamentDecision
 from zicato.evolve.lifecycle_services import _now_iso
 from zicato.runtime.control_consumer import GateOverride, claim_field_gate_overrides
+from zicato.runtime.lock import WorkspaceLock
 
 if TYPE_CHECKING:
     from zicato.evolve.field_candidates import CandidateField
@@ -143,6 +144,7 @@ async def _confirm_crowning_on_holdout(
     judge_only: bool,
     fast_mode: bool,
     confirm_fn: Any,
+    writer: WorkspaceLock | None = None,
 ) -> _CrowningHoldout:
     """Confirm a field's crowning train-promote on the holdout slice.
 
@@ -196,6 +198,7 @@ async def _confirm_crowning_on_holdout(
         holdout_block,
         holdout_child_scalar,
     ) = await confirm_fn(
+        writer=writer,
         adapter=adapter,
         champion_gen=champion_gen,
         challenger_gen=generation_for(challenger_crown_id),
@@ -411,6 +414,7 @@ async def resolve_field_verdict(
         judge_only=field_round.judge_only,
         fast_mode=field_round.fast_mode,
         confirm_fn=confirm_crowning_holdout,
+        writer=field_round.prepared.writer,
     )
     promoted_id = crowning.promoted_id
     reason_override = crowning.reason_override

@@ -30,8 +30,6 @@ all, so it has no page to link and reads that same caption.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 import os
 from pathlib import Path
@@ -52,10 +50,8 @@ log = logging.getLogger("zicato.proposer.episode_export")
 #: copied elsewhere carries both.
 EXPORT_FILENAME = "episode.html"
 
-#: How long the export may take before the round stops waiting on it. The
-#: page is one pass over a log the round has already finished writing, so
-#: a run this long means the binary is wedged rather than busy, and the
-#: round stops waiting.
+#: Export execution deadline. After expiry, cleanup retains ownership until
+#: the direct child is reaped and its process group has no live members.
 EXPORT_TIMEOUT_S = 30.0
 
 
@@ -88,29 +84,22 @@ async def write_episode_export(
     """
     directory = Path(episode_dir)
     command = export_command(binary, directory)
+    from zicato.runtime.process import run_process  # noqa: PLC0415
+
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        result = await run_process(command, timeout_s=EXPORT_TIMEOUT_S)
     except OSError as exc:
         log.debug("episode export could not start %s: %s", command[0], exc)
         return None
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=EXPORT_TIMEOUT_S)
     except TimeoutError:
-        with contextlib.suppress(OSError, ProcessLookupError):
-            process.kill()
-        with contextlib.suppress(Exception):  # noqa: BLE001 - the page is best effort
-            await process.wait()
         log.debug("episode export for %s outlived %ss", directory, EXPORT_TIMEOUT_S)
         return None
-    if process.returncode != 0 or not stdout:
+    stdout, stderr = result.stdout or b"", result.stderr or b""
+    if result.returncode != 0 or not stdout:
         log.debug(
             "episode export for %s exited %s: %s",
             directory,
-            process.returncode,
+            result.returncode,
             stderr.decode("utf-8", "replace").strip(),
         )
         return None

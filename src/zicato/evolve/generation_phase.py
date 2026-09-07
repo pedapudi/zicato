@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from zicato.runtime.lock import WorkspaceLock
 from zicato.workspace import WorkspaceLayout, generation_ids
 from zicato.workspace import epochs as workspace_epochs
 
@@ -55,6 +56,7 @@ class PreparedRound:
     screen_candidates: Any
     recombine_pair: Any
     custom_judge_names: frozenset[str]
+    writer: WorkspaceLock | None = None
 
 
 @dataclass(frozen=True, slots=True)

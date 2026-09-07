@@ -277,6 +277,7 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(runner_mod, "_ingest_run_into_index", lambda *a, **k: None)
 
     class _Proc:
+        pid = -1
         returncode = 0
 
         async def wait(self) -> int:
@@ -286,6 +287,7 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
         return _Proc()
 
     monkeypatch.setattr(runner_mod.asyncio, "create_subprocess_exec", fake_spawn)
+    monkeypatch.setattr(runner_mod, "_worker_processes_gone", lambda *args, **kwargs: True)
     # The worker result file is read via _load_worker_result; point it at
     # the loss.json we pre-wrote.
     monkeypatch.setattr(

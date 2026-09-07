@@ -113,6 +113,11 @@ class WorkspaceLayout:
         return self.runtime_dir / "lock.json"
 
     @property
+    def lock_guard(self) -> Path:
+        """The persistent guard inode for exclusive workspace writers."""
+        return self.runtime_dir / "lock.guard"
+
+    @property
     def heartbeat(self) -> Path:
         """The orchestrator's liveness beat (``runtime/heartbeat.json``)."""
         return self.runtime_dir / "heartbeat.json"

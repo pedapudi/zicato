@@ -36,10 +36,10 @@ dependencies = [
     # It builds the execution-contract document, launches the `foe` binary,
     # and answers the host protocol. Pinned to one commit because Foe
     # publishes no release yet and its interfaces are unstable; the binary a
-    # workspace configures must be built from the same commit, which
-    # `FoeProposerAgent` asserts through the package's own compatibility
-    # check. Bump the rev here and in [tool.uv.sources] together.
-    "foe @ git+https://github.com/pedapudi/foe.git@84a97b9603383fb38aec8dd4d6b9e88df0ed2a36#subdirectory=python",
+    # workspace configures should be built from the same commit. Runtime
+    # compatibility checks validate config, log, and protocol versions;
+    # they do not compare source revisions. Bump both source references together.
+    "foe @ git+https://github.com/pedapudi/foe.git@393df34e4a56fca8a16e73b6f9da153644af53f2#subdirectory=python",
 ]
 
 [project.optional-dependencies]
@@ -475,4 +475,4 @@ harmonograf-server = { git = "https://github.com/pedapudi/harmonograf.git", subd
 # git source pins a rev AND a subdirectory. The rev matches the direct
 # reference in [project.dependencies]; bump both together, and rebuild the
 # `foe` binary a workspace configures from the same commit.
-foe = { git = "https://github.com/pedapudi/foe.git", subdirectory = "python", rev = "84a97b9603383fb38aec8dd4d6b9e88df0ed2a36" }
+foe = { git = "https://github.com/pedapudi/foe.git", subdirectory = "python", rev = "393df34e4a56fca8a16e73b6f9da153644af53f2" }

@@ -35,6 +35,8 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
+from zicato.runtime.lock import WorkspaceLock
+from zicato.runtime.writer import workspace_writer
 
 #: Default number of A/A draws. Five draws give ten pairwise deltas — enough
 #: to see a floor without burning a round's worth of budget; operators
@@ -194,6 +196,7 @@ async def measure_noise_floor(
     judge_only: bool = False,
     raise_on_infra_abort: bool = False,
     on_draw: Callable[[int, int], None] | None = None,
+    writer: WorkspaceLock | None = None,
 ) -> NoiseFloor:
     """Duel ``generation`` against itself ``runs`` times; measure the spread.
 
@@ -226,14 +229,7 @@ async def measure_noise_floor(
     a hang. It is strictly an observability hook: it runs inside the draw loop,
     so it must be cheap and must not raise.
     """
-    from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
-    from zicato.tournament.scheduling import _run_board_units_fast  # noqa: PLC0415
-    from zicato.tournament.scoring import aggregate_generation_score  # noqa: PLC0415
-    from zicato.tournament.worker_transport import (  # noqa: PLC0415
-        _stamp_disable_drift,
-        _stamp_judge_only,
-        _stamp_replicate_index,
-    )
+    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
 
     if runs < 2:
         raise ValueError(f"noise-floor calibration needs at least 2 runs, got {runs!r}")
@@ -251,61 +247,76 @@ async def measure_noise_floor(
             '(or the "contract_preflight" run count in config.json)'
         )
 
-    board = _stamp_disable_drift(board, disable_drift)
-    board = _stamp_judge_only(board, judge_only)
-
-    scalars: list[float] = []
-    for draw in range(runs):
-        replicate_index = CALIBRATION_REPLICATE_BASE + draw
-        losses = await _run_board_units_fast(
-            adapter=adapter,
-            child_gen=generation,
-            # Stamp the replicate index onto each entry's context, as the
-            # replicated-duel path does before it calls the same
-            # runner: the cache key alone does not reach the harness, and a
-            # seeded harness derives its noise draw from the STAMPED index
-            # — without the stamp every "fresh" draw re-rolls the identical
-            # seed and a stochastic harness measures a floor of 0.0.
-            board=_stamp_replicate_index(board, replicate_index),
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            match_id=f"aa-calibration:{draw}",
-            # Distinct replicate index per draw ⇒ distinct cache slot ⇒ a
-            # fresh sample (and an idempotent re-read on a repeated audit).
-            replicate_index=replicate_index,
+    async with workspace_writer(
+        workspace_root,
+        writer=writer,
+        instance_id=config.instance_id,
+        cleanup=lambda: drain_worker_cleanup(workspace_root),
+    ) as writer:
+        from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
+        from zicato.tournament.scheduling import _run_board_units_fast  # noqa: PLC0415
+        from zicato.tournament.scoring import aggregate_generation_score  # noqa: PLC0415
+        from zicato.tournament.worker_transport import (  # noqa: PLC0415
+            _stamp_disable_drift,
+            _stamp_judge_only,
+            _stamp_replicate_index,
         )
-        # An infra abort (endpoint outage, worker crash) is not a measurement
-        # of the generation — folding its worst-case not-completed scalar into
-        # the floor would let a transient outage poison the epoch. A strict
-        # consumer (the default-on pre-flight) opts to void the whole
-        # measurement instead of persisting an outage-derived floor.
-        if raise_on_infra_abort and any(
-            is_infra_abort_cause(getattr(lp, "abort_cause", None)) for lp in losses.values()
-        ):
-            raise NoiseFloorInconclusive(
-                f"A/A noise-floor draw {draw} hit an infra abort (endpoint outage / "
-                "worker crash); the measurement is inconclusive and must not be "
-                "persisted — an outage must never disqualify a contract."
-            )
-        agg = aggregate_generation_score(list(losses.values()), weights)
-        scalars.append(float(agg.get("scalar", 0.0)))
-        if on_draw is not None:
-            # Reported AFTER the draw settles, so the count is draws COMPLETED
-            # — never draws started. The caller stamps the initial 0/K itself.
-            on_draw(draw + 1, runs)
 
-    max_abs, std = delta_spread(scalars)
-    return NoiseFloor(
-        generation_id=generation.id,
-        epoch_id=epoch_id,
-        runs=runs,
-        scalars=tuple(scalars),
-        max_abs_delta=max_abs,
-        delta_std=std,
-        measured_at=_dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat(),
-    )
+        board = _stamp_disable_drift(board, disable_drift)
+        board = _stamp_judge_only(board, judge_only)
+
+        scalars: list[float] = []
+        for draw in range(runs):
+            replicate_index = CALIBRATION_REPLICATE_BASE + draw
+            losses = await _run_board_units_fast(
+                adapter=adapter,
+                child_gen=generation,
+                # Stamp the replicate index onto each entry's context, as the
+                # replicated-duel path does before it calls the same
+                # runner: the cache key alone does not reach the harness, and a
+                # seeded harness derives its noise draw from the STAMPED index
+                # — without the stamp every "fresh" draw re-rolls the identical
+                # seed and a stochastic harness measures a floor of 0.0.
+                board=_stamp_replicate_index(board, replicate_index),
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                match_id=f"aa-calibration:{draw}",
+                # Distinct replicate index per draw ⇒ distinct cache slot ⇒ a
+                # fresh sample (and an idempotent re-read on a repeated audit).
+                replicate_index=replicate_index,
+            )
+            # An infra abort (endpoint outage, worker crash) is not a measurement
+            # of the generation — folding its worst-case not-completed scalar into
+            # the floor would let a transient outage poison the epoch. A strict
+            # consumer (the default-on pre-flight) opts to void the whole
+            # measurement instead of persisting an outage-derived floor.
+            if raise_on_infra_abort and any(
+                is_infra_abort_cause(getattr(lp, "abort_cause", None)) for lp in losses.values()
+            ):
+                raise NoiseFloorInconclusive(
+                    f"A/A noise-floor draw {draw} hit an infra abort (endpoint outage / "
+                    "worker crash); the measurement is inconclusive and must not be "
+                    "persisted — an outage must never disqualify a contract."
+                )
+            agg = aggregate_generation_score(list(losses.values()), weights)
+            scalars.append(float(agg.get("scalar", 0.0)))
+            if on_draw is not None:
+                # Reported AFTER the draw settles, so the count is draws COMPLETED
+                # — never draws started. The caller stamps the initial 0/K itself.
+                on_draw(draw + 1, runs)
+
+        max_abs, std = delta_spread(scalars)
+        return NoiseFloor(
+            generation_id=generation.id,
+            epoch_id=epoch_id,
+            runs=runs,
+            scalars=tuple(scalars),
+            max_abs_delta=max_abs,
+            delta_std=std,
+            measured_at=_dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat(),
+        )
 
 
 def recommended_promote_margin(

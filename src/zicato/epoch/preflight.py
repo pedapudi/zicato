@@ -179,6 +179,8 @@ from uuid import uuid4
 
 from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
 from zicato.core.mutation import MutationPoint, Patch
+from zicato.runtime.lock import WorkspaceLock
+from zicato.runtime.writer import workspace_writer
 from zicato.tournament.calibration import (
     DEFAULT_CALIBRATION_RUNS,
     NoiseFloor,
@@ -909,6 +911,7 @@ async def run_contract_preflight(
     degrade_mutation_id: str | None = None,
     probe_points: int | None = None,
     on_probe: Callable[[int, int], None] | None = None,
+    writer: WorkspaceLock | None = None,
 ) -> tuple[PreflightReport, NoiseFloor]:
     """Measure the contract's noise floor AND degradation signal; verdict.
 
@@ -960,215 +963,226 @@ async def run_contract_preflight(
     to a refusal under ``preflight_gate="refuse"``. All four are raised
     before any draw is spent.
     """
-    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
-    from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
-    from zicato.evolve.generation_phase import mutable_trees  # noqa: PLC0415
-    from zicato.mutation.applier import apply_patches  # noqa: PLC0415
-    from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
-    from zicato.tournament.calibration import (  # noqa: PLC0415
-        recommended_promote_margin,
-    )
-    from zicato.tournament.scheduling import _run_board_units_fast  # noqa: PLC0415
-    from zicato.tournament.scoring import aggregate_generation_score  # noqa: PLC0415
-    from zicato.tournament.worker_transport import (  # noqa: PLC0415
-        _stamp_disable_drift,
-        _stamp_judge_only,
-        _stamp_replicate_index,
-    )
+    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
 
-    # (b0) Probe SELECTION first, before a single draw is spent. Enumeration
-    # and selection are pure filesystem reads; every way they can fail is a
-    # deterministic property of the snapshot or of the operator's config, so
-    # learning about it costs nothing — whereas learning about it after (a)
-    # has burned K champion evaluations charges the operator real budget for a
-    # typo. Behaviour is otherwise identical: nothing here reads the floor.
-    points = enumerate_mutations(mutable_trees(adapter, generation.snapshot_root))
-    if not points:
-        raise ValueError(
-            f"contract pre-flight: no mutation points enumerated under "
-            f"{generation.snapshot_root}; nothing to degrade (and nothing to evolve)"
+    async with workspace_writer(
+        workspace_root,
+        writer=writer,
+        instance_id=config.instance_id,
+        cleanup=lambda: drain_worker_cleanup(workspace_root),
+    ) as writer:
+        from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
+        from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
+        from zicato.evolve.generation_phase import mutable_trees  # noqa: PLC0415
+        from zicato.mutation.applier import apply_patches  # noqa: PLC0415
+        from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
+        from zicato.tournament.calibration import (  # noqa: PLC0415
+            recommended_promote_margin,
         )
-    pinned, limit = probe_selection_bounds(
-        config, degrade_mutation_id=degrade_mutation_id, probe_points=probe_points
-    )
-    sample, probed = select_probe_points(points, limit=limit, mutation_ids=pinned)
-    if not sample:
-        raise ValueError(
-            f"contract pre-flight: all {len(points)} mutation point(s) under "
-            f"{generation.snapshot_root} degrade to byte-identical content "
-            "(palindromic spans / already-blank code regions), so no probe can "
-            "demonstrate any signal; the mutable surface needs real "
-            "content before the contract can be pre-flighted"
-        )
-    if len(sample) > PREFLIGHT_REPLICATE_SPAN:
-        # Probe j draws at PREFLIGHT_REPLICATE_BASE + j, so a sample wider than
-        # the reserved block would squat the candidate screen's range and make
-        # ITS idempotence a lie. Refuse rather than silently overlap.
-        block_end = PREFLIGHT_REPLICATE_BASE + PREFLIGHT_REPLICATE_SPAN - 1
-        raise PreflightConfigError(
-            f"contract pre-flight: a {len(sample)}-point probe sample exceeds the "
-            f"reserved replicate block of {PREFLIGHT_REPLICATE_SPAN} "
-            f"({PREFLIGHT_REPLICATE_BASE}..{block_end}); lower "
-            "runtime.preflight_probe_points (or shorten "
-            "runtime.preflight_probe_mutation_ids)"
+        from zicato.tournament.scheduling import _run_board_units_fast  # noqa: PLC0415
+        from zicato.tournament.scoring import aggregate_generation_score  # noqa: PLC0415
+        from zicato.tournament.worker_transport import (  # noqa: PLC0415
+            _stamp_disable_drift,
+            _stamp_judge_only,
+            _stamp_replicate_index,
         )
 
-    # Everything the measurement may spend is now known: K A/A draws plus one
-    # draw per selected probe, each a serial pass over the whole board. That
-    # total anchors the progress an operator reads while it runs.
-    total_units = runs + len(sample)
-    if on_probe is not None:
-        on_probe(0, total_units)
-
-    # (a) The A/A noise floor — the same measurement `zicato board audit`
-    # takes, on the same cache slots (idempotent across the two surfaces).
-    # This is where the pre-flight starts SPENDING: K champion draws.
-    floor = await measure_noise_floor(
-        adapter=adapter,
-        generation=generation,
-        board=board,
-        weights=weights,
-        config=config,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-        runs=runs,
-        disable_drift=disable_drift,
-        judge_only=judge_only,
-        # Void the whole pre-flight rather than persist an outage-derived
-        # floor: a transient endpoint outage during the epoch's first round
-        # must not poison the floor (and, under the hard gate, falsely
-        # disqualify the contract). The caller's ``best_effort`` turns the
-        # raised :class:`NoiseFloorInconclusive` into a skip + re-measure next
-        # round.
-        raise_on_infra_abort=True,
-        # The A/A draws are the pre-flight's first units, so the calibration's
-        # per-draw callback reports against the PRE-FLIGHT's total, not K.
-        on_draw=(
-            (lambda done, _runs: on_probe(done, total_units)) if on_probe is not None else None
-        ),
-    )
-
-    margin = float(getattr(weights, "promote_margin", 0.0))
-    # The bound past which more probes cannot change either verdict: a signal
-    # clearing BOTH the floor (``preflight_verdict``) and the margin
-    # (``preflight_window_verdict``) settles them, so probing on would only
-    # spend champion evaluations to refine a number nothing reads. Note it is
-    # the MARGIN and not just the floor — short-circuiting at the floor alone
-    # would let the reported signal understate the true maximum and
-    # spuriously trip the margin-above-achievable branch (issue #112).
-    settled_bound = max(float(floor.max_abs_delta), margin)
-
-    stamped_board = _stamp_judge_only(_stamp_disable_drift(board, disable_drift), judge_only)
-    champion_mean = sum(floor.scalars) / len(floor.scalars) if floor.scalars else 0.0
-
-    # (b) The scripted-perturbation duels over the sample chosen in (b0).
-    best_point = sample[0]
-    best_scalar = champion_mean
-    best_signal = -1.0
-    for ordinal, point in enumerate(sample):
-        patch = degraded_patch_for(point)
-        with tempfile.TemporaryDirectory(prefix="zicato-preflight-") as scratch:
-            degraded_root = Path(scratch) / "degraded"
-            # The applier copies the champion snapshot (code-only, run
-            # artifacts excluded) and lands the degradation atomically — the
-            # real lineage is never touched; the tree lives only inside this
-            # ``with`` block.
-            apply_patches(generation.snapshot_root, [patch], degraded_root)
-            degraded_gen = replace(generation, snapshot_root=degraded_root)
-            # One reserved slot per probe: distinct indices are distinct cache
-            # slots, so probe N never replays probe M's draw, and because the
-            # sample is deterministic a re-run is an idempotent HIT throughout.
-            replicate_index = PREFLIGHT_REPLICATE_BASE + ordinal
-            losses = await _run_board_units_fast(
-                adapter=adapter,
-                child_gen=degraded_gen,
-                # Stamped like the calibration draws: the harness derives any
-                # seeded noise from the STAMPED index, so the degraded draw is
-                # an independent sample rather than a re-roll of an A/A seed.
-                board=_stamp_replicate_index(stamped_board, replicate_index),
-                weights=weights,
-                config=config,
-                workspace_root=workspace_root,
-                epoch_id=epoch_id,
-                match_id=f"contract-preflight:degraded:{point.id}",
-                replicate_index=replicate_index,
+        # (b0) Probe SELECTION first, before a single draw is spent. Enumeration
+        # and selection are pure filesystem reads; every way they can fail is a
+        # deterministic property of the snapshot or of the operator's config, so
+        # learning about it costs nothing — whereas learning about it after (a)
+        # has burned K champion evaluations charges the operator real budget for a
+        # typo. Behaviour is otherwise identical: nothing here reads the floor.
+        points = enumerate_mutations(mutable_trees(adapter, generation.snapshot_root))
+        if not points:
+            raise ValueError(
+                f"contract pre-flight: no mutation points enumerated under "
+                f"{generation.snapshot_root}; nothing to degrade (and nothing to evolve)"
             )
-            # Same discipline as the A/A draws: a degraded-probe infra abort
-            # makes the signal un-measurable rather than zero — void the pre-flight
-            # rather than persist a verdict derived from an outage.
-            if any(
-                is_infra_abort_cause(getattr(lp, "abort_cause", None)) for lp in losses.values()
-            ):
-                raise NoiseFloorInconclusive(
-                    "contract pre-flight: the degraded-perturbation draw hit an infra "
-                    "abort (endpoint outage / worker crash); the signal "
-                    "measurement is inconclusive and must not be persisted."
-                )
-            agg = aggregate_generation_score(list(losses.values()), weights)
-            degraded_scalar = float(agg.get("scalar", 0.0))
+        pinned, limit = probe_selection_bounds(
+            config, degrade_mutation_id=degrade_mutation_id, probe_points=probe_points
+        )
+        sample, probed = select_probe_points(points, limit=limit, mutation_ids=pinned)
+        if not sample:
+            raise ValueError(
+                f"contract pre-flight: all {len(points)} mutation point(s) under "
+                f"{generation.snapshot_root} degrade to byte-identical content "
+                "(palindromic spans / already-blank code regions), so no probe can "
+                "demonstrate any signal; the mutable surface needs real "
+                "content before the contract can be pre-flighted"
+            )
+        if len(sample) > PREFLIGHT_REPLICATE_SPAN:
+            # Probe j draws at PREFLIGHT_REPLICATE_BASE + j, so a sample wider than
+            # the reserved block would squat the candidate screen's range and make
+            # ITS idempotence a lie. Refuse rather than silently overlap.
+            block_end = PREFLIGHT_REPLICATE_BASE + PREFLIGHT_REPLICATE_SPAN - 1
+            raise PreflightConfigError(
+                f"contract pre-flight: a {len(sample)}-point probe sample exceeds the "
+                f"reserved replicate block of {PREFLIGHT_REPLICATE_SPAN} "
+                f"({PREFLIGHT_REPLICATE_BASE}..{block_end}); lower "
+                "runtime.preflight_probe_points (or shorten "
+                "runtime.preflight_probe_mutation_ids)"
+            )
 
-        signal = abs(degraded_scalar - champion_mean)
+        # Everything the measurement may spend is now known: K A/A draws plus one
+        # draw per selected probe, each a serial pass over the whole board. That
+        # total anchors the progress an operator reads while it runs.
+        total_units = runs + len(sample)
         if on_probe is not None:
-            # Reported AFTER the probe's draw settles, so the count an operator
-            # reads is units COMPLETED — the A/A draws plus this probe.
-            on_probe(runs + ordinal + 1, total_units)
-        probed.append(
-            ProbedPoint(
-                mutation_id=point.id,
-                kind=str(point.kind),
-                file=str(point.file),
-                role=str(point.metadata.get("role", "")),
-                degraded_scalar=degraded_scalar,
-                signal=signal,
-            )
-        )
-        if signal > best_signal:
-            best_point, best_scalar, best_signal = point, degraded_scalar, signal
-        if best_signal > settled_bound:
-            probed.extend(
-                ProbedPoint(
-                    mutation_id=rest.id,
-                    kind=str(rest.kind),
-                    file=str(rest.file),
-                    role=str(rest.metadata.get("role", "")),
-                    skipped="verdict_settled",
-                )
-                for rest in sample[ordinal + 1 :]
-            )
-            break
+            on_probe(0, total_units)
 
-    # (c) Verdicts — signal-vs-noise, then the promote-margin window.
-    verdict, signal = preflight_verdict(floor.scalars, best_scalar, floor.max_abs_delta)
-    window_verdict, window_failure = preflight_window_verdict(floor.max_abs_delta, margin, signal)
-    # The holdout's SECOND bound, when the split is active (issue #118). Split
-    # the same way the runner's holdout duel does — same config, same rotation
-    # seed — so the entry count the note reasons about is the one the gate will
-    # actually confirm against. Prose only: it can neither raise nor lower a
-    # verdict, and an unsplit board yields None.
-    holdout_seed = rotation_seed(weights.overfitting, epoch_id)
-    _train_ids, holdout_ids = split_board(board, weights.overfitting, seed=holdout_seed)
-    holdout_note = holdout_window_note(weights, len(holdout_ids))
-    report = PreflightReport(
-        epoch_id=epoch_id,
-        generation_id=generation.id,
-        verdict=verdict,
-        noise_floor_max_abs_delta=floor.max_abs_delta,
-        noise_floor_runs=floor.runs,
-        champion_scalars=floor.scalars,
-        degraded_scalar=best_scalar,
-        signal=signal,
-        degraded_mutation_id=best_point.id,
-        degraded_mutation_kind=str(best_point.kind),
-        degraded_file=str(best_point.file),
-        measured_at=_dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat(),
-        probed_points=tuple(probed),
-        promote_margin=margin,
-        window_verdict=window_verdict,
-        window_failure=window_failure,
-        recommended_margin=(recommended_promote_margin(scalars=floor.scalars) or None),
-        holdout_note=holdout_note,
-    )
-    return report, floor
+        # (a) The A/A noise floor — the same measurement `zicato board audit`
+        # takes, on the same cache slots (idempotent across the two surfaces).
+        # This is where the pre-flight starts SPENDING: K champion draws.
+        floor = await measure_noise_floor(
+            writer=writer,
+            adapter=adapter,
+            generation=generation,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            runs=runs,
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+            # Void the whole pre-flight rather than persist an outage-derived
+            # floor: a transient endpoint outage during the epoch's first round
+            # must not poison the floor (and, under the hard gate, falsely
+            # disqualify the contract). The caller's ``best_effort`` turns the
+            # raised :class:`NoiseFloorInconclusive` into a skip + re-measure next
+            # round.
+            raise_on_infra_abort=True,
+            # The A/A draws are the pre-flight's first units, so the calibration's
+            # per-draw callback reports against the PRE-FLIGHT's total, not K.
+            on_draw=(
+                (lambda done, _runs: on_probe(done, total_units)) if on_probe is not None else None
+            ),
+        )
+
+        margin = float(getattr(weights, "promote_margin", 0.0))
+        # The bound past which more probes cannot change either verdict: a signal
+        # clearing BOTH the floor (``preflight_verdict``) and the margin
+        # (``preflight_window_verdict``) settles them, so probing on would only
+        # spend champion evaluations to refine a number nothing reads. Note it is
+        # the MARGIN and not just the floor — short-circuiting at the floor alone
+        # would let the reported signal understate the true maximum and
+        # spuriously trip the margin-above-achievable branch (issue #112).
+        settled_bound = max(float(floor.max_abs_delta), margin)
+
+        stamped_board = _stamp_judge_only(_stamp_disable_drift(board, disable_drift), judge_only)
+        champion_mean = sum(floor.scalars) / len(floor.scalars) if floor.scalars else 0.0
+
+        # (b) The scripted-perturbation duels over the sample chosen in (b0).
+        best_point = sample[0]
+        best_scalar = champion_mean
+        best_signal = -1.0
+        for ordinal, point in enumerate(sample):
+            patch = degraded_patch_for(point)
+            with tempfile.TemporaryDirectory(prefix="zicato-preflight-") as scratch:
+                degraded_root = Path(scratch) / "degraded"
+                # The applier copies the champion snapshot (code-only, run
+                # artifacts excluded) and lands the degradation atomically — the
+                # real lineage is never touched; the tree lives only inside this
+                # ``with`` block.
+                apply_patches(generation.snapshot_root, [patch], degraded_root)
+                degraded_gen = replace(generation, snapshot_root=degraded_root)
+                # One reserved slot per probe: distinct indices are distinct cache
+                # slots, so probe N never replays probe M's draw, and because the
+                # sample is deterministic a re-run is an idempotent HIT throughout.
+                replicate_index = PREFLIGHT_REPLICATE_BASE + ordinal
+                losses = await _run_board_units_fast(
+                    adapter=adapter,
+                    child_gen=degraded_gen,
+                    # Stamped like the calibration draws: the harness derives any
+                    # seeded noise from the STAMPED index, so the degraded draw is
+                    # an independent sample rather than a re-roll of an A/A seed.
+                    board=_stamp_replicate_index(stamped_board, replicate_index),
+                    weights=weights,
+                    config=config,
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    match_id=f"contract-preflight:degraded:{point.id}",
+                    replicate_index=replicate_index,
+                )
+                # Same discipline as the A/A draws: a degraded-probe infra abort
+                # makes the signal un-measurable rather than zero — void the pre-flight
+                # rather than persist a verdict derived from an outage.
+                if any(
+                    is_infra_abort_cause(getattr(lp, "abort_cause", None)) for lp in losses.values()
+                ):
+                    raise NoiseFloorInconclusive(
+                        "contract pre-flight: the degraded-perturbation draw hit an infra "
+                        "abort (endpoint outage / worker crash); the signal "
+                        "measurement is inconclusive and must not be persisted."
+                    )
+                agg = aggregate_generation_score(list(losses.values()), weights)
+                degraded_scalar = float(agg.get("scalar", 0.0))
+
+            signal = abs(degraded_scalar - champion_mean)
+            if on_probe is not None:
+                # Reported AFTER the probe's draw settles, so the count an operator
+                # reads is units COMPLETED — the A/A draws plus this probe.
+                on_probe(runs + ordinal + 1, total_units)
+            probed.append(
+                ProbedPoint(
+                    mutation_id=point.id,
+                    kind=str(point.kind),
+                    file=str(point.file),
+                    role=str(point.metadata.get("role", "")),
+                    degraded_scalar=degraded_scalar,
+                    signal=signal,
+                )
+            )
+            if signal > best_signal:
+                best_point, best_scalar, best_signal = point, degraded_scalar, signal
+            if best_signal > settled_bound:
+                probed.extend(
+                    ProbedPoint(
+                        mutation_id=rest.id,
+                        kind=str(rest.kind),
+                        file=str(rest.file),
+                        role=str(rest.metadata.get("role", "")),
+                        skipped="verdict_settled",
+                    )
+                    for rest in sample[ordinal + 1 :]
+                )
+                break
+
+        # (c) Verdicts — signal-vs-noise, then the promote-margin window.
+        verdict, signal = preflight_verdict(floor.scalars, best_scalar, floor.max_abs_delta)
+        window_verdict, window_failure = preflight_window_verdict(
+            floor.max_abs_delta, margin, signal
+        )
+        # The holdout's SECOND bound, when the split is active (issue #118). Split
+        # the same way the runner's holdout duel does — same config, same rotation
+        # seed — so the entry count the note reasons about is the one the gate will
+        # actually confirm against. Prose only: it can neither raise nor lower a
+        # verdict, and an unsplit board yields None.
+        holdout_seed = rotation_seed(weights.overfitting, epoch_id)
+        _train_ids, holdout_ids = split_board(board, weights.overfitting, seed=holdout_seed)
+        holdout_note = holdout_window_note(weights, len(holdout_ids))
+        report = PreflightReport(
+            epoch_id=epoch_id,
+            generation_id=generation.id,
+            verdict=verdict,
+            noise_floor_max_abs_delta=floor.max_abs_delta,
+            noise_floor_runs=floor.runs,
+            champion_scalars=floor.scalars,
+            degraded_scalar=best_scalar,
+            signal=signal,
+            degraded_mutation_id=best_point.id,
+            degraded_mutation_kind=str(best_point.kind),
+            degraded_file=str(best_point.file),
+            measured_at=_dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat(),
+            probed_points=tuple(probed),
+            promote_margin=margin,
+            window_verdict=window_verdict,
+            window_failure=window_failure,
+            recommended_margin=(recommended_promote_margin(scalars=floor.scalars) or None),
+            holdout_note=holdout_note,
+        )
+        return report, floor
 
 
 __all__ = [

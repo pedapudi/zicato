@@ -143,6 +143,7 @@ from zicato.proposer.input_capture import (
 )
 from zicato.proposer.proposer import ProposerError
 from zicato.scoring.diff_complexity import diff_char_size as _diff_size
+from zicato.util.async_tasks import gather_owned
 
 log = logging.getLogger("zicato.proposer.best_of_n")
 
@@ -717,6 +718,21 @@ class BestOfNProposerAgent:
         return self.depth_model if self.depth_model is not None else ctx.model
 
     async def propose(self, ctx: ProposerContext) -> Experiment:
+        from zicato.runtime.writer import workspace_writer  # noqa: PLC0415
+        from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+
+        root = ctx.workspace_root
+        if root is None:
+            return await self._propose(ctx)
+        async with workspace_writer(
+            root,
+            writer=ctx.writer,
+            instance_id="proposal",
+            cleanup=lambda: drain_worker_cleanup(root),
+        ) as writer:
+            return await self._propose(replace(ctx, writer=writer))
+
+    async def _propose(self, ctx: ProposerContext) -> Experiment:
         n = self.config.best_of_n
         if n <= 1:
             # One inner sample, no critique.
@@ -897,32 +913,12 @@ class BestOfNProposerAgent:
         return candidates[chosen]
 
     async def _gather_slate(self, ctx: ProposerContext, n: int) -> list[_SlotOutcome]:
-        """Fan the N slate slots out under the propose-parallelism cap.
+        """Run capped proposal slots and join their cleanup in slot order.
 
-        Returns one :class:`_SlotOutcome` per slot IN SLOT ORDER
-        (``asyncio.gather`` preserves input order regardless of which slot
-        finishes first), so the caller's ordered pass is deterministic.
-        ``propose_parallelism == 1`` runs the slots strictly serially, in
-        slot order, and skips the task/semaphore machinery so the no-factory
-        unit-test path stays a plain loop.
-
-        Scratch-lease safety: ``_run_one_slot``'s own
-        ``try/finally`` always releases ITS slot's scratch lease, but plain
-        ``asyncio.gather()`` (``return_exceptions=False``) propagates the
-        FIRST exception the instant any one slot raises, WITHOUT cancelling
-        or awaiting the remaining slots — they keep running as orphaned
-        background tasks, so a sibling's scratch parent can still be on disk
-        at the exact moment this call returns control to the caller. Passing
-        ``return_exceptions=True`` makes ``gather`` wait for every slot to
-        actually finish (success or exception) — and therefore for every
-        slot's ``finally: cleanup()`` to have already run — before this
-        method ever returns or raises, so the caller can never observe a
-        still-open lease. Findings are re-raised in SLOT order (not
-        completion order) for the same determinism the rest of the gather
-        provides; a slot's own :class:`~zicato.proposer.proposer.ProposerError`
-        never reaches here (:meth:`_sample_slot` already folds it into a
-        normal ``_SlotOutcome``), so only an unexpected exception takes this
-        path.
+        Serial execution uses a plain loop. Concurrent execution retains every
+        slot through cancellation, including repeated cancellation, before its
+        scratch lease can be released. Ordinary failures let siblings finish
+        and are raised in slot order after all leases close.
         """
         parallelism = max(1, min(self.propose_parallelism, n))
         if parallelism == 1:
@@ -933,7 +929,7 @@ class BestOfNProposerAgent:
             async with sem:
                 return await self._run_one_slot(ctx, sample, n)
 
-        results = await asyncio.gather(
+        results = await gather_owned(
             *(_guarded(sample) for sample in range(n)), return_exceptions=True
         )
         outcomes: list[_SlotOutcome] = []

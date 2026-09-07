@@ -19,9 +19,10 @@ downstream of the proposer sees what it always saw.
 The copy lives in the OS temp root under the ``ztw-pscratch-`` prefix,
 distinct from the ``ztw-pvalidate-`` trees the patch verifier writes and
 the ``ztw-slate-`` trees a best-of-N slate uses, so no sweep over one
-family reaps another. It is removed on every exit path, including the one
-where the episode raised in the middle of an edit: the snapshot itself is
-never mounted writable, so the worst a lost tree costs is disk.
+family reaps another. The proposal owner waits for host shutdown and process
+group termination before leaving the working-copy context. The copy is then
+removed on every exit path, including failure in the middle of an edit. The
+snapshot itself is never mounted writable.
 """
 
 from __future__ import annotations

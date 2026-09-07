@@ -788,6 +788,8 @@ async def _run(args: dict[str, Any]) -> None:
                 run_id=run_id,
                 pid=os.getpid(),
                 pid_start_time=_pid_start_time(os.getpid()),
+                producer_pid=args.get("producer_pid"),
+                producer_start_time=args.get("producer_start_time"),
                 pgid=own_pgid,
                 snapshot_path=str(snapshot_root),
                 started_at=now.isoformat(),

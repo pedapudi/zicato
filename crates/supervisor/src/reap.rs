@@ -1,29 +1,15 @@
-//! Orphan reaping + ephemeral-snapshot GC after a confirmed orchestrator death.
+//! Confined snapshot cleanup after confirmed producer death.
 //!
-//! When the orchestrator process is genuinely gone — not merely slow — its
-//! run workers are orphaned and the per-run ephemeral snapshot directories
-//! (`${TMPDIR}/ztw-snap-*`, materialised by the generation store's
-//! `checkout_ephemeral` — see [`zicato.epoch.genstore`] — via the runner's
-//! [`zicato.tournament.worker_transport._checkout_run_snapshot`], and
-//! normally discarded on a clean run-end) are leaked. The supervisor is the
-//! out-of-band process that can clean both up.
+//! Each active record identifies the process that created its worker. Unknown
+//! or live producer identity refuses orphan cleanup. The watchdog acquires the
+//! stable invocation writer guard before reading an orphan batch and retains
+//! it through group termination, snapshot cleanup and active-record removal.
 //!
-//! Two safety rails govern this module:
-//!
-//! 1. **CONSERVATIVE dead determination** ([`decide_orchestrator_dead`]) —
-//!    the heartbeat pid must be confirmed gone (an `is_same_process` check,
-//!    not a stale timestamp). A slow orchestrator (GC pause, slow LLM, a
-//!    debugger) keeps its pid ALIVE, so it is never reaped — its in-flight
-//!    work is left exactly as the alive-orchestrator path leaves it
-//!    (the orchestrator's own reaper owns that lifecycle).
-//! 2. **PREFIX-GUARDED rmtree** ([`reapable_snapshot_root`]) — a recorded
-//!    `snapshot_path` is GC'd ONLY when its `ztw-snap-*` mkdtemp root sits
-//!    under the system temp dir. Any path that does not resolve to a
-//!    `ztw-snap-*` directory under the temp dir is refused, so a malformed
-//!    or hostile record can never delete an arbitrary tree.
+//! Snapshot deletion is confined to a `ztw-snap-*` directory below the system
+//! temporary directory. A malformed path cannot authorize broader deletion.
 
 use crate::signal;
-use crate::state::{ActiveRun, Heartbeat};
+use crate::state::ActiveRun;
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
@@ -32,30 +18,18 @@ use tracing::{debug, warn};
 /// match `zicato.epoch.genstore.EPHEMERAL_SNAPSHOT_PREFIX`.
 pub const SNAPSHOT_PREFIX: &str = "ztw-snap-";
 
-/// Whether the orchestrator behind `heartbeat` is CONFIRMED dead — the
-/// conservative trigger that gates every reaping action.
+/// Positively establish that the producer recorded by a run no longer exists.
 ///
-/// Returns `true` ONLY when the heartbeat names a pid that is no longer the
-/// process that recorded the heartbeat (`is_same_process` is false: gone, or
-/// a recycled-pid impostor). A heartbeat with no pid, or a pid that is still
-/// the live orchestrator, returns `false` — a slow-but-alive orchestrator is
-/// NOT reaped (its pid stays alive regardless of how stale the timestamp is),
-/// and a missing heartbeat is treated as "no orchestrator to declare dead"
-/// rather than guessing.
-///
-/// The orchestrator records no `/proc` start-time token today, so the
-/// identity check degrades to bare liveness (`is_same_process(pid, None)` ==
-/// `is_alive(pid)`); the moment such a token is recorded, this function picks
-/// it up unchanged and gains pid-reuse immunity for the orchestrator too.
-pub fn decide_orchestrator_dead(heartbeat: Option<&Heartbeat>) -> bool {
-    let Some(hb) = heartbeat else {
+/// Missing provenance, invalid tokens and unreadable live identity retain
+/// ownership. A readable replacement token proves that the recorded owner died.
+pub fn producer_is_dead(run: &ActiveRun) -> bool {
+    let (Some(pid), Some(expected)) = (run.producer_pid, run.producer_start_time) else {
         return false;
     };
-    let Some(pid) = hb.pid else {
-        return false;
-    };
-    // No recorded orchestrator start-time token yet → None (bare liveness).
-    !signal::is_same_process(pid, None)
+    pid > 1
+        && expected.is_finite()
+        && expected >= 0.0
+        && !signal::is_same_process(pid, Some(expected))
 }
 
 /// Resolve the system temp dir the runner's `tempfile.mkdtemp` would have
@@ -177,7 +151,6 @@ pub fn reap_orphaned_snapshot(run: &ActiveRun) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use tempfile::TempDir;
 
     fn run_with_snapshot(snapshot_path: Option<&str>) -> ActiveRun {
@@ -188,62 +161,52 @@ mod tests {
         }
     }
 
-    // ---- decide_orchestrator_dead (conservative dead-trigger) -------
-
     #[test]
-    fn no_heartbeat_is_not_dead() {
-        // Absent heartbeat → "no orchestrator to declare dead", not a reap.
-        assert!(!decide_orchestrator_dead(None));
-    }
-
-    #[test]
-    fn heartbeat_without_pid_is_not_dead() {
-        let hb = Heartbeat {
-            pid: None,
-            last_heartbeat: Some(Utc::now()),
-            ..Default::default()
-        };
-        assert!(!decide_orchestrator_dead(Some(&hb)));
-    }
-
-    #[test]
-    fn alive_orchestrator_is_not_dead_even_when_stale() {
-        // The supervisor's own pid stands in for a live orchestrator. A
-        // wildly stale timestamp must NOT flip it to dead — only liveness
-        // matters. This is the slow-but-alive case we refuse to reap.
-        let me = std::process::id() as i32;
-        let hb = Heartbeat {
-            pid: Some(me),
-            // An absurdly old timestamp: staleness must not trigger a reap.
-            last_heartbeat: Some(Utc::now() - chrono::Duration::days(7)),
-            ..Default::default()
-        };
-        assert!(
-            !decide_orchestrator_dead(Some(&hb)),
-            "a live (if stale) orchestrator must never be declared dead",
-        );
-    }
-
-    #[test]
-    fn gone_orchestrator_pid_is_dead() {
-        // A pid that cannot be alive (a huge unused number) is confirmed dead.
-        let hb = Heartbeat {
-            pid: Some(99_999_999),
-            last_heartbeat: Some(Utc::now()),
-            ..Default::default()
-        };
-        assert!(decide_orchestrator_dead(Some(&hb)));
-    }
-
-    #[test]
-    fn sentinel_orchestrator_pid_is_dead() {
-        // pid 0 / negative are never alive → confirmed dead.
-        for pid in [0, -1] {
-            let hb = Heartbeat {
-                pid: Some(pid),
+    fn producer_death_requires_valid_saved_identity() {
+        let pid = std::process::id() as i32;
+        let token = signal::pid_start_time(pid).unwrap();
+        for run in [
+            ActiveRun::default(),
+            ActiveRun {
+                producer_pid: Some(pid),
                 ..Default::default()
-            };
-            assert!(decide_orchestrator_dead(Some(&hb)));
+            },
+            ActiveRun {
+                producer_pid: Some(0),
+                producer_start_time: Some(token),
+                ..Default::default()
+            },
+            ActiveRun {
+                producer_pid: Some(pid),
+                producer_start_time: Some(f64::NAN),
+                ..Default::default()
+            },
+            ActiveRun {
+                producer_pid: Some(pid),
+                producer_start_time: Some(-1.0),
+                ..Default::default()
+            },
+            ActiveRun {
+                producer_pid: Some(pid),
+                producer_start_time: Some(token),
+                ..Default::default()
+            },
+        ] {
+            assert!(!producer_is_dead(&run));
+        }
+        for run in [
+            ActiveRun {
+                producer_pid: Some(99_999_999),
+                producer_start_time: Some(token),
+                ..Default::default()
+            },
+            ActiveRun {
+                producer_pid: Some(pid),
+                producer_start_time: Some(token + 1.0),
+                ..Default::default()
+            },
+        ] {
+            assert!(producer_is_dead(&run));
         }
     }
 

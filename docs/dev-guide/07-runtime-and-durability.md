@@ -837,7 +837,7 @@ run without touching anything else. The schema (`ActiveRun` in
 |---|---|---|
 | `run_id` | unique run id — `{generation}--{entry}` for replicate 0, `r{n}.{generation}--{entry}` for `r>0`; a generation id is always `v{n}`, so the two namespaces are disjoint without reserving user entry ids | everything |
 | `pid` | the WORKER's own pid (`os.getpid()` stamped by the worker) | supervisor kill paths |
-| `pid_start_time` | the worker's `/proc` start-time token — pid-reuse immunity (D9) | `signal::is_same_process` in the supervisor; `fresh_run_count`'s identity gate in the query layer |
+| `pid_start_time` | the worker's `/proc` start-time token — pid-reuse immunity (D9) | `signal::verified_process` for supervisor signalling; `fresh_run_count`'s identity gate in the query layer |
 | `pgid` | the worker's own process group (spawned with `start_new_session`, so `pgid == pid`) | group-kill upgrade (`resolve_kill_target`) |
 | `started_at`, `last_progress` | ISO-8601 UTC; `last_progress` is bumped every ~3s by `RunHeartbeatBeater` (a daemon thread that keeps beating through GIL-releasing LLM waits) | staleness trigger `decide_run` |
 | `wall_clock_budget_seconds`, `deadline` | the promised budget and the absolute deadline (`started_at + budget`) | deadline trigger `decide_run_deadline` — but note the supervisor treats the written deadline as UNTRUSTED and clamps it (08-supervisor.md §8.5) |
@@ -925,55 +925,65 @@ on (both anti-flash / anti-thrash measures — change them and the UI regresses)
 
 ## 7.7 The workspace lock
 
-Only one orchestrator may write under `.zicato/runtime/` at a time. The lock
-(`src/zicato/runtime/lock.py`) is a **pid-based JSON file**
-(`runtime/lock.json`) rather than an `fcntl.flock`: the supervisor is a
-separate process, possibly in a different language, and pid-based locks
-survive non-clean exits recoverably.
+A workspace permits one invocation to mutate its canonical state. Acquisition
+holds a nonblocking kernel lock on the persistent `runtime/lock.guard` inode
+before reading or replacing the inspection record at `runtime/lock.json`.
+The guard is never deleted. Process exit releases the kernel resource; stale
+inspection metadata remains recoverable by the next invocation.
 
-The stealing rules are a decision matrix over process identity, and identity
-is `(pid, start_time)` — invariant D9:
+Independent invocations compete even when they share a process and instance
+name. Internal operations receive the already acquired `WorkspaceLock` and call
+`validate_workspace_lock(writer, workspace_root)`. Validation requires the held
+lease, matching workspace, current process, and unchanged ownership metadata.
+A descriptor reconstructed from the JSON grants no mutation or release authority.
 
-```python
-    Behavior matrix (assume my pid = ``self``):
+The inspection record includes a unique owner identifier for each acquisition.
+Release removes metadata only when it still describes that acquisition, then
+closes the lease. Releasing a predecessor again cannot remove a successor owned
+by the same process and configured instance.
 
-    * No lock file → write a fresh lock, return :class:`WorkspaceLock`.
-    * Lock file with pid == ``self`` → idempotent re-acquisition. The
-      existing acquisition timestamp is preserved (so the caller can
-      log "first acquired at..." across retries).
-    * Lock file with pid != ``self`` and that pid is alive → raise
-      :class:`WorkspaceLockHeld`.
-    * Lock file with pid != ``self`` and that pid is dead → if
-      ``steal_stale`` is true, overwrite with a fresh lock and return.
-      If false, raise :class:`WorkspaceLockHeld`.
-```
-— `src/zicato/runtime/lock.py`, `acquire_workspace_lock`
+A record with an owner identifier describes a kernel lease. Exclusive guard
+acquisition proves that a prior lease has ended, even if metadata cleanup failed
+while its process remained alive. A forked child closes its inherited lease
+descriptor without unlocking the parent's descriptor.
 
-"Alive" in that matrix is `is_same_process(prior.pid, prior.start_time)`, not
-bare `os.kill(pid, 0)` liveness. `pid_start_time` reads Linux
-`/proc/<pid>/stat` field 22 (with a psutil fallback off-Linux) as an opaque
-equality token; `is_same_process` then applies a conservative matrix — when
-identity cannot be proven either way, it refuses to steal:
+Records without an owner identifier may represent a writer using process
+metadata alone. An absent process or mismatched start token allows recovery;
+a live process with matching or unavailable identity prevents it.
+`steal_stale=False` refuses either kind of stale-record recovery.
 
-- pid dead → not the same process (steal is allowed);
-- pid alive, no recorded start time (a lock written without one) → treat as
-  alive (do not steal);
-- pid alive, current start time unreadable → treat as alive (cannot
-  *disprove* identity);
-- both known → equal or not.
+The asynchronous invocation scope, `validated_invocation`, retains the writer
+through resource teardown. Its `InvocationContext.resources` stack registers
+release immediately after each acquisition. One shielded task first drains all
+retained worker owners on their original event loop, then closes the resources.
+The writer is released last. A bounded worker retry cannot establish completion;
+unconfirmed exit keeps the invocation, its writer, and its services alive.
 
-Even same-pid re-acquisition runs the identity check, guarding the
-pathological case where *our own* pid number equals a prior owner's recycled
-pid. Release (`release_workspace_lock`) is guarded too: it deletes the file
-only if the on-disk lock still matches this caller's `(pid, instance_id)` —
-otherwise a successor stole it after a crash and overwriting would corrupt
-the successor's state.
+Standalone tournament, proposal, calibration, preflight, screening, and
+reflection measurement calls acquire the same writer before publishing worker
+records. Their asynchronous `runtime.writer.workspace_writer` scope drains
+retained workers before releasing the lease. A failed drain retains ownership.
+The debug proposal command also holds the lease while choosing the generation
+and publishing the experiment.
 
-> ✅ ALWAYS reuse `is_pid_alive` / `pid_start_time` / `is_same_process` from
-> `zicato.runtime.lock` for any new liveness decision on the Python side.
-> The Rust supervisor has byte-equivalent twins in
-> `crates/supervisor/src/signal.rs`; the two must keep agreeing on what the
-> start-time token means (Linux: `/proc` field 22 as a float).
+Nested calls receive the existing `WorkspaceLock` explicitly. Tournament and
+measurement functions accept `writer`; proposer calls carry it in
+`ProposerContext`, and evolve forwards it through `PreparedRound`. Each scope
+validates a borrowed handle and leaves release to its enclosing invocation.
+Concurrent calls without that handle compete for ownership, including calls in
+the same process. Pure admission previews execute without acquiring a writer.
+
+The shared process owner, `runtime.process`, verifies process identity and group
+exit for tournament workers, regression commands, and episode exports. Command
+execution retains startup and output-reader tasks through cancellation, then
+reaps the direct child before returning. Worker transport forwards its existing
+termination interface and grace interval to this owner.
+
+Each owning scope waits for its cleanup task through repeated cancellation and
+preserves the original failure. Independent resource cleanup continues when
+another release raises.
+Emitter context tokens are reset by the original invoking task before awaiting
+cleanup; tokens cannot be reset from the shielded child task.
 
 ---
 

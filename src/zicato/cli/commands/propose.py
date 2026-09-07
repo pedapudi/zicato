@@ -388,55 +388,69 @@ def propose_cmd(
     without running the tournament.
     """
 
+    asyncio.run(_propose(workspace, epoch, patterns_from, max_retries))
+
+
+async def _propose(
+    workspace: str, epoch: str | None, patterns_from: str | None, max_retries: int
+) -> None:
+    from zicato.runtime.writer import workspace_writer  # noqa: PLC0415
+    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+
     workspace_dir = Path(workspace)
-    config = _load_workspace_config(workspace_dir)
-    epoch_id = _resolve_epoch(workspace_dir, epoch)
+    async with workspace_writer(
+        workspace_dir,
+        writer=None,
+        instance_id="proposal",
+        cleanup=lambda: drain_worker_cleanup(workspace_dir),
+    ) as writer:
+        config = _load_workspace_config(workspace_dir)
+        epoch_id = _resolve_epoch(workspace_dir, epoch)
 
-    brief_file = _epoch_brief_path(workspace_dir, epoch_id)
-    if not brief_file.exists():
-        raise click.ClickException(
-            f"No proposer brief at {brief_file}. Create it before proposing."
-        )
-    brief = load_brief(brief_file)
+        brief_file = _epoch_brief_path(workspace_dir, epoch_id)
+        if not brief_file.exists():
+            raise click.ClickException(
+                f"No proposer brief at {brief_file}. Create it before proposing."
+            )
+        brief = load_brief(brief_file)
 
-    existing = _list_generations(workspace_dir, epoch_id)
-    if not existing:
-        raise click.ClickException(
-            f"Epoch {epoch_id!r} has no generations yet; cannot propose a child."
-        )
-    parent_gen = existing[-1]
-    new_gen = next_generation_id(existing)
+        existing = _list_generations(workspace_dir, epoch_id)
+        if not existing:
+            raise click.ClickException(
+                f"Epoch {epoch_id!r} has no generations yet; cannot propose a child."
+            )
+        parent_gen = existing[-1]
+        new_gen = next_generation_id(existing)
 
-    agent, generation_root = _resolve_agent(workspace_dir, config, epoch_id, parent_gen)
+        agent, generation_root = _resolve_agent(workspace_dir, config, epoch_id, parent_gen)
 
-    mutations = _load_mutations(workspace_dir, generation_root)
-    if not mutations:
-        raise click.ClickException(
-            "No mutation points were enumerated; cannot propose a patch set."
-        )
+        mutations = _load_mutations(workspace_dir, generation_root)
+        if not mutations:
+            raise click.ClickException(
+                "No mutation points were enumerated; cannot propose a patch set."
+            )
 
-    patterns = _load_patterns(workspace_dir, epoch_id, parent_gen, patterns_from)
-    loss_summary = _load_loss_summary(workspace_dir, epoch_id, parent_gen)
-    aux_call_llm = _resolve_aux_llm(config)
-    model = config.evaluation_model
+        patterns = _load_patterns(workspace_dir, epoch_id, parent_gen, patterns_from)
+        loss_summary = _load_loss_summary(workspace_dir, epoch_id, parent_gen)
+        aux_call_llm = _resolve_aux_llm(config)
+        model = config.evaluation_model
 
-    # Custom judges declared on the board / per_judge_weights are valid
-    # ``drift:<judge_name>`` metric targets in a hypothesis. Best-effort:
-    # if the board/scoring cannot be loaded the proposer falls back to
-    # built-in-only drift-kind validation.
-    custom_judge_names = _load_custom_judge_names(workspace_dir)
+        # Custom judges declared on the board / per_judge_weights are valid
+        # ``drift:<judge_name>`` metric targets in a hypothesis. Best-effort:
+        # if the board/scoring cannot be loaded the proposer falls back to
+        # built-in-only drift-kind validation.
+        custom_judge_names = _load_custom_judge_names(workspace_dir)
 
-    # Experiment memory: feed the settled cross-round digest to the
-    # standalone propose path too so the debug command matches the loop.
-    # Best-effort — a missing / stale index yields an empty list and the
-    # prompt section is omitted.
-    from zicato.evolve.ingest import _load_prior_experiments  # noqa: PLC0415
+        # Experiment memory: feed the settled cross-round digest to the
+        # standalone propose path too so the debug command matches the loop.
+        # Best-effort — a missing / stale index yields an empty list and the
+        # prompt section is omitted.
+        from zicato.evolve.ingest import _load_prior_experiments  # noqa: PLC0415
 
-    prior = _load_prior_experiments(workspace_dir, epoch_id)
+        prior = _load_prior_experiments(workspace_dir, epoch_id)
 
-    try:
-        experiment = asyncio.run(
-            agent.propose(
+        try:
+            experiment = await agent.propose(
                 ProposerContext(
                     epoch_id=epoch_id,
                     parent_generation_id=parent_gen,
@@ -450,17 +464,17 @@ def propose_cmd(
                     max_retries=max_retries,
                     forbidden_ids=brief.forbidden_ids,
                     workspace_root=workspace_dir,
+                    writer=writer,
                     generation_root=generation_root,
                     custom_judge_names=custom_judge_names,
                     prior_experiments=tuple(prior),
                 )
             )
-        )
-    except ProposerError as exc:
-        raise click.ClickException(str(exc)) from exc
+        except ProposerError as exc:
+            raise click.ClickException(str(exc)) from exc
 
-    out_path = _write_proposal(workspace_dir, epoch_id, new_gen, experiment)
-    click.echo(f"Wrote experiment {experiment.id} for {epoch_id}/{new_gen} to {out_path}")
+        out_path = _write_proposal(workspace_dir, epoch_id, new_gen, experiment)
+        click.echo(f"Wrote experiment {experiment.id} for {epoch_id}/{new_gen} to {out_path}")
 
 
 __all__ = ["propose_cmd"]

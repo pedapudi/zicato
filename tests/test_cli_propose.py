@@ -194,10 +194,11 @@ def test_debugging_leaves_the_canonical_trees_byte_identical(tmp_path: Path) -> 
     added = set(after) - set(before)
     changed = {k for k in set(after) & set(before) if after[k] != before[k]}
     assert not changed, sorted(changed)
-    # The one write is the proposal, beside the record of what produced it.
+    # The stable lock inode coordinates producers and survives lease release.
     assert added == {
         str((epoch / "proposals" / "v1.json").relative_to(workspace)),
         str((epoch / "proposer_inputs.jsonl").relative_to(workspace)),
+        "runtime/lock.guard",
     } | {a for a in added if a.startswith(str(Path("epochs") / epoch_id / "episodes"))}
 
 

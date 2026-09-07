@@ -13,7 +13,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -38,7 +41,8 @@ from zicato.proposer.foe_agent import FoeProposerAgent
 from zicato.proposer.foe_request import SANCTIONED_TOOLS
 from zicato.proposer.foe_scratch import SCRATCH_PREFIX
 from zicato.proposer.proposer import ProposerBlocked, ProposerError, ProposerExhausted
-from zicato.runtime.state import list_active_runs
+from zicato.runtime.lock import pid_start_time
+from zicato.runtime.state import ActiveRun, list_active_runs, remove_active_run, write_active_run
 
 #: A snapshot with one declared mutation point, enumerated by the real
 #: enumerator rather than described by hand: the projection and the patch
@@ -222,17 +226,32 @@ def test_the_episode_is_registered_where_the_watchdog_can_reach_it(
         ],
     )
     live: list[tuple[str, int]] = []
+    producers: list[tuple[int | None, float | None]] = []
     real_remove = foe_agent._remove_active_run
+    real_register = foe_agent._register_active_run
 
-    def observe(workspace_root: Path, run_id: str) -> None:
-        live.extend((run.run_id, run.pid) for run in list_active_runs(workspace_root))
-        real_remove(workspace_root, run_id)
+    def register(workspace_root: Path, run_id: str, handle: Any, *args: Any) -> ActiveRun | None:
+        owner = real_register(workspace_root, run_id, handle, *args)
+        assert owner is not None
+        assert owner.pid_start_time == pid_start_time(handle.pid)
+        assert owner.pid_start_time is not None
+        assert owner.pgid == os.getpgid(handle.pid) == handle.pid
+        return owner
+
+    def observe(workspace_root: Path, owner: ActiveRun) -> None:
+        records = list_active_runs(workspace_root)
+        live.extend((run.run_id, run.pid) for run in records)
+        producers.extend((run.producer_pid, run.producer_start_time) for run in records)
+        real_remove(workspace_root, owner)
 
     monkeypatch.setattr(foe_agent, "_remove_active_run", observe)
+    monkeypatch.setattr(foe_agent, "_register_active_run", register)
     asyncio.run(workspace.agent().propose(workspace.context()))
 
-    assert [run_id for run_id, _pid in live] == ["propose:e1:v1"]
+    assert len(live) == 1
+    assert live[0][0].startswith("propose:e1:v1:slot-single:")
     assert live[0][1] > 0
+    assert producers == [(os.getpid(), pid_start_time(os.getpid()))]
     assert list_active_runs(workspace.root) == []
 
 
@@ -249,9 +268,9 @@ def test_an_episode_outliving_its_budget_is_ended_and_reported_exhausted(
     pids: list[int] = []
     real_register = foe_agent._register_active_run
 
-    def observe(workspace_root: Path, run_id: str, handle: Any, *args: Any) -> None:
+    def observe(workspace_root: Path, run_id: str, handle: Any, *args: Any) -> ActiveRun | None:
         pids.append(handle.pid)
-        real_register(workspace_root, run_id, handle, *args)
+        return real_register(workspace_root, run_id, handle, *args)
 
     real_wait_for = asyncio.wait_for
 
@@ -270,6 +289,95 @@ def test_an_episode_outliving_its_budget_is_ended_and_reported_exhausted(
     assert list_active_runs(workspace.root) == []
     with pytest.raises(ProcessLookupError):
         os.kill(pids[0], 0)
+
+
+@pytest.mark.asyncio
+async def test_overlapping_proposal_slots_keep_distinct_process_owners(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace = Workspace(tmp_path, [return_turn(_HYPOTHESIS)])
+    gates = [asyncio.Event(), asyncio.Event()]
+    processes = []
+
+    async def start(*args: Any, **kwargs: Any) -> Any:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", "import time; time.sleep(60)", start_new_session=True
+        )
+        index = len(processes)
+        processes.append(proc)
+
+        async def wait() -> Any:
+            await gates[index].wait()
+            proc.terminate()
+            await proc.wait()
+            return foe_agent.foe.Completed(_HYPOTHESIS)
+
+        handle = SimpleNamespace(pid=proc.pid, wait=wait)
+        kwargs["on_spawn"](handle)
+        return handle
+
+    monkeypatch.setattr(foe_agent.foe, "start_config", start)
+    request = SimpleNamespace(document=lambda: {}, host_tools=())
+    agent = workspace.agent()
+    config = foe_agent.resolve_foe_config(agent.config)
+    tasks = [
+        asyncio.create_task(
+            agent._run_episode(workspace.context(slot_index=slot), config, request, workspace.root)
+        )
+        for slot in range(2)
+    ]
+    try:
+        async with asyncio.timeout(3):
+            while len(list_active_runs(workspace.root)) != 2:
+                await asyncio.sleep(0.01)
+        records = list_active_runs(workspace.root)
+        assert len({run.run_id for run in records}) == 2
+        assert len({run.pid for run in records}) == 2
+        for slot, run in enumerate(records):
+            assert f":slot-{slot}:" in run.run_id
+            assert run.pid_start_time == pid_start_time(run.pid)
+            assert run.pid_start_time is not None
+            assert run.pgid == os.getpgid(run.pid) == run.pid
+            os.kill(run.pid, 0)
+        gates[0].set()
+        await tasks[0]
+        [remaining] = list_active_runs(workspace.root)
+        assert remaining.pid == processes[1].pid
+        os.kill(remaining.pid, 0)
+        # A delayed cleanup must refuse a replacement owner even at the old key.
+        replacement = replace(remaining, run_id=records[0].run_id)
+        write_active_run(workspace.root, replacement)
+        foe_agent._remove_active_run(workspace.root, records[0])
+        assert replacement in list_active_runs(workspace.root)
+        remove_active_run(workspace.root, replacement.run_id, expected_owner=replacement)
+    finally:
+        for gate in gates:
+            gate.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for proc in processes:
+            if proc.returncode is None:
+                proc.kill()
+            await proc.wait()
+    assert list_active_runs(workspace.root) == []
+
+
+def test_repeated_proposal_slot_preserves_attempt_transcripts(tmp_path: Path) -> None:
+    from zicato.query.events_index import find_proposal_episode_log
+    from zicato.query.paths import WorkspacePaths
+
+    workspace = Workspace(tmp_path, [call_turn(_edit(_EDITED_FILE)), return_turn(_HYPOTHESIS)])
+    context = workspace.context(slot_index=1)
+    agent = workspace.agent()
+    asyncio.run(agent.propose(context))
+    first = find_proposal_episode_log(WorkspacePaths(workspace.root), "e1", "v1", slot_index=1)
+    assert first is not None
+    original = first.read_bytes()
+    asyncio.run(agent.propose(context))
+    second = find_proposal_episode_log(WorkspacePaths(workspace.root), "e1", "v1", slot_index=1)
+    assert second is not None and second != first
+    assert first.read_bytes() == original
+    assert second.is_file()
+    assert list_active_runs(workspace.root) == []
 
 
 #: What an episode may do, written out here rather than imported. This

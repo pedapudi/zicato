@@ -110,21 +110,21 @@ def test_is_same_process_falls_back_to_liveness_without_recorded_time() -> None:
 
 
 def test_acquire_writes_lock_file(tmp_path: Path) -> None:
-    lock = acquire_workspace_lock(tmp_path, "default")
-    assert lock.pid == os.getpid()
-    assert lock.instance_id == "default"
-    assert lock.workspace_root == tmp_path
+    with acquire_workspace_lock(tmp_path, "default") as lock:
+        assert lock.pid == os.getpid()
+        assert lock.instance_id == "default"
+        assert lock.workspace_root == tmp_path
 
-    # On-disk shape matches.
-    raw = json.loads(lock_path(tmp_path).read_text())
-    assert raw["pid"] == os.getpid()
-    assert raw["instance_id"] == "default"
-    assert raw["acquired_at"].endswith("Z")
-    # The start-time identity token is recorded alongside the pid (key is
-    # always present; value is a float on hosts with a start-time source).
-    assert "start_time" in raw
-    if raw["start_time"] is not None:
-        assert raw["start_time"] == pid_start_time(os.getpid())
+        # On-disk shape matches.
+        raw = json.loads(lock_path(tmp_path).read_text())
+        assert raw["pid"] == os.getpid()
+        assert raw["instance_id"] == "default"
+        assert raw["acquired_at"].endswith("Z")
+        # The start-time identity token is recorded alongside the pid (key is
+        # always present; value is a float on hosts with a start-time source).
+        assert "start_time" in raw
+        if raw["start_time"] is not None:
+            assert raw["start_time"] == pid_start_time(os.getpid())
 
 
 def test_acquire_steals_when_pid_recycled_to_innocent_process(tmp_path: Path) -> None:
@@ -153,11 +153,11 @@ def test_acquire_steals_when_pid_recycled_to_innocent_process(tmp_path: Path) ->
             }
         )
     )
-    lock = acquire_workspace_lock(tmp_path, "default")
-    assert lock.pid == os.getpid()
-    assert lock.instance_id == "default"
-    # The freshly written lock carries our real start time.
-    assert lock.start_time == real
+    with acquire_workspace_lock(tmp_path, "default") as lock:
+        assert lock.pid == os.getpid()
+        assert lock.instance_id == "default"
+        # The freshly written lock carries our real start time.
+        assert lock.start_time == real
 
 
 def test_acquire_refuses_when_live_pid_start_time_matches(tmp_path: Path) -> None:
@@ -188,12 +188,11 @@ def test_acquire_refuses_when_live_pid_start_time_matches(tmp_path: Path) -> Non
         acquire_workspace_lock(tmp_path, "default")
 
 
-def test_acquire_same_pid_idempotent(tmp_path: Path) -> None:
-    first = acquire_workspace_lock(tmp_path, "default")
-    second = acquire_workspace_lock(tmp_path, "default")
-    # Both descriptors refer to the same lock; acquired_at is preserved
-    # across the idempotent second call.
-    assert first == second
+def test_acquired_lock_supports_scoped_release(tmp_path: Path) -> None:
+    with acquire_workspace_lock(tmp_path, "default") as writer:
+        assert writer.pid == os.getpid()
+        assert lock_path(tmp_path).exists()
+    assert not lock_path(tmp_path).exists()
 
 
 def test_acquire_different_pid_alive_raises(tmp_path: Path) -> None:
@@ -233,9 +232,9 @@ def test_acquire_steals_dead_pid_by_default(tmp_path: Path) -> None:
             }
         )
     )
-    lock = acquire_workspace_lock(tmp_path, "default")
-    assert lock.pid == os.getpid()
-    assert lock.instance_id == "default"
+    with acquire_workspace_lock(tmp_path, "default") as lock:
+        assert lock.pid == os.getpid()
+        assert lock.instance_id == "default"
 
 
 def test_acquire_refuses_to_steal_when_steal_stale_false(tmp_path: Path) -> None:
@@ -250,20 +249,19 @@ def test_acquire_refuses_to_steal_when_steal_stale_false(tmp_path: Path) -> None
             }
         )
     )
-    with pytest.raises(WorkspaceLockHeld, match="stale pid"):
+    with pytest.raises(WorkspaceLockHeld, match="stale writer metadata"):
         acquire_workspace_lock(tmp_path, "default", steal_stale=False)
 
 
 def test_acquire_creates_runtime_dir(tmp_path: Path) -> None:
     # Bare tmp_path with no .zicato/ tree yet; acquire must build it.
     assert not (tmp_path / ".zicato").exists()
-    acquire_workspace_lock(tmp_path, "default")
-    assert lock_path(tmp_path).exists()
+    with acquire_workspace_lock(tmp_path, "default"):
+        assert lock_path(tmp_path).exists()
 
-
-# ---------------------------------------------------------------------------
-# release_workspace_lock
-# ---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
+    # release_workspace_lock
+    # ---------------------------------------------------------------------------
 
 
 def test_release_removes_file(tmp_path: Path) -> None:

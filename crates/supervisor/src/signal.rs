@@ -7,7 +7,7 @@
 use nix::sys::signal::{kill, killpg, Signal};
 use nix::unistd::Pid;
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// The supervisor's own process-group id.
 ///
@@ -29,9 +29,9 @@ pub enum EscalationOutcome {
     AlreadyGone,
     /// SIGTERM was sent and the process exited within grace.
     TerminatedGracefully,
-    /// SIGTERM did not stop it; SIGKILL was sent.
+    /// SIGKILL was sent and target termination was confirmed.
     KilledForcefully,
-    /// SIGTERM not deliverable (permission, ESRCH, ...).
+    /// Ownership, signal delivery, or final termination could not be confirmed.
     Failed,
 }
 
@@ -39,13 +39,32 @@ pub fn is_alive(pid: i32) -> bool {
     if pid <= 0 {
         return false;
     }
+    if let Some(fields) = process_fields(pid) {
+        if matches!(fields.first().map(String::as_str), Some("Z" | "X")) {
+            return false;
+        }
+    }
     // Signal 0 = existence check.
     match kill(Pid::from_raw(pid), None) {
         Ok(_) => true,
         Err(nix::errno::Errno::ESRCH) => false,
         Err(nix::errno::Errno::EPERM) => true, // exists, just not ours to signal
-        Err(_) => false,
+        Err(_) => true,
     }
+}
+
+fn process_fields(pid: i32) -> Option<Vec<String>> {
+    if pid <= 0 {
+        return None;
+    }
+    let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rparen = raw.rfind(')')?;
+    Some(
+        raw[rparen + 1..]
+            .split_whitespace()
+            .map(String::from)
+            .collect(),
+    )
 }
 
 /// Read `pid`'s start time (an opaque identity token), or `None`.
@@ -69,17 +88,48 @@ pub fn is_alive(pid: i32) -> bool {
 /// integer-valued and well within `f64`'s exact-integer range, so equality
 /// comparison is exact.
 pub fn pid_start_time(pid: i32) -> Option<f64> {
-    if pid <= 0 {
-        return None;
+    process_fields(pid)?
+        .get(19)?
+        .parse::<u64>()
+        .ok()
+        .map(|value| value as f64)
+}
+
+/// A signal requires a recorded, readable start token matching a live process.
+pub fn verified_process(pid: i32, expected_start_time: Option<f64>) -> bool {
+    expected_start_time.is_some() && pid_start_time(pid) == expected_start_time && is_alive(pid)
+}
+
+/// Unknown membership remains live; zombies cannot execute or retain a checkout.
+pub fn group_has_live_members(pgid: i32) -> bool {
+    if pgid <= 1 || pgid == own_pgid() {
+        return true;
     }
-    let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    // Field 2 (comm) is wrapped in parens and may itself contain ')' and
-    // spaces, so tokenize everything after the LAST ')'.
-    let rparen = raw.rfind(')')?;
-    let rest: Vec<&str> = raw[rparen + 1..].split_whitespace().collect();
-    // rest[0] is field 3 (state); field 22 (starttime) is rest[19].
-    rest.get(19)
-        .and_then(|s| s.parse::<u64>().ok().map(|t| t as f64))
+    let Ok(processes) = std::fs::read_dir("/proc") else {
+        return killpg(Pid::from_raw(pgid), None) != Err(nix::errno::Errno::ESRCH);
+    };
+    for process in processes {
+        let Ok(process) = process else {
+            return true;
+        };
+        let Some(pid) = process
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if let Some(fields) = process_fields(pid) {
+            if fields.get(2).and_then(|value| value.parse::<i32>().ok()) == Some(pgid)
+                && !matches!(fields.first().map(String::as_str), Some("Z" | "X"))
+            {
+                return true;
+            }
+        } else if is_alive(pid) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Read `pid`'s process-group id from `/proc/<pid>/stat` (field 5, `pgrp`),
@@ -94,18 +144,11 @@ pub fn pid_start_time(pid: i32) -> Option<f64> {
 /// group anyway). A non-positive result is rejected (a process group id is
 /// always positive).
 pub fn pgid_of(pid: i32) -> Option<i32> {
-    if pid <= 0 {
-        return None;
-    }
-    let raw = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    // Field 2 (comm) is parenthesized and may contain ')' / spaces, so
-    // tokenize after the LAST ')'. rest[0] is field 3 (state); field 5
-    // (pgrp) is rest[2].
-    let rparen = raw.rfind(')')?;
-    let rest: Vec<&str> = raw[rparen + 1..].split_whitespace().collect();
-    rest.get(2)
-        .and_then(|s| s.parse::<i32>().ok())
-        .filter(|&pgid| pgid > 0)
+    process_fields(pid)?
+        .get(2)?
+        .parse::<i32>()
+        .ok()
+        .filter(|pgid| *pgid > 0)
 }
 
 /// Whether `pid` is alive **and** is the same process that recorded
@@ -156,10 +199,9 @@ pub fn is_negatable_pgid(pgid: i32, protected: &std::collections::HashSet<i32>) 
     !protected.contains(&pgid)
 }
 
-/// Send SIGTERM to an entire process group (`killpg(pgid, SIGTERM)`, i.e.
-/// `kill(-pgid, …)`). The caller MUST have already vetted `pgid` through
-/// [`is_negatable_pgid`] AND confirmed the group leader is alive and
-/// identity-matched — this primitive does not re-check.
+/// Send SIGTERM to a process group whose ownership the caller already verified.
+/// The caller must apply both `is_negatable_pgid` and `verified_target`; this
+/// primitive does not recheck either guard.
 pub fn send_sigterm_group(pgid: i32) -> Result<(), nix::errno::Errno> {
     debug!(pgid, "sending SIGTERM to process group");
     killpg(Pid::from_raw(pgid), Signal::SIGTERM)
@@ -172,32 +214,70 @@ pub fn send_sigkill_group(pgid: i32) -> Result<(), nix::errno::Errno> {
     killpg(Pid::from_raw(pgid), Signal::SIGKILL)
 }
 
-/// What an escalation should signal: a single leader pid, or the whole
-/// process group.
-///
-/// Liveness is always tracked through the group LEADER pid (the worker —
-/// `pgid == pid`, since the worker is spawned as a session/group leader).
-/// Tracking the leader keeps the identity check (`is_same_process`) and the
-/// "still alive?" poll meaningful even for the group case: the group is
-/// considered gone once its leader exits, exactly as a single-pid kill
-/// tracks its own pid.
+/// An owned leader or its process group. Group termination includes descendants
+/// after leader exit; a group id remains allocated while its members survive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KillTarget {
     /// Signal a single pid (legacy record with no pgid, or a pgid the
     /// negate-guard refused).
     Leader { pid: i32 },
-    /// Signal the whole process group by negating `pgid`; the group's
-    /// liveness is tracked through `leader_pid`.
+    /// Signal the owned group, including members surviving `leader_pid`.
     Group { pgid: i32, leader_pid: i32 },
 }
 
+/// A recorded group remains owned after leader exit while descendants survive.
+/// Unreadable identity of a possibly live leader never authorizes signalling.
+pub fn verified_target(target: KillTarget, expected_start_time: Option<f64>) -> bool {
+    let pid = target.leader_pid();
+    target_identity_matches(
+        target,
+        expected_start_time,
+        pid_start_time(pid),
+        is_alive(pid),
+        pgid_of(pid),
+    )
+}
+
+fn target_identity_matches(
+    target: KillTarget,
+    expected: Option<f64>,
+    observed: Option<f64>,
+    leader_alive: bool,
+    observed_group: Option<i32>,
+) -> bool {
+    let Some(expected) = expected.filter(|value| value.is_finite() && *value >= 0.0) else {
+        return false;
+    };
+    if observed.is_some_and(|value| value != expected) {
+        return false;
+    }
+    match target {
+        KillTarget::Leader { pid } => pid > 1 && leader_alive && observed == Some(expected),
+        KillTarget::Group { pgid, leader_pid } => {
+            pgid > 1
+                && pgid == leader_pid
+                && pgid != own_pgid()
+                && match observed {
+                    Some(_) => observed_group == Some(pgid),
+                    None => !leader_alive && observed_group.is_none(),
+                }
+        }
+    }
+}
+
 impl KillTarget {
-    /// The pid whose liveness gates this escalation (the leader in both
-    /// cases).
-    fn leader_pid(self) -> i32 {
+    /// The leader whose start token establishes the target's ownership.
+    pub fn leader_pid(self) -> i32 {
         match self {
             KillTarget::Leader { pid } => pid,
             KillTarget::Group { leader_pid, .. } => leader_pid,
+        }
+    }
+
+    pub fn is_gone(self) -> bool {
+        match self {
+            KillTarget::Leader { pid } => !is_alive(pid),
+            KillTarget::Group { pgid, .. } => !group_has_live_members(pgid),
         }
     }
 
@@ -225,53 +305,104 @@ pub async fn escalate(pid: i32, grace: Duration) -> EscalationOutcome {
     escalate_target(KillTarget::Leader { pid }, grace).await
 }
 
-/// Escalate a [`KillTarget`]: SIGTERM, poll the leader for exit up to
-/// `grace`, SIGKILL if the leader is still alive.
-///
-/// For a [`KillTarget::Group`] the SIGTERM/SIGKILL go to the whole group
-/// (`kill(-pgid, …)`) but the exit poll watches the group LEADER pid, so the
-/// escalation completes the moment the worker (group leader) exits — any
-/// stragglers in the group have been signalled by the same `killpg`. The
-/// outcome semantics are identical to the single-pid path: `AlreadyGone`
-/// when the leader is already dead, `TerminatedGracefully` if it exits
-/// within grace, `KilledForcefully` after the forced kill, `Failed` if a
-/// signal could not be delivered.
+/// Capture an owned target's identity before starting its escalation.
 pub async fn escalate_target(target: KillTarget, grace: Duration) -> EscalationOutcome {
-    let leader = target.leader_pid();
-    if !is_alive(leader) {
+    escalate_owned_target(target, pid_start_time(target.leader_pid()), grace).await
+}
+
+/// Terminate an identity-verified target and confirm its process group stopped.
+///
+/// The start token is retained across waits. After leader exit, surviving group
+/// members retain the group id. A replacement leader invalidates that ownership.
+pub async fn escalate_owned_target(
+    target: KillTarget,
+    expected_start_time: Option<f64>,
+    grace: Duration,
+) -> EscalationOutcome {
+    if target.is_gone() {
         return EscalationOutcome::AlreadyGone;
     }
-    if let Err(e) = target.send_sigterm() {
-        warn!(?target, error=%e, "SIGTERM failed");
+    if !verified_target(target, expected_start_time) {
         return EscalationOutcome::Failed;
     }
-
-    let poll_interval = Duration::from_millis(100);
-    let mut elapsed = Duration::ZERO;
-    while elapsed < grace {
-        tokio::time::sleep(poll_interval).await;
-        elapsed += poll_interval;
-        if !is_alive(leader) {
+    if target.send_sigterm().is_err() {
+        return EscalationOutcome::Failed;
+    }
+    let deadline = tokio::time::Instant::now() + grace;
+    while tokio::time::Instant::now() < deadline {
+        if target.is_gone() {
             return EscalationOutcome::TerminatedGracefully;
         }
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
-
-    if !is_alive(leader) {
+    if target.is_gone() {
         return EscalationOutcome::TerminatedGracefully;
     }
-
-    match target.send_sigkill() {
-        Ok(_) => EscalationOutcome::KilledForcefully,
-        Err(e) => {
-            warn!(?target, error=%e, "SIGKILL failed");
-            EscalationOutcome::Failed
-        }
+    if !verified_target(target, expected_start_time) {
+        return EscalationOutcome::Failed;
     }
+    if target.send_sigkill().is_err() {
+        return EscalationOutcome::Failed;
+    }
+    let deadline = tokio::time::Instant::now() + grace.max(Duration::from_millis(100));
+    while tokio::time::Instant::now() < deadline {
+        if target.is_gone() {
+            return EscalationOutcome::KilledForcefully;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    EscalationOutcome::Failed
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unreadable_live_identity_and_replacement_leaders_refuse_signals() {
+        let group = KillTarget::Group {
+            pgid: 999_999,
+            leader_pid: 999_999,
+        };
+        for target in [group, KillTarget::Leader { pid: 999_999 }] {
+            assert!(!target_identity_matches(
+                target,
+                Some(12.0),
+                None,
+                true,
+                None
+            ));
+            assert!(!target_identity_matches(
+                target,
+                Some(12.0),
+                Some(13.0),
+                true,
+                Some(999_999)
+            ));
+            assert!(!target_identity_matches(target, None, None, false, None));
+        }
+        assert!(target_identity_matches(
+            group,
+            Some(12.0),
+            None,
+            false,
+            None
+        ));
+        assert!(!target_identity_matches(
+            group,
+            Some(12.0),
+            None,
+            true,
+            Some(999_999)
+        ));
+        assert!(!target_identity_matches(
+            group,
+            Some(12.0),
+            Some(12.0),
+            true,
+            None
+        ));
+    }
 
     #[test]
     fn invalid_pid_is_not_alive() {
@@ -389,8 +520,7 @@ mod tests {
 
     #[tokio::test]
     async fn escalate_target_group_with_dead_leader_is_already_gone() {
-        // A group whose leader pid is not alive (pid 0) escalates to nothing:
-        // the leader gates the whole group's liveness.
+        // An absent leader and an empty group need no signals.
         let out = escalate_target(
             KillTarget::Group {
                 pgid: 999_999,
@@ -403,50 +533,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn escalate_group_kills_the_whole_group() {
-        // End-to-end: spawn a worker as its OWN process-group leader, fork a
-        // grandchild inside that group, then group-escalate. Negating the
-        // pgid must take BOTH down — the leak the single-pid kill would miss.
-        use std::os::unix::process::CommandExt;
-        // The leader spawns a child sleep, then sleeps itself; both share the
-        // new process group the leader creates via setsid().
-        let mut leader = unsafe {
-            std::process::Command::new("sh")
-                .args(["-c", "sleep 600 & sleep 600"])
-                .pre_exec(|| {
-                    // New session → the leader becomes its own group leader,
-                    // so pgid == its pid and the grandchild inherits the pgid.
-                    nix::unistd::setsid().map_err(std::io::Error::from)?;
-                    Ok(())
-                })
-                .spawn()
-                .expect("spawn group leader")
-        };
-        let leader_pid = leader.id() as i32;
-        // The leader's new pgid equals its own pid (it is the group leader).
-        let pgid = leader_pid;
-        // Give the shell a moment to fork its background grandchild.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        let out = escalate_target(
-            KillTarget::Group { pgid, leader_pid },
-            Duration::from_millis(300),
-        )
-        .await;
-        // The leader exited (gracefully on SIGTERM, or forcibly) — either way
-        // the group is gone.
-        assert!(
-            matches!(
+    async fn escalation_finishes_descendants_when_leader_exited_before_or_during_grace() {
+        for leader_exited in [false, true] {
+            let group = crate::test_process_group::OwnedGroup::spawn(leader_exited);
+            let out = escalate_owned_target(
+                KillTarget::Group {
+                    pgid: group.leader,
+                    leader_pid: group.leader,
+                },
+                Some(group.start_time),
+                Duration::from_millis(50),
+            )
+            .await;
+            assert_eq!(
                 out,
-                EscalationOutcome::TerminatedGracefully | EscalationOutcome::KilledForcefully
-            ),
-            "group escalation should stop the leader, got {out:?}",
-        );
-        let _ = leader.wait();
-        // The leader pid is gone.
-        assert!(
-            !is_alive(leader_pid),
-            "leader must be dead after group kill"
-        );
+                EscalationOutcome::KilledForcefully,
+                "leader exited before escalation: {leader_exited}"
+            );
+            assert!(!is_alive(group.descendant), "resistant descendant survived");
+            assert!(!is_alive(group.leader));
+        }
     }
 }

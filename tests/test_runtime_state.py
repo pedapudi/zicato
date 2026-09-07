@@ -15,6 +15,8 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from zicato.runtime.paths import active_run_path, heartbeat_path, kill_request_path
 from zicato.runtime.state import (
     ActiveRun,
@@ -234,6 +236,38 @@ def test_active_run_round_trip(tmp_path: Path) -> None:
     write_active_run(tmp_path, run)
     [back] = list_active_runs(tmp_path)
     assert back == run
+
+
+def test_active_run_preserves_absent_and_recorded_producer_identity(tmp_path: Path) -> None:
+    original = _sample_run().to_dict()
+    assert "producer_pid" not in original and "producer_start_time" not in original
+    assert ActiveRun.from_dict(original).to_dict() == original
+    run = replace(_sample_run(), producer_pid=1234, producer_start_time=0.0)
+    write_active_run(tmp_path, run)
+    touch_active_run_progress(tmp_path, run.run_id)
+    [read] = list_active_runs(tmp_path)
+    assert read.producer_pid == 1234 and read.producer_start_time == 0.0
+    unknown = replace(run, producer_start_time=None)
+    assert ActiveRun.from_dict(unknown.to_dict()).producer_start_time is None
+
+
+@pytest.mark.parametrize(
+    "pid, token",
+    [
+        (True, 1),
+        (-1, 1),
+        (1.0, 1),
+        (1, True),
+        (1, float("nan")),
+        (1, float("inf")),
+        (1, -1),
+        (None, 1),
+    ],
+)
+def test_active_run_refuses_malformed_producer_identity(pid, token) -> None:
+    payload = dict(_sample_run().to_dict(), producer_pid=pid, producer_start_time=token)
+    with pytest.raises(ValueError, match="producer_"):
+        ActiveRun.from_dict(payload)
 
 
 def test_active_run_defaults_pgid_and_snapshot_path_to_none() -> None:

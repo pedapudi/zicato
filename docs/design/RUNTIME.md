@@ -8,7 +8,7 @@ concurrency model that lets parallel tournaments coexist on one
 workspace.
 
 > **What ships today.** The `.zicato/runtime/` state files, the
-> heartbeat (`HeartbeatBeater`), the pid-based workspace lock, the
+> heartbeat (`HeartbeatBeater`), the kernel workspace writer guard, the
 > atomic-write helper, and the control-file protocol module all ship
 > (`src/zicato/runtime/`). The Rust watchdog supervisor
 > (`crates/supervisor/`) ships and is auto-spawned by `evolve` in
@@ -92,7 +92,8 @@ Python memory or only in the supervisor's memory.
 
 ```
 .zicato/runtime/
-├── lock.json                       # exclusive workspace lock
+├── lock.guard                      # stable kernel writer guard; never removed
+├── lock.json                       # readable writer identity metadata
 ├── heartbeat.json                  # orchestrator pulse, bumped every 1-5s
 ├── dashboard.json                  # dashboard's actually-bound host/port
 ├── active_tournament.json          # current tournament shape + per-entry status
@@ -124,7 +125,7 @@ does not write a `.pid` / `.stdout` / `.stderr` file under `runtime/`
 the runtime helpers, and every consumed command is archived into it with
 a JSON sidecar — see §2.5.
 
-### 2.1 `lock.json` — exclusive workspace lock
+### 2.1 Workspace writer guard and identity metadata
 
 The orchestrator acquires an exclusive lock on the workspace at
 startup. This prevents two `zicato evolve` invocations from
@@ -135,34 +136,36 @@ is hard to detect after the fact and that corrupts the journal.
 {
   "pid": 84321,
   "instance_id": "default",
-  "started_at": "2026-05-14T12:34:50.123Z",
-  "workspace_root": "/home/op/myagent/.zicato"
+  "acquired_at": "2026-05-14T12:34:50.123Z",
+  "workspace_root": "/home/op/myagent/.zicato",
+  "start_time": 116371304.0,
+  "owner_id": "7ad19fcae5d84193a9e8a14a5197a44d"
 }
 ```
 
-**Acquisition.** A pid-based JSON lock rather than `fcntl.flock`
-(`src/zicato/runtime/lock.py`). The file records the owning pid; the
-lock is held for the lifetime of the orchestrator process and removed
-on a best-effort basis at clean exit. A `flock`-style advisory lock
-leaves no human-readable owner behind and is released invisibly on
-process death, so it was rejected; the pid-in-JSON form lets the next
-invocation see the stale owner and decide. The supervisor does not
-acquire the lock, since there is only one orchestrator, but it reads
-the file to know whose heartbeat it is watching.
+**Acquisition.** `src/zicato/runtime/lock.py` takes a nonblocking exclusive
+`flock` on `runtime/lock.guard`, then atomically publishes the owning process,
+start token and invocation identifier in `lock.json`. Independent invocations
+compete even when they run in the same process. The guard file remains at a
+stable path and is never removed.
 
-**Stale lock handling.** If `lock.json` exists but the named PID is
-not alive, the new orchestrator considers the lock stale and steals
-it (`steal_stale=True`, the default). The liveness check is
-`os.kill(pid, 0)` — cheap, no signal actually delivered; `ESRCH` means
-dead. A live foreign pid raises `WorkspaceLockHeld`. Re-acquisition by
-the same pid is idempotent. This recovers automatically from
-kernel-level kills, host reboots, and any case where the orchestrator
-died without clean exit.
+The invocation holds its lease from validation through asynchronous teardown.
+Cleanup joins owned tasks and confirms worker exit before releasing resources.
+The kernel releases the lease when its owner exits. Forked children close
+inherited writer descriptors without unlocking the parent's open file
+description.
 
-**Why the lock is not a fixed empty file named `.lock`.** The JSON
-payload is what makes stale-lock recovery readable: a stale lock left
-by a run from the day before carries enough metadata for the operator
-to confirm that it is left over, without searching logs.
+**Stale metadata.** Successful kernel acquisition proves that a recorded kernel
+lease ended. The next writer can replace its stale inspection metadata. Legacy
+metadata without an invocation identifier still requires a process identity
+check: a live or unreadable owner raises `WorkspaceLockHeld`. A missing process
+or readable replacement start token permits recovery. Deserializing metadata
+does not grant a writer handle or permission to release another invocation.
+
+The supervisor takes the same nonblocking guard only for orphan handling. It
+rereads active records while holding the lease and retains it through verified
+termination and finalization. Guard contention skips orphan authority while
+independent deadline, requested and stale-run enforcement continue.
 
 ### 2.2 `heartbeat.json` — orchestrator pulse
 
@@ -449,15 +452,14 @@ in-process dashboard routes stay compiled in and unmounted.
 ┌─────────────────────────────────────────────────────────────────┐
 │  zicato evolve (Python orchestrator process)                    │
 │  ─────────────────────────────────────────                      │
-│  1. Acquire .zicato/runtime/lock.json (pid-based JSON).         │
+│  1. Acquire runtime/lock.guard; publish lock.json metadata.      │
 │  2. Start the HeartbeatBeater (writes heartbeat.json).          │
 │  3. Spawn zicato-supervisor (watchdog) with --no-dashboard,     │
 │     and python -m zicato.dashboard (the UI service).            │
 │  4. Read runtime/dashboard.json; print the dashboard URL.       │
 │  5. Run the meta-loop (rounds 1..N).                            │
-│  6. On exit: tear down the dashboard first (free its port),     │
-│     then the watchdog — SIGTERM, wait up to 5s, SIGKILL if      │
-│     still alive. Release the lock.                              │
+│  6. On exit: join owned work and finish worker cleanup;         │
+│     then stop telemetry and services, and release the writer.   │
 └─────────────────────────────────────────────────────────────────┘
                           │ spawns (×2)
                           ▼
@@ -526,53 +528,29 @@ it.
 
 ### 3.3 Escalation (SIGTERM → grace → SIGKILL)
 
-For each `active_runs/{run_id}.json`, the supervisor escalates when
-EITHER condition holds:
+The supervisor admits termination after confirmed producer death, an explicit
+kill request, an expired deadline, or stale run progress, in that priority order.
+A signal requires the saved worker identity, or its verified group after leader
+exit. Missing or mismatched worker identity refuses signalling. Orphan handling
+also requires a positively dead producer identity and the stable writer guard;
+a global heartbeat alone cannot authorize it.
 
-- the run's `deadline` (set to `started_at + wall_clock_budget_seconds`)
-  has passed, OR
-- the run's `last_progress` is older than `--run-stale-kill`
-  (default 120s). (`--run-stale-warn`, default 30s, logs first.)
+Each owned process group receives SIGTERM, followed by SIGKILL if live group
+members survive the grace period. The group remains owned after its leader
+exits. Independent owners have independent grace deadlines; integrity scans run
+on a separate task and execute blocking filesystem work off-thread.
 
-```
-  t=0       run is past its deadline OR last_progress > run-stale-kill
-            │
-            ▼
-  t=0       supervisor logs "escalating run {run_id}"; records it in
-            │ the /statusz escalation ring buffer
-            │
-            ▼
-  t=0       supervisor sends SIGTERM to the run's PID
-            │
-            │ waits the escalation grace period (default 5s)
-            │
-            ▼
-  t=grace   process cooperated → exits → done
-            OR
-  t=grace   process still alive → SIGKILL
-            │
-            ▼
-            The run's active_runs/{run_id}.json is left for the
-            orchestrator to clean up (it notices the process is dead
-            and finalises the run).
-```
+Termination is confirmed only when the leader and every live group member have
+stopped. The parent then owns normal run finalization. A guarded orphan batch
+retains `runtime/lock.guard` through escalation, confined snapshot cleanup and
+active-record finalization. The record must still identify the same worker and
+a positively dead producer. The guard excludes a successor guarded invocation
+throughout the ownership comparison and deletion.
 
-**Why escalation runs in two stages.** SIGTERM gives the run a chance
-to flush its goldfive event sink, so `events.jsonl` is not truncated
-mid-event, and to exit cleanly. SIGKILL is uninterruptible: the process
-is gone immediately and the last few events are lost. Always sending
-SIGKILL would corrupt the JSONL on every escalation, and always sending
-SIGTERM would leave a truly wedged process hanging forever. The process
-id the supervisor signals is the per-run subprocess worker's own, so a
-SIGKILL takes out exactly that one run's process and leaves the
-orchestrator running — see [ROBUSTNESS.md](ROBUSTNESS.md) §2.3.
-
-**Why escalation belongs to the supervisor rather than the
-orchestrator.** The orchestrator is itself a Python process, and a
-wedge in it would prevent it from sending the signal. The supervisor
-runs in a different language with a different runtime, so a wedge in
-one cannot wedge the other. This is the orchestrator watchdog described
-in [ROBUSTNESS.md](ROBUSTNESS.md) §2.4.
+The parent delegates termination through a kill-request marker while the
+supervisor is reachable. If that bounded delegation does not confirm group
+termination, the parent uses its captured process identity for fallback
+termination. Unconfirmed cleanup retains the active record and checkout.
 
 ### 3.4 Why Rust
 
@@ -615,33 +593,31 @@ constraints, BPF availability — for no gain.
 
 Inside `.zicato/runtime/` the writer rules are strict:
 
-| File | Sole writer | Readers |
+| File | Publication and finalization | Readers |
 |---|---|---|
-| `lock.json` | orchestrator | supervisor |
+| `lock.guard` | Public invocation or supervisor orphan batch holds an exclusive kernel lease | Competing owners attempt nonblocking acquisition |
+| `lock.json` | Workspace writer publishes inspection metadata and removes its own record | supervisor |
 | `heartbeat.json` | orchestrator | supervisor, dashboard |
 | `dashboard.json` | dashboard service | orchestrator (URL readback) |
 | `active_tournament.json` | orchestrator | supervisor, dashboard |
-| `active_runs/{run_id}.json` | the per-run subprocess **worker** that owns `run_id`; the orchestrator only reaps a dead worker's file | supervisor, dashboard |
+| `active_runs/{run_id}.json` | Tournament worker or proposal producer publishes its owned record; its parent finalizes after confirmed exit; the supervisor finalizes a confirmed orphan under the writer guard | supervisor, dashboard |
 | `control/<command>` | dashboard service | orchestrator, at its safe points |
 | `control_log/*` | orchestrator, on consume | dashboard |
 
-There are no shared writers. Every file has exactly one process that
-writes to it, and concurrent readers are safe because every write is an
-atomic rename. There are no `fcntl` locks beyond the pid-based
-`lock.json`, and no shared in-memory mutable state.
+Atomic replacement keeps concurrent readers from observing partial records.
+Public evolve invocations hold an exclusive kernel lease on `runtime/lock.guard`
+from validation through asynchronous teardown. Standalone tournament and proposal
+entry points retain the same ownership through child finalization; nested calls
+reuse their invocation's validated context. The supervisor uses the same
+stable inode for orphan batches and retains its lease through finalization.
+`lock.json` carries inspection metadata; the guard file is never removed.
 
-**This is the load-bearing invariant for the design.** Locking
-correctness in a multi-process system is hard. Making every file
-single-writer buys that correctness at the cost of some redundancy.
-
-**Why it is safe for workers to write their own files.** A worker
-writes only the `active_runs/{run_id}.json` for the run it owns, and
-workers share no files. The orchestrator may delete a worker's file
-when reaping a dead worker, and never writes to a file a live worker
-owns. One race window remains: a worker deletes its own file on
-finishing while the orchestrator is reading it. The orchestrator treats
-the resulting `ENOENT` as a normal terminal state rather than an
-error.
+Each active record carries the worker identity and its producer's PID and
+start token. A live producer retains orphan ownership even without a global
+heartbeat. Parent cleanup waits for worker termination. Supervisor cleanup
+also requires a positively dead producer and compares the worker, producer and
+snapshot fields before removing the recorded resources. Readers tolerate a
+record disappearing during finalization.
 
 ## 4. Resume semantics
 
@@ -1147,14 +1123,10 @@ permit** held for a worker's lifetime:
   reaper to write and no liveness protocol to get wrong. This is the
   reason for `flock` over a counter file.
 
-  This is the opposite choice from the workspace lock (§2.1), which
-  rejects `flock` because it is released invisibly on process death and
-  leaves no human-readable owner. Both choices suit their own problem.
-  The workspace lock is about identity: an operator needs to know which
-  process owns the epoch, and a stale owner is a decision to surface
-  rather than to reclaim silently. A permit is about counting: nobody
-  needs to know who holds slot 3, and invisible release on death is the
-  property that makes a permit unleakable.
+  The workspace writer guard (§2.1) uses the same kernel release property.
+  Its separate JSON metadata records the process and invocation for inspection.
+  Worker permits count concurrent runs across workspaces; the workspace guard
+  excludes competing mutation and orphan finalization within one workspace.
 * **it degrades OPEN.** Any failure to create the directory, open a
   slot, or use `flock` (an unsupported filesystem, a read-only
   runtime dir, a platform without `fcntl`) yields a permit that

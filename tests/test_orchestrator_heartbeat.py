@@ -223,8 +223,8 @@ def test_evolve_n_rounds_writes_heartbeat_and_releases_lock(
 
     # Lock has been released — re-acquiring should succeed immediately.
     assert not lock_path(workspace).exists()
-    fresh = acquire_workspace_lock(workspace, "follow-up", steal_stale=False)
-    assert fresh.instance_id == "follow-up"
+    with acquire_workspace_lock(workspace, "follow-up", steal_stale=False) as fresh:
+        assert fresh.instance_id == "follow-up"
 
 
 def test_evolve_n_rounds_advances_progress_seq_and_marks_terminal(

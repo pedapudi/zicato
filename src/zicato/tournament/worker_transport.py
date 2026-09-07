@@ -31,7 +31,6 @@ working unchanged.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -49,6 +48,13 @@ from zicato.core import (
     run_id_for_unit,
 )
 from zicato.epoch.genstore import EPHEMERAL_SNAPSHOT_PREFIX, EphemeralCheckout
+from zicato.runtime.process import (
+    DEFAULT_SIGNAL_GRACE_S,
+    terminate_process,
+)
+from zicato.runtime.process import (
+    processes_gone as _worker_processes_gone,
+)
 
 log = logging.getLogger("zicato.tournament.runner")
 
@@ -348,7 +354,7 @@ _PARENT_BUDGET_GRACE_S: float = 30.0
 #: Matches the supervisor's two-stage escalation grace. Used only by the
 #: last-resort reaper (:func:`_terminate_worker`) — the normal kill path
 #: now delegates escalation to the supervisor (see below).
-_SIGTERM_TO_SIGKILL_GRACE_S: float = 5.0
+_SIGTERM_TO_SIGKILL_GRACE_S: float = DEFAULT_SIGNAL_GRACE_S
 
 # NOTE: the window the parent waits for the SUPERVISOR to escalate-kill a
 # worker (before falling back to a last-resort self-kill) is configurable
@@ -866,46 +872,16 @@ def _aborted_loss_profile(
     )
 
 
-async def _terminate_worker(proc: Any) -> None:
-    """LAST-RESORT escalate SIGTERM -> (grace) -> SIGKILL on a worker process.
-
-    The normal over-budget kill path delegates escalation to the
-    supervisor (the single SIGTERM→grace→SIGKILL escalator): the parent
-    writes a kill-request marker and waits for the worker to die. This
-    function is the parent's *fallback*, used only when the supervisor did
-    not reap the worker within the config's ``supervisor_kill_wait_s``
-    window (:attr:`zicato.core.RuntimeConfig.supervisor_kill_wait_s`) — i.e. no
-    supervisor is attached (an ad-hoc run with no watchdog) or the
-    supervisor itself is gone. In that case the parent MUST still
-    guarantee the worker is reaped, so it runs the same escalation here.
-    Because it fires only after the supervisor's whole escalation window
-    has elapsed with the worker still alive, it never races a healthy
-    supervisor over the same pid.
-
-    After SIGTERM we wait :data:`_SIGTERM_TO_SIGKILL_GRACE_S` for a clean
-    exit; if the worker is still alive we SIGKILL it. Either way we
-    ``await proc.wait()`` so no zombie is left and the parent observes the
-    final exit code.
-    """
-    if proc.returncode is not None:
-        return
-    try:
-        proc.terminate()
-    except ProcessLookupError:
-        return
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=_SIGTERM_TO_SIGKILL_GRACE_S)
-        return
-    except TimeoutError:
-        pass
-    try:
-        proc.kill()
-    except ProcessLookupError:
-        pass
-    try:
-        await proc.wait()
-    except ProcessLookupError:
-        pass
+async def _terminate_worker(
+    proc: Any, *, expected_start_time: float | None = None, pgid: int | None = None
+) -> bool:
+    """Apply the shared termination policy with the worker's grace interval."""
+    return await terminate_process(
+        proc,
+        expected_start_time=expected_start_time,
+        pgid=pgid,
+        signal_grace_s=_SIGTERM_TO_SIGKILL_GRACE_S,
+    )
 
 
 def _load_worker_result(result_path: Path) -> dict[str, Any] | None:
@@ -964,5 +940,6 @@ __all__ = [
     "_stamp_replicate_index",
     "_telemetry_helpers",
     "_terminate_worker",
+    "_worker_processes_gone",
     "_weights_spec",
 ]

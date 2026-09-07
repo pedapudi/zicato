@@ -45,6 +45,8 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
+from zicato.runtime.lock import WorkspaceLock
+from zicato.runtime.writer import workspace_writer
 
 #: Replicate-index base for active board-reflection draws. Reserved far above
 #: every other owner in the partitioned replicate namespace so a reflection
@@ -508,6 +510,7 @@ async def run_corpus(
     disable_drift: tuple[Any, ...] = (),
     judge_only: bool = False,
     persist: bool = True,
+    writer: WorkspaceLock | None = None,
 ) -> list[ObservationRun]:
     """Produce fresh corpus draws at the reserved base; persist + mark executed.
 
@@ -525,74 +528,86 @@ async def run_corpus(
     pre-registration resume seam. Returns the in-memory
     :class:`ObservationRun` list either way.
     """
-    from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
-    from zicato.tournament.scheduling import _run_board_units_fast  # noqa: PLC0415
-    from zicato.tournament.worker_transport import (  # noqa: PLC0415
-        _stamp_disable_drift,
-        _stamp_judge_only,
-        _stamp_replicate_index,
-    )
+    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
 
-    entry_ids = set(plan.entries)
-    board_subset = [entry for entry in board if entry.id in entry_ids] if entry_ids else list(board)
-    stamped_board = _stamp_judge_only(_stamp_disable_drift(board_subset, disable_drift), judge_only)
+    async with workspace_writer(
+        workspace_root,
+        writer=writer,
+        instance_id=config.instance_id,
+        cleanup=lambda: drain_worker_cleanup(workspace_root),
+    ) as writer:
+        from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
+        from zicato.tournament.scheduling import _run_board_units_fast  # noqa: PLC0415
+        from zicato.tournament.worker_transport import (  # noqa: PLC0415
+            _stamp_disable_drift,
+            _stamp_judge_only,
+            _stamp_replicate_index,
+        )
 
-    runs: list[ObservationRun] = []
-    for generation in generations:
-        for draw in range(int(plan.replicates)):
-            replicate_index = REFLECTION_REPLICATE_BASE + draw
-            losses = await _run_board_units_fast(
-                adapter=adapter,
-                child_gen=generation,
-                board=_stamp_replicate_index(stamped_board, replicate_index),
-                weights=weights,
-                config=config,
-                workspace_root=workspace_root,
-                epoch_id=plan.epoch_id,
-                match_id=f"reflection:{plan.reflection_id}:r{draw}",
-                replicate_index=replicate_index,
-            )
-            # Same discipline as the preflight's degraded draw: an infra abort
-            # makes the draw un-measurable rather than worst-case — void it
-            # rather than persist an outage-derived observation. Infra aborts
-            # are never cached, so a re-run re-attempts this same slot.
-            if any(
-                is_infra_abort_cause(getattr(lp, "abort_cause", None)) for lp in losses.values()
-            ):
-                raise ReflectionDrawInconclusive(
-                    f"reflection {plan.reflection_id}: candidate {generation.id} draw r{draw} "
-                    "hit an infra abort (endpoint outage / worker crash); the draw is "
-                    "inconclusive and must not be persisted."
+        entry_ids = set(plan.entries)
+        board_subset = (
+            [entry for entry in board if entry.id in entry_ids] if entry_ids else list(board)
+        )
+        stamped_board = _stamp_judge_only(
+            _stamp_disable_drift(board_subset, disable_drift), judge_only
+        )
+
+        runs: list[ObservationRun] = []
+        for generation in generations:
+            for draw in range(int(plan.replicates)):
+                replicate_index = REFLECTION_REPLICATE_BASE + draw
+                losses = await _run_board_units_fast(
+                    adapter=adapter,
+                    child_gen=generation,
+                    board=_stamp_replicate_index(stamped_board, replicate_index),
+                    weights=weights,
+                    config=config,
+                    workspace_root=workspace_root,
+                    epoch_id=plan.epoch_id,
+                    match_id=f"reflection:{plan.reflection_id}:r{draw}",
+                    replicate_index=replicate_index,
                 )
-            for entry in board_subset:
-                loss = losses.get(entry.id)
-                if loss is None:
-                    continue
-                loss_path = _active_loss_path(
-                    workspace_root, plan.epoch_id, generation.id, entry.id, replicate_index
-                )
-                result_present, judge_io_records = _read_sidecars(loss_path)
-                runs.append(
-                    _build_observation(
-                        reflection_id=plan.reflection_id,
-                        candidate_id=generation.id,
-                        entry_id=entry.id,
-                        replicate=replicate_index,
-                        loss=loss,
-                        weights=weights,
-                        loss_path=loss_path,
-                        result_present=result_present,
-                        events_path=_unit_events_path_for(loss_path),
-                        judge_io_records=judge_io_records,
+                # Same discipline as the preflight's degraded draw: an infra abort
+                # makes the draw un-measurable rather than worst-case — void it
+                # rather than persist an outage-derived observation. Infra aborts
+                # are never cached, so a re-run re-attempts this same slot.
+                if any(
+                    is_infra_abort_cause(getattr(lp, "abort_cause", None)) for lp in losses.values()
+                ):
+                    raise ReflectionDrawInconclusive(
+                        f"reflection {plan.reflection_id}: candidate {generation.id} draw r{draw} "
+                        "hit an infra abort (endpoint outage / worker crash); the draw is "
+                        "inconclusive and must not be persisted."
                     )
-                )
+                for entry in board_subset:
+                    loss = losses.get(entry.id)
+                    if loss is None:
+                        continue
+                    loss_path = _active_loss_path(
+                        workspace_root, plan.epoch_id, generation.id, entry.id, replicate_index
+                    )
+                    result_present, judge_io_records = _read_sidecars(loss_path)
+                    runs.append(
+                        _build_observation(
+                            reflection_id=plan.reflection_id,
+                            candidate_id=generation.id,
+                            entry_id=entry.id,
+                            replicate=replicate_index,
+                            loss=loss,
+                            weights=weights,
+                            loss_path=loss_path,
+                            result_present=result_present,
+                            events_path=_unit_events_path_for(loss_path),
+                            judge_io_records=judge_io_records,
+                        )
+                    )
 
-    if persist:
-        write_corpus(workspace_root, plan.epoch_id, plan.reflection_id, runs)
-        from zicato.reflection.plan import write_plan  # noqa: PLC0415
+        if persist:
+            write_corpus(workspace_root, plan.epoch_id, plan.reflection_id, runs)
+            from zicato.reflection.plan import write_plan  # noqa: PLC0415
 
-        write_plan(workspace_root, plan.mark_executed())
-    return runs
+            write_plan(workspace_root, plan.mark_executed())
+        return runs
 
 
 def _active_loss_path(

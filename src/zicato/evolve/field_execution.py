@@ -158,6 +158,7 @@ async def run_field_matchup(
         phase=f"tournament:round_{field_round.round_index}:{matchup.matchup_id}",
     )
     result = await run_matchup(
+        writer=field_round.prepared.writer,
         adapter=field_round.adapter,
         left_gen=candidates.generation(matchup.left.generation_id),
         right_gen=candidates.generation(matchup.right.generation_id),

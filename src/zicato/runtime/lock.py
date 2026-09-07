@@ -1,69 +1,69 @@
-"""Workspace lock — pid-based with stale-pid detection.
+"""Exclusive workspace writers with readable process-identity metadata.
 
-Only one orchestrator may write under ``.zicato/runtime/`` at a time;
-running two against the same workspace would corrupt the lineage and
-the in-flight tournament state. The lock file at
-``.zicato/runtime/lock.json`` records the owning pid, instance id, and
-acquisition timestamp.
-
-The lock protocol is intentionally PID-based rather than OS-level
-(``fcntl.flock`` and friends) because:
-
-* The supervisor binary is a separate process and may be a different
-  language; a JSON file works without negotiating a protocol.
-* PID-based locks survive non-clean orchestrator exits in a recoverable
-  way — the next invocation sees the stale pid, confirms it is gone
-  via ``os.kill(pid, 0)``, and steals.
-
-Re-acquisition by the same pid is idempotent (returns a fresh
-:class:`WorkspaceLock` describing the existing lock). Different-pid
-acquisitions raise :class:`WorkspaceLockHeld` unless the prior owner
-is dead AND ``steal_stale=True`` (the default).
+A kernel lock on a stable guard file serializes acquisition and remains held
+until the writer releases ownership or exits. The sibling JSON record lets
+supervisors and readers inspect ownership without acquiring it. Independent
+invocations in one process must acquire separate handles and therefore compete.
 """
 
 from __future__ import annotations
 
 import errno
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+from weakref import WeakSet
 
 from zicato.runtime._storage import lock_key
-from zicato.runtime.paths import ensure_runtime_dirs
+from zicato.runtime.paths import ensure_runtime_dirs, lock_guard_path
 from zicato.storage import workspace_backend
 from zicato.util.iso_time import now_iso as _utc_now_iso
 
 
 class WorkspaceLockHeld(RuntimeError):
-    """Raised when the workspace is locked by a live, different process."""
+    """Raised when another invocation owns the workspace."""
+
+
+@dataclass(eq=False, slots=True, weakref_slot=True)
+class _WriterLease:
+    fd: int
+
+    def __post_init__(self) -> None:
+        _writer_leases.add(self)
+
+    def close(self) -> None:
+        if self.fd >= 0:
+            fd, self.fd = self.fd, -1
+            _writer_leases.discard(self)
+            os.close(fd)
+
+
+_writer_leases: WeakSet[_WriterLease] = WeakSet()
+
+
+def _close_inherited_leases() -> None:
+    # Closing the child's descriptor preserves the parent's shared lock.
+    # LOCK_UN would also unlock the parent's open file description.
+    for lease in tuple(_writer_leases):
+        try:
+            lease.close()
+        except OSError:
+            pass
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_close_inherited_leases)
 
 
 @dataclass(frozen=True, slots=True)
 class WorkspaceLock:
-    """Handle to an acquired workspace lock.
+    """An owned writer handle, or a read-only description of its metadata.
 
-    Carries everything :func:`release_workspace_lock` needs to confirm
-    it is releasing its own lock (and not stomping on a successor that
-    stole it after a crash).
-
-    Fields
-    ------
-    pid:
-        OS process id that owns the lock.
-    instance_id:
-        Logical instance id stamped at acquisition time. Mirrors
-        :class:`zicato.core.types.RuntimeConfig.instance_id`.
-    acquired_at:
-        ISO-8601 UTC timestamp of acquisition.
-    workspace_root:
-        Workspace the lock applies to.
-    start_time:
-        The owning process's start time (see :func:`pid_start_time`),
-        paired with ``pid`` to defeat pid reuse: a recycled pid cannot pass
-        as the original owner. ``None`` for a lock that carries no start
-        time, or when the host could not read one; callers degrade
-        gracefully via :func:`is_same_process`.
+    Only acquisition attaches a live lease. Deserializing the JSON cannot
+    authorize mutation or release. The owner identifier distinguishes successive
+    invocations even when their process and configured instance are identical.
     """
 
     pid: int
@@ -71,20 +71,25 @@ class WorkspaceLock:
     acquired_at: str
     workspace_root: Path
     start_time: float | None = None
+    owner_id: str | None = None
+    _lease: _WriterLease | None = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize to a plain dict for JSON encoding."""
-        return {
+        """Serialize inspection metadata without granting ownership."""
+        result = {
             "pid": self.pid,
             "instance_id": self.instance_id,
             "acquired_at": self.acquired_at,
             "workspace_root": str(self.workspace_root),
             "start_time": self.start_time,
         }
+        if self.owner_id is not None:
+            result["owner_id"] = self.owner_id
+        return result
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> WorkspaceLock:
-        """Construct from a JSON-decoded dict."""
+        """Read metadata, including records written without an owner identifier."""
         raw_start = d.get("start_time")
         return cls(
             pid=int(d["pid"]),
@@ -92,7 +97,23 @@ class WorkspaceLock:
             acquired_at=str(d["acquired_at"]),
             workspace_root=Path(d["workspace_root"]),
             start_time=float(raw_start) if raw_start is not None else None,
+            owner_id=d.get("owner_id"),
         )
+
+    def __enter__(self) -> WorkspaceLock:
+        try:
+            validate_workspace_lock(self, self.workspace_root)
+        except BaseException:
+            # A failed scope entry has no matching __exit__ call.
+            try:
+                release_workspace_lock(self)
+            except BaseException:
+                pass
+            raise
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        release_workspace_lock(self)
 
 
 def is_pid_alive(pid: int) -> bool:
@@ -137,6 +158,70 @@ def is_pid_alive(pid: int) -> bool:
             return False
         return True
     return True
+
+
+def signal_owned_process(
+    pid: int,
+    expected_start_time: float | None,
+    pgid: int | None,
+    sig: int,
+    *,
+    leader_exited: bool,
+) -> bool:
+    """Signal a verified leader or the group retained after its confirmed exit.
+
+    An unreadable live identity refuses signalling. The caller must establish
+    leader exit independently before a missing start token can retain a group.
+    """
+    if pid <= 1 or expected_start_time is None:
+        return False
+    current = pid_start_time(pid)
+    if current != expected_start_time and (current is not None or not leader_exited):
+        return False
+    try:
+        if pgid is None:
+            if not leader_exited:
+                os.kill(pid, sig)
+        else:
+            if pgid != pid or pgid <= 1 or pgid == os.getpgrp():
+                return False
+            if not leader_exited and os.getpgid(pid) != pgid:
+                return False
+            os.killpg(pgid, sig)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        return False
+    return True
+
+
+def group_has_live_members(pgid: int) -> bool:
+    """Treat unreadable membership as live; exited zombies cannot execute code."""
+    if pgid <= 1 or pgid == os.getpgrp():
+        return True
+    try:
+        processes = tuple(Path("/proc").iterdir())
+    except OSError:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+        return True
+    for process in processes:
+        if not process.name.isdecimal():
+            continue
+        try:
+            raw = (process / "stat").read_text()
+            fields = raw[raw.rindex(")") + 1 :].split()
+            if int(fields[2]) == pgid and fields[0] not in {"Z", "X"}:
+                return True
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except (OSError, ValueError, IndexError):
+            return True
+    return False
 
 
 def pid_start_time(pid: int) -> float | None:
@@ -266,92 +351,85 @@ def acquire_workspace_lock(
     *,
     steal_stale: bool = True,
 ) -> WorkspaceLock:
-    """Acquire the workspace lock for the current process.
+    """Acquire an exclusive writer and publish its inspection metadata.
 
-    Behavior matrix (assume my pid = ``self``):
-
-    * No lock file → write a fresh lock, return :class:`WorkspaceLock`.
-    * Lock file with pid == ``self`` → idempotent re-acquisition. The
-      existing acquisition timestamp is preserved (so the caller can
-      log "first acquired at..." across retries).
-    * Lock file with pid != ``self`` and that pid is alive → raise
-      :class:`WorkspaceLockHeld`.
-    * Lock file with pid != ``self`` and that pid is dead → if
-      ``steal_stale`` is true, overwrite with a fresh lock and return.
-      If false, raise :class:`WorkspaceLockHeld`.
-
-    Parameters
-    ----------
-    workspace_root:
-        The workspace to lock.
-    instance_id:
-        Stamped on the lock for audit purposes.
-    steal_stale:
-        Whether to steal a lock whose owner is dead. Default ``True``;
-        operators running a conservative deployment can set
-        it to ``False`` to require manual cleanup of stale locks.
+    Acquiring twice in one process is refused. Private operations reuse the
+    existing handle explicitly through :func:`validate_workspace_lock`.
+    Exclusive acquisition proves that a recorded kernel lease has ended.
+    Records without an owner identifier can represent a writer using process
+    metadata alone; their live process still blocks takeover.
     """
+    import fcntl  # noqa: PLC0415
+
+    workspace_root = workspace_root.resolve()
     ensure_runtime_dirs(workspace_root)
-    backend = workspace_backend(workspace_root, start=False)
-    my_pid = os.getpid()
+    # Never unlink this guard: every contender must lock the same inode.
+    lease = _WriterLease(os.open(lock_guard_path(workspace_root), os.O_CREAT | os.O_RDWR, 0o600))
+    try:
+        try:
+            fcntl.flock(lease.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise WorkspaceLockHeld(f"workspace {workspace_root} has an active writer") from exc
+        backend = workspace_backend(workspace_root, start=False)
+        existing = backend.read_json(lock_key())
+        if existing is not None:
+            prior = WorkspaceLock.from_dict(existing)
+            recorded_lease = isinstance(prior.owner_id, str) and bool(prior.owner_id)
+            if not recorded_lease and is_same_process(prior.pid, prior.start_time):
+                raise WorkspaceLockHeld(
+                    f"workspace {workspace_root} locked by live pid {prior.pid} "
+                    f"(instance {prior.instance_id!r}, acquired {prior.acquired_at})"
+                )
+            if not steal_stale:
+                raise WorkspaceLockHeld(
+                    f"workspace {workspace_root} has stale writer metadata for pid {prior.pid} "
+                    f"(instance {prior.instance_id!r}, acquired {prior.acquired_at}); "
+                    "refusing to steal with steal_stale=False"
+                )
+        lock = WorkspaceLock(
+            pid=os.getpid(),
+            instance_id=instance_id,
+            acquired_at=_utc_now_iso(),
+            workspace_root=workspace_root,
+            start_time=pid_start_time(os.getpid()),
+            owner_id=uuid4().hex,
+            _lease=lease,
+        )
+        backend.write_json(lock_key(), lock.to_dict())
+        return lock
+    except BaseException:
+        lease.close()
+        raise
 
-    existing = backend.read_json(lock_key())
-    if existing is not None:
-        prior = WorkspaceLock.from_dict(existing)
-        if prior.pid == my_pid and is_same_process(prior.pid, prior.start_time):
-            # Idempotent re-acquisition by the *same* process: keep the
-            # original acquired_at so observers can see when the lock first
-            # appeared. The start-time check guards the pathological case
-            # where this process's pid equals a prior owner's pid that has
-            # since been recycled to us — without it we'd inherit a foreign
-            # lock as if it were our own re-acquisition.
-            return prior
-        # Different pid, OR same pid number but a different process
-        # (recycled). Is the recorded owner still the same live process?
-        if is_same_process(prior.pid, prior.start_time):
-            raise WorkspaceLockHeld(
-                f"workspace {workspace_root} locked by live pid {prior.pid} "
-                f"(instance {prior.instance_id!r}, acquired {prior.acquired_at})"
-            )
-        if not steal_stale:
-            raise WorkspaceLockHeld(
-                f"workspace {workspace_root} locked by stale pid {prior.pid} "
-                f"(instance {prior.instance_id!r}, acquired {prior.acquired_at}); "
-                "refusing to steal with steal_stale=False"
-            )
-        # Fall through to overwrite: the prior owner is gone (or its pid
-        # was reused by an unrelated process — the start-time mismatch
-        # proves it is not the lock owner, so stealing is correct).
 
-    lock = WorkspaceLock(
-        pid=my_pid,
-        instance_id=instance_id,
-        acquired_at=_utc_now_iso(),
-        workspace_root=workspace_root,
-        start_time=pid_start_time(my_pid),
-    )
-    backend.write_json(lock_key(), lock.to_dict())
-    return lock
+def validate_workspace_lock(writer: WorkspaceLock, workspace_root: Path) -> None:
+    """Require the live writer handle acquired for this workspace and process."""
+    if (
+        writer._lease is None
+        or writer._lease.fd < 0
+        or writer.pid != os.getpid()
+        or writer.workspace_root != workspace_root.resolve()
+        or not writer.owner_id
+    ):
+        raise WorkspaceLockHeld(f"workspace {workspace_root} requires its acquired writer handle")
+    existing = workspace_backend(writer.workspace_root, start=False).read_json(lock_key())
+    if existing != writer.to_dict():
+        raise WorkspaceLockHeld(
+            f"workspace {workspace_root} writer metadata changed during ownership"
+        )
 
 
 def release_workspace_lock(lock: WorkspaceLock) -> None:
-    """Release a previously-acquired workspace lock.
-
-    Reads the on-disk lock; if it still belongs to the same pid +
-    instance_id this caller acquired with, deletes it. Otherwise the
-    call is a no-op — the lock has been stolen by another process or
-    has already been released, and overwriting it would corrupt the
-    successor's state.
-
-    Idempotent.
-    """
-    backend = workspace_backend(lock.workspace_root, start=False)
-    existing = backend.read_json(lock_key())
-    if existing is None:
+    """Remove owned metadata and close the lease; repeated release is harmless."""
+    if lock._lease is None or lock._lease.fd < 0:
         return
-    prior = WorkspaceLock.from_dict(existing)
-    if prior.pid == lock.pid and prior.instance_id == lock.instance_id:
-        backend.delete(lock_key())
+    try:
+        if lock.pid == os.getpid():
+            backend = workspace_backend(lock.workspace_root, start=False)
+            if backend.read_json(lock_key()) == lock.to_dict():
+                backend.delete(lock_key())
+    finally:
+        lock._lease.close()
 
 
 __all__ = [
@@ -360,7 +438,10 @@ __all__ = [
     "read_workspace_lock",
     "is_pid_alive",
     "pid_start_time",
+    "signal_owned_process",
+    "group_has_live_members",
     "is_same_process",
     "acquire_workspace_lock",
+    "validate_workspace_lock",
     "release_workspace_lock",
 ]

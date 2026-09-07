@@ -21,8 +21,9 @@ contract:
   zicato runtime's event loop stays responsive (the live dashboard
   keeps polling state) and the test process's globals can't leak into
   the runner's process.
-* Bounded wall clock — the suite is killed after ``timeout_s`` seconds.
-  A timeout is reported as ``passed=False`` with the summary keyword
+* Execution deadline — termination begins after ``timeout_s`` seconds.
+  Cleanup waits until the child is reaped and its process group has no live
+  members. A timeout is reported as ``passed=False`` with the summary keyword
   ``"timeout"`` so the gate-side wiring can surface it distinctly from
   ordinary test failures.
 * Parsed failure ids — pytest's ``-q --tb=line`` output emits per-failed
@@ -36,7 +37,6 @@ The dataclass is frozen + slotted so it round-trips through
 
 from __future__ import annotations
 
-import asyncio
 import re
 import time
 from dataclasses import dataclass
@@ -184,24 +184,13 @@ async def run_regression_suite(
             elapsed_s=0.0,
         )
 
-    proc = await asyncio.create_subprocess_exec(
-        *test_command,
-        cwd=str(test_root),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
+    from zicato.runtime.process import run_process  # noqa: PLC0415
+
     try:
-        stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+        result = await run_process(
+            test_command, cwd=test_root, timeout_s=timeout_s, merge_stderr=True
+        )
     except TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        # Drain so the transport closes cleanly; ignore the bytes.
-        try:
-            await proc.communicate()
-        except Exception:  # noqa: BLE001
-            pass
         elapsed = time.monotonic() - started
         return RegressionResult(
             passed=False,
@@ -211,9 +200,8 @@ async def run_regression_suite(
         )
 
     elapsed = time.monotonic() - started
-    output = stdout_bytes.decode("utf-8", errors="replace")
-    exit_code = proc.returncode if proc.returncode is not None else -1
-    return _classify_completed_run(output, exit_code, elapsed)
+    output = (result.stdout or b"").decode("utf-8", errors="replace")
+    return _classify_completed_run(output, result.returncode, elapsed)
 
 
 __all__ = ["RegressionResult", "run_regression_suite"]

@@ -1205,7 +1205,7 @@ two `_run_single` coroutines under one `asyncio.gather` — and the two are safe
 concurrent because everything about a run is per-`run_id`:
 
 ```python
-    parent_result, child_result = await asyncio.gather(
+    parent_result, child_result = await gather_owned(
         _run_unit_cache_first(..., generation=parent_gen, ..., side=Side.PARENT, ...),
         _run_unit_cache_first(..., generation=child_gen, ..., side=Side.CHILD, ...),
         return_exceptions=True,
@@ -1219,16 +1219,19 @@ concurrent because everything about a run is per-`run_id`:
 ```
 — `src/zicato/tournament/scheduling.py`, `_run_full_board_unit`
 
-Two properties are load-bearing. **`return_exceptions=True`** keeps a failing
-side from cancelling its in-flight sibling mid-subprocess (which would orphan a
-worker and skip its `finally` cleanup); both sides are allowed to finish, and
-only then is a champion-side failure — then a challenger-side one — re-raised.
-And **nothing is shared** between the two sides: each `_run_single` spawns its
-own subprocess worker, each pointed at its own distinct `ztw-snap-*` ephemeral
-checkout, each writing a distinct `run_id` (`run_id_for_unit`, and the two
-generations differ), so the snapshot checkout, the `active_runs` file, and the
-`loss.json` are all per-side. This is why `parallelism` counts board units rather
-than subprocesses: one full-mode unit is TWO concurrent workers.
+`return_exceptions=True` lets both sides finish before the scheduler raises a
+champion-side failure, then a challenger-side failure. Each side owns a separate
+subprocess, checkout, active-run record, and loss file. One full-mode board unit
+therefore consumes two workers.
+
+Every selection and board-unit batch uses `util.async_tasks.gather_owned`.
+Cancellation requests reach unfinished children once; the batch joins all child
+tasks before propagating cancellation. Repeated parent cancellation cannot
+interrupt that join. An ordinary exception also cancels and joins siblings when
+`return_exceptions` is false. Worker tasks must finish bounded cleanup or retain
+their resource owners before the invocation drains retained workers. An empty
+retained-owner registry is sufficient only after every tournament task has
+finished unwinding.
 
 > ⛔ The run id names a board unit — `(generation, entry, replicate)` — rather
 > than a `(generation, entry)` pair. Build it ONLY through

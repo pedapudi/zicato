@@ -63,6 +63,8 @@ from zicato.reflection.mining import (
     HINT_REGRESSION_ENTRY,
     HINT_RUBRIC_REVISION,
 )
+from zicato.runtime.lock import WorkspaceLock
+from zicato.runtime.writer import workspace_writer
 
 #: Replicate-index base for eval-synthesis admission probes — the A/A noise
 #: draws (``SYNTHESIS_REPLICATE_BASE + j``) and the discrimination-probe draws
@@ -251,6 +253,7 @@ async def admit_suggestion(
     spend: bool,
     noise_runs: int = DEFAULT_NOISE_RUNS,
     discrimination_candidates: int = DEFAULT_DISCRIMINATION_CANDIDATES,
+    writer: WorkspaceLock | None = None,
 ) -> AdmissionRecord:
     """Measure a drafted suggestion's operating characteristics (EVAL-SYNTHESIS.md §5).
 
@@ -282,40 +285,48 @@ async def admit_suggestion(
             spent=False,
         )
 
-    execution, noise = await _execution_and_noise(
-        request.entry,
-        champion=champion,
-        weights=weights,
-        config=config,
-        adapter=adapter,
-        workspace_root=workspace_root,
-        epoch_id=epoch_id,
-        noise_runs=noise_runs,
-    )
-    # An entry that cannot execute cleanly on the champion is not spent against
-    # the discrimination candidates — discrimination of a non-executing draft is
-    # meaningless (and the doc rejects a non-executing draft at execution, §5.1).
-    if execution.get("ran"):
-        discrimination = await _discrimination_probe(
+    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+
+    async with workspace_writer(
+        workspace_root,
+        writer=writer,
+        instance_id=config.instance_id,
+        cleanup=lambda: drain_worker_cleanup(workspace_root),
+    ) as writer:
+        execution, noise = await _execution_and_noise(
             request.entry,
-            experiments=experiments,
+            champion=champion,
             weights=weights,
             config=config,
             adapter=adapter,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
-            discrimination_candidates=discrimination_candidates,
+            noise_runs=noise_runs,
         )
-    else:
-        discrimination = _unmeasured_discrimination()
-    return AdmissionRecord(
-        execution=execution,
-        noise=noise,
-        discrimination=discrimination,
-        leakage=leakage,
-        cost=cost,
-        spent=True,
-    )
+        # An entry that cannot execute cleanly on the champion is not spent against
+        # the discrimination candidates — discrimination of a non-executing draft is
+        # meaningless (and the doc rejects a non-executing draft at execution, §5.1).
+        if execution.get("ran"):
+            discrimination = await _discrimination_probe(
+                request.entry,
+                experiments=experiments,
+                weights=weights,
+                config=config,
+                adapter=adapter,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                discrimination_candidates=discrimination_candidates,
+            )
+        else:
+            discrimination = _unmeasured_discrimination()
+        return AdmissionRecord(
+            execution=execution,
+            noise=noise,
+            discrimination=discrimination,
+            leakage=leakage,
+            cost=cost,
+            spent=True,
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -24,7 +24,9 @@ from zicato.core import (
     ScoringWeights,
 )
 from zicato.core.types import DriftCount, ExpectationResult
+from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock
 from zicato.tournament.runner import run_matchup, run_tournament
+from zicato.util.async_tasks import gather_owned
 
 
 def _loss(*, generation_id: str, entry_id: str, drift_loss: float, pass_fail: bool | None):
@@ -449,7 +451,7 @@ def _run_two_concurrent_matchups(
     probe.install(monkeypatch)
     board = _big_board(4)
 
-    def _matchup(right_id: str, match_id: str):
+    def _matchup(right_id: str, match_id: str, writer: WorkspaceLock):
         return run_matchup(
             adapter=object(),
             left_gen=_gen(tmp_path, "v0"),
@@ -461,10 +463,12 @@ def _run_two_concurrent_matchups(
             epoch_id="e0",
             match_id=match_id,
             unit_semaphore=shared,
+            writer=writer,
         )
 
     async def _two() -> None:
-        await asyncio.gather(_matchup("v1", "m1"), _matchup("v2", "m2"))
+        with acquire_workspace_lock(tmp_path, "matchup-concurrency") as writer:
+            await gather_owned(_matchup("v1", "m1", writer), _matchup("v2", "m2", writer))
 
     asyncio.run(_two())
     return probe.peak
