@@ -89,6 +89,7 @@ function feed() {
 }
 
 let SUGGESTIONS = feed();
+let provenanceResponse = PROVENANCE;
 const OP_CALLS = [];
 const PROV_PATH = '/api/reflection/refl-traceviz/suggestion/sug-14ffa7e6/provenance';
 
@@ -103,7 +104,7 @@ function installFetch() {
     if (path === '/builder/config') return jsonRes(CONFIG);
     if (path.startsWith('/builder/draft')) return jsonRes({ session: 'dashboard', draft: DRAFT, cost: { board_runs_per_round: 2, breakdown: [] }, warnings: [], diff: { components: [], changed_components: [] }, drafts: [], proposer_dirs: [] });
     if (path === '/builder/suggestions') return jsonRes(SUGGESTIONS);
-    if (path === PROV_PATH) return jsonRes(PROVENANCE);
+    if (path === PROV_PATH) return jsonRes(provenanceResponse);
     if (path === '/builder/op') { OP_CALLS.push(body); return jsonRes({ draft: DRAFT, patch: { op: body.op, changed: {} }, cost: { board_runs_per_round: 2, breakdown: [] }, warnings: [], diff: { components: [], changed_components: [] } }); }
     return jsonRes({});
   };
@@ -262,6 +263,17 @@ test('cards: rationale + subject are textContent — probe markup stays inert (X
   assert(judge.textContent.includes('<img src=x onerror=alert(1)>'), 'the rationale markup is inert text');
   assert(judge.textContent.includes('<script>bad()</script>'), 'the subject markup is inert text');
   assertEqual(host.innerHTMLWriteCount(), 0, 'the cards never write innerHTML');
+});
+
+test('mini-strip: displays the shared reader refusal without drawing provenance', async () => {
+  SUGGESTIONS = feed();
+  provenanceResponse = { found: false, unreadable: 'Suggestion record has an invalid rank.' };
+  const host = await mountBoard();
+  const card = byClass(host, 'dn-bld-sugcard').find((c) => c.textContent.includes('trace-a0be332d'));
+  const block = firstClass(card, 'dn-bld-sugstripwrap');
+  assert(block.textContent.includes(provenanceResponse.unreadable), 'shows the server reason');
+  assertEqual(byClass(block, 'dn-bld-sugstrip').length, 0, 'no provenance strip is drawn');
+  provenanceResponse = PROVENANCE;
 });
 
 await run();

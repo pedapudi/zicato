@@ -47,16 +47,14 @@ ONCE; a second malformed response yields ``verdict="ambiguous"`` with the raw
 response retained — the engine NEVER raises out of a bad model response, and an
 ambiguous pile is itself a finding (an underspecified criterion).
 
-Idempotent cache — the corpus is frozen, so file-exists is a HIT
-----------------------------------------------------------------
+Cache acceptance
+----------------
 Each verdict persists at
-``epochs/{e}/reflections/{id}/adjudication/{judge}/{run_ref}.json`` where
-``run_ref = "{candidate}:{entry}:r{replicate}"``. Because the observation
-corpus is frozen per ``reflection_id``, a present file is a cache HIT:
-:func:`adjudicate_corpus` re-reads it and spends ZERO adjudicator budget on a
-second pass. Optional adjudicator replication (``k_adj``) measures the
-adjudicator's OWN reliability via the existing
-:func:`zicato.judge_runtime.reliability.pairwise_disagreement`.
+``epochs/{e}/reflections/{id}/adjudication/{judge}/{run_ref}.json``. The record
+owner validates its identity and verdict before the engine compares the model,
+protocol, replication count, and transcript fidelity. A matching record avoids
+another adjudication. A valid stale record is recomputed; malformed persisted
+content raises a record error without spending adjudication budget.
 """
 
 from __future__ import annotations
@@ -64,12 +62,28 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.judge_runtime.reliability import _freeze_context, pairwise_disagreement
+from zicato.reflection.adjudication import (
+    ADJUDICATED_AMBIGUOUS,
+    ADJUDICATED_SHOULD_BE_SILENT,
+    ADJUDICATED_SHOULD_FIRE,
+    ADJUDICATION_FORMAT_VERSION,
+    OBSERVED_FIRED,
+    OBSERVED_SILENT,
+    VERDICT_AMBIGUOUS,
+    VERDICT_FN,
+    VERDICT_FP,
+    VERDICT_TN,
+    VERDICT_TP,
+    JudgeAdjudication,
+    classify_verdict,
+    read_adjudication,
+    write_adjudication,
+)
 from zicato.reflection.corpus import (
     FIDELITY_PREVIEW,
     FIDELITY_RESULT,
@@ -96,25 +110,6 @@ ADJUDICATOR_PROMPT_VERSION: int = 2
 VERDICT_JSON_KEYS: tuple[str, ...] = ("should_fire", "severity", "evidence_span", "rationale")
 SEVERITY_VOCAB: tuple[str, ...] = ("none", "info", "warning", "critical")
 
-#: ``format_version`` stamped onto every persisted adjudication file. A reader
-#: skips (returns ``None`` for) any other version — a verdict this reader
-#: cannot vouch for degrades to "not cached", never a crash.
-ADJUDICATION_FORMAT_VERSION: int = 1
-
-# Verdict vocabulary (the confusion-matrix cells + the excluded-from-rates pile).
-VERDICT_TP: str = "TP"
-VERDICT_FP: str = "FP"
-VERDICT_FN: str = "FN"
-VERDICT_TN: str = "TN"
-VERDICT_AMBIGUOUS: str = "ambiguous"
-
-# Observed / adjudicated vocabulary.
-OBSERVED_FIRED: str = "fired"
-OBSERVED_SILENT: str = "silent"
-ADJUDICATED_SHOULD_FIRE: str = "should_fire"
-ADJUDICATED_SHOULD_BE_SILENT: str = "should_be_silent"
-ADJUDICATED_AMBIGUOUS: str = "ambiguous"
-
 #: Delimiters bracketing the verbatim transcript in the user prompt. A
 #: ``span_quoting`` double slices between these to prove it received the exact
 #: bytes; the adjudicator model reads the same region.
@@ -134,89 +129,6 @@ ADJUDICATOR_SYSTEM_PROMPT: str = (
     "guards, false when the transcript is clean. Keep evidence_span short and "
     "copied verbatim from the transcript so the operator can verify in seconds."
 )
-
-
-# ---------------------------------------------------------------------------
-# The verdict record
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class JudgeAdjudication:
-    """One meta-judge verdict over one judge decision (the doc's schema).
-
-    ``observed`` is what the judge did; ``adjudicated`` is what the independent
-    meta-judge concluded from the transcript; ``verdict`` is their 2×2 join
-    (plus the excluded ``ambiguous`` pile). ``fidelity`` and ``prompt_version``
-    ride along so downstream aggregation never mixes tiers or protocols, and
-    ``raw_response`` retains the model's bytes on an ambiguous parse failure.
-    """
-
-    judge_name: str
-    run_ref: str
-    observed: str
-    adjudicated: str
-    verdict: str
-    severity_match: bool | None
-    evidence_span: str
-    meta_judge_rationale: str
-    meta_judge_model: str
-    adjudicator_self_agreement: float | None
-    operator_confirmed: bool | None
-    fidelity: str
-    prompt_version: int
-    k_adj: int
-    raw_response: str | None = None
-
-    def to_json(self) -> dict[str, Any]:
-        """The persisted ``adjudication/{judge}/{run_ref}.json`` shape."""
-        return {
-            "format_version": ADJUDICATION_FORMAT_VERSION,
-            "judge_name": self.judge_name,
-            "run_ref": self.run_ref,
-            "observed": self.observed,
-            "adjudicated": self.adjudicated,
-            "verdict": self.verdict,
-            "severity_match": self.severity_match,
-            "evidence_span": self.evidence_span,
-            "meta_judge_rationale": self.meta_judge_rationale,
-            "meta_judge_model": self.meta_judge_model,
-            "adjudicator_self_agreement": self.adjudicator_self_agreement,
-            "operator_confirmed": self.operator_confirmed,
-            "fidelity": self.fidelity,
-            "prompt_version": self.prompt_version,
-            "k_adj": self.k_adj,
-            "raw_response": self.raw_response,
-        }
-
-    @classmethod
-    def from_json(cls, data: dict[str, Any]) -> JudgeAdjudication:
-        """Rebuild one verdict from its persisted dict.
-
-        ``prompt_version`` and ``k_adj`` default to ``0`` and ``meta_judge_model``
-        to ``""`` — NOT to the current live constants. A cache file written
-        before these fields existed carries none of them, and defaulting to
-        the live values would MASK the staleness the cache predicate exists
-        to catch (a 0 / ``""`` can never
-        equal a live model / version / k, so the record is correctly re-derived).
-        """
-        return cls(
-            judge_name=str(data.get("judge_name", "")),
-            run_ref=str(data.get("run_ref", "")),
-            observed=str(data.get("observed", OBSERVED_SILENT)),
-            adjudicated=str(data.get("adjudicated", ADJUDICATED_AMBIGUOUS)),
-            verdict=str(data.get("verdict", VERDICT_AMBIGUOUS)),
-            severity_match=data.get("severity_match"),
-            evidence_span=str(data.get("evidence_span", "")),
-            meta_judge_rationale=str(data.get("meta_judge_rationale", "")),
-            meta_judge_model=str(data.get("meta_judge_model", "")),
-            adjudicator_self_agreement=data.get("adjudicator_self_agreement"),
-            operator_confirmed=data.get("operator_confirmed"),
-            fidelity=str(data.get("fidelity", FIDELITY_PREVIEW)),
-            prompt_version=int(data.get("prompt_version", 0)),
-            k_adj=int(data.get("k_adj", 0)),
-            raw_response=data.get("raw_response"),
-        )
 
 
 def run_ref_for(obs: ObservationRun) -> str:
@@ -489,15 +401,6 @@ async def _call_bounded(call_llm: Any, system: str, user: str, model: str) -> st
         return text
 
 
-def _classify(observed: str, adjudicated: str) -> str:
-    """Join observed × adjudicated into the confusion-matrix verdict."""
-    if adjudicated == ADJUDICATED_AMBIGUOUS:
-        return VERDICT_AMBIGUOUS
-    if observed == OBSERVED_FIRED:
-        return VERDICT_TP if adjudicated == ADJUDICATED_SHOULD_FIRE else VERDICT_FP
-    return VERDICT_FN if adjudicated == ADJUDICATED_SHOULD_FIRE else VERDICT_TN
-
-
 # ---------------------------------------------------------------------------
 # One decision → one verdict
 # ---------------------------------------------------------------------------
@@ -580,7 +483,7 @@ async def adjudicate_decision(
         (p for p in parsed_list if bool(p.get("should_fire")) == majority), parsed_list[0]
     )
     adjudicated = ADJUDICATED_SHOULD_FIRE if majority else ADJUDICATED_SHOULD_BE_SILENT
-    verdict = _classify(observed, adjudicated)
+    verdict = classify_verdict(observed, adjudicated)
 
     severity_match: bool | None = None
     if verdict == VERDICT_TP:
@@ -610,45 +513,6 @@ async def adjudicate_decision(
         k_adj=stamped_k_adj,
         raw_response=None,
     )
-
-
-# ---------------------------------------------------------------------------
-# Cache persistence
-# ---------------------------------------------------------------------------
-
-
-def write_adjudication(path: Path, adjudication: JudgeAdjudication) -> Path:
-    """Persist one verdict via the fsync'd atomic JSON writer; return the path.
-
-    Routes through :func:`zicato.storage.atomic_write_json` — the SAME durable
-    ``.tmp`` + ``fsync`` (file AND parent dir) + rename discipline the
-    ``result.json`` capture writer uses — so a cached verdict, like a captured run
-    result, survives power loss rather than resting on a bare rename.
-    """
-    from zicato.storage import atomic_write_json  # noqa: PLC0415
-
-    atomic_write_json(path, adjudication.to_json())
-    return path
-
-
-def read_adjudication(path: Path) -> JudgeAdjudication | None:
-    """Read one persisted verdict; ``None`` on ANY defect (a re-run re-adjudicates).
-
-    A missing / unreadable file, non-JSON / non-object content, or a
-    ``format_version`` other than :data:`ADJUDICATION_FORMAT_VERSION` all
-    return ``None`` — a cache MISS the caller re-adjudicates, never a crash.
-    """
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    try:
-        body = json.loads(raw)
-    except (ValueError, json.JSONDecodeError):
-        return None
-    if not isinstance(body, dict) or body.get("format_version") != ADJUDICATION_FORMAT_VERSION:
-        return None
-    return JudgeAdjudication.from_json(body)
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +592,7 @@ async def adjudicate_corpus(
             path = reflection_adjudication_path(
                 workspace_root, epoch_id, reflection_id, judge_name, run_ref
             )
-            cached = read_adjudication(path) if path.exists() else None
+            cached = read_adjudication(path)
             if (
                 cached is not None
                 and cached.meta_judge_model == adjudicator_model

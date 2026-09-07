@@ -197,7 +197,7 @@ def as_list(value: Any) -> list[Any]:
 
 
 #: The label column for every ``label   value`` line, across every lens. One
-#: number so the six lenses read as one surface rather than six tables.
+#: number so tables across the console share the same alignment.
 LABEL_WIDTH = 24
 
 

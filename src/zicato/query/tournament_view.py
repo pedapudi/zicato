@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from zicato.epoch._storage import RecordError
 from zicato.query._sqlite import (
     INDEX_NOT_BUILT_NOTE,
     _IndexAbsent,
@@ -18,6 +19,7 @@ from zicato.query.epoch_view import (
     _normalize_structure,
     _tournament_block_from_scoring,
 )
+from zicato.query.inputs import EpochInputs
 from zicato.query.paths import (
     WorkspacePaths,
     _opt_bool,
@@ -30,7 +32,8 @@ from zicato.query.paths import (
 from zicato.query.ratings import RATING_FIELDS, rating_by_generation
 from zicato.query.replicate_scores import replicate_scores, standard_error
 from zicato.query.runtime_view import read_active_tournament_dict
-from zicato.workspace import read_gen_score, read_loss, run_entry_ids
+from zicato.tournament.scoring import read_gen_score
+from zicato.workspace import read_loss, run_entry_ids
 
 
 def _champion_lineage(generations: list[dict[str, Any]]) -> list[str]:
@@ -71,16 +74,20 @@ def _champion_lineage(generations: list[dict[str, Any]]) -> list[str]:
     return chain
 
 
-def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
+def build_bracket(
+    paths: WorkspacePaths, epoch_id: str | None = None, *, inputs: EpochInputs | None = None
+) -> dict[str, Any]:
     """``GET /api/tournaments`` — the bracket for an epoch.
 
     ``epoch_id`` defaults to the current epoch; a validated id scopes to that
     epoch instead.
     """
     epoch_id = _resolve_epoch_id(paths, epoch_id)
+    if inputs is not None:
+        inputs.check(paths, epoch_id)
     try:
         with open_index_ro(paths.index_db) as conn:
-            return _bracket_from_conn(paths, conn, epoch_id)
+            return _bracket_from_conn(paths, conn, epoch_id, inputs=inputs)
     except _IndexAbsent:
         return with_index_not_built_note(
             {"epoch_id": epoch_id, "champion_lineage": [], "matchups": []}
@@ -90,7 +97,11 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
 
 
 def _bracket_from_conn(
-    paths: WorkspacePaths, conn: sqlite3.Connection, epoch_id: str | None
+    paths: WorkspacePaths,
+    conn: sqlite3.Connection,
+    epoch_id: str | None,
+    *,
+    inputs: EpochInputs | None = None,
 ) -> dict[str, Any]:
     """The bracket body — reads the open connection, never closes it."""
     if epoch_id is None:
@@ -366,9 +377,18 @@ def _bracket_from_conn(
     # than mislabelling the epoch gauntlet.
     if epoch_structure == "gauntlet":
         layout = layout_of(paths)
-        block = _tournament_block_from_scoring(_read_json_value(layout.scoring(epoch_id)))
+        scoring = (
+            inputs.scoring.copy()
+            if inputs is not None
+            else _read_json_value(layout.scoring(epoch_id))
+        )
+        block = _tournament_block_from_scoring(scoring)
         if block is None:
-            cfg = _read_json_value(layout.epoch_config(epoch_id))
+            cfg = (
+                inputs.config.copy()
+                if inputs is not None
+                else _read_json_value(layout.epoch_config(epoch_id))
+            )
             block = _tournament_block_from_scoring(
                 cfg.get("scoring") if isinstance(cfg, dict) else None
             )
@@ -672,14 +692,10 @@ def _read_run_loss_files(
     return out
 
 
-def _read_gen_score(paths: WorkspacePaths, epoch_id: str, generation_id: str) -> dict[str, Any]:
-    """Read a generation's cached ``gen_score.json`` aggregate.
-
-    Returns the raw aggregate dict (``scalar`` / ``drift_loss_mean`` /
-    ``pass_rate`` / ``scalar_components`` / ...), or ``{}`` when the
-    file is absent or malformed.
-    """
-    return read_gen_score(layout_of(paths), epoch_id, generation_id)
+def _gen_score_view(paths: WorkspacePaths, epoch_id: str, generation_id: str) -> dict[str, Any]:
+    """Project the accepted aggregate for query responses."""
+    score = read_gen_score(layout_of(paths), epoch_id, generation_id)
+    return score.to_dict() if score else {}
 
 
 def _entry_outcome(
@@ -887,8 +903,12 @@ def build_matchup_grid(
         for cell in side.values()
     )
 
-    parent_score = _read_gen_score(paths, epoch_id, champion_id) if champion_id else {}
-    child_score = _read_gen_score(paths, epoch_id, challenger_id)
+    try:
+        parent_score = _gen_score_view(paths, epoch_id, champion_id) if champion_id else {}
+        child_score = _gen_score_view(paths, epoch_id, challenger_id)
+    except RecordError as exc:
+        base["unreadable"] = str(exc)
+        return base
     p_scalar, c_scalar, pair_delta = _scalar_pair(
         parent_score.get("scalar"), child_score.get("scalar")
     )
@@ -1351,8 +1371,11 @@ def _structure_from_loss_files(
     champion, challenger = _decode_crowning_pair(tournament_id)
     if not challenger:
         return None
-    parent_score = _read_gen_score(paths, epoch_id, champion) if champion else {}
-    child_score = _read_gen_score(paths, epoch_id, challenger)
+    try:
+        parent_score = _gen_score_view(paths, epoch_id, champion) if champion else {}
+        child_score = _gen_score_view(paths, epoch_id, challenger)
+    except RecordError as exc:
+        return {"epoch_id": epoch_id, "tournament_id": tournament_id, "unreadable": str(exc)}
     parent_scalar, child_scalar, delta = _scalar_pair(
         parent_score.get("scalar"), child_score.get("scalar")
     )
@@ -1466,10 +1489,14 @@ def _enrich_override_status(
     tdir = field_tournaments_dir(paths.root, epoch_id)
     if not tdir.is_dir():
         return result
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
+    from zicato.tournament.records import read_field_tournament_record  # noqa: PLC0415
+
     for record_path in sorted(tdir.glob("field-*.json")):
-        record = _read_json_value(record_path)
-        if not isinstance(record, dict):
-            continue
+        try:
+            record = read_field_tournament_record(record_path).to_dict()
+        except RecordError as exc:
+            return {**result, "unreadable": str(exc)}
         override_status = record.get("override_status")
         promoted_ids = record.get("promoted_generation_ids")
         if not (isinstance(override_status, dict) and override_status) and not (

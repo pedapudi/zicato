@@ -13,6 +13,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+from tests._reflection_support import finding_body, scorecard_body
 from zicato.core.workspace import (
     reflection_dir,
     reflection_findings_path,
@@ -60,11 +61,21 @@ def _write_reflection_files(
         encoding="utf-8",
     )
     reflection_scorecards_path(workspace, epoch_id, reflection_id).write_text(
-        json.dumps({"reflection_id": reflection_id, "scorecards": scorecards or []}),
+        json.dumps(
+            {
+                "reflection_id": reflection_id,
+                "scorecards": [scorecard_body(card) for card in (scorecards or [])],
+            }
+        ),
         encoding="utf-8",
     )
     reflection_findings_path(workspace, epoch_id, reflection_id).write_text(
-        json.dumps({"reflection_id": reflection_id, "findings": findings or []}),
+        json.dumps(
+            {
+                "reflection_id": reflection_id,
+                "findings": [finding_body(item) for item in (findings or [])],
+            }
+        ),
         encoding="utf-8",
     )
     if summary is not None:

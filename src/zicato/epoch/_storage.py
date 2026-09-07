@@ -104,22 +104,27 @@ class RecordFormatError(RecordError):
     """A canonical JSON record's ``format_version`` is not readable here."""
 
 
-def check_record_format(body: dict[str, object], record_name: str) -> None:
+def check_record_format(
+    body: dict[str, object],
+    record_name: str,
+    *,
+    expected_version: int = RECORD_FORMAT_VERSION,
+    allow_missing: bool = True,
+) -> None:
     """Refuse a canonical record whose ``format_version`` this build cannot read.
 
-    ``body`` is the parsed JSON record; ``record_name`` names it in the
-    error (e.g. ``"experiment.json"``). Absent ⇒ version 1 (pre-stamp
-    records — accepted this release); equal ⇒ fine; anything else raises
-    :class:`RecordFormatError` with the upgrade guidance.
+    The owner declares the accepted integer version and whether an absent
+    stamp is readable. Version-1 owners retain their unstamped-record policy;
+    settlement receipts require their explicit format-3 stamp.
     """
     raw = body.get("format_version")
-    if raw is None:
+    if raw is None and allow_missing:
         return  # pre-stamp record — version 1 by definition this release
-    if isinstance(raw, int) and not isinstance(raw, bool) and raw == RECORD_FORMAT_VERSION:
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw == expected_version:
         return
     raise RecordFormatError(
-        f"{record_name}: format_version {raw!r} is not readable by this "
-        f"zicato (expects {RECORD_FORMAT_VERSION}); the record was written "
+        f"{record_name}: unsupported format_version {raw!r} is not readable by this "
+        f"zicato (expects {expected_version}); the record was written "
         "by an incompatible (likely newer) version — upgrade zicato rather "
         "than letting an old reader misinterpret it"
     )

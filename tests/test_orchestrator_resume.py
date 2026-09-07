@@ -156,7 +156,7 @@ def test_resume_reuses_completed_units_without_rerun(
     # correct resume leaves a single v1 node — never a duplicate.
     from zicato.epoch.lineage import load_lineage
 
-    lineage_after = load_lineage(workspace)
+    lineage_after = load_lineage(workspace).to_dict()
     v1_records = [
         node
         for epoch in lineage_after["epochs"]

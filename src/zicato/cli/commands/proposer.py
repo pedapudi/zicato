@@ -262,7 +262,7 @@ def _render_findings(reflection: Any) -> str:
     # many prior epochs its comparisons span. Every "compared against" line
     # below is a claim about that history, so its breadth belongs on screen
     # rather than only in the persisted record.
-    history = len(reflection.investigation.history if reflection.investigation else ())
+    history = len(reflection.investigation["history"] if reflection.investigation else ())
     lines = [
         f"Proposer reflection {reflection.reflection_id} · epoch {reflection.epoch_id}",
         f"  substrate: {reflection.investigation_source}"
@@ -380,13 +380,17 @@ def recommendations_cmd(workspace: str, as_json: bool) -> None:
     This is the same list the epoch boundary prints — the boundary is when
     applying one is free, because the epoch is rolling anyway.
     """
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
     from zicato.proposer.reflection import (  # noqa: PLC0415
         pending_recommendations,
         render_recommendation_lines,
     )
 
     workspace_root = Path(workspace).resolve()
-    pending = pending_recommendations(workspace_root)
+    try:
+        pending = pending_recommendations(workspace_root)
+    except RecordError as exc:
+        raise click.ClickException(str(exc)) from exc
     if as_json:
         click.echo(json.dumps({"pending": pending}, indent=2, sort_keys=True))
         return
@@ -432,11 +436,12 @@ def apply_recommendation_cmd(
     epoch and opens a fresh one before proposing anything, and that new epoch's
     record carries this recommendation id.
     """
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
     from zicato.proposer.apply_recommendation import (  # noqa: PLC0415
         ApplyError,
         apply_recommendation,
     )
-    from zicato.proposer.reflection import read_finding  # noqa: PLC0415
+    from zicato.proposer.reflection_records import read_finding  # noqa: PLC0415
 
     workspace_root, resolved_epoch = _resolve_workspace_epoch(workspace, epoch_id)
     if proposer_override:
@@ -450,20 +455,20 @@ def apply_recommendation_cmd(
             "`zicato epoch register --proposer-path PATH`, or pass --proposer-path here."
         )
 
-    if show_diff:
-        located = read_finding(workspace_root, recommendation_id, epoch_id=epoch_id)
-        diff = ((located[2].get("remedy") or {}) if located else {}).get("diff")
-        if diff:
-            click.echo(diff)
-
     try:
+        if show_diff:
+            located = read_finding(workspace_root, recommendation_id, epoch_id=epoch_id)
+            remedy = located[2].remedy if located else None
+            if remedy is not None and remedy.diff:
+                click.echo(remedy.diff)
+
         applied = apply_recommendation(
             workspace_root,
             recommendation_id,
             proposer_path=proposer_path,
             epoch_id=epoch_id,
         )
-    except ApplyError as exc:
+    except (ApplyError, RecordError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(

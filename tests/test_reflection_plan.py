@@ -10,10 +10,12 @@ re-writes it executed.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from zicato.epoch._storage import RecordError
 from zicato.reflection.plan import (
     DEFAULT_CHECKS,
     MODE_ACTIVE,
@@ -79,7 +81,7 @@ def test_plan_json_round_trip() -> None:
 def test_from_json_rejects_unknown_format_version() -> None:
     payload = _plan().to_json()
     payload["format_version"] = 99
-    with pytest.raises(ValueError, match="format_version"):
+    with pytest.raises(RecordError, match="format_version"):
         ReflectionPlan.from_json(payload)
 
 
@@ -143,3 +145,73 @@ def test_resume_overwrites_pre_registered_plan_as_executed(tmp_path: Path) -> No
 
 def test_read_plan_absent_returns_none(tmp_path: Path) -> None:
     assert read_plan(tmp_path / ".zicato", "epoch-1", "refl-nope") is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("format_version", True),
+        ("executed", "false"),
+        ("pre_registered", 1),
+        ("replicates", True),
+        ("replicates", "3"),
+        ("candidates", "v0"),
+        ("entries", [1]),
+        ("mode", "unknown"),
+    ],
+)
+def test_plan_refuses_coercion(field: str, value: object) -> None:
+    body = dict(_plan().to_json(), **{field: value})
+    with pytest.raises(RecordError, match=field):
+        ReflectionPlan.from_json(body)
+
+
+def test_plan_preserves_historical_omissions_and_extension_numbers(tmp_path: Path) -> None:
+    body = {
+        "format_version": 1,
+        "reflection_id": "refl-example",
+        "epoch_id": "epoch-1",
+        "replicates": 1,
+        "extension": {"count": 1, "weight": 1.0},
+    }
+    plan = ReflectionPlan.from_json(body)
+    path = write_plan(tmp_path, plan)
+    assert path.read_bytes() == json.dumps(body, indent=2, sort_keys=True).encode()
+    assert plan.to_json() == body
+    assert plan.mark_executed().to_json() == dict(body, executed=True)
+    assert plan.to_json() == body
+
+
+def test_plan_refuses_present_corruption_and_location_mismatch(tmp_path: Path) -> None:
+    plan = _plan()
+    path = write_plan(tmp_path, plan)
+    original = path.read_bytes()
+    path.write_text("null", encoding="utf-8")
+    with pytest.raises(RecordError, match="JSON object"):
+        read_plan(tmp_path, plan.epoch_id, plan.reflection_id)
+    with pytest.raises(RecordError):
+        write_plan(tmp_path, plan)
+    assert path.read_text() == "null"
+    path.write_bytes(original)
+    body = dict(plan.to_json(), epoch_id="epoch-other")
+    path.write_text(json.dumps(body), encoding="utf-8")
+    with pytest.raises(RecordError, match="location"):
+        read_plan(tmp_path, plan.epoch_id, plan.reflection_id)
+
+
+def test_plan_revision_failure_prevents_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from zicato.reflection import plan as plan_module
+
+    plan = _plan()
+    path = write_plan(tmp_path, plan)
+    original = path.read_bytes()
+
+    def fail_mark(*args: object) -> None:
+        raise OSError("revision unavailable")
+
+    monkeypatch.setattr(plan_module, "mark_epoch_changed", fail_mark)
+    with pytest.raises(OSError, match="revision unavailable"):
+        write_plan(tmp_path, plan.mark_executed())
+    assert path.read_bytes() == original

@@ -1,168 +1,105 @@
-"""One addressing scheme for both surfaces.
-
-``zicato tui --view <path>`` takes the SAME path the browser's hash router
-takes, so a link pasted out of a browser address bar opens the matching
-terminal lens and vice versa. ``/e/<epoch>/gen/17`` is the candidate dossier in
-both places; there is no second vocabulary to learn.
-
-Shorthands exist for the common cases (``candidate/17``, ``instrument``), and
-they resolve to the same :class:`Route`. The terminal ships fewer views than
-the browser: the candidate, board and health lenses are not built here, and
-the builder, settings, publication and traces surfaces are browser-side only.
-An address naming one of those resolves to the NEAREST lens this build does
-have, and records what was asked for in :attr:`Route.unsupported`, so the
-status band can say "candidate is not in this build" rather than landing
-somewhere unrelated without comment.
-
-That is the rule this module enforces: an address the operator can type
-always resolves, and always admits when it could not give them what they
-asked for.
-"""
+"""Browser addresses resolved into Home, Standings and Instrument review views."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
-#: The lenses v1 ships, in rail order. ``1``-``3`` jump to these.
 LENSES: tuple[str, ...] = ("home", "standings", "instrument")
 
-#: Lenses DESIGNED in docs/design/TUI.md and deferred out of v1, each mapped to
-#: the shipped lens that carries the nearest evidence. Distinct from
-#: :data:`BROWSER_ONLY`: these are coming, and the address already works.
-DEFERRED: dict[str, str] = {
-    # the dossier's nearest neighbour is the row it was opened from
-    "candidate": "standings",
-    "diff": "standings",
-    "mutations": "standings",
-    # board status + evaluation health are one deferred lens between them
-    "board": "home",
-    "boardstatus": "home",
-    "evals": "home",
-    "evals_health": "home",
-    # health findings + the log tail
-    "health": "home",
-    "logs": "home",
-}
-
-#: Browser views that stay in the browser BY DESIGN (v1 non-goals: authoring,
-#: deep trace visualisation, formatted reports), and the lens each lands on.
 BROWSER_ONLY: dict[str, str] = {
     "builder": "home",
     "settings": "home",
     "publication": "home",
+    "paper": "home",
     "traces": "instrument",
+    "diff": "standings",
+    "mutations": "standings",
 }
 
-#: Everything an address may resolve to that this build cannot render.
-UNSHIPPED: dict[str, str] = {**DEFERRED, **BROWSER_ONLY}
+
+def segment(value: str) -> str:
+    """Encode one coordinate without changing its identity."""
+    return quote(value, safe="")
 
 
 @dataclass(frozen=True)
 class Route:
-    """A resolved address: which lens, and the parameters it needs."""
+    """A navigation address and the evidence selected within its rail view."""
 
     lens: str = "home"
     params: dict[str, str] = field(default_factory=dict)
     unsupported: str | None = None
 
     def to_path(self) -> str:
-        """Render the route back to its browser-hash path form."""
         epoch = self.params.get("epoch")
-        base = f"/e/{epoch}" if epoch else ""
+        base = f"/e/{segment(epoch)}" if epoch else ""
+        detail = self.params.get("detail")
+        entry = self.params.get("entry")
+        gen = self.params.get("gen")
+        if detail in {"health", "logs"}:
+            return f"{base}/{detail}"
+        if detail in {"board", "boards", "evals"}:
+            if entry:
+                path = f"{base}/board/{segment(entry)}"
+                return path + (f"/{segment(gen)}" if gen else "")
+            return f"{base}/{detail}"
         if self.lens == "home":
             return base or "/"
         if self.lens == "standings":
-            gen = self.params.get("gen")
             if gen:
-                return f"{base}/gen/{gen}"
-            return f"{base}/gens" if base else "/gens"
-        if self.lens == "instrument":
-            reflection = self.params.get("reflection")
-            return f"{base}/instrument/{reflection}" if reflection else f"{base}/instrument"
-        return "/logs"
+                path = f"{base}/gen/{segment(gen)}"
+                return path + (f"/{segment(entry)}" if entry else "")
+            return f"{base}/gens"
+        path = f"{base}/instrument"
+        for key in ("reflection", "judge", "run_ref"):
+            if self.params.get(key):
+                path += f"/{segment(self.params[key])}"
+        return path
 
 
 def parse_route(path: str | None) -> Route:
-    """Resolve a ``--view`` argument (or a browser hash path) to a lens.
-
-    Accepts, interchangeably:
-
-    * the browser hash path, with or without the leading ``#``:
-      ``#/e/2026-07-01_e3/gen/17``, ``/logs``, ``/``
-    * a bare lens name: ``standings``, ``instrument``
-    * a lens shorthand with its parameter: ``candidate/17``, ``board/entry-4``,
-      ``instrument/refl-2``
-    """
-    raw = (path or "").strip()
-    if not raw:
-        return Route()
-    raw = raw.lstrip("#")
-    # `~k=v` suffix params address the browser's compare target; the TUI has no
-    # compare lens, so the structural path is all that is read.
-    raw = raw.split("~", 1)[0]
-    parts = [unquote(p) for p in raw.strip("/").split("/") if p]
+    """Resolve a browser hash, full path or shorthand to a review view."""
+    parts = [
+        unquote(p)
+        for p in (path or "").strip().lstrip("#").split("~", 1)[0].strip("/").split("/")
+        if p
+    ]
     if not parts:
         return Route()
-
-    head = parts[0]
-    if head in LENSES:
-        return _shorthand(head, parts[1:])
-    if head in UNSHIPPED:
-        # An unshipped shorthand still carries its argument to the lens that
-        # lands it: `candidate/v4` puts the cursor near v4 in the standings
-        # rather than dropping the operator at the top of an unrelated table.
-        landed = _shorthand(UNSHIPPED[head], parts[1:])
-        return Route(lens=landed.lens, params=landed.params, unsupported=head)
-    if head != "e":
-        return Route()
-
-    epoch = parts[1] if len(parts) > 1 else None
-    if not epoch:
-        return Route()
-    params = {"epoch": epoch}
-    group = parts[2] if len(parts) > 2 else None
-    if group is None:
-        return Route(lens="home", params=params)
-    rest = parts[3:]
-    if group == "gens":
-        return Route(lens="standings", params=params)
-    if group == "gen":
-        # The candidate dossier is deferred; the address still resolves, to the
-        # standings row the operator would have opened it from, and says so.
-        return Route(
-            lens="standings",
-            params=_with(params, "gen", rest, 0),
-            unsupported="diff" if len(rest) > 1 and rest[1] == "diff" else "candidate",
+    params = {}
+    if parts[0] == "e":
+        if len(parts) < 2:
+            return Route()
+        params["epoch"] = parts[1]
+        parts = parts[2:]
+    if not parts:
+        return Route(params=params)
+    group, *rest = parts
+    if group in {"candidate", "gen", "standings", "gens"}:
+        params = _with(params, "gen", rest, 0)
+        if len(rest) > 1 and rest[1] == "diff":
+            return Route("standings", params, "diff")
+        return Route("standings", _with(params, "entry", rest, 1))
+    if group in {"board", "boards", "boardstatus", "evals", "evals_health"}:
+        params["detail"] = (
+            "evals" if group == "evals_health" else "boards" if group == "boardstatus" else group
         )
-    if group in ("board", "boards", "evals"):
-        return Route(
-            lens=DEFERRED["board"],
-            params=_with(params, "entry", rest, 0),
-            unsupported=group,
-        )
+        params = _with(params, "entry", rest, 0)
+        return Route("instrument", _with(params, "gen", rest, 1))
+    if group in {"health", "logs"}:
+        return Route("home", {**params, "detail": group})
     if group == "instrument":
-        resolved = _with(params, "reflection", rest, 0)
-        resolved = _with(resolved, "judge", rest, 1)
-        resolved = _with(resolved, "run_ref", rest, 2)
-        return Route(lens="instrument", params=resolved)
-    if group in UNSHIPPED:
-        return Route(lens=UNSHIPPED[group], params=params, unsupported=group)
-    return Route(lens="home", params=params)
-
-
-def _shorthand(lens: str, rest: list[str]) -> Route:
-    keys = {"standings": "gen", "instrument": "reflection"}
-    key = keys.get(lens)
-    if key and rest:
-        return Route(lens=lens, params={key: rest[0]})
-    return Route(lens=lens)
+        for i, key in enumerate(("reflection", "judge", "run_ref")):
+            params = _with(params, key, rest, i)
+        return Route("instrument", params)
+    if group in BROWSER_ONLY:
+        return Route(BROWSER_ONLY[group], params, group)
+    return Route("home", params)
 
 
 def _with(params: dict[str, str], key: str, rest: list[str], index: int) -> dict[str, str]:
-    if len(rest) > index and rest[index]:
-        return {**params, key: rest[index]}
-    return params
+    return {**params, key: rest[index]} if len(rest) > index and rest[index] else params
 
 
-__all__ = ["BROWSER_ONLY", "DEFERRED", "LENSES", "UNSHIPPED", "Route", "parse_route"]
+__all__ = ["BROWSER_ONLY", "LENSES", "Route", "parse_route", "segment"]

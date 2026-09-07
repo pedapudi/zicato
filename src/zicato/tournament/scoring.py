@@ -70,12 +70,252 @@ the divergence is bounded to this single function.
 
 from __future__ import annotations
 
+import json
 import math
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from zicato.core import LossProfile, ScoringWeights
+from zicato.epoch._storage import RecordError, check_record_format
 from zicato.scoring import ScalarContext, builtin_scalar, resolve_scalar
 from zicato.scoring.builtins import diff_complexity_component
+from zicato.storage import atomic_write_text
+from zicato.workspace.layout import WorkspaceLayout
+
+
+@dataclass(frozen=True, slots=True)
+class GenerationScore:
+    """One accepted aggregate, retaining historical omissions and numeric types."""
+
+    generation_id: str | None
+    scalar: int | float
+    drift_loss_mean: int | float | None
+    pass_rate: int | float | None
+    mean_score: int | float | None
+    _json: str = field(repr=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a detached aggregate for gates and presentation."""
+        body: dict[str, Any] = json.loads(self._json)
+        for key in ("generation_id", "scalar", "drift_loss_mean", "pass_rate", "mean_score"):
+            value = getattr(self, key)
+            if key in body or value is not None:
+                body[key] = value
+        return body
+
+
+@dataclass(frozen=True, slots=True)
+class ScoreMeasurement:
+    """One retained generation measurement in its recorded write order."""
+
+    score: GenerationScore
+    seq: int
+    round_index: int | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self.score.to_dict(), seq=self.seq, round_index=self.round_index)
+
+
+def _score_number(value: Any, name: str, *, nullable: bool = False) -> int | float | None:
+    if value is None and nullable:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        raise RecordError(f"gen_score: {name} must be finite" + (" or null" if nullable else ""))
+    return value
+
+
+def _score_count(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise RecordError(f"gen_score: {name} must be a nonnegative integer")
+    return value
+
+
+def decode_gen_score(value: Any, *, generation_id: str | None = None) -> GenerationScore:
+    """Accept an aggregate without supplying absent historical display fields."""
+    if not isinstance(value, dict):
+        raise RecordError("gen_score: expected a JSON object")
+    check_record_format(value, "gen_score")
+    recorded_id = value.get("generation_id")
+    if "generation_id" in value and (not isinstance(recorded_id, str) or not recorded_id):
+        raise RecordError("gen_score: generation_id must be a nonempty string")
+    if generation_id is not None and recorded_id is not None and recorded_id != generation_id:
+        raise RecordError(
+            f"gen_score: generation_id {recorded_id!r} does not match {generation_id!r}"
+        )
+    scalar = _score_number(value.get("scalar"), "scalar")
+    assert scalar is not None
+    numbers = {
+        key: _score_number(value[key], key, nullable=True) if key in value else None
+        for key in ("drift_loss_mean", "pass_rate", "mean_score")
+    }
+    for key in ("entry_count", "expectation_count"):
+        if key in value:
+            _score_count(value[key], key)
+    for key in ("namespace_aggregates", "scalar_components", "diff_size", "per_entry"):
+        if key not in value:
+            continue
+        mapping = value[key]
+        if not isinstance(mapping, dict) or any(not isinstance(name, str) for name in mapping):
+            raise RecordError(f"gen_score: {key} must be an object with string keys")
+        for name, item in mapping.items():
+            if key == "diff_size":
+                _score_count(item, f"diff_size.{name}")
+            elif key != "per_entry":
+                _score_number(item, f"{key}.{name}")
+            else:
+                if not isinstance(item, dict):
+                    raise RecordError(f"gen_score: per_entry.{name} must be an object")
+                for metric in ("drift_loss", "failure", "score"):
+                    if metric in item:
+                        _score_number(
+                            item[metric], f"per_entry.{name}.{metric}", nullable=metric == "score"
+                        )
+                verdict = item.get("pass_fail")
+                if verdict is not None and not isinstance(verdict, bool):
+                    raise RecordError(
+                        f"gen_score: per_entry.{name}.pass_fail must be boolean or null"
+                    )
+    for key in ("scalar_provenance", "source_epoch", "source_run"):
+        if key in value and not isinstance(value[key], str):
+            raise RecordError(f"gen_score: {key} must be a string")
+    if "cached" in value and not isinstance(value["cached"], bool):
+        raise RecordError("gen_score: cached must be boolean")
+    try:
+        encoded = json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise RecordError(f"gen_score: {exc}") from exc
+    return GenerationScore(
+        recorded_id,
+        scalar,
+        numbers["drift_loss_mean"],
+        numbers["pass_rate"],
+        numbers["mean_score"],
+        encoded,
+    )
+
+
+def read_gen_score(
+    layout: WorkspaceLayout, epoch_id: str, generation_id: str
+) -> GenerationScore | None:
+    """Read the canonical aggregate; absence is distinct from a malformed record."""
+    path = layout.gen_score(epoch_id, generation_id)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError) as exc:
+        raise RecordError(f"{path}: {exc}") from exc
+    try:
+        return decode_gen_score(json.loads(text), generation_id=generation_id)
+    except (ValueError, RecordError) as exc:
+        raise RecordError(f"{path}: {exc}") from exc
+
+
+def _score_history(text: str, generation_id: str) -> tuple[tuple[ScoreMeasurement, ...], str]:
+    """Decode complete records; only an unterminated, invalid final JSON line is torn."""
+    rows: list[ScoreMeasurement] = []
+    accepted: list[str] = []
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if not line.strip():
+            accepted.append(line)
+            continue
+        try:
+            value = json.loads(line)
+        except ValueError as exc:
+            if index == len(lines) - 1 and not line.endswith("\n"):
+                return tuple(rows), "".join(accepted)
+            raise RecordError(f"gen_score.history: line {index + 1}: {exc}") from exc
+        if not isinstance(value, dict):
+            raise RecordError(f"gen_score.history: line {index + 1} must be an object")
+        score = decode_gen_score(
+            {key: item for key, item in value.items() if key not in {"seq", "round_index"}},
+            generation_id=generation_id,
+        )
+        seq = _score_count(value.get("seq"), "seq")
+        if seq != len(rows):
+            raise RecordError(f"gen_score.history: expected seq {len(rows)}, found {seq}")
+        if "round_index" not in value:
+            raise RecordError("gen_score.history: missing round_index")
+        round_index = value["round_index"]
+        if round_index is not None:
+            _score_count(round_index, "round_index")
+        rows.append(ScoreMeasurement(score, seq, round_index))
+        accepted.append(line)
+    return tuple(rows), text
+
+
+def _read_score_history(
+    path: Path, generation_id: str
+) -> tuple[tuple[ScoreMeasurement, ...], str, bool]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return (), "", False
+    except (OSError, UnicodeError) as exc:
+        raise RecordError(f"{path}: {exc}") from exc
+    try:
+        rows, prefix = _score_history(text, generation_id)
+        return rows, prefix, prefix != text
+    except RecordError as exc:
+        raise RecordError(f"{path}: {exc}") from exc
+
+
+def read_gen_score_history(
+    layout: WorkspaceLayout,
+    epoch_id: str,
+    generation_id: str,
+) -> tuple[ScoreMeasurement, ...]:
+    """Read retained measurements in order, refusing corruption within the history."""
+    return _read_score_history(layout.gen_score_history(epoch_id, generation_id), generation_id)[0]
+
+
+def write_gen_score(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    aggregate: dict[str, Any],
+    *,
+    round_index: int | None = None,
+) -> None:
+    """Retain a measurement before atomically publishing its flat aggregate.
+
+    The caller holds the workspace writer lease. History is flushed before the
+    flat aggregate is atomically replaced. A crash between those writes leaves
+    a complete measurement and the prior aggregate. Only a torn final line is
+    replaced when appending; malformed complete records prevent either write.
+    Both formats retain sorted keys, original numeric types, and final newlines.
+    """
+    if round_index is not None:
+        _score_count(round_index, "round_index")
+    payload = dict(aggregate)
+    payload.setdefault("generation_id", generation_id)
+    score = decode_gen_score(payload, generation_id=generation_id)
+    layout = WorkspaceLayout.from_root(workspace_root)
+    # Refuse corruption in either authority before replacing any recorded facts.
+    read_gen_score(layout, epoch_id, generation_id)
+    history_path = layout.gen_score_history(epoch_id, generation_id)
+    history, text, torn_tail = _read_score_history(history_path, generation_id)
+    record = score.to_dict()
+    record.update(seq=len(history), round_index=round_index)
+    line = (
+        ("\n" if text and not text.endswith("\n") else "")
+        + json.dumps(record, sort_keys=True)
+        + "\n"
+    )
+    if torn_tail or not history_path.exists():
+        atomic_write_text(history_path, text + line)
+    else:
+        with history_path.open("a", encoding="utf-8") as stream:
+            stream.write(line)
+            stream.flush()
+            os.fsync(stream.fileno())
+    atomic_write_text(
+        layout.gen_score(epoch_id, generation_id),
+        json.dumps(score.to_dict(), indent=2, sort_keys=True) + "\n",
+    )
 
 
 def entry_score(loss: LossProfile) -> float | None:
@@ -465,6 +705,12 @@ def aggregate_generation_score(
 
 
 __all__ = [
+    "GenerationScore",
+    "ScoreMeasurement",
+    "decode_gen_score",
+    "read_gen_score",
+    "read_gen_score_history",
+    "write_gen_score",
     "aggregate_generation_score",
     "aggregate_namespaced_metrics",
     "entry_score",

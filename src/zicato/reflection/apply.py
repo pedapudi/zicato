@@ -18,7 +18,6 @@ imports the builder driver to reach them.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,22 +68,6 @@ def _slot_name(reflection_id: str) -> str:
     return f"{_SLOT_STEM}{stem}"
 
 
-def _read_findings(workspace_root: Path, epoch_id: str, reflection_id: str) -> list[dict[str, Any]]:
-    """Read the reflection's ``findings.json`` into a list of finding dicts."""
-    from zicato.core.workspace import reflection_findings_path  # noqa: PLC0415
-
-    path = reflection_findings_path(workspace_root, epoch_id, reflection_id)
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError):
-        return []
-    if isinstance(raw, dict):
-        raw = raw.get("findings")
-    if not isinstance(raw, list):
-        return []
-    return [f for f in raw if isinstance(f, dict)]
-
-
 def find_finding(
     workspace_root: Path,
     epoch_id: str,
@@ -92,9 +75,12 @@ def find_finding(
     finding_id: str,
 ) -> dict[str, Any]:
     """Return one finding dict by id, or raise :class:`FindingNotFoundError`."""
-    for finding in _read_findings(workspace_root, epoch_id, reflection_id):
-        if str(finding.get("finding_id", "")) == finding_id:
-            return finding
+    from zicato.reflection.findings import read_findings  # noqa: PLC0415
+
+    collection = read_findings(workspace_root, epoch_id, reflection_id)
+    for finding in collection.items if collection is not None else ():
+        if finding.finding_id == finding_id:
+            return finding.to_json()
     raise FindingNotFoundError(
         f"no finding {finding_id!r} in reflection {reflection_id!r} (epoch {epoch_id!r})"
     )
@@ -225,11 +211,11 @@ def find_suggestion(
     suggestion_id: str,
 ) -> dict[str, Any]:
     """Return one suggestion dict by id, or raise :class:`SuggestionNotFoundError`."""
-    from zicato.reflection.suggestions import read_suggestions_json  # noqa: PLC0415
+    from zicato.reflection.suggestions import read_suggestions  # noqa: PLC0415
 
-    for s in read_suggestions_json(workspace_root, epoch_id, reflection_id):
-        if str(s.get("suggestion_id", "")) == suggestion_id:
-            return s
+    for suggestion in read_suggestions(workspace_root, epoch_id, reflection_id):
+        if suggestion.suggestion_id == suggestion_id:
+            return suggestion.to_json()
     raise SuggestionNotFoundError(
         f"no suggestion {suggestion_id!r} in reflection {reflection_id!r} (epoch {epoch_id!r})"
     )

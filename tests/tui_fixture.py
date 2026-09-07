@@ -169,6 +169,18 @@ PAYLOADS: dict[str, Any] = {
             },
         ],
         "current_champion": CHALLENGER,
+        "champion_record": {
+            "epoch_id": EPOCH,
+            "generation_id": CHALLENGER,
+            "parent_generation_id": CHAMPION,
+            "decision": "promoted",
+            "decision_label": "promoted",
+            "promoted": True,
+            "created_at": "2026-07-04T09:12:00Z",
+            "elo": 1547.8,
+            "elo_se": 29.6,
+            "elo_games": 9,
+        },
         "holdout": {
             "train_scalar": 0.0391,
             "holdout_scalar": 0.0468,
@@ -705,6 +717,9 @@ PAYLOADS: dict[str, Any] = {
 }
 
 
+PAYLOADS[f"/api/tournaments?epoch={EPOCH}"] = PAYLOADS["/api/tournaments"]
+
+
 def live_payloads() -> dict[str, Any]:
     """The same workspace with a round in flight and a swiss field racing."""
     payloads = deepcopy(PAYLOADS)
@@ -827,6 +842,7 @@ def live_payloads() -> dict[str, Any]:
         "projected": {},
     }
     payloads["/api/heartbeat"] = {**payloads["/api/heartbeat"], "phase": "tournament", "seq": 490}
+    payloads[f"/api/tournaments?epoch={EPOCH}"] = payloads["/api/tournaments"]
     return payloads
 
 

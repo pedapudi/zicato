@@ -2125,4 +2125,37 @@ test('A17 · a per-judge payload with no raw/weight still renders (honest dashes
   assert(String(tbl.textContent).includes('—'), 'the absent raw/weight read as honest dashes, never zeros');
 });
 
+test('candidate parent refusal renders the served reason and participates in refresh', async () => {
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  const params = { epochId: EPOCH_ID, gen: 'v1' };
+  async function renderReason(reason) {
+    freshState();
+    installFixtureMap(dossierVariant('v1', null, (d) => {
+      d.parent_inconsistency = reason;
+      d.comparison = null;
+      d.gates = [];
+    }));
+    await candidateMod.render(host, ctx, params);
+  }
+  await renderReason(null);
+  const initialDigest = host.getAttribute('data-t-digest');
+  const firstReason = 'Receipt parent v2 disagrees with lineage parent v0.';
+  await renderReason(firstReason);
+  const warning = allByClass(host, 'dn-parent-inconsistency')[0];
+  assert(warning, 'the refused parent comparison has a visible warning');
+  assert(warning.textContent.includes(firstReason), 'the shared dossier supplies the reason');
+  assert(host.getAttribute('data-t-digest') !== initialDigest, 'a refusal refreshes the panel');
+  await renderReason(firstReason);
+  assertEqual(allByClass(host, 'dn-parent-inconsistency')[0], warning,
+    'an unchanged refusal preserves its DOM node');
+  const changedReason = 'Parent receipt cannot be read.';
+  await renderReason(changedReason);
+  assert(allByClass(host, 'dn-parent-inconsistency')[0].textContent.includes(changedReason),
+    'a changed reason is rendered');
+  await renderReason(null);
+  assertEqual(allByClass(host, 'dn-parent-inconsistency').length, 0,
+    'a resolved parent removes the warning');
+});
+
 await run();

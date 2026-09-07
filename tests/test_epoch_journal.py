@@ -31,11 +31,44 @@ from zicato.epoch import (
     update_experiment_outcome,
     write_experiment,
 )
+from zicato.epoch.journal import read_experiment_contents
 from zicato.query.decisions import canonical_decision, experiment_decision
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def test_experiment_contents_resolves_patches_from_one_accepted_body(
+    epoch_root: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ws, eid = epoch_root
+    experiment = _experiment()
+    write_experiment(ws, eid, "v1", experiment)
+    path = experiment_json_path(ws, eid, "v1")
+    body = json.loads(path.read_text())
+    body["annotation"] = {"recorded": True}
+    path.write_text(json.dumps(body))
+    reads = 0
+    original = Path.read_text
+
+    def replace_after_read(file: Path, *args: object, **kwargs: object) -> str:
+        nonlocal reads
+        text = original(file, *args, **kwargs)
+        if file == path:
+            reads += 1
+            file.write_text(json.dumps({**body, "patch_ids": ["missing"]}))
+        return text
+
+    monkeypatch.setattr(Path, "read_text", replace_after_read)
+    contents = read_experiment_contents(ws, eid, "v1")
+    assert contents is not None
+    assert contents.body == body
+    assert contents.patches == experiment.patches
+    assert reads == 1
+    with pytest.raises(ExperimentRecordError, match="missing"):
+        read_experiment_contents(ws, eid, "v1")
+    assert read_experiment_contents(ws, eid, "absent") is None
 
 
 def _experiment(

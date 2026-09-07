@@ -432,7 +432,9 @@ def test_apply_forks_draft_and_leaves_contract_unchanged(
 
 def test_apply_non_actionable_finding_errors(workspace: tuple[Path, str]) -> None:
     ws, epoch_id = workspace
-    # Hand-write a findings.json whose only finding has no proposed_op.
+    from tests._reflection_support import finding_body
+
+    # The canonical finding is a recommendation with no mechanical operation.
     rid = "refl-manual-0001"
     fp = reflection_findings_path(ws, epoch_id, rid)
     fp.parent.mkdir(parents=True, exist_ok=True)
@@ -440,7 +442,7 @@ def test_apply_non_actionable_finding_errors(workspace: tuple[Path, str]) -> Non
         json.dumps(
             {
                 "reflection_id": rid,
-                "findings": [{"finding_id": "f-untested", "proposed_op": None}],
+                "findings": [finding_body({"finding_id": "f-untested", "proposed_op": None})],
             }
         ),
         encoding="utf-8",

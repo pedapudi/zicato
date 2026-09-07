@@ -71,6 +71,7 @@ from typing import Any
 from zicato.core.types import Experiment, LossProfile
 from zicato.core.workspace import loss_profile_path
 from zicato.epoch._storage import RecordError
+from zicato.epoch.lineage import LineageEpoch, LineageGeneration
 from zicato.index.schema import (
     SCHEMA_VERSION,
     Table,
@@ -101,33 +102,6 @@ def _default_db_path(workspace_root: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Cross-epoch + cross-generation lineage resolvers
 # ---------------------------------------------------------------------------
-
-
-def _parent_epoch_id_from_lineage_entry(entry: dict[str, Any] | None) -> str | None:
-    """Extract the parent epoch id from a single ``lineage.json`` entry.
-
-    The ``v0_parent`` field is the canonical pointer at the prior
-    epoch's promoted leaf. In current writers it carries the bare
-    parent epoch id (the design comment in :mod:`zicato.epoch.lineage`
-    flags a planned ``{epoch}:{gen}`` form). We accept either:
-
-    * a bare ``"epoch_id"`` string — used verbatim,
-    * a ``"epoch_id:generation_id"`` string — the ``epoch_id`` half
-      is the answer,
-    * ``None`` — the workspace's first epoch has no parent.
-
-    A non-string value collapses to ``None``.
-    """
-    if entry is None:
-        return None
-    raw = entry.get("v0_parent")
-    if not isinstance(raw, str) or not raw:
-        return None
-    # Tolerate the planned "{epoch}:{gen}" form by stripping the
-    # generation suffix when present.
-    if ":" in raw:
-        return raw.split(":", 1)[0]
-    return raw
 
 
 def _tournament_id_for_run(
@@ -283,22 +257,6 @@ def _upsert_epoch(
         goal=goal,
         parent_epoch_id=parent_epoch_id,
     )
-
-
-def _round_index_from_lineage_gen(gen: dict[str, Any]) -> int | None:
-    """Extract a generation's birth ``round_index`` from its lineage dict.
-
-    Legacy lineage rows predate the field, so an absent or non-integer
-    value reads as ``None`` (birth round unknown) — the index column is
-    nullable and consumers degrade on a null.
-    """
-    raw = gen.get("round_index")
-    if isinstance(raw, bool):
-        # ``bool`` is an ``int`` subclass; a stray boolean is not a round.
-        return None
-    if isinstance(raw, int):
-        return raw
-    return None
 
 
 def _upsert_generation(
@@ -830,10 +788,11 @@ def _load_field_tournaments(workspace_root: Path, epoch_id: str) -> list[dict[st
     directory (written by the orchestrator at settle time). Each holds the
     settled field structure — round pairings, Copeland standings,
     competitors, proposing field-status — for one non-gauntlet round.
-    Returns an empty list when the directory is absent (a pure-gauntlet
-    epoch) or unreadable; an individual unparseable file is skipped.
+    Absence means the epoch has no field snapshots. A malformed present
+    snapshot prevents a partial index rebuild from appearing complete.
     """
     from zicato.core.workspace import field_tournaments_dir  # noqa: PLC0415
+    from zicato.tournament.records import read_field_tournament_record  # noqa: PLC0415
 
     root = field_tournaments_dir(workspace_root, epoch_id)
     if not root.exists():
@@ -842,12 +801,7 @@ def _load_field_tournaments(workspace_root: Path, epoch_id: str) -> list[dict[st
     for child in sorted(root.iterdir()):
         if not child.is_file() or child.suffix != ".json":
             continue
-        try:
-            record = json.loads(child.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(record, dict):
-            out.append(record)
+        out.append(read_field_tournament_record(child).to_dict())
     return out
 
 
@@ -952,28 +906,6 @@ def _load_json_file(path: Path) -> Any | None:
         return None
 
 
-def _scorecard_list(raw: Any) -> list[dict[str, Any]]:
-    """Normalise a persisted scorecards artifact to a list of card dicts.
-
-    Tolerates either the wrapped ``{"scorecards": [...]}`` form the CLI
-    writes or a bare list, and skips any non-dict element.
-    """
-    if isinstance(raw, dict):
-        raw = raw.get("scorecards")
-    if not isinstance(raw, list):
-        return []
-    return [c for c in raw if isinstance(c, dict)]
-
-
-def _finding_list(raw: Any) -> list[dict[str, Any]]:
-    """Normalise a persisted findings artifact to a list of finding dicts."""
-    if isinstance(raw, dict):
-        raw = raw.get("findings")
-    if not isinstance(raw, list):
-        return []
-    return [f for f in raw if isinstance(f, dict)]
-
-
 def _ingest_reflection_into(
     conn: sqlite3.Connection,
     workspace_root: Path,
@@ -989,27 +921,22 @@ def _ingest_reflection_into(
     ``plan.json`` (identity + mode + executed), ``scorecards.json`` (per-judge
     cards + the corpus verdict tally), ``findings.json`` (finding count), and
     the derived ``summary.json`` (the consumed noise floor + decision-flip
-    headline). Every artifact is read best-effort — a reflection with a plan
-    but no scorecards (a ``--passive`` / ``--no-llm-adjudication`` run that
-    produced no adjudications) still projects a row with an empty judge set.
+    headline). The plan owner refuses malformed canonical identity before any
+    projection changes. An absent scorecard file contributes an empty judge set;
+    scorecard and finding validation belong to their record owners.
     """
-    from zicato.core.workspace import (  # noqa: PLC0415
-        reflection_dir,
-        reflection_findings_path,
-        reflection_plan_path,
-        reflection_scorecards_path,
-    )
+    from zicato.core.workspace import reflection_dir  # noqa: PLC0415
+    from zicato.reflection.findings import read_findings  # noqa: PLC0415
+    from zicato.reflection.plan import read_plan  # noqa: PLC0415
+    from zicato.reflection.scorecards import read_scorecards  # noqa: PLC0415
 
-    plan = _load_json_file(reflection_plan_path(workspace_root, epoch_id, reflection_id))
-    if not isinstance(plan, dict):
+    plan = read_plan(workspace_root, epoch_id, reflection_id)
+    if plan is None:
         return False
 
-    scorecards = _scorecard_list(
-        _load_json_file(reflection_scorecards_path(workspace_root, epoch_id, reflection_id))
-    )
-    findings = _finding_list(
-        _load_json_file(reflection_findings_path(workspace_root, epoch_id, reflection_id))
-    )
+    collection = read_scorecards(workspace_root, epoch_id, reflection_id)
+    scorecards = [card.to_json() for card in collection.cards] if collection is not None else []
+    findings = read_findings(workspace_root, epoch_id, reflection_id)
     summary = _load_json_file(
         reflection_dir(workspace_root, epoch_id, reflection_id) / "summary.json"
     )
@@ -1024,18 +951,18 @@ def _ingest_reflection_into(
 
     _upsert_reflection(
         conn,
-        reflection_id=str(plan.get("reflection_id") or reflection_id),
-        epoch_id=str(plan.get("epoch_id") or epoch_id),
-        created_at=str(plan.get("created_at") or ""),
-        mode=str(plan.get("mode") or ""),
-        executed=bool(plan.get("executed", False)),
+        reflection_id=plan.reflection_id,
+        epoch_id=plan.epoch_id,
+        created_at=plan.created_at,
+        mode=plan.mode,
+        executed=plan.executed,
         noise_floor_max_abs_delta=_opt_float_field(summary.get("noise_floor_max_abs_delta")),
         decision_flip_p=_opt_float_field(summary.get("decision_flip_p")),
-        n_findings=len(findings),
+        n_findings=len(findings.items) if findings is not None else 0,
         n_judges=len(scorecards),
         verdict_counts=verdict_counts,
     )
-    _upsert_judge_scorecards(conn, str(plan.get("reflection_id") or reflection_id), scorecards)
+    _upsert_judge_scorecards(conn, plan.reflection_id, scorecards)
     return True
 
 
@@ -1184,29 +1111,20 @@ class _EpochWalkItem:
 
     ``config`` is the typed :class:`zicato.core.types.EpochConfig` when the
     epoch has a readable ``config.json``, and ``None`` for a thin epoch known
-    only to ``lineage.json``. ``lineage_entry`` is that epoch's raw lineage
+    only to ``lineage.json``. ``lineage_entry`` is that epoch's accepted lineage
     dict, or ``None`` when the epoch has a directory but no lineage row yet.
     """
 
     epoch_id: str
-    lineage_entry: dict[str, Any] | None
+    lineage_entry: LineageEpoch | None
     config: Any | None
 
 
-def _lineage_by_epoch(workspace_root: Path) -> dict[str, dict[str, Any]]:
-    """Index ``lineage.json``'s epoch entries by id; ``{}`` when unreadable."""
+def _lineage_by_epoch(workspace_root: Path) -> dict[str, LineageEpoch]:
+    """Index accepted epoch lineage; malformed present records stop reconstruction."""
     from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
 
-    try:
-        lineage = load_lineage(workspace_root)
-    except (OSError, json.JSONDecodeError):
-        return {}
-    out: dict[str, dict[str, Any]] = {}
-    for entry in lineage.get("epochs", []):
-        eid = entry.get("id")
-        if isinstance(eid, str):
-            out[eid] = entry
-    return out
+    return {entry.id: entry for entry in load_lineage(workspace_root).epochs}
 
 
 def _walk_epochs(workspace_root: Path) -> list[_EpochWalkItem]:
@@ -1264,18 +1182,18 @@ def _upsert_epoch_from_walk(conn: sqlite3.Connection, item: _EpochWalkItem) -> N
             created_at=cfg.created_at,
             closed=cfg.closed,
             goal=cfg.goal,
-            parent_epoch_id=_parent_epoch_id_from_lineage_entry(item.lineage_entry),
+            parent_epoch_id=item.lineage_entry.parent_epoch_id if item.lineage_entry else None,
         )
         return
-    entry = item.lineage_entry or {}
+    entry = item.lineage_entry
     _upsert_epoch(
         conn,
         epoch_id=item.epoch_id,
         contract_hash="",
-        created_at=str(entry.get("started_at", "")),
-        closed=bool(entry.get("closed_at")),
+        created_at=entry.started_at if entry else "",
+        closed=bool(entry and entry.closed_at),
         goal="",
-        parent_epoch_id=_parent_epoch_id_from_lineage_entry(item.lineage_entry),
+        parent_epoch_id=item.lineage_entry.parent_epoch_id if item.lineage_entry else None,
     )
 
 
@@ -1296,31 +1214,29 @@ def _rebuild_epoch(
     conn: sqlite3.Connection,
     workspace_root: Path,
     epoch_id: str,
-    lineage_entry: dict[str, Any] | None,
+    lineage_entry: LineageEpoch | None,
 ) -> None:
     """Populate generations / experiments / runs for one epoch."""
     # Generation metadata (parent + promoted) from lineage.json.
-    gen_meta: dict[str, dict[str, Any]] = {}
-    if lineage_entry is not None:
-        for g in lineage_entry.get("generations", []):
-            gid = g.get("id")
-            if isinstance(gid, str):
-                gen_meta[gid] = g
+    gen_meta: dict[str, LineageGeneration] = (
+        {generation.id: generation for generation in lineage_entry.generations}
+        if lineage_entry
+        else {}
+    )
 
     # The set of generations to index is the union of those in lineage
     # and those with a directory on disk.
     generation_ids = set(gen_meta) | set(_iter_generation_dirs(workspace_root, epoch_id))
     for generation_id in sorted(generation_ids):
-        meta = gen_meta.get(generation_id, {})
-        raw_promoted = meta.get("promoted")
+        meta = gen_meta.get(generation_id)
         _upsert_generation(
             conn,
             epoch_id=epoch_id,
             generation_id=generation_id,
-            parent_generation_id=meta.get("parent_id"),
-            promoted=raw_promoted if isinstance(raw_promoted, bool) else None,
-            created_at=str(meta.get("created_at", "")),
-            round_index=_round_index_from_lineage_gen(meta),
+            parent_generation_id=meta.parent_id if meta else None,
+            promoted=meta.promoted if meta else None,
+            created_at=meta.created_at if meta else "",
+            round_index=meta.round_index if meta else None,
         )
         _ingest_experiment_into(conn, workspace_root, epoch_id, generation_id)
         for entry_id in _iter_run_entry_ids(workspace_root, epoch_id, generation_id):
@@ -1375,7 +1291,7 @@ def _count_dirs(root: Path) -> int:
 def _epoch_signals(
     workspace_root: Path,
     epoch_id: str,
-    lineage_entry: dict[str, Any] | None,
+    lineage_entry: LineageEpoch | None,
 ) -> _CursorSignals:
     """Compute one epoch's cheap staleness signals from the workspace.
 
@@ -1416,10 +1332,7 @@ def _epoch_signals(
             if loss_profile_path(workspace_root, epoch_id, generation_id, entry_id).is_file():
                 runs += 1
 
-    lineage_generations = 0
-    for gen in (lineage_entry or {}).get("generations", []):
-        if isinstance(gen, dict) and isinstance(gen.get("id"), str):
-            lineage_generations += 1
+    lineage_generations = len(lineage_entry.generations) if lineage_entry else 0
 
     return (
         experiments,
@@ -1460,7 +1373,7 @@ def _write_cursor(
     conn: sqlite3.Connection,
     workspace_root: Path,
     epoch_id: str,
-    lineage_entry: dict[str, Any] | None,
+    lineage_entry: LineageEpoch | None,
 ) -> None:
     """Upsert one epoch's ``ingest_cursors`` row.
 
@@ -1890,7 +1803,7 @@ def ensure_index(
     target = db_path if db_path is not None else _default_db_path(workspace_root)
     reason = _rebuild_reason(target)
     if reason is None and target.resolve() == _default_db_path(workspace_root).resolve():
-        from zicato.evolve.settlement_recovery import (  # noqa: PLC0415
+        from zicato.epoch.settlement_receipt import (  # noqa: PLC0415
             settlement_index_repair_required,
         )
 
@@ -2231,32 +2144,15 @@ def _upsert_owning_epoch_generation(
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         pass
 
-    # Resolve the parent epoch id from lineage.json's v0_parent field
-    # for the matching entry. Tolerates a missing / unreadable lineage
-    # — the upsert preserves any existing parent_epoch_id via COALESCE.
-    parent_epoch_id: str | None = None
-    parent_id: str | None = None
-    promoted: bool | None = None
-    gen_created_at = ""
-    round_index: int | None = None
-    try:
-        from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
+    from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
 
-        lineage = load_lineage(workspace_root)
-        for entry in lineage.get("epochs", []):
-            if entry.get("id") != epoch_id:
-                continue
-            parent_epoch_id = _parent_epoch_id_from_lineage_entry(entry)
-            for g in entry.get("generations", []):
-                if g.get("id") == generation_id:
-                    parent_id = g.get("parent_id")
-                    raw_promoted = g.get("promoted")
-                    promoted = raw_promoted if isinstance(raw_promoted, bool) else None
-                    gen_created_at = str(g.get("created_at", ""))
-                    round_index = _round_index_from_lineage_gen(g)
-            break
-    except (OSError, json.JSONDecodeError):
-        pass
+    entry = load_lineage(workspace_root).epoch(epoch_id)
+    generation = entry.generation(generation_id) if entry else None
+    parent_epoch_id = entry.parent_epoch_id if entry else None
+    parent_id = generation.parent_id if generation else None
+    promoted = generation.promoted if generation else None
+    gen_created_at = generation.created_at if generation else ""
+    round_index = generation.round_index if generation else None
     _upsert_epoch(
         conn,
         epoch_id,
@@ -2325,24 +2221,18 @@ def backfill_generations(
     try:
         conn.execute("PRAGMA busy_timeout=5000")
         lineage = load_lineage(workspace_root)
-        for entry in lineage.get("epochs", []):
-            epoch_id = entry.get("id")
-            if not isinstance(epoch_id, str):
-                continue
-            for g in entry.get("generations", []):
-                gid = g.get("id")
-                if not isinstance(gid, str):
-                    continue
+        for entry in lineage.epochs:
+            epoch_id = entry.id
+            for g in entry.generations:
+                gid = g.id
                 scanned += 1
-                raw_parent = g.get("parent_id")
-                parent = raw_parent if isinstance(raw_parent, str) else None
-                raw_promoted = g.get("promoted")
-                promoted = raw_promoted if isinstance(raw_promoted, bool) else None
+                parent = g.parent_id
+                promoted = g.promoted
 
                 # ``round_index`` is owned by lineage.json (the birth
                 # round); reconcile it too so a row missing the value gains
                 # it once lineage carries it. An absent value reads as None.
-                round_index = _round_index_from_lineage_gen(g)
+                round_index = g.round_index
 
                 # Read what the DB currently has so we only count a real
                 # rewrite rather than a no-op upsert.
@@ -2365,7 +2255,7 @@ def backfill_generations(
                 # then to the empty string (matches the live writer's
                 # behaviour when timestamps are unavailable).
                 if not created_at:
-                    created_at = str(g.get("created_at", ""))
+                    created_at = g.created_at
 
                 # The upsert writes round_index via COALESCE, so it never
                 # nulls an existing value; a backfill is needed only when
@@ -2549,13 +2439,11 @@ def backfill_tournament_fk(
         apply_schema(conn)
 
         lineage = load_lineage(workspace_root)
-        for entry in lineage.get("epochs", []):
-            epoch_id = entry.get("id")
-            if not isinstance(epoch_id, str):
-                continue
+        for entry in lineage.epochs:
+            epoch_id = entry.id
 
             # epochs.parent_epoch_id from this lineage entry's v0_parent.
-            parent_epoch_id = _parent_epoch_id_from_lineage_entry(entry)
+            parent_epoch_id = entry.parent_epoch_id
             cur = conn.execute(
                 "SELECT parent_epoch_id FROM epochs WHERE epoch_id = ?",
                 (epoch_id,),
@@ -2568,10 +2456,8 @@ def backfill_tournament_fk(
                 )
                 epochs_updated += 1
 
-            for g in entry.get("generations", []):
-                gid = g.get("id")
-                if not isinstance(gid, str):
-                    continue
+            for g in entry.generations:
+                gid = g.id
                 scanned += 1
                 try:
                     experiment = read_experiment(workspace_root, epoch_id, gid)

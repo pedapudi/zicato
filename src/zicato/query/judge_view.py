@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.workspace import replicate_index_from_run_id
+from zicato.epoch._storage import RecordError
 from zicato.query._sqlite import (
     _opt_json,
     _opt_str,
@@ -24,6 +25,7 @@ from zicato.query.epoch_view import (
     build_epochs_summary,
 )
 from zicato.query.eval_view import facet_scores_for_generation, facets_by_entry
+from zicato.query.inputs import EpochInputs
 from zicato.query.lineage_view import build_lineage_view
 from zicato.query.paths import (
     WorkspacePaths,
@@ -31,7 +33,6 @@ from zicato.query.paths import (
     _opt_bool,
     _preview,
     _read_json_value,
-    _utc_now,
     coerce_float,
     layout_of,
     read_current_epoch,
@@ -41,17 +42,15 @@ from zicato.query.run_log import (
     build_run_log,
 )
 from zicato.query.runtime_view import (
+    RuntimeInputs,
     derive_liveness,
-    read_active_runs_view,
-    read_active_tournament_dict,
     read_heartbeat_dict,
-    read_lock_dict,
 )
 from zicato.query.tournament_view import (
     _champion_lineage,
+    _gen_score_view,
     _opt_metrics,
     _opt_score,
-    _read_gen_score,
     _tournament_id_for,
 )
 from zicato.workspace import judge_loss_rows
@@ -224,6 +223,8 @@ def build_per_entry_for_generation(
     paths: WorkspacePaths,
     epoch_id: str,
     generation_id: str,
+    *,
+    inputs: EpochInputs | None = None,
 ) -> dict[str, Any]:
     """Per-entry breakdown of one generation, scoped via tournament_id FK.
 
@@ -272,7 +273,9 @@ def build_per_entry_for_generation(
     # / malformed file falls back to the generation-scoped query.
     exp_path = layout_of(paths).experiment(epoch_id, generation_id)
     parent_gen_id: str | None = None
-    raw_exp = _read_json_value(exp_path)
+    if inputs is not None:
+        inputs.check(paths, epoch_id)
+    raw_exp = inputs.experiment(generation_id) if inputs is not None else _read_json_value(exp_path)
     if isinstance(raw_exp, dict):
         raw_parent = raw_exp.get("parent_generation_id")
         if isinstance(raw_parent, str) and raw_parent:
@@ -392,9 +395,17 @@ def build_per_entry_for_generation(
     # predates the field, so the candidate view degrades to its pass-rate
     # summary. Folded alongside the per-entry scores so the dossier can
     # show a single board-level score number.
-    gen_mean_score = _opt_score(_read_gen_score(paths, epoch_id, generation_id).get("mean_score"))
+    unreadable: dict[str, str] = {}
+    try:
+        gen_mean_score = _opt_score(
+            _gen_score_view(paths, epoch_id, generation_id).get("mean_score")
+        )
+    except RecordError as exc:
+        gen_mean_score = None
+        unreadable["unreadable"] = str(exc)
 
     return {
+        **unreadable,
         "epoch_id": epoch_id,
         "generation_id": generation_id,
         "tournament_id": tournament_id,
@@ -409,7 +420,9 @@ def build_per_entry_for_generation(
         # against (BOARD-FORMAT.md §1.4). Computed server-side, which keeps
         # the group-by off the client. Empty facets ⇒ the table does not
         # paint. Diagnostic: nothing downstream of this key feeds a decision.
-        "facet_scores": facet_scores_for_generation(paths, epoch_id, generation_id, entry_facets),
+        "facet_scores": facet_scores_for_generation(
+            paths, epoch_id, generation_id, entry_facets, inputs=inputs
+        ),
         "entries": entries,
     }
 
@@ -814,14 +827,14 @@ def build_run_header(
 #: strictly worse than a bounded staleness the reader can reason about.
 _MUTATION_COUNT_TTL_S: float = 5.0
 
-#: ``{(workspace root, *source roots): (expires_at_monotonic, count)}``. The
-#: workspace root is IN the key rather than only the trees: the surface is activated
-#: from that workspace's contract, so two workspaces over identical trees can
-#: legitimately enumerate different counts and must not share an entry.
+#: The key includes workspace, epoch, and source roots. Epochs can declare
+#: different mutation syntax for the same source trees.
 _MUTATION_COUNT_CACHE: dict[tuple[str, ...], tuple[float, int]] = {}
 
 
-def _mutation_point_count(workspace_root: Path, source_roots: list[str]) -> int:
+def _mutation_point_count(
+    workspace_root: Path, source_roots: list[str], epoch_id: str | None
+) -> int:
     """Mutation points across ``source_roots``, cached for :data:`_MUTATION_COUNT_TTL_S`.
 
     Best-effort so a malformed source tree never bubbles up to the dashboard
@@ -829,18 +842,9 @@ def _mutation_point_count(workspace_root: Path, source_roots: list[str]) -> int:
     ``# zicato:mutable`` markers plus a goldfive manifest if one exists, and any
     failure reads as ``0``.
 
-    The surface is ACTIVATED from the workspace first, so the count is of the
-    surface the RUN sees — the contract's declared file types rather than the
-    built-ins alone. Counting the built-in surface would under-report every workspace that
-    declares extra file types, which is the whole point of declaring them.
-
-    That activation installs a PROCESS-GLOBAL table, and a cache hit skips it —
-    safe only because nothing depends on this call for that side effect. Every
-    other enumerating caller (the mutations CLI, the dashboard's mutations
-    endpoint, the evolve loop, propose) activates the surface itself before its
-    own walk, exactly as ``activate_mutation_surface`` documents. If that ever
-    stops being true, hoist the activation OUT of the cached path rather than
-    widening the key.
+    The selected epoch supplies the declared syntax table for this walk.
+    Enumeration receives it explicitly, so a reader does not change another
+    request's syntax or consult a moving current-epoch marker.
 
     Only the COUNT is cached, never the enumeration. ``mutation/enumerator.py``
     is explicit that spans must not be cached — line numbers drift as patches
@@ -855,24 +859,36 @@ def _mutation_point_count(workspace_root: Path, source_roots: list[str]) -> int:
     """
     if not source_roots:
         return 0
-    key = (str(workspace_root), *source_roots)
+    key = (str(workspace_root), epoch_id or "", *source_roots)
     now = time.monotonic()
     cached = _MUTATION_COUNT_CACHE.get(key)
     if cached is not None and cached[0] > now:
         return cached[1]
     try:
         from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
-        from zicato.workspace_loader import activate_mutation_surface  # noqa: PLC0415
+        from zicato.mutation.markers import syntax_table_from_config  # noqa: PLC0415
+        from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
-        activate_mutation_surface(workspace_root)
-        count = len(enumerate_mutations([Path(r) for r in source_roots]))
+        raw = (
+            _read_json_value(layout_of(WorkspacePaths(workspace_root)).scoring(epoch_id))
+            if epoch_id is not None
+            else None
+        )
+        try:
+            weights = scoring_weights_from_dict(raw) if isinstance(raw, dict) else None
+        except ValueError:
+            weights = None
+        table = syntax_table_from_config(weights.mutation_surface if weights is not None else None)
+        count = len(enumerate_mutations([Path(r) for r in source_roots], syntax_table=table))
     except Exception:  # noqa: BLE001 — best-effort
         count = 0
     _MUTATION_COUNT_CACHE[key] = (now + _MUTATION_COUNT_TTL_S, count)
     return count
 
 
-def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
+def build_workspace_identity(
+    paths: WorkspacePaths, *, inputs: RuntimeInputs | None = None
+) -> dict[str, Any]:
     """Structured workspace identity block — the workspace-level environment.
 
     Returns an object with the fields the workspace view's
@@ -926,7 +942,7 @@ def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
     else:
         source_roots = []
 
-    epoch_id = read_current_epoch(paths)
+    epoch_id = inputs.epoch_id if inputs is not None else read_current_epoch(paths)
     if epoch_id is not None:
         layout = layout_of(paths)
         board_path = str(layout.board(epoch_id))
@@ -942,9 +958,9 @@ def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
         brief_path = None
         scoring_path = None
 
-    mutation_point_count = _mutation_point_count(paths.root, source_roots)
+    mutation_point_count = _mutation_point_count(paths.root, source_roots, epoch_id)
 
-    hb = read_heartbeat_dict(paths)
+    hb = inputs.heartbeat.copy() if inputs is not None else read_heartbeat_dict(paths)
     instance_id = "default"
     created_at: str | None = None
     if isinstance(hb, dict):
@@ -999,24 +1015,25 @@ def build_environment(
     # port / build) and is supplied by the /api/health route handler,
     # not this reader — it is intentionally absent from the environment
     # payload. ``heartbeat`` is the orchestrator's runtime heartbeat.
+    inputs = RuntimeInputs.capture(paths)
     return {
-        "workspace": build_workspace_identity(paths),
-        "epoch_id": read_current_epoch(paths),
+        "workspace": build_workspace_identity(paths, inputs=inputs),
+        "epoch_id": inputs.epoch_id,
         "epochs": build_epochs_summary(paths),
-        "active_tournament": read_active_tournament_dict(paths),
+        "active_tournament": inputs.tournament.copy(),
         # The lineage walk reads a JSON file per generation and is the
         # largest cost in this reader; the feed is served verbatim, rating
         # triple included.
         "generations": build_lineage_view(paths),
-        "active_runs": read_active_runs_view(paths),
-        "heartbeat": read_heartbeat_dict(paths),
+        "active_runs": inputs.active_runs.copy(),
+        "heartbeat": inputs.heartbeat.copy(),
         # The served tri-state (runtime_view.derive_liveness) — the one
         # answer to "is anything running?", so the environment feed and
         # the SSE snapshot cannot disagree about it.
-        "liveness": derive_liveness(paths),
-        "lock": read_lock_dict(paths),
-        "run_log": build_run_log(paths, run_log_limit),
-        "generated_at": _iso(_utc_now()),
+        "liveness": derive_liveness(paths, inputs=inputs),
+        "lock": inputs.lock.copy(),
+        "run_log": build_run_log(paths, run_log_limit, active_runs=inputs.active_runs.copy()),
+        "generated_at": _iso(inputs.now),
     }
 
 

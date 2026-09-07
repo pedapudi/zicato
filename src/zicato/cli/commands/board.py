@@ -39,22 +39,10 @@ from zicato.core.workspace import board_path
 
 
 def _resolve_epoch_id(workspace_root: Path) -> str:
-    """Resolve the current epoch id from the workspace.
+    """Read the current-epoch marker, using the unregistered board when absent."""
+    from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
 
-    Looks for ``lineage.json`` and reads its ``current_epoch`` field
-    when present. Otherwise returns ``"default"`` so the command can
-    still operate on a freshly initialised workspace.
-    """
-    lineage = workspace_root / "lineage.json"
-    if lineage.exists():
-        try:
-            payload = json.loads(lineage.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return "default"
-        current = payload.get("current_epoch")
-        if isinstance(current, str) and current:
-            return current
-    return "default"
+    return current_epoch_id(workspace_root) or "default"
 
 
 def _resolve_board_path(workspace: str) -> Path:

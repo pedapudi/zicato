@@ -81,6 +81,15 @@ class WorkspaceLayout:
         return self.root / "index.db"
 
     @property
+    def index_revisions_dir(self) -> Path:
+        """Durable epoch change signals for repairing the derived index."""
+        return self.root / "index-revisions"
+
+    def index_revision(self, epoch_id: str) -> Path:
+        """The last revision issued before an epoch's indexed records changed."""
+        return self.index_revisions_dir / f"{epoch_id}.revision"
+
+    @property
     def current_epoch_marker(self) -> Path:
         """The ``current_epoch`` marker file at the workspace root."""
         return self.root / "current_epoch"
@@ -369,6 +378,10 @@ class WorkspaceLayout:
         the round subtree has one path definition like every other.
         """
         return self.epoch_dir(epoch_id) / "rounds"
+
+    def field_settlement(self, epoch_id: str, round_index: int) -> Path:
+        """The round's canonical settlement receipt."""
+        return self.round_dir(epoch_id, round_index) / "field_settlement.json"
 
     def round_dir(self, epoch_id: str, round_index: int) -> Path:
         """One evolve round's directory under :meth:`rounds_dir`.

@@ -12,12 +12,13 @@ from typing import Any
 
 from zicato.epoch._storage import RecordError
 from zicato.epoch.journal import read_experiment_body
+from zicato.epoch.lineage import Lineage, load_lineage
 from zicato.query.decisions import decision_surface
+from zicato.query.inputs import EpochInputs
 from zicato.query.paths import (
     WorkspacePaths,
     _iso,
     _natural_key,
-    _read_json_value,
     layout_of,
 )
 from zicato.query.ratings import RATING_FIELDS, rating_by_generation
@@ -37,6 +38,8 @@ def build_lineage_view(
     epoch_id: str | None = None,
     *,
     include_ratings: bool = True,
+    inputs: EpochInputs | None = None,
+    lineage_record: Lineage | None = None,
 ) -> dict[str, Any]:
     """Every generation directory in every epoch, in-flight or resolved.
 
@@ -63,30 +66,17 @@ def build_lineage_view(
     rated — reads as the null triple, never an error. The rating is
     visibility-only; it never gates promotion.
     """
-    legacy: dict[tuple[str, str], dict[str, Any]] = {}
-    lineage_file = _read_json_value(paths.lineage)
-    if isinstance(lineage_file, dict):
-        for ep in lineage_file.get("epochs", []) or []:
-            if not isinstance(ep, dict):
-                continue
-            legacy_eid = str(ep.get("id", ""))
-            for gen in ep.get("generations", []) or []:
-                if not isinstance(gen, dict):
-                    continue
-                gid = gen.get("id")
-                if not isinstance(gid, str):
-                    continue
-                legacy[(legacy_eid, gid)] = {
-                    "parent_id": gen.get("parent_id"),
-                    "created_at": gen.get("created_at") or None,
-                    "promoted": gen.get("promoted"),
-                    # The settle-time facts the DAG records (issue
-                    # #124) — passed through verbatim below.
-                    "rejection_reason": gen.get("rejection_reason"),
-                    "parent_scalar": gen.get("parent_scalar"),
-                    "child_scalar": gen.get("child_scalar"),
-                    "delta_scalar": gen.get("delta_scalar"),
-                }
+    if inputs is not None:
+        inputs.check(paths, epoch_id)
+    try:
+        lineage = lineage_record if lineage_record is not None else load_lineage(paths.root)
+    except RecordError as exc:
+        return {"generations": [], "unreadable": str(exc)}
+    metadata = {
+        (epoch.id, generation.id): generation
+        for epoch in lineage.epochs
+        for generation in epoch.generations
+    }
 
     generations: list[dict[str, Any]] = []
     epoch_created: dict[str, str] = {}
@@ -96,16 +86,27 @@ def build_lineage_view(
     # it through ``iter_epochs`` keeps the workspace walk in one place and
     # reuses the cached ``created_at`` each typed ``Epoch`` already carries.
     layout = layout_of(paths)
-    for epoch in iter_epochs(layout):
-        if epoch_id is not None and epoch.id != epoch_id:
+    if inputs is not None:
+        config = inputs.config.copy()
+        created = config.get("created_at") if isinstance(config, dict) else None
+        epochs = [(inputs.epoch_id, created if isinstance(created, str) else "")]
+    else:
+        epochs = [(epoch.id, epoch.created_at) for epoch in iter_epochs(layout)]
+    for eid, epoch_timestamp in epochs:
+        if epoch_id is not None and eid != epoch_id:
             continue
-        eid = epoch.id
-        epoch_created[eid] = epoch.created_at
-        for generation_id in generation_ids(layout, eid):
-            meta = legacy.get((eid, generation_id), {})
+        epoch_created[eid] = epoch_timestamp
+        ids = inputs.generations if inputs is not None else generation_ids(layout, eid)
+        for generation_id in ids:
+            meta = metadata.get((eid, generation_id))
             unreadable: str | None = None
             try:
-                experiment = read_experiment_body(layout.root, eid, generation_id)
+                if inputs is not None:
+                    captured = inputs.generations[generation_id]
+                    experiment = captured.body.copy()
+                    unreadable = captured.unreadable
+                else:
+                    experiment = read_experiment_body(layout.root, eid, generation_id)
             except RecordError as exc:
                 # Degrade at this boundary: lineage.json is the authority for
                 # topology and gate outcome, so the node still renders with the
@@ -117,9 +118,8 @@ def build_lineage_view(
 
             # lineage.json is the single authority for topology and gate
             # outcome. experiment.json remains proposal metadata only.
-            parent = meta.get("parent_id")
-            promoted = meta.get("promoted")
-            promoted = promoted if isinstance(promoted, bool) else None
+            parent = meta.parent_id if meta else None
+            promoted = meta.promoted if meta else None
 
             # The evolve-round that MINTED this generation, stamped onto
             # experiment.json at mint time. Absent on a record carrying no
@@ -143,7 +143,7 @@ def build_lineage_view(
                         created_at = val
                         break
             if created_at is None:
-                legacy_created = meta.get("created_at")
+                legacy_created = meta.created_at if meta else None
                 if isinstance(legacy_created, str) and legacy_created:
                     created_at = legacy_created
             if created_at is None:
@@ -183,11 +183,11 @@ def build_lineage_view(
             # written before the field existed keeps its prior payload,
             # and the reason is empty on anything but a settled
             # rejection (append_to_lineage enforces that at the write).
-            reason = meta.get("rejection_reason")
+            reason = meta.rejection_reason if meta else None
             if isinstance(reason, str) and reason:
                 node["rejection_reason"] = reason
             for field in ("parent_scalar", "child_scalar", "delta_scalar"):
-                value = meta.get(field)
+                value = getattr(meta, field) if meta else None
                 if isinstance(value, int | float) and not isinstance(value, bool):
                     node[field] = float(value)
             generations.append(node)

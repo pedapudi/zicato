@@ -270,7 +270,7 @@ def _lineage_promoted(workspace: Path, epoch_id: str, gid: str) -> bool | None:
     """Return the ``promoted`` flag the lineage records for ``gid``."""
     from zicato.epoch.lineage import load_lineage
 
-    lineage = load_lineage(workspace)
+    lineage = load_lineage(workspace).to_dict()
     for entry in lineage.get("epochs", []):
         if entry.get("id") != epoch_id:
             continue

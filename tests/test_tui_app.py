@@ -149,10 +149,10 @@ async def test_help_overlay_toggles_in_the_drawer() -> None:
         await pilot.pause()
         await pilot.press("question_mark")
         await pilot.pause()
-        assert "This build is read-only" in str(app.query_one("#drawer", Static).content)
+        assert "Read-only" in str(app.query_one("#drawer", Static).content)
         await pilot.press("question_mark")
         await pilot.pause()
-        assert "This build is read-only" not in str(app.query_one("#drawer", Static).content)
+        assert "Read-only" not in str(app.query_one("#drawer", Static).content)
 
 
 async def test_ascii_mode_emits_no_non_ascii() -> None:

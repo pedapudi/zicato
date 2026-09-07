@@ -844,28 +844,19 @@ def _hydrate_generations(
     to the experiment-id ordering when lineage has not been populated
     (the common case in unit tests that bypass the lifecycle helpers).
     """
-    raw = load_lineage(workspace_root)
-    for entry in raw.get("epochs", []) or []:
-        if entry.get("id") != epoch_id:
-            continue
-        out: list[Generation] = []
-        for g in entry.get("generations", []) or []:
-            try:
-                out.append(
-                    Generation(
-                        id=str(g["id"]),
-                        epoch_id=epoch_id,
-                        parent_id=g.get("parent_id"),
-                        snapshot_root=Path("/"),
-                        created_at=str(g.get("created_at", "")),
-                        promoted=bool(g.get("promoted", False)),
-                    )
-                )
-            except (KeyError, TypeError, ValueError):
-                continue
-        if out:
-            return out
-        break
+    epoch = load_lineage(workspace_root).epoch(epoch_id)
+    if epoch is not None and epoch.generations:
+        return [
+            Generation(
+                id=generation.id,
+                epoch_id=epoch_id,
+                parent_id=generation.parent_id,
+                snapshot_root=Path("/"),
+                created_at=generation.created_at,
+                promoted=generation.promoted is True,
+            )
+            for generation in epoch.generations
+        ]
 
     if not fallback_ids:
         return []

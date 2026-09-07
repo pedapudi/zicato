@@ -209,10 +209,6 @@ class ReadEndpoint:
         four ``SCOPE_`` / ``EPOCH_SCOPE_NONE`` values above. When it is not
         ``EPOCH_SCOPE_NONE`` the resolved epoch id (or ``None`` for the
         current epoch) is passed to the reader after the path coordinates.
-    off_event_loop:
-        Whether the read blocks on files heavy enough to run in the
-        threadpool. A read that walks per-run files or stats a tree must
-        never stall the event loop the whole dashboard shares.
     """
 
     path: str
@@ -223,7 +219,6 @@ class ReadEndpoint:
     degrade: Degrade | None = None
     degrade_status: int = 200
     epoch_scope: str = EPOCH_SCOPE_NONE
-    off_event_loop: bool = False
 
     @property
     def coordinates(self) -> tuple[str, ...]:
@@ -407,7 +402,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
             "the two surfaces cannot disagree. The server owns the phase-string "
             "inference; the stepper renders this verdict verbatim."
         ),
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/live/execution-plan",
@@ -418,7 +412,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
             "run. A workspace that is not live serves its plan with an empty "
             "overlay."
         ),
-        off_event_loop=True,
     ),
     # -- reads scoped by the optional ?epoch= parameter -----------------
     ReadEndpoint(
@@ -487,13 +480,11 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
             "A malformed scope reads as no scope, so the trend still renders."
         ),
         epoch_scope=SCOPE_IGNORE_MALFORMED_EPOCH,
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/proposer/recommendations",
         reader=query.build_proposer_recommendations,
         serves="The pending proposer-recommendation queue, workspace-wide.",
-        off_event_loop=True,
     ),
     # -- epoch-coordinate reads ----------------------------------------
     ReadEndpoint(
@@ -613,7 +604,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         serves="The entries × candidates outcomes matrix for one epoch.",
         params=("epoch_id",),
         degrade=lambda _paths, c: _empty_matrix(c["epoch_id"]),
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/epoch/{epoch_id}/eval/{entry_id}",
@@ -621,7 +611,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         serves="One board entry's instrument-quality dossier.",
         params=("epoch_id", "entry_id"),
         degrade=lambda _paths, c: _empty_eval_dossier(c["epoch_id"], c["entry_id"]),
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/epoch/{epoch_id}/candidate/{generation_id}",
@@ -636,7 +625,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         params=("epoch_id", "generation_id"),
         query=("entry",),
         degrade=lambda _paths, c: _empty_dossier(c["epoch_id"], c["generation_id"]),
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/epoch/{epoch_id}/eval-health",
@@ -644,7 +632,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         serves="The instrument-quality panel for one epoch.",
         params=("epoch_id",),
         degrade=lambda _paths, c: _empty_health(c["epoch_id"]),
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/epoch/{epoch_id}/judge-roster",
@@ -652,7 +639,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         serves="What is armed to judge a run on one epoch's board.",
         params=("epoch_id",),
         degrade=lambda _paths, c: _empty_judge_roster(c["epoch_id"]),
-        off_event_loop=True,
     ),
     # -- generation- and run-coordinate reads ---------------------------
     ReadEndpoint(
@@ -862,7 +848,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         serves="The foreign traces imported for one reflection.",
         params=("reflection_id",),
         degrade=_echo(epoch_id=None, found=False, trace_count=0, traces=[]),
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/reflection/{reflection_id}/trace/{trace_id}",
@@ -870,7 +855,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         serves="One imported trace: its strip model and the reconstructed conversation.",
         params=("reflection_id", "trace_id"),
         degrade=_degrade_trace_detail,
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/reflection/{reflection_id}/suggestion/{suggestion_id}/provenance",
@@ -878,14 +862,12 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         serves="One suggestion's provenance chain, from episodes back to trace segments.",
         params=("reflection_id", "suggestion_id"),
         degrade=lambda _paths, c: _empty_provenance(c["reflection_id"], c["suggestion_id"]),
-        off_event_loop=True,
     ),
     # -- generation files and the mutation surface ----------------------
     ReadEndpoint(
         path="/api/files",
         reader=query.build_file_index,
         serves="Every epoch's generations, each with file and patch counts and ``has_tree``.",
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/files/{epoch_id}/{generation_id}/tree",
@@ -894,7 +876,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         params=("epoch_id", "generation_id"),
         degrade=_fixed(error=_INVALID_GENERATION_COORDINATE, entries=[]),
         degrade_status=400,
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/files/{epoch_id}/{generation_id}/content",
@@ -904,7 +885,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         query=("path",),
         degrade=_degrade_file_content,
         degrade_status=400,
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/files/{epoch_id}/{generation_id}/patches",
@@ -913,7 +893,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         params=("epoch_id", "generation_id"),
         degrade=_fixed(error=_INVALID_GENERATION_COORDINATE, patches=[]),
         degrade_status=400,
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/files/{epoch_id}/{generation_id}/diff",
@@ -922,7 +901,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         params=("epoch_id", "generation_id"),
         degrade=_fixed(error=_INVALID_GENERATION_COORDINATE, files=[]),
         degrade_status=400,
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/mutations/{epoch_id}",
@@ -931,7 +909,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         params=("epoch_id",),
         degrade=_fixed(error="invalid epoch id", mutations=[]),
         degrade_status=400,
-        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/mutations/{epoch_id}/{mutation_id}",
@@ -940,7 +917,6 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         params=("epoch_id", "mutation_id"),
         degrade=_fixed(error="invalid epoch or mutation id"),
         degrade_status=400,
-        off_event_loop=True,
     ),
 )
 
@@ -960,8 +936,8 @@ def _read_handler(paths: WorkspacePaths, entry: ReadEndpoint) -> Any:
 
     The order is fixed and is the whole contract: reject an unsafe
     coordinate before anything touches the workspace, resolve the optional
-    epoch scope, then call the reader — in the threadpool when the row says
-    the read blocks on files.
+    epoch scope, then run the entire synchronous reader in the threadpool.
+    Reader-owned connections are opened, used and closed in that worker.
     """
     degrade = entry.degrade or _never_served
 
@@ -970,7 +946,10 @@ def _read_handler(paths: WorkspacePaths, entry: ReadEndpoint) -> Any:
         coordinates.update({name: request.query_params.get(name, "") for name in entry.query})
         for name, value in coordinates.items():
             if not _coordinate_guard(name)(value):
-                return JSONResponse(degrade(paths, coordinates), status_code=entry.degrade_status)
+                return JSONResponse(
+                    await run_in_threadpool(degrade, paths, coordinates),
+                    status_code=entry.degrade_status,
+                )
         arguments: list[Any] = list(coordinates.values())
         if entry.epoch_scope:
             try:
@@ -978,19 +957,21 @@ def _read_handler(paths: WorkspacePaths, entry: ReadEndpoint) -> Any:
             except (_BadEpoch, ValueError):
                 if entry.epoch_scope != SCOPE_IGNORE_MALFORMED_EPOCH:
                     return JSONResponse(
-                        degrade(paths, coordinates), status_code=entry.degrade_status
+                        await run_in_threadpool(degrade, paths, coordinates),
+                        status_code=entry.degrade_status,
                     )
                 arguments.append(None)
         if entry.epoch_scope == SCOPE_REJECT_UNKNOWN_EPOCH:
             # The reader raises for an epoch the workspace does not hold, and
             # that answer degrades the same way a malformed one does.
             try:
-                return JSONResponse(entry.reader(paths, *arguments))
+                return JSONResponse(await run_in_threadpool(entry.reader, paths, *arguments))
             except ValueError:
-                return JSONResponse(degrade(paths, coordinates), status_code=entry.degrade_status)
-        if entry.off_event_loop:
-            return JSONResponse(await run_in_threadpool(entry.reader, paths, *arguments))
-        return JSONResponse(entry.reader(paths, *arguments))
+                return JSONResponse(
+                    await run_in_threadpool(degrade, paths, coordinates),
+                    status_code=entry.degrade_status,
+                )
+        return JSONResponse(await run_in_threadpool(entry.reader, paths, *arguments))
 
     handler.__name__ = route_name(entry.path)
     handler.__doc__ = f"``GET {entry.path}`` — {entry.serves}"
@@ -1020,7 +1001,7 @@ def _make_state_endpoints(
                 "version": _dashboard_version(),
                 "uptime_seconds": int(time.monotonic() - started),
                 "read_only": read_only,
-                "workspace": str(paths.root),
+                "workspace": str(paths.root.resolve()),
                 "port": _request.app.state.bound_port,
                 "build": _dashboard_version(),
             }
@@ -1032,7 +1013,9 @@ def _make_state_endpoints(
         # fanning out to six. ``?run-log-limit=`` is clamped like the
         # dedicated run-log endpoint.
         limit = query.clamp_run_log_limit(_int_query(request, "run-log-limit"))
-        return JSONResponse(query.build_environment(paths, run_log_limit=limit))
+        return JSONResponse(
+            await run_in_threadpool(query.build_environment, paths, run_log_limit=limit)
+        )
 
     async def api_search(request: Request) -> JSONResponse:
         """Sidebar search across entries / judges / patches / mutations.
@@ -1042,7 +1025,7 @@ def _make_state_endpoints(
         callers cannot trigger a wide scan with a degenerate query.
         """
         q = request.query_params.get("q", "")
-        return JSONResponse(query.build_search_results(paths, q))
+        return JSONResponse(await run_in_threadpool(query.build_search_results, paths, q))
 
     async def api_logs(request: Request) -> JSONResponse:
         """The structured operator-log tail (LOGGING.md) for one invocation.
@@ -1077,7 +1060,7 @@ def _make_state_endpoints(
         log tail instead of re-rendering it."""
         limit = query.clamp_run_log_limit(_int_query(request, "limit"))
         after = _int_query(request, "after")
-        return JSONResponse(query.build_run_log(paths, limit, after=after))
+        return JSONResponse(await run_in_threadpool(query.build_run_log, paths, limit, after=after))
 
     return {
         "api_health": api_health,
@@ -1105,7 +1088,7 @@ def _make_epoch_document_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
             return PlainTextResponse("invalid epoch id", status_code=400)
-        text = query.read_epoch_journal_md(paths, epoch_id)
+        text = await run_in_threadpool(query.read_epoch_journal_md, paths, epoch_id)
         if text is None:
             return PlainTextResponse(
                 f"journal.md not found for epoch {epoch_id}",
@@ -1127,7 +1110,7 @@ def _make_epoch_document_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
             return PlainTextResponse("invalid epoch id", status_code=400)
-        html = query.read_epoch_analysis_html(paths, epoch_id)
+        html = await run_in_threadpool(query.read_epoch_analysis_html, paths, epoch_id)
         if html is None:
             return PlainTextResponse("analysis.html not found for this epoch", status_code=404)
         return HTMLResponse(html)
@@ -1154,8 +1137,12 @@ def _make_proposal_episode_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
             return JSONResponse({"error": "invalid coordinates"}, status_code=400)
         return JSONResponse(
-            query.build_proposal_episode_export(
-                paths, epoch_id, generation_id, slot=_int_query(request, "slot")
+            await run_in_threadpool(
+                query.build_proposal_episode_export,
+                paths,
+                epoch_id,
+                generation_id,
+                slot=_int_query(request, "slot"),
             )
         )
 
@@ -1175,8 +1162,12 @@ def _make_proposal_episode_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         generation_id = request.path_params["generation_id"]
         if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
             return PlainTextResponse("invalid coordinates", status_code=400)
-        html = query.read_proposal_episode_export(
-            paths, epoch_id, generation_id, slot=_int_query(request, "slot")
+        html = await run_in_threadpool(
+            query.read_proposal_episode_export,
+            paths,
+            epoch_id,
+            generation_id,
+            slot=_int_query(request, "slot"),
         )
         if html is None:
             return PlainTextResponse(f"no episode export for {generation_id}", status_code=404)
@@ -1213,7 +1204,8 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         epoch_q = request.query_params.get("epoch")
         gen_ok = bool(gen and _is_safe_id(gen))
         entry_ok = bool(entry and _is_safe_id(entry))
-        events_path = query.resolve_conversation(
+        events_path = await run_in_threadpool(
+            query.resolve_conversation,
             paths,
             run_id,
             gen=gen if gen_ok else None,
@@ -1224,7 +1216,9 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         if events_path is None:
             return JSONResponse({"error": f"no events for run {run_id}"}, status_code=404)
         try:
-            transcript = reconstruct_transcript(events_path, partial_ok=True)
+            transcript = await run_in_threadpool(
+                reconstruct_transcript, events_path, partial_ok=True
+            )
             return JSONResponse(transcript.to_dict())
         except Exception as exc:  # best-effort: never 500 the dashboard
             return JSONResponse(
@@ -1236,7 +1230,9 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         entry_id = request.path_params["entry_id"]
         if not _is_safe_id(entry_id):
             return JSONResponse({"error": "invalid entry_id"}, status_code=400)
-        return JSONResponse(query.build_matchup_conversations(paths, entry_id))
+        return JSONResponse(
+            await run_in_threadpool(query.build_matchup_conversations, paths, entry_id)
+        )
 
     async def api_run_transcript(request: Request) -> Response:
         """Reconstruct the transcript for one ``(epoch, gen, entry)`` run.
@@ -1266,7 +1262,8 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         run_q = run_q if (run_q and _is_safe_id(run_q)) else None
         match_q = match_q if (match_q and _is_safe_id(match_q)) else None
         return JSONResponse(
-            query.build_run_transcript(
+            await run_in_threadpool(
+                query.build_run_transcript,
                 paths,
                 epoch_id,
                 generation_id,
@@ -1304,7 +1301,8 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         run_q = run_q if (run_q and _is_safe_id(run_q)) else None
         match_q = match_q if (match_q and _is_safe_id(match_q)) else None
         return JSONResponse(
-            query.build_run_transcript_delta(
+            await run_in_threadpool(
+                query.build_run_transcript_delta,
                 paths,
                 epoch_id,
                 generation_id,

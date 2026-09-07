@@ -25,6 +25,7 @@ from zicato.runtime.lock import (
     release_workspace_lock,
 )
 from zicato.runtime.state import list_active_runs
+from zicato.storage import atomic_write_text
 
 
 def runtime(boundary: str, arguments: list[str]) -> None:
@@ -46,8 +47,9 @@ def runtime(boundary: str, arguments: list[str]) -> None:
     os.close(writer)
     assert os.read(reader, 5) == b"ready"
     os.close(reader)
-    (log_dir / "ownership.json").write_text(
-        json.dumps({"pid": os.getpid(), "child": child, "scratch": str(scratch)})
+    atomic_write_text(
+        log_dir / "ownership.json",
+        json.dumps({"pid": os.getpid(), "child": child, "scratch": str(scratch)}),
     )
     if not boundary.startswith("handshake"):
         log = Log(log_dir, LOG_VERSION, None)

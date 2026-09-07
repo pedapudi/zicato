@@ -35,12 +35,7 @@ from typing import Any
 
 import click
 
-from zicato.core.workspace import (
-    reflection_dir,
-    reflection_findings_path,
-    reflection_practices_path,
-    reflection_scorecards_path,
-)
+from zicato.core.workspace import reflection_dir
 
 # The live-run gate message: an ACTIVE reflection — one that would spend
 # meta-judge (adjudicator) budget — is refused unless the operator supplies an
@@ -115,21 +110,11 @@ def _resolve_candidates(
     # Parent of the champion from lineage (for the decision-flip pair).
     parent_id: str | None = None
     epoch_gens: list[str] = []
-    try:
-        lineage = load_lineage(workspace_root)
-        for entry in lineage.get("epochs", []):
-            if entry.get("id") != epoch_id:
-                continue
-            for g in entry.get("generations", []):
-                gid = g.get("id")
-                if isinstance(gid, str):
-                    epoch_gens.append(gid)
-                    if gid == champion_id:
-                        raw_parent = g.get("parent_id")
-                        parent_id = raw_parent if isinstance(raw_parent, str) else None
-            break
-    except (OSError, json.JSONDecodeError):
-        pass
+    epoch = load_lineage(workspace_root).epoch(epoch_id)
+    if epoch is not None:
+        epoch_gens = [generation.id for generation in epoch.generations]
+        champion = epoch.generation(champion_id) if champion_id else None
+        parent_id = champion.parent_id if champion else None
 
     if explicit:
         candidates = list(explicit)
@@ -161,19 +146,8 @@ def _load_epoch_experiments(workspace_root: Path, epoch_id: str) -> list[dict[st
     from zicato.core.workspace import experiment_json_path  # noqa: PLC0415
     from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
 
-    gen_ids: list[str] = []
-    try:
-        lineage = load_lineage(workspace_root)
-        for entry in lineage.get("epochs", []):
-            if entry.get("id") != epoch_id:
-                continue
-            for g in entry.get("generations", []):
-                gid = g.get("id")
-                if isinstance(gid, str):
-                    gen_ids.append(gid)
-            break
-    except (OSError, json.JSONDecodeError):
-        pass
+    epoch = load_lineage(workspace_root).epoch(epoch_id)
+    gen_ids = [generation.id for generation in epoch.generations] if epoch else []
 
     out: list[dict[str, Any]] = []
     for gid in gen_ids:
@@ -574,13 +548,11 @@ def _reflect_execute(
     )
 
     # --- Persist scorecards / findings / summary; mark executed -------------
-    _write_json(
-        reflection_scorecards_path(workspace_root, resolved_epoch, reflection_id),
-        {"reflection_id": reflection_id, "scorecards": [c.to_json() for c in scorecards]},
-    )
-    _write_json(
-        reflection_findings_path(workspace_root, resolved_epoch, reflection_id),
-        {"reflection_id": reflection_id, "findings": [f.to_json() for f in derived]},
+    from zicato.reflection.scorecards import Scorecards, write_scorecards  # noqa: PLC0415
+
+    write_scorecards(workspace_root, resolved_epoch, Scorecards(reflection_id, tuple(scorecards)))
+    findings_mod.write_findings(
+        workspace_root, resolved_epoch, findings_mod.Findings(reflection_id, tuple(derived))
     )
     _write_json(
         reflection_dir(workspace_root, resolved_epoch, reflection_id) / "summary.json",
@@ -602,10 +574,7 @@ def _reflect_execute(
         noise_floor=noise_floor,
         preflight=preflight,
     )
-    _write_json(
-        reflection_practices_path(workspace_root, resolved_epoch, reflection_id),
-        review.to_json(),
-    )
+    practices_mod.write_practice_review(workspace_root, resolved_epoch, reflection_id, review)
 
     plan_mod.write_plan(workspace_root, reflection_plan.mark_executed())
 
@@ -973,25 +942,25 @@ def report_cmd(reflection_id: str, workspace: str, epoch_id: str | None, as_json
     summary = _load_json_or(
         reflection_dir(workspace_root, resolved_epoch, reflection_id) / "summary.json", {}
     )
-    scorecards = _load_json_or(
-        reflection_scorecards_path(workspace_root, resolved_epoch, reflection_id), {}
-    )
-    findings = _load_json_or(
-        reflection_findings_path(workspace_root, resolved_epoch, reflection_id), {}
-    )
-    practices = _load_json_or(
-        reflection_practices_path(workspace_root, resolved_epoch, reflection_id), {}
-    )
-    cards = scorecards.get("scorecards", []) if isinstance(scorecards, dict) else []
-    finds = findings.get("findings", []) if isinstance(findings, dict) else []
-    checks = practices.get("checks", []) if isinstance(practices, dict) else []
-
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
+    from zicato.reflection.findings import read_findings  # noqa: PLC0415
+    from zicato.reflection.practices import read_practice_review  # noqa: PLC0415
+    from zicato.reflection.scorecards import read_scorecards  # noqa: PLC0415
     from zicato.reflection.suggestions import (  # noqa: PLC0415
         read_suggestions,
         render_suggestions_md,
     )
 
-    suggestions = read_suggestions(workspace_root, resolved_epoch, reflection_id)
+    try:
+        scorecards = read_scorecards(workspace_root, resolved_epoch, reflection_id)
+        findings = read_findings(workspace_root, resolved_epoch, reflection_id)
+        practices = read_practice_review(workspace_root, resolved_epoch, reflection_id)
+        suggestions = read_suggestions(workspace_root, resolved_epoch, reflection_id)
+    except RecordError as exc:
+        raise click.ClickException(str(exc)) from exc
+    cards = [card.to_json() for card in scorecards.cards] if scorecards is not None else []
+    finds = [finding.to_json() for finding in findings.items] if findings is not None else []
+    checks = [check.to_json() for check in practices.checks] if practices is not None else []
 
     if as_json:
         click.echo(
@@ -1249,6 +1218,7 @@ def apply_cmd(reflection_id: str, item_id: str, workspace: str, epoch_id: str | 
     staged draft and seals it through the builder, which is the gated step that
     rolls the epoch.
     """
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
     from zicato.reflection.apply import (  # noqa: PLC0415
         FindingNotActionableError,
         FindingNotFoundError,
@@ -1272,7 +1242,7 @@ def apply_cmd(reflection_id: str, item_id: str, workspace: str, epoch_id: str | 
                 reflection_id=reflection_id,
                 suggestion_id=item_id,
             )
-        except SuggestionNotFoundError as exc:
+        except (SuggestionNotFoundError, RecordError) as exc:
             raise click.ClickException(str(exc)) from exc
         except FindingNotActionableError as exc:
             raise click.ClickException(str(exc)) from exc
@@ -1292,7 +1262,7 @@ def apply_cmd(reflection_id: str, item_id: str, workspace: str, epoch_id: str | 
             reflection_id=reflection_id,
             finding_id=item_id,
         )
-    except FindingNotFoundError as exc:
+    except (FindingNotFoundError, RecordError) as exc:
         raise click.ClickException(str(exc)) from exc
     except FindingNotActionableError as exc:
         raise click.ClickException(str(exc)) from exc

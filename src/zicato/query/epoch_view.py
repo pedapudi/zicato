@@ -6,12 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from zicato.epoch._storage import RecordError
-from zicato.epoch.journal import (
-    patch_body,
-    read_experiment_body,
-    read_generation_patches,
-)
 from zicato.proposer.brief import brief_goal
 from zicato.query.board_scan import board_entry_id, iter_board_rows
 from zicato.query.decisions import (
@@ -19,6 +13,7 @@ from zicato.query.decisions import (
     promoted_tristate,
     stamp_experiment_decision,
 )
+from zicato.query.inputs import EpochInputs, capture_generations
 from zicato.query.paths import (
     WorkspacePaths,
     _is_finite,
@@ -30,8 +25,7 @@ from zicato.query.paths import (
     layout_of,
 )
 from zicato.query.promoted_head import read_recorded_heads, recorded_head_ids
-from zicato.storage import workspace_backend
-from zicato.workspace import WorkspaceLayout, generation_ids, iter_epochs
+from zicato.workspace import WorkspaceLayout, iter_epochs
 from zicato.workspace.config_io import read_workspace_config
 
 # ---------------------------------------------------------------------------
@@ -321,6 +315,8 @@ def _read_epoch_experiments(
     layout: WorkspaceLayout,
     epoch_id: str,
     lineage: dict[str, dict[str, Any]] | None = None,
+    *,
+    inputs: EpochInputs | None = None,
 ) -> list[dict[str, Any]]:
     """The epoch's per-generation experiment records, in round-number order.
 
@@ -337,12 +333,13 @@ def _read_epoch_experiments(
     nested ``outcome``.
     """
     experiments: list[dict[str, Any]] = []
-    backend = workspace_backend(layout.root, start=False)
-    for generation_id in generation_ids(layout, epoch_id):
-        try:
-            body = read_experiment_body(layout.root, epoch_id, generation_id)
-            patches = read_generation_patches(backend, epoch_id, generation_id).patches
-        except RecordError as exc:
+    generations = (
+        inputs.generations
+        if inputs is not None
+        else capture_generations(WorkspacePaths(layout.root), epoch_id)
+    )
+    for generation_id, captured in generations.items():
+        if captured.unreadable is not None:
             # Degrade at this boundary rather than failing the endpoint: the
             # generation still appears, carrying the reason its fields are
             # missing instead of a row of blanks the reader cannot account
@@ -351,11 +348,12 @@ def _read_epoch_experiments(
             record: dict[str, Any] = {
                 "generation_id": generation_id,
                 "patches": {},
-                "unreadable": str(exc),
+                "unreadable": captured.unreadable,
             }
             stamp_experiment_decision(record)
             experiments.append(record)
             continue
+        body = captured.body.copy()
         if body is None:
             continue
         record = dict(body)
@@ -367,9 +365,7 @@ def _read_epoch_experiments(
         # patch reader, so only the patches the experiment references are
         # served — an orphan file left by a crash between the two write
         # phases is not one of them.
-        record["patches"] = {
-            patch.mutation_id: patch_body(patch) for patch in patches if patch.mutation_id
-        }
+        record["patches"] = captured.patches.copy()
         # The canonical decision surface: ``decision`` + tri-state
         # ``promoted``, stamped by the shared classifier so this feed can
         # never disagree with the lineage view.
@@ -840,9 +836,10 @@ def build_epoch_view(
         return {"epoch_id": None}
 
     epoch_dir = layout_of(paths).epoch_dir(epoch_id)
+    inputs = EpochInputs.capture(paths, epoch_id)
     view: dict[str, Any] = {"epoch_id": epoch_id}
 
-    cfg = _read_json_value(epoch_dir / "config.json")
+    cfg = inputs.config.copy()
     if isinstance(cfg, dict):
         if isinstance(cfg.get("contract_hash"), str):
             view["contract_hash"] = cfg["contract_hash"]
@@ -863,7 +860,7 @@ def build_epoch_view(
     # read as a fallback. Any read error -> empty string.
     view["brief"] = _read_epoch_brief(epoch_dir)
 
-    scoring = _read_json_value(epoch_dir / "scoring.json")
+    scoring = inputs.scoring.copy()
     if scoring is not None:
         view["scoring"] = scoring
 
@@ -916,13 +913,17 @@ def build_epoch_view(
     from zicato.query.lineage_view import build_lineage_view  # noqa: PLC0415
 
     if lineage_view is None:
-        lineage_view = build_lineage_view(paths, epoch_id, include_ratings=False)
+        lineage_view = build_lineage_view(paths, epoch_id, include_ratings=False, inputs=inputs)
     lineage = {
         node["generation_id"]: node
         for node in lineage_view.get("generations", [])
-        if isinstance(node, dict) and isinstance(node.get("generation_id"), str)
+        if isinstance(node, dict)
+        and isinstance(node.get("generation_id"), str)
+        and node.get("epoch_id") == epoch_id
     }
-    view["experiments"] = _read_epoch_experiments(layout_of(paths), epoch_id, lineage)
+    view["experiments"] = _read_epoch_experiments(
+        layout_of(paths), epoch_id, lineage, inputs=inputs
+    )
 
     # The REIGNING champion — the end of the promoted spine (or the seed
     # while nothing is promoted). The ONE champion pointer the frontend
@@ -932,6 +933,13 @@ def build_epoch_view(
     view["current_champion"] = _current_champion(
         view["experiments"], recorded_head_ids(read_recorded_heads(paths, epoch_id))
     )
+    champion = lineage.get(view["current_champion"])
+    view["champion_record"] = dict(champion) if champion is not None else None
+    if champion is not None:
+        from zicato.query.ratings import RATING_FIELDS, rating_by_generation  # noqa: PLC0415
+
+        rating = rating_by_generation(paths, epoch_id).get((epoch_id, view["current_champion"]), {})
+        view["champion_record"].update({field: rating.get(field) for field in RATING_FIELDS})
 
     # Holdout ladder summary — the latest decision's ``holdout`` block
     # (ladder budget + train/holdout scalars). Read defensively from the

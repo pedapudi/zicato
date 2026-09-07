@@ -37,12 +37,17 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from zicato.reflection.adjudicator import VERDICT_FN, VERDICT_FP, JudgeAdjudication
+from zicato.core.workspace import reflection_findings_path
+from zicato.epoch._storage import RecordError
+from zicato.reflection.adjudication import VERDICT_FN, VERDICT_FP, JudgeAdjudication
 from zicato.reflection.scorecards import JudgeScorecard
+from zicato.storage import atomic_write_json
+from zicato.workspace.projection import mark_epoch_changed
 
 #: Down-weight a false-fire-heavy judge is nudged toward (a starting point the
 #: operator tunes rather than a fitted value).
@@ -67,9 +72,10 @@ class Finding:
     evidence: tuple[dict[str, Any], ...]
     recommendation: str
     proposed_op: dict[str, Any] | None
+    _json: str | None = field(default=None, repr=False, compare=False)
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        values = {
             "finding_id": self.finding_id,
             "pillar": self.pillar,
             "severity": self.severity,
@@ -79,6 +85,111 @@ class Finding:
             "recommendation": self.recommendation,
             "proposed_op": dict(self.proposed_op) if self.proposed_op is not None else None,
         }
+        stored = json.loads(self._json) if self._json is not None else {}
+        stored.update(values)
+        return stored
+
+    @classmethod
+    def from_json(cls, body: Any) -> Finding:
+        """Accept stored finding facts without importing or invoking draft operations."""
+        if not isinstance(body, dict):
+            raise RecordError("finding: expected a JSON object")
+        for key in ("finding_id", "pillar", "title", "detail", "recommendation"):
+            if not isinstance(body.get(key), str):
+                raise RecordError(f"finding: {key} must be a string")
+            if key in ("finding_id", "pillar") and not body[key]:
+                raise RecordError(f"finding: {key} must not be empty")
+        if not isinstance(body.get("severity"), str) or body["severity"] not in _SEVERITY_RANK:
+            raise RecordError("finding: invalid severity")
+        evidence = body.get("evidence")
+        if not isinstance(evidence, list) or any(not isinstance(item, dict) for item in evidence):
+            raise RecordError("finding: evidence must be an array of objects")
+        if "proposed_op" not in body:
+            raise RecordError("finding: missing proposed_op")
+        operation = body["proposed_op"]
+        if operation is not None and (
+            not isinstance(operation, dict)
+            or not isinstance(operation.get("op"), str)
+            or not operation["op"]
+            or not isinstance(operation.get("args"), dict)
+        ):
+            raise RecordError("finding: proposed_op requires an operation name and argument object")
+        try:
+            encoded = json.dumps(body, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise RecordError(f"finding: invalid JSON value: {exc}") from exc
+        fields = json.loads(encoded)
+        return cls(
+            **{
+                key: fields[key]
+                for key in (
+                    "finding_id",
+                    "pillar",
+                    "severity",
+                    "title",
+                    "detail",
+                    "recommendation",
+                    "proposed_op",
+                )
+            },
+            evidence=tuple(fields["evidence"]),
+            _json=encoded,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Findings:
+    """The ranked findings published by one reflection."""
+
+    reflection_id: str
+    items: tuple[Finding, ...]
+    _json: str | None = field(default=None, repr=False, compare=False)
+
+    def to_json(self) -> dict[str, Any]:
+        stored = json.loads(self._json) if self._json is not None else {}
+        stored.update(
+            reflection_id=self.reflection_id, findings=[item.to_json() for item in self.items]
+        )
+        return stored
+
+    @classmethod
+    def from_json(cls, body: Any) -> Findings:
+        if not isinstance(body, dict) or not isinstance(body.get("findings"), list):
+            raise RecordError("findings: expected an object with a findings list")
+        if not isinstance(body.get("reflection_id"), str) or not body["reflection_id"]:
+            raise RecordError("findings: reflection_id must be a nonempty string")
+        items = tuple(Finding.from_json(item) for item in body["findings"])
+        if len({item.finding_id for item in items}) != len(items):
+            raise RecordError("findings: duplicate finding identity")
+        try:
+            encoded = json.dumps(body, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise RecordError(f"findings: invalid JSON value: {exc}") from exc
+        return cls(body["reflection_id"], items, encoded)
+
+
+def read_findings(workspace_root: Path, epoch_id: str, reflection_id: str) -> Findings | None:
+    """Read the canonical collection; only an absent file has no recorded findings."""
+    path = reflection_findings_path(workspace_root, epoch_id, reflection_id)
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise RecordError(f"findings {path}: {exc}") from exc
+    record = Findings.from_json(body)
+    if record.reflection_id != reflection_id:
+        raise RecordError(f"findings {path}: reflection identity differs from its location")
+    return record
+
+
+def write_findings(workspace_root: Path, epoch_id: str, record: Findings) -> Path:
+    """Validate and mark the projection before durable canonical publication."""
+    accepted = Findings.from_json(record.to_json())
+    path = reflection_findings_path(workspace_root, epoch_id, accepted.reflection_id)
+    mark_epoch_changed(workspace_root, epoch_id)
+    atomic_write_json(path, accepted.to_json())
+    return path
 
 
 def _op_function(op_name: str) -> Any:
@@ -409,6 +520,9 @@ __all__ = [
     "SEVERITY_INFO",
     "SEVERITY_WARNING",
     "Finding",
+    "Findings",
     "derive_findings",
+    "read_findings",
     "validate_proposed_op",
+    "write_findings",
 ]

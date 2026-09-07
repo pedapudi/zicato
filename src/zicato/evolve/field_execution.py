@@ -39,7 +39,6 @@ from zicato.evolve.decision_support import (
 from zicato.evolve.field_candidates import CandidateField
 from zicato.evolve.gate import _resolve_round_champion_mode
 from zicato.evolve.generation_phase import FieldRound
-from zicato.evolve.ingest import _cache_gen_score
 from zicato.evolve.lifecycle_services import _beat
 from zicato.evolve.round_api import EvolveRoundOutcome
 from zicato.evolve.round_reporting import (
@@ -47,6 +46,7 @@ from zicato.evolve.round_reporting import (
     _emit_harness_loaded,
     _emit_tournament_units,
 )
+from zicato.tournament.scoring import write_gen_score
 from zicato.util import best_effort
 
 if TYPE_CHECKING:
@@ -76,7 +76,7 @@ class RoundTallies:
     new generations and must run, which says nothing about champion reuse.
 
     ``aggregates`` holds the per-generation aggregate the Pareto frontier
-    record reads, filled from the same dicts :func:`_cache_gen_score`
+    record reads, filled from the same dicts :func:`write_gen_score`
     persists and only when ``cache_scores`` is set, so an evidence-gate
     replicate duel's single draw can never overwrite the round-scored
     aggregate (docs/design/PARETO-FRONTIER.md §6).  ``raw_results`` keeps
@@ -212,14 +212,14 @@ async def run_field_matchup(
         # Every matchup appends its own line to the archive beside the
         # canonical file, so the within-round measurements the last
         # matchup's write shadows are still on disk (issue #122).
-        _cache_gen_score(
+        write_gen_score(
             field_round.workspace_root,
             field_round.epoch_id,
             matchup.left.generation_id,
             result.parent_agg,
             round_index=field_round.round_index,
         )
-        _cache_gen_score(
+        write_gen_score(
             field_round.workspace_root,
             field_round.epoch_id,
             matchup.right.generation_id,

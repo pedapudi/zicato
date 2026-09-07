@@ -69,15 +69,10 @@ class Console:
         return LensContext(route=self.route, width=self.width, ascii_only=self.ascii_only)
 
     def note_progress(self, seq: Any, terminal: Any = None) -> bool:
-        """Fold a ``state_change`` frame's cursor. True ⇒ this frame is work.
+        """Record progress advancement or restart for liveness and refresh.
 
-        THE OUTER GATE. The SSE stream carries no digest, so ``seq`` is the
-        only thing that can tell a real change from a no-op beat *before* any
-        HTTP request is made. A repeated ``seq`` returns False and the caller
-        does not fetch at all — which is the difference between "we refetched
-        the whole workspace and then decided not to repaint" and "we did
-        nothing". The digest gate in :meth:`refresh` is the inner guard behind
-        it, for the changes ``seq`` cannot see (a reindex, an operator edit).
+        Content invalidation is independent: the app also refreshes when the
+        broker's content revision changes without a progress transition.
         """
         progress = present.note_progress(seq, terminal, self.last_seq)
         if progress.present:
@@ -103,11 +98,17 @@ class Console:
         The digest comparison happens BEFORE anything is handed to a renderer,
         so an unchanged payload costs one fetch pass and zero screen work.
         """
+        return self.apply_view(self.build_view(self.context))
+
+    def build_view(self, context: LensContext) -> View:
+        """Fetch and assemble one captured route without changing UI state."""
         begin = getattr(self.client, "begin_pass", None)
         if callable(begin):
             begin()
-        lens = BY_NAME[self.route.lens]
-        fresh = safe_render(lens, self.client, self.context)
+        return safe_render(BY_NAME[context.route.lens], self.client, context)
+
+    def apply_view(self, fresh: View) -> bool:
+        """Apply a completed read on the UI thread; identical content is a no-op."""
         previous = self.view
         if previous is not None and previous.digest == fresh.digest:
             self.noops += 1
@@ -161,7 +162,7 @@ class Console:
         self.cursor = 0
 
     def jump(self, index: int) -> None:
-        """``1``-``6``: jump to the lens at that rail position, keeping the epoch."""
+        """``1``-``3``: jump to the lens at that rail position, keeping the epoch."""
         if not 1 <= index <= len(LENSES):
             return
         lens = LENSES[index - 1]
@@ -189,7 +190,7 @@ class Console:
             return
         route = parse_route(selected.action)
         epoch = self.route.params.get("epoch")
-        if epoch and "epoch" not in route.params:
+        if epoch and "epoch" not in route.params and route.params.get("detail") != "logs":
             route = Route(
                 lens=route.lens,
                 params={**route.params, "epoch": epoch},

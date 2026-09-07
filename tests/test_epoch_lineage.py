@@ -39,7 +39,7 @@ def test_new_epoch_registers_in_lineage(
     workspace: Path, board_file: Path, rubric_file: Path
 ) -> None:
     cfg = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     assert "epochs" in data
     assert len(data["epochs"]) == 1
     entry = data["epochs"][0]
@@ -55,7 +55,7 @@ def test_new_epoch_records_parent_epoch_id(
     a = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
     time.sleep(0.01)
     b = new_epoch(workspace, "beta", board_file, rubric_file, ScoringWeights())
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     by_id = {e["id"]: e for e in data["epochs"]}
     assert by_id[a.id]["v0_parent"] is None
     assert by_id[b.id]["v0_parent"] == a.id
@@ -93,7 +93,7 @@ def test_append_to_lineage_builds_generations(
     append_to_lineage(workspace, cfg.id, g1, "v0")
     append_to_lineage(workspace, cfg.id, g2, "v1")
 
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     [entry] = [e for e in data["epochs"] if e["id"] == cfg.id]
     gens = entry["generations"]
     assert [g["id"] for g in gens] == ["v0", "v1", "v2"]
@@ -118,7 +118,7 @@ def test_append_to_lineage_updates_existing_generation(
     from dataclasses import replace
 
     append_to_lineage(workspace, cfg.id, replace(g, promoted=True), "v0")
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     [entry] = [e for e in data["epochs"] if e["id"] == cfg.id]
     [recorded] = entry["generations"]
     assert recorded["promoted"] is True
@@ -149,7 +149,7 @@ def test_append_to_lineage_pending_writes_null_promoted_then_settles(
     # CREATION-time append: in-flight challenger, promoted defaults False on
     # the Generation, but pending=True must persist null instead.
     append_to_lineage(workspace, cfg.id, g, "v0", pending=True)
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     [entry] = [e for e in data["epochs"] if e["id"] == cfg.id]
     [recorded] = entry["generations"]
     assert recorded["promoted"] is None, "an in-flight challenger is PENDING, not rejected"
@@ -159,7 +159,7 @@ def test_append_to_lineage_pending_writes_null_promoted_then_settles(
     from dataclasses import replace
 
     append_to_lineage(workspace, cfg.id, replace(g, promoted=True), "v0")
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     [entry] = [e for e in data["epochs"] if e["id"] == cfg.id]
     [recorded] = entry["generations"]
     assert recorded["promoted"] is True, "the settle-time append records the real outcome"
@@ -180,11 +180,11 @@ def test_append_to_lineage_pending_then_rejected_settles_false(
         created_at="2026-04-08T11:00:00+00:00",
     )
     append_to_lineage(workspace, cfg.id, g, "v0", pending=True)
-    [recorded] = load_lineage(workspace)["epochs"][0]["generations"]
+    [recorded] = load_lineage(workspace).to_dict()["epochs"][0]["generations"]
     assert recorded["promoted"] is None
     # Cut by the tournament → settle records promoted=False (the default).
     append_to_lineage(workspace, cfg.id, g, "v0")
-    [recorded] = load_lineage(workspace)["epochs"][0]["generations"]
+    [recorded] = load_lineage(workspace).to_dict()["epochs"][0]["generations"]
     assert recorded["promoted"] is False
 
 
@@ -222,12 +222,12 @@ def test_append_to_lineage_auto_creates_epoch_entry(workspace: Path) -> None:
         promoted=True,
     )
     append_to_lineage(workspace, "2026-04-08_unregistered", g, None)
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     assert any(e["id"] == "2026-04-08_unregistered" for e in data["epochs"])
 
 
 def test_load_lineage_empty(workspace: Path) -> None:
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     assert data == {"epochs": []}
 
 
@@ -323,7 +323,7 @@ def test_append_to_lineage_records_round_index(
     for g, parent in ((seed, None), (c1, "v0"), (c2, "v0"), (c3, "v1")):
         append_to_lineage(workspace, cfg.id, g, parent)
 
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     [entry] = [e for e in data["epochs"] if e["id"] == cfg.id]
     by_id = {g["id"]: g for g in entry["generations"]}
     assert by_id["v0"]["round_index"] == 0
@@ -355,7 +355,7 @@ def test_append_to_lineage_round_index_survives_redefence(
     append_to_lineage(workspace, cfg.id, g, "v0")
     # Re-record on promotion; the in-place update must keep round_index=1.
     append_to_lineage(workspace, cfg.id, replace(g, promoted=True), "v0")
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     [entry] = [e for e in data["epochs"] if e["id"] == cfg.id]
     [recorded] = entry["generations"]
     assert recorded["promoted"] is True
@@ -369,6 +369,6 @@ def test_close_marks_lineage_closed_at(
 
     cfg = new_epoch(workspace, "alpha", board_file, rubric_file, ScoringWeights())
     close_epoch(workspace, cfg.id, aux_call_llm=None)
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     [entry] = [e for e in data["epochs"] if e["id"] == cfg.id]
     assert entry["closed_at"] != ""

@@ -684,6 +684,10 @@ function suggestionsInbox() {
       text: 'Instrument lens: reflection ' + feed.reflection_id + ' →',
     }));
   }
+  if (feed.unreadable) {
+    kids.push(empty(feed.unreadable));
+    return el('div', { class: 'dn-bld-suggestions' }, kids);
+  }
   if (!items.length) {
     kids.push(empty('No suggestions — run `zicato reflect suggest` to synthesise instrument improvements from the mined episodes.'));
     return el('div', { class: 'dn-bld-suggestions' }, kids);
@@ -800,6 +804,10 @@ function provenanceStripBlock(s, foreign, provPayload) {
   const feed = _suggestions || {};
   const traceId = foreign.trace_id || (provPayload && provPayload.subject) || '';
   const wrap = el('div', { class: 'dn-bld-sugstripwrap' });
+  if (provPayload && provPayload.unreadable) {
+    wrap.appendChild(empty(provPayload.unreadable));
+    return wrap;
+  }
   // the link into the Traces DETAIL route: #/e/<epoch>/traces/<reflection>/<trace>
   // (the review caught the earlier singular `/trace/` segment falling through
   // parseRoute's default to the epoch view).

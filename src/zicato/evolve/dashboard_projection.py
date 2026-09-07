@@ -1,17 +1,8 @@
-"""Dashboard live-state projection for the evolve loop.
+"""Live tournament projections and their round and standings serializers.
 
-Pure presentation code moved verbatim from :mod:`zicato.orchestrator`: the
-``active_tournament`` live-state envelope writers, the canonical round /
-standings serialisers, the runner-projected overlays, and the durable
-field-tournament snapshot. The orchestrator re-imports these by name, so every
-call site is unchanged and the live-state JSON the dashboard reads is
-byte-identical.
-
-The two helpers these functions share with the orchestrator -- ``_now_iso``
-and ``_index_db_path`` -- remain defined in :mod:`zicato.orchestrator` (they
-are used broadly there) and are imported lazily inside the functions that need
-them, matching the deferred-import style already used throughout this block and
-avoiding an import cycle at module load.
+The evolve loop publishes live envelopes, overlays run progress, and opens
+in-progress field snapshots through the tournament record owner. Resolved
+settlement receipts authorize the transition to a settled durable snapshot.
 """
 
 from __future__ import annotations
@@ -20,6 +11,8 @@ import logging
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+
+from zicato.tournament.records import field_tournament_record, write_field_tournament_record
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -448,7 +441,9 @@ def _open_field_tournament(
     This writer exposes the competitors and proposal status while execution is
     active. A two-competitor gauntlet needs no separate field record.
     """
-    record = _field_tournament_record(
+    from zicato.evolve.lifecycle_services import _now_iso  # noqa: PLC0415
+
+    record = field_tournament_record(
         field_tournament_id=field_tournament_id,
         epoch_id=epoch_id,
         structure=structure,
@@ -458,12 +453,13 @@ def _open_field_tournament(
         standings=[],
         field_status=field_status,
         decision=None,
+        ran_at=_now_iso(),
         state="in_progress",
     )
     if record is None:
         return
     try:
-        _write_field_tournament_record(
+        write_field_tournament_record(
             workspace_root,
             epoch_id=epoch_id,
             first_challenger_id=first_challenger_id,
@@ -472,92 +468,7 @@ def _open_field_tournament(
     except Exception as exc:  # noqa: BLE001 — durable snapshot is best-effort here
         log.debug("field-tournament snapshot skipped: %s", exc)
         return
-    _ingest_field_tournament_record(workspace_root, record)
-
-
-def _field_tournament_record(
-    *,
-    field_tournament_id: str,
-    epoch_id: str,
-    structure: str,
-    structure_params: dict[str, Any],
-    competitors: list[dict[str, Any]],
-    rounds: list[dict[str, Any]],
-    standings: list[dict[str, Any]],
-    field_status: list[dict[str, Any]],
-    decision: Any,
-    state: str = "settled",
-    override_status: dict[str, dict[str, Any]] | None = None,
-    promoted_generation_ids: list[str] | None = None,
-) -> dict[str, Any] | None:
-    """Build one field-tournament snapshot without writing it.
-
-    A two-competitor gauntlet has a canonical duel record already, so it
-    does not create a separate field snapshot.
-    """
-    if len(competitors) < 3:
-        return None
-    from zicato.evolve.lifecycle_services import _now_iso  # noqa: PLC0415
-
-    crowning_delta: float | None = None
-    for r in reversed(rounds):
-        matches = r.get("matches") or []
-        if matches:
-            crowning_delta = matches[-1].get("delta_scalar")
-            break
-    champion_id = next(
-        (c.get("generation_id") for c in competitors if str(c.get("role", "")) == "champion"),
-        "",
-    )
-    # ``decision`` is None while the round is still in flight (the envelope
-    # is opened before the bracket resolves); the crowning fields stay empty
-    # until settle. getattr tolerates the None case alongside the settled
-    # TournamentDecision so the open + settle writes share one code path.
-    record: dict[str, Any] = {
-        "tournament_id": field_tournament_id,
-        "epoch_id": epoch_id,
-        "structure": structure,
-        "structure_params": dict(structure_params),
-        "competitors": [dict(c) for c in competitors],
-        "rounds": rounds,
-        "standings": standings,
-        "field_status": [dict(f) for f in field_status],
-        "promoted_generation_id": getattr(decision, "promoted_generation_id", "") or "",
-        "champion_generation_id": champion_id or "",
-        "decision": getattr(decision, "decision", "") or "",
-        "reason": getattr(decision, "reason", "") or "",
-        "delta_scalar": crowning_delta,
-        "state": state,
-        "ran_at": _now_iso(),
-    }
-    # Multi-promotion + operator-override readback (additive). Both keys are
-    # OMITTED when absent so a no-override single-promotion record is
-    # byte-identical to before this field existed. ``promoted_generation_ids``
-    # is the full advanced SET (a tie / an operator multi-promote);
-    # ``override_status`` is the per-generation override provenance the
-    # dashboard renders ({action, ts, reason, state}).
-    if promoted_generation_ids:
-        record["promoted_generation_ids"] = list(promoted_generation_ids)
-    if override_status:
-        record["override_status"] = {gid: dict(prov) for gid, prov in override_status.items()}
-    return record
-
-
-def _write_field_tournament_record(
-    workspace_root: Path,
-    *,
-    epoch_id: str,
-    first_challenger_id: str,
-    record: dict[str, Any],
-) -> None:
-    """Atomically replace one canonical field-tournament snapshot."""
-    from zicato.core.workspace import field_tournament_path  # noqa: PLC0415
-    from zicato.storage import atomic_write_json  # noqa: PLC0415
-
-    atomic_write_json(
-        field_tournament_path(workspace_root, epoch_id, first_challenger_id),
-        record,
-    )
+    _ingest_field_tournament_record(workspace_root, record.to_dict())
 
 
 def _ingest_field_tournament_record(

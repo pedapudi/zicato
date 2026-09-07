@@ -487,4 +487,21 @@ test('termination: the real list + detail + dense-lane renders complete under a 
   assert(ms < budgetMs, `completed in ${ms} ms`);
 });
 
+for (const mode of ['list', 'detail']) {
+  test(mode + ': a changed canonical refusal updates the rendered reason', async () => {
+    fresh();
+    const host = document.createElement('div');
+    const params = { epochId: EPOCH_ID, reflectionId: REFL_ID };
+    if (mode === 'detail') params.traceId = TRACE_ID;
+    for (const reason of ['Suggestion record has an invalid rank.', 'Suggestion record has a duplicate ID.']) {
+      fresh();
+      installFixtureMap(traceMap({ [mode]: { found: false, unreadable: reason } }));
+      await traces.render(host, CTX, params);
+      assert(textOf(host).includes(reason), 'shows the current server reason');
+      assert(!textOf(host).includes('No such'), 'refusal is distinct from absence');
+      assertEqual(svgsByClass(host, 'dn-strip').length, 0, 'refused evidence has no strip');
+    }
+  });
+}
+
 run();

@@ -193,15 +193,19 @@ def _load_loss_summary(workspace_dir: Path, epoch_id: str, parent_gen: str) -> s
     summary_path = gen_dir / "loss_summary.txt"
     if summary_path.exists():
         return summary_path.read_text(encoding="utf-8").strip()
-    # Fall back to the gen-score summary if telemetry has dropped one there.
-    score_path = gen_dir / "gen_score.json"
-    if score_path.exists():
-        try:
-            score = json.loads(score_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return "(loss summary unavailable)"
-        return json.dumps(score, indent=2, sort_keys=True)
-    return "(loss summary unavailable)"
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
+    from zicato.tournament.scoring import read_gen_score  # noqa: PLC0415
+    from zicato.workspace.layout import WorkspaceLayout  # noqa: PLC0415
+
+    try:
+        score = read_gen_score(WorkspaceLayout.from_root(workspace_dir), epoch_id, parent_gen)
+    except RecordError as exc:
+        return f"(loss summary unreadable: {exc})"
+    return (
+        json.dumps(score.to_dict(), indent=2, sort_keys=True)
+        if score
+        else "(loss summary unavailable)"
+    )
 
 
 def _load_custom_judge_names(workspace_dir: Path) -> frozenset[str]:

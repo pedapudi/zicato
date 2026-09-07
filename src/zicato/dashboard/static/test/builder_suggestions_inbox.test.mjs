@@ -216,4 +216,14 @@ test('suggestions inbox: a re-render over the same feed churns no DOM (digest no
   assert(inbox1 === inbox2, 'the inbox DOM node is reused (digest-gated, anti-flash)');
 });
 
+test('suggestions inbox: displays a canonical reader refusal without draft actions', async () => {
+  SUGGESTIONS = { ...feed(), unreadable: 'Suggestion record has an invalid rank.' };
+  const host = await mountBoard();
+  const inbox = firstClass(host, 'dn-bld-suggestions');
+  assert(inbox.textContent.includes(SUGGESTIONS.unreadable), 'shows the server reason');
+  assert(!inbox.textContent.includes('No suggestions'), 'refusal is distinct from an empty collection');
+  assertEqual(byClass(inbox, 'dn-bld-sugstage').length, 0, 'refused suggestions have no draft action');
+  assertEqual(OP_CALLS.length, 0, 'rendering performs no operation');
+});
+
 await run();

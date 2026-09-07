@@ -1,8 +1,9 @@
 """Attaching to a dashboard service — connect to one, or start one.
 
 ``zicato tui --url http://127.0.0.1:7892`` attaches to a service someone else
-is running (an ``evolve`` loop's, typically). With no ``--url`` the TUI spawns
-its own against the named workspace, using the SAME path ``evolve`` uses:
+is running (an ``evolve`` loop's, typically). With no ``--url`` the TUI reuses
+a service whose health response identifies the named workspace, or starts
+one using the same path ``evolve`` uses:
 ``python -m zicato.dashboard`` in its own session, with the bound port read
 back from ``runtime/dashboard.json`` rather than assumed — the service walks
 ``+1`` when its preferred port is taken, so a guessed port is a wrong port.
@@ -70,6 +71,23 @@ def spawn_argv(workspace_root: Path, port: int) -> list[str]:
     ]
 
 
+def _serves_workspace(client: HttpClient, workspace: Path) -> bool:
+    """A reachable endpoint is reusable only for its verified local workspace."""
+    try:
+        health = client.get("/api/health")
+    except ServiceError:
+        return False
+    if not isinstance(health, dict) or health.get("status") != "ok":
+        return False
+    served = health.get("workspace")
+    if not isinstance(served, str) or not Path(served).is_absolute():
+        return False
+    try:
+        return Path(served).resolve() == workspace
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 @dataclass
 class Attachment:
     """A live connection, plus the process to stop if the TUI started it."""
@@ -118,13 +136,13 @@ def attach(
     timeout: float = 20.0,
     sleep: float = 0.1,
 ) -> Attachment:
-    """Connect to a dashboard service, spawning one when no ``url`` is given.
+    """Connect to a dashboard service, starting one when local discovery fails.
 
     Order of preference, and each step is a deliberate one:
 
     1. An explicit ``--url`` wins outright — the operator named a service.
-    2. An endpoint file for this workspace that answers: attach to the running
-       ``evolve`` loop's dashboard rather than starting a competing one.
+    2. An endpoint file whose health response identifies this workspace:
+       attach to its running dashboard.
     3. Spawn a service, then read its endpoint file back for the real port.
     """
     if url:
@@ -142,11 +160,7 @@ def attach(
     existing = read_endpoint(endpoint_file(workspace))
     if existing:
         client = HttpClient(existing)
-        try:
-            client.get("/api/health")
-        except ServiceError:
-            pass  # a stale endpoint file from a finished run; spawn our own
-        else:
+        if _serves_workspace(client, workspace):
             return Attachment(url=existing, client=client, workspace=workspace)
 
     return _spawn(workspace, port=port, timeout=timeout, sleep=sleep)
@@ -154,8 +168,8 @@ def attach(
 
 def _spawn(workspace: Path, *, port: int, timeout: float, sleep: float) -> Attachment:
     marker = endpoint_file(workspace)
-    # Drop a stale endpoint file so the readback below can only ever observe
-    # the service THIS call started.
+    # Clear the discovery hint before launch. Every readback must still
+    # verify the workspace served at the published address.
     try:
         marker.unlink()
     except OSError:
@@ -184,14 +198,10 @@ def _spawn(workspace: Path, *, port: int, timeout: float, sleep: float) -> Attac
         found = read_endpoint(marker)
         if found:
             client = HttpClient(found)
-            try:
-                client.get("/api/health")
-            except ServiceError:
-                time.sleep(sleep)
-                continue
-            attachment.url = found
-            attachment.client = client
-            return attachment
+            if _serves_workspace(client, workspace):
+                attachment.url = found
+                attachment.client = client
+                return attachment
         time.sleep(sleep)
 
     attachment.close()

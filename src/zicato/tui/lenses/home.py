@@ -5,7 +5,7 @@ anything, who is champion, and what is happening right now. Everything else is
 one keystroke away.
 
 Payloads: ``/api/workspace``, ``/api/epoch``, ``/api/epoch/{id}/trajectory``,
-``/api/epoch/{id}/cost``, ``/api/live/pipeline``, ``/api/lineage``.
+``/api/epoch/{id}/cost``, ``/api/live/pipeline``.
 """
 
 from __future__ import annotations
@@ -22,9 +22,10 @@ from zicato.tui.lenses.base import (
     decision_span,
     evidence,
     kv_row,
-    missing,
     rating_spans,
 )
+from zicato.tui.lenses.review import content_view, health_review
+from zicato.tui.routes import Route
 from zicato.tui.view import Block, Span, View, digest_of, row
 
 #: The loop-verdict phrase's severity style. The phrase itself always prints,
@@ -55,24 +56,46 @@ class HomeLens:
 
     @staticmethod
     def render(client: Client, ctx: LensContext) -> View:
+        if ctx.route.params.get("detail") in {"health", "logs"}:
+            return health_review(client, ctx.route)
         workspace = as_dict(client.get("/api/workspace"))
         epoch_id = ctx.epoch or workspace.get("current_epoch_id")
         if not epoch_id:
-            return missing(
+            return content_view(
                 HomeLens.title,
-                "this workspace has no epoch yet",
-                hint="run `zicato evolve` to open one",
+                [
+                    Block(
+                        rows=(
+                            row(
+                                "health",
+                                ("Health findings and logs", "plain"),
+                                action="/logs",
+                                selectable=True,
+                            ),
+                        )
+                    )
+                ],
+                degraded="This workspace has no epoch yet.",
             )
         epoch = as_dict(client.get(f"/api/epoch?epoch={epoch_id}"))
         traj = as_dict(client.get(f"/api/epoch/{epoch_id}/trajectory"))
         cost = as_dict(client.get(f"/api/epoch/{epoch_id}/cost"))
         pipeline = as_dict(client.get("/api/live/pipeline"))
-        lineage = as_list(as_dict(client.get("/api/lineage")).get("generations"))
 
         blocks = [
             _loop_block(traj, cost, ctx),
-            _champion_block(epoch, lineage, ctx),
+            _champion_block(epoch, ctx),
             _round_block(pipeline, ctx),
+            Block(
+                rows=(
+                    row(
+                        "health",
+                        ("Health findings and logs", "plain"),
+                        action=Route("home", {"epoch": epoch_id, "detail": "health"}).to_path(),
+                        selectable=True,
+                    ),
+                )
+            ),
         ]
         return View(
             title=f"{epoch_id}",
@@ -84,7 +107,7 @@ class HomeLens:
                 _loop_digest(traj, cost),
                 epoch.get("current_champion"),
                 epoch.get("closed"),
-                _champion_rating_digest(epoch, lineage),
+                _champion_rating_digest(epoch),
                 _pipeline_digest(pipeline),
             ),
             meta={"epoch_id": epoch_id},
@@ -220,7 +243,7 @@ def _floor_text(floor: dict[str, Any]) -> str:
     return f"±{present.fmt(half, 4)}{tail}"
 
 
-def _champion_block(epoch: dict[str, Any], lineage: list[Any], ctx: LensContext) -> Block:
+def _champion_block(epoch: dict[str, Any], ctx: LensContext) -> Block:
     """Who reigns, on what evidence."""
     champion_id = epoch.get("current_champion")
     if not champion_id:
@@ -228,17 +251,9 @@ def _champion_block(epoch: dict[str, Any], lineage: list[Any], ctx: LensContext)
             title="Champion",
             rows=(row("champion", ("no champion yet — nothing has raced", "faint")),),
         )
-    record = next(
-        (g for g in lineage if isinstance(g, dict) and g.get("generation_id") == champion_id),
-        {},
-    )
+    record = as_dict(epoch.get("champion_record"))
     summary = as_dict(epoch.get("delta_scalar_summary"))
-    experiments = as_list(epoch.get("experiments"))
-    exp = next(
-        (e for e in experiments if isinstance(e, dict) and e.get("generation_id") == champion_id),
-        {},
-    )
-    decision = present.decision_of(record) or present.decision_of(exp) or "pending"
+    decision = present.decision_of(record) or "pending"
     rows = [
         row(
             "champion",
@@ -253,8 +268,11 @@ def _champion_block(epoch: dict[str, Any], lineage: list[Any], ctx: LensContext)
                 ),
                 uncertainty=present.rating_text(record, games=True),
                 decision=present.verdict_label(decision),
-                provenance="/api/epoch current_champion + /api/lineage",
+                provenance="/api/epoch champion_record",
             ),
+            action=Route(
+                "standings", {"epoch": str(epoch.get("epoch_id")), "gen": str(champion_id)}
+            ).to_path(),
             selectable=True,
         ),
         row(
@@ -361,15 +379,12 @@ def _loop_digest(traj: dict[str, Any], cost: dict[str, Any]) -> list[Any]:
     ]
 
 
-def _champion_rating_digest(epoch: dict[str, Any], lineage: list[Any]) -> Any:
-    champion_id = epoch.get("current_champion")
-    record = next(
-        (g for g in lineage if isinstance(g, dict) and g.get("generation_id") == champion_id),
-        None,
-    )
+def _champion_rating_digest(epoch: dict[str, Any]) -> Any:
+    record = as_dict(epoch.get("champion_record"))
     model = present.rating_model(record)
     summary = as_dict(epoch.get("delta_scalar_summary"))
     return [
+        present.decision_of(record),
         [model.elo, model.se, model.games, model.provisional] if model else None,
         present.fmt(summary.get("champion_spine"), 4),
         present.fmt(summary.get("gross"), 4),

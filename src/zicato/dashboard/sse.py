@@ -34,6 +34,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from starlette.concurrency import run_in_threadpool
+
 from zicato.query import WorkspacePaths, build_snapshot
 from zicato.workspace import is_events_file
 
@@ -127,10 +129,12 @@ class ChangeBroker:
 
     def __init__(self, paths: WorkspacePaths) -> None:
         self.paths = paths
+        self.content_revision = 0
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._observer: Any | None = None
         self._poll_task: asyncio.Task[None] | None = None
+        self._flush_task: asyncio.Task[None] | None = None
         # Tracks events.jsonl sizes so a grow can be reported as a
         # `run_log` event for the live conversation stream.
         self._events_sizes: dict[str, int] = {}
@@ -146,16 +150,17 @@ class ChangeBroker:
         """Begin watching. Idempotent."""
         self._loop = asyncio.get_running_loop()
         if _HAVE_WATCHDOG:
-            self._start_watchdog()
+            await run_in_threadpool(self._start_watchdog)
         else:  # pragma: no cover - exercised only without watchdog
             self._poll_task = asyncio.create_task(self._poll_loop())
 
     async def stop(self) -> None:
         """Stop watching and release resources. Idempotent."""
+        self._loop = None
         if self._observer is not None:
             try:
                 self._observer.stop()
-                self._observer.join(timeout=2.0)
+                await run_in_threadpool(self._observer.join, timeout=2.0)
             except Exception:
                 pass
             self._observer = None
@@ -169,7 +174,15 @@ class ChangeBroker:
         if self._flush_handle is not None:
             self._flush_handle.cancel()
             self._flush_handle = None
+        if self._flush_task is not None:
+            self._flush_task.cancel()
+            try:
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+            self._flush_task = None
         self._pending_kinds.clear()
+        self._loop = None
 
     # -- subscription -------------------------------------------------
 
@@ -232,37 +245,45 @@ class ChangeBroker:
 
     def _accumulate_kind(self, kind: str) -> None:
         """Event-loop-side: record a changed kind, arm the flush timer."""
+        if kind not in {"heartbeat", "progress"}:
+            self.content_revision += 1
         self._pending_kinds.add(kind)
-        if self._flush_handle is None and self._loop is not None:
+        if self._flush_handle is None and self._flush_task is None and self._loop is not None:
             self._flush_handle = self._loop.call_later(_COALESCE_WINDOW_S, self._flush_state_change)
 
     def _flush_state_change(self) -> None:
-        """Emit one ``state_change`` for every kind seen in the window."""
         self._flush_handle = None
+        self._flush_task = asyncio.create_task(self._publish_state_change())
+
+    async def _publish_state_change(self) -> None:
+        """Coalesce mutations while one progress read is in flight."""
         kinds = sorted(self._pending_kinds)
         self._pending_kinds.clear()
-        if not kinds:
-            return
-        # `kind` carries a single region for back-compat with a client
-        # that reads only one; `kinds` carries the whole coalesced set.
-        # `seq` / `terminal` carry the orchestrator's TRUE liveness cursor,
-        # so a consumer can digest-gate on genuine progress and tell a
-        # SETTLED run from a STALLED one. Both are additive fields: a client
-        # that reads only `kind` / `kinds` still works.
-        seq, terminal = _progress_signal(self.paths)
-        self._emit(
-            {
-                "event": "state_change",
-                "data": {
-                    "type": "state_change",
-                    "kind": kinds[0] if len(kinds) == 1 else "multiple",
-                    "kinds": kinds,
-                    "seq": seq,
-                    "terminal": terminal,
-                    "ts": _now_iso(),
-                },
-            }
-        )
+        revision = self.content_revision
+        try:
+            if not kinds:
+                return
+            seq, terminal = await run_in_threadpool(_progress_signal, self.paths)
+            self._emit(
+                {
+                    "event": "state_change",
+                    "data": {
+                        "type": "state_change",
+                        "kind": kinds[0] if len(kinds) == 1 else "multiple",
+                        "kinds": kinds,
+                        "content_revision": revision,
+                        "seq": seq,
+                        "terminal": terminal,
+                        "ts": _now_iso(),
+                    },
+                }
+            )
+        finally:
+            self._flush_task = None
+            if self._pending_kinds and self._loop is not None:
+                self._flush_handle = self._loop.call_later(
+                    _COALESCE_WINDOW_S, self._flush_state_change
+                )
 
     def _report_events_growth(self, path: Path) -> None:
         try:
@@ -293,6 +314,10 @@ class ChangeBroker:
 
         class _Handler(FileSystemEventHandler):
             def on_any_event(self, event: FileSystemEvent) -> None:
+                if event.event_type not in {"created", "modified", "deleted", "moved"}:
+                    return
+                if event.is_directory and event.event_type == "modified":
+                    return
                 src = getattr(event, "src_path", None)
                 if src:
                     broker._on_path_changed(str(src))
@@ -320,33 +345,32 @@ class ChangeBroker:
 
     # -- poll-loop fallback ------------------------------------------
 
-    async def _poll_loop(self) -> None:  # pragma: no cover - no-watchdog path
-        seen: dict[str, float] = {}
-        roots = [self.paths.runtime, self.paths.epochs]
-        single = [self.paths.current_epoch_marker, self.paths.lineage]
+    def _poll_changes(
+        self, seen: dict[str, tuple[int, int, int]]
+    ) -> dict[str, tuple[int, int, int]]:
+        """Scan and report changes in a worker, including removed records."""
+        current: dict[str, tuple[int, int, int]] = {}
+        candidates = [self.paths.current_epoch_marker, self.paths.lineage]
+        for root in (self.paths.runtime, self.paths.epochs):
+            candidates.extend(root.rglob("*"))
+        for path in candidates:
+            try:
+                if path.is_file():
+                    stat = path.stat()
+                    current[str(path)] = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+            except OSError:
+                continue
+        for key in seen.keys() | current.keys():
+            if seen.get(key) != current.get(key):
+                self._on_path_changed(key)
+        return current
+
+    async def _poll_loop(self) -> None:
+        seen: dict[str, tuple[int, int, int]] = {}
         while True:
             try:
-                current: dict[str, float] = {}
-                for root in roots:
-                    if not root.is_dir():
-                        continue
-                    for p in root.rglob("*"):
-                        if p.is_file():
-                            try:
-                                current[str(p)] = p.stat().st_mtime
-                            except OSError:
-                                pass
-                for p in single:
-                    if p.exists():
-                        try:
-                            current[str(p)] = p.stat().st_mtime
-                        except OSError:
-                            pass
-                for key, mtime in current.items():
-                    if seen.get(key) != mtime:
-                        self._on_path_changed(key)
-                seen = current
-            except Exception:
+                seen = await run_in_threadpool(self._poll_changes, seen)
+            except OSError:
                 pass
             await asyncio.sleep(_POLL_INTERVAL_S)
 
@@ -371,17 +395,25 @@ async def sse_event_stream(broker: ChangeBroker, paths: WorkspacePaths) -> Async
     """
     queue = broker.subscribe()
     try:
-        snapshot = build_snapshot(paths)
+        # A mutation during construction must remain newer than this snapshot.
+        revision = broker.content_revision
+        snapshot = await run_in_threadpool(build_snapshot, paths)
         # Stamp the orchestrator progress cursor on the opening snapshot
         # frame too, so a freshly-connected client
         # has the true liveness ``seq`` + terminal marker before any
         # ``state_change`` arrives. The heartbeat inside ``snapshot`` also
         # carries ``seq``; this top-level pair mirrors the ``state_change``
         # frame so the consumer reads one consistent shape.
-        seq, terminal = _progress_signal(paths)
+        seq, terminal = await run_in_threadpool(_progress_signal, paths)
         yield _format_sse(
             "snapshot",
-            {"type": "snapshot", "data": snapshot, "seq": seq, "terminal": terminal},
+            {
+                "type": "snapshot",
+                "data": snapshot,
+                "content_revision": revision,
+                "seq": seq,
+                "terminal": terminal,
+            },
         )
         last_ping = time.monotonic()
         while True:

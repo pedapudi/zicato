@@ -189,7 +189,7 @@ def _resolve_epoch_id(paths: WorkspacePaths, epoch_id: str | None) -> str | None
         or "\x00" in epoch_id
     ):
         raise ValueError(f"invalid epoch id: {epoch_id!r}")
-    if epoch_id not in list_epoch_ids(paths):
+    if not layout_of(paths).epoch_dir(epoch_id).is_dir():
         raise ValueError(f"unknown epoch id: {epoch_id!r}")
     return epoch_id
 

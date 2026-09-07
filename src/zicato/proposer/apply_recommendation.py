@@ -27,12 +27,12 @@ because generations proposed by different proposers are not comparable.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from zicato.proposer.reflection import read_finding
+from zicato.epoch._storage import RecordError
+from zicato.proposer.reflection_records import read_finding
 from zicato.proposer.staging import stage_recommendation
 
 
@@ -64,22 +64,6 @@ class Applied:
         }
 
 
-def _safe_relative(relative_path: str) -> Path:
-    """Resolve a remedy's relative path, refusing anything that escapes the dir.
-
-    A recommendation record is a file on disk that an operator (or a future
-    substrate) can edit, so its path is untrusted input to a write. Absolute
-    paths and ``..`` segments are refused outright rather than normalised —
-    there is no legitimate remedy that needs either.
-    """
-    candidate = Path(relative_path)
-    if candidate.is_absolute() or any(part == ".." for part in candidate.parts):
-        raise ApplyError(
-            f"remedy path {relative_path!r} escapes the proposer dir; refusing to write"
-        )
-    return candidate
-
-
 def apply_recommendation(
     workspace_root: Path,
     recommendation_id: str,
@@ -97,41 +81,36 @@ def apply_recommendation(
     Applying is idempotent in effect: re-applying the same recommendation
     rewrites identical bytes and does not double-stage the id.
     """
-    located = read_finding(workspace_root, recommendation_id, epoch_id=epoch_id)
+    try:
+        located = read_finding(workspace_root, recommendation_id, epoch_id=epoch_id)
+    except RecordError as exc:
+        raise ApplyError(str(exc)) from exc
     if located is None:
         raise ApplyError(
             f"no proposer recommendation {recommendation_id!r} found under {workspace_root}; "
             "run `zicato proposer recommendations` for the pending queue"
         )
     found_epoch, reflection_id, finding = located
-    remedy = finding.get("remedy")
-    if not isinstance(remedy, dict):
+    remedy = finding.remedy
+    if remedy is None:
         raise ApplyError(
             f"recommendation {recommendation_id!r} carries no remedy — it is a finding to "
             "read, not an edit to apply (mutation-surface findings are operator decisions)"
         )
 
-    new_text = str(remedy.get("new_text", ""))
-    recorded = str(remedy.get("sha256", ""))
-    actual = hashlib.sha256(new_text.encode("utf-8")).hexdigest()
-    if not recorded or recorded != actual:
-        raise ApplyError(
-            f"recommendation {recommendation_id!r} failed its integrity check "
-            f"(recorded {recorded or 'nothing'}, computed {actual}); the record was edited "
-            "after it was drafted. Re-run `zicato proposer reflect` and apply the fresh id."
-        )
-
-    target = proposer_path / _safe_relative(str(remedy.get("relative_path", "")))
+    target = proposer_path / remedy.relative_path
+    if not target.resolve().is_relative_to(proposer_path.resolve()):
+        raise ApplyError("remedy path escapes the proposer dir through a symbolic link")
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(new_text, encoding="utf-8")
+    target.write_text(remedy.new_text, encoding="utf-8")
 
     return Applied(
         recommendation_id=recommendation_id,
         epoch_id=found_epoch,
         reflection_id=reflection_id,
         path=target,
-        sha256=actual,
-        kind=str(remedy.get("kind", "")),
+        sha256=remedy.sha256,
+        kind=remedy.kind,
         staged=stage_recommendation(workspace_root, recommendation_id),
     )
 

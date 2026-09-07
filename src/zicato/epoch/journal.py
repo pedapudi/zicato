@@ -106,6 +106,14 @@ class PatchRecord:
     patches: tuple[Patch, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ExperimentContents:
+    """An accepted experiment body and the patches that body references."""
+
+    body: dict[str, Any]
+    patches: tuple[Patch, ...]
+
+
 def _field(name: str, text: str) -> str:
     """Render one ``**name**: value`` field, preserving ``text`` in full.
 
@@ -759,6 +767,15 @@ def read_experiment_from_backend(
     body = _accepted_body(backend, epoch_id, generation_id)
     if body is None:
         raise FileNotFoundError(f"experiment.json not found for {where} (storage key {exp_key!r})")
+    return _experiment_from_body(backend, epoch_id, generation_id, body)
+
+
+def _experiment_from_body(
+    backend: StorageBackend, epoch_id: str, generation_id: str, body: dict[str, Any]
+) -> Experiment:
+    """Resolve one accepted body's declared patches and typed fields."""
+    exp_key = experiment_key(epoch_id, generation_id)
+    where = f"{epoch_id}/{generation_id}"
 
     patches: list[Patch] = []
     patch_ids = body.get("patch_ids")
@@ -846,6 +863,22 @@ def read_experiment_body(
     """
     backend = workspace_backend(workspace_root, start=False)
     return _accepted_body(backend, epoch_id, generation_id)
+
+
+def read_experiment_contents(
+    workspace_root: Path, epoch_id: str, generation_id: str
+) -> ExperimentContents | None:
+    """Read a body's stored fields and resolve its patches from that same body.
+
+    Absence returns ``None``. A malformed body or declared patch raises
+    ``RecordError`` through the same acceptance and decoding as the typed read.
+    """
+    backend = workspace_backend(workspace_root, start=False)
+    body = _accepted_body(backend, epoch_id, generation_id)
+    if body is None:
+        return None
+    record = _experiment_from_body(backend, epoch_id, generation_id, body)
+    return ExperimentContents(body=body, patches=record.patches)
 
 
 def read_epoch_experiments(
@@ -940,8 +973,10 @@ __all__ = [
     "read_epoch_experiments",
     "read_epoch_experiment_bodies",
     "read_experiment_body",
+    "read_experiment_contents",
     "read_generation_patches",
     "ExperimentRecordError",
     "PatchRecord",
+    "ExperimentContents",
     "update_experiment_outcome",
 ]

@@ -217,4 +217,28 @@ test('dispatch shape: the shell tree and the home view issue ONE /api/workspace 
   fresh();
 });
 
+test('failed reflection reads expire while successful absence stays cached', async () => {
+  fresh();
+  const clock = Date.now;
+  let now = 1000;
+  Date.now = () => now;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('temporarily unavailable');
+    return { ok: true, json: async () => null };
+  };
+  try {
+    assertEqual(await data.cachedJson('/api/reflection/e1/r1/summary'), null);
+    assertEqual(await data.cachedJson('/api/reflection/e1/r1/summary'), null);
+    assertEqual(calls, 1, 'failure is shared during backoff');
+    now += 30000;
+    await data.cachedJson('/api/reflection/e1/r1/summary');
+    assertEqual(calls, 2, 'failed entry retries without global invalidation');
+    now += 30000;
+    await data.cachedJson('/api/reflection/e1/r1/summary');
+    assertEqual(calls, 2, 'successful absence remains cached');
+  } finally { Date.now = clock; fresh(); }
+});
+
 await run();

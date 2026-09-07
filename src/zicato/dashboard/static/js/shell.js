@@ -926,12 +926,12 @@ async function renderTree(route) {
   });
   const digest = treeDigest(model, route, _toggles, live);
   if (digest === _lastTreeDigest && _treeHost.firstChild) return;
-  _lastTreeDigest = digest;
   buildTree(_treeHost, model, route, _toggles, _ctx, (key) => {
     if (_toggles.has(key)) _toggles.delete(key); else _toggles.add(key);
     _lastTreeDigest = null;
     renderTree(parseRoute(location.hash));
   }, live);
+  _lastTreeDigest = digest;
 }
 
 function renderCrumbs(route) {
@@ -1101,9 +1101,7 @@ async function fireLoopControl(action, body, pausedAfter) {
   let res = { ok: false, status: 0 };
   try { res = await postControl(action, body); } catch (err) { res = { ok: false, status: 0 }; }
   if (res.ok && pausedAfter != null) _pausedOverride = pausedAfter;
-  // A control write does not advance the orchestrator progress seq, so the
-  // SSE no-op-skip gate drops its state_change — refresh explicitly so the
-  // paused readback converges (and the button flips) promptly.
+  // Read back the control result without waiting for the SSE debounce.
   try { await loadEnvironment(); } catch (err) { /* transient — next beat retries */ }
   _lastLoopCtlDigest = null;
   renderStatus();
@@ -1367,20 +1365,11 @@ function onStateChanged() {
   // the 400 ms re-dispatch debounce. The hero patches in place (no full
   // repaint); the structure swap inside it stays digest-gated.
   refreshLive();
-  // THE UNDER-RENDER FIX. The tree + candidate-listing views read data.js's
-  // module cache, which invalidateLive() busts ONLY on a view change — so a NEW
-  // candidate folded into AppState by /api/environment never reached those panes
-  // (stale cache → gen-keyed digests never flipped → hard-refresh needed). Detect
-  // a real live-data change (gen set / statuses / epoch roster) via a signature
-  // off the just-refreshed AppState, and ONLY THEN drop the stale cache + force
-  // the tree to recompute. A no-op beat leaves the signature identical ⇒ no bust,
-  // no fetch, no repaint (no flash); the view/tree digests still gate after a
-  // bust, so only a true add repaints.
+  // Invalidate changed resources; tree and view digests still govern painting.
   const sig = liveDataSignature();
   if (sig !== _lastLiveSig) {
     _lastLiveSig = sig;
     invalidateLive();
-    _lastTreeDigest = null;   // force renderTree to rebuild off the fresh cache
   }
   if (_reRenderTimer != null) return;
   _reRenderTimer = setTimeout(() => {

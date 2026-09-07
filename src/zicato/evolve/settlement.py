@@ -24,7 +24,7 @@ champion pointer contradicts.
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
@@ -33,8 +33,8 @@ from zicato.core.types import (
     OutcomeRecord,
     TournamentDecision,
 )
+from zicato.epoch.settlement_receipt import SettlementCandidate, new_settlement_receipt
 from zicato.evolve.dashboard_projection import (
-    _field_tournament_record,
     _serialise_rounds,
     _serialise_standings,
     _settle_active_tournament,
@@ -56,11 +56,11 @@ from zicato.evolve.propose_apply import _maybe_run_placebo_arm_gauntlet
 from zicato.evolve.round_api import EvolveRoundOutcome
 from zicato.evolve.round_reporting import _promoted_entry_regressions
 from zicato.evolve.settlement_recovery import (
-    SETTLEMENT_INTENT_FORMAT_VERSION,
     commit_field_settlement,
     record_promotion_hook_delivery,
 )
 from zicato.selection.strategy import SelectionDecision
+from zicato.tournament.records import field_tournament_record
 from zicato.util import best_effort
 from zicato.workspace import generation_round_number
 
@@ -468,25 +468,23 @@ def _field_settlement_receipt(
 ) -> dict[str, Any]:
     """Serialize every fact needed to validate, replay, and audit settlement."""
     champion_agg = _first_aggregate_for(field_round.parent_id, execution.decision)
-    candidate_records: list[dict[str, Any]] = []
+    candidate_records: list[SettlementCandidate] = []
     for candidate in settlement.candidates:
         challenger = candidate.challenger
         generation_id = challenger.generation_id
         aggregate = _first_aggregate_for(generation_id, execution.decision)
         candidate_records.append(
-            {
-                "experiment_id": challenger.experiment.id,
-                "generation_id": generation_id,
-                "created_at": challenger.generation.created_at,
-                "parent_scalar": (
-                    float(champion_agg["scalar"]) if champion_agg is not None else None
-                ),
-                "child_scalar": float(aggregate["scalar"]) if aggregate is not None else None,
-                "outcome": asdict(candidate.outcome),
-            }
+            SettlementCandidate.from_outcome(
+                experiment_id=challenger.experiment.id,
+                generation_id=generation_id,
+                created_at=challenger.generation.created_at,
+                parent_scalar=float(champion_agg["scalar"]) if champion_agg is not None else None,
+                child_scalar=float(aggregate["scalar"]) if aggregate is not None else None,
+                outcome=candidate.outcome,
+            )
         )
 
-    field_record = _field_tournament_record(
+    field_record = field_tournament_record(
         field_tournament_id=f"{field_round.epoch_id}:field:{candidates.first_challenger_id}",
         epoch_id=field_round.epoch_id,
         structure=field_round.tournament_spec.structure,
@@ -496,6 +494,7 @@ def _field_settlement_receipt(
         standings=_serialise_standings(settlement.decision.standings),
         field_status=candidates.field_status or [],
         decision=settlement.decision,
+        ran_at=_now_iso(),
         state="settled",
         override_status=verdict.override_provenance or None,
         promoted_generation_ids=(
@@ -514,22 +513,15 @@ def _field_settlement_receipt(
         and hook is not None
         and callable(hook)
     )
-    return {
-        "format_version": SETTLEMENT_INTENT_FORMAT_VERSION,
-        "state": "pending",
-        "settlement_id": settlement_id,
-        "epoch_id": field_round.epoch_id,
-        "round_index": field_round.round_index,
-        "primary_promoted_generation_id": settlement.primary_promoted_generation_id,
-        "candidates": candidate_records,
-        "field_tournament_record": field_record,
-        "index_projection": {"state": "pending", "error_type": ""},
-        "promotion_hook": {
-            "state": "pending" if hook_is_applicable else "not_applicable",
-            "adapter_name": hook_adapter_name if hook_is_applicable else "",
-            "failure_type": "",
-        },
-    }
+    return new_settlement_receipt(
+        settlement_id=settlement_id,
+        epoch_id=field_round.epoch_id,
+        round_index=field_round.round_index,
+        primary_id=settlement.primary_promoted_generation_id,
+        candidates=tuple(candidate_records),
+        field_record=field_record.to_dict() if field_record is not None else None,
+        hook_adapter_name=hook_adapter_name if hook_is_applicable else "",
+    ).to_dict()
 
 
 def _round_summary(

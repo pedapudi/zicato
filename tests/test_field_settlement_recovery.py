@@ -26,12 +26,12 @@ from tests.test_orchestrator_multi_challenger import (
 from zicato.core.workspace import experiment_json_path, field_tournament_path, lineage_path
 from zicato.epoch.journal import outcome_from_dict, read_experiment
 from zicato.epoch.lineage import load_lineage
+from zicato.epoch.settlement_receipt import field_settlement_intent_path
 from zicato.evolve import settlement as settlement_module
 from zicato.evolve.ingest import index_preflight
 from zicato.evolve.settlement_recovery import (
     acknowledge_repaired_settlement_indexes,
     commit_field_settlement,
-    field_settlement_intent_path,
     replay_field_settlement,
 )
 from zicato.health.diagnostics import detect_settlement_receipt_attention
@@ -105,7 +105,9 @@ def _assert_field_is_unmutated(workspace: Path, epoch_id: str) -> None:
     """Assert that validation failed before any settlement write."""
     assert read_experiment(workspace, epoch_id, "v1").outcome is None
     assert read_experiment(workspace, epoch_id, "v2").outcome is None
-    epoch = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == epoch_id)
+    epoch = next(
+        row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
+    )
     by_generation = {row["id"]: row for row in epoch["generations"]}
     assert by_generation["v1"]["promoted"] is None
     assert by_generation["v2"]["promoted"] is None
@@ -204,7 +206,7 @@ def test_resume_completes_each_interrupted_field_settlement_boundary(
         experiment = read_experiment(workspace, epoch_id, generation_id)
         assert experiment.outcome == outcome_from_dict(candidate["outcome"])
 
-    lineage = load_lineage(workspace)
+    lineage = load_lineage(workspace).to_dict()
     epoch = next(row for row in lineage["epochs"] if row["id"] == epoch_id)
     by_generation = {row["id"]: row for row in epoch["generations"]}
     for candidate in candidates:
@@ -297,11 +299,15 @@ def test_lineage_resolution_is_atomic_across_the_candidate_field(
             crash_checkpoint=stop_after_atomic_resolution,
         )
 
-    epoch = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == epoch_id)
+    epoch = next(
+        row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
+    )
     by_id = {row["id"]: row for row in epoch["generations"]}
     assert {by_id["v1"]["promoted"], by_id["v2"]["promoted"]} == {False, True}
     assert prepare_resume(workspace, epoch_id).classification == "clean"
-    epoch = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == epoch_id)
+    epoch = next(
+        row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
+    )
     assert {row["id"] for row in epoch["generations"]} >= {"v1", "v2"}
 
 
@@ -422,7 +428,9 @@ def test_recovery_preserves_an_operator_multi_promotion_receipt(
         "v1",
         "v3",
     ]
-    epoch = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == epoch_id)
+    epoch = next(
+        row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
+    )
     promoted = {row["id"] for row in epoch["generations"] if row.get("promoted") is True}
     assert promoted >= {"v1", "v3"}
 
@@ -565,7 +573,9 @@ def test_resume_discards_an_entire_field_when_no_receipt_was_persisted(
 
     receipt_path = field_settlement_intent_path(workspace, epoch_id, 0)
     assert not receipt_path.exists()
-    lineage_before = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == epoch_id)
+    lineage_before = next(
+        row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
+    )
     pending = [row["id"] for row in lineage_before["generations"] if row.get("promoted") is None]
     assert pending == ["v1", "v2"]
     in_progress_path = field_tournament_path(workspace, epoch_id, "v1")
@@ -580,7 +590,9 @@ def test_resume_discards_an_entire_field_when_no_receipt_was_persisted(
     for generation_id in ("v1", "v2"):
         assert not (workspace / "epochs" / epoch_id / "generations" / generation_id).exists()
 
-    lineage_after = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == epoch_id)
+    lineage_after = next(
+        row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
+    )
     assert {row["id"] for row in lineage_after["generations"]}.isdisjoint({"v1", "v2"})
     # Cleanup invalidates the derived projection. The evolve preflight rebuilds
     # it after canonical recovery, so prepare_resume itself leaves no stale DB.
@@ -619,7 +631,9 @@ def test_unrecorded_field_cleanup_includes_a_sibling_missing_its_experiment(
     plan = prepare_resume(workspace, epoch_id)
 
     assert plan.classification == "discard_unrecorded_field"
-    lineage = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == epoch_id)
+    lineage = next(
+        row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
+    )
     assert {row["id"] for row in lineage["generations"]}.isdisjoint({"v1", "v2"})
     from zicato.evolve.generation_phase import next_generation_id
 
@@ -669,7 +683,9 @@ def test_unrecorded_field_cleanup_recovers_from_each_durability_boundary(
     monkeypatch.setattr(resume_module, "_field_cleanup_checkpoint", lambda _boundary: None)
     plan = prepare_resume(workspace, epoch_id)
     assert plan.classification in {"clean", "discard_unrecorded_field"}
-    epoch = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == epoch_id)
+    epoch = next(
+        row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
+    )
     assert {row["id"] for row in epoch["generations"]}.isdisjoint({"v1", "v2"})
     assert not (workspace / "epochs" / epoch_id / "rounds" / "0").exists()
     ensure_index(workspace)
@@ -763,7 +779,9 @@ def test_unrecorded_field_cleanup_preserves_a_terminal_diversity_rejection(
     with pytest.raises(_InjectedCrash, match="before receipt"):
         run_evolve_once(workspace, epoch_id, make_aux_responder([]))
 
-    before = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == epoch_id)
+    before = next(
+        row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
+    )
     assert {row["id"]: row["promoted"] for row in before["generations"]} | {
         "v1": None,
         "v2": False,
@@ -771,7 +789,9 @@ def test_unrecorded_field_cleanup_preserves_a_terminal_diversity_rejection(
 
     plan = prepare_resume(workspace, epoch_id)
     assert plan.classification == "discard_unrecorded_field"
-    after = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == epoch_id)
+    after = next(
+        row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == epoch_id
+    )
     by_id = {row["id"]: row for row in after["generations"]}
     assert "v1" not in by_id
     assert by_id["v2"]["promoted"] is False
@@ -880,7 +900,7 @@ def test_existing_field_snapshot_conflict_is_rejected_before_mutation(
     snapshot["champion_generation_id"] = "v2"
     snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="existing in-progress field tournament conflicts"):
+    with pytest.raises(RuntimeError, match="field tournament record.*inconsistent incumbent"):
         prepare_resume(workspace, epoch_id)
     _assert_field_is_unmutated(workspace, epoch_id)
 
@@ -1029,7 +1049,7 @@ def test_receipt_corruption_is_unhealthy_and_prevents_partial_repair_acknowledge
     assert retained["index_projection"]["state"] == "repair_required"
     attention = epoch_settlement_receipt_attention(workspace, epoch_id)
     assert len(attention.index_repairs) == 1
-    assert attention.corruptions[0]["exception_type"] == "RuntimeError"
+    assert attention.corruptions[0]["exception_type"] == "RecordError"
     report = build_health_report(WorkspacePaths(workspace))
     assert report["healthy"] is False
     codes = {finding["code"] for finding in report["findings"]}

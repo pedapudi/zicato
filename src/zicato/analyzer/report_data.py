@@ -54,8 +54,10 @@ from zicato.core.types import (
     MetricMovementActual,
 )
 from zicato.core.workspace import _normalise_workspace_root
+from zicato.epoch._storage import RecordError
 from zicato.epoch.journal import read_epoch_experiments
 from zicato.proposer.brief import brief_goal
+from zicato.tournament.scoring import read_gen_score
 from zicato.util.text import preview
 from zicato.workspace import (
     ScalarStep,
@@ -64,7 +66,6 @@ from zicato.workspace import (
     per_judge_loss_totals,
     read_board_entries,
     read_epoch_config,
-    read_gen_score,
     read_round_records,
 )
 
@@ -441,6 +442,7 @@ def _load_one_generation(
 
     patches = _patch_views(experiment)
     gen_score = read_gen_score(layout, epoch_id, gen_id_dir)
+    gen_score_body = gen_score.to_dict() if gen_score else {}
     per_judge_totals = _load_per_judge_totals(layout, epoch_id, gen_id_dir)
 
     return GenerationView(
@@ -462,7 +464,7 @@ def _load_one_generation(
         drift_movements=drift_movements,
         metric_movements=metric_movements,
         patches=patches,
-        gen_score=gen_score,
+        gen_score=gen_score_body,
         per_judge_loss_totals=per_judge_totals,
     )
 
@@ -579,10 +581,12 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
     journal_text = _read_text(layout.journal(epoch_id), _MAX_JOURNAL_CHARS)
 
     experiments, unreadable_generations = read_epoch_experiments(layout.root, epoch_id)
-    raw_generations = [
-        _load_one_generation(layout, epoch_id, gen_id_dir, experiment)
-        for gen_id_dir, experiment in experiments
-    ]
+    raw_generations = []
+    for gen_id_dir, experiment in experiments:
+        try:
+            raw_generations.append(_load_one_generation(layout, epoch_id, gen_id_dir, experiment))
+        except RecordError as exc:
+            unreadable_generations.append(f"{gen_id_dir}: {exc}")
     generations = _cumulate_scalar(raw_generations)
 
     timestamps = [g.proposed_at for g in generations if g.proposed_at]

@@ -466,4 +466,76 @@ test('teardown: reset the shared AppState / bus subscriptions for the next file'
   assert(true, 'shared singletons reset');
 });
 
+test('content revision refreshes a stopped run without advancing progress', async () => {
+  resetCursor();
+  state.noteProgress(17, true);
+  const f = installMockSse();
+  sse.connectSSE();
+  f.fire('state_change', { seq: 17, terminal: true, kinds: ['epoch'], content_revision: 1 });
+  await settleDebounce();
+  assertEqual(f.envFetches(), 1, 'canonical content causes an environment read');
+  f.fire('state_change', { seq: 17, terminal: true, kinds: ['heartbeat'], content_revision: 1 });
+  await settleDebounce();
+  assertEqual(f.envFetches(), 1, 'unchanged revision does not read again');
+});
+
+test('failed environment read retries an unchanged content revision', async () => {
+  resetCursor();
+  state.noteProgress(17, true);
+  const f = installMockSse();
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('temporarily unavailable');
+    return { ok: true, json: async () => ({ epoch_id: 'recovered' }) };
+  };
+  sse.connectSSE();
+  f.fire('state_change', { seq: 17, content_revision: 2 });
+  await settleDebounce();
+  assertEqual(calls, 1);
+  f.fire('state_change', { seq: 17, content_revision: 2 });
+  await new Promise((resolve) => setTimeout(resolve, 850));
+  assertEqual(calls, 2, 'one bounded retry succeeds without revision advancement');
+  assertEqual(state.epoch.id, 'recovered');
+});
+
+test('content changes during a held refresh coalesce into one follow-up', async () => {
+  resetCursor();
+  state.noteProgress(17, true);
+  const f = installMockSse();
+  const pending = [];
+  globalThis.fetch = () => new Promise((resolve) => pending.push(resolve));
+  sse.connectSSE();
+  f.fire('state_change', { seq: 17, content_revision: 3 });
+  await settleDebounce();
+  for (let i = 4; i < 15; i++) f.fire('state_change', { seq: 17, content_revision: i });
+  await settleDebounce();
+  assertEqual(pending.length, 1, 'one request remains in flight');
+  pending[0]({ ok: true, json: async () => ({ epoch_id: 'first' }) });
+  await settleDebounce();
+  assertEqual(pending.length, 2, 'one follow-up observes the later mutation');
+  pending[1]({ ok: true, json: async () => ({ epoch_id: 'last' }) });
+  await settleDebounce();
+  assertEqual(state.epoch.id, 'last');
+  assertEqual(pending.length, 2);
+});
+
+test('reconnect ignores an earlier request and frames from the detached stream', async () => {
+  resetCursor();
+  const earlier = installMockSse();
+  let release;
+  globalThis.fetch = () => new Promise((resolve) => { release = resolve; });
+  sse.connectSSE();
+  earlier.fire('state_change', { seq: 17, content_revision: 4 });
+  await settleDebounce();
+  const replacement = installMockSse();
+  sse.connectSSE();
+  replacement.fire('snapshot', { data: { epoch_id: 'replacement' }, seq: 17, content_revision: 0 });
+  earlier.fire('snapshot', { data: { epoch_id: 'detached' }, seq: 17, content_revision: 5 });
+  release({ ok: true, json: async () => ({ epoch_id: 'earlier' }) });
+  await settleDebounce();
+  assertEqual(state.epoch.id, 'replacement');
+  assertEqual(replacement.envFetches(), 0, 'replacement snapshot requires no redundant read');
+});
+
 await run();

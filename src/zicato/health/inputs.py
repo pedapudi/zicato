@@ -47,7 +47,7 @@ def epoch_settlement_receipt_attention(
     epoch_id: str,
 ) -> SettlementReceiptAttention:
     """Scan retained settlement receipts once for all health conditions."""
-    from zicato.evolve.settlement_recovery import scan_field_settlement_receipts  # noqa: PLC0415
+    from zicato.epoch.settlement_receipt import scan_field_settlement_receipts  # noqa: PLC0415
 
     try:
         receipts, corruptions = scan_field_settlement_receipts(workspace_root, epoch_id)
@@ -65,41 +65,24 @@ def epoch_settlement_receipt_attention(
 
     deliveries: list[dict[str, Any]] = []
     repairs: list[dict[str, Any]] = []
-    for raw in receipts:
-        if raw.get("state") != "committed":
+    for receipt in receipts:
+        if receipt.state != "committed":
             continue
-        hook = raw.get("promotion_hook")
-        if isinstance(hook, dict) and hook.get("state") == "delivery_unknown":
-            field_record = raw.get("field_tournament_record")
-            generation_id = (
-                str(field_record.get("promoted_generation_id", ""))
-                if isinstance(field_record, dict)
-                else next(
-                    (
-                        str(candidate.get("generation_id", ""))
-                        for candidate in raw.get("candidates", [])
-                        if isinstance(candidate, dict)
-                        and isinstance(candidate.get("outcome"), dict)
-                        and candidate["outcome"].get("tournament_decision") == "promoted"
-                    ),
-                    "",
-                )
-            )
+        if receipt.promotion_hook.state == "delivery_unknown":
             deliveries.append(
                 {
-                    "settlement_id": str(raw.get("settlement_id", "")),
-                    "round_index": raw.get("round_index"),
-                    "generation_id": generation_id,
-                    "adapter_name": str(hook.get("adapter_name", "")),
+                    "settlement_id": receipt.settlement_id,
+                    "round_index": receipt.round_index,
+                    "generation_id": receipt.primary_id or "",
+                    "adapter_name": receipt.promotion_hook.adapter_name,
                 }
             )
-        projection = raw.get("index_projection")
-        if isinstance(projection, dict) and projection.get("state") == "repair_required":
+        if receipt.index_projection.state == "repair_required":
             repairs.append(
                 {
-                    "settlement_id": str(raw.get("settlement_id", "")),
-                    "round_index": raw.get("round_index"),
-                    "error_type": str(projection.get("error_type", "")),
+                    "settlement_id": receipt.settlement_id,
+                    "round_index": receipt.round_index,
+                    "error_type": receipt.index_projection.error_type,
                 }
             )
     return SettlementReceiptAttention(tuple(deliveries), tuple(repairs), corruptions)

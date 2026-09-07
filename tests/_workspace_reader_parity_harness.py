@@ -574,18 +574,23 @@ def _write_generation(ws: Path, epoch_id: str, generation_id: str) -> None:
         "scalar": scalar,
         "pass_rate": round(0.60 + 0.02 * index, 6),
         "mean_drift_loss": round(0.40 - 0.02 * index, 6),
-        "per_entry": [
-            {"entry_id": entry_id, "drift_loss": round(0.40 - 0.02 * index, 6)}
-            for entry_id in ENTRY_IDS
-        ],
+        "per_entry": {
+            entry_id: {"drift_loss": round(0.40 - 0.02 * index, 6)} for entry_id in ENTRY_IDS
+        },
     }
-    _write_json(gen_dir / "gen_score.json", aggregate)
-    # The append-only archive keeps the measurements a re-scoring overwrote.
-    # ``v0`` is measured again each time it defends, so it carries two.
-    history = [dict(aggregate, seq=1, round_index=max(index, 1))]
+    from zicato.tournament.scoring import write_gen_score
+
+    # The owner assigns zero-based sequence numbers and publishes the final
+    # measurement as the flat score. v0 retains a previous defense as well.
     if index == 0:
-        history.append(dict(aggregate, seq=2, round_index=2, scalar=round(scalar + 0.004, 6)))
-    _write_jsonl(gen_dir / "gen_score.history.jsonl", history)
+        write_gen_score(
+            ws,
+            epoch_id,
+            generation_id,
+            dict(aggregate, scalar=round(scalar + 0.004, 6)),
+            round_index=1,
+        )
+    write_gen_score(ws, epoch_id, generation_id, aggregate, round_index=2 if index == 0 else index)
 
     # Snapshot-origin provenance. One generation records a mutable tree no
     # unit ever imported, which is the recorded gap the loop-health
@@ -673,35 +678,67 @@ def _write_field_tournament(ws: Path, epoch_id: str) -> None:
     Three competitors, so the index projects a field-level row rather than
     treating the round as a two-way gauntlet.
     """
-    _write_json(
-        ws / "epochs" / epoch_id / "tournaments" / "field-v4.json",
-        {
-            "tournament_id": f"{epoch_id}:field:v4",
-            "epoch_id": epoch_id,
-            "first_challenger_id": "v4",
-            "decision": "promoted",
-            "reason": "",
-            "delta_scalar": -0.02,
-            "ran_at": "2026-01-05T00:00:00Z",
-            "structure": "swiss",
-            "structure_params": {"rounds": 2},
-            "competitors": ["v3", "v4", "v5"],
-            "rounds": [
-                {"round": 1, "pairings": [{"a": "v3", "b": "v4", "winner": "v4"}]},
-                {"round": 2, "pairings": [{"a": "v4", "b": "v5", "winner": "v4"}]},
-            ],
-            "standings": [
-                {"generation_id": "v4", "wins": 2, "losses": 0, "status": "champion"},
-                {"generation_id": "v3", "wins": 0, "losses": 1, "status": "eliminated"},
-                {"generation_id": "v5", "wins": 0, "losses": 1, "status": "eliminated"},
-            ],
-            "field_status": [
-                {"generation_id": "v3", "status": "eliminated"},
-                {"generation_id": "v4", "status": "champion"},
-                {"generation_id": "v5", "status": "eliminated"},
-            ],
-        },
+    from zicato.core import TournamentDecision
+    from zicato.selection.strategy import SelectionDecision
+    from zicato.tournament.records import field_tournament_record, write_field_tournament_record
+
+    record = field_tournament_record(
+        field_tournament_id=f"{epoch_id}:field:v4",
+        epoch_id=epoch_id,
+        structure="swiss",
+        structure_params={"rounds": 2},
+        competitors=[
+            {"generation_id": "v3", "role": "champion", "seed": 1},
+            {"generation_id": "v4", "role": "challenger", "seed": 2},
+            {"generation_id": "v5", "role": "challenger", "seed": 3},
+        ],
+        rounds=[
+            {
+                "stage_index": 0,
+                "label": "Swiss 1",
+                "matches": [
+                    {
+                        "match_id": "r0_m0",
+                        "competitors": ["v3", "v4"],
+                        "winner": "v4",
+                        "decision": "promoted",
+                        "delta_scalar": -0.02,
+                        "bracket_slot": "",
+                        "bye": False,
+                    },
+                ],
+            },
+            {
+                "stage_index": 1,
+                "label": "Swiss 2",
+                "matches": [
+                    {
+                        "match_id": "r1_m0",
+                        "competitors": ["v5", "v4"],
+                        "winner": "v4",
+                        "decision": "promoted",
+                        "delta_scalar": -0.02,
+                        "bracket_slot": "",
+                        "bye": False,
+                    },
+                ],
+            },
+        ],
+        standings=[
+            {"generation_id": "v4", "wins": 2, "losses": 0, "status": "champion"},
+            {"generation_id": "v3", "wins": 0, "losses": 1, "status": "eliminated"},
+            {"generation_id": "v5", "wins": 0, "losses": 1, "status": "eliminated"},
+        ],
+        field_status=[
+            {"generation_id": "v3", "status": "eliminated"},
+            {"generation_id": "v4", "status": "champion"},
+            {"generation_id": "v5", "status": "eliminated"},
+        ],
+        decision=SelectionDecision("v4", TournamentDecision.PROMOTED, ""),
+        ran_at="2026-01-05T00:00:00Z",
     )
+    assert record is not None
+    write_field_tournament_record(ws, epoch_id=epoch_id, first_challenger_id="v4", record=record)
 
 
 def _write_reflections(ws: Path, epoch_id: str) -> None:
@@ -712,69 +749,91 @@ def _write_reflections(ws: Path, epoch_id: str) -> None:
     carries the scorecards, findings and summary a completed run produces, so
     the readers' partial-record path is pinned alongside the complete one.
     """
+    from tests._reflection_support import scorecard_body
+    from zicato.reflection.adjudication import JudgeAdjudication, write_adjudication
     from zicato.reflection.corpus import write_corpus
+    from zicato.reflection.findings import Finding
+    from zicato.reflection.plan import ReflectionPlan, write_plan
 
     for reflection_id in REFLECTION_IDS:
         complete = reflection_id == "r-10"
         base = ws / "epochs" / epoch_id / "reflections" / reflection_id
-        _write_json(
-            base / "plan.json",
-            {
-                "reflection_id": reflection_id,
-                "epoch_id": epoch_id,
-                "created_at": f"2026-01-{2 if reflection_id == 'r-2' else 10:02d}T00:00:00Z",
-                "mode": "passive" if not complete else "active",
-                "executed": complete,
-                "candidates": ["v0", "v1"],
-                "entries": list(ENTRY_IDS),
-                "replicates": 2,
-                "adjudicator": "meta_judge",
-                "checks": ["reliability", "discrimination"],
-            },
+        write_plan(
+            ws,
+            ReflectionPlan(
+                reflection_id=reflection_id,
+                epoch_id=epoch_id,
+                created_at=f"2026-01-{2 if reflection_id == 'r-2' else 10:02d}T00:00:00Z",
+                mode="passive" if not complete else "active",
+                executed=complete,
+                candidates=("v0", "v1"),
+                entries=tuple(ENTRY_IDS),
+                replicates=2,
+                adjudicator_model="meta_judge",
+                checks=("reliability", "discrimination"),
+                pre_registered=True,
+            ),
         )
         if not complete:
             continue
         _write_json(
             base / "scorecards.json",
-            [
-                {
-                    "judge_name": "tone_guard",
-                    "tp": 4,
-                    "fp": 1,
-                    "fn": 2,
-                    "tn": 9,
-                    "ambiguous": 1,
-                    "precision": 0.8,
-                    "recall": 0.667,
-                },
-                {
-                    "judge_name": "fact_guard",
-                    "tp": 0,
-                    "fp": 0,
-                    "fn": 0,
-                    "tn": 0,
-                    "ambiguous": 0,
-                    "precision": None,
-                    "recall": None,
-                },
-            ],
+            {
+                "reflection_id": reflection_id,
+                "scorecards": [
+                    scorecard_body(card)
+                    for card in [
+                        {
+                            "judge_name": "tone_guard",
+                            "tp": 4,
+                            "fp": 1,
+                            "fn": 2,
+                            "tn": 9,
+                            "ambiguous": 1,
+                            "precision": 0.8,
+                            "recall": 0.667,
+                        },
+                        {
+                            "judge_name": "fact_guard",
+                            "tp": 0,
+                            "fp": 0,
+                            "fn": 0,
+                            "tn": 0,
+                            "ambiguous": 0,
+                            "precision": None,
+                            "recall": None,
+                        },
+                    ]
+                ],
+            },
         )
         _write_json(
             base / "findings.json",
-            [
-                {
-                    "id": "finding-1",
-                    "severity": "warning",
-                    "summary": "tone_guard misses dismissive closings.",
-                    "evidence": {"observed": 2, "expected": 6},
-                },
-                {
-                    "id": "finding-2",
-                    "severity": "info",
-                    "summary": "t10 never differentiates the candidates.",
-                    "evidence": {"spread": 0.0},
-                },
-            ],
+            {
+                "reflection_id": reflection_id,
+                "findings": [
+                    Finding(
+                        finding_id="finding-1",
+                        pillar="validity",
+                        severity="warning",
+                        title="tone_guard misses dismissive closings.",
+                        detail="",
+                        evidence=({"observed": 2, "expected": 6},),
+                        recommendation="",
+                        proposed_op=None,
+                    ).to_json(),
+                    Finding(
+                        finding_id="finding-2",
+                        pillar="discrimination",
+                        severity="info",
+                        title="t10 never differentiates the candidates.",
+                        detail="",
+                        evidence=({"spread": 0.0},),
+                        recommendation="",
+                        proposed_op=None,
+                    ).to_json(),
+                ],
+            },
         )
         _write_json(
             base / "summary.json",
@@ -784,15 +843,24 @@ def _write_reflections(ws: Path, epoch_id: str) -> None:
         # in a real run, so the persisted records are the ones the reader
         # returns.
         write_corpus(ws, epoch_id, reflection_id, _fixture_corpus(ws, epoch_id, reflection_id))
-        _write_json(
+        write_adjudication(
             base / "adjudication" / "tone_guard" / "v0:t1:r0.json",
-            {
-                "judge_name": "tone_guard",
-                "run_ref": "v0:t1:r0",
-                "verdict": "tp",
-                "rationale": "The closing line is dismissive.",
-                "adjudicated_at": FIXED_TS,
-            },
+            JudgeAdjudication(
+                judge_name="tone_guard",
+                run_ref="v0:t1:r0",
+                observed="fired",
+                adjudicated="should_fire",
+                verdict="TP",
+                severity_match=None,
+                evidence_span="",
+                meta_judge_rationale="The closing line is dismissive.",
+                meta_judge_model="meta_judge",
+                adjudicator_self_agreement=None,
+                operator_confirmed=None,
+                fidelity="verbatim",
+                prompt_version=1,
+                k_adj=1,
+            ),
         )
 
 
@@ -1041,12 +1109,13 @@ def _capture_workspace_reads(ws: Path, snap: dict[str, Any]) -> None:
         snap[f"zicato.epoch.journal.read_experiment::{generation_id}"] = journal.read_experiment(
             ws, epoch_id, generation_id
         )
-        snap[f"zicato.workspace.read_gen_score::{generation_id}"] = wsp.read_gen_score(
-            layout, epoch_id, generation_id
-        )
-        snap[f"zicato.workspace.read_gen_score_history::{generation_id}"] = (
-            wsp.read_gen_score_history(layout, epoch_id, generation_id)
-        )
+        from zicato.tournament.scoring import read_gen_score, read_gen_score_history
+
+        score = read_gen_score(layout, epoch_id, generation_id)
+        snap[f"zicato.workspace.read_gen_score::{generation_id}"] = score.to_dict() if score else {}
+        snap[f"zicato.workspace.read_gen_score_history::{generation_id}"] = [
+            row.to_dict() for row in read_gen_score_history(layout, epoch_id, generation_id)
+        ]
         snap[f"zicato.workspace.read_loss::{generation_id}"] = wsp.read_loss(
             layout, epoch_id, generation_id, "t1"
         )

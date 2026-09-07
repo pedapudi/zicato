@@ -65,6 +65,11 @@ class HttpClient:
         self.timeout = timeout
         self._cache: dict[str, Any] = {}
         self._lock = threading.Lock()
+        self._closed = threading.Event()
+
+    def close(self) -> None:
+        """Stop subsequent requests; active socket reads finish in their worker."""
+        self._closed.set()
 
     def begin_pass(self) -> None:
         """Drop the per-pass cache; the next fetch of each path hits the wire."""
@@ -84,6 +89,8 @@ class HttpClient:
         return payload
 
     def _fetch(self, path: str) -> Any:
+        if self._closed.is_set():
+            raise ServiceError("the dashboard client is closed")
         url = self.url(path)
         request = urllib.request.Request(url, headers={"Accept": "application/json"})
         try:
@@ -115,20 +122,21 @@ class HttpClient:
     def events(self, *, path: str = "/events") -> Iterator[Event]:
         """Yield decoded SSE frames until the stream closes.
 
-        Blocking; the app runs it on a worker thread. A dropped connection ends
-        the iterator rather than raising — the app reconnects and shows the
-        connection state in the status band, because a stale screen that LOOKS
-        live is the failure mode worth engineering against.
+        The app consumes the stream in a worker. A dropped connection ends
+        the iterator and leaves periodic view refreshes active. The socket
+        inactivity timeout exceeds the server's fifteen-second keepalive.
         """
+        if self._closed.is_set():
+            return
         request = urllib.request.Request(self.url(path), headers={"Accept": "text/event-stream"})
         try:
-            response = urllib.request.urlopen(request, timeout=None)
+            response = urllib.request.urlopen(request, timeout=max(20.0, self.timeout))
         except (urllib.error.URLError, TimeoutError, OSError):
             return
         with response:
             name = "message"
             data_lines: list[str] = []
-            while True:
+            while not self._closed.is_set():
                 try:
                     raw = response.readline()
                 except (TimeoutError, OSError):

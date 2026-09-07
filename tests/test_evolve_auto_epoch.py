@@ -380,10 +380,10 @@ def test_pending_settlement_finishes_before_contract_drift_rolls_epoch(
 ) -> None:
     """Auto-roll seeds from the recovered champion, not the pre-crash head."""
     from zicato.epoch.journal import read_experiment
+    from zicato.epoch.settlement_receipt import field_settlement_intent_path
     from zicato.evolve import settlement as settlement_module
     from zicato.evolve.settlement_recovery import (
         commit_field_settlement,
-        field_settlement_intent_path,
     )
     from zicato.orchestrator import evolve_n_rounds
 

@@ -17,9 +17,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from zicato.core import TournamentDecision
 from zicato.query import WorkspacePaths, build_gate_breakdown
 from zicato.query.gate_view import build_rating_view
 from zicato.selection.dead_letter import InconclusiveRecord, record_inconclusive
+from zicato.selection.strategy import SelectionDecision
+from zicato.tournament.records import field_tournament_record, write_field_tournament_record
 
 EPOCH_ID = "2026-06-10_e0"
 
@@ -39,13 +42,25 @@ def _scoring(threshold: float | None) -> dict[str, object]:
     }
 
 
-def _durable_record(matches: list[dict[str, object]]) -> dict[str, object]:
-    return {
-        "tournament_id": f"{EPOCH_ID}:field:v1",
-        "structure": "swiss",
-        "rounds": [{"stage_index": 0, "label": "Swiss round 1", "matches": matches}],
-        "standings": [],
-    }
+def _write_durable_record(ws: Path, matches: list[dict[str, object]]) -> None:
+    record = field_tournament_record(
+        field_tournament_id=f"{EPOCH_ID}:field:v1",
+        epoch_id=EPOCH_ID,
+        structure="swiss",
+        structure_params={},
+        competitors=[
+            {"generation_id": "v0", "seed": 1, "role": "champion"},
+            {"generation_id": "v1", "seed": 2, "role": "challenger"},
+            {"generation_id": "v2", "seed": 3, "role": "challenger"},
+        ],
+        rounds=[{"stage_index": 0, "label": "Swiss round 1", "matches": matches}],
+        standings=[],
+        field_status=[],
+        decision=SelectionDecision("v1", TournamentDecision.PROMOTED, ""),
+        ran_at="2026-06-10T00:00:00Z",
+    )
+    assert record is not None
+    write_field_tournament_record(ws, epoch_id=EPOCH_ID, first_challenger_id="v1", record=record)
 
 
 def _match(left: str, right: str, *, winner: str, delta: float) -> dict[str, object]:
@@ -96,10 +111,7 @@ def test_rating_present_but_uncredible_below_floor(tmp_path: Path) -> None:
         _match("v0", "v1", winner="v1", delta=-0.5),
         _match("v0", "v1", winner="v1", delta=-0.5),
     ]
-    _write_json(
-        ws / "epochs" / EPOCH_ID / "tournaments" / "field-v1.json",
-        _durable_record(matches),
-    )
+    _write_durable_record(ws, matches)
     block = build_rating_view(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
     assert block["present"] is True
     assert block["credible"] is False
@@ -114,10 +126,7 @@ def test_rating_present_and_credible_from_durable(tmp_path: Path) -> None:
     # Enough durable duels for a credible fit; v1 wins them all.
     ws = _workspace(tmp_path, threshold=0.9)
     matches = [_match("v0", "v1", winner="v1", delta=-0.5) for _ in range(6)]
-    _write_json(
-        ws / "epochs" / EPOCH_ID / "tournaments" / "field-v1.json",
-        _durable_record(matches),
-    )
+    _write_durable_record(ws, matches)
     block = build_rating_view(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
     assert block["present"] is True
     assert block["credible"] is True
@@ -153,10 +162,7 @@ def test_rating_prefers_dead_letter_record(tmp_path: Path) -> None:
     ws = _workspace(tmp_path, threshold=0.9)
     # A durable record that would re-fit one way...
     matches = [_match("v0", "v1", winner="v1", delta=-0.5) for _ in range(6)]
-    _write_json(
-        ws / "epochs" / EPOCH_ID / "tournaments" / "field-v1.json",
-        _durable_record(matches),
-    )
+    _write_durable_record(ws, matches)
     # ...but a dead-letter record with an explicit inconclusive block wins.
     authoritative_rating = {
         "present": True,
@@ -191,6 +197,31 @@ def test_rating_prefers_dead_letter_record(tmp_path: Path) -> None:
     assert block["next_duel"] is None  # terminal
     assert len(block["ci_history"]) == 2
     assert block["ci_history"][-1]["replicates_spent"] == 3
+
+
+def test_rating_refuses_corrupt_inconclusive_record(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path, threshold=0.9)
+    _write_json(ws / "runtime" / "inconclusive" / "v1.json", None)
+    block = build_rating_view(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+    assert block["present"] is False
+    assert "JSON object" in block["unreadable"]
+
+
+def test_rating_ignores_other_epochs_inconclusive_record(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path, threshold=0.9)
+    record_inconclusive(
+        ws,
+        InconclusiveRecord(
+            generation_id="v1",
+            champion_id="v0",
+            epoch_id="other-epoch",
+            rating={"present": True, "decision": "inconclusive"},
+            ci_history=[],
+            reason="unresolved in a different epoch",
+        ),
+    )
+    block = build_rating_view(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+    assert block["decision"] == "deferred"
 
 
 # ---------------------------------------------------------------------------

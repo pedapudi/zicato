@@ -29,11 +29,11 @@
 > | DQ2 | one spelling per wire field | **One spelling per field on the wire.** `entry_id`, `generation_id`, `ts` (int ms epoch), `pass_fail` (`true`/`false`/`null`), `promoted` (tri-state `true`/`false`/`null`). No aliases, no bare ints the client re-interprets, no default-`false` for an undecided promotion. |
 > | DQ3 | every reader is best-effort | **Every reader is best-effort.** A missing / never-built / transiently-torn input degrades to an empty-or-`None` shape (often with a `note`), never raises. No endpoint built on `zicato.query` returns a 500. |
 > | DQ4 | the query layer is library code | **The query layer is library code and never imports the dashboard.** The import-linter contract "the query layer stays dashboard-free" pins it; the dashboard is a driver on top. |
-> | DQ5 | change-signals carry no content | **SSE frames carry change-kinds + `seq` + `terminal` ONLY — never content.** A `state_change` is a signal to fetch rather than a payload. |
-> | DQ6 | a no-op heartbeat rebuilds zero DOM | **A no-op heartbeat rebuilds ZERO DOM.** The client drops a repeat-`seq` frame with no fetch; a view folds a content digest (timestamps excluded) and swaps only on a real change. Node tests assert DOM-node identity across a re-serve. |
+> | DQ5 | change-signals carry no content | **SSE change frames carry changed regions, content revision and progress metadata.** A `state_change` is a signal to fetch rather than a payload. |
+> | DQ6 | a no-op heartbeat rebuilds zero DOM | **A no-op heartbeat rebuilds ZERO DOM.** The client skips unchanged content revisions and progress cursors; a view folds a content digest (timestamps excluded) and swaps only on a real change. Node tests assert DOM-node identity across a re-serve. |
 > | DQ7 | verdicts are honest about the noise floor | **Verdicts are honest about the noise floor.** Movement inside the measured A/A floor reads `no_signal` ("no detectable signal"), never "plateaued" or "improving". |
 > | DQ8 | null-degrade under the Rust supervisor | **Every new GET null-degrades on the Rust supervisor.** A payload the Rust reader does not serve returns `null`/empty; the client paints the honest empty state, never a spinner or a crash. |
-> | DQ9 | controls gate on writability | **Controls gate on `read_only:false`; a destructive control takes a two-step confirm.** A control write forces an explicit refresh — it does not advance the progress `seq`, so the no-op-skip gate would otherwise stall the readback. |
+> | DQ9 | controls gate on writability | **Controls gate on `read_only:false`; a destructive control takes a two-step confirm.** A successful control write requests immediate readback; content revision also makes the change visible to other clients. |
 > | DQ10 | the champion is the reigning spine end | **`current_champion` is the reigning spine end** — the LAST promoted generation — never the first-scored or the highest-scored; a decision surface names its `deciding_rule`. |
 > | DQ11 | a payload-shape change is a clean break | **A payload-shape change is a clean break.** Server and client change in the same commit, client-side coalescers are deleted, and the node suite's recorded responses and the goldens are re-recorded together. |
 > | DQ12 | validate an id before it touches the workspace | **An id path param is validated by `_is_safe_id` before it touches the workspace.** A malformed coordinate degrades to the empty shape at HTTP 200 — never a 500, never a traversal. |
@@ -167,6 +167,30 @@ kept alongside it.
 — `src/zicato/dashboard/endpoints.py` (module docstring)
 
 ---
+
+### Inputs shared within a response
+
+The environment response captures the current epoch marker, heartbeat,
+active runs, lock, active tournament, progress-log tail, and clock once.
+Workspace identity and liveness use those observations. The state response
+uses the same runtime capture and preserves an absent epoch instead of
+resolving the marker again while assembling its contract.
+
+The epoch overview and candidate dossier capture the selected epoch's
+config, scoring, and generation records in `query.inputs.EpochInputs`.
+The journal owner returns each accepted stored experiment body together
+with the patches that body declares. Component builders receive explicit
+inputs and independent copies of mutable JSON values. Captures retain
+absence and read errors for the response lifetime. They are neither a
+cross-file transaction nor a process cache; the next request reads again.
+
+Generation identity includes the epoch. The overview serves
+`champion_record` with its epoch, generation, recorded decision, and rating
+uncertainty. Terminal Home renders that record and includes its decision
+and rating in the content digest. A missing index leaves rating fields
+null. Proposal lookup with a named epoch returns no episode when that
+epoch has none, even if another epoch holds the same generation name.
+Entry selection and rating inclusion remain explicit view arguments.
 
 ## 9.2 The server-authority doctrine
 
@@ -536,6 +560,16 @@ the per-entry, scorecard, episode, grid, gate, comparison, drill-down and
 racing-field readers and serves the result on
 `/api/epoch/{epoch_id}/candidate/{generation_id}`, so `views/candidate.js`
 reads one payload per candidate and recomputes no verdict.
+
+The dossier compares the parent declared by canonical lineage, the captured
+experiment, and its settlement receipt before composing parent-dependent
+comparisons. Parent identity includes the epoch: `source:v0` and `selected:v0`
+are different candidates. A conflict or unreadable authority produces
+`parent_inconsistency` and suppresses gates, matchup grids, and hypothesis
+comparisons. The candidate's own records remain available for inspection.
+Clients display that reason without selecting a parent themselves. External
+baseline ancestry remains visible through `parent` and `parent_epoch_id`;
+a baseline experiment may record no parent within its own evaluation contract.
 
 The node suite derives none of these joins either. `static/test/recorded.mjs`
 serves the responses `tests/data/endpoint_route_snapshot.json` records over
@@ -911,6 +945,15 @@ requested port. It also reuses-or-launches the persistent per-workspace
 harmonograf server so a standalone/post-mortem dashboard can deep-link into
 persisted sessions (§9.14 has the readback side).
 
+The terminal's automatic attachment treats the endpoint record as a discovery
+hint. It accepts the endpoint only when `/api/health` reports `status: ok`
+and the served workspace resolves to the requested canonical path. The health
+response publishes an absolute workspace path, including when the server was
+started with a relative path. Missing, malformed, or different identities
+follow the unavailable-endpoint recovery path. The same check applies while
+waiting for a spawned dashboard. An explicit `zicato tui --url` selects the
+named service directly and does not require a local workspace match.
+
 > ⚠️ TRAP — the definitive dashboard URL is printed by `run()` AFTER the port
 > walk, because `_pick_port` may have walked off the requested port. The CLI
 > command modules deliberately do NOT pre-print the URL. If you add a startup
@@ -996,9 +1039,10 @@ A row states the route, the reader behind it (called as
 `reader(paths, *coordinates)`, so `params`, and `query` after it, are written
 in the reader's argument order), what the route serves, the degrade a rejected coordinate
 answers with and at which status, how the optional `?epoch=` scope is
-handled, and whether the read blocks on files hard enough to need the
-threadpool. Nothing else varies between these routes, so nothing else is in
-the table.
+handled. Every synchronous reader runs in the threadpool after coordinate
+and scope validation. Handwritten handlers follow the same rule, including
+report, transcript and environment reads. Each reader creates, uses and closes
+its connections and request inputs inside the worker.
 
 Three of the degrade forms are worth naming. `_echo(...)` repeats the
 route's coordinates under their own names — optionally renamed, as the gate
@@ -1223,43 +1267,23 @@ per-endpoint polls.
 ```
 — `src/zicato/dashboard/sse.py` (module docstring)
 
-### 9.6.1 The wire vocabulary — change-kinds + seq + terminal ONLY
+### 9.6.1 Content revision and progress metadata
 
-The `state_change` frame carries the coalesced set of changed `kind`
-regions plus the orchestrator's true-liveness `seq` and `terminal` marker
-— and NOTHING ELSE. It never carries the changed data:
+A `state_change` carries `kind`, `kinds`, `content_revision`, `seq`,
+`terminal` and `ts`. The changed records remain behind the GET endpoints.
+`content_revision` is a broker-local invalidation counter: observed content
+mutations advance it, including epoch and reflection rewrites after a run
+stops. It is not a record version or a rendering digest.
 
-```python
-        seq, terminal = _progress_signal(self.paths)
-        self._emit(
-            {
-                "event": "state_change",
-                "data": {
-                    "type": "state_change",
-                    "kind": kinds[0] if len(kinds) == 1 else "multiple",
-                    "kinds": kinds,
-                    "seq": seq,
-                    "terminal": terminal,
-                    "ts": _now_iso(),
-                },
-            }
-        )
-```
-— `src/zicato/dashboard/sse.py`, `_flush_state_change`
+The progress sequence `seq` advances on orchestrator transitions. The
+`terminal` flag distinguishes a finished loop from a stalled one. Heartbeat
+and progress notifications do not advance the content revision; writes to
+canonical records do. File-open and file-close notifications and directory
+modification noise are ignored, so reading a record cannot trigger a refresh
+feedback loop.
 
-`_progress_signal` reads the true liveness cursor off the orchestrator
-progress event log — `seq` advances only on a genuine transition (never on
-the heartbeat timer), and `terminal` distinguishes a cleanly-ended loop
-from a stalled one. It is best-effort: a never-run workspace or a torn read
-degrades to `(0, False)` and never raises into the hot path.
-
-> ⛔ NEVER put a payload on a `state_change` frame. The frame's job is to say
-> "something in region X changed; fetch if you care" — the client does ONE
-> `/api/environment` read in response. If you ship the changed data on the
-> frame, you have (a) reintroduced the fan-out, (b) coupled the SSE writer to
-> every payload shape, and (c) made the frame unable to coalesce (two
-> different payloads cannot merge). A change-signal carries no content: the frame is a signal; the data is a
-> GET.
+The broker reads progress metadata in a worker. A failed progress read
+returns `(0, False)`; content invalidation remains independent of that result.
 
 ### 9.6.2 Coalescing — the anti-flash debounce
 
@@ -1272,18 +1296,13 @@ maps a changed path to a `kind` region (`heartbeat` / `lock` /
 serialization. A `.tmp` atomic-write intermediate is pure noise and is
 dropped before classification.
 
-The opening `snapshot` frame carries the same `seq`/`terminal` pair so a
-freshly-connected client has the liveness cursor before any `state_change`
-arrives:
-
-```python
-        seq, terminal = _progress_signal(paths)
-        yield _format_sse(
-            "snapshot",
-            {"type": "snapshot", "data": snapshot, "seq": seq, "terminal": terminal},
-        )
-```
-— `src/zicato/dashboard/sse.py`, `sse_event_stream`
+The opening `snapshot` carries the same metadata beside its initial payload.
+The broker captures `content_revision` before constructing the snapshot in a
+worker. A mutation during construction therefore has a newer revision and
+causes a follow-up refresh. Snapshot construction, progress reads, polling
+scans and watcher shutdown run outside the event loop. The polling fallback
+compares file identity, nanosecond modification time and size, including
+removed files.
 
 The `run_log` frame is the one prompt (non-coalesced) emit — an
 `events.jsonl` growth drives the live conversation stream, so it fires
@@ -1343,73 +1362,29 @@ changed. This is the no-op-heartbeat-rebuilds-zero-DOM rule.
 
 ### 9.7.2 Layer 1 — the SSE frame ships no content (server)
 
-Covered in §9.6: the `state_change` frame carries change-kinds + `seq` +
-`terminal` only. A payload on the frame would defeat every layer below it,
+Covered in §9.6: the `state_change` frame carries changed regions, content
+revision and progress metadata. A payload on the frame would defeat every layer below it,
 because two content-bearing frames cannot coalesce and a content-bearing
 frame forces a render. Layer 1 is the change-signals-carry-no-content rule; it is the server's contribution to
 the render discipline.
 
-### 9.7.3 Layer 2 — the client seq no-op-skip gate
+### 9.7.3 Content invalidation before rendering
 
-The client drops a repeat-`seq` frame with NO fetch and NO state touched. A
-coalesced beat that re-emits the same `seq` is a true no-op; only a genuine
-`seq` advance (or a rollover = restarted log) refreshes:
+The browser requests an environment refresh when content revision changes or
+progress advances or restarts. A repeated heartbeat with unchanged metadata
+requires no read. Servers without revision metadata use changed regions as
+the invalidation signal; frames without a progress cursor still refresh.
 
-```javascript
-  _sse.addEventListener('state_change', (ev) => {
-    // THE SEQ NO-OP-SKIP GATE. Refresh ONLY on a genuine seq advance (or a
-    // rollover = restarted log); a repeat seq (a coalesced no-op beat)
-    // writes ZERO DOM — no fetch, no state touched. A frame with no seq
-    // (pre-RUNTIME-V2) degrades to the legacy always-refresh path.
-    let frame = null;
-    try { frame = ev && ev.data != null ? JSON.parse(ev.data) : null; }
-    catch { frame = null; }
-    if (frame && typeof frame === 'object' && 'seq' in frame) {
-      const verdict = state.noteProgress(frame.seq, frame.terminal);
-      if (verdict.advanced || verdict.rollover) {
-        state._changed();
-        refreshAfterEvent();
-      }
-      return;
-    }
-    refreshAfterEvent();
-  });
-```
-— `src/zicato/dashboard/static/js/core/sse.js`
+The client keeps one environment request in flight and coalesces later
+signals into one pending request. It acknowledges the captured revision only
+after a successful response is applied. Failures retain the pending request
+and retry with exponential delays capped at 30 seconds. A reconnect or a
+replacement snapshot prevents an earlier environment response from being
+applied to the replacement state.
 
-`state.noteProgress(seq, terminal)` is the pure cursor: the first `seq` ever
-is adopted and counts as an advance (a fresh load must paint); a strictly
-greater `seq` advances; a smaller `seq` is a rollover (the log was cleared
-on a fresh boot); a repeat `seq` is a no-op that moves nothing:
-
-```javascript
-  noteProgress(seq, terminal, now = Date.now()) {
-    if (typeof seq !== 'number' || !isFinite(seq)) {
-      return { advanced: false, rollover: false, present: false };
-    }
-    const prev = this.lastSeq;
-    let advanced = false;
-    let rollover = false;
-    if (prev < 0) {
-      advanced = true;              // first seq ever — a fresh load must paint.
-    } else if (seq > prev) {
-      advanced = true;
-    } else if (seq < prev) {
-      rollover = true;              // log cleared + restarted (seq begins at 1).
-    }
-    if (advanced || rollover) {
-      this.lastSeq = seq;
-      this.lastSeqAdvanceAt = now;
-    }
-    if (typeof terminal === 'boolean') this.terminal = terminal;
-    return { advanced, rollover, present: true };
-  }
-```
-— `src/zicato/dashboard/static/js/core/state.js`, `noteProgress`
-
-A frame with no `seq` — from a server that does not stamp one — degrades to the
-always-refresh path. The gate is additive, so such a server refreshes on every
-beat.
+Content invalidation clears affected resource caches, including individual
+reflection summaries. Generation membership need not change. View digests
+still decide whether the resulting payload changes the DOM.
 
 ### 9.7.4 Layer 3 — views fetch-in-render, fold a content digest, `gatedSwap`
 
@@ -1425,8 +1400,8 @@ export function gatedSwap(host, digest, build) {
   if (!host) return false;
   const next = String(digest);
   if (host.getAttribute('data-t-digest') === next && host.firstChild) return false;
-  clearChildren(host);
   const built = build();
+  clearChildren(host);
   const nodes = Array.isArray(built) ? built : [built];
   for (const n of nodes) { if (n) host.appendChild(n); }
   host.setAttribute('data-t-digest', next);
@@ -1490,28 +1465,28 @@ own `_last*Digest` and returns without touching DOM when it matches:
 ```javascript
   const digest = treeDigest(model, route, _toggles, live);
   if (digest === _lastTreeDigest && _treeHost.firstChild) return;
-  _lastTreeDigest = digest;
+  // Build the tree, then acknowledge the successfully painted digest.
 ```
 — `src/zicato/dashboard/static/js/shell.js`, `renderTree`
 
 The upstream chrome guard that keeps a beat from even reaching a rebuild is
-`onStateChanged`'s live-data signature: only a real membership/status change
-in the generations set busts the drill-down caches and forces a tree
-rebuild; a no-op beat leaves the signature equal and busts nothing:
+`onStateChanged`'s live-data signature includes generation membership,
+status and content invalidation. A changed signature clears resource caches;
+the tree's rendered content digest still decides whether to rebuild:
 
 ```javascript
   const sig = liveDataSignature();
   if (sig !== _lastLiveSig) {
     _lastLiveSig = sig;
     invalidateLive();
-    _lastTreeDigest = null;   // force renderTree to rebuild off the fresh cache
   }
 ```
 — `src/zicato/dashboard/static/js/shell.js`, `onStateChanged`
 
 `liveDataSignature` (in `data.js`) is signed off the gen SET (id +
 tri-state status + birth-round + epoch), id-sorted so it is order-
-independent — the digest philosophy applied to cache invalidation.
+independent. It also includes the successfully applied content invalidation
+counter, so a canonical rewrite refreshes resources without forcing a repaint.
 
 ### 9.7.5 Layer 4 — DOM-node-identity assertions in node tests
 
@@ -1551,7 +1526,7 @@ projection folds to a byte-identical digest, an advance flips it:
 
 `seq_render_gate.test.mjs` is the render-discipline BACKBONE suite — it
 pins `state.noteProgress` (advance / repeat-no-op / rollover / absent-seq
-degrade), the `core/sse.js` seq skip gate (a non-advancing frame issues NO
+degrade), the `core/sse.js` refresh gate (unchanged metadata issues NO
 fetch), the four run-states, and the chrome pill's zero-DOM no-op beat.
 
 > ✅ ALWAYS add a "no-op re-serve keeps node identity" assertion when you add
@@ -1565,7 +1540,7 @@ fetch), the four run-states, and the chrome pill's zero-DOM no-op beat.
 A live surface ships only if it ticks every box:
 
 1. **The server frame is a signal.** The change flows through
-   `state_change` (kinds + seq + terminal); the data is a GET.
+   `state_change` (kinds, content revision, seq and terminal); the data is a GET.
 2. **Fetch-in-render.** The view fetches its own data in `render()` via a
    null-degrading `data.js` accessor; it does not read a frame payload.
 3. **Content digest, timestamps excluded.** The digest folds WHAT is drawn
@@ -1990,9 +1965,9 @@ calls `build_round_pipeline`, projects that verdict onto plan nodes, and
 returns both; the two endpoints are its two projections. Serving them from
 one read is what keeps the stepper from reporting Gate while the plan marks
 Run active, and keeps the two from reporting different counts of the same
-in-flight records. Both rows are declared `off_event_loop=True`: the plan
-walks every per-unit file in the epoch, and that read must not sit on the
-event loop of a route the hero polls on each live tick. Measured against the
+in-flight records. Both readers run in the threadpool, as do all synchronous
+dashboard readers. The plan's scan of per-unit files therefore leaves the
+event loop available to sibling requests. Measured against the
 largest epoch available for measurement (`2026-06-07_e4`, 56 loss files, 64
 nodes) the served live payload is 41.7 KB, ~0.65 KB per node, well under the
 200 KB at which paging the tree would pay for its own complexity — so no
@@ -2120,20 +2095,16 @@ an override is already recorded or the round has settled.
 
 ### 9.12.3 Paused readback — the explicit refresh
 
-A control write does NOT advance the orchestrator progress `seq`, so the SSE
-no-op-skip gate (§9.7.3) would DROP its `state_change` and the paused
-readback would lag. The fix: after a successful POST, stamp an optimistic
-override and force an explicit `loadEnvironment()` so the readback converges
-and the button flips promptly:
+A successful control POST requests an immediate environment read so the
+button reflects the result promptly. The broker's content revision also
+invalidates other connected clients after the control record changes.
 
 ```javascript
 async function fireLoopControl(action, body, pausedAfter) {
   let res = { ok: false, status: 0 };
   try { res = await postControl(action, body); } catch (err) { res = { ok: false, status: 0 }; }
   if (res.ok && pausedAfter != null) _pausedOverride = pausedAfter;
-  // A control write does not advance the orchestrator progress seq, so the
-  // SSE no-op-skip gate drops its state_change — refresh explicitly so the
-  // paused readback converges (and the button flips) promptly.
+  // Read back the control result without waiting for the SSE debounce.
   try { await loadEnvironment(); } catch (err) { /* transient — next beat retries */ }
   _lastLoopCtlDigest = null;
   renderStatus();
@@ -2147,13 +2118,6 @@ so a raced or stale override can never stick. The paused state itself rides
 on the heartbeat payload (`readers/runtime_view.py::read_paused` →
 `heartbeat.paused`) so every runtime read carries it without a second fetch.
 
-> ⚠️ TRAP — this is the one place the digest-gated no-op-skip gate works
-> AGAINST you. A control write is a real user intent but not an orchestrator
-> transition, so it does not bump `seq`, so the gate correctly (for its own
-> purpose) drops the frame. The explicit `loadEnvironment()` after every
-> control POST is not redundant — it is what makes a control feel responsive
-> under a discipline built to ignore no-op beats. Omit it and the pause
-> button appears to do nothing for up to a poll interval.
 
 ---
 
@@ -2199,39 +2163,17 @@ the head unchanged").
 
 ## 9.14 The client read layer — `data.js` accessors, caching, transcripts
 
-`data.js` is the drill-down read layer: a small set of cached,
-failure-tolerant GETs. The mechanism is `cachedJson` — a failed read is
-cached as `null` so a view paints an honest "unavailable" rather than
-spinning forever, and a later `invalidate()` retries:
+`data.js` shares one in-flight promise per resource URL. A failed request
+resolves to `null` and becomes eligible for retry after one second; concurrent
+callers share the same failure during that delay. A successful response that
+contains `null` remains cached until invalidation.
 
-```javascript
-export async function cachedJson(path) {
-  if (_cache.has(path)) return _cache.get(path);
-  try {
-    const data = await fetchJson(path);
-    _cache.set(path, data);
-    return data;
-  } catch (err) {
-    // A transient failure is cached as null so the view paints an honest
-    // "unavailable" rather than spinning forever; a later invalidate() retries.
-    _cache.set(path, null);
-    return null;
-  }
-}
-```
-— `src/zicato/dashboard/static/js/data.js`, `cachedJson`
-
-Drill-down payloads are immutable for a COMPLETED generation, so caching
-avoids re-fetching on every SSE-driven re-render. `invalidateLive()` busts
-the keys that can change while a run is live; it fires on a VIEW change AND
-(via `liveDataSignature`, §9.7.4) when a new candidate lands mid-round — the
-"under-render fix": a new candidate that surfaced by SSE refreshed AppState
-but not the cached drill-downs, so the tree digests never flipped and the
-operator had to hard-refresh. `invalidateRunTranscript` busts just the two
-cache keys a LIVE transcript flows through so a running candidate's
-transcript re-reads as new turns land, while the transcript host stays
-digest-gated on content (`transcriptDigest`) so a re-read that yields no new
-turn is still a no-op repaint — scroll preserved.
+Invalidation removes the cache entry immediately. A detached promise can
+complete for callers already holding it, but cannot restore or overwrite the
+cache. Content changes invalidate both reflection lists and individual
+reflection records. `invalidateRunTranscript` limits transcript refreshes to
+the affected run; content digests preserve DOM identity when a re-read yields
+the same rendered values.
 
 The SSE spine reads through ONE consolidated endpoint (`/api/environment`)
 and refreshes on a single coalesced poll — it does not fan out to
@@ -2559,7 +2501,7 @@ Where to add (and what will catch) a regression, by concern:
 | the served joins (round-timeline / racing-field) reach the node suite as recorded responses | `tests/test_dashboard_endpoint_table.py` + `static/test/recorded.mjs` |
 | a field round names the WINNER after a promotion (by role tag rather than by borrow) | `tests/test_dashboard_racing_and_rounds.py::test_field_round_names_the_new_champion_after_a_promotion` |
 | a field round's champion provenance: current round, and unknown vs `"full"` | `tests/test_dashboard_racing_and_rounds.py` (`…metadata_comes_from_that_round`, `…no_crowning_row_reports_an_unknown_eval_mode`, `…legacy_row_without_the_v8_columns_still_reads_full`) |
-| SSE frame shape (kinds + seq + terminal only), coalescing, ordering | `tests/test_dashboard_sse*.py`, node `live_protocol.test.mjs` |
+| SSE frame shape (kinds, content revision and progress metadata), coalescing, ordering | `tests/test_dashboard_sse*.py`, node `live_protocol.test.mjs` |
 | the uncertainty-honest verdict (`no_signal` vs `plateaued`) | `tests/test_dashboard_loop_view.py` |
 | digest-gated render: no-op DOM identity, seq skip gate, four run-states | node `seq_render_gate.test.mjs`, `pipeline_stepper.test.mjs` |
 | the pipeline projection (`_project_pipeline`) | `tests/test_dashboard_loop_view.py` (pure inference) + `pipeline_stepper.test.mjs` |

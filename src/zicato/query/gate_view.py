@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from zicato.epoch._storage import RecordError
 from zicato.query._sqlite import (
     INDEX_NOT_BUILT_NOTE,
     _IndexAbsent,
@@ -13,6 +14,7 @@ from zicato.query._sqlite import (
     open_index_ro,
     with_index_not_built_note,
 )
+from zicato.query.inputs import EpochInputs
 from zicato.query.judge_view import build_per_judge_comparison
 from zicato.query.lineage_view import build_lineage_view
 from zicato.query.paths import (
@@ -25,7 +27,7 @@ from zicato.query.paths import (
     read_current_epoch,
 )
 from zicato.query.tournament_view import (
-    _read_gen_score,
+    _gen_score_view,
     _read_run_loss_files,
 )
 
@@ -415,7 +417,9 @@ def _overlay_settlement_health(
 # ---------------------------------------------------------------------------
 
 
-def _read_epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
+def _read_epoch_scoring_weights(
+    paths: WorkspacePaths, epoch_id: str, inputs: EpochInputs | None = None
+) -> Any:
     """Build the epoch's :class:`ScoringWeights` from its ``scoring.json``.
 
     The shipped ``workspace_loader`` / ``lifecycle`` parsers intentionally drop
@@ -427,7 +431,11 @@ def _read_epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
     """
     from zicato.core import ScoringWeights  # noqa: PLC0415
 
-    raw = _read_json_value(layout_of(paths).scoring(epoch_id))
+    raw = (
+        inputs.scoring.copy()
+        if inputs is not None
+        else _read_json_value(layout_of(paths).scoring(epoch_id))
+    )
     if not isinstance(raw, dict):
         return ScoringWeights()
 
@@ -477,7 +485,7 @@ def _gen_agg_for_gate(
     monotonicity rule can still be judged. Returns ``None`` only when there
     is no scalar to compare at all (the rule set then degrades to unknown).
     """
-    score = _read_gen_score(paths, epoch_id, generation_id)
+    score = _gen_score_view(paths, epoch_id, generation_id)
     if not isinstance(score, dict):
         score = {}
 
@@ -754,7 +762,7 @@ def _live_challenger_projection(
 
 
 def _build_override_block(
-    paths: WorkspacePaths, epoch_id: str, challenger_id: str
+    paths: WorkspacePaths, epoch_id: str, challenger_id: str, inputs: EpochInputs | None = None
 ) -> dict[str, Any]:
     """The ``gate.override`` block for one challenger.
 
@@ -772,7 +780,11 @@ def _build_override_block(
     absent: dict[str, Any] = {"present": False, "action": None, "reason": None}
     if not challenger_id:
         return absent
-    exp = _read_json_value(layout_of(paths).experiment(epoch_id, challenger_id))
+    exp = (
+        inputs.experiment(challenger_id)
+        if inputs is not None
+        else _read_json_value(layout_of(paths).experiment(epoch_id, challenger_id))
+    )
     if not isinstance(exp, dict):
         return absent
     outcome = exp.get("outcome")
@@ -791,6 +803,8 @@ def build_gate_breakdown(
     epoch_id: str,
     champion_id: str,
     challenger_id: str,
+    *,
+    inputs: EpochInputs | None = None,
 ) -> dict[str, Any]:
     """Structured promote-gate decomposition for the decision view.
 
@@ -814,10 +828,23 @@ def build_gate_breakdown(
         regressed_namespaces,
     )
 
-    weights = _read_epoch_scoring_weights(paths, epoch_id)
+    if inputs is not None:
+        inputs.check(paths, epoch_id)
+    weights = _read_epoch_scoring_weights(paths, epoch_id, inputs)
 
-    parent_agg = _gen_agg_for_gate(paths, epoch_id, champion_id) if champion_id else None
-    child_agg = _gen_agg_for_gate(paths, epoch_id, challenger_id)
+    try:
+        parent_agg = _gen_agg_for_gate(paths, epoch_id, champion_id) if champion_id else None
+        child_agg = _gen_agg_for_gate(paths, epoch_id, challenger_id)
+    except RecordError as exc:
+        return {
+            "epoch_id": epoch_id,
+            "champion": champion_id,
+            "challenger": challenger_id,
+            "decision": "deferred",
+            "reason": str(exc),
+            "unreadable": str(exc),
+            "rules": [],
+        }
 
     base: dict[str, Any] = {
         "epoch_id": epoch_id,
@@ -871,14 +898,14 @@ def build_gate_breakdown(
         # ``rating.present`` is ``False`` on a run with no
         # ``promote_confidence_threshold`` in its structure params, so a UI that
         # does not know the field renders nothing new.
-        "rating": build_rating_view(paths, epoch_id, champion_id, challenger_id),
+        "rating": build_rating_view(paths, epoch_id, champion_id, challenger_id, inputs=inputs),
         # Operator override block. ``present`` is ``False`` on every round the
         # gate decided and on every record storing no override, so a
         # gate-decided pair's breakdown keeps the shape it had before the block
         # existed; ``present=True`` carries ``{action, reason}`` when an
         # operator force-promoted or force-rejected THIS challenger, so the
         # decision view never presents the override as the gate's own verdict.
-        "override": _build_override_block(paths, epoch_id, challenger_id),
+        "override": _build_override_block(paths, epoch_id, challenger_id, inputs),
     }
 
     # Echo the per-judge primary driver from the same source the decision
@@ -977,7 +1004,11 @@ def build_gate_breakdown(
         # PERSISTED rejection so the gate panel documents WHY it was cut — the
         # full "field_diversity_overlap: overlap 0.667 with v9 …" reason — instead
         # of a bare "deferred" with no explanation.
-        exp = _read_json_value(layout_of(paths).experiment(epoch_id, challenger_id))
+        exp = (
+            inputs.experiment(challenger_id)
+            if inputs is not None
+            else _read_json_value(layout_of(paths).experiment(epoch_id, challenger_id))
+        )
         if isinstance(exp, dict):
             exp_outcome = exp.get("outcome")
             if isinstance(exp_outcome, dict):
@@ -1183,7 +1214,9 @@ def build_gate_breakdown(
     return base
 
 
-def _read_promote_confidence_threshold(paths: WorkspacePaths, epoch_id: str) -> float | None:
+def _read_promote_confidence_threshold(
+    paths: WorkspacePaths, epoch_id: str, inputs: EpochInputs | None = None
+) -> float | None:
     """Read the epoch's opt-in ``promote_confidence_threshold`` from disk.
 
     The pre-gate threshold lives in the structure params, persisted under
@@ -1197,7 +1230,11 @@ def _read_promote_confidence_threshold(paths: WorkspacePaths, epoch_id: str) -> 
         read_promote_confidence_threshold as _read_threshold,
     )
 
-    raw = _read_json_value(layout_of(paths).scoring(epoch_id))
+    raw = (
+        inputs.scoring.copy()
+        if inputs is not None
+        else _read_json_value(layout_of(paths).scoring(epoch_id))
+    )
     if not isinstance(raw, dict):
         return None
     tournament = raw.get("tournament")
@@ -1236,10 +1273,10 @@ def _read_pair_duels_from_durable(
     tdir = field_tournaments_dir(paths.root, epoch_id)
     if not tdir.is_dir():
         return duels
+    from zicato.tournament.records import read_field_tournament_record  # noqa: PLC0415
+
     for record_path in sorted(tdir.glob("field-*.json")):
-        record = _read_json_value(record_path)
-        if not isinstance(record, dict):
-            continue
+        record = read_field_tournament_record(record_path).to_dict()
         for rnd in record.get("rounds") or []:
             if not isinstance(rnd, dict):
                 continue
@@ -1264,6 +1301,8 @@ def build_rating_view(
     epoch_id: str,
     champion_id: str,
     challenger_id: str,
+    *,
+    inputs: EpochInputs | None = None,
 ) -> dict[str, Any]:
     """The Bradley--Terry ``gate.rating`` block for a champion/challenger pair.
 
@@ -1295,6 +1334,7 @@ def build_rating_view(
     per-refit convergence trace (a single current point when reconstructed
     live, the full driver trace when read from the dead-letter record).
     """
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
     from zicato.selection.dead_letter import read_inconclusive  # noqa: PLC0415
     from zicato.selection.evidence_gate import (  # noqa: PLC0415
         CI_Z,
@@ -1305,25 +1345,34 @@ def build_rating_view(
 
     absent = {"present": False}
 
-    threshold = _read_promote_confidence_threshold(paths, epoch_id)
+    threshold = _read_promote_confidence_threshold(paths, epoch_id, inputs)
     if threshold is None or not challenger_id:
         return absent
 
     # Prefer the authoritative dead-letter record for an inconclusive duel — it
     # carries the exact final block the driver computed (incl. the full
     # ci_history), so the dashboard never disagrees with the run's own verdict.
-    dead_letter = read_inconclusive(paths.root, challenger_id)
-    if isinstance(dead_letter, dict):
-        rating = dead_letter.get("rating")
-        if isinstance(rating, dict) and rating.get("present"):
-            out = dict(rating)
-            out["next_duel"] = None  # terminal — nothing more to replicate
-            history = dead_letter.get("ci_history")
-            out["ci_history"] = history if isinstance(history, list) else []
-            return out
+    try:
+        dead_letter = read_inconclusive(paths.root, challenger_id)
+    except RecordError as exc:
+        return {**absent, "unreadable": str(exc)}
+    if (
+        dead_letter is not None
+        and dead_letter.epoch_id == epoch_id
+        and dead_letter.champion_id == champion_id
+        and dead_letter.rating.get("present")
+    ):
+        out = dict(dead_letter.rating)
+        out["next_duel"] = None  # Terminal records have no further scheduled replicate.
+        out["ci_history"] = [dict(row) for row in dead_letter.ci_history]
+        return out
 
     # Else reconstruct the duel audit from the durable record and re-fit.
-    duels = _read_pair_duels_from_durable(paths, epoch_id, champion_id, challenger_id)
+
+    try:
+        duels = _read_pair_duels_from_durable(paths, epoch_id, champion_id, challenger_id)
+    except RecordError as exc:
+        return {**absent, "unreadable": str(exc)}
     # Resolved (non-tie) duels for THIS pair gate credibility.
     pair_duels = [
         (d.winner, d.loser)

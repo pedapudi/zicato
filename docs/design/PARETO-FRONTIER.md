@@ -405,7 +405,7 @@ One best-effort call at the shared **round-settle seam** in
 `evolve_field_round`, after holdout confirmation, integrity checks, and
 operator overrides. The frontier therefore uses the champion that the round
 commits. Per-generation aggregates accumulate in `_run_matchup` where
-`_cache_gen_score` writes them. Evidence-gate replicate duels set
+`write_gen_score` writes them. Evidence-gate replicate duels set
 `cache_scores=False`, so they cannot overwrite the round-scored aggregate.
 
 Failure of the recorder can never fail a round. It follows the emission
