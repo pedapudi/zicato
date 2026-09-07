@@ -61,6 +61,11 @@ def lock_path(workspace_root: Path) -> Path:
     return _layout(workspace_root).lock
 
 
+def lock_guard_path(workspace_root: Path) -> Path:
+    """Return the stable inode used to serialize workspace writers."""
+    return _layout(workspace_root).lock_guard
+
+
 def heartbeat_path(workspace_root: Path) -> Path:
     """Return the path to the heartbeat JSON file."""
     return _layout(workspace_root).heartbeat
@@ -172,6 +177,7 @@ def ensure_runtime_dirs(workspace_root: Path) -> None:
 __all__ = [
     "runtime_dir",
     "lock_path",
+    "lock_guard_path",
     "heartbeat_path",
     "dashboard_endpoint_path",
     "active_runs_dir",

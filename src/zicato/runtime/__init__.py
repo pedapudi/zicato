@@ -15,8 +15,8 @@ Re-exports are organized by file:
 * :mod:`zicato.runtime.control` — control-file protocol (operator
   commands flow dashboard → orchestrator via files under
   ``.zicato/runtime/control/``).
-* :mod:`zicato.runtime.lock` — pid-based workspace lock with stale-pid
-  stealing.
+* :mod:`zicato.runtime.lock` — exclusive invocation ownership with readable
+  process metadata and stale-record recovery.
 
 The orchestrator wiring (when does the orchestrator actually call into
 this module) lands in a separate change once Round 6+7 stabilizes the

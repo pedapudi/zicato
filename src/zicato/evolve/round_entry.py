@@ -14,6 +14,7 @@ from zicato.core.types import (
     Generation,
 )
 from zicato.evolve import generation_phase
+from zicato.evolve.invocation import InvocationContext, validated_invocation
 from zicato.evolve.lifecycle_services import (
     _now_iso,
 )
@@ -35,6 +36,7 @@ from zicato.runtime.effective_settings import (
     recorded_setting,
 )
 from zicato.runtime.heartbeat import HeartbeatBeater
+from zicato.runtime.lock import validate_workspace_lock
 from zicato.runtime.resume import ResumePlan
 from zicato.util.best_effort import best_effort
 
@@ -80,70 +82,52 @@ async def evolve_once(
     total_rounds: int = 0,
     meta_loop_emitter: Any = None,
     resume_plan: ResumePlan | None = None,
-    workspace_checked: bool = False,
 ) -> EvolveRoundOutcome:
-    """Run ONE evolve round against the current epoch.
+    """Run one round while owning the workspace from validation through teardown.
 
-    ``target_call_llm`` / ``evaluation_call_llm`` are optional overrides
-    for a library caller that already holds the callables. Left ``None``
-    — which is what ``zicato evolve`` passes — each role is resolved from
-    the workspace configuration by
-    :func:`zicato.runtime_factory.make_runtime_config`: the
-    ``models.engines`` entry the role maps to, then the ``runtime.*``
-    dotted path. That is the same resolution the tournament workers
-    perform in their own interpreters, so the loop and its workers agree
-    on which callable a role runs by construction rather than by the
-    orchestrator forwarding an object they cannot see.
+    An explicit epoch selects the evaluation contract. Callables override the
+    configured target and evaluation roles. A completed or rejected round returns
+    an outcome; unrecoverable workspace, adapter and persistence failures propagate.
 
-    ``workspace_checked`` says the caller has already run the pre-spend
-    workspace gate for this invocation. :func:`evolve_n_rounds` passes it
-    so a multi-round run pays for the gate once rather than per round.
-    Default ``False``, because this function is exported as
-    :func:`zicato.orchestrator.evolve_once` and a library caller entering
-    here spends a full round: it is a spend boundary in its own right and
-    gates itself accordingly.
-
-    ``resume_plan`` — when supplied by :func:`evolve_n_rounds` for the
-    FIRST round of a resumed invocation — carries the conservative
-    crash-resume decision (``runtime/resume.py``). When it
-    ``resumes_in_place`` for the generation this round would mint, the
-    propose + apply step is skipped and the persisted
-    ``experiment.json`` + patches are reused: the snapshot is re-derived
-    from those same patches (idempotent) and the tournament cache-HITs
-    every board unit that already has a ``loss.json`` on disk, so only
-    the entries that did not finish are re-run. ``None`` (the default, and
-    every round after the first) is byte-identical to a cold start.
-
-    ``beater`` — when supplied by :func:`evolve_n_rounds` — receives a
-    :meth:`HeartbeatBeater.update` call at every phase transition
-    (proposing / applying / tournament / done) stamped with the real
-    ``epoch_id``, the generation id being worked on, and the
-    ``round_index``, so the dashboard header reflects live progress.
-    When ``None`` (a standalone ``evolve_once`` call) the heartbeat
-    plumbing is simply skipped. ``round_index`` / ``total_rounds`` also
-    reach matchup execution so published tournament state can render
-    "round N of M".
-
-    Steps:
-
-    1. Load the workspace config and the current epoch (board, proposer
-       brief, scoring, adapter via the workspace's adapter factory).
-    2. Resolve the current promoted generation as the parent.
-    3. Re-enumerate mutation points against the parent's snapshot.
-    4. Detect cross-run patterns over the parent's loss profiles.
-    5. Render a short loss summary for the proposer.
-    6. Freeze those inputs in a :class:`PreparedRound`.
-    7. Ask the configured strategy for its field width.
-    8. Dispatch candidate production, tournament evaluation, evidence
-       confirmation, and durable settlement through
-       :func:`zicato.evolve.field.evolve_field_round`.
-
-    Returns
-    -------
-    EvolveRoundOutcome
-        Always returned for a completed or normally rejected round.
-        Unrecoverable workspace, adapter, and persistence failures propagate.
+    A resume plan reuses an interrupted generation's recorded experiment and
+    completed measurements. The heartbeat and round counters let an embedding
+    caller report progress through the same execution path as the multi-round API.
     """
+    async with validated_invocation(workspace_root, epoch_id, instance_id) as invocation:
+        return await _evolve_once(
+            invocation=invocation,
+            epoch_id=epoch_id,
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=evaluation_call_llm,
+            fast_mode=fast_mode,
+            max_proposer_retries=max_proposer_retries,
+            beater=beater,
+            round_index=round_index,
+            total_rounds=total_rounds,
+            meta_loop_emitter=meta_loop_emitter,
+            resume_plan=resume_plan,
+        )
+
+
+async def _evolve_once(
+    *,
+    invocation: InvocationContext,
+    epoch_id: str | None = None,
+    target_call_llm: CallLLM | None = None,
+    evaluation_call_llm: CallLLM | None = None,
+    fast_mode: bool = False,
+    max_proposer_retries: int = 2,
+    beater: HeartbeatBeater | None = None,
+    round_index: int = 0,
+    total_rounds: int = 0,
+    meta_loop_emitter: Any = None,
+    resume_plan: ResumePlan | None = None,
+) -> EvolveRoundOutcome:
+    """Execute a round using the invoking caller's validated ownership."""
+    writer = invocation.writer
+    workspace_root = writer.workspace_root
+    instance_id = writer.instance_id
+    validate_workspace_lock(writer, workspace_root)
     # Lazy imports — see module docstring.
     from zicato import (  # noqa: PLC0415
         adapter_factory,
@@ -162,20 +146,6 @@ async def evolve_once(
     from zicato.proposer.external import external_proposer_config  # noqa: PLC0415
     from zicato.proposer.skills import resolve_proposer_spec  # noqa: PLC0415
     from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
-
-    # The mandatory pre-spend gate, unless the caller already ran it (see
-    # ``workspace_checked``). Imported per call rather than at module scope:
-    # suites that drive a round against a minimal fixture workspace
-    # patch ``zicato.check.require_workspace_valid``, and hoisting this would
-    # bind the function once and silently defeat every one of those patches.
-    if not workspace_checked:
-        from zicato.check import require_workspace_valid  # noqa: PLC0415
-
-        require_workspace_valid(
-            workspace_root,
-            epoch_id=epoch_id,
-            live_contract=epoch_id is None,
-        )
 
     # --- 1. Workspace + epoch artifacts ---
     workspace_config = workspace_loader.load_workspace_config(workspace_root)
@@ -364,6 +334,7 @@ async def evolve_once(
     # short-circuits every later round) and best-effort. ``zicato board
     # audit`` is the manual surface for the same measurement.
     await _maybe_calibrate_noise_floor(
+        writer=writer,
         workspace_root=workspace_root,
         epoch_id=resolved_epoch_id,
         epoch_cfg=_epoch_cfg,
@@ -396,6 +367,7 @@ async def evolve_once(
     # challenger can achieve (issue #119).
     # ``zicato board preflight`` is the manual surface.
     _preflight_verdict = await _maybe_contract_preflight(
+        writer=writer,
         workspace_root=workspace_root,
         epoch_id=resolved_epoch_id,
         epoch_cfg=_epoch_cfg,
@@ -559,6 +531,7 @@ async def evolve_once(
     # best-of-N wrapper calls it GUARDED once its slate settles, so a
     # catastrophically-regressed candidate is vetoed before selection.
     screen_candidates = _build_candidate_screen_runner(
+        writer=writer,
         weights=weights,
         adapter=adapter,
         parent_gen=parent_gen,
@@ -641,6 +614,7 @@ async def evolve_once(
         experimental_structures=weights.experimental.tournament_structures,
     )
     prepared = generation_phase.PreparedRound(
+        writer=writer,
         workspace_root=workspace_root,
         workspace_config=workspace_config,
         epoch_id=resolved_epoch_id,

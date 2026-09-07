@@ -1,9 +1,8 @@
 //! Watchdog tasks: heartbeat staleness + run staleness/deadline checks.
 //!
-//! Each tick reads state files (cheap, small files) and decides whether
-//! to escalate. The decisions are pure functions of `(state, now,
-//! thresholds)` and are unit-tested below; the async wrapper just plumbs
-//! them into `tokio::time::interval`.
+//! Each tick reads runtime files and verifies process identity before
+//! admitting concurrent escalations. Orphan mutation also holds the stable
+//! writer guard through record inspection, termination and finalization.
 //!
 //! Deadline enforcement is a first-class, default-on trigger: every
 //! board-entry run carries a `deadline` (`started_at +
@@ -17,14 +16,18 @@
 use crate::action_log::{Action, Trigger, WatchdogLog};
 use crate::ledger::{AuditLedger, RecordKind};
 use crate::reader::{self, WorkspacePaths};
-use crate::reap;
-use crate::signal::{self, escalate_target, KillTarget};
+use crate::reap::{self, producer_is_dead};
+use crate::signal::{self, escalate_owned_target, KillTarget};
 use chrono::{DateTime, Utc};
-use std::collections::HashSet;
+use futures::stream::{FuturesUnordered, StreamExt};
+use std::collections::{HashMap, HashSet};
+use std::fs::{File, OpenOptions};
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast::Sender;
-use tracing::{info, warn};
+use tracing::warn;
 
 /// Diff-containment configuration threaded into [`runs_loop`].
 ///
@@ -637,26 +640,10 @@ pub fn is_signalable_run_pid(pid: i32, protected: &HashSet<i32>) -> bool {
     true
 }
 
-/// Resolve the escalation target for a run whose worker `pid` has ALREADY
-/// been vetted (signalable + alive + identity-matched) by the caller.
-///
-/// The single worker pid is upgraded to a whole-process-group kill — taking
-/// down the worker AND any grandchildren the system under test spawned — ONLY
-/// when every safety condition holds:
-///
-/// * the run records a `pgid`,
-/// * that pgid is the worker's OWN group (`pgid == pid`): the worker is
-///   spawned as a session/group leader, so its pgid equals its pid. We
-///   refuse to negate a pgid that is not the vetted leader's own group —
-///   that would be a foreign group we have not identity-matched,
-/// * the pgid passes [`signal::is_negatable_pgid`] (`pgid > 1`, not a
-///   protected group: the supervisor's or orchestrator's own pgid).
-///
-/// When any condition fails the target falls back to a single-pid
-/// [`KillTarget::Leader`] on the already-vetted worker pid — the legacy,
-/// always-safe behavior. The caller's pid vetting (`is_same_process` /
-/// `is_signalable_run_pid`) is the identity gate; this only decides
-/// leader-vs-group on top of that.
+/// Select a recorded worker's group only when it owns that group identifier.
+/// Protected groups and foreign memberships fall back to a single-process target.
+/// A group may outlive its leader. The caller must verify the selected target's
+/// recorded identity before any signal; target selection alone grants no authority.
 pub fn resolve_kill_target(
     run: &crate::state::ActiveRun,
     vetted_pid: i32,
@@ -669,7 +656,11 @@ pub fn resolve_kill_target(
     // Only negate the worker's OWN group. The worker is its group's leader
     // (start_new_session → pgid == pid), so a pgid that does not equal the
     // vetted leader pid is a group we have NOT identity-matched; refuse it.
-    if pgid != vetted_pid {
+    let observed_group = signal::pgid_of(vetted_pid);
+    if pgid != vetted_pid
+        || observed_group.is_some_and(|group| group != pgid)
+        || (observed_group.is_none() && signal::is_alive(vetted_pid))
+    {
         return leader;
     }
     if !signal::is_negatable_pgid(pgid, protected_pgids) {
@@ -725,9 +716,8 @@ pub fn effective_deadline(
 
 /// Decide whether an active run has blown its per-board wall-clock budget.
 ///
-/// Pure function of `(active_run, now, grace, max_run_seconds)` so it is
-/// unit-testable independent of the tokio loop, mirroring
-/// [`decide_heartbeat`] / [`decide_run`].
+/// Timing classification also verifies the recorded worker identity against
+/// the kernel. The asynchronous loop owns signalling and grace-period waits.
 ///
 /// The enforced deadline is the **clamped** [`effective_deadline`]
 /// (`min(written, started_at + max_run_seconds)`) — not the raw written
@@ -737,12 +727,10 @@ pub fn effective_deadline(
 /// * past it (within `grace`) → [`RunDeadlineAction::Sigterm`]
 /// * past it + `grace`, worker still alive → [`RunDeadlineAction::Sigkill`]
 ///
-/// The grace window is measured from the effective deadline itself: once it
-/// passes the worker is asked to stop, and `grace` later — if it has not
-/// honoured SIGTERM — it is force-killed. A worker that exits during the
-/// grace window is no longer alive, so the result collapses back to
-/// `None`. Pid safety is enforced via [`is_signalable_run_pid`]; an unsafe
-/// or absent pid yields `None`.
+/// The classification measures overrun from the effective deadline. The run
+/// loop admits one escalation, whose grace begins when SIGTERM is sent.
+/// An exited leader can still own surviving group members; only a stopped
+/// target collapses back to `None`. Signal and identity guards apply first.
 pub fn decide_run_deadline(
     run: &crate::state::ActiveRun,
     now: DateTime<Utc>,
@@ -756,20 +744,9 @@ pub fn decide_run_deadline(
     if now <= deadline {
         return RunDeadlineAction::None;
     }
-    let Some(pid) = run.pid else {
-        // Past deadline but no pid to signal — nothing the watchdog can do.
+    let Some(pid) = decide_run_kill_request(run, protected) else {
         return RunDeadlineAction::None;
     };
-    if !is_signalable_run_pid(pid, protected) {
-        return RunDeadlineAction::None;
-    }
-    // Sanity-check the worker is actually alive AND is the same process we
-    // recorded — never signal a recycled pid. When the worker recorded its
-    // start time we verify it; absent a recorded start time this degrades
-    // to a bare liveness check (legacy writers).
-    if !signal::is_same_process(pid, run.pid_start_time) {
-        return RunDeadlineAction::None;
-    }
 
     let overrun = now.signed_duration_since(deadline);
     let grace = chrono::Duration::from_std(grace).unwrap_or_else(|_| chrono::Duration::zero());
@@ -780,16 +757,9 @@ pub fn decide_run_deadline(
     }
 }
 
-/// Resolve the worker pid to escalate for a parent-requested kill, or
-/// `None` when there is nothing safe to signal.
-///
-/// Pure function of `(active_run, protected)` so it is unit-testable
-/// independent of the tokio loop, mirroring [`decide_run_deadline`]. The
-/// parent has already decided the worker must die (it wrote the
-/// `kill_requests/{run_id}` marker), so there is no deadline/staleness
-/// condition here — only the same pid-safety guard
-/// ([`is_signalable_run_pid`]) plus an aliveness check, so a recycled or
-/// already-dead pid is never signalled.
+/// Return the recorded owner only when its target passes signal and identity guards.
+/// Surviving descendants retain an owned group after leader exit. Missing saved
+/// identity, unreadable live identity, and a replacement leader refuse escalation.
 pub fn decide_run_kill_request(
     run: &crate::state::ActiveRun,
     protected: &HashSet<i32>,
@@ -798,7 +768,10 @@ pub fn decide_run_kill_request(
     if !is_signalable_run_pid(pid, protected) {
         return None;
     }
-    if !signal::is_alive(pid) {
+    let mut groups = protected_pgids(None);
+    groups.extend(protected.iter().filter_map(|pid| signal::pgid_of(*pid)));
+    let target = resolve_kill_target(run, pid, &groups);
+    if !signal::verified_target(target, run.pid_start_time) || target.is_gone() {
         return None;
     }
     Some(pid)
@@ -873,94 +846,153 @@ pub async fn heartbeat_loop(
     }
 }
 
-/// Reap every orphaned worker + ephemeral snapshot after a CONFIRMED
-/// orchestrator death.
-///
-/// The caller has already established (via [`reap::decide_orchestrator_dead`])
-/// that the orchestrator is genuinely gone — not merely slow — so its own
-/// reaper will never run. For each active run this:
-///
-/// 1. **Group-kills the worker** through the same vetted escalation path the
-///    deadline/staleness triggers use ([`resolve_kill_target`] +
-///    [`escalate_target`]): a live, signalable, identity-matched worker is
-///    group-killed (its whole process group, when it carries a negatable
-///    pgid), else single-pid. A worker that is already gone is skipped.
-/// 2. **GCs the leaked ephemeral snapshot** via the prefix-guarded
-///    [`reap::reap_orphaned_snapshot`] — only a `ztw-snap-*` root under the
-///    system temp dir is removed; anything else is refused.
-/// 3. **Finalizes the state file** — removes `active_runs/{run_id}.json`, the
-///    finalization the dead orchestrator's reaper would otherwise have owned,
-///    so the run does not linger as a phantom active run.
-///
-/// Unlike the alive-orchestrator triggers (which deliberately LEAVE the state
-/// file for the orchestrator's reaper), this path removes it: there is no
-/// orchestrator left to do so.
-async fn reap_dead_orchestrator_runs(
-    paths: &WorkspacePaths,
-    runs: &[crate::state::ActiveRun],
-    protected_pgids: &HashSet<i32>,
-    thresholds: &Thresholds,
-    log: &Arc<WatchdogLog>,
-    ledger: Option<&Arc<AuditLedger>>,
-) {
-    // The orchestrator is dead, so its pid is not a live worker; an empty
-    // protected pid set is correct here (the pgid set still fences the
-    // supervisor's own group).
-    let protected: HashSet<i32> = HashSet::new();
-    for run in runs {
-        // 1. Group-kill the orphaned worker, when there is a live, vetted pid.
-        if let Some(pid) = decide_run_kill_request(run, &protected) {
-            let target = resolve_kill_target(run, pid, protected_pgids);
-            warn!(
-                run_id = %run.run_id,
-                pid,
-                ?target,
-                "reaping orphaned worker after orchestrator death; escalating",
-            );
-            let out = escalate_target(target, thresholds.run_kill_grace).await;
-            record_action(
-                log,
-                ledger,
-                Action {
-                    ts: Utc::now(),
-                    trigger: Trigger::OrchestratorReap,
-                    pid,
-                    run_id: Some(run.run_id.clone()),
-                    outcome: out.into(),
-                },
-            );
+/// Resource cleanup requires both the leader and all group members to stop.
+fn run_processes_gone(run: &crate::state::ActiveRun) -> bool {
+    run.pid.is_some_and(|pid| !signal::is_alive(pid))
+        && run
+            .pgid
+            .is_none_or(|pgid| !signal::group_has_live_members(pgid))
+}
+
+/// One locked snapshot of orphan ownership, shared by its pending escalations.
+struct OrphanBatch {
+    _guard: File,
+    paths: WorkspacePaths,
+    heartbeat: Option<crate::state::Heartbeat>,
+    runs: Vec<crate::state::ActiveRun>,
+}
+
+impl OrphanBatch {
+    fn acquire(paths: &WorkspacePaths) -> Option<Arc<Self>> {
+        // Never unlink the guard: Python and Rust must lock the same inode.
+        let guard = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(paths.lock_guard())
+            .ok()?;
+        // SAFETY: guard owns this descriptor for the whole batch lifetime.
+        if unsafe { libc::flock(guard.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return None;
         }
+        if metadata_writer_may_be_live(paths) {
+            return None;
+        }
+        let heartbeat = reader::read_heartbeat(paths);
+        let runs = reader::read_active_runs(paths);
+        if !runs.iter().any(producer_is_dead) {
+            return None;
+        }
+        Some(Arc::new(Self {
+            _guard: guard,
+            paths: paths.clone(),
+            heartbeat,
+            runs,
+        }))
+    }
+}
 
-        // 2. GC the leaked ztw-snap-* ephemeral snapshot (prefix-guarded).
+/// Metadata-only writers cannot be excluded by the kernel lease alone.
+fn metadata_writer_may_be_live(paths: &WorkspacePaths) -> bool {
+    let bytes = match std::fs::read(paths.lock()) {
+        Ok(bytes) => bytes,
+        Err(error) => return error.kind() != std::io::ErrorKind::NotFound,
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return true;
+    };
+    if value["owner_id"]
+        .as_str()
+        .is_some_and(|owner| !owner.is_empty())
+    {
+        // Exclusive flock proves that this recorded kernel lease ended.
+        return false;
+    }
+    let Some(pid) = value["pid"]
+        .as_i64()
+        .and_then(|pid| i32::try_from(pid).ok())
+    else {
+        return true;
+    };
+    signal::is_same_process(pid, value["start_time"].as_f64())
+}
+
+fn finalize_orphan(batch: &OrphanBatch, run: &crate::state::ActiveRun) {
+    let paths = &batch.paths;
+    let path = paths.active_runs_dir().join(format!("{}.json", run.run_id));
+    let current = std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<crate::state::ActiveRun>(&bytes).ok());
+    if current.is_some_and(|current| {
+        current.pid == run.pid
+            && current.pid_start_time == run.pid_start_time
+            && current.producer_pid == run.producer_pid
+            && current.producer_start_time == run.producer_start_time
+            && current.snapshot_path == run.snapshot_path
+    }) && producer_is_dead(run)
+        && run_processes_gone(run)
+    {
         reap::reap_orphaned_snapshot(run);
-
-        // 3. Finalize the state file the dead orchestrator's reaper can no
-        //    longer remove. Best-effort: a vanished file is not an error.
-        let run_file = paths.active_runs_dir().join(format!("{}.json", run.run_id));
-        if let Err(e) = std::fs::remove_file(&run_file) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                warn!(?run_file, error=%e, "failed to finalize reaped run state file");
+        #[cfg(test)]
+        tests::observe_orphan_removal(&path);
+        if let Err(error) = std::fs::remove_file(path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                warn!(%error, run_id = %run.run_id, "orphan state cleanup failed");
             }
         }
     }
 }
 
-/// Long-running active-runs watchdog task.
+fn finish_owner(owners: &mut HashMap<(i32, u64), Option<Arc<OrphanBatch>>>, owner: (i32, u64)) {
+    if let Some(Some(batch)) = owners.remove(&owner) {
+        for run in &batch.runs {
+            if run.pid == Some(owner.0) && run.pid_start_time.map(f64::to_bits) == Some(owner.1) {
+                finalize_orphan(&batch, run);
+            }
+        }
+    }
+}
+
+async fn enforce_run(
+    paths: &WorkspacePaths,
+    run: &crate::state::ActiveRun,
+    target: KillTarget,
+    trigger: Trigger,
+    grace: Duration,
+    log: &Arc<WatchdogLog>,
+    ledger: Option<&Arc<AuditLedger>>,
+) {
+    let outcome = escalate_owned_target(target, run.pid_start_time, grace).await;
+    let action = Action {
+        ts: Utc::now(),
+        trigger,
+        pid: target.leader_pid(),
+        run_id: Some(run.run_id.clone()),
+        outcome: outcome.into(),
+    };
+    let (action_log, action_ledger) = (log.clone(), ledger.cloned());
+    if let Err(error) = tokio::task::spawn_blocking(move || {
+        record_action(&action_log, action_ledger.as_ref(), action);
+    })
+    .await
+    {
+        warn!(%error, "termination action recording failed");
+    }
+    if outcome == signal::EscalationOutcome::Failed || !target.is_gone() {
+        return;
+    }
+    if trigger == Trigger::KillRequest {
+        reader::clear_kill_request(paths, &run.run_id);
+    }
+}
+
+/// Enforce orphan, requested, deadline, and stale-run termination in that order.
 ///
-/// Each tick evaluates two independent triggers per `active_runs/*.json`:
-///
-/// 1. **Deadline overrun** ([`decide_run_deadline`]) — default-on; sends
-///    SIGTERM, then SIGKILL after `--run-kill-grace`. The watchdog never
-///    deletes the state file: the orchestrator/worker owns that lifecycle
-///    (the Python parent detects the dead worker, cleans up, and records
-///    the run aborted).
-/// 2. **Run staleness** ([`decide_run`]) — `last_progress` not advancing.
-//
-// Each parameter is one independent collaborator the loop plumbs into the
-// pure decision helpers (paths, thresholds, interval, the action ring, the
-// optional ledger, and the two integrity-notary scan configs). Bundling them
-// would only rename the same set behind one struct, so the explicit signature
-// is clearer.
+/// Each verified owner has one pending escalation. Independent owners advance
+/// concurrently, so one grace period cannot delay another run's deadline.
+/// Integrity scans run in a separate task and perform filesystem work off-thread.
 #[allow(clippy::too_many_arguments)]
 pub async fn runs_loop(
     paths: WorkspacePaths,
@@ -976,272 +1008,145 @@ pub async fn runs_loop(
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut shutdown_rx = shutdown.subscribe();
-    // INTEGRITY NOTARY: when a ledger is configured, observe promote/reject
-    // decision transitions and epoch contract-hash changes once each and stamp
-    // them into the tamper-evident chain. Stateful across ticks; a no-op when
-    // no ledger is configured.
-    let mut transitions = crate::ledger::TransitionObserver::new();
-    // Generations quarantined by the prior diff-containment scan, so a standing
-    // violation alerts once rather than every tick.
-    let mut quarantined: HashSet<(String, String)> = HashSet::new();
-    // Generations flagged by the prior promotion-gate scan (same de-dup).
-    let mut gate_flagged: HashSet<(String, String)> = HashSet::new();
-    // Findings seen by the prior divergence audit, keyed by (code, gen).
-    let mut divergence_seen: HashSet<(String, Option<String>)> = HashSet::new();
+    let audits = tokio::spawn(integrity_loop(
+        paths.clone(),
+        interval,
+        ledger.clone(),
+        diff,
+        promotion_gate,
+        divergence,
+        shutdown.subscribe(),
+    ));
+    let mut pending = FuturesUnordered::new();
+    let mut owners = HashMap::new();
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                // Record any newly-resolved decisions / contract changes into
-                // the audit ledger (alarm-only / read-only — never blocks).
-                if let Some(ledger) = ledger.as_ref() {
-                    observe_transitions(&paths, ledger, &mut transitions);
-                }
-                // Diff-containment attestation (alarm-only / read-only). Off by
-                // default; when enabled, scans materialised generations and
-                // surfaces out-of-bounds mutations.
-                if diff.enabled {
-                    run_diff_containment_scan(
-                        &paths,
-                        &diff,
-                        ledger.as_ref(),
-                        &mut quarantined,
-                    );
-                }
-                // Promotion gatekeeping (alarm-only / read-only). Off by
-                // default; when enabled, re-applies the gate's scalar rule to
-                // recorded promotions and alarms on contradictions.
-                if promotion_gate.enabled {
-                    run_promotion_gate_scan(
-                        &paths,
-                        &promotion_gate,
-                        ledger.as_ref(),
-                        &mut gate_flagged,
-                    );
-                }
-                // Index-vs-canonical divergence audit (read-only). Off by
-                // default; when enabled, joins canonical + index and flags
-                // divergences / stuck in-flight generations.
-                if divergence.enabled {
-                    run_divergence_audit(
-                        &paths,
-                        &divergence,
-                        ledger.as_ref(),
-                        &mut divergence_seen,
-                    );
-                }
-                // Protect the orchestrator pid (carried by the heartbeat)
-                // from ever being treated as a run worker. The watchdog
-                // kills run pids only.
-                let mut protected: HashSet<i32> = HashSet::new();
-                let heartbeat_pid = reader::read_heartbeat(&paths).and_then(|hb| hb.pid);
-                if let Some(pid) = heartbeat_pid {
-                    protected.insert(pid);
-                }
-
-                // Process groups the watchdog must NEVER negate: its own and
-                // the orchestrator's. A group-kill (`kill(-pgid, …)`) into a
-                // protected group would signal the supervisor / orchestrator.
-                let protected_pgids = protected_pgids(heartbeat_pid);
-
-                // Parent→supervisor kill requests pending this tick. The
-                // Python parent writes one when a worker overruns its budget,
-                // delegating the SINGLE SIGTERM→grace→SIGKILL escalator to
-                // this supervisor (no parent↔supervisor race over the pid).
-                let kill_requests = reader::read_kill_requests(&paths);
-
-                let runs = reader::read_active_runs(&paths);
-
-                // Trigger -1 (highest): CONFIRMED orchestrator death. When the
-                // heartbeat pid is genuinely gone (an identity check, not a
-                // stale timestamp — a slow-but-alive orchestrator keeps its pid
-                // alive and is NEVER reaped), the orchestrator's own reaper will
-                // never run. The supervisor steps in: group-kill every orphaned
-                // worker, GC each run's leaked ztw-snap-* ephemeral snapshot,
-                // and finalize the state files. When the orchestrator is alive
-                // we skip this entirely and leave state for its reaper, exactly
-                // as before.
-                if reap::decide_orchestrator_dead(
-                    reader::read_heartbeat(&paths).as_ref(),
-                ) && !runs.is_empty()
-                {
-                    warn!(
-                        run_count = runs.len(),
-                        "orchestrator is confirmed dead; reaping orphaned workers + ephemeral snapshots",
-                    );
-                    reap_dead_orchestrator_runs(
-                        &paths,
-                        &runs,
-                        &protected_pgids,
-                        &thresholds,
-                        &log,
-                        ledger.as_ref(),
-                    )
-                    .await;
-                    // The orchestrator is gone; the per-run deadline/staleness
-                    // triggers below are moot this tick.
-                    continue;
-                }
-
-                for run in &runs {
+                let observed_heartbeat = reader::read_heartbeat(&paths);
+                let observed_runs = reader::read_active_runs(&paths);
+                let batch = observed_runs.iter().any(producer_is_dead)
+                    .then(|| OrphanBatch::acquire(&paths)).flatten();
+                let heartbeat = batch.as_ref().and_then(|batch| batch.heartbeat.clone())
+                    .or(observed_heartbeat);
+                let heartbeat_pid = heartbeat.as_ref().and_then(|hb| hb.pid);
+                let protected: HashSet<i32> = heartbeat_pid.into_iter().collect();
+                let groups = protected_pgids(heartbeat_pid);
+                let requests = reader::read_kill_requests(&paths);
+                let runs = batch.as_ref().map(|batch| batch.runs.clone())
+                    .unwrap_or(observed_runs);
+                for run in runs {
                     let now = Utc::now();
-
-                    // Trigger 0: explicit parent kill request. Highest
-                    // priority — the parent has already decided this worker
-                    // must die, so escalate immediately rather than waiting
-                    // for the deadline/staleness thresholds.
-                    if kill_requests.contains(&run.run_id) {
-                        match decide_run_kill_request(run, &protected) {
-                            None => {
-                                // No signalable pid (absent / unsafe / dead):
-                                // nothing to escalate, but the request is
-                                // satisfied — clear it so it isn't retried.
-                                reader::clear_kill_request(&paths, &run.run_id);
+                    let orphaned = batch.is_some() && producer_is_dead(&run);
+                    let trigger = if orphaned {
+                        Some(Trigger::OrchestratorReap)
+                    } else if requests.contains(&run.run_id) {
+                        Some(Trigger::KillRequest)
+                    } else if !thresholds.run_deadline_kill_disabled && !matches!(
+                        decide_run_deadline(&run, now, thresholds.run_kill_grace,
+                            thresholds.max_run_seconds, &protected), RunDeadlineAction::None
+                    ) {
+                        Some(Trigger::RunDeadline)
+                    } else {
+                        match decide_run(&run, now, &thresholds) {
+                            RunAction::Kill { .. } => Some(Trigger::RunStale),
+                            RunAction::Warn => {
+                                warn!(run_id = %run.run_id, "active run is stalled");
+                                None
                             }
-                            Some(pid) => {
-                                let target =
-                                    resolve_kill_target(run, pid, &protected_pgids);
-                                warn!(
-                                    run_id = %run.run_id,
-                                    pid,
-                                    ?target,
-                                    "parent requested kill; escalating (single escalator)",
-                                );
-                                let out =
-                                    escalate_target(target, thresholds.run_kill_grace).await;
-                                info!(
-                                    ?out,
-                                    run_id = %run.run_id,
-                                    "kill-request escalation complete; \
-                                     leaving state file for orchestrator cleanup",
-                                );
-                                record_action(
-                                    &log,
-                                    ledger.as_ref(),
-                                    Action {
-                                        ts: Utc::now(),
-                                        trigger: Trigger::KillRequest,
-                                        pid,
-                                        run_id: Some(run.run_id.clone()),
-                                        outcome: out.into(),
-                                    },
-                                );
-                                // Clear the consumed marker so the next tick
-                                // does not re-escalate a recycled pid; leave
-                                // the state file for the orchestrator reaper.
-                                reader::clear_kill_request(&paths, &run.run_id);
+                            RunAction::Nothing => None,
+                        }
+                    };
+                    let Some(trigger) = trigger else { continue; };
+                    let Some(pid) = decide_run_kill_request(&run, &protected) else {
+                        if let Some(batch) = batch.as_ref().filter(|_| orphaned) {
+                            if run_processes_gone(&run) {
+                                finalize_orphan(batch, &run);
                             }
                         }
                         continue;
-                    }
-
-                    // Trigger 1: per-board wall-clock deadline (default-on).
-                    if !thresholds.run_deadline_kill_disabled {
-                        match decide_run_deadline(
-                            run,
-                            now,
-                            thresholds.run_kill_grace,
-                            thresholds.max_run_seconds,
-                            &protected,
-                        ) {
-                            RunDeadlineAction::None => {}
-                            RunDeadlineAction::Sigterm { pid }
-                            | RunDeadlineAction::Sigkill { pid } => {
-                                let budget = run
-                                    .wall_clock_budget_seconds
-                                    .map(|b| format!("{b:.0}"))
-                                    .unwrap_or_else(|| "?".to_string());
-                                let target =
-                                    resolve_kill_target(run, pid, &protected_pgids);
-                                warn!(
-                                    run_id = %run.run_id,
-                                    pid,
-                                    ?target,
-                                    budget_seconds = %budget,
-                                    "run {} exceeded its {}s wall-clock budget; SIGTERM",
-                                    run.run_id,
-                                    budget,
-                                );
-                                // escalate_target() does SIGTERM, waits the
-                                // grace window, then SIGKILLs if still alive —
-                                // group-wide when the run carries a negatable
-                                // pgid, else the single leader pid.
-                                let out =
-                                    escalate_target(target, thresholds.run_kill_grace).await;
-                                if out == crate::signal::EscalationOutcome::KilledForcefully {
-                                    warn!(
-                                        run_id = %run.run_id,
-                                        pid,
-                                        "run ignored SIGTERM after {}s grace; SIGKILL",
-                                        thresholds.run_kill_grace.as_secs(),
-                                    );
-                                }
-                                info!(
-                                    ?out,
-                                    run_id = %run.run_id,
-                                    "run deadline escalation complete; \
-                                     leaving state file for orchestrator cleanup",
-                                );
-                                record_action(
-                                    &log,
-                                    ledger.as_ref(),
-                                    Action {
-                                        ts: Utc::now(),
-                                        trigger: Trigger::RunDeadline,
-                                        pid,
-                                        run_id: Some(run.run_id.clone()),
-                                        outcome: out.into(),
-                                    },
-                                );
-                                // Deliberately do NOT remove the state
-                                // file: the orchestrator/worker owns that
-                                // lifecycle.
-                                continue;
-                            }
+                    };
+                    let owner = (pid, run.pid_start_time.unwrap().to_bits());
+                    if let Some(pending_batch) = owners.get_mut(&owner) {
+                        if orphaned {
+                            *pending_batch = batch.clone();
                         }
+                        continue;
                     }
-
-                    // Trigger 2: run staleness (complementary).
-                    match decide_run(run, now, &thresholds) {
-                        RunAction::Nothing => {}
-                        RunAction::Warn => {
-                            warn!(run_id=%run.run_id, "active run is stalled (warn)");
-                        }
-                        RunAction::Kill { pid } => {
-                            if !is_signalable_run_pid(pid, &protected) {
-                                warn!(
-                                    run_id=%run.run_id,
-                                    pid,
-                                    "stalled run pid is not a signalable worker; skipping",
-                                );
-                                continue;
-                            }
-                            let target = resolve_kill_target(run, pid, &protected_pgids);
-                            warn!(run_id=%run.run_id, pid, ?target, "active run past kill threshold; escalating");
-                            let out = escalate_target(target, thresholds.grace).await;
-                            info!(?out, run_id=%run.run_id, "run escalation complete");
-                            record_action(
-                                &log,
-                                ledger.as_ref(),
-                                Action {
-                                    ts: Utc::now(),
-                                    trigger: Trigger::RunStale,
-                                    pid,
-                                    run_id: Some(run.run_id.clone()),
-                                    outcome: out.into(),
-                                },
-                            );
-                            // Remove the state file so we don't re-escalate.
-                            let run_file = paths.active_runs_dir().join(format!("{}.json", run.run_id));
-                            if let Err(e) = std::fs::remove_file(&run_file) {
-                                if e.kind() != std::io::ErrorKind::NotFound {
-                                    warn!(?run_file, error=%e, "failed to remove stale run file");
-                                }
-                            }
-                        }
-                    }
+                    owners.insert(owner, batch.clone().filter(|_| orphaned));
+                    let target = resolve_kill_target(&run, pid, &groups);
+                    let grace = if trigger == Trigger::RunStale { thresholds.grace }
+                        else { thresholds.run_kill_grace };
+                    let (paths, log, ledger) = (paths.clone(), log.clone(), ledger.clone());
+                    pending.push(async move {
+                        enforce_run(&paths, &run, target, trigger, grace, &log, ledger.as_ref()).await;
+                        owner
+                    });
                 }
             }
+            Some(owner) = pending.next(), if !pending.is_empty() => {
+                finish_owner(&mut owners, owner);
+            }
             _ = shutdown_rx.recv() => break,
+        }
+    }
+    // A shutdown must finish escalations that already sent SIGTERM.
+    while let Some(owner) = pending.next().await {
+        finish_owner(&mut owners, owner);
+    }
+    audits.abort();
+}
+
+/// Integrity reads run in the blocking pool, outside the deadline polling task.
+async fn integrity_loop(
+    paths: WorkspacePaths,
+    interval: Duration,
+    ledger: Option<Arc<AuditLedger>>,
+    diff: DiffContainmentConfig,
+    promotion_gate: PromotionGateConfig,
+    divergence: DivergenceConfig,
+    mut shutdown: tokio::sync::broadcast::Receiver<()>,
+) {
+    let mut state = (
+        crate::ledger::TransitionObserver::new(),
+        HashSet::new(),
+        HashSet::new(),
+        HashSet::new(),
+    );
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {}
+            _ = shutdown.recv() => return,
+        }
+        let (paths, ledger, diff, promotion_gate, divergence) = (
+            paths.clone(),
+            ledger.clone(),
+            diff.clone(),
+            promotion_gate.clone(),
+            divergence.clone(),
+        );
+        let task = tokio::task::spawn_blocking(move || {
+            if let Some(ledger) = ledger.as_ref() {
+                observe_transitions(&paths, ledger, &mut state.0);
+            }
+            if diff.enabled {
+                run_diff_containment_scan(&paths, &diff, ledger.as_ref(), &mut state.1);
+            }
+            if promotion_gate.enabled {
+                run_promotion_gate_scan(&paths, &promotion_gate, ledger.as_ref(), &mut state.2);
+            }
+            if divergence.enabled {
+                run_divergence_audit(&paths, &divergence, ledger.as_ref(), &mut state.3);
+            }
+            state
+        });
+        tokio::select! {
+            result = task => match result {
+                Ok(result) => state = result,
+                Err(error) => { warn!(%error, "integrity scan stopped"); return; }
+            },
+            _ = shutdown.recv() => return,
         }
     }
 }
@@ -1251,6 +1156,717 @@ mod tests {
     use super::*;
     use crate::state::{ActiveRun, Heartbeat};
     use chrono::Duration as ChDuration;
+
+    type RemovalObserver = (std::path::PathBuf, Box<dyn FnOnce()>);
+    thread_local! {
+        static REMOVAL_OBSERVER: std::cell::RefCell<Option<RemovalObserver>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    pub(super) fn observe_orphan_removal(path: &std::path::Path) {
+        let callback = REMOVAL_OBSERVER.with(|observer| {
+            let mut observer = observer.borrow_mut();
+            if observer
+                .as_ref()
+                .is_some_and(|(expected, _)| expected == path)
+            {
+                observer.take().map(|(_, callback)| callback)
+            } else {
+                None
+            }
+        });
+        if let Some(callback) = callback {
+            callback();
+        }
+    }
+
+    struct ObserveRemoval;
+    impl Drop for ObserveRemoval {
+        fn drop(&mut self) {
+            REMOVAL_OBSERVER.with(|observer| observer.borrow_mut().take());
+        }
+    }
+
+    fn writer_guard(paths: &WorkspacePaths) -> Option<File> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(paths.lock_guard())
+            .unwrap();
+        // SAFETY: the returned File owns the descriptor and releases the lease.
+        (unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0)
+            .then_some(file)
+    }
+
+    fn publish_run(paths: &WorkspacePaths, run: &ActiveRun) {
+        std::fs::create_dir_all(paths.active_runs_dir()).unwrap();
+        std::fs::write(
+            paths.active_runs_dir().join(format!("{}.json", run.run_id)),
+            serde_json::to_vec(run).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn publish_heartbeat(paths: &WorkspacePaths, pid: i32) {
+        std::fs::write(
+            paths.heartbeat(),
+            serde_json::to_vec(&Heartbeat {
+                pid: Some(pid),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn orphan_guard_shares_python_flock_and_preserves_the_guard_inode() {
+        use std::os::unix::fs::MetadataExt;
+        let root = tempfile::tempdir().unwrap();
+        let paths = WorkspacePaths::new(root.path().into());
+        publish_run(
+            &paths,
+            &ActiveRun {
+                run_id: "orphan".into(),
+                producer_pid: Some(99_999_999),
+                producer_start_time: Some(1.0),
+                ..Default::default()
+            },
+        );
+        let batch = OrphanBatch::acquire(&paths).unwrap();
+        let inode = std::fs::metadata(paths.lock_guard()).unwrap().ino();
+        let attempt = || {
+            let output = std::process::Command::new("python3").args([
+                "-c",
+                "import fcntl,os,sys\nfd=os.open(sys.argv[1],os.O_CREAT|os.O_RDWR,0o600)\ntry:\n fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n print('acquired')\nexcept BlockingIOError:\n print('blocked')\nfinally:\n os.close(fd)",
+            ]).arg(paths.lock_guard()).output().unwrap();
+            assert!(output.status.success());
+            String::from_utf8(output.stdout).unwrap()
+        };
+        assert_eq!(attempt().trim(), "blocked");
+        drop(batch);
+        assert_eq!(attempt().trim(), "acquired");
+        assert_eq!(std::fs::metadata(paths.lock_guard()).unwrap().ino(), inode);
+    }
+
+    #[tokio::test]
+    async fn writer_and_live_or_unknown_producer_refuse_stale_heartbeat_reaping() {
+        let mut failures = Vec::new();
+        for case in [
+            "writer",
+            "metadata-writer",
+            "live-producer",
+            "missing-producer",
+            "missing-token",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = WorkspacePaths::new(root.path().into());
+            let mut worker = Sleeper::spawn();
+            let run = ActiveRun {
+                run_id: "retained-worker".into(),
+                pid: Some(worker.pid()),
+                pid_start_time: signal::pid_start_time(worker.pid()),
+                producer_pid: match case {
+                    "writer" | "metadata-writer" => Some(99_999_999),
+                    "missing-producer" => None,
+                    _ => Some(std::process::id() as i32),
+                },
+                producer_start_time: match case {
+                    "writer" | "metadata-writer" => Some(1.0),
+                    "live-producer" => signal::pid_start_time(std::process::id() as i32),
+                    _ => None,
+                },
+                ..Default::default()
+            };
+            publish_run(&paths, &run);
+            publish_heartbeat(&paths, 99_999_999);
+            let guard = (case == "writer").then(|| writer_guard(&paths).unwrap());
+            if case == "metadata-writer" {
+                std::fs::write(
+                    paths.lock(),
+                    serde_json::to_vec(&serde_json::json!({
+                        "pid": std::process::id(),
+                        "start_time": signal::pid_start_time(std::process::id() as i32)
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            }
+            let log = Arc::new(WatchdogLog::new());
+            let (shutdown, _) = tokio::sync::broadcast::channel(1);
+            let task = start_run_watchdog(
+                paths.clone(),
+                Thresholds::default(),
+                log.clone(),
+                None,
+                shutdown.clone(),
+            );
+            tokio::time::sleep(Duration::from_millis(70)).await;
+            let alive = worker.0.try_wait().unwrap().is_none();
+            publish_heartbeat(&paths, std::process::id() as i32);
+            let _ = shutdown.send(());
+            task.await.unwrap();
+            if !alive || !log.is_empty() || reader::read_active_runs(&paths).len() != 1 {
+                failures.push(case);
+            }
+            drop(guard);
+        }
+        assert!(
+            failures.is_empty(),
+            "valid or unproven ownership was reaped: {failures:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn orphan_record_comparison_excludes_a_replacement_writer_until_unlink() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let root = tempfile::tempdir().unwrap();
+        let paths = WorkspacePaths::new(root.path().into());
+        let prior = ActiveRun {
+            run_id: "reused-run".into(),
+            pid: Some(99_999_998),
+            pid_start_time: Some(1.0),
+            producer_pid: Some(99_999_999),
+            producer_start_time: Some(1.0),
+            ..Default::default()
+        };
+        publish_run(&paths, &prior);
+        publish_heartbeat(&paths, 99_999_999);
+        let worker = Sleeper::spawn();
+        let replacement = ActiveRun {
+            pid: Some(worker.pid()),
+            pid_start_time: signal::pid_start_time(worker.pid()),
+            producer_pid: Some(std::process::id() as i32),
+            producer_start_time: signal::pid_start_time(std::process::id() as i32),
+            ..prior
+        };
+        let seen = Rc::new(Cell::new(false));
+        let replaced = Rc::new(Cell::new(false));
+        let (observed, published) = (seen.clone(), replaced.clone());
+        let (observer_paths, record) = (paths.clone(), replacement.clone());
+        REMOVAL_OBSERVER.with(|observer| {
+            *observer.borrow_mut() = Some((
+                paths.active_runs_dir().join("reused-run.json"),
+                Box::new(move || {
+                    observed.set(true);
+                    if let Some(_guard) = writer_guard(&observer_paths) {
+                        publish_heartbeat(&observer_paths, std::process::id() as i32);
+                        publish_run(&observer_paths, &record);
+                        published.set(true);
+                    }
+                }),
+            ));
+        });
+        let _observer = ObserveRemoval;
+        let log = Arc::new(WatchdogLog::new());
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let task = start_run_watchdog(
+            paths.clone(),
+            Thresholds::default(),
+            log,
+            None,
+            shutdown.clone(),
+        );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !seen.get() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let _ = shutdown.send(());
+        task.await.unwrap();
+        if !replaced.get() {
+            let _guard = writer_guard(&paths).expect("orphan batch retained its completed lease");
+            publish_heartbeat(&paths, std::process::id() as i32);
+            publish_run(&paths, &replacement);
+        }
+        let records = reader::read_active_runs(&paths);
+        assert_eq!(
+            records.len(),
+            1,
+            "orphan finalization deleted the replacement owner's record"
+        );
+        assert_eq!(records[0].pid, replacement.pid);
+        assert!(
+            !replaced.get(),
+            "replacement writer entered during compare/delete"
+        );
+    }
+
+    #[tokio::test]
+    async fn orphan_batch_retains_writer_guard_while_independent_deadlines_advance() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = WorkspacePaths::new(root.path().into());
+        let group = crate::test_process_group::OwnedGroup::spawn(true);
+        let orphan = ActiveRun {
+            run_id: "orphan".into(),
+            pid: Some(group.leader),
+            pgid: Some(group.leader),
+            pid_start_time: Some(group.start_time),
+            producer_pid: Some(99_999_999),
+            producer_start_time: Some(1.0),
+            ..Default::default()
+        };
+        publish_run(&paths, &orphan);
+        // A live unrelated heartbeat cannot conceal a positively orphaned producer.
+        publish_heartbeat(&paths, std::process::id() as i32);
+        let log = Arc::new(WatchdogLog::new());
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let task = start_run_watchdog(
+            paths.clone(),
+            Thresholds {
+                run_kill_grace: Duration::from_millis(300),
+                ..Thresholds::default()
+            },
+            log.clone(),
+            None,
+            shutdown.clone(),
+        );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while writer_guard(&paths).is_some() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let worker = Sleeper::spawn();
+        let deadline = ActiveRun {
+            run_id: "independent-deadline".into(),
+            pid: Some(worker.pid()),
+            pid_start_time: signal::pid_start_time(worker.pid()),
+            producer_pid: Some(std::process::id() as i32),
+            producer_start_time: signal::pid_start_time(std::process::id() as i32),
+            deadline: Some(Utc::now() - ChDuration::seconds(1)),
+            ..Default::default()
+        };
+        publish_run(&paths, &deadline);
+        let independent = tokio::time::timeout(Duration::from_millis(200), async {
+            while signal::is_alive(worker.pid()) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .is_ok();
+        let orphan_survived = signal::is_alive(group.descendant);
+        let guard_held = writer_guard(&paths).is_none();
+        let _ = shutdown.send(());
+        task.await.unwrap();
+        assert!(
+            independent && orphan_survived,
+            "an orphan grace delayed an independent deadline"
+        );
+        assert!(
+            guard_held,
+            "orphan escalation released writer ownership before group exit"
+        );
+        assert!(writer_guard(&paths).is_some());
+        assert!(!paths.active_runs_dir().join("orphan.json").exists());
+        assert!(log
+            .snapshot()
+            .iter()
+            .any(|action| action.trigger == Trigger::RunDeadline));
+    }
+
+    #[tokio::test]
+    async fn producer_death_attaches_writer_guard_to_an_existing_deadline_escalation() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = WorkspacePaths::new(root.path().into());
+        let group = crate::test_process_group::OwnedGroup::spawn(false);
+        let mut producer = Sleeper::spawn();
+        let run = ActiveRun {
+            run_id: "pending-deadline".into(),
+            pid: Some(group.leader),
+            pgid: Some(group.leader),
+            pid_start_time: Some(group.start_time),
+            producer_pid: Some(producer.pid()),
+            producer_start_time: signal::pid_start_time(producer.pid()),
+            deadline: Some(Utc::now() - ChDuration::seconds(1)),
+            ..Default::default()
+        };
+        publish_run(&paths, &run);
+        let log = Arc::new(WatchdogLog::new());
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let task = start_run_watchdog(
+            paths.clone(),
+            Thresholds {
+                run_kill_grace: Duration::from_millis(300),
+                ..Thresholds::default()
+            },
+            log.clone(),
+            None,
+            shutdown.clone(),
+        );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while signal::is_alive(group.leader) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(signal::is_alive(group.descendant));
+        assert!(writer_guard(&paths).is_some());
+        producer.0.kill().unwrap();
+        producer.reap();
+        let adopted = tokio::time::timeout(Duration::from_millis(200), async {
+            while writer_guard(&paths).is_some() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .is_ok();
+        let descendant_retained = signal::is_alive(group.descendant);
+        let _ = shutdown.send(());
+        task.await.unwrap();
+        assert!(adopted && descendant_retained);
+        assert!(writer_guard(&paths).is_some());
+        assert!(!paths
+            .active_runs_dir()
+            .join("pending-deadline.json")
+            .exists());
+        let actions = log.snapshot();
+        assert_eq!(
+            actions.len(),
+            1,
+            "producer death duplicated an admitted escalation"
+        );
+        assert_eq!(actions[0].trigger, Trigger::RunDeadline);
+    }
+
+    #[test]
+    fn orphan_finalization_retains_records_with_replaced_producer_or_snapshot() {
+        for replacement in ["producer", "snapshot"] {
+            let root = tempfile::tempdir().unwrap();
+            let paths = WorkspacePaths::new(root.path().into());
+            let (snapshot, snapshot_path) = make_ephemeral_snapshot();
+            let run = ActiveRun {
+                run_id: "replaced-owner".into(),
+                pid: Some(99_999_998),
+                pid_start_time: Some(1.0),
+                producer_pid: Some(99_999_999),
+                producer_start_time: Some(1.0),
+                snapshot_path: Some(snapshot_path),
+                ..Default::default()
+            };
+            publish_run(&paths, &run);
+            let batch = OrphanBatch::acquire(&paths).unwrap();
+            let mut changed = run.clone();
+            match replacement {
+                "producer" => {
+                    changed.producer_pid = Some(std::process::id() as i32);
+                    changed.producer_start_time = signal::pid_start_time(std::process::id() as i32);
+                }
+                _ => changed.snapshot_path = None,
+            }
+            publish_run(&paths, &changed);
+            finalize_orphan(&batch, &run);
+            assert!(paths.active_runs_dir().join("replaced-owner.json").exists());
+            assert!(
+                snapshot.path().exists(),
+                "changed ownership released the prior snapshot"
+            );
+        }
+    }
+
+    fn start_run_watchdog(
+        paths: WorkspacePaths,
+        thresholds: Thresholds,
+        log: Arc<WatchdogLog>,
+        ledger: Option<Arc<AuditLedger>>,
+        shutdown: Sender<()>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(runs_loop(
+            paths,
+            thresholds,
+            Duration::from_millis(10),
+            log,
+            ledger,
+            DiffContainmentConfig {
+                enabled: false,
+                findings: Arc::new(crate::diff_containment::DiffContainmentFindings::new()),
+            },
+            PromotionGateConfig {
+                enabled: false,
+                findings: Arc::new(crate::promotion_gate::PromotionGateFindings::new()),
+            },
+            DivergenceConfig {
+                enabled: false,
+                findings: Arc::new(crate::divergence::DivergenceFindings::new()),
+                stuck_age_seconds: 60,
+            },
+            shutdown,
+        ))
+    }
+
+    async fn await_orphan_cleanup(
+        paths: &WorkspacePaths,
+        thresholds: &Thresholds,
+        log: &Arc<WatchdogLog>,
+        ledger: Option<&Arc<AuditLedger>>,
+    ) {
+        let heartbeat = Heartbeat {
+            pid: Some(99_999_999),
+            ..Default::default()
+        };
+        std::fs::write(paths.heartbeat(), serde_json::to_vec(&heartbeat).unwrap()).unwrap();
+        for mut run in reader::read_active_runs(paths) {
+            run.producer_pid = heartbeat.pid;
+            run.producer_start_time = Some(1.0);
+            publish_run(paths, &run);
+        }
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let task = start_run_watchdog(
+            paths.clone(),
+            *thresholds,
+            log.clone(),
+            ledger.cloned(),
+            shutdown.clone(),
+        );
+        let result = tokio::time::timeout(Duration::from_secs(2), async {
+            while !reader::read_active_runs(paths).is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        let _ = shutdown.send(());
+        task.await.unwrap();
+        result.expect("orphan ownership was not finalized");
+    }
+
+    #[tokio::test]
+    async fn every_trigger_finishes_descendants_when_leader_exited_before_polling() {
+        let mut failures = Vec::new();
+        for trigger in [
+            Trigger::KillRequest,
+            Trigger::RunDeadline,
+            Trigger::RunStale,
+            Trigger::OrchestratorReap,
+        ] {
+            let group = crate::test_process_group::OwnedGroup::spawn(true);
+            let root = tempfile::tempdir().unwrap();
+            let paths = WorkspacePaths::new(root.path().into());
+            std::fs::create_dir_all(paths.active_runs_dir()).unwrap();
+            std::fs::create_dir_all(paths.kill_requests_dir()).unwrap();
+            let run = ActiveRun {
+                run_id: "owned-worker".into(),
+                producer_pid: (trigger == Trigger::OrchestratorReap).then_some(99_999_999),
+                producer_start_time: (trigger == Trigger::OrchestratorReap).then_some(1.0),
+                pid: Some(group.leader),
+                pgid: Some(group.leader),
+                pid_start_time: Some(group.start_time),
+                last_progress: (trigger == Trigger::RunStale)
+                    .then(|| Utc::now() - ChDuration::hours(1)),
+                deadline: (trigger == Trigger::RunDeadline)
+                    .then(|| Utc::now() - ChDuration::seconds(1)),
+                ..Default::default()
+            };
+            let record = paths.active_runs_dir().join("owned-worker.json");
+            std::fs::write(&record, serde_json::to_vec(&run).unwrap()).unwrap();
+            let heartbeat = Heartbeat {
+                pid: Some(if trigger == Trigger::OrchestratorReap {
+                    99_999_999
+                } else {
+                    std::process::id() as i32
+                }),
+                ..Default::default()
+            };
+            std::fs::write(paths.heartbeat(), serde_json::to_vec(&heartbeat).unwrap()).unwrap();
+            if trigger == Trigger::KillRequest {
+                std::fs::write(paths.kill_requests_dir().join("owned-worker"), b"{}").unwrap();
+            }
+            let log = Arc::new(WatchdogLog::new());
+            let (shutdown, _) = tokio::sync::broadcast::channel(1);
+            let task = start_run_watchdog(
+                paths,
+                Thresholds {
+                    run_deadline_kill_disabled: trigger != Trigger::RunDeadline,
+                    run_kill_grace: Duration::from_millis(20),
+                    grace: Duration::from_millis(20),
+                    ..Thresholds::default()
+                },
+                log.clone(),
+                None,
+                shutdown.clone(),
+            );
+            let stopped = tokio::time::timeout(Duration::from_millis(500), async {
+                while signal::is_alive(group.descendant) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .is_ok();
+            let _ = shutdown.send(());
+            task.await.unwrap();
+            if !stopped
+                || !log
+                    .snapshot()
+                    .iter()
+                    .any(|action| action.trigger == trigger)
+            {
+                failures.push(trigger);
+            }
+        }
+        assert!(failures.is_empty(), "descendants survived: {failures:?}");
+    }
+
+    #[tokio::test]
+    async fn every_trigger_rejects_missing_or_mismatched_process_identity() {
+        let mut failures = Vec::new();
+        for trigger in [
+            Trigger::KillRequest,
+            Trigger::RunDeadline,
+            Trigger::RunStale,
+            Trigger::OrchestratorReap,
+        ] {
+            for missing in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let paths = WorkspacePaths::new(root.path().into());
+                std::fs::create_dir_all(paths.active_runs_dir()).unwrap();
+                std::fs::create_dir_all(paths.kill_requests_dir()).unwrap();
+                let mut sleeper = Sleeper::spawn();
+                let pid = sleeper.pid();
+                let run = ActiveRun {
+                    run_id: "owned-worker".into(),
+                    producer_pid: (trigger == Trigger::OrchestratorReap).then_some(99_999_999),
+                    producer_start_time: (trigger == Trigger::OrchestratorReap).then_some(1.0),
+                    pid: Some(pid),
+                    pid_start_time: if missing {
+                        None
+                    } else {
+                        signal::pid_start_time(pid).map(|value| value + 1.0)
+                    },
+                    last_progress: (trigger == Trigger::RunStale)
+                        .then(|| Utc::now() - ChDuration::hours(1)),
+                    deadline: (trigger == Trigger::RunDeadline)
+                        .then(|| Utc::now() - ChDuration::seconds(1)),
+                    ..Default::default()
+                };
+                let record = paths.active_runs_dir().join("owned-worker.json");
+                std::fs::write(&record, serde_json::to_vec(&run).unwrap()).unwrap();
+                let heartbeat = Heartbeat {
+                    pid: Some(if trigger == Trigger::OrchestratorReap {
+                        99_999_999
+                    } else {
+                        std::process::id() as i32
+                    }),
+                    ..Default::default()
+                };
+                std::fs::write(paths.heartbeat(), serde_json::to_vec(&heartbeat).unwrap()).unwrap();
+                if trigger == Trigger::KillRequest {
+                    std::fs::write(paths.kill_requests_dir().join("owned-worker"), b"{}").unwrap();
+                }
+                let log = Arc::new(WatchdogLog::new());
+                let (shutdown, _) = tokio::sync::broadcast::channel(1);
+                let task = start_run_watchdog(
+                    paths,
+                    Thresholds {
+                        run_deadline_kill_disabled: trigger != Trigger::RunDeadline,
+                        run_kill_grace: Duration::from_millis(20),
+                        grace: Duration::from_millis(20),
+                        ..Thresholds::default()
+                    },
+                    log.clone(),
+                    None,
+                    shutdown.clone(),
+                );
+                tokio::time::sleep(Duration::from_millis(60)).await;
+                let _ = shutdown.send(());
+                task.await.unwrap();
+                let alive = sleeper.0.try_wait().unwrap().is_none();
+                if !alive || !record.exists() || !log.is_empty() {
+                    failures.push(format!("{trigger:?}, missing token={missing}: alive={alive}, record retained={}, actions={}", record.exists(), log.snapshot().len()));
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "unverified owners were affected: {failures:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn simultaneous_deadlines_share_one_grace_period() {
+        use std::io::BufRead;
+        let root = tempfile::tempdir().unwrap();
+        let paths = WorkspacePaths::new(root.path().into());
+        std::fs::create_dir_all(paths.active_runs_dir()).unwrap();
+        let mut sleepers = Vec::new();
+        for index in 0..3 {
+            let mut child = std::process::Command::new("sh")
+                .args(["-c", "trap '' TERM; printf 'ready\\n'; exec sleep 60"])
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut ready = String::new();
+            std::io::BufReader::new(child.stdout.take().unwrap())
+                .read_line(&mut ready)
+                .unwrap();
+            assert_eq!(ready.trim(), "ready");
+            let sleeper = Sleeper(child);
+            let run = ActiveRun {
+                run_id: format!("worker-{index}"),
+                pid: Some(sleeper.pid()),
+                pid_start_time: signal::pid_start_time(sleeper.pid()),
+                deadline: Some(Utc::now() - ChDuration::seconds(1)),
+                ..Default::default()
+            };
+            std::fs::write(
+                paths.active_runs_dir().join(format!("worker-{index}.json")),
+                serde_json::to_vec(&run).unwrap(),
+            )
+            .unwrap();
+            if index == 0 {
+                let alias = ActiveRun {
+                    run_id: "same-owner".into(),
+                    ..run.clone()
+                };
+                std::fs::write(
+                    paths.active_runs_dir().join("same-owner.json"),
+                    serde_json::to_vec(&alias).unwrap(),
+                )
+                .unwrap();
+            }
+            sleepers.push(sleeper);
+        }
+        let log = Arc::new(WatchdogLog::new());
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let task = start_run_watchdog(
+            paths,
+            Thresholds {
+                run_kill_grace: Duration::from_millis(300),
+                ..Thresholds::default()
+            },
+            log.clone(),
+            None,
+            shutdown.clone(),
+        );
+        let started = std::time::Instant::now();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while log.snapshot().len() < 3 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let elapsed = started.elapsed();
+        let _ = shutdown.send(());
+        task.await.unwrap();
+        assert!(
+            elapsed < Duration::from_millis(750),
+            "deadlines serialized: {elapsed:?}"
+        );
+        assert_eq!(
+            log.snapshot().len(),
+            3,
+            "one escalation per process identity"
+        );
+        assert!(sleepers
+            .iter()
+            .all(|sleeper| !signal::is_alive(sleeper.pid())));
+    }
 
     fn thresholds() -> Thresholds {
         Thresholds::default()
@@ -1561,6 +2177,7 @@ mod tests {
         let run = ActiveRun {
             run_id: "r1".into(),
             pid: Some(pid),
+            pid_start_time: signal::pid_start_time(pid),
             deadline: Some(now - ChDuration::seconds(1)),
             ..Default::default()
         };
@@ -1584,6 +2201,7 @@ mod tests {
         let run = ActiveRun {
             run_id: "r1".into(),
             pid: Some(pid),
+            pid_start_time: signal::pid_start_time(pid),
             // 10s past deadline, grace is 5s -> escalate to SIGKILL.
             deadline: Some(now - ChDuration::seconds(10)),
             ..Default::default()
@@ -1940,20 +2558,28 @@ mod tests {
 
     #[test]
     fn resolve_target_group_kills_the_workers_own_group() {
-        // The worker is its group's leader (pgid == pid): a group kill is
-        // selected, negating the whole group.
+        use std::os::unix::process::CommandExt;
+        let sleeper = Sleeper(
+            std::process::Command::new("sleep")
+                .arg("60")
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
+        let pid = sleeper.pid();
         let run = ActiveRun {
             run_id: "r1".into(),
-            pid: Some(4242),
-            pgid: Some(4242),
+            pid: Some(pid),
+            pgid: Some(pid),
+            pid_start_time: signal::pid_start_time(pid),
             ..Default::default()
         };
         assert_eq!(
-            resolve_kill_target(&run, 4242, &no_protected()),
+            resolve_kill_target(&run, pid, &no_protected()),
             KillTarget::Group {
-                pgid: 4242,
-                leader_pid: 4242,
-            },
+                pgid: pid,
+                leader_pid: pid
+            }
         );
     }
 
@@ -2041,6 +2667,7 @@ mod tests {
         let run = ActiveRun {
             run_id: "r1".into(),
             pid: Some(pid),
+            pid_start_time: signal::pid_start_time(pid),
             ..Default::default()
         };
         assert_eq!(decide_run_kill_request(&run, &no_protected()), Some(pid));
@@ -2258,7 +2885,7 @@ mod tests {
         assert_eq!(tracker.last_seq_change_at(), Some(start));
     }
 
-    // ---- reap_dead_orchestrator_runs (orphan reaping end-to-end) ----
+    // ---- Orphan enforcement through the running watchdog ----
 
     /// Build a `ztw-snap-*` ephemeral-snapshot tree under the SYSTEM temp dir
     /// (what the reap path's prefix guard checks against) and return
@@ -2302,10 +2929,8 @@ mod tests {
         std::fs::write(&run_file, serde_json::to_vec(&run).unwrap()).unwrap();
 
         let log = Arc::new(WatchdogLog::new());
-        reap_dead_orchestrator_runs(
+        await_orphan_cleanup(
             &paths,
-            std::slice::from_ref(&run),
-            &no_protected(),
             &Thresholds {
                 run_kill_grace: Duration::from_millis(200),
                 ..Thresholds::default()
@@ -2363,10 +2988,8 @@ mod tests {
         std::fs::write(&run_file, serde_json::to_vec(&run).unwrap()).unwrap();
 
         let log = Arc::new(WatchdogLog::new());
-        reap_dead_orchestrator_runs(
+        await_orphan_cleanup(
             &paths,
-            std::slice::from_ref(&run),
-            &no_protected(),
             &Thresholds {
                 run_kill_grace: Duration::from_millis(200),
                 ..Thresholds::default()
@@ -2406,15 +3029,7 @@ mod tests {
         std::fs::write(&run_file, serde_json::to_vec(&run).unwrap()).unwrap();
 
         let log = Arc::new(WatchdogLog::new());
-        reap_dead_orchestrator_runs(
-            &paths,
-            std::slice::from_ref(&run),
-            &no_protected(),
-            &thresholds(),
-            &log,
-            None,
-        )
-        .await;
+        await_orphan_cleanup(&paths, &thresholds(), &log, None).await;
 
         assert!(
             !run_file.exists(),
@@ -2448,10 +3063,8 @@ mod tests {
 
         let log = Arc::new(WatchdogLog::new());
         let ledger = Arc::new(AuditLedger::open(&tmp.path().join("super-runtime")));
-        reap_dead_orchestrator_runs(
+        await_orphan_cleanup(
             &paths,
-            std::slice::from_ref(&run),
-            &no_protected(),
             &Thresholds {
                 run_kill_grace: Duration::from_millis(200),
                 ..Thresholds::default()

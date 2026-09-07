@@ -62,6 +62,7 @@ from zicato.tournament.unit_cache import (
     record_unit_attempt,
 )
 from zicato.tournament.worker_transport import _runtime_state, _stamp_replicate_index
+from zicato.util.async_tasks import gather_owned
 
 log = logging.getLogger("zicato.tournament.runner")
 
@@ -353,7 +354,7 @@ async def _run_full_board_unit(
     # (uniform behaviour) but ``run_tournament`` overrides it to False so the
     # immutable champion is reused rather than re-run every round.
     effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
-    parent_result, child_result = await asyncio.gather(
+    parent_result, child_result = await gather_owned(
         _run_unit_cache_first(
             adapter=adapter,
             generation=parent_gen,
@@ -700,7 +701,7 @@ async def _run_board_units_full(
                 provenance=provenance,
             )
 
-    results = await asyncio.gather(
+    results = await gather_owned(
         *(_bounded(entry) for entry in board),
         return_exceptions=True,
     )
@@ -886,7 +887,7 @@ async def _run_board_units_full_budgeted(
                 if _record_skip(entry):
                     skipped += 1
             continue
-        results = await asyncio.gather(
+        results = await gather_owned(
             *(_bounded(entry) for entry in batch),
             return_exceptions=True,
         )
@@ -1006,7 +1007,7 @@ async def _run_board_units_fast(
                 provenance=provenance,
             )
 
-    results = await asyncio.gather(
+    results = await gather_owned(
         *(_bounded(entry) for entry in board),
         return_exceptions=True,
     )
@@ -1322,7 +1323,7 @@ async def _run_entry_replicate_chains(
                 results.append(await run_unit(entry, replicate_base + offset))
         return results
 
-    chains = await asyncio.gather(
+    chains = await gather_owned(
         *(_chain(position) for position in range(board_size)),
         return_exceptions=True,
     )

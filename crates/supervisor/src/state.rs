@@ -67,12 +67,18 @@ pub struct ActiveRun {
     pub run_id: String,
     #[serde(default)]
     pub pid: Option<i32>,
+    /// Process that created the worker, captured before spawning or reparenting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub producer_pid: Option<i32>,
+    /// Saved producer identity; absent identity cannot authorize orphan cleanup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub producer_start_time: Option<f64>,
     /// The worker process's start time (Linux `/proc/<pid>/stat` field 22),
     /// recorded by the worker when it writes this record. Paired with `pid`
     /// it defeats pid reuse: the watchdog only signals a pid whose start
     /// time still matches, so a recycled pid (the worker died and the kernel
     /// reissued its number to an unrelated process) is never mis-targeted.
-    /// Absent for legacy writers → the watchdog degrades to bare liveness.
+    /// Absent for legacy writers → the watchdog refuses signalling.
     /// Carried as `f64` to match the Python writer (which serializes the
     /// `/proc` tick count as a float, e.g. `116371304.0`); the values are
     /// integer-valued so equality comparison is exact.
@@ -91,9 +97,9 @@ pub struct ActiveRun {
     /// Absolute path to the run's ephemeral snapshot working copy (the
     /// `ztw-snap-*` temp directory the runner copytrees the code snapshot
     /// into for this run). Discarded by the runner on a clean run-end, but
-    /// orphaned if the orchestrator dies mid-run; recording it here lets the
-    /// supervisor GC the leftover `ztw-snap-*` tree after a confirmed
-    /// orchestrator death. `None` for a legacy record or a run that mounted
+    /// orphaned if its producer dies mid-run. The supervisor can remove the
+    /// leftover `ztw-snap-*` tree after confirmed producer death and worker
+    /// termination. `None` for a legacy record or a run that mounted
     /// no ephemeral snapshot.
     #[serde(default)]
     pub snapshot_path: Option<String>,

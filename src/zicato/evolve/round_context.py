@@ -38,6 +38,7 @@ from zicato.core.types import Experiment, Generation
 from zicato.evolve.ingest import _index_db_path
 from zicato.evolve.lifecycle_services import _beat
 from zicato.runtime.heartbeat import HeartbeatBeater
+from zicato.runtime.lock import WorkspaceLock
 from zicato.workspace import WorkspaceLayout, generation_ids
 
 if TYPE_CHECKING:
@@ -60,6 +61,7 @@ def _build_candidate_screen_runner(
     disable_drift: tuple[Any, ...],
     judge_only: bool,
     beater: HeartbeatBeater | None,
+    writer: WorkspaceLock | None = None,
 ) -> ScreenRunner | None:
     """Build this round's candidate-screen closure, or ``None`` when OFF.
 
@@ -94,6 +96,7 @@ def _build_candidate_screen_runner(
             phase=f"screening:r{round_index}",
         )
         return await run_candidate_screen(
+            writer=writer,
             candidates=list(candidates),
             adapter=adapter,
             parent_gen=parent_gen,

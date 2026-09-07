@@ -164,6 +164,7 @@ async def produce_candidate_batch(
             resume_experiment = resume_plan.resume_experiment
 
         attempt: CandidateAttempt = await produce_one(
+            writer=prepared.writer,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             parent_id=parent_id,

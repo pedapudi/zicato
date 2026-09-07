@@ -974,11 +974,9 @@ def test_the_dashboard_startup_skips_while_an_evolve_holds_the_lock(
     from zicato.runtime.lock import acquire_workspace_lock
 
     ws = _make_workspace(tmp_path)
-    acquire_workspace_lock(ws, "the-running-evolve")
-
-    _ensure_index_at_startup(_resolve_workspace(ws))
-
-    assert not (ws / "index.db").exists()
+    with acquire_workspace_lock(ws, "the-running-evolve"):
+        _ensure_index_at_startup(_resolve_workspace(ws))
+        assert not (ws / "index.db").exists()
 
 
 def test_the_dashboard_startup_skips_a_workspace_with_no_epochs(tmp_path: Path) -> None:

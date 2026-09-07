@@ -601,6 +601,7 @@ async def _close_field_round(
     first_challenger_id = candidates.first_challenger_id
     if field_round.field_size == 1:
         await _maybe_run_placebo_arm_gauntlet(
+            writer=field_round.prepared.writer,
             workspace_root=field_round.workspace_root,
             epoch_id=field_round.epoch_id,
             adapter=field_round.adapter,

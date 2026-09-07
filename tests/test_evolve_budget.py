@@ -78,7 +78,7 @@ def _install_mock_evolve_once(
             await asyncio.sleep(per_round_sleep)
         return _make_outcome(round_index, decision)
 
-    monkeypatch.setattr("zicato.evolve.round_entry.evolve_once", _mock_evolve_once)
+    monkeypatch.setattr("zicato.evolve.round_entry._evolve_once", _mock_evolve_once)
     # This suite replaces the round beneath the public loop and uses the
     # deliberately non-worker stub workspace from test_orchestrator.
     monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
@@ -128,7 +128,7 @@ def _install_clock_advancing_evolve_once(
         clock.advance(per_round_advance)
         return _make_outcome(round_index, decision)
 
-    monkeypatch.setattr("zicato.evolve.round_entry.evolve_once", _mock_evolve_once)
+    monkeypatch.setattr("zicato.evolve.round_entry._evolve_once", _mock_evolve_once)
     monkeypatch.setattr("zicato.evolve.loop.time.monotonic", clock.monotonic)
     monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
@@ -139,6 +139,36 @@ async def _target_call_llm(system: str, user: str, model: str) -> str:
 
 async def _aux_call_llm(system: str, user: str, model: str) -> str:
     return "aux-output"
+
+
+def test_operation_timeout_is_not_invocation_budget_exhaustion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    _install_mock_evolve_once(monkeypatch, per_round_sleep=0)
+
+    async def timed_out_operation(**_: Any) -> EvolveRoundOutcome:
+        raise TimeoutError("measurement transport timed out")
+
+    monkeypatch.setattr("zicato.evolve.round_entry._evolve_once", timed_out_operation)
+    stop_reason: list[str] = []
+    with pytest.raises(TimeoutError, match="measurement transport timed out"):
+        asyncio.run(
+            orch.evolve_n_rounds(
+                rounds=1,
+                workspace_root=workspace,
+                epoch_id=epoch_id,
+                target_call_llm=_target_call_llm,
+                evaluation_call_llm=_aux_call_llm,
+                max_wall_clock_seconds=3600,
+                stop_reason_out=stop_reason,
+            )
+        )
+    assert stop_reason == []
+    from zicato.runtime.lock import acquire_workspace_lock
+
+    with acquire_workspace_lock(workspace, "following-invocation"):
+        pass
 
 
 # ---------------------------------------------------------------------------

@@ -49,6 +49,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.proposer.external import ExternalProposerConfig
     from zicato.proposer.genealogy import GenealogyItem
     from zicato.proposer.recombine import RecombinationPair
+    from zicato.runtime.lock import WorkspaceLock
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 
@@ -84,6 +85,7 @@ class ProposerContext:
     max_retries: int = 2
     forbidden_ids: tuple[str, ...] = ()
     workspace_root: Path | None = None
+    writer: WorkspaceLock | None = None
     #: The PARENT generation's materialised snapshot — the tree this round is
     #: about to patch, resolved by the orchestrator through the generation
     #: store's path convention and threaded here so a tool-using proposer

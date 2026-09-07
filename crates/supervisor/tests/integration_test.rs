@@ -817,6 +817,7 @@ fn write_active_run(
     let ar = serde_json::json!({
         "run_id": run_id,
         "pid": pid,
+        "pid_start_time": sigutil::pid_start_time(pid),
         "entry_id": "e1",
         "started_at": now - ChDuration::seconds(900),
         "last_progress": now, // fresh progress: deadline is the only trigger

@@ -25,6 +25,7 @@ implementation — a caller cannot tell the difference.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
@@ -315,6 +316,12 @@ class ActiveRun:
         ``None`` for a record that omits the field, and on a platform
         without process groups; the supervisor then falls back to the
         single-pid kill.
+    producer_pid, producer_start_time:
+        The process that launched this worker and its process start token,
+        captured before spawning. A stale global heartbeat does not make a
+        worker orphaned while its recorded producer is alive. Missing identity
+        remains unproven; readers must not infer it from the worker's current
+        parent because an orphan may have been reparented.
     snapshot_path:
         Absolute path-as-string to the run's ephemeral snapshot checkout
         (the ``ztw-snap-*`` temp directory the generation store
@@ -340,9 +347,29 @@ class ActiveRun:
     pid_start_time: float | None = None
     pgid: int | None = None
     snapshot_path: str | None = None
+    producer_pid: int | None = None
+    producer_start_time: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.producer_pid is not None and (
+            isinstance(self.producer_pid, bool)
+            or not isinstance(self.producer_pid, int)
+            or self.producer_pid <= 0
+        ):
+            raise ValueError("active run producer_pid must be a positive integer or null")
+        if self.producer_start_time is not None and (
+            self.producer_pid is None
+            or isinstance(self.producer_start_time, bool)
+            or not isinstance(self.producer_start_time, int | float)
+            or not math.isfinite(self.producer_start_time)
+            or self.producer_start_time < 0
+        ):
+            raise ValueError(
+                "active run producer_start_time requires a producer PID and a finite token"
+            )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "run_id": self.run_id,
             "pid": self.pid,
             "pid_start_time": self.pid_start_time,
@@ -357,6 +384,11 @@ class ActiveRun:
             "generation_id": self.generation_id,
             "epoch_id": self.epoch_id,
         }
+        if self.producer_pid is not None:
+            payload.update(
+                producer_pid=self.producer_pid, producer_start_time=self.producer_start_time
+            )
+        return payload
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ActiveRun:
@@ -377,6 +409,8 @@ class ActiveRun:
             pid_start_time=float(raw_start) if raw_start is not None else None,
             pgid=int(raw_pgid) if raw_pgid is not None else None,
             snapshot_path=str(raw_snapshot) if raw_snapshot is not None else None,
+            producer_pid=d.get("producer_pid"),
+            producer_start_time=d.get("producer_start_time"),
         )
 
 
@@ -408,19 +442,33 @@ def write_active_run(workspace_root: Path, run: ActiveRun) -> None:
     backend.write_json(active_run_key(run.run_id), run.to_dict())
 
 
-def remove_active_run(workspace_root: Path, run_id: str) -> None:
-    """Delete one run's state file. Idempotent if already gone."""
-    workspace_backend(workspace_root, start=False).delete(active_run_key(run_id))
+def remove_active_run(
+    workspace_root: Path, run_id: str, *, expected_owner: ActiveRun | None = None
+) -> None:
+    """Remove a run record, optionally requiring its original process owner.
+
+    Proposal attempts have unique keys. The comparison also refuses delayed
+    cleanup if a different process record was written at the same key.
+    """
+    backend = workspace_backend(workspace_root, start=False)
+    key = active_run_key(run_id)
+    if expected_owner is not None:
+        current = backend.read_json(key)
+        if current is None or (current.get("pid"), current.get("pid_start_time")) != (
+            expected_owner.pid,
+            expected_owner.pid_start_time,
+        ):
+            return
+    backend.delete(key)
 
 
 def request_worker_kill(workspace_root: Path, run_id: str) -> None:
     """Ask the supervisor to escalate-kill a run's worker (parent→supervisor).
 
-    Writes a ``control/kill_requests/{run_id}`` marker. The Rust
-    supervisor — the single SIGTERM→grace→SIGKILL escalator — reads it,
-    runs the escalation on the worker's pid, and clears the marker. The
-    Python parent therefore never signals the worker itself, so there is
-    no parent↔supervisor race over the same pid.
+    Writes a ``control/kill_requests/{run_id}`` marker. The supervisor
+    verifies the recorded process identity, terminates its owned group,
+    and clears the marker after confirmation. The parent may use a bounded
+    identity-checked fallback if delegated termination remains unconfirmed.
 
     Best-effort and idempotent: re-requesting an already-pending kill
     just rewrites the same marker. The payload carries the run id and a
@@ -436,7 +484,7 @@ def request_worker_kill(workspace_root: Path, run_id: str) -> None:
 def clear_worker_kill_request(workspace_root: Path, run_id: str) -> None:
     """Remove a run's kill-request marker. Idempotent if already gone.
 
-    The supervisor clears the marker once it has escalated; the parent
+    The supervisor clears the marker after confirmed termination; the parent
     also clears it on cleanup so a marker never outlives its run (a
     recycled run id must not inherit a stale request).
     """

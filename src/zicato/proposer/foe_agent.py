@@ -32,10 +32,11 @@ import logging
 import os
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 import foe
 
@@ -45,6 +46,7 @@ from zicato.core.types import (
     MutationPoint,
     ProposerSpec,
 )
+from zicato.proposer.episode_process import EpisodeProcess
 from zicato.proposer.foe_config import (
     FoeProposerConfig,
     ProposerConfigError,
@@ -70,13 +72,9 @@ from zicato.proposer.structured import ExperimentParseError, parse_experiment_js
 if TYPE_CHECKING:  # pragma: no cover - typing-only imports
     from zicato.proposer.agent import ProposerContext
     from zicato.proposer.external import ExternalProposerConfig
+    from zicato.runtime.state import ActiveRun
 
 log = logging.getLogger("zicato.proposer.foe")
-
-#: How long a cancelled episode gets to settle before the host stops
-#: waiting on it. Foe closes its own obligations on cancel, so this bounds
-#: the pathological case rather than the ordinary one.
-_CANCEL_GRACE_S = 30.0
 
 #: Fingerprints already read from a binary in this process, keyed by the
 #: contract document and the binary that answered for it. ``foe plan``
@@ -244,6 +242,21 @@ class FoeProposerAgent:
     # -- proposing --------------------------------------------------------
 
     async def propose(self, ctx: ProposerContext) -> Experiment:
+        from zicato.runtime.writer import workspace_writer  # noqa: PLC0415
+        from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
+
+        config = resolve_foe_config(self.config)
+        generation_root = _require_generation_root(ctx)
+        root = config.workspace_root or ctx.workspace_root or generation_root
+        async with workspace_writer(
+            root,
+            writer=ctx.writer,
+            instance_id="proposal",
+            cleanup=lambda: drain_worker_cleanup(root),
+        ) as writer:
+            return await self._propose(replace(ctx, writer=writer))
+
+    async def _propose(self, ctx: ProposerContext) -> Experiment:
         """Run one proposal episode and return the experiment it produced."""
         config = resolve_foe_config(self.config)
         generation_root = _require_generation_root(ctx)
@@ -288,52 +301,94 @@ class FoeProposerAgent:
         workspace_root: Path,
     ) -> foe.Outcome:
         """Launch the episode, police its deadline, and return its outcome."""
-        log_dir = _episode_log_dir(workspace_root, ctx)
-        try:
-            handle = await foe.start_config(
+        episode_id = uuid4().hex
+        slot = "single" if ctx.slot_index is None else str(ctx.slot_index)
+        run_id = f"propose:{ctx.epoch_id}:{ctx.new_generation_id}:slot-{slot}:{episode_id}"
+        log_dir = _episode_log_dir(workspace_root, ctx, episode_id)
+        process = EpisodeProcess()
+        owner: ActiveRun | None = None
+
+        def spawned(handle: foe.Handle) -> None:
+            nonlocal owner
+            process.attach(handle)
+            owner = _register_active_run(workspace_root, run_id, handle, config, ctx, log_dir)
+
+        launch = asyncio.create_task(
+            foe.start_config(
                 request.document(),
                 binary=config.binary,
                 log_dir=log_dir,
                 tools=request.host_tools,
+                start_new_session=True,
+                on_spawn=spawned,
             )
-        except (foe.BinaryError, foe.CompatibilityError, foe.ConfigError, ValueError) as exc:
-            raise ProposerError([f"the proposal episode could not start: {exc}"]) from exc
-
-        run_id = f"propose:{ctx.epoch_id}:{ctx.new_generation_id}"
-        _register_active_run(workspace_root, run_id, handle, config, ctx, log_dir)
-        invocation = await _episode_started(ctx, config)
+        )
         started_at = time.monotonic()
-        try:
-            deadline = config.budget.seconds
+        invocation: str | None = None
+        label = "failed"
+        primary_failure: BaseException | None = None
+
+        async def execute() -> foe.Outcome:
+            nonlocal invocation
+            invocation = await _episode_started(ctx, config)
+            return await process.wait(launch)
+
+        async def close() -> None:
             try:
-                outcome = (
-                    await handle.wait()
-                    if deadline is None
-                    else await asyncio.wait_for(handle.wait(), timeout=deadline)
-                )
+                await process.close(launch)
+            finally:
+                if owner is not None:
+                    _remove_active_run(workspace_root, owner)
+            await _episode_completed(ctx, invocation, started_at, label)
+            await _export_settled_episode(config, log_dir)
+
+        try:
+            try:
+                outcome = await asyncio.wait_for(execute(), timeout=config.budget.seconds)
             except TimeoutError:
-                # The budget Foe was given is the same one; reaching here
-                # means the process did not honor it, so the host that
-                # holds the pipe ends it. Foe closes its own obligations
-                # on cancel, so the log stays readable.
+                label = "timeout"
                 log.warning(
                     "proposal episode for %s outlived its %ss budget; cancelling pid %s",
                     ctx.new_generation_id,
-                    deadline,
-                    handle.pid,
+                    config.budget.seconds,
+                    None if process.handle is None else process.handle.pid,
                 )
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(handle.cancel(), timeout=_CANCEL_GRACE_S)
-                await _episode_completed(ctx, invocation, started_at, "timeout")
-                await _export_settled_episode(config, log_dir)
                 raise ProposerExhausted(
-                    "seconds", f"the episode outlived its {deadline}s budget"
+                    "seconds", f"the episode outlived its {config.budget.seconds}s budget"
                 ) from None
-            await _episode_completed(ctx, invocation, started_at, _outcome_label(outcome))
-            await _export_settled_episode(config, log_dir)
+            except (foe.BinaryError, foe.CompatibilityError, foe.ConfigError, ValueError) as exc:
+                raise ProposerError([f"the proposal episode could not start: {exc}"]) from exc
+            label = _outcome_label(outcome)
             return outcome
+        except BaseException as exc:
+            primary_failure = exc
+            if isinstance(exc, asyncio.CancelledError):
+                label = "cancelled"
+            raise
         finally:
-            _remove_active_run(workspace_root, run_id)
+            cleanup = asyncio.create_task(close())
+            cancelled: asyncio.CancelledError | None = None
+            while True:
+                try:
+                    await asyncio.shield(cleanup)
+                    break
+                except asyncio.CancelledError as exc:
+                    if cleanup.cancelled():
+                        if primary_failure is None:
+                            if cancelled is not None:
+                                raise cancelled from None
+                            raise
+                        break
+                    cancelled = cancelled or exc
+                except BaseException as exc:
+                    if primary_failure is None:
+                        if cancelled is not None:
+                            raise cancelled from exc
+                        raise
+                    log.warning("proposal cleanup failed: %s", exc)
+                    break
+            if primary_failure is None and cancelled is not None:
+                raise cancelled
 
     def _blocked_as(
         self,
@@ -574,12 +629,18 @@ def _require_generation_root(ctx: ProposerContext) -> Path:
     return ctx.generation_root
 
 
-def _episode_log_dir(workspace_root: Path, ctx: ProposerContext) -> Path:
-    """Where this episode's transcript lands, under the epoch's records."""
+def _episode_log_dir(workspace_root: Path, ctx: ProposerContext, episode_id: str) -> Path:
+    """Reserve a transcript directory without overwriting a prior attempt."""
     from zicato.workspace import WorkspaceLayout  # noqa: PLC0415 - avoids an import cycle
 
     layout = WorkspaceLayout.from_root(workspace_root)
-    return layout.proposal_episode_dir(ctx.epoch_id, ctx.new_generation_id, ctx.slot_index)
+    directory = layout.proposal_episode_dir(ctx.epoch_id, ctx.new_generation_id, ctx.slot_index)
+    try:
+        directory.mkdir(parents=True)
+    except FileExistsError:
+        directory = directory / "attempts" / episode_id
+        directory.mkdir(parents=True)
+    return directory
 
 
 def _register_active_run(
@@ -589,13 +650,14 @@ def _register_active_run(
     config: FoeProposerConfig,
     ctx: ProposerContext,
     log_dir: Path,
-) -> None:
-    """Record the episode's own pid so the watchdog can end it.
+) -> ActiveRun | None:
+    """Record the episode's owned process identity so the watchdog can end it.
 
     Best-effort by contract, like every other observability write on the
     propose path: a workspace whose runtime tree cannot be written still
     proposes, it just loses the supervisor's reach over this episode.
     """
+    from zicato.runtime.lock import pid_start_time  # noqa: PLC0415
     from zicato.runtime.state import ActiveRun, write_active_run  # noqa: PLC0415
     from zicato.util import best_effort  # noqa: PLC0415
 
@@ -608,22 +670,25 @@ def _register_active_run(
         pgid: int | None = None
         with contextlib.suppress(OSError, AttributeError):
             pgid = os.getpgid(handle.pid)
-        write_active_run(
-            workspace_root,
-            ActiveRun(
-                run_id=run_id,
-                pid=handle.pid,
-                started_at=started.isoformat(),
-                last_progress=started.isoformat(),
-                wall_clock_budget_seconds=int(seconds),
-                deadline=(started + timedelta(seconds=seconds)).isoformat(),
-                events_jsonl_path=str(log_dir / "episode.jsonl"),
-                entry_id="",
-                generation_id=ctx.new_generation_id,
-                epoch_id=ctx.epoch_id,
-                pgid=pgid,
-            ),
+        owner = ActiveRun(
+            run_id=run_id,
+            pid=handle.pid,
+            started_at=started.isoformat(),
+            last_progress=started.isoformat(),
+            wall_clock_budget_seconds=int(seconds),
+            deadline=(started + timedelta(seconds=seconds)).isoformat(),
+            events_jsonl_path=str(log_dir / "episode.jsonl"),
+            entry_id="",
+            generation_id=ctx.new_generation_id,
+            epoch_id=ctx.epoch_id,
+            pgid=handle.pid if pgid in {None, handle.pid} else None,
+            pid_start_time=pid_start_time(handle.pid),
+            producer_pid=os.getpid(),
+            producer_start_time=pid_start_time(os.getpid()),
         )
+        write_active_run(workspace_root, owner)
+        return owner
+    return None
 
 
 async def _export_settled_episode(config: FoeProposerConfig, log_dir: Path) -> None:
@@ -648,7 +713,8 @@ async def _export_settled_episode(config: FoeProposerConfig, log_dir: Path) -> N
         await write_episode_export(config.binary, log_dir)
 
 
-def _remove_active_run(workspace_root: Path, run_id: str) -> None:
+def _remove_active_run(workspace_root: Path, owner: ActiveRun) -> None:
+    from zicato.runtime.lock import group_has_live_members, is_pid_alive  # noqa: PLC0415
     from zicato.runtime.state import remove_active_run  # noqa: PLC0415
     from zicato.util import best_effort  # noqa: PLC0415
 
@@ -656,7 +722,10 @@ def _remove_active_run(workspace_root: Path, run_id: str) -> None:
         "proposal-episode active-run cleanup",
         on_error=lambda exc: log.debug("proposal-episode active-run cleanup skipped: %s", exc),
     ):
-        remove_active_run(workspace_root, run_id)
+        if not is_pid_alive(owner.pid) and (
+            owner.pgid is None or not group_has_live_members(owner.pgid)
+        ):
+            remove_active_run(workspace_root, owner.run_id, expected_owner=owner)
 
 
 __all__ = [

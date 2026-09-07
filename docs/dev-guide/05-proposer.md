@@ -171,17 +171,26 @@ One `propose()` is one Foe episode, in its own process:
    epoch's brief + its skills), the sanctioned tool list, the read grant
    (the snapshot) and the write grant (the copy), the budget, and the
    completion rule — plus the task, which is this round's evidence.
-4. `foe.start_config` launches the binary. The episode's own pid is
-   written to `active_runs` before its first model request, so the
-   supervisor watchdog can end a wedged proposal by the same escalation
-   it uses for a wedged tournament worker (§5.1.4).
-5. The host polices the wall-clock deadline it gave Foe. Reaching it
-   means the process did not honor its own budget, so the host that holds
-   the pipe cancels it and reports `ProposerExhausted("seconds")`.
+4. `foe.start_config` launches the binary in its own session. Its synchronous
+   `on_spawn` callback captures the handle and start token, then writes the
+   episode to `active_runs` before waiting for the startup handshake.
+   The supervisor can therefore terminate a stalled startup (§5.1.4).
+5. One wall-clock deadline covers startup and execution. Cancellation or a
+   missed deadline starts one shielded cleanup task. Cleanup requests host
+   cancellation, escalates the verified process group through termination and
+   kill signals, and joins the host after every live group member has stopped.
+   A deadline remains `ProposerExhausted("seconds")` after cleanup.
 6. `_experiment_from` turns the outcome into an experiment or into a
    refusal (§5.1.3), projecting the working copy onto the declared
    mutation points to get the patch set.
 7. The caller's post-apply hook (`ctx.validate_experiment`) runs last.
+
+The working copy and invocation writer remain held through repeated
+cancellation and unconfirmed termination. An unreadable live start token
+refuses signalling; cleanup retries while retaining the process owner and
+inputs on the original event loop. A descendant that survives its leader
+retains the recorded group identity. Host completion alone cannot release
+those inputs while a live group member remains.
 
 > ⚠️ TRAP — the projection reads a point back in the APPLIER's unit, not
 > the enumerator's. For a `.py` span those differ: the enumerator reports
@@ -816,6 +825,17 @@ Each record also carries `ts`, the lineage coordinates (`epoch_id`,
 > `sum(1 for r in read_proposer_inputs(ws, epoch) if r["role"] == ROLE_PROPOSAL)`
 > is what a round cost — the workspace's own account, which the recombination
 > cost-neutrality tests measure against.
+
+Each proposal launch has a unique active-run key containing the epoch,
+candidate, slate slot, and a random episode identifier. The host starts in its
+own session; its PID, process group, and start token are recorded together.
+Cleanup compares the saved owner with the active record and waits for the whole
+group to stop. One slot cannot remove another slot's record.
+
+The first episode uses the candidate or slot transcript directory. Repeated
+attempts use `attempts/{episode_id}` beneath that directory, preserving earlier
+logs. Transcript queries choose the most recently written attempt for a slot.
+The runtime identifier does not enter candidate hashes or selection semantics.
 
 The episode's own transcript is a second, richer artifact: Foe writes it to
 `epochs/{epoch_id}/episodes/{generation_id}[-{slot}]/episode.jsonl`, and it
@@ -2300,6 +2320,7 @@ Where to add (and what will catch) a regression, by concern:
 |---|---|
 | the episode: four endings, watchdog registration, holdout exclusion, budget | `tests/test_proposer_foe_agent.py` |
 | the working copy and the projection that reads it back | `tests/test_proposer_foe_scratch.py` |
+| startup, cancellation, deadlines, and descendant ownership | `tests/test_episode_process.py` with the isolated `tests/_proposal_cancellation_probe.py` controller |
 | the `proposer` block, and the refusals for a removed runtime | `tests/test_proposer_foe_config.py` |
 | what moves the proposer's contract fingerprint, and what does not | `tests/test_proposer_contract_identity.py` |
 | the outcome vocabulary and its round-log / scorecard readers | `tests/test_proposer_episode_outcomes.py` |

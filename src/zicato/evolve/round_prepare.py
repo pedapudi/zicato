@@ -17,6 +17,7 @@ from zicato.evolve.lifecycle_services import (
     _beat,
     _now_iso,
 )
+from zicato.runtime.lock import WorkspaceLock
 from zicato.util import best_effort
 
 if TYPE_CHECKING:
@@ -50,6 +51,7 @@ async def _maybe_calibrate_noise_floor(
     judge_only: bool,
     beater: HeartbeatBeater | None = None,
     round_index: int = 0,
+    writer: WorkspaceLock | None = None,
 ) -> None:
     """Run the opt-in A/A noise-floor calibration once per epoch.
 
@@ -108,6 +110,7 @@ async def _maybe_calibrate_noise_floor(
             on_error=lambda exc: log.warning("noise-floor calibration skipped: %s", exc),
         ):
             floor = await measure_noise_floor(
+                writer=writer,
                 adapter=adapter,
                 generation=parent_gen,
                 board=board,
@@ -155,6 +158,7 @@ async def _maybe_contract_preflight(
     judge_only: bool,
     beater: HeartbeatBeater | None = None,
     round_index: int = 0,
+    writer: WorkspaceLock | None = None,
 ) -> str | None:
     """Measure the contract pre-flight once per epoch; return the verdict.
 
@@ -303,6 +307,7 @@ async def _maybe_contract_preflight(
     try:
         with best_effort("contract pre-flight", on_error=_on_preflight_error):
             report, floor = await run_contract_preflight(
+                writer=writer,
                 adapter=adapter,
                 generation=parent_gen,
                 board=board,

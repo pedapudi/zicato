@@ -1,23 +1,8 @@
-"""The N-round evolve loop split out of :mod:`zicato.orchestrator`.
+"""Run multiple rounds under one validated workspace owner.
 
-:func:`evolve_n_rounds` calls :func:`zicato.evolve.round_entry.evolve_once` up to
-``rounds`` times, with the four loop circuit-breakers modelled as a small
-:class:`StopPolicy` set:
-
-* :class:`ConsecutiveRejectionPolicy` — stop after N rejected rounds in a row;
-* :class:`DegenerateHealthPolicy` — stop after N consecutive CRITICAL
-  loop-health findings;
-* :class:`WallClockBudgetPolicy` — the total wall-clock ceiling, enforced
-  both between rounds and (via :func:`asyncio.wait_for`) within a round.
-
-The policies are pure bookkeeping over the existing counters/thresholds;
-the loop drives them in the unchanged order and emits the unchanged log
-lines and symbolic stop-reason strings. This is a behaviour-preserving
-move — :func:`evolve_n_rounds` keeps its exact signature and is re-exported
-from :mod:`zicato.orchestrator`.
-
-Collaborators are imported from their owning phase modules. Tests patch those
-owners directly; the dispatcher is not a private seam registry.
+Rejection, loop-health and wall-clock policies stop further scheduling. The
+invocation deadline cancels cooperative round work; an operation's own timeout
+propagates without being relabelled as invocation-budget exhaustion.
 """
 
 from __future__ import annotations
@@ -30,9 +15,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from zicato.epoch.preflight import PreflightRefusedError
+from zicato.evolve.invocation import InvocationContext, validated_invocation
 from zicato.logging_stream import install_log_stream, set_log_context
 from zicato.runtime.heartbeat import HeartbeatBeater
-from zicato.runtime.lock import acquire_workspace_lock, release_workspace_lock
 from zicato.runtime.resume import (
     ResumePlan,
     discard_interrupted_generation,
@@ -425,80 +410,59 @@ async def evolve_n_rounds(
     max_wall_clock_seconds: int | None = None,
     stop_reason_out: list[str] | None = None,
 ) -> list[EvolveRoundOutcome]:
-    """Loop :func:`evolve_once` up to ``rounds`` times.
+    """Run rounds under one workspace owner and one pre-execution validation.
 
-    ``target_call_llm`` / ``evaluation_call_llm`` are forwarded to
-    :func:`evolve_once` unchanged; ``None`` (the default, and what
-    ``zicato evolve`` passes) means each role is resolved from the
-    workspace configuration.
+    An explicit epoch selects a frozen contract; otherwise contract drift is
+    resolved before the first round. Target and evaluation callables override
+    their configured roles. Rejection and health policies may stop scheduling.
 
-    Stops early on ``max_consecutive_rejections`` rejected rounds in a
-    row — that's a strong signal the proposer is stuck and the
-    operator probably wants to inspect the proposer brief / patterns
-    before spending more LLM calls. A successful promotion resets the
-    consecutive-rejection counter.
-
-    A second circuit breaker watches loop *health*: when
-    ``stop_on_degenerate_health`` is true (the default), the loop stops early
-    once :data:`_DEGENERATE_HEALTH_STOP_THRESHOLD` consecutive rounds report a
-    CRITICAL loop-health finding (e.g. degenerate scoring, where the tournament
-    cannot tell a real improvement from noise). Same shape as the
-    consecutive-rejection breaker: there is no point spending more LLM calls on
-    a loop that is producing no usable signal. A round whose health is not
-    CRITICAL resets the counter. Pass ``stop_on_degenerate_health=False`` to
-    opt out and run every requested round regardless of health.
-
-    A third early-exit is the **total wall-clock budget**: when
-    ``max_wall_clock_seconds`` is set (``None``, the default, leaves the
-    loop unbounded), the orchestrator records
-    a monotonic start time and enforces the ceiling two ways:
-
-    * **Between rounds** — before starting round N+1, if the elapsed
-      time has already reached the budget, the loop stops cleanly with
-      a logged message and returns the outcomes gathered so far, in the
-      same shape as the consecutive-reject breaker.
-    * **Within a round** — each round's work is wrapped in
-      :func:`asyncio.wait_for` with a timeout equal to the *remaining*
-      budget, so a single long round cannot blow the total. A round
-      that would exceed the ceiling is cancelled; it is recorded as an
-      aborted round (a synthetic :class:`EvolveRoundOutcome` carrying a
-      ``"wall_clock_budget"`` rejection reason) and the loop stops.
-
-    The total budget is enforced *in addition to* — not instead of —
-    each board entry's own ``wall_clock_budget_seconds``; both apply.
-    Note the within-round cancellation is a Layer-1 ``asyncio.wait_for``
-    guard (see ``docs/design/ROBUSTNESS.md``): it only pre-empts
-    *cooperative* async work. A round wedged in a blocking call or a
-    CPU-bound loop is not hard-killed here — that requires the
-    subprocess-worker boundary. This is the same contract the
-    per-entry budget relies on.
-
-    The mandatory workspace gate runs first, before auto-epoching or any
-    model call. Contract-hash auto-epoching then runs ONCE, before the round
-    loop: when ``epoch_id`` is ``None`` and ``auto_epoch`` is true, the
-    orchestrator resolves (and, if the contract drifted, auto-rolls) the epoch
-    via :func:`ensure_epoch_for_contract`. The resolved id is then pinned for
-    every round of this invocation so the loop never re-rolls mid-flight.
-    When ``epoch_id`` is passed explicitly, auto-rolling is skipped. The
-    workspace gate still verifies that the selected epoch matches its frozen
-    contract before any model call.
-
-    The list of :class:`EvolveRoundOutcome` returned has one entry per
-    round attempted (which may be fewer than ``rounds`` if any
-    early-stop fired).
-
-    ``stop_reason_out`` is an optional caller-supplied list the function
-    appends a single symbolic terminal-reason string to before
-    returning, so a caller (the CLI) can render a summary that
-    distinguishes the terminal states without re-deriving them from the
-    outcomes. One of: ``"completed"`` (all rounds ran),
-    ``"consecutive_rejections"``, ``"degenerate_health"``,
-    ``"wall_clock_budget_between_rounds"`` (the total budget was already
-    spent before the next round started), or
-    ``"wall_clock_budget_mid_round"`` (a round was cancelled because
-    finishing it would overrun the total budget). Callers that do not
-    pass the list see no behavioural change.
+    The optional wall-clock budget covers round execution. Only expiry of its
+    enclosing deadline records a budget-aborted outcome; operation timeouts
+    propagate. Worker termination remains the subprocess owner's responsibility.
+    The optional stop-reason list receives one reason on a normal return.
     """
+    if rounds <= 0:
+        if stop_reason_out is not None:
+            stop_reason_out.append("completed")
+        return []
+    async with validated_invocation(workspace_root, epoch_id, instance_id) as invocation:
+        return await _evolve_n_rounds(
+            invocation=invocation,
+            rounds=rounds,
+            epoch_id=epoch_id,
+            target_call_llm=target_call_llm,
+            evaluation_call_llm=evaluation_call_llm,
+            fast_mode=fast_mode,
+            max_consecutive_rejections=max_consecutive_rejections,
+            max_proposer_retries=max_proposer_retries,
+            auto_epoch=auto_epoch,
+            epoch_name=epoch_name,
+            stop_on_degenerate_health=stop_on_degenerate_health,
+            max_wall_clock_seconds=max_wall_clock_seconds,
+            stop_reason_out=stop_reason_out,
+        )
+
+
+async def _evolve_n_rounds(
+    *,
+    rounds: int,
+    invocation: InvocationContext,
+    epoch_id: str | None = None,
+    target_call_llm: CallLLM | None = None,
+    evaluation_call_llm: CallLLM | None = None,
+    fast_mode: bool = False,
+    max_consecutive_rejections: int = 3,
+    max_proposer_retries: int = 2,
+    auto_epoch: bool = True,
+    epoch_name: str | None = None,
+    stop_on_degenerate_health: bool = True,
+    max_wall_clock_seconds: int | None = None,
+    stop_reason_out: list[str] | None = None,
+) -> list[EvolveRoundOutcome]:
+    """Coordinate rounds while the public entry point retains ownership."""
+    writer = invocation.writer
+    workspace_root = writer.workspace_root
+    instance_id = writer.instance_id
     from zicato import workspace_loader  # noqa: PLC0415
     from zicato.evolve.dashboard_projection import _mark_run_terminal  # noqa: PLC0415
     from zicato.evolve.epoching import ensure_epoch_for_contract  # noqa: PLC0415
@@ -509,7 +473,7 @@ async def evolve_n_rounds(
         _resolve_or_launch_harmonograf,
     )
     from zicato.evolve.round_api import DEFERRED_INFRA_DECISION  # noqa: PLC0415
-    from zicato.evolve.round_entry import evolve_once  # noqa: PLC0415
+    from zicato.evolve.round_entry import _evolve_once  # noqa: PLC0415
     from zicato.runtime.control_consumer import (  # noqa: PLC0415
         block_while_paused,
         claim_rubric_replacement,
@@ -520,29 +484,6 @@ async def evolve_n_rounds(
     def _set_stop_reason(reason: str) -> None:
         if stop_reason_out is not None:
             stop_reason_out.append(reason)
-
-    if rounds <= 0:
-        _set_stop_reason("completed")
-        return []
-
-    # One of the two public spend boundaries (``evolve_once`` is the other,
-    # and gates itself the same way). Keeping the gate here rather than in a
-    # command-layer helper is what makes it unbypassable: a library caller
-    # reaches it without going through the CLI. It must precede
-    # auto-epoching, because resolving contract drift may call the evaluation
-    # model. Every round below is then handed ``workspace_checked=True``, so
-    # a multi-round invocation pays for the gate once.
-    # Imported per call rather than at module scope. Suites that drive this
-    # loop against a minimal fixture workspace patch
-    # ``zicato.check.require_workspace_valid``; hoisting this import would
-    # bind the function once and silently defeat every one of those patches.
-    from zicato.check import require_workspace_valid  # noqa: PLC0415
-
-    require_workspace_valid(
-        workspace_root,
-        epoch_id=epoch_id,
-        live_contract=epoch_id is None,
-    )
 
     # Resolve the two roles a round always needs. This is the spend
     # boundary, and auto-epoching below already calls the evaluation
@@ -566,14 +507,14 @@ async def evolve_n_rounds(
     # Installed here — the shared orchestrator entrypoint — so every
     # ``zicato.*`` ``log.*`` call for the whole loop is captured into
     # ``.zicato/logs/<stamp>-<pid>.jsonl`` with zero call-site changes.
-    # Acquired outside the try (like the lock below) and closed in the same
-    # ``finally``. Best-effort: a logging-setup failure never fails the run.
+    # Register release immediately so a later setup failure removes the handler.
     log_level = (
         workspace_loader.load_workspace_config(workspace_root)
         .get("runtime", {})
         .get("log_level", "INFO")
     )
     log_stream = install_log_stream(workspace_root, level=str(log_level))
+    invocation.resources.callback(log_stream.close)
     # Tag every orchestrator record with the pinned epoch for this
     # invocation (optional enrichment; the workers bind the full
     # epoch/generation/run context on their side).
@@ -606,59 +547,49 @@ async def evolve_n_rounds(
     # Workspace lock + heartbeat lifecycle. The lock keeps two concurrent
     # orchestrators from corrupting the same workspace; the beater writes
     # ``heartbeat.json`` so the supervisor binary can detect a wedge.
-    lock = acquire_workspace_lock(workspace_root, instance_id)
     _prepared_plan = ResumePlan()
-    try:
-        # Reconcile the open epoch under the workspace lock before contract
-        # drift can close it or choose its promoted head as a new baseline.
-        # A complete receipt is replayed; a receiptless field is discarded;
-        # and a resumable single challenger is retained unless a contract roll
-        # makes its cached evaluation incomparable with the new contract.
-        if epoch_id is None:
-            from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
+    # Reconcile the open epoch under the workspace lock before contract
+    # drift can close it or choose its promoted head as a new baseline.
+    # A complete receipt is replayed; a receiptless field is discarded;
+    # and a resumable single challenger is retained unless a contract roll
+    # makes its cached evaluation incomparable with the new contract.
+    if epoch_id is None:
+        from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
 
-            current_epoch = current_epoch_id(workspace_root)
-            if current_epoch is not None:
-                _prepared_plan = prepare_resume(workspace_root, current_epoch)
+        current_epoch = current_epoch_id(workspace_root)
+        if current_epoch is not None:
+            _prepared_plan = prepare_resume(workspace_root, current_epoch)
 
-            def discard_resume_before_roll(rolling_epoch: str) -> None:
-                nonlocal _prepared_plan
-                if not _prepared_plan.resumes_in_place:
-                    return
-                generation_id = _prepared_plan.resume_generation_id
-                experiment = _prepared_plan.resume_experiment
-                assert generation_id is not None and experiment is not None
-                discard_interrupted_generation(
-                    workspace_root,
-                    rolling_epoch,
-                    generation_id,
-                    round_index=experiment.round_index,
-                )
-                _prepared_plan = ResumePlan(
-                    discarded_generation_id=generation_id,
-                    classification="discard_unrecorded_field",
-                )
-
-            epoch_id = await ensure_epoch_for_contract(
+        def discard_resume_before_roll(rolling_epoch: str) -> None:
+            nonlocal _prepared_plan
+            if not _prepared_plan.resumes_in_place:
+                return
+            generation_id = _prepared_plan.resume_generation_id
+            experiment = _prepared_plan.resume_experiment
+            assert generation_id is not None and experiment is not None
+            discard_interrupted_generation(
                 workspace_root,
-                auto_epoch=auto_epoch,
-                aux_call_llm=evaluation_call_llm,
-                epoch_name=epoch_name,
-                before_contract_roll=discard_resume_before_roll,
+                rolling_epoch,
+                generation_id,
+                round_index=experiment.round_index,
             )
-            set_log_context(epoch_id=epoch_id)
-            if epoch_id != current_epoch:
-                _prepared_plan = prepare_resume(workspace_root, epoch_id)
-        else:
+            _prepared_plan = ResumePlan(
+                discarded_generation_id=generation_id,
+                classification="discard_unrecorded_field",
+            )
+
+        epoch_id = await ensure_epoch_for_contract(
+            workspace_root,
+            auto_epoch=auto_epoch,
+            aux_call_llm=evaluation_call_llm,
+            epoch_name=epoch_name,
+            before_contract_roll=discard_resume_before_roll,
+        )
+        set_log_context(epoch_id=epoch_id)
+        if epoch_id != current_epoch:
             _prepared_plan = prepare_resume(workspace_root, epoch_id)
-    except BaseException:
-        release_workspace_lock(lock)
-        with best_effort(
-            "operator-log stream close after epoch resolution failure",
-            on_error=lambda exc: log.debug("operator-log stream close raised: %s", exc),
-        ):
-            log_stream.close()
-        raise
+    else:
+        _prepared_plan = prepare_resume(workspace_root, epoch_id)
     # Conservative crash-resume reconciliation (RUNTIME.md §4, ROBUSTNESS.md
     # §2.6) — runs ONCE, right after the lock is held and before any new
     # work. It clears the stale runtime/ state of a prior dead evolve and,
@@ -695,28 +626,33 @@ async def evolve_n_rounds(
         on_error=lambda exc: log.debug("progress-log clear skipped: %s", exc),
     ):
         progress_log.clear_log(workspace_root)
-    beater = HeartbeatBeater(workspace_root, instance_id, interval_s=2.0)
     # Resolve the harmonograf console URL once up front so the supervisor
     # / dashboard can surface a "watch live" link from the heartbeat for
     # the whole invocation. When no URL is configured (the default after
     # #202) the supervisor auto-launches an in-process harmonograf bound
-    # to a free localhost port; the handle is shut down in the finally
-    # block. The auto-launched URL is also pushed into ZICATO_HARMONOGRAF_URL
+    # to a free localhost port; invocation cleanup owns its shutdown.
+    # The auto-launched URL is also pushed into ZICATO_HARMONOGRAF_URL
     # so per-board-run workers attach their per-run sinks to the same
     # server without any further plumbing.
     harmonograf_url, harmonograf_handle = _resolve_or_launch_harmonograf(workspace_root)
+    invocation.resources.callback(harmonograf_handle.shutdown)
     # Meta-loop goldfive emitter. One per evolve invocation, stable
     # session id derived from the start ISO — the proposer + analyzer
     # call sites take it through ``evolve_once`` so their LLM calls
     # land as paired envelopes on the same harmonograf timeline workers
     # already feed. Constructed best-effort; a degraded install (no
     # goldfive proto stubs) returns an emitter with an empty sink list
-    # and every emit is a no-op. The emitter is closed in the same
-    # ``finally`` block that tears the harmonograf supervisor down.
+    # and every emit is a no-op. Invocation cleanup closes the emitter
+    # before shutting down its console server.
     evolve_started_at_iso = _now_iso()
     meta_loop_emitter = _build_meta_loop_emitter_safe(
         workspace_root, harmonograf_url, evolve_started_at_iso
     )
+    if meta_loop_emitter is not None:
+        invocation.resources.push_async_callback(meta_loop_emitter.close)
+    beater = HeartbeatBeater(workspace_root, instance_id, interval_s=2.0)
+    invocation.resources.push_async_callback(beater.stop)
+    invocation.resources.callback(_mark_run_terminal, workspace_root)
     # Bind the emitter as the ambient meta-loop emitter so the structural
     # spans (round / phase / matchup / worker / slate slot) can be opened by
     # deep call sites — the runner, the board-unit scheduler, the best-of-N
@@ -857,12 +793,11 @@ async def evolve_n_rounds(
                     kind=SPAN_ROUND,
                     meta={"round_index": _round_idx, "epoch_id": _epoch_id or ""},
                 ):
-                    return await evolve_once(
-                        workspace_root=workspace_root,
+                    return await _evolve_once(
+                        invocation=invocation,
                         epoch_id=_epoch_id,
                         target_call_llm=target_call_llm,
                         evaluation_call_llm=evaluation_call_llm,
-                        instance_id=instance_id,
                         fast_mode=fast_mode,
                         max_proposer_retries=max_proposer_retries,
                         beater=beater,
@@ -870,7 +805,6 @@ async def evolve_n_rounds(
                         total_rounds=rounds,
                         meta_loop_emitter=meta_loop_emitter,
                         resume_plan=_resume_plan,
-                        workspace_checked=True,
                     )
 
             try:
@@ -879,18 +813,13 @@ async def evolve_n_rounds(
                     outcome = await _run_round()
                 else:
                     remaining = budget.remaining_s()
+                    deadline = asyncio.timeout(remaining)
                     try:
-                        # Layer-1 asyncio.wait_for guard: a round that would
-                        # push past the total budget is cancelled. This only
-                        # pre-empts cooperative async work — a round wedged
-                        # in a blocking call or CPU-bound loop is not
-                        # hard-killed here; that needs the subprocess worker
-                        # boundary. Same caveat as the per-entry budget. See
-                        # docs/design/ROBUSTNESS.md.
-                        outcome = await asyncio.wait_for(_run_round(), timeout=remaining)
+                        async with deadline:
+                            outcome = await _run_round()
                     except TimeoutError:
-                        # asyncio.wait_for raises the builtin TimeoutError
-                        # (asyncio.TimeoutError is an alias of it on 3.11+).
+                        if not deadline.expired():
+                            raise
                         assert max_wall_clock_seconds is not None
                         from zicato.evolve.generation_phase import safe_parent  # noqa: PLC0415
 
@@ -1031,40 +960,8 @@ async def evolve_n_rounds(
         )
         beater.bump_now()
     finally:
-        # Defensive terminal-state write (issue: a dead/closed run reading
-        # LIVE). A cleanly-ended loop stamps a terminal heartbeat phase
-        # above; here we ALSO flip any lingering active-tournament envelope
-        # out of ``phase="running"`` so a normally-ended run never reads as a
-        # live tournament — even inside the heartbeat freshness window. Runs
-        # on BOTH the clean and the error/interrupt path (a SIGKILL still
-        # can't self-clean, which the frontend freshness gate covers).
-        _mark_run_terminal(workspace_root)
-        await beater.stop()
-        release_workspace_lock(lock)
-        # Remove the operator-log handler + restore the logger level. Best-
-        # effort: teardown failures never propagate out of the ``finally``.
-        with best_effort(
-            "operator-log stream close",
-            on_error=lambda exc: log.debug("operator-log stream close raised: %s", exc),
-        ):
-            log_stream.close()
-        # Flush + close the meta-loop emitter BEFORE the harmonograf
-        # supervisor is stopped — a sink that needs to push a final
-        # buffer to the gRPC console wants the server still up.
+        # Context tokens belong to this invoking task; resource cleanup runs
+        # in the invocation's shielded task after the binding is restored.
         reset_current_emitter(_emitter_token)
-        if meta_loop_emitter is not None:
-            with best_effort(
-                "meta-loop emitter close",
-                on_error=lambda exc: log.debug("meta-loop emitter close raised: %s", exc),
-            ):
-                await meta_loop_emitter.close()
-        # Shut down the auto-launched harmonograf server (no-op on the
-        # opt-out / failure-isolation paths). MUST run unconditionally
-        # so a crashed evolve still tears the embedded server down.
-        with best_effort(
-            "harmonograf shutdown",
-            on_error=lambda exc: log.debug("harmonograf shutdown raised: %s", exc),
-        ):
-            harmonograf_handle.shutdown()
     _set_stop_reason(stop_reason)
     return outcomes

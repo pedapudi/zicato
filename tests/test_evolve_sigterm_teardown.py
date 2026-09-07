@@ -89,7 +89,7 @@ async def _hang_mid_round(**_kwargs):
 
 
 import zicato.evolve.round_entry as round_entry
-round_entry.evolve_once = _hang_mid_round
+round_entry._evolve_once = _hang_mid_round
 
 ev.evolve_cmd.main(
     args=[

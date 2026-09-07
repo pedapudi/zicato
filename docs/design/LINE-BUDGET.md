@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 474,157 | +65,496 |
-| Production | 197,702 | 204,443 | +6,741 |
-| Production logic | 110,276 | 113,717 | +3,441 |
+| Total | 408,661 | 477,848 | +69,187 |
+| Production | 197,702 | 205,963 | +8,261 |
+| Production logic | 110,276 | 114,740 | +4,464 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -85,20 +85,20 @@ production-logic series per subsystem along a branch's first-parent commits.
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
 | src/zicato/dashboard | 70,434 | 37,605 | 26,200 | 30.3% |
-| src/zicato/query | 20,184 | 20,184 | 12,010 | 40.5% |
-| src/zicato/evolve | 12,662 | 12,662 | 7,533 | 40.5% |
-| src/zicato/reflection | 9,779 | 9,779 | 6,159 | 37.0% |
-| src/zicato/epoch | 12,287 | 12,287 | 5,704 | 53.6% |
-| src/zicato/proposer | 11,144 | 11,144 | 5,594 | 49.8% |
-| crates/supervisor | 14,560 | 12,130 | 5,498 | 54.7% |
-| src/zicato/tournament | 10,793 | 10,793 | 5,498 | 49.1% |
-| src/zicato/cli | 8,192 | 8,192 | 5,178 | 36.8% |
+| src/zicato/query | 20,193 | 20,193 | 12,017 | 40.5% |
+| src/zicato/evolve | 12,634 | 12,634 | 7,656 | 39.4% |
+| src/zicato/reflection | 9,805 | 9,805 | 6,183 | 36.9% |
+| src/zicato/proposer | 11,297 | 11,297 | 5,738 | 49.2% |
+| src/zicato/epoch | 12,312 | 12,312 | 5,727 | 53.5% |
+| crates/supervisor | 15,335 | 12,904 | 5,671 | 56.1% |
+| src/zicato/tournament | 10,917 | 10,917 | 5,644 | 48.3% |
+| src/zicato/cli | 8,206 | 8,206 | 5,189 | 36.8% |
 | src/zicato/analyzer | 7,618 | 7,618 | 4,780 | 37.3% |
 | src/zicato/selection | 5,271 | 5,271 | 2,837 | 46.2% |
 | src/zicato/index | 5,513 | 5,513 | 2,773 | 49.7% |
 | src/zicato/tui | 3,839 | 3,839 | 2,535 | 34.0% |
+| src/zicato/runtime | 5,425 | 5,425 | 2,501 | 53.9% |
 | src/zicato/telemetry | 4,709 | 4,709 | 2,249 | 52.2% |
-| src/zicato/runtime | 5,080 | 5,080 | 2,183 | 57.0% |
 | src/zicato/core | 6,228 | 6,228 | 1,970 | 68.4% |
 | src/zicato/contract_draft | 2,928 | 2,928 | 1,684 | 42.5% |
 | src/zicato/builder | 2,341 | 2,341 | 1,330 | 43.2% |
@@ -109,8 +109,8 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/adapters | 2,168 | 2,168 | 793 | 63.4% |
 | src/zicato/testing | 1,447 | 1,447 | 760 | 47.5% |
 | src/zicato/judge_runtime | 1,749 | 1,749 | 740 | 57.7% |
-| src/zicato/_tournament_worker.py | 1,262 | 1,262 | 633 | 49.8% |
-| src/zicato/workspace | 1,618 | 1,618 | 631 | 61.0% |
+| src/zicato/_tournament_worker.py | 1,264 | 1,264 | 635 | 49.8% |
+| src/zicato/workspace | 1,623 | 1,623 | 634 | 60.9% |
 | src/zicato/synthetic | 1,139 | 1,139 | 544 | 52.2% |
 | src/zicato/scoring | 1,388 | 1,388 | 464 | 66.6% |
 | src/zicato/patterns | 804 | 804 | 417 | 48.1% |
@@ -123,11 +123,11 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/runtime_factory.py | 421 | 421 | 210 | 50.1% |
 | hatch_build.py | 199 | 199 | 163 | 18.1% |
 | src/zicato/workspace_loader.py | 362 | 362 | 143 | 60.5% |
+| src/zicato/util | 253 | 253 | 103 | 59.3% |
 | src/zicato/integrations | 143 | 143 | 100 | 30.1% |
 | src/zicato/reasoning.py | 112 | 112 | 83 | 25.9% |
 | src/zicato/adapter_factory.py | 218 | 218 | 73 | 66.5% |
 | src/zicato/import_path.py | 155 | 155 | 60 | 61.3% |
-| src/zicato/util | 182 | 182 | 54 | 70.3% |
 | src/zicato/__init__.py | 74 | 74 | 48 | 35.1% |
 | src/zicato/orchestrator.py | 14 | 14 | 11 | 21.4% |
 | src/zicato/aux_timeout.py | 54 | 54 | 8 | 85.2% |
@@ -395,3 +395,7 @@ dropped rows named.
 | Shared verification and native build validation (total) | 472,446 | +1,711 | 474,157 | Issues #410 and #497–#499: one check registry, exhaustive import-role validation, safe native build reuse, and timing evidence. Remove copied check commands and repeated full-suite collection; focused command and build regressions establish replacement coverage. |
 | Shared verification and native build validation (production) | 204,430 | +13 | 204,443 | Issues #410 and #497: remove the report-to-query dependency and shared text duplication; add the build hook checks that reject stale, absent, or foreign-target supervisor executables. |
 | Shared verification and native build validation (production logic) | 113,621 | +96 | 113,717 | Issues #410 and #497: executable growth belongs to build-input validation and wheel publication. Application import and text ownership are consolidated; verified executable reuse reduces repeated build work. |
+
+| Process and workspace ownership (total) | 474,157 | +3,691 | 477,848 | Issues #476, #477 and #478: process-group identity, writer leases, and cancellation ownership, with real-process regressions for failed signals, repeated cancellation, reaping, and orphan cleanup. |
+| Process and workspace ownership (production) | 204,443 | +1,520 | 205,963 | Issues #476, #477 and #478: shared process termination and task joining replace independent cleanup paths; public execution carries an explicit writer through child termination and final publication. |
+| Process and workspace ownership (production logic) | 113,717 | +1,023 | 114,740 | Issues #476, #477 and #478: verified process identity, retained asynchronous ownership, and writer-serialized orphan cleanup. The partial invocation boundary for #484 also validates public calls under the same writer. |

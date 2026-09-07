@@ -324,7 +324,7 @@ def test_loop_backs_off_exponentially_and_reconciles(
             return _deferred_outcome(round_index)
         return _promoted_outcome(round_index)
 
-    monkeypatch.setattr(round_entry, "evolve_once", _mock_evolve_once)
+    monkeypatch.setattr(round_entry, "_evolve_once", _mock_evolve_once)
     monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
     sleeps: list[float] = []

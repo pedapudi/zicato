@@ -23,6 +23,7 @@ from zicato.evolve.round import (
     check_patch_manifest_and_forbidden,
 )
 from zicato.runtime.heartbeat import HeartbeatBeater
+from zicato.runtime.lock import WorkspaceLock
 from zicato.selection.diversity import jaccard
 from zicato.util import best_effort
 
@@ -129,6 +130,7 @@ async def _propose_child(
     screen_candidates: ScreenRunner | None = None,
     recombine_pair: Any = None,
     scratch_validator_factory: Any = None,
+    writer: WorkspaceLock | None = None,
 ) -> Experiment:
     """Build the :class:`ProposerContext` + propose ONE child of the champion.
 
@@ -172,6 +174,7 @@ async def _propose_child(
         async with meta_span("propose", kind=SPAN_PHASE, meta={"generation_id": next_id}):
             experiment = await proposer_agent.propose(
                 ProposerContext(
+                    writer=writer,
                     epoch_id=epoch_id,
                     parent_generation_id=parent_id,
                     new_generation_id=next_id,
@@ -260,6 +263,7 @@ async def _propose_and_apply_challenger(
     screen_candidates: ScreenRunner | None = None,
     recombine_pair: Any = None,
     resume_experiment: Experiment | None = None,
+    writer: WorkspaceLock | None = None,
 ) -> CandidateAttempt:
     """Propose + apply ONE challenger child of the champion.
 
@@ -387,6 +391,7 @@ async def _propose_and_apply_challenger(
     try:
         if experiment is None:
             experiment = await _propose_child(
+                writer=writer,
                 proposer_agent=proposer_agent,
                 epoch_id=epoch_id,
                 parent_id=parent_id,
@@ -566,6 +571,7 @@ async def _maybe_run_placebo_arm_gauntlet(
     fast_mode: bool,
     round_index: int,
     total_rounds: int,
+    writer: WorkspaceLock | None = None,
 ) -> None:
     """Run the opt-in placebo duel after a settled gauntlet round.
 
@@ -608,6 +614,7 @@ async def _maybe_run_placebo_arm_gauntlet(
             round_index=round_index,
         )
         result = await run_matchup(
+            writer=writer,
             adapter=adapter,
             left_gen=parent_gen,
             right_gen=challenger.generation,

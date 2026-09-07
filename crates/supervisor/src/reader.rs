@@ -38,6 +38,11 @@ impl WorkspacePaths {
         self.runtime.join("lock.json")
     }
 
+    /// Stable inode shared with the Python invocation writer lease.
+    pub fn lock_guard(&self) -> PathBuf {
+        self.runtime.join("lock.guard")
+    }
+
     pub fn active_runs_dir(&self) -> PathBuf {
         self.runtime.join("active_runs")
     }

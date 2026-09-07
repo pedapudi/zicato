@@ -7,7 +7,6 @@ which keeps it testable without a workspace or live harness.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -27,6 +26,7 @@ from zicato.selection.strategy import (
     SelectionDecision,
     SelectionStrategy,
 )
+from zicato.util.async_tasks import gather_owned
 
 #: ``request_field(n)`` resolves the champion contestant and applies ``n``
 #: challenger experiments into fresh snapshots, returning
@@ -246,7 +246,7 @@ async def evaluate_tournament(
         # dashboard's bracket/ladder/funnel exists live with winner=null.
         if on_progress is not None:
             on_progress(strategy)
-        results = await asyncio.gather(*(run_matchup(m) for m in batch))
+        results = await gather_owned(*(run_matchup(m) for m in batch))
         for result in results:
             strategy.record_result(result)
 

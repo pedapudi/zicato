@@ -20,19 +20,19 @@
 >
 > | ID | Name | Invariant |
 > |----|------|-----------|
-> | S1 | out-of-band supervision | The supervisor is a separate OS process that communicates with the orchestrator ONLY through atomic state files. It never shares memory, sockets, or locks with the loop it audits. |
+> | S1 | out-of-band supervision | The supervisor reads atomic runtime files in a separate process. Run enforcement remains independent of the orchestrator event loop. Orphan cleanup shares the stable kernel writer guard to exclude invocation takeover. |
 > | S2 | the never-kill-the-orchestrator rule | The supervisor never kills the orchestrator. `decide_heartbeat` has no `Kill` variant by construction; a deeply stale heartbeat escalates the WARNING, nothing else. |
-> | S3 | the vetted-pid-signalling rule | A worker pid is signalled only after the full vetting chain: `is_signalable_run_pid` (never pid ≤ 1, never self, never a protected pid) AND `is_same_process(pid, pid_start_time)` (pid-reuse immunity). |
+> | S3 | the vetted-pid-signalling rule | Signals require a safe process identifier and `verified_target`: a matching live identity, or a recorded group whose leader has exited while descendants retain the group. Unknown live identity and replacement leaders refuse signals. |
 > | S4 | the clamped-deadline rule | Orchestrator-written deadlines are untrusted: the enforced cutoff is clamped to `started_at + max_run_seconds`, so a run is always killable no matter what deadline was written. |
-> | S5 | the confirmed-death-before-reaping rule | Reaping (orphan workers + `ztw-snap-*` snapshots + state-file finalization) happens ONLY after a CONFIRMED orchestrator death — an identity check on the heartbeat pid, never a stale timestamp. |
+> | S5 | the confirmed-death-before-reaping rule | Orphan signalling and cleanup require a positively dead producer identity recorded by the run and the stable writer guard. Live, unknown or unreadable producer identity retains ownership. |
 > | S6 | the path-confined snapshot collection rule | Snapshot GC removes only a `ztw-snap-*` root that is a strict descendant of the system temp dir. Any other path is refused, however it got into the record. |
 > | S7 | the ledger-records-never-gates rule | The audit ledger is append-only, hash-chained, fsynced per append, torn-tail-repaired at open, and verified on startup. It records; it never gates. |
 > | S8 | the read-only version-pinned index rule | The supervisor opens `index.db` read-only, refuses a `user_version` that does not equal its pinned `EXPECTED_SCHEMA_VERSION`, and every index-backed endpoint degrades to an empty/`null` payload with a `note` rather than a 500. |
-> | S9 | the sole-worker-signaller rule | The supervisor is the SOLE signaller of worker pids on the escalation path. The Python parent requests kills by writing markers; it never signals workers itself. |
+> | S9 | coordinated worker termination | The parent delegates termination through a kill-request marker when a supervisor is reachable. A bounded fallback uses the captured process identity if delegation does not confirm group termination. |
 > | S10 | the read-only fail-open integrity check | Every integrity-notary check (diff containment, promotion gate, divergence) is read-only and fail-open on the supervisor side: it alarms on positive observed evidence and reports nothing when the attestation cannot be made. |
-> | S11 | the two-loops fixed-trigger-priority rule | The two loops (`heartbeat_loop`, `runs_loop`) are the only active code. Each is a pure-decision-function-plumbed `tokio::time::interval` select-loop; `runs_loop` applies its per-run triggers in a FIXED priority order (confirmed-death reap → kill-request → deadline → staleness), and every escalation is mirrored to the in-memory action ring AND — when configured — the ledger. |
+> | S11 | independent enforcement with fixed trigger priority | Run enforcement applies confirmed-death reap, kill-request, deadline, then staleness. Each verified owner has one concurrent escalation, recorded in the action ring and optional ledger. Integrity scans run separately. |
 > | S12 | the never-block-never-leak live surface rule | The live surface never blocks and never leaks write intermediates: the filesystem watcher drops `*.tmp` atomic-write intermediates and per-file-debounces; the SSE broker is a bounded broadcast that drops a slow client rather than blocking the watcher or other clients. |
-> | S13 | the no-cached-state-across-ticks rule | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, the integrity de-dup sets, the ledger tail) and the process-lifetime counters. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
+> | S13 | the no-cached-state-across-ticks rule | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, pending process owners and their guarded orphan snapshots, integrity de-dup sets, the ledger tail) and the process-lifetime counters. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
 > | S14 | the operational-not-analytical HTTP surface rule | The HTTP read surface is operational. Analytical tournament and health projections belong to `zicato.query`; the supervisor may inspect the index for alarms but never serves it as business truth. |
 
 ---
@@ -47,11 +47,10 @@ records is not a trustworthy witness to them. So the supervisor is:
   `zicato evolve` (with `--no-dashboard`, so it runs the watchdog loop and
   its `/statusz` surface only) or run standalone by the operator / `zicato
   dashboard`;
-- **a pure reader of atomic state files** — everything it knows comes from
-  the files chapter 07 defines, read fresh each tick through
-  `crates/supervisor/src/reader.rs`. Because every Python writer is atomic
-  (tmp→fsync→rename), the supervisor never needs a lock and never observes a
-  torn record — out-of-band supervision;
+- **a reader of atomic runtime files** — observations come from the files
+  chapter 07 defines, through `crates/supervisor/src/reader.rs`. Read operations
+  need no writer lock. Orphan mutation holds the stable kernel guard while
+  it inspects records, terminates verified groups and finalizes ownership;
 - **never a peer in memory** — no shared queues, no IPC channel, no port the
   orchestrator must answer on. The one "write channel" back toward the loop
   is the same control-file protocol everyone else uses (§8.5, §8.11).
@@ -70,13 +69,10 @@ depends on the orchestrator being responsive.
 ```
 — `crates/supervisor/src/watchdog.rs` (module docstring)
 
-A second structural rule keeps the code testable: **every decision is a pure
-function of `(state, now, thresholds)`** — `decide_heartbeat`, `decide_run`,
-`decide_run_deadline`, `decide_run_kill_request`, `decide_orchestrator_dead`,
-`resolve_kill_target`, `reapable_snapshot_root`, `check_row` — and the async
-loops just plumb them into `tokio::time::interval`. When you extend the
-supervisor, put the decision in a pure function with unit tests beside it and
-keep the loop body dumb.
+Timing and path policies are testable independently through `decide_heartbeat`,
+`decide_run`, `reapable_snapshot_root` and `check_row`. Signal decisions also
+inspect kernel process identity. Real process tests cover group termination,
+producer death, competing writer leases and asynchronous enforcement.
 
 ---
 
@@ -86,10 +82,10 @@ keep the loop body dumb.
 |---|---|
 | `main.rs` | CLI (`clap`) + wiring: spawns the two watchdog loops, the filesystem watcher, the HTTP server; opt-in flags for the integrity notary (`--diff-containment`, `--promotion-gate`, `--divergence-audit`, `--ledger-dir`); `--read-only`, `--no-dashboard`, `--daemon`. |
 | `lib.rs` | Library facade so the integration tests exercise the same code paths without spawning the binary. |
-| `watchdog.rs` | The two loops (`heartbeat_loop`, `runs_loop`) and every pure decision function + `Thresholds` + `SeqLiveness`. |
+| `watchdog.rs` | Heartbeat, run enforcement, and independent integrity scan tasks, with their decision functions and timing state. |
 | `reader.rs` | Reads runtime state files into snapshots; `WorkspacePaths` (the path map twin of `zicato.runtime.paths`); kill-request read/clear; lineage/active-run views. |
 | `state.rs` | Serde wire structs mirroring the Python dataclasses — every field `#[serde(default)]`. |
-| `signal.rs` | POSIX signal helpers: liveness, `pid_start_time`, `is_same_process`, pgid guards, SIGTERM→grace→SIGKILL escalation (`escalate_target`). |
+| `signal.rs` | POSIX signal helpers: liveness, `pid_start_time`, `verified_process`, pgid guards, and identity-checked escalation (`escalate_owned_target`). |
 | `reap.rs` | Confirmed-dead determination + prefix-guarded `ztw-snap-*` snapshot GC. |
 | `ledger.rs` | The tamper-evident hash-chained audit ledger + `TransitionObserver` (decision/contract-change observation). |
 | `sha256.rs` | Small dependency-free SHA-256 (ledger digests, diff-containment file hashes). |
@@ -108,10 +104,9 @@ keep the loop body dumb.
 | `action_log.rs` | In-memory ring buffer of recent watchdog escalations. |
 | `log.rs` | Tracing subscriber init. |
 
-Two loops own everything active: `heartbeat_loop` (orchestrator liveness,
-warn-only) and `runs_loop` (kill requests, confirmed-dead reaping, per-run
-deadline + staleness enforcement, and — when enabled — the three
-integrity-notary scans plus ledger transition observation).
+`heartbeat_loop` reports orchestrator liveness. `runs_loop` enforces kill
+requests, confirmed-death reaping, run deadlines, and staleness. Its separate
+`integrity_loop` observes ledger transitions and enabled integrity checks.
 
 ---
 
@@ -179,24 +174,26 @@ vetted-pid-signalling rule.
 supervisor's own pid, never a pid in the protected set (the orchestrator's
 heartbeat pid). Pure function; unit-tested without spawning anything.
 
-**Stage 2 — identity** (`signal::is_same_process(pid, pid_start_time)`): a
-pid number is not an identity — after the owner exits, the kernel can reissue
-the number to an unrelated process. The worker records its start-time token
-(Linux `/proc/<pid>/stat` field 22) into `active_runs/{run_id}.json` as
-`pid_start_time`; the supervisor re-reads the live token and signals only on
-a match. The Python twin is `zicato.runtime.lock.is_same_process` — the two
-implementations must keep agreeing on the token's meaning (both carry it as a
-float; the values are integer-valued so equality is exact — see the field
-comment in `crates/supervisor/src/state.rs`).
+**Process identity** (`signal::verified_target`): the worker records its start
+token from Linux `/proc/<pid>/stat` field 22. A live leader requires a matching
+readable token. After leader exit, surviving descendants retain the recorded
+group identifier, so the group can still be terminated. Missing recorded
+identity, unreadable live identity, and replacement leaders refuse signals.
+
+The Python token reader is `zicato.runtime.lock.pid_start_time`. Both languages
+serialize the integer tick count as a float. The conservative `is_same_process`
+helper remains appropriate for lock and read policies; it cannot authorize a
+signal because unknown identity counts as live there.
 
 **Group kills are guarded twice more.** Workers are spawned with
 `start_new_session`, so a worker leads its own process group (`pgid == pid`).
 `resolve_kill_target` upgrades a vetted single-pid kill to a group kill only
 when ALL of: the record carries a `pgid`; that pgid IS the vetted leader's
 own pid (a pgid ≠ pid is a foreign group nobody identity-matched — refuse);
-and `is_negatable_pgid` passes (pgid > 1, and neither the supervisor's nor the
-orchestrator's own group, computed by `protected_pgids`). Any failure falls
-back to the always-safe single-pid `KillTarget::Leader`.
+a present leader belongs to that group; and `is_negatable_pgid` passes (pgid > 1,
+and neither the supervisor's nor the orchestrator's group). A group remains
+selectable after its leader exits. Group-selection failure permits only a
+single-process target, which must still pass identity verification.
 
 **What goes wrong without it:** a recycled pid gets an innocent process
 SIGKILLed; a negated foreign pgid takes down the supervisor or the
@@ -237,7 +234,9 @@ pub fn effective_deadline(
 
 `decide_run_deadline` then walks: before the effective deadline → `None`;
 past it within `--run-kill-grace` → `Sigterm`; past it + grace with the
-worker still alive → `Sigkill`. Pid vetting applies before anything is sent; a worker that exits during the grace collapses back to `None`.
+owned target still active → `Sigkill`. The loop admits one escalation with a
+full grace after SIGTERM. A leader that exits while descendants remain does
+not collapse the target to `None`.
 
 The staleness trigger (`decide_run`) is separate and complementary: it fires
 on `last_progress` not advancing. Its kill threshold is `2 × the run's own
@@ -262,38 +261,29 @@ only process positioned to clean up, and the danger is cleaning up a
 confirmed-death-before-reaping rule and the path-confined snapshot collection
 rule (`crates/supervisor/src/reap.rs`):
 
-**Rail 1 — conservative dead determination.** `decide_orchestrator_dead`
-returns true ONLY when the heartbeat's pid fails the identity check (gone, or
-a recycled-pid impostor). Staleness is irrelevant; the unit test says it
-outright:
+**Producer identity and writer exclusion.** Every active run records the PID
+and start token of the process that created its worker. The runner captures
+these fields before spawning; workers do not infer the producer after
+reparenting. The proposal host records its caller directly.
 
-```rust
-    #[test]
-    fn alive_orchestrator_is_not_dead_even_when_stale() {
-        // The supervisor's own pid stands in for a live orchestrator. A
-        // wildly stale timestamp must NOT flip it to dead — only liveness
-        // matters. This is the slow-but-alive case we refuse to reap.
-        let me = std::process::id() as i32;
-        let hb = Heartbeat {
-            pid: Some(me),
-            // An absurdly old timestamp: staleness must not trigger a reap.
-            last_heartbeat: Some(Utc::now() - chrono::Duration::days(7)),
-            ..Default::default()
-        };
-        assert!(
-            !decide_orchestrator_dead(Some(&hb)),
-            "a live (if stale) orchestrator must never be declared dead",
-        );
-    }
-```
-— `crates/supervisor/src/reap.rs`
+`producer_is_dead` permits orphan handling only when that saved process is
+positively gone or a readable token proves its PID was reused. Missing, invalid
+or unreadable live provenance retains the record and its resources. A global
+heartbeat is diagnostic; it cannot authorize reaping another producer's work.
 
-On a confirmed death, `reap_dead_orchestrator_runs` (in `watchdog.rs`) does
-three things per active run: group-kill the worker through the same vetted
-escalation path the other triggers use; GC the leaked snapshot; and — unlike
-the alive-orchestrator triggers, which deliberately LEAVE state files for the
-orchestrator's own reaper — remove `active_runs/{run_id}.json`, because there
-is no orchestrator left to finalize it.
+`OrphanBatch` acquires `runtime/lock.guard` with nonblocking exclusive `flock`,
+then rereads active records under that lease. The guard uses the same stable
+inode as public evolve invocations and is never removed. The batch retains it
+through all admitted group escalations, snapshot cleanup and record deletion.
+A competing guarded invocation therefore cannot replace ownership between the
+final comparison and deletion. A live metadata-only writer also refuses orphan
+authority.
+
+Standalone tournament and proposal entry points acquire the same workspace
+writer ownership through child finalization. Calls nested in evolve reuse its
+validated context. These producers record their own process identity even
+without an orchestrator heartbeat. Their live identity refuses orphan handling;
+the shared guard also excludes publication during orphan finalization.
 
 **Rail 2 — the prefix-guarded rmtree.** `reapable_snapshot_root` is the only
 path by which the supervisor ever deletes a directory, and it refuses
@@ -402,7 +392,7 @@ watchdog-only mode).
 
 ## 8.8 Guarantee: the integrity notary — three read-only scans
 
-All three are per-tick scans in `runs_loop`, off by default, each behind its
+All three run in the independent `integrity_loop`, off by default, each behind its
 own flag, each writing its latest result into a shared findings store that
 `/statusz` surfaces and (when configured) the ledger records. All three obey
 the read-only fail-open integrity check: read-only, alarm-only, fail-open.
@@ -536,48 +526,19 @@ supervisor.
 
 ---
 
-## 8.10 The kill-request single-escalator handshake
+## 8.10 Delegated termination and bounded fallback
 
-The sole-worker-signaller rule has two halves, each in its own language, each
-pointing at the other:
+The parent writes `control/kill_requests/{run_id}` through
+`request_worker_kill` when a supervisor is reachable. It waits for confirmed
+group termination during the configured delegation window. If that window
+expires, the parent may use the captured identity for bounded fallback
+termination. Cleanup retains ownership and resources when exit is unconfirmed.
 
-**Python writes markers.** When the parent decides a worker must die (its
-own budget logic, an operator's dashboard kill), it writes
-`control/kill_requests/{run_id}` via
-`zicato.runtime.state.request_worker_kill` — and never signals the pid:
-
-```python
-    Writes a ``control/kill_requests/{run_id}`` marker. The Rust
-    supervisor — the single SIGTERM→grace→SIGKILL escalator — reads it,
-    runs the escalation on the worker's pid, and clears the marker. The
-    Python parent therefore never signals the worker itself, so there is
-    no parent↔supervisor race over the same pid.
-```
-— `src/zicato/runtime/state.py`, `request_worker_kill`
-
-**The supervisor is the sole signaller.** In `runs_loop`, the kill-request
-trigger is "Trigger 0" — highest priority among the per-run triggers (the
-parent already decided; no deadline/staleness condition applies).
-`decide_run_kill_request` applies the standard vetting (signalable and alive;
-identity via the escalation path); `resolve_kill_target` upgrades to
-a group kill when safe; `escalate_target` runs SIGTERM → grace → SIGKILL.
-The marker is cleared afterwards — and also when there is nothing safe to
-signal (absent/unsafe/dead pid), so a request is never retried forever:
-
-```rust
-                    if kill_requests.contains(&run.run_id) {
-                        match decide_run_kill_request(run, &protected) {
-                            None => {
-                                // No signalable pid (absent / unsafe / dead):
-                                // nothing to escalate, but the request is
-                                // satisfied — clear it so it isn't retried.
-                                reader::clear_kill_request(&paths, &run.run_id);
-                            }
-                            Some(pid) => {
-                                let target =
-                                    resolve_kill_target(run, pid, &protected_pgids);
-```
-— `crates/supervisor/src/watchdog.rs`, `runs_loop`
+`runs_loop` admits each request through the same verified identity check as
+deadlines, stale runs, and orphan cleanup. `resolve_kill_target` verifies group
+ownership, then `escalate_owned_target` sends SIGTERM and escalates to SIGKILL
+when group members survive the grace period. The marker clears only after
+termination is confirmed. An unverified request remains available for inspection.
 
 The Python side also clears its own marker on run cleanup
 (`clear_worker_kill_request`) so a marker never outlives its run — a
@@ -670,8 +631,8 @@ wrong here.
 - *Pure-decision unit tests* live in a `#[cfg(test)] mod tests` beside the
   function — `watchdog.rs`, `reap.rs`, `signal.rs`, `ledger.rs`,
   `promotion_gate.rs`, `index_db.rs` all follow this. New guarantees get
-  the same treatment: extract the decision, unit-test the matrix
-  (`no_heartbeat_is_not_dead`, `refuses_a_path_outside_the_temp_dir` are
+  the same treatment: test policy combinations and process ownership boundaries
+  (`producer_death_requires_valid_saved_identity`, `refuses_a_path_outside_the_temp_dir` are
   the tone to match — one named property per test).
 - *Route/end-to-end tests* live in `crates/supervisor/tests/integration_test.rs`
   (~2,500 lines): build a synthetic workspace with `make_workspace()`
@@ -796,15 +757,14 @@ uv run pytest tests/ -m "not node and not cascade_oc" -q  # nothing else regress
 
 ---
 
-## 8.14 Anatomy of the two loops
+## 8.14 Heartbeat, enforcement, and integrity tasks
 
-§8.2 named the two loops; this is how they actually run. `main.rs` wires them
-identically: build `WorkspacePaths` from the workspace root, build `Thresholds`
-from the CLI flags, spawn the filesystem watcher (100ms debounce), construct the
-shared trackers, open the ledger (if `--ledger-dir` was given) and stamp a
-`SupervisorStart` record, then `tokio::spawn` each loop on the shared `--interval`
-tick. Both loops select on a broadcast shutdown channel so a clean exit stops
-them together.
+`main.rs` starts the heartbeat and run-enforcement loops. Run enforcement
+starts the independent integrity task. Initialization constructs workspace paths,
+thresholds, the filesystem watcher, shared trackers and the optional ledger.
+It records supervisor startup, then spawns the polling loops at `--interval`.
+A broadcast channel stops polling, and run enforcement finishes admitted
+escalations before returning.
 
 ```rust
     let seq_liveness = Arc::new(std::sync::Mutex::new(watchdog::SeqLiveness::new()));
@@ -824,7 +784,7 @@ them together.
 
 The `SeqLiveness` tracker is a *shared* `Arc<Mutex>`: `heartbeat_loop` advances it
 (the only writer) and `/statusz` reads it without advancing, so both agree on the
-last seq-change age, under the two-loops fixed-trigger-priority rule. This is
+last seq-change age, under the fixed trigger priority rule. This is
 the structural half of the seq-first liveness
 of §8.3.
 
@@ -857,53 +817,29 @@ adding a kill would have to
 add a `HeartbeatAction` variant first, which is the diff §8.3's `⛔ NEVER`
 tells you to reject.
 
-### 8.14.2 `runs_loop` — the fixed trigger priority
+### 8.14.2 `runs_loop` — independent process deadlines
 
-Each tick, `runs_loop` first runs the enabled integrity scans (ledger transition
-observation, diff-containment, promotion-gate, divergence — §8.7/§8.8), computes
-the protected pid set (the heartbeat pid) and protected pgid set (its own +
-the orchestrator's groups), reads the pending kill-requests, reads the active
-runs, and then applies FOUR triggers in strict priority order:
+Each tick rereads the heartbeat, protected process groups, kill requests, and
+active records. It applies these triggers in order:
 
-| Priority | Trigger | Fires when | State file |
-|---|---|---|---|
-| −1 (highest) | **confirmed orchestrator death** | `decide_orchestrator_dead` (pid identity fails; a stale timestamp does not count) AND runs exist | REMOVED (no orchestrator left to finalize) |
-| 0 | **kill-request** | the parent wrote `control/kill_requests/{run_id}` | LEFT for the orchestrator reaper; the marker is cleared |
-| 1 | **wall-clock deadline** | `decide_run_deadline` past the clamped `effective_deadline` | LEFT for the orchestrator reaper |
-| 2 | **staleness** | `decide_run` — `last_progress` not advancing past the run's own `2×budget` | REMOVED (so it is not re-escalated) |
+| Trigger | Condition | Cleanup owner |
+|---|---|---|
+| Confirmed producer death | The run's producer identity is gone and the writer guard is held | Supervisor, after group termination and an owner comparison under that guard |
+| Kill request | The parent wrote a marker for the run | Parent; supervisor clears the marker after confirmed termination |
+| Deadline | The clamped deadline expired | Parent |
+| Staleness | Progress exceeded the run's stale threshold | Parent |
 
-The ordering is not cosmetic. Trigger −1 `continue`s the whole tick (the
-orchestrator is gone; the per-run triggers are moot), and Trigger 0 `continue`s
-the per-run loop iteration (the parent already decided; do not also apply the
-deadline/staleness thresholds). The confirmed-death reaper does three things per
-run — the same vetted escalation the live triggers use, then the snapshot GC,
-then the state-file finalization the dead orchestrator cannot do:
+A map of `(pid, start token)` identities prevents duplicate pending escalation.
+Each orphan owner retains a shared reference to its guarded batch snapshot,
+including an owner whose ordinary escalation was already pending when its
+producer died. `FuturesUnordered` advances grace periods independently. Shutdown
+finishes admitted escalations and finalization before dropping their leases.
+If the guard is unavailable, requested, deadline and stale-run enforcement
+continue without orphan authority.
 
-```rust
-        // 1. Group-kill the orphaned worker, when there is a live, vetted pid.
-        if let Some(pid) = decide_run_kill_request(run, &protected) {
-            let target = resolve_kill_target(run, pid, protected_pgids);
-            ...
-            let out = escalate_target(target, thresholds.run_kill_grace).await;
-            record_action(log, ledger, Action { ..., trigger: Trigger::OrchestratorReap, ... });
-        }
-        // 2. GC the leaked ztw-snap-* ephemeral snapshot (prefix-guarded).
-        reap::reap_orphaned_snapshot(run);
-        // 3. Finalize the state file the dead orchestrator's reaper can no longer remove.
-        let run_file = paths.active_runs_dir().join(format!("{}.json", run.run_id));
-        ... std::fs::remove_file(&run_file) ...
-```
-— `crates/supervisor/src/watchdog.rs`, `reap_dead_orchestrator_runs` (abridged)
-
-> ⚠️ TRAP — the "leave the state file vs remove it" distinction is load-bearing
-> and easy to get backwards. The alive-orchestrator triggers (kill-request,
-> deadline) LEAVE `active_runs/{run_id}.json` because the orchestrator's own
-> reaper owns that lifecycle (it detects the dead worker, cleans up, and records
-> the run aborted — 06-tournament-and-selection.md §"The abort-cause decision
-> tree"). The staleness and confirmed-death paths REMOVE it, because leaving it
-> would make the supervisor re-escalate the same run every tick (staleness) or
-> leave a phantom active run behind a dead orchestrator (death). If you add a
-> trigger, decide its state-file ownership explicitly.
+`integrity_loop` runs transition observation and enabled integrity scans in a
+separate task. It uses `spawn_blocking` for filesystem and ledger work, so a slow
+scan cannot occupy the run deadline loop.
 
 ### 8.14.3 The two graces, and `record_action` mirroring
 
@@ -920,14 +856,11 @@ tamper-evident audit trail (§8.7, §8.19).
 
 ### 8.14.4 The integrity-scan de-dup sets
 
-`runs_loop` carries three `HashSet`s across ticks so a STANDING violation alarms
-ONCE rather than every tick: `quarantined` (diff-containment, keyed by `(epoch, gen)`),
-`gate_flagged` (promotion-gate, same key), and `divergence_seen` (keyed by
-`(code, gen)`), plus the stateful `TransitionObserver` (§8.17). These are the
-ONLY state the loop keeps across ticks besides the ledger tail — everything else
-is re-read fresh each tick, under the no-cached-state-across-ticks rule. A new
-integrity scan you add must carry its own
-de-dup set the same way, or it will re-alarm on a steady-state condition forever.
+`integrity_loop` retains three sets to report an unchanged violation once:
+diff-containment findings keyed by epoch and generation, promotion-gate findings
+with the same key, and divergence findings keyed by code and generation. It also
+retains `TransitionObserver`. Each scan returns this state to the next scan;
+run enforcement has its own pending-owner set.
 
 ---
 
@@ -998,41 +931,24 @@ JSON float (`116371304.0`) — integer-valued, so equality is exact (the
 `state.rs` field comment and 07-runtime-and-durability.md §7.6.2 both
 pin this).
 
-`is_same_process(pid, expected_start_time)` is the composed check: not alive →
-`false`; alive with no recorded time → fall back to bare liveness (`true`); alive
-with an unreadable current time → `true` (cannot *disprove* identity, so do not
-manufacture a mismatch); alive with both known → `true` iff equal. This
-conservative bias is deliberate — the supervisor would rather fail to reap than
-kill an innocent recycled-pid process.
+`is_same_process` treats missing identity as live for conservative read policies.
+`verified_process` requires matching saved and live tokens. `verified_target`
+also permits an owned group after its leader exits; a live leader with unreadable
+identity cannot authorize termination.
 
-### 8.16.2 `escalate_target` — the SIGTERM→grace→SIGKILL state machine
+### 8.16.2 Verified group escalation
 
-```rust
-pub async fn escalate_target(target: KillTarget, grace: Duration) -> EscalationOutcome {
-    let leader = target.leader_pid();
-    if !is_alive(leader) {
-        return EscalationOutcome::AlreadyGone;
-    }
-    if let Err(e) = target.send_sigterm() { ...; return EscalationOutcome::Failed; }
-    let poll_interval = Duration::from_millis(100);
-    let mut elapsed = Duration::ZERO;
-    while elapsed < grace {
-        tokio::time::sleep(poll_interval).await;
-        elapsed += poll_interval;
-        if !is_alive(leader) { return EscalationOutcome::TerminatedGracefully; }
-    }
-    if !is_alive(leader) { return EscalationOutcome::TerminatedGracefully; }
-    match target.send_sigkill() { Ok(_) => EscalationOutcome::KilledForcefully, Err(_) => ... }
-}
-```
-— `crates/supervisor/src/signal.rs`, `escalate_target` (abridged)
+`escalate_owned_target` checks the captured identity and group membership before
+SIGTERM. It waits up to the grace period for every group member to stop, then
+rechecks identity before sending SIGKILL to any survivors. Leader exit alone does not finish group escalation: surviving
+members retain the group id. A reused leader with a different token invalidates
+ownership before another signal is sent.
 
-The four `EscalationOutcome` values (`AlreadyGone`, `TerminatedGracefully`,
-`KilledForcefully`, `Failed`) are what `record_action` stamps into the ledger and
-the ring. The whole machine tracks the group LEADER pid for liveness even in the
-group case: `KillTarget::Group { pgid, leader_pid }` sends `killpg(-pgid, …)` to
-the whole group but polls `leader_pid` for exit — "the group is considered gone
-once its leader exits", exactly like a single-pid kill.
+The final confirmation also has a bounded wait. `AlreadyGone`,
+`TerminatedGracefully`, and `KilledForcefully` describe confirmed termination.
+`Failed` retains active ownership and resources. Linux zombies count as stopped
+because they cannot execute code or use the checkout; their parent still owns
+reaping them.
 
 ### 8.16.3 The group-kill guards, again from the primitive side
 
@@ -1050,17 +966,17 @@ pub fn is_negatable_pgid(pgid: i32, protected: &std::collections::HashSet<i32>) 
 — `crates/supervisor/src/signal.rs`, `is_negatable_pgid`
 
 `resolve_kill_target` (in `watchdog.rs`) composes it with the pgid-equals-leader
-check (§8.4) and falls back to `KillTarget::Leader` — the always-safe single-pid
-kill — on any failure. `pgid <= 1` is the catastrophic case the guard closes:
+check (§8.4) and falls back to `KillTarget::Leader` on any failure. That
+single-process target must still pass `verified_target`. `pgid <= 1` is the catastrophic case the guard closes:
 `killpg(0, …)` means "my own group" and `killpg(1, …)` is init's; either would
 signal the supervisor or the whole system.
 
 > ⛔ NEVER call `send_sigterm_group` / `send_sigkill_group` (or construct a
 > `KillTarget::Group`) without going through `resolve_kill_target`. The group
 > primitives explicitly "do not re-check" the vetting — they trust the caller
-> vetted the pgid through `is_negatable_pgid` AND confirmed the leader is alive
-> and identity-matched. A raw group send is how you turn a stray record into a
-> system-wide SIGKILL.
+> vetted the pgid through `is_negatable_pgid` and verified ownership through
+> `verified_target`. A recorded group can outlive its leader; an unknown live
+> identity cannot authorize a group signal.
 
 ---
 

@@ -28,3 +28,6 @@ pub mod static_assets;
 pub mod statusz;
 pub mod watchdog;
 pub mod watcher;
+
+#[cfg(test)]
+mod test_process_group;
