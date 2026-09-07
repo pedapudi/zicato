@@ -57,7 +57,7 @@ rating, and how a Bradley–Terry paired-comparison model should be used.
   §4's first two recommendations.
 - **Diff-complexity regularization ships** (`src/zicato/scoring/diff_complexity.py`)
   and **the random-baseline placebo arm ships** as the opt-in
-  `overfitting.random_baseline_every_n`. Those are two of §6's items, and
+  `experimental.random_baseline_every_n`. Those are two of §6's items, and
   every documentation-reconciliation item §6 lists has since been applied.
 - **Multi-challenger fields with holdout confirmation ship**
   (`evolve_field_round` and `confirm_crowning_holdout` in
@@ -471,7 +471,7 @@ lacks. Five rules govern its use in zicato:
 
 > **Partly since built.** Diff-complexity regularization ships as
 > `src/zicato/scoring/diff_complexity.py`, and the random-baseline check ships
-> as the opt-in placebo arm `overfitting.random_baseline_every_n`. Every
+> as the opt-in placebo arm `experimental.random_baseline_every_n`. Every
 > documentation-reconciliation item listed below has been applied.
 
 - **Diff-complexity regularization** (OVERFITTING.md #4, "BUILD — cheap"): a

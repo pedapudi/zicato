@@ -19,7 +19,12 @@ from goldfive import DriftSeverity
 
 from zicato.core.board import Expectation, ExpectationKind, JudgeMode, JudgeSpec
 from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
-from zicato.core.scoring_config import OverfittingConfig, ProposerQualityConfig, ScoringWeights
+from zicato.core.scoring_config import (
+    ExperimentalConfig,
+    OverfittingConfig,
+    ProposerQualityConfig,
+    ScoringWeights,
+)
 from zicato.core.tournament import TournamentStructure
 from zicato.core.types import BoardEntry
 from zicato.reflection import practices as P
@@ -254,9 +259,19 @@ def test_overfitting_rotation_off_is_attend() -> None:
 
 
 def test_overfitting_all_good_is_sound() -> None:
-    w = _weights(proposer_quality=ProposerQualityConfig(screen_entries=2))
-    c = P.check_overfitting_posture(weights=w, board_entries=_big_board(), experiments=[])
+    w = _weights(
+        proposer_quality=ProposerQualityConfig(screen_entries=2),
+        experimental=ExperimentalConfig(random_baseline_every_n=5),
+    )
+    c = P.check_overfitting_posture(
+        weights=w,
+        board_entries=_big_board(),
+        experiments=[
+            _exp(f"g{i}", decision="promoted") for i in range(P.PLACEBO_PROMOTIONS_THRESHOLD)
+        ],
+    )
     assert c.verdict == P.VERDICT_SOUND
+    assert c.evidence["random_baseline_every_n"] == 5
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +362,8 @@ def test_calibration_no_floor_is_unmeasured() -> None:
 def test_placebo_rejected_is_sound() -> None:
     exps = [_exp("p0", decision="rejected", placebo=True)]
     c = P.check_placebo_outcomes(
-        weights=_weights(overfitting=OverfittingConfig(random_baseline_every_n=5)), experiments=exps
+        weights=_weights(experimental=ExperimentalConfig(random_baseline_every_n=5)),
+        experiments=exps,
     )
     assert c.verdict == P.VERDICT_SOUND
 
@@ -359,15 +375,16 @@ def test_placebo_promoted_is_unsound() -> None:
 
 
 def test_placebo_cadence_set_never_fired_is_attend() -> None:
-    w = _weights(overfitting=OverfittingConfig(random_baseline_every_n=5))
+    w = _weights(experimental=ExperimentalConfig(random_baseline_every_n=5))
     c = P.check_placebo_outcomes(weights=w, experiments=[_exp("g0", decision="rejected")])
     assert c.verdict == P.VERDICT_ATTEND
+    assert c.evidence["random_baseline_every_n"] == 5
 
 
 def test_placebo_off_is_unmeasured_with_enable_op() -> None:
     c = P.check_placebo_outcomes(weights=_weights(), experiments=[])
     assert c.verdict == P.VERDICT_UNMEASURED
-    assert c.proposed_op["op"] == "set_holdout"
+    assert c.proposed_op["op"] == "set_experimental"
 
 
 # ---------------------------------------------------------------------------
@@ -434,7 +451,7 @@ def test_promotion_no_promotions_is_unmeasured() -> None:
 def test_promotion_below_floor_no_gate_is_unsound() -> None:
     exps = [_exp("g1", decision="promoted")]
     c = P.check_promotion_hygiene(
-        weights=_weights(promote_margin=0.01),
+        weights=_weights(tournament_structure=TournamentStructure.gauntlet(), promote_margin=0.01),
         experiments=exps,
         board_entries=_big_board(),
         noise_floor=_floor([1.0, 1.5], max_abs=0.5),
@@ -460,7 +477,7 @@ def test_promotion_hygiene_never_proposes_an_op_that_lowers_the_margin() -> None
     floor = _floor([1.0, 1.5], max_abs=0.10)
     floor["delta_std"] = 0.01
     c = P.check_promotion_hygiene(
-        weights=_weights(promote_margin=0.05),
+        weights=_weights(tournament_structure=TournamentStructure.gauntlet(), promote_margin=0.05),
         experiments=exps,
         board_entries=_big_board(),
         noise_floor=floor,
@@ -482,7 +499,7 @@ def test_promotion_hygiene_still_proposes_a_genuine_raise() -> None:
     floor = _floor([1.0, 1.5], max_abs=0.10)
     floor["delta_std"] = 0.01
     c = P.check_promotion_hygiene(
-        weights=_weights(promote_margin=0.001),
+        weights=_weights(tournament_structure=TournamentStructure.gauntlet(), promote_margin=0.001),
         experiments=exps,
         board_entries=_big_board(),
         noise_floor=floor,
@@ -506,7 +523,7 @@ def test_promotion_hygiene_range_fallback_always_raises_the_margin() -> None:
     floor = _floor([1.0, 1.5], max_abs=0.10)
     del floor["delta_std"]
     c = P.check_promotion_hygiene(
-        weights=_weights(promote_margin=0.099),
+        weights=_weights(tournament_structure=TournamentStructure.gauntlet(), promote_margin=0.099),
         experiments=exps,
         board_entries=_big_board(),
         noise_floor=floor,
@@ -536,7 +553,10 @@ def test_promotion_with_evidence_gate_is_sound() -> None:
 def test_promotion_margin_only_no_floor_is_unmeasured() -> None:
     exps = [_exp("g1", decision="promoted")]
     c = P.check_promotion_hygiene(
-        weights=_weights(), experiments=exps, board_entries=[_entry("a")], noise_floor=None
+        weights=_weights(tournament_structure=TournamentStructure.gauntlet()),
+        experiments=exps,
+        board_entries=[_entry("a")],
+        noise_floor=None,
     )
     assert c.verdict == P.VERDICT_UNMEASURED
 

@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 502,405 | +93,744 |
-| Production | 197,702 | 213,489 | +15,787 |
-| Production logic | 110,276 | 123,564 | +13,288 |
+| Total | 408,661 | 503,805 | +95,144 |
+| Production | 197,702 | 213,273 | +15,571 |
+| Production logic | 110,276 | 123,728 | +13,452 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,25 +84,25 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 70,692 | 37,650 | 26,336 | 30.1% |
-| src/zicato/query | 20,724 | 20,724 | 12,609 | 39.2% |
-| src/zicato/epoch | 14,872 | 14,872 | 8,141 | 45.3% |
-| src/zicato/evolve | 11,970 | 11,970 | 7,394 | 38.2% |
-| src/zicato/reflection | 10,295 | 10,295 | 6,757 | 34.4% |
-| src/zicato/tournament | 11,579 | 11,579 | 6,517 | 43.7% |
-| crates/supervisor | 16,378 | 13,947 | 6,516 | 53.3% |
-| src/zicato/proposer | 11,163 | 11,163 | 5,824 | 47.8% |
-| src/zicato/cli | 8,172 | 8,172 | 5,349 | 34.5% |
-| src/zicato/analyzer | 7,635 | 7,635 | 4,808 | 37.0% |
-| src/zicato/core | 7,806 | 7,806 | 3,147 | 59.7% |
+| src/zicato/dashboard | 70,733 | 37,657 | 26,343 | 30.0% |
+| src/zicato/query | 20,721 | 20,721 | 12,605 | 39.2% |
+| src/zicato/epoch | 15,028 | 15,028 | 8,272 | 45.0% |
+| src/zicato/evolve | 11,971 | 11,971 | 7,395 | 38.2% |
+| src/zicato/reflection | 10,300 | 10,300 | 6,762 | 34.3% |
+| crates/supervisor | 16,420 | 13,989 | 6,525 | 53.4% |
+| src/zicato/tournament | 11,580 | 11,580 | 6,518 | 43.7% |
+| src/zicato/proposer | 11,166 | 11,166 | 5,827 | 47.8% |
+| src/zicato/cli | 8,167 | 8,167 | 5,348 | 34.5% |
+| src/zicato/analyzer | 7,619 | 7,619 | 4,800 | 37.0% |
+| src/zicato/core | 7,672 | 7,672 | 3,244 | 57.7% |
 | src/zicato/tui | 4,394 | 4,394 | 3,136 | 28.6% |
-| src/zicato/selection | 5,463 | 5,463 | 3,106 | 43.1% |
+| src/zicato/selection | 5,393 | 5,393 | 3,093 | 42.6% |
 | src/zicato/index | 5,451 | 5,451 | 2,822 | 48.2% |
 | src/zicato/runtime | 5,374 | 5,374 | 2,485 | 53.8% |
 | src/zicato/telemetry | 4,640 | 4,640 | 2,290 | 50.6% |
-| src/zicato/contract_draft | 3,326 | 3,326 | 2,045 | 38.5% |
+| src/zicato/contract_draft | 3,190 | 3,190 | 1,979 | 38.0% |
 | src/zicato/mutation | 2,888 | 2,888 | 1,346 | 53.4% |
-| src/zicato/builder | 2,247 | 2,247 | 1,281 | 43.0% |
+| src/zicato/builder | 2,177 | 2,177 | 1,283 | 41.1% |
 | src/zicato/health | 2,316 | 2,316 | 1,267 | 45.3% |
 | src/zicato/check | 1,736 | 1,736 | 1,114 | 35.8% |
 | src/zicato/board | 2,363 | 2,363 | 1,056 | 55.3% |
@@ -117,19 +117,19 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/models_config.py | 465 | 465 | 345 | 25.8% |
 | src/zicato/storage | 994 | 994 | 341 | 65.7% |
 | src/zicato/emulator | 675 | 675 | 306 | 54.7% |
-| src/zicato/example_workspace | 658 | 658 | 301 | 54.3% |
+| src/zicato/example_workspace | 657 | 657 | 300 | 54.3% |
 | src/zicato/logging_stream.py | 445 | 445 | 215 | 51.7% |
 | hatch_build.py | 205 | 205 | 169 | 17.6% |
 | src/zicato/driver_imports.py | 206 | 206 | 161 | 21.8% |
 | src/zicato/runtime_factory.py | 262 | 262 | 149 | 43.1% |
-| src/zicato/workspace_loader.py | 321 | 321 | 126 | 60.7% |
+| src/zicato/workspace_loader.py | 332 | 332 | 134 | 59.6% |
 | src/zicato/config.py | 162 | 162 | 121 | 25.3% |
 | src/zicato/util | 253 | 253 | 103 | 59.3% |
 | src/zicato/integrations | 143 | 143 | 100 | 30.1% |
 | src/zicato/adapter_factory.py | 120 | 120 | 89 | 25.8% |
 | src/zicato/reasoning.py | 112 | 112 | 83 | 25.9% |
 | src/zicato/import_path.py | 155 | 155 | 60 | 61.3% |
-| src/zicato/__init__.py | 74 | 74 | 48 | 35.1% |
+| src/zicato/__init__.py | 67 | 67 | 41 | 38.8% |
 | src/zicato/orchestrator.py | 14 | 14 | 11 | 21.4% |
 | src/zicato/aux_timeout.py | 15 | 15 | 6 | 60.0% |
 
@@ -429,3 +429,10 @@ dropped rows named.
 | Accepted invocation inputs and recoverable publication (production logic) | 120,523 | +3,041 | 123,564 | Issues #364, #387 and #480–#484: typed admission and worker reconstruction preserve accepted input forms. Recovery validates retained bytes before publication; settled reads and cleanup enforce projection currency; the score owner persists dirty state before history or flat replacement. |
 | Canonical worker artifacts and retained reader fixtures (total) | 502,389 | +37 | 502,426 | Issues #364, #387 and #480–#482: canonical measurement paths and run identities keep worker transport separate from durable captures. Typed lineage assertions, required score publication markers, read-only revision checks, and retained historical scoring preserve existing lifecycle and reader oracles. |
 | Remove repeated test execution and correct subprocess setup (total) | 502,426 | -21 | 502,405 | Issues #405 and #498: validators run directly where their findings are the subject; recovery cases share prepared input and remove one duplicate test. Subprocess fixtures declare their imports and omit unrelated telemetry server startup. Focused tests retain real process and recovery checks. |
+| Shared defaults and reduced testing cost (total) | 502,405 | +1,415 | 503,820 | Issues #394, #395, #405, #487, #495 and #498: shared defaults and experimental settings, tests of the recommended execution path, independent ranking checks, fewer repeated measurements, and one verification policy. The native lock owner explicitly releases its lock when cleanup finishes. |
+| Shared defaults and reduced testing cost (production) | 213,489 | -204 | 213,285 | Issues #394 and #395: one set of defaults and one group of experimental settings replace duplicated configuration and editor operations. A stable hash representation removes attempts to recognize several equivalent hashes. The native cleanup guard releases its file lock explicitly. |
+| Shared defaults and reduced testing cost (production logic) | 123,564 | +173 | 123,737 | Issues #394, #395 and #495: typed field migration and validation of supported stored records add executable checks. Shared defaults, feature consumers, and stable hashing remove duplicated logic. The native lock correction adds explicit release at the end of ownership. |
+| Remove the duplicate name for defaults (total) | 503,820 | -16 | 503,804 | Issue #395: remove the compatibility function, its public export, and a redundant assertion. Callers construct the shared configuration directly. Migration errors explain that equivalent settings retain their evaluation hash. |
+| Remove the duplicate name for defaults (production) | 213,285 | -12 | 213,273 | Issue #395: remove the forwarding function and its duplicate public export. |
+| Remove the duplicate name for defaults (production logic) | 123,737 | -9 | 123,728 | Issue #395: callers use the existing configuration constructor; no replacement abstraction is introduced. |
+| Assert navigation while data is still loading (total) | 503,804 | +1 | 503,805 | Issue #405: observe navigation inside its handler while the request is held. Remove the helper thread and its one-second release timer. A delayed return from the test driver now passes; a read that blocks the input loop still fails. |

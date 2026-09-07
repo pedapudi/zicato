@@ -1905,7 +1905,7 @@ wasted confirmation duel — never an unsafe promotion.
 | Function | What it computes | Cost |
 |---|---|---|
 | `condorcet_check` | the contestant who beats every other head-to-head, or `None` | O(n²) fast path every method collapses to |
-| `smith_set` | the smallest dominant set (top cycle) — a front prune | O(n²)-ish |
+| `smith_set` | the smallest set whose every member strictly beats every outsider | O(n²) |
 | `ranked_pairs` | Tideman's margin-sorted lock/skip, with an auditable `trace` of which edges were locked and which were skipped to avoid a cycle | polynomial |
 | `copeland_order` | best-first by Copeland score (wins − losses) | O(n²) |
 | `resolve_leader` | the dispatch: Condorcet fast path → Smith prune → `ranked_pairs` or `copeland` | — |
@@ -1914,7 +1914,15 @@ wasted confirmation duel — never an unsafe promotion.
 a pairing both sides have "won" nets to whichever accumulated the larger total
 margin, so the strongest, most-separated verdicts dominate a noisy measurement.
 A pairing that nets to zero is recorded as *no edge* — an honest "unresolved tie" the resolvers treat
-as a missing comparison. `resolve_leader` is what a strategy's `resolver` param
+as a missing comparison. Contestants seen only in tied duels still belong to
+the matrix. Strict dominance requires a positive margin from every retained
+member to every outsider; unresolved outsiders join the set whenever a member
+cannot beat them. The maximum-Copeland seed and queue closure are checked
+against exhaustive subset enumeration in `tests/test_selection_dominance.py`.
+The [derivation](../design/SELECTION-THEORY.md#32-smith-set-strict-dominance)
+explains why membership is invariant to input order.
+
+`resolve_leader` is what a strategy's `resolver` param
 (§6.10.2) routes through; the returned leader is always fed to the champion gate
 before any promotion. This is the layer SELECTION-THEORY.md §5 describes; the
 rating/Bradley–Terry layer (§6.11) sits above it.
@@ -1932,7 +1940,7 @@ rating/Bradley–Terry layer (§6.11) sits above it.
 The placebo arm (`evolve/placebo.py`, wired in `orchestrator.py`) is the
 random-baseline control of the anti-overfitting program
 (`docs/design/OVERFITTING.md`). Every Nth round
-(`overfitting.random_baseline_every_n`, default off) the orchestrator fields ONE
+(`experimental.random_baseline_every_n`, default off) the orchestrator fields ONE
 extra challenger whose patch is a **semantics-preserving no-op**: the first
 enumerated mutation point's current value re-emitted unchanged. The baseline
 tree behaves identically to the champion, so under a working decision procedure

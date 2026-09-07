@@ -10,7 +10,7 @@ from typing import Any
 
 from zicato.core.drift_kinds import DriftKind
 from zicato.core.types import BoardEntry, ProposerSkill, ProposerSpec, ScoringWeights
-from zicato.epoch.contract import ContractInputs, compute_contract_hash
+from zicato.epoch.contract import ContractInputs, compute_recorded_contract_hash
 from zicato.proposer.brief import ProposerBrief
 from zicato.proposer.external import ExternalProposerConfig
 
@@ -269,7 +269,7 @@ class EpochExecutionContract:
         ):
             if path.read_bytes() != captured:
                 raise ExecutionContractError(f"epoch {self.epoch_id}: retained {path.name} changed")
-        if compute_contract_hash(inputs, proposer_spec=spec) != self.contract_hash:
+        if compute_recorded_contract_hash(inputs, proposer_spec=spec) != self.contract_hash:
             raise ExecutionContractError(
                 f"epoch {self.epoch_id}: retained inputs or executable dependencies do not match "
                 "the recorded contract; restore them or create an epoch for the changed contract"

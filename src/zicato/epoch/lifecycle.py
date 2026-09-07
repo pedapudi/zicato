@@ -159,24 +159,10 @@ def scoring_to_dict(weights: ScoringWeights) -> dict[str, Any]:
 
 
 def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
-    """Parse a frozen ``scoring.json`` dict back into :class:`ScoringWeights`.
+    """Decode the epoch's recorded scoring using the shared historical rules."""
+    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
 
-    The inverse of :func:`scoring_to_dict`, field-enumerating via
-    :func:`zicato.epoch.contract_serde.historical_dataclass_from_json`: every field
-    absent from a ``scoring.json`` falls back to the dataclass default, so a
-    file written before a field existed loads cleanly, and
-    every present field — including the nested ``tournament`` /
-    ``overfitting`` blocks — round-trips. Mirror of
-    :func:`zicato.workspace_loader.historical_scoring_weights_from_dict`.
-    """
-    from zicato.core.scoring_config import _reject_retired_scoring_keys  # noqa: PLC0415
-    from zicato.epoch.contract_serde import historical_dataclass_from_json  # noqa: PLC0415
-
-    # Reject retired keys symmetrically with the live loader, so a stale
-    # snapshot fails loudly through either path rather than silently scoring
-    # under a default nobody chose.
-    _reject_retired_scoring_keys(d)
-    return historical_dataclass_from_json(ScoringWeights, dict(d))
+    return historical_scoring_weights_from_dict(d)
 
 
 def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
@@ -453,6 +439,25 @@ def _prepare_epoch(
             "one spelling would silently lose"
         )
 
+    from dataclasses import replace
+
+    from zicato.core.tournament import read_promote_confidence_threshold, read_replicate_budget
+
+    # Typed callers already have effective settings. Persist an enabled implicit
+    # budget before authored hashing can apply a different omission default.
+    params = weights.tournament_structure.params
+    if (
+        read_promote_confidence_threshold(params) is not None
+        and "promote_confidence_replicates" not in params
+    ):
+        weights = replace(
+            weights,
+            tournament_structure=replace(
+                weights.tournament_structure,
+                params={**params, "promote_confidence_replicates": read_replicate_budget(params)},
+            ),
+        )
+
     # Validate optional integration documents before closing an epoch or
     # creating files. Contract canonicalization repeats this check after
     # materialization; running it here keeps failure transactional.
@@ -512,8 +517,6 @@ def _prepare_epoch(
                 proposer_path=proposer_path,
             )
         else:
-            from dataclasses import replace
-
             contract = replace(
                 contract,
                 board_path=target_board,

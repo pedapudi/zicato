@@ -59,7 +59,7 @@
 | File | What lives there | Approx. size |
 |---|---|---|
 | `src/zicato/epoch/contract.py` | `ContractInputs`, every `_canon_*`, `compute_contract_hash` / `compute_component_hashes`, `resolve_contract_inputs`, `_SCORING_OMIT_AT_DEFAULT_FIELDS`, `scoring_to_canon`, `scoring_contract_to_canon` | 776 lines |
-| `src/zicato/core/scoring_config.py` | `ScoringWeights`, Zicato-owned nested config dataclasses, the frozen optional Goldfive JSON mapping, the runtime-derived contract-knob registry, `to_json`/`from_json`, `recommended_scaffold_weights` | — |
+| `src/zicato/core/scoring_config.py` | `ScoringWeights`, Zicato-owned nested config dataclasses, the frozen optional Goldfive JSON mapping, the runtime-derived contract-knob registry, `to_json`/`from_json` | — |
 | `src/zicato/integrations/goldfive.py` | Lazy bridge to Goldfive's public configuration document, runtime construction, and implementation identity | — |
 | `src/zicato/core/epoch.py` | `EpochConfig` (the frozen contract record) and `Generation` (one lineage node) | 177 lines |
 | `src/zicato/epoch/lifecycle.py` | `new_epoch`, `close_epoch` / `close_epoch_async`, `load_epoch` / `list_epochs`, `switch_epoch`, `set_epoch_goal` / `set_epoch_noise_floor` / `set_epoch_preflight`, `scoring_to_dict` | 769 lines |
@@ -743,30 +743,24 @@ epoch) only when set to a non-default value. `scoring_to_canon` implements it
                 continue
 ```
 
-The registered fields (`_SCORING_OMIT_AT_DEFAULT_FIELDS`,
-`src/zicato/epoch/contract.py`):
+Fields carrying `omit_at_default` metadata are omitted recursively. The
+`experimental` block is omitted while its whole value equals
+`ExperimentalConfig()`. Examples include:
 
-| Field | Lives on | Default | What it opts into |
+| Field | Owner | Default | Behavior when enabled |
 |---|---|---|---|
-| `diff_complexity_weight` | `ScoringWeights` | `0.0` | the MDL / parsimony scalar term |
-| `experiment_memory` | `ScoringWeights` | `ExperimentMemoryConfig()` | cross-epoch experiment memory |
-| `random_baseline_every_n` | `OverfittingConfig` (nested) | `0` | the placebo / random-baseline arm |
-| `block_on_containment_violation` | `ScoringWeights` | `False` | integrity BLOCKING (vs alarm-only) |
-| `block_on_gate_contradiction` | `ScoringWeights` | `False` | gate-contradiction BLOCKING |
-| `screen_entries` | `ProposerQualityConfig` (nested) | `0` | pre-tournament candidate screening |
-| `screen_veto_only` | `ProposerQualityConfig` (nested) | `False` | screen veto-only (no tiebreak feed) |
-| `process_exemplars` | `ProposerQualityConfig` (nested) | `0` | the redacted process-exemplar channel |
-| `mutation_surface` | `ScoringWeights` | `{}` | file types beyond the built-in mutation-site envelope (MUTATION-SURFACE.md §2.5) |
+| `experimental` | `ScoringWeights` | `ExperimentalConfig()` | Optional features awaiting qualification |
+| `diff_complexity_weight` | `ExperimentalConfig` | `0.0` | Edit-complexity penalty |
+| `cross_epoch_memory` | `ExperimentalConfig` | `False` | Prior-epoch experiment history |
+| `screen_entries` | `ProposerQualityConfig` | `0` | Pre-tournament screening |
+| `block_on_containment_violation` | `ScoringWeights` | `False` | Reject a candidate after a containment violation |
 
-Note the **nested** entries: `random_baseline_every_n`, `screen_entries`,
-`screen_veto_only`, and `process_exemplars` live on nested config dataclasses,
-not on `ScoringWeights` directly. The omit check works for them because
-`scoring_to_canon` recurses into nested dataclasses and applies the SAME
-`_SCORING_OMIT_AT_DEFAULT_FIELDS` name check at every depth — the field NAME is
-what is matched, wherever it sits. A comparison for the nested block is by
-value against its `default_factory()` instance (an all-default
-`ExperimentMemoryConfig` compares equal and is omitted; any opt-in differs and
-rolls).
+Authored feature settings use their declared location under `experimental`.
+Supplying a former location raises a migration error. Archived records use
+`historical_scoring_weights_from_dict`; relocated fields retain their recorded
+meaning without rewriting the file. Selected-epoch verification uses
+`compute_recorded_contract_hash` to preserve the original canonical locations.
+The ordinary `compute_contract_hash` validates authored configuration.
 
 **What it buys:** byte-stable hashes across zicato upgrades — an epoch created
 before a field existed hashes byte-for-byte identically to one that explicitly
@@ -1456,35 +1450,20 @@ screen is scaffolded and the process-exemplar channel is not.
        -k "round_trip or lifecycle or loader" -q
    ```
 
-5. **Make the scaffold decision.** Decide whether
-   `recommended_scaffold_weights` (`src/zicato/core/scoring_config.py`) sets your
-   knob. The rule is a real distinction rather than a matter of taste:
-   - an **evaluation-side** knob that only changes how candidates are *measured*
-     may be scaffolded — the precedent is the candidate screen, which the
-     scaffold enables explicitly:
-     ```python
-     # src/zicato/core/scoring_config.py — recommended_scaffold_weights (tail)
-             proposer_quality=ProposerQualityConfig(screen_entries=2),
-         )
-     ```
-   - a knob that **widens what the proposer can see** of the board (the
-     overfitting boundary — 05-proposer.md §5.8)
-     must NOT be scaffolded. The precedent is `process_exemplars`: the candidate
-     screen is evaluation-side, while exemplars widen the proposer-visibility
-     channel, so the operator opts in under the harm-detection runbook in
-     `docs/design/PROCESS-EXEMPLARS.md` §5
-     (`ProposerQualityConfig.process_exemplars` docstring). It defaults `0` and
-     the scaffold leaves it `0`.
-   In both cases the in-code default stays OFF; only the scaffold — what a
-   freshly created workspace's `scoring.json` spells out — differs. If your knob
-   touches proposer visibility, treat it like `process_exemplars`: write the
-   design note first, because this recipe alone does not cover a
-   visibility-widening knob (14-goals-and-roadmap.md §"Design-first zones"), and
-   leave the scaffold alone.
-   **Verify:**
+5. **Define one default.** The field declarations used by `ScoringWeights()`
+   define defaults for typed construction, initialization, and the editor.
+   Initialization writes only deviations from those defaults. Complete resolved
+   values remain available through inspection and in each saved epoch.
+
+   Recommended screening uses two entries. Optional features under
+   `ExperimentalConfig` remain inactive until explicitly enabled. A change that
+   exposes additional task information to proposal generation requires the
+   restricted feedback review in `05-proposer.md` and the feature's design.
+   Moving a setting in the editor does not justify changing its default.
+
+   Verify that sparse and expanded inputs resolve to the same values and hash:
    ```bash
-   uv run pytest tests/test_scaffold_contract.py -q
-   uv run python -c "from zicato.core.scoring_config import recommended_scaffold_weights as s; print(s().proposer_quality)"
+   uv run pytest tests/test_scaffold_contract.py tests/test_shared_scoring_defaults.py -q
    ```
 
 6. **Wire the builder op + GUI + copilot.** Operators set contract knobs through

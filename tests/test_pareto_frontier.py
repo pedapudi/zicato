@@ -29,6 +29,7 @@ from typing import Any
 
 import pytest
 
+from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
     bootstrap_workspace,
     install_stub_adapter_factory,
@@ -38,6 +39,7 @@ from tests._orchestrator_harness import (
     target_call_llm,
 )
 from zicato.core import DriftCount, ExpectationResult, LossProfile, MetricCount, ScoringWeights
+from zicato.core.types import ExperimentalConfig, TournamentStructure
 from zicato.epoch.pareto import (
     FrontierCandidate,
     FrontierMember,
@@ -424,17 +426,17 @@ def test_a_FIELD_round_that_crowns_the_placebo_leaves_the_record_untouched(
     Asserted on a PRE-SEEDED record so the pin distinguishes "correctly
     skipped" from "never got that far".
     """
-    from tests.test_orchestrator_multi_challenger import (
-        _bootstrap_swiss_workspace,
-    )
-    from zicato.core.scoring_config import OverfittingConfig
     from zicato.evolve.placebo import PLACEBO_HYPOTHESIS_MARKER
 
-    workspace, epoch_id = _bootstrap_swiss_workspace(
+    workspace, epoch_id = bootstrap_workspace(
         tmp_path,
-        field_size=2,
-        rounds_n=1,
-        overfitting=OverfittingConfig(random_baseline_every_n=1),
+        weights=deterministic_weights(
+            promote_margin=_MARGIN,
+            tournament_structure=TournamentStructure(
+                structure="swiss", params={"field_size": 2, "rounds_n": 1}
+            ),
+            experimental=ExperimentalConfig(tournament_structures=True, random_baseline_every_n=1),
+        ),
     )
     # A record already on disk, so "untouched" is observable rather than
     # indistinguishable from "never written". The seeded member is
@@ -1143,7 +1145,12 @@ def _drive_round(
     drift_by_gen: dict[str, float],
     tokens_by_gen: dict[str, int],
 ) -> tuple[Path, str, Any]:
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=_MARGIN, tournament_structure=TournamentStructure.gauntlet()
+        ),
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -1226,7 +1233,12 @@ def test_a_promotion_retires_a_newly_dominated_member_end_to_end(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Round 1 records the cheap loser; round 2's champion dominates it."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=_MARGIN, tournament_structure=TournamentStructure.gauntlet()
+        ),
+    )
     install_stub_adapter_factory(monkeypatch)
     drift_by_gen = {"v0": 1.0, "v1": 3.0, "v2": 0.5}
     install_telemetry_stubs(

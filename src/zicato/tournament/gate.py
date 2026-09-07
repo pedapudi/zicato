@@ -14,7 +14,7 @@ candidate outright (OVERFITTING.md §5 / §12 #4 — the ceiling half of the
 diff-complexity regularizer):
 
 0. **Diff-complexity ceiling** (when
-   :attr:`ScoringWeights.diff_complexity_ceiling` ``> 0`` AND the challenger's
+   :attr:`ExperimentalConfig.diff_complexity_ceiling` ``> 0`` AND the challenger's
    ``diff_size`` was threaded onto ``child_agg``). The challenger's diff
    complexity (``added + removed + patches`` — the same measure the loss-term
    weight reads) is compared against the ceiling; a diff OVER the ceiling is
@@ -850,7 +850,7 @@ def evaluate_gate(
     # parsimony machinery is active (see ``aggregate_generation_score``); at the
     # default ceiling this branch is skipped and the decision is byte-identical
     # to a contract without the field.
-    ceiling = float(weights.diff_complexity_ceiling)
+    ceiling = float(weights.experimental.diff_complexity_ceiling)
     if ceiling > 0.0:
         diff_size = child_agg.get("diff_size")
         if isinstance(diff_size, dict):

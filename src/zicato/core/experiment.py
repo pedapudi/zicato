@@ -328,7 +328,7 @@ EXPERIMENT_MEMORY_MAX_ENTRIES = 12
 
 #: Prefix stamped onto the ``hypothesis.core_idea`` of a random-baseline
 #: (placebo) challenger — the opt-in calibration arm of OVERFITTING.md #7
-#: (``overfitting.random_baseline_every_n``). The marker is the STABLE
+#: (``experimental.random_baseline_every_n``). The marker is the STABLE
 #: contract between the minting side (:mod:`zicato.evolve.placebo`) and
 #: every consumer that must recognise the arm: the health detector
 #: (:func:`zicato.health.diagnostics.detect_placebo_promoted` — a PROMOTED

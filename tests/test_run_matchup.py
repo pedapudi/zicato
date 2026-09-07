@@ -24,7 +24,7 @@ from zicato.core import (
     RuntimeConfig,
     ScoringWeights,
 )
-from zicato.core.types import DriftCount, ExpectationResult
+from zicato.core.types import DriftCount, ExpectationResult, ExperimentalConfig
 from zicato.core.workspace import run_id_for_unit
 from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock
 from zicato.tournament.runner import run_matchup, run_tournament
@@ -228,7 +228,7 @@ def test_run_matchup_applies_diff_complexity_to_the_correct_competitor(
             left_gen=_gen(tmp_path, "v0"),
             right_gen=_gen(tmp_path, "v1"),
             board=_board(),
-            weights=ScoringWeights(diff_complexity_weight=0.1),
+            weights=ScoringWeights(experimental=ExperimentalConfig(diff_complexity_weight=0.1)),
             config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",

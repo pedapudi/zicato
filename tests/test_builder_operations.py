@@ -12,6 +12,9 @@ from zicato.core.types import (
     BoardEntry,
     JudgeMode,
     JudgeSpec,
+    ProposerQualityConfig,
+    ScoringWeights,
+    TournamentStructure,
 )
 
 
@@ -29,13 +32,23 @@ def _board(n: int) -> list[BoardEntry]:
     return [_entry(f"e{i}") for i in range(n)]
 
 
+def _gauntlet_draft() -> TournamentDraft:
+    """Start edit and cost cases with confirmation and screening disabled."""
+    return TournamentDraft(
+        scoring=ScoringWeights(
+            tournament_structure=TournamentStructure.gauntlet(),
+            proposer_quality=ProposerQualityConfig(screen_entries=0),
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
 # Write ops + their DraftPatch
 # ---------------------------------------------------------------------------
 
 
 def test_set_structure_changes_structure_and_keeps_params() -> None:
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     ops.set_param(draft, "field_size", 4)
     patch = ops.set_structure(draft, "racing")
     assert draft.scoring.tournament_structure.structure == "racing"
@@ -300,11 +313,11 @@ def test_remove_board_entry() -> None:
 
 
 def test_restore_draft_in_place_reports_components() -> None:
-    source = TournamentDraft()
+    source = _gauntlet_draft()
     source.entries = _board(2)
     source.brief = "the source brief"
 
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     draft.entries = _board(3)
     ops.set_structure(draft, "racing")
     ops.set_board_meta(draft, judge_only=True)
@@ -345,7 +358,7 @@ def test_restore_draft_op_name_for_undo() -> None:
 
 
 def test_cost_gauntlet() -> None:
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     draft.entries = _board(5)
     ops.set_structure(draft, "gauntlet")
     ops.set_param(draft, "field_size", 1)
@@ -359,7 +372,7 @@ def test_cost_gauntlet() -> None:
 
 
 def test_cost_swiss() -> None:
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     draft.entries = _board(6)
     # A 6-entry board now clears the (lowered, 8 -> 6) split floor; this
     # test's subject is the swiss run arithmetic over the whole board, so
@@ -376,8 +389,9 @@ def test_cost_swiss() -> None:
 
 
 def test_cost_racing_sums_rungs_plus_final() -> None:
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     draft.entries = _board(8)
+    _no_holdout(draft)
     ops.set_structure(draft, "racing")
     ops.set_param(draft, "field_size", 4)
     ops.set_param(draft, "eta", 2)
@@ -412,7 +426,7 @@ def test_cost_racing_rung0_override_moves_the_estimate() -> None:
 
 
 def test_cost_includes_holdout_confirm_runs() -> None:
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     # 12 entries, two explicitly tagged holdout → holdout split active.
     draft.entries = _board(12)
     ops.set_structure(draft, "gauntlet")
@@ -451,7 +465,7 @@ def test_cost_swiss_unset_replicates_uses_strategy_default_two() -> None:
     # The under-reporting bug: with ``replicates`` UNSET the meter must use
     # swiss's strategy default of 2, not a flat 1. The old flat-1 default
     # would have reported HALF this number.
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     draft.entries = _board(8)
     _no_holdout(draft)
     ops.set_experimental(draft, tournament_structures=True)
@@ -469,7 +483,7 @@ def test_cost_swiss_unset_replicates_uses_strategy_default_two() -> None:
 def test_cost_explicit_replicates_overrides_structure_default() -> None:
     # An EXPLICIT ``replicates`` is honored verbatim even when it differs from
     # the structure default (swiss default is 2; an explicit 1 still wins).
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     draft.entries = _board(8)
     _no_holdout(draft)
     ops.set_experimental(draft, tournament_structures=True)
@@ -498,7 +512,7 @@ def test_cost_unset_replicates_per_structure_defaults() -> None:
         "racing": 1,
     }
     for structure, default in expected.items():
-        draft = TournamentDraft()
+        draft = _gauntlet_draft()
         draft.entries = _board(8)
         _no_holdout(draft)
         ops.set_experimental(draft, tournament_structures=True)
@@ -600,7 +614,7 @@ def test_set_screening() -> None:
 
     import pytest
 
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     assert draft.scoring.proposer_quality.screen_entries == 0
     patch = ops.set_screening(draft, entries=2, veto_only=True)
     assert draft.scoring.proposer_quality.screen_entries == 2
@@ -623,14 +637,14 @@ def test_set_screening() -> None:
 
 
 def test_cost_includes_candidate_screen_runs_when_opted_in() -> None:
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     draft.entries = _board(10)
     _no_holdout(draft)
     ops.set_structure(draft, "gauntlet")
     ops.set_param(draft, "field_size", 1)
     ops.set_param(draft, "replicates", 1)
 
-    # Default (screen off): no candidate-screen line.
+    # Screening starts off: no candidate-screen line.
     est_off = ops.estimate_cost(draft)
     assert not any(line.label == "candidate-screen runs" for line in est_off.breakdown)
 
@@ -664,9 +678,9 @@ def test_cost_screen_runs_scale_with_field_and_cap_at_board() -> None:
 
 
 def test_validate_margin_below_noise_floor_refuses_when_gate_off() -> None:
-    # Default contract: promote_margin 0.01, evidence gate OFF. A measured
+    # Gauntlet fixture: promote_margin 0.01, evidence gate OFF. A measured
     # floor at/above the margin makes margin-only duels noise-decided.
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     draft.entries = _board(4)
     warns = {w.code: w for w in ops.validate(draft, noise_floor_max_abs_delta=0.05)}
     assert "margin_below_noise_floor" in warns
@@ -727,7 +741,7 @@ def test_validate_reads_measured_floor_off_the_epoch_record(tmp_path) -> None:
 
     cfg = new_epoch(ws, name="a", board_source=board, brief_source=brief, weights=ScoringWeights())
 
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     draft.entries = _board(4)
     # No measurement yet: silent.
     codes = {w.code for w in ops.validate(draft, ws)}
@@ -887,7 +901,7 @@ def test_preflight_measures_draft_contract_against_target0(tmp_path) -> None:
 
 # ---------------------------------------------------------------------------
 # Full knob coverage — set_holdout (overfitting), set_gate (hard blocks),
-# set_namespace_weights, set_proposer_quality, set_experiment_memory
+# set_namespace_weights, set_proposer_quality, set_experimental
 # ---------------------------------------------------------------------------
 
 
@@ -898,21 +912,21 @@ def test_set_holdout_full_overfitting_coverage() -> None:
         min_board_size_for_split=10,
         rotate_holdout=False,
         restrict_proposer_visibility=False,
-        random_baseline_every_n=5,
-        max_generations_per_contract=40,
     )
     of = draft.scoring.overfitting
     assert of.min_board_size_for_split == 10
     assert of.rotate_holdout is False
     assert of.restrict_proposer_visibility is False
-    assert of.random_baseline_every_n == 5
-    assert of.max_generations_per_contract == 40
+    patch = ops.set_experimental(draft, random_baseline_every_n=5, max_generations_per_contract=40)
+    experimental = draft.scoring.experimental
+    assert experimental.random_baseline_every_n == 5
+    assert experimental.max_generations_per_contract == 40
     assert patch.changed["random_baseline_every_n"] == {"from": 0, "to": 5}
     assert patch.changed["max_generations_per_contract"] == {"from": None, "to": 40}
 
     # ``0`` clears the ceiling (None is reserved for "leave unchanged").
-    patch2 = ops.set_holdout(draft, max_generations_per_contract=0)
-    assert draft.scoring.overfitting.max_generations_per_contract is None
+    patch2 = ops.set_experimental(draft, max_generations_per_contract=0)
+    assert draft.scoring.experimental.max_generations_per_contract is None
     assert patch2.changed["max_generations_per_contract"] == {"from": 40, "to": None}
 
     # No-op edit records nothing.
@@ -924,10 +938,10 @@ def test_set_holdout_ladder_partial_mapping() -> None:
     import pytest
 
     draft = TournamentDraft()
-    patch = ops.set_holdout(draft, ladder={"budget": 8, "noise_scale": 0.1})
+    patch = ops.set_holdout(draft, ladder={"budget": 8, "threshold": 0.1})
     ladder = draft.scoring.overfitting.ladder
     assert ladder.budget == 8
-    assert ladder.noise_scale == 0.1
+    assert ladder.threshold == 0.1
     assert ladder.enabled is True  # untouched by the partial mapping
     assert patch.changed["ladder.budget"] == {"from": 16, "to": 8}
 
@@ -949,7 +963,7 @@ def test_set_holdout_invalid_values_rejected_by_dataclass() -> None:
     import pytest
 
     with pytest.raises(ValueError, match="random_baseline_every_n"):
-        ops.set_holdout(TournamentDraft(), random_baseline_every_n=-1)
+        ops.set_experimental(TournamentDraft(), random_baseline_every_n=-1)
     with pytest.raises(ValueError, match="holdout_fraction"):
         ops.set_holdout(TournamentDraft(), fraction=1.5)
 
@@ -1037,15 +1051,16 @@ def test_set_namespace_weights() -> None:
 
     draft = TournamentDraft()
     weights = {"drift:": 2.0, "failure:": 1.0, "rubric:": -0.5, "cost:": 0.0}
-    patch = ops.set_namespace_weights(draft, namespace_weights=weights, diff_complexity_weight=0.01)
-    assert dict(draft.scoring.namespace_weights) == weights
-    assert draft.scoring.diff_complexity_weight == 0.01
+    patch = ops.set_namespace_weights(draft, namespace_weights=weights)
     assert patch.changed["namespace_weights"]["to"] == weights
+    patch = ops.set_experimental(draft, diff_complexity_weight=0.01)
+    assert dict(draft.scoring.namespace_weights) == weights
+    assert draft.scoring.experimental.diff_complexity_weight == 0.01
     assert patch.changed["diff_complexity_weight"] == {"from": 0.0, "to": 0.01}
 
     # The paired parsimony CEILING sets + records like the weight.
-    patch_ceil = ops.set_namespace_weights(draft, diff_complexity_ceiling=10.0)
-    assert draft.scoring.diff_complexity_ceiling == 10.0
+    patch_ceil = ops.set_experimental(draft, diff_complexity_ceiling=10.0)
+    assert draft.scoring.experimental.diff_complexity_ceiling == 10.0
     assert patch_ceil.changed["diff_complexity_ceiling"] == {"from": 0.0, "to": 10.0}
 
     # No-op replacement records nothing.
@@ -1053,10 +1068,10 @@ def test_set_namespace_weights() -> None:
     assert patch2.changed == {}
 
     with pytest.raises(ValueError, match=">= 0"):
-        ops.set_namespace_weights(TournamentDraft(), diff_complexity_weight=-0.1)
+        ops.set_experimental(TournamentDraft(), diff_complexity_weight=-0.1)
 
     with pytest.raises(ValueError, match=">= 0"):
-        ops.set_namespace_weights(TournamentDraft(), diff_complexity_ceiling=-1.0)
+        ops.set_experimental(TournamentDraft(), diff_complexity_ceiling=-1.0)
 
 
 def test_set_proposer_quality_composes_with_screening() -> None:
@@ -1086,21 +1101,22 @@ def test_set_proposer_quality_recombine_arg() -> None:
     composes with the other quality knobs (default-off ⇒ omitted from changed)."""
     draft = TournamentDraft()
     # Default-off ⇒ passing the current value is a no-op (no changed entry, no roll).
-    noop = ops.set_proposer_quality(draft, recombine=False)
+    noop = ops.set_experimental(draft, recombine=False)
     assert "recombine" not in noop.changed
-    assert draft.scoring.proposer_quality.recombine is False
+    assert draft.scoring.experimental.recombine is False
 
     # Flipping it on lands on the nested block and records the from/to delta.
-    patch = ops.set_proposer_quality(draft, best_of_n=4, recombine=True)
+    ops.set_proposer_quality(draft, best_of_n=4)
+    patch = ops.set_experimental(draft, recombine=True)
     quality = draft.scoring.proposer_quality
-    assert quality.recombine is True
+    assert draft.scoring.experimental.recombine is True
     assert quality.best_of_n == 4
     assert patch.changed["recombine"] == {"from": False, "to": True}
 
     # Flipping it back off records the reverse delta.
-    off = ops.set_proposer_quality(draft, recombine=False)
+    off = ops.set_experimental(draft, recombine=False)
     assert off.changed["recombine"] == {"from": True, "to": False}
-    assert draft.scoring.proposer_quality.recombine is False
+    assert draft.scoring.experimental.recombine is False
 
 
 def test_set_proposer_quality_genealogy_arg() -> None:
@@ -1110,21 +1126,21 @@ def test_set_proposer_quality_genealogy_arg() -> None:
 
     draft = TournamentDraft()
     # Default 0 ⇒ passing the current value is a no-op (no changed entry, no roll).
-    noop = ops.set_proposer_quality(draft, genealogy=0)
+    noop = ops.set_experimental(draft, genealogy=0)
     assert "genealogy" not in noop.changed
-    assert draft.scoring.proposer_quality.genealogy == 0
+    assert draft.scoring.experimental.genealogy == 0
 
     # A positive count lands on the nested block and records the from/to delta.
-    patch = ops.set_proposer_quality(draft, genealogy=4)
-    assert draft.scoring.proposer_quality.genealogy == 4
+    patch = ops.set_experimental(draft, genealogy=4)
+    assert draft.scoring.experimental.genealogy == 4
     assert patch.changed["genealogy"] == {"from": 0, "to": 4}
 
     # Back to 0 records the reverse delta.
-    off = ops.set_proposer_quality(draft, genealogy=0)
+    off = ops.set_experimental(draft, genealogy=0)
     assert off.changed["genealogy"] == {"from": 4, "to": 0}
 
     with pytest.raises(ValueError, match="genealogy must be >= 0"):
-        ops.set_proposer_quality(TournamentDraft(), genealogy=-1)
+        ops.set_experimental(TournamentDraft(), genealogy=-1)
 
 
 def test_set_proposer_quality_calibration_feedback_arg() -> None:
@@ -1133,33 +1149,33 @@ def test_set_proposer_quality_calibration_feedback_arg() -> None:
     import pytest
 
     draft = TournamentDraft()
-    noop = ops.set_proposer_quality(draft, calibration_feedback=0)
+    noop = ops.set_experimental(draft, calibration_feedback=0)
     assert "calibration_feedback" not in noop.changed
-    assert draft.scoring.proposer_quality.calibration_feedback == 0
+    assert draft.scoring.experimental.calibration_feedback == 0
 
-    patch = ops.set_proposer_quality(draft, calibration_feedback=5)
-    assert draft.scoring.proposer_quality.calibration_feedback == 5
+    patch = ops.set_experimental(draft, calibration_feedback=5)
+    assert draft.scoring.experimental.calibration_feedback == 5
     assert patch.changed["calibration_feedback"] == {"from": 0, "to": 5}
 
-    off = ops.set_proposer_quality(draft, calibration_feedback=0)
+    off = ops.set_experimental(draft, calibration_feedback=0)
     assert off.changed["calibration_feedback"] == {"from": 5, "to": 0}
 
     with pytest.raises(ValueError, match="calibration_feedback must be >= 0"):
-        ops.set_proposer_quality(TournamentDraft(), calibration_feedback=-1)
+        ops.set_experimental(TournamentDraft(), calibration_feedback=-1)
 
 
-def test_set_experiment_memory() -> None:
+def test_set_experimental() -> None:
     import json
 
     draft = TournamentDraft()
-    assert draft.scoring.experiment_memory.cross_epoch is False
-    patch = ops.set_experiment_memory(draft, cross_epoch=True)
-    assert draft.scoring.experiment_memory.cross_epoch is True
-    assert patch.changed["cross_epoch"] == {"from": False, "to": True}
+    assert draft.scoring.experimental.cross_epoch_memory is False
+    patch = ops.set_experimental(draft, cross_epoch_memory=True)
+    assert draft.scoring.experimental.cross_epoch_memory is True
+    assert patch.changed["cross_epoch_memory"] == {"from": False, "to": True}
     # No-op records nothing.
-    assert ops.set_experiment_memory(draft, cross_epoch=True).changed == {}
+    assert ops.set_experimental(draft, cross_epoch_memory=True).changed == {}
     serialized = json.loads(json.dumps(draft.to_dict()))
-    assert serialized["scoring"]["experiment_memory"]["cross_epoch"] is True
+    assert serialized["scoring"]["experimental"]["cross_epoch_memory"] is True
 
 
 def test_set_goldfive_activation_partial_update_and_removal() -> None:
@@ -1234,7 +1250,7 @@ def test_set_telemetry_dialect() -> None:
 
 
 def test_cost_evidence_gate_confirm_budget_is_priced() -> None:
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     draft.entries = _board(10)
     _no_holdout(draft)
     ops.set_structure(draft, "gauntlet")
@@ -1269,7 +1285,7 @@ def test_cost_evidence_gate_confirm_budget_is_priced() -> None:
 
 
 def test_cost_best_of_n_evaluation_line_excluded_from_headline() -> None:
-    draft = TournamentDraft()
+    draft = _gauntlet_draft()
     draft.entries = _board(10)
     _no_holdout(draft)
     ops.set_structure(draft, "gauntlet")
@@ -1312,7 +1328,7 @@ def test_cost_placebo_cadence_amortized() -> None:
 
     # Every 4th round fields one extra no-op challenger: a full duel of
     # replicates 2 × board 10 = 20 runs, amortized to ceil(20/4) = 5.
-    ops.set_holdout(draft, random_baseline_every_n=4)
+    ops.set_experimental(draft, random_baseline_every_n=4)
     est = ops.estimate_cost(draft)
     placebo = [line for line in est.breakdown if "placebo" in line.label]
     assert len(placebo) == 1
@@ -1335,7 +1351,7 @@ def test_cost_all_honest_terms_compose_with_the_screen_line() -> None:
     ops.set_param(draft, "promote_confidence_threshold", 0.8)
     ops.set_param(draft, "promote_confidence_replicates", 32)
     ops.set_screening(draft, entries=2)
-    ops.set_holdout(draft, random_baseline_every_n=5)
+    ops.set_experimental(draft, random_baseline_every_n=5)
 
     est = ops.estimate_cost(draft)
     labels = [line.label for line in est.breakdown]
@@ -1363,7 +1379,6 @@ def _slot_workspace(tmp_path) -> object:
     """A minimal workspace with a live contract for DraftStore init."""
     import json
 
-    from zicato.core.types import ScoringWeights
     from zicato.epoch.lifecycle import new_epoch
     from zicato.workspace.config_io import write_workspace_config
 
@@ -1378,7 +1393,8 @@ def _slot_workspace(tmp_path) -> object:
     brief = tmp_path / "brief.md"
     brief.write_text("# Brief\n", encoding="utf-8")
     scoring = tmp_path / "scoring.json"
-    scoring.write_text(json.dumps({"pass_weight": 1.0}), encoding="utf-8")
+    weights = _gauntlet_draft().scoring
+    scoring.write_text(json.dumps(weights.to_json()), encoding="utf-8")
     write_workspace_config(
         ws,
         {
@@ -1390,7 +1406,7 @@ def _slot_workspace(tmp_path) -> object:
             },
         },
     )
-    new_epoch(ws, name="a", board_source=board, brief_source=brief, weights=ScoringWeights())
+    new_epoch(ws, name="a", board_source=board, brief_source=brief, weights=weights)
     return ws
 
 
@@ -1447,9 +1463,9 @@ def test_draftstore_fork_board_edits_do_not_leak(tmp_path) -> None:
 
 
 def test_compare_drafts_keyed_diff() -> None:
-    a = TournamentDraft()
+    a = _gauntlet_draft()
     a.entries = _board(3)
-    b = TournamentDraft()
+    b = _gauntlet_draft()
     b.entries = _board(3)
 
     # Identical drafts: nothing changed.
@@ -1766,7 +1782,6 @@ def _seed_min_workspace(tmp_path) -> None:
     """A minimal registered workspace the DraftStore can init drafts from."""
     import json as _json
 
-    from zicato.core.types import ScoringWeights as _SW
     from zicato.epoch.lifecycle import new_epoch as _new_epoch
     from zicato.workspace.config_io import write_workspace_config as _wcfg
 
@@ -1780,7 +1795,8 @@ def _seed_min_workspace(tmp_path) -> None:
     brief = tmp_path / "brief.md"
     brief.write_text("# Brief\n", encoding="utf-8")
     scoring = tmp_path / "scoring.json"
-    scoring.write_text(_json.dumps({"promote_margin": 0.01}), encoding="utf-8")
+    weights = _gauntlet_draft().scoring
+    scoring.write_text(_json.dumps(weights.to_json()), encoding="utf-8")
     _wcfg(
         ws,
         {
@@ -1800,6 +1816,6 @@ def _seed_min_workspace(tmp_path) -> None:
         name="alpha",
         board_source=board,
         brief_source=brief,
-        weights=_SW(),
+        weights=weights,
         entrypoint="pkg.mod:agent",
     )

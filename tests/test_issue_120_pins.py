@@ -28,7 +28,7 @@ the number the loop would actually charge.
 from __future__ import annotations
 
 from zicato.core import DriftCount, LossProfile, ScoringWeights
-from zicato.core.types import Experiment, HypothesisSpec, Patch
+from zicato.core.types import Experiment, ExperimentalConfig, HypothesisSpec, Patch
 from zicato.scoring.builtins import diff_complexity_component
 from zicato.scoring.diff_complexity import diff_size
 from zicato.tournament.gate import evaluate_gate
@@ -52,7 +52,7 @@ _WEIGHTS = ScoringWeights(
     namespace_weights={"drift:": 0.0, "failure:": 1.0},
     pass_weight=1.0,
     promote_margin=0.01,
-    diff_complexity_weight=0.02,
+    experimental=ExperimentalConfig(diff_complexity_weight=0.02),
 )
 
 

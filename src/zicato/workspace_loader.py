@@ -175,10 +175,10 @@ def load_current_brief(workspace_root: Path) -> ProposerBrief:
 
 def historical_scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
     """Decode frozen scoring records using the persisted compatibility rules."""
-    from zicato.epoch.contract_serde import historical_dataclass_from_json  # noqa: PLC0415
+    from zicato.epoch.contract_serde import historical_scoring_from_json  # noqa: PLC0415
 
     _reject_retired_scoring_keys(d)
-    return historical_dataclass_from_json(ScoringWeights, d)
+    return historical_scoring_from_json(d)
 
 
 def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:
@@ -202,6 +202,7 @@ def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:
 
     if not isinstance(raw, Mapping):
         return OverfittingConfig.defaults()
+    _refuse_partial_ladder_increment(raw.get("ladder"))
     return historical_dataclass_from_json(OverfittingConfig, raw)
 
 
@@ -227,7 +228,17 @@ def ladder_config_from_dict(raw: Any) -> LadderConfig:
 
     if not isinstance(raw, Mapping):
         return LadderConfig.defaults()
+    _refuse_partial_ladder_increment(raw)
     return historical_dataclass_from_json(LadderConfig, raw)
+
+
+def _refuse_partial_ladder_increment(raw: Any) -> None:
+    """The retired release rule needs the complete record's promotion margin."""
+    if isinstance(raw, Mapping) and "noise_scale" in raw:
+        raise ValueError(
+            "recorded ladder.noise_scale requires historical_scoring_weights_from_dict "
+            "with the complete scoring record to preserve its release threshold"
+        )
 
 
 def overfitting_config_to_dict(cfg: OverfittingConfig) -> dict[str, Any]:

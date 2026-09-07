@@ -646,6 +646,7 @@ def check_overfitting_posture(
 ) -> PracticeCheck:
     """Memorization defense must scale with a splittable board (OVERFITTING.md §4/§6/§7)."""
     of = getattr(weights, "overfitting", None)
+    experimental = getattr(weights, "experimental", None)
     pq = getattr(weights, "proposer_quality", None)
     rationale = "memorization defense must scale with a splittable board (OVERFITTING.md §4/§6/§7)."
     board_size = len(board_entries)
@@ -656,7 +657,7 @@ def check_overfitting_posture(
         "min_board_size_for_split": min_split,
         "holdout_enabled": bool(getattr(of, "enabled", False)),
         "rotate_holdout": bool(getattr(of, "rotate_holdout", False)),
-        "random_baseline_every_n": int(getattr(of, "random_baseline_every_n", 0)),
+        "random_baseline_every_n": int(getattr(experimental, "random_baseline_every_n", 0)),
         "screen_entries": int(getattr(pq, "screen_entries", 0)) if pq is not None else 0,
         "promotions": promotions,
     }
@@ -683,11 +684,13 @@ def check_overfitting_posture(
         issues.append("holdout is not rotating (a fixed slice is mined every epoch)")
         op = op or _op("set_holdout", {"rotate_holdout": True})
     if (
-        getattr(of, "random_baseline_every_n", 0) == 0
+        getattr(experimental, "random_baseline_every_n", 0) == 0
         and promotions >= PLACEBO_PROMOTIONS_THRESHOLD
     ):
         issues.append(f"no placebo cadence after {promotions} promotions")
-        op = op or _op("set_holdout", {"random_baseline_every_n": PLACEBO_PROMOTIONS_THRESHOLD})
+        op = op or _op(
+            "set_experimental", {"random_baseline_every_n": PLACEBO_PROMOTIONS_THRESHOLD}
+        )
     if pq is not None and getattr(pq, "screen_entries", 0) == 0:
         issues.append("pre-tournament candidate screening is off")
         op = op or _op("set_screening", {"entries": 2})
@@ -904,8 +907,8 @@ def check_placebo_outcomes(*, weights: Any, experiments: list[Any]) -> PracticeC
     )
 
     rationale = "a rejected placebo proves gate discrimination; a promoted one disproves it (§11)."
-    of = getattr(weights, "overfitting", None)
-    cadence = int(getattr(of, "random_baseline_every_n", 0)) if of is not None else 0
+    experimental = getattr(weights, "experimental", None)
+    cadence = int(getattr(experimental, "random_baseline_every_n", 0))
     promoted = detect_placebo_promoted(experiments)
     placebo_exps = [e for e in experiments if _is_placebo_experiment(e)]
     evidence: dict[str, Any] = {
@@ -954,7 +957,9 @@ def check_placebo_outcomes(*, weights: Any, experiments: list[Any]) -> PracticeC
         headline="No placebo arm configured (random_baseline_every_n=0) — discrimination unproven.",
         evidence=evidence,
         rationale=rationale,
-        proposed_op=_op("set_holdout", {"random_baseline_every_n": PLACEBO_PROMOTIONS_THRESHOLD}),
+        proposed_op=_op(
+            "set_experimental", {"random_baseline_every_n": PLACEBO_PROMOTIONS_THRESHOLD}
+        ),
         unmeasured_reason="no placebo control arm has run (set random_baseline_every_n)",
     )
 

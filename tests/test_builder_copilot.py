@@ -31,7 +31,7 @@ import pytest
 from zicato.builder.config import BuilderConfig
 from zicato.builder.copilot import CHAT_DISABLED_MESSAGE, run_copilot
 from zicato.contract_draft.draft import DraftStore
-from zicato.core.types import ScoringWeights
+from zicato.core.types import ProposerQualityConfig, ScoringWeights, TournamentStructure
 from zicato.epoch.lifecycle import new_epoch
 from zicato.workspace.config_io import write_workspace_config
 
@@ -51,7 +51,11 @@ def _seed_workspace(tmp_path: Path, *, builder_model: bool = False) -> Path:
     brief = tmp_path / "brief.md"
     brief.write_text("# Brief\n\nsteer\n", encoding="utf-8")
     scoring = tmp_path / "scoring.json"
-    scoring.write_text(json.dumps({"pass_weight": 1.0}), encoding="utf-8")
+    weights = ScoringWeights(
+        tournament_structure=TournamentStructure.gauntlet(),
+        proposer_quality=ProposerQualityConfig(screen_entries=0),
+    )
+    scoring.write_text(json.dumps(weights.to_json()), encoding="utf-8")
     write_workspace_config(
         ws,
         {
@@ -81,7 +85,7 @@ def _seed_workspace(tmp_path: Path, *, builder_model: bool = False) -> Path:
         name="alpha",
         board_source=board,
         brief_source=brief,
-        weights=ScoringWeights(),
+        weights=weights,
         entrypoint="pkg.mod:agent",
     )
     return ws
@@ -134,7 +138,7 @@ async def test_graceful_degrade_leaves_draft_untouched(tmp_path: Path) -> None:
         )
     )
 
-    # The form path is untouched: the draft still reflects the live default.
+    # The form path is untouched: the draft still reflects the live gauntlet.
     draft = store.get("s1", ws)
     assert draft.scoring.tournament_structure.structure == "gauntlet"
 
@@ -354,7 +358,6 @@ def test_default_builder_tools_registry_covers_every_op() -> None:
         "set_gate",
         "set_namespace_weights",
         "set_proposer_quality",
-        "set_experiment_memory",
         "set_experimental",
         "set_screening",
         "edit_board_entry",
@@ -413,15 +416,15 @@ def test_new_knob_tools_edit_the_shared_draft(tmp_path: Path) -> None:
     ctx = BuilderToolContext(session_id="s", store=store, workspace_root=ws)
     with bind_builder_tool_context(ctx):
         r1 = _json.loads(copilot_tools.set_proposer_quality(best_of_n=4))
-        r2 = _json.loads(copilot_tools.set_experiment_memory(cross_epoch=True))
-        r3 = _json.loads(copilot_tools.set_namespace_weights(diff_complexity_weight=0.01))
+        r2 = _json.loads(copilot_tools.set_experimental(cross_epoch_memory=True))
+        r3 = _json.loads(copilot_tools.set_experimental(diff_complexity_weight=0.01))
         r4 = _json.loads(copilot_tools.set_holdout(ladder={"budget": 8}))
         r5 = _json.loads(copilot_tools.set_gate(regression_timeout_s=0))
         r6 = _json.loads(copilot_tools.remove_board_entry("e4"))
         r7 = _json.loads(copilot_tools.remove_board_entry("ghost"))
         r8 = _json.loads(copilot_tools.set_board_meta(disable_drift=["off_topic"]))
     assert r1["patch"]["changed"]["best_of_n"]["to"] == 4
-    assert r2["patch"]["changed"]["cross_epoch"]["to"] is True
+    assert r2["patch"]["changed"]["cross_epoch_memory"]["to"] is True
     assert r3["patch"]["changed"]["diff_complexity_weight"]["to"] == 0.01
     assert r4["patch"]["changed"]["ladder.budget"]["to"] == 8
     # invalid values come back as an error the model can read, never a crash.
@@ -431,7 +434,7 @@ def test_new_knob_tools_edit_the_shared_draft(tmp_path: Path) -> None:
     assert r8["patch"]["changed"]["disable_drift"]["to"] == ["off_topic"]
     draft = store.get("s", ws)
     assert draft.scoring.proposer_quality.best_of_n == 4
-    assert draft.scoring.experiment_memory.cross_epoch is True
+    assert draft.scoring.experimental.cross_epoch_memory is True
     assert draft.scoring.overfitting.ladder.budget == 8
     assert {e.id for e in draft.entries} == {"e1", "e2", "e3"}
     assert [str(k) for k in draft.disable_drift] == ["off_topic"]

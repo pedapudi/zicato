@@ -14,7 +14,7 @@ import asyncio
 
 import pytest
 
-from zicato.core.types import TournamentDecision, TournamentStructure
+from zicato.core.types import ExperimentalConfig, TournamentDecision, TournamentStructure
 from zicato.selection import Contestant, evaluate_tournament, make_strategy
 from zicato.selection.driver import TournamentEvaluation
 from zicato.selection.strategy import Matchup, MatchupResult
@@ -32,7 +32,7 @@ def _evaluate(
     gate_decision: TournamentDecision,
 ) -> TournamentEvaluation:
     """Drive one structure over a champion and a single challenger."""
-    strategy = make_strategy(spec, experimental_structures=True)
+    strategy = make_strategy(spec, experimental=ExperimentalConfig(tournament_structures=True))
 
     async def request_field(n: int) -> tuple[Contestant, list[Contestant]]:
         return (

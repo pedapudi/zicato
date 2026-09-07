@@ -142,7 +142,7 @@ class ProposerContext:
     #: byte-identically.
     metric_priorities: str = ""
     #: Pre-rendered, train-slice-only, REDACTED process-exemplar block —
-    #: the opt-in ``proposer_quality.process_exemplars`` channel
+    #: the opt-in ``experimental.process_exemplars`` channel
     #: (``docs/design/PROCESS-EXEMPLARS.md``). Built by the orchestrator,
     #: best-effort, from
     #: :func:`~zicato.analyzer.process_exemplars.extract_process_exemplars`
@@ -155,7 +155,7 @@ class ProposerContext:
     #: on. Empty (the default — every knob-off round) omits the section,
     #: leaving the prompt otherwise unchanged.
     process_exemplars: str = ""
-    #: Sampled genealogy items — the opt-in ``proposer_quality.genealogy``
+    #: Sampled genealogy items — the opt-in ``experimental.genealogy``
     #: channel (``docs/design/PROPOSER.md`` §2.7). Built by the orchestrator
     #: from :func:`~zicato.proposer.genealogy.sample_genealogy` (parents = the
     #: champion's promoted spine; inspirations = diverse rejected reign
@@ -172,7 +172,7 @@ class ProposerContext:
     #: the section and leaves the rest of the prompt byte-identical.
     genealogy: tuple[GenealogyItem, ...] = ()
     #: Optional per-reign prediction-calibration summary — the opt-in
-    #: ``proposer_quality.calibration_feedback`` channel
+    #: ``experimental.calibration_feedback`` channel
     #: (``docs/design/PROPOSER.md`` §2.8). Built by the orchestrator from
     #: :func:`~zicato.proposer.calibration.sample_calibration` (the reign's
     #: settled hypotheses graded by the prediction-accuracy grader —

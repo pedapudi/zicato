@@ -280,15 +280,15 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `restrict_visibility` | `bool = False` (context default) — **default-ON in production** via `weights.overfitting.restrict_proposer_visibility` | orchestrator from the contract | `render_evidence` → `render_pattern_block(restrict=…)`, `_render_prior_experiment_line(restrict=…)`; the best-of-N critic renders the SAME evidence | MACHINERY (the envelope switch itself) |
 | `failure_profile` | `str = ""` | orchestrator: `_render_failure_profile(TRAIN losses, weights)` — pre-rendered, **already banded** | spliced as `## Failure-mode profile`; `hint_for_slot` parses its stable line shapes for the dominant mode | BANDED + AGGREGATED (every number through `_band_rate`/`_band_quality`; board-anonymous by construction) |
 | `metric_priorities` | `str = ""` | orchestrator: `render_metric_priorities_block(build_metric_priorities(board, weights, losses))` — pre-rendered, **already banded** | replaces the flat vocabulary inside `## Valid expectation targets`; also threaded into the recombination merge prompt | BANDED (within-channel weight ratios only — the raw coefficients are the objective function and stay orchestrator-side, §5.8) |
-| `process_exemplars` | `str = ""` | orchestrator: `_render_process_exemplars_block` — **opt-in** (`proposer_quality.process_exemplars > 0`), best-effort | spliced as `## Process exemplars` directly after the failure profile; also fed to the critic | REDACTED (the four redaction rules, §5.8.3); train-only; empty at default |
+| `process_exemplars` | `str = ""` | orchestrator: `_render_process_exemplars_block` — **opt-in** (`experimental.process_exemplars > 0`), best-effort | spliced as `## Process exemplars` directly after the failure profile; also fed to the critic | REDACTED (the four redaction rules, §5.8.3); train-only; empty at default |
 | `sample_hint` | `str = ""` | the **best-of-N wrapper** (`replace(ctx, sample_hint=hint_for_slot(i, n, profile))`) — never the orchestrator | `render_evidence` → `## Edit-class hint (this sample)` at the very top | IDENTITY-FREE (static instruction strings only) |
 | `slot_index` | `int \| None = None` | the **best-of-N wrapper** (`replace(ctx, slot_index=sample)` in `_run_one_slot`) — never the orchestrator | the input capture (§5.5.1), the episode log's directory name, and the task's `## This episode` block, which is what tells one slot's episode from a sibling's | MACHINERY |
 | `revise_feedback` | `str = ""` | the **best-of-N wrapper**, only on the ONE all-vetoed revise re-sample (`_render_revise_feedback`) | `render_evidence` → `## Why the previous attempt was set aside`, at the top of the task | AGGREGATED (composed solely of counts-only screen reason strings + static text) |
 | `mutation_track_records` | `Mapping[str, MutationTrackRecord] \| None = None` | orchestrator: `_load_mutation_track_records` (best-effort index read, `{}` on failure) | `render_mutation_block(track_records=…)` — one banded advisory line per manifest entry; the `mutation_track_record` tool renders the same shape | BANDED + AGGREGATED ("experiments touching this point"; Δscalar bucketed; never causal) |
 | `round_event_emitter` | `Callable[[str, dict], None] \| None = None` | orchestrator: `_RoundLogEmitter.emit` | best-of-N wrapper via `_emit_round_event` (guarded — a raising emitter never fails a propose) | MACHINERY |
 | `screen_candidates` | `ScreenRunner \| None = None` | orchestrator: `_build_candidate_screen_runner` — ONE closure per round, only when `screen_entries > 0 AND best_of_n > 1` | best-of-N wrapper: `_screen_slate`, `_screen_replacement` | MACHINERY (its OUTPUT strings are AGGREGATED counts-only by the `CandidateScreenResult.reason` contract) |
-| `recombine_pair` | `RecombinationPair \| None = None` | orchestrator: `_build_recombination_pair` — ONE selection per round at the screen-builder site, only when `proposer_quality.recombine AND best_of_n > 1`; `_recombine_pair_for_slot` threads it to the FIELD's slot-0 challenger only | best-of-N wrapper: the last slate slot mints its patch union (§5.6.11) instead of sampling the LLM | MACHINERY (carries counts + patches + hypothesis TEXT only — entry ids never leave the builder; the improved/regressed sets are intersected with the current TRAIN board inside `_build_recombination_pair` and discarded) |
-| `genealogy` | `tuple[GenealogyItem, ...] = ()` | orchestrator: `_build_genealogy_items` — ONE sampling per round at the screen-builder site, only when `proposer_quality.genealogy > 0`; ALL best-of-N slots (and the critic) see the SAME items | `render_evidence` → `render_genealogy_block` → spliced as `## Candidate genealogy` directly above `## What's already been tried` (§5.6.13) | BANDED + REDACTED (whole-candidate outcomes through `_bucket_scalar_delta`; proposer-authored core ideas + capped diff excerpts; NO entry ids, NO per-entry results, NO exact deltas — candidate genealogy, never board data; empty at default) |
+| `recombine_pair` | `RecombinationPair \| None = None` | orchestrator: `_build_recombination_pair` — ONE selection per round at the screen-builder site, only when `experimental.recombine AND best_of_n > 1`; `_recombine_pair_for_slot` threads it to the FIELD's slot-0 challenger only | best-of-N wrapper: the last slate slot mints its patch union (§5.6.11) instead of sampling the LLM | MACHINERY (carries counts + patches + hypothesis TEXT only — entry ids never leave the builder; the improved/regressed sets are intersected with the current TRAIN board inside `_build_recombination_pair` and discarded) |
+| `genealogy` | `tuple[GenealogyItem, ...] = ()` | orchestrator: `_build_genealogy_items` — ONE sampling per round at the screen-builder site, only when `experimental.genealogy > 0`; ALL best-of-N slots (and the critic) see the SAME items | `render_evidence` → `render_genealogy_block` → spliced as `## Candidate genealogy` directly above `## What's already been tried` (§5.6.13) | BANDED + REDACTED (whole-candidate outcomes through `_bucket_scalar_delta`; proposer-authored core ideas + capped diff excerpts; NO entry ids, NO per-entry results, NO exact deltas — candidate genealogy, never board data; empty at default) |
 
 > ✅ ALWAYS give a new `ProposerContext` field a default that renders
 > byte-identically when unset. That is not a style preference — it is the
@@ -1239,7 +1239,7 @@ screens/vetoes off the events, but the mode string is what a human greps for):
 |---|---|
 | `critique` | the critic chose; normal healthy path |
 | `heuristic` | critique disabled, no aux callable, or the critic failed/was unparseable — a persistent stream of these with `critique_enabled: true` means the aux endpoint or the critic prompt is broken |
-| `recombined` | a non-vetoed mechanical recombination mint was chosen outright (§5.6.11), no critic call — a single winner captured two rejected complementary fixes; expected only under `proposer_quality.recombine` |
+| `recombined` | a non-vetoed mechanical recombination mint was chosen outright (§5.6.11), no critic call — a single winner captured two rejected complementary fixes; expected only under `experimental.recombine` |
 | `screen_sole_survivor` | the veto narrowed the slate to one; no critique call spent |
 | `screen_revise_survivor` | an all-vetoed slate was rescued by the ONE revise re-sample |
 | `screen_all_vetoed:critique` / `screen_all_vetoed:heuristic` | all-vetoed, revise UNAVAILABLE (inner proposer failed) — the step knowingly forwards a vetoed candidate; frequent occurrences mean the proposer cannot act on the veto feedback |
@@ -1363,8 +1363,8 @@ retroactively.)
 
 And the sibling knobs this chapter leans on:
 `overfitting.restrict_proposer_visibility` (default `true` — the §5.8 master
-switch), `experiment_memory.cross_epoch` (default `false` — §5.10.3),
-`overfitting.random_baseline_every_n` (the placebo arm — proposer-adjacent
+switch), `experimental.cross_epoch_memory` (default `false` — §5.10.3),
+`experimental.random_baseline_every_n` (the placebo arm — proposer-adjacent
 but minted WITHOUT the proposer; see 06-tournament-and-selection.md §6.13).
 
 ### 5.6.10 `CandidateScreenResult` — the screen's output shape
@@ -1397,7 +1397,7 @@ def wrap_with_proposer_quality(
 
 ### 5.6.11 The mechanical recombination slot
 
-Opt-in (`proposer_quality.recombine` AND `best_of_n > 1`; default OFF —
+Opt-in (`experimental.recombine` AND `best_of_n > 1`; default OFF —
 byte-identical propose path when off). The mechanism, in one sentence: **a
 single champion can only ever discount ONE challenger's fix — so when two
 REJECTED challengers each fixed a DISTINCT slice of the board with
@@ -1506,7 +1506,7 @@ filter), so this closes the holdout-leak and preserves context-is-the-envelope.
 > comment in `_build_recombination_pair`.
 
 **Merge modes — `mechanical` (default) vs `llm`.**
-`proposer_quality.recombine_merge` chooses HOW the slot composes the union
+`experimental.recombine_merge` chooses HOW the slot composes the union
 (design: PROPOSER.md §2.6.1; omit-at-default, `"llm"` rolls). `"mechanical"` is
 everything above. `"llm"` instead issues ONE evaluation merge call — the DEPTH
 refinement role (`BestOfNProposerAgent._depth_call_llm`, exactly as the
@@ -1566,7 +1566,7 @@ consumer:
 
 ### 5.6.13 The genealogy channel
 
-Opt-in (`proposer_quality.genealogy > 0`; default `0` = OFF — byte-identical
+Opt-in (`experimental.genealogy > 0`; default `0` = OFF — byte-identical
 propose path when off). The in-context analogue of AlphaEvolve's prompt
 sampler: it feeds the proposer a redacted view of the current reign's
 candidate LINEAGE so the LLM can evolve IN CONTEXT — extend a promoted line
@@ -2068,7 +2068,7 @@ BEFORE being rejected.
 
 ### 5.10.3 Cross-epoch memory (opt-in) and its separation rules
 
-`experiment_memory.cross_epoch: true` (`ExperimentMemoryConfig` — a contract
+`experimental.cross_epoch_memory: true` (`ExperimentalConfig` — a contract
 field, omitted-at-default from the canonical form so old contracts never roll
 retroactively). The rules, all enforced in
 `_cross_contract_settled_rows` / `_cross_contract_entries`:

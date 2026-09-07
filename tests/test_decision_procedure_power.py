@@ -60,7 +60,12 @@ from zicato.core import (
     TournamentDecision,
 )
 from zicato.core.measurement import MeasurementDraw, measurement_artifact_path
-from zicato.core.types import DriftCount, ExpectationResult
+from zicato.core.types import (
+    DriftCount,
+    ExpectationResult,
+    ProposerQualityConfig,
+    TournamentStructure,
+)
 from zicato.core.workspace import run_dir
 from zicato.import_path import import_dotted_path
 from zicato.selection.driver import (
@@ -121,15 +126,17 @@ DELTA_CASES: dict[str, tuple[tuple[str, ...], float]] = {
     "large": ((), 2.016),
 }
 
-#: The NAIVE default contract — the shipped ScoringWeights defaults:
-#: replicates=1 (run_matchup's default), promote_margin=0.01, per-entry
-#: pass-rate monotonicity, no evidence gate.
-NAIVE_WEIGHTS = ScoringWeights()
+#: Single-draw comparison with per-entry monotonicity and no confirmation.
+#: Pin this statistical reference independently of the workspace recommendation.
+NAIVE_WEIGHTS = ScoringWeights(
+    tournament_structure=TournamentStructure.gauntlet(),
+    proposer_quality=ProposerQualityConfig(screen_entries=0),
+)
 
 #: The EFFECTIVE contract's weights: same margin, but aggregate-scope
 #: monotonicity — the documented policy for sampled/noisy boards, where a
 #: single noise-flipped entry must not veto a genuinely better challenger.
-EFFECTIVE_WEIGHTS = ScoringWeights(pass_rate_monotonicity_scope="aggregate")
+EFFECTIVE_WEIGHTS = replace(NAIVE_WEIGHTS, pass_rate_monotonicity_scope="aggregate")
 
 #: Averaging 32 draws reduces the approximate single-draw difference standard
 #: deviation from 0.66 to 0.12. This makes the planted 0.34 improvement about
@@ -507,7 +514,7 @@ def test_margin_below_noise_floor_without_evidence_gate_is_unsound(null_report):
     gate promote never: the complete seeded control measures the effect of confirmation.
     """
     floor_sd, _ = _measure_noise_floor(null_report)
-    margin_only = ScoringWeights(pass_rate_monotonicity=False)
+    margin_only = replace(NAIVE_WEIGHTS, pass_rate_monotonicity=False)
     assert margin_only.promote_margin < floor_sd, "the premise: margin below the floor"
 
     margin_report = _power_report(
@@ -1155,7 +1162,6 @@ def _screen_runner_for(
     veto_only: bool = False,
 ) -> Any:
     """One trial's real orchestrator-built screen closure over _NoisyWorld."""
-    from zicato.core.types import ProposerQualityConfig
     from zicato.evolve.round_context import _build_candidate_screen_runner
 
     snap = tmp_path / "champion_snapshot"
@@ -1168,13 +1174,14 @@ def _screen_runner_for(
         tokens_by_gen[f"v0-screen-r0c{i}"] = tokens
     world = _NoisyWorld(tokens_by_gen, sigma)
     world.install(monkeypatch)
-    weights = ScoringWeights(
+    weights = replace(
+        NAIVE_WEIGHTS,
         proposer_quality=ProposerQualityConfig(
             best_of_n=max(2, len(candidate_tokens)),
             critique_enabled=False,
             screen_entries=2,
             screen_veto_only=veto_only,
-        )
+        ),
     )
     runner = _build_candidate_screen_runner(
         weights=weights,
@@ -1237,7 +1244,6 @@ def test_screen_deterministic_slate_vetoes_broken_selects_best(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """sigma=0: good / mediocre / broken slate — broken vetoed, best chosen."""
-    from zicato.core.types import ProposerQualityConfig
     from zicato.proposer.agent import ProposerContext
     from zicato.proposer.best_of_n import BestOfNProposerAgent
 
@@ -1360,7 +1366,6 @@ def test_screen_tiebreak_beats_random_at_large_delta_safe_at_small(
 ) -> None:
     """Survivor tiebreak: >> random at a large planted delta; ~random at a
     small one (never systematically WORSE than random)."""
-    from zicato.core.types import ProposerQualityConfig
     from zicato.proposer.agent import ProposerContext
     from zicato.proposer.best_of_n import BestOfNProposerAgent
 
@@ -1444,7 +1449,6 @@ def test_screened_slate_never_sends_broken_to_the_tournament(
     the noise-side operating characteristics live in the rate tests
     above, not in this guarantee.
     """
-    from zicato.core.types import ProposerQualityConfig
     from zicato.proposer.agent import ProposerContext
     from zicato.proposer.best_of_n import BestOfNProposerAgent
 
@@ -1528,7 +1532,7 @@ REC_UNION_TOKENS: tuple[str, ...] = ()
 #: The OC contract's margin — strictly between the single fix's true Δ
 #: (1.2) and the union's (2.4). Monotonicity off to isolate the margin
 #: rule (the same isolation the margin-vs-noise test uses).
-REC_MARGIN_WEIGHTS = ScoringWeights(promote_margin=1.5, pass_rate_monotonicity=False)
+REC_MARGIN_WEIGHTS = replace(NAIVE_WEIGHTS, promote_margin=1.5, pass_rate_monotonicity=False)
 
 REC_SIGMA = 0.10
 REC_TRIALS = 40

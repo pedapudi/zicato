@@ -26,6 +26,7 @@ from tests._foe_support import stand_in_proposer_block
 from tests._source_tree_builders import mutable_tree
 from zicato.core.types import (
     Experiment,
+    ExperimentalConfig,
     HypothesisSpec,
     MutationPoint,
     Patch,
@@ -297,7 +298,8 @@ async def test_the_recombination_merge_call_is_captured(tmp_path: Path) -> None:
     inner = _ScriptedInner([_experiment("a", "router__sp"), _experiment("b", "writer__sp")])
     agent = BestOfNProposerAgent(
         inner=inner,
-        config=ProposerQualityConfig(best_of_n=2, recombine_merge="llm"),
+        config=ProposerQualityConfig(best_of_n=2),
+        experimental=ExperimentalConfig(recombine_merge="llm"),
     )
     await agent.propose(_bon_ctx(tmp_path, aux, recombine_pair=pair))
 

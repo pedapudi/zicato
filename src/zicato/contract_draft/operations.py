@@ -336,7 +336,6 @@ _LADDER_TYPES: dict[str, type] = {
     "enabled": bool,
     "threshold": float,
     "budget": int,
-    "noise_scale": float,
 }
 
 
@@ -346,7 +345,7 @@ def _coerce_ladder_value(key: str, value: Any) -> Any:
     ``threshold`` is the ONLY nullable ladder key — its ``None`` means
     "auto-derive from ``promote_margin``". A null anywhere else must be
     rejected here: reaching the dataclass, it would raise an uncaught
-    ``TypeError`` from ``budget``/``noise_scale``'s comparison validators
+    ``TypeError`` from ``budget``'s comparison validator
     (surfacing as a 500), and ``enabled``, which has no validator to trip,
     would silently store ``None`` in a bool field.
     """
@@ -375,8 +374,6 @@ def set_holdout(
     min_board_size_for_split: int | None = None,
     rotate_holdout: bool | None = None,
     restrict_proposer_visibility: bool | None = None,
-    random_baseline_every_n: int | None = None,
-    max_generations_per_contract: int | None = None,
     ladder: dict[str, Any] | None = None,
 ) -> DraftPatch:
     """Edit the train/holdout split + the full anti-overfitting config.
@@ -386,15 +383,11 @@ def set_holdout(
     ``holdout`` tag exactly on the supplied ids (every other entry loses
     the tag). The remaining keywords cover the rest of the overfitting
     contract: the split floor (``min_board_size_for_split``), per-epoch
-    holdout rotation, the proposer-visibility restriction, the placebo
-    cadence (``random_baseline_every_n``; the gate-discrimination
-    control — ``0`` fields no baseline), and the board-refresh ceiling
-    (``max_generations_per_contract``; ``0`` CLEARS the ceiling, since
-    ``None`` here means "leave unchanged").
+    holdout rotation, and the proposer-visibility restriction.
 
     ``ladder`` is a PARTIAL mapping over the
     :class:`~zicato.core.scoring_config.LadderConfig` knobs (``enabled``
-    / ``threshold`` / ``budget`` / ``noise_scale``) merged onto the
+    / ``threshold`` / ``budget``) merged onto the
     current ladder — an explicit ``"threshold": null`` IN the mapping
     resets the release threshold to auto (derive from
     ``promote_margin``). Unknown ladder keys raise. Any subset of the
@@ -410,23 +403,12 @@ def set_holdout(
         ("min_board_size_for_split", min_board_size_for_split),
         ("rotate_holdout", rotate_holdout),
         ("restrict_proposer_visibility", restrict_proposer_visibility),
-        ("random_baseline_every_n", random_baseline_every_n),
     ):
         if value is not None and value != getattr(of, name):
             of_changes[name] = value
             changed[name] = {"from": getattr(of, name), "to": value}
-    if max_generations_per_contract is not None:
-        # ``0`` clears the ceiling (the field's meaningful "off" is None,
-        # which this op reserves for "leave unchanged").
-        ceiling = None if max_generations_per_contract == 0 else max_generations_per_contract
-        if ceiling != of.max_generations_per_contract:
-            of_changes["max_generations_per_contract"] = ceiling
-            changed["max_generations_per_contract"] = {
-                "from": of.max_generations_per_contract,
-                "to": ceiling,
-            }
     if ladder is not None:
-        allowed = {"enabled", "threshold", "budget", "noise_scale"}
+        allowed = {"enabled", "threshold", "budget"}
         unknown = set(ladder) - allowed
         if unknown:
             raise ValueError(
@@ -656,50 +638,17 @@ def set_namespace_weights(
     draft: TournamentDraft,
     *,
     namespace_weights: dict[str, float] | None = None,
-    diff_complexity_weight: float | None = None,
-    diff_complexity_ceiling: float | None = None,
 ) -> DraftPatch:
-    """Set the multi-objective namespace coefficients + the parsimony term.
-
-    ``namespace_weights`` replaces the whole per-namespace coefficient
-    mapping (keys keep their trailing colon, e.g. ``"drift:"``; the SIGN
-    encodes the namespace's "worse" direction — positive = higher is
-    worse, negative = higher is better, zero = tracked but unscored).
-    ``diff_complexity_weight`` is the opt-in MDL/parsimony coefficient
-    (``0`` = the term is exactly absent; must be >= 0).
-    ``diff_complexity_ceiling`` is the paired opt-in parsimony CEILING
-    (``0`` = OFF; must be >= 0): a challenger whose diff complexity exceeds
-    it is rejected outright by the gate. All are contract fields — changing
-    any rolls the epoch.
-    """
+    """Replace namespace coefficients; positive values make higher loss worse."""
     changed: dict[str, Any] = {}
-    scoring_changes: dict[str, Any] = {}
     if namespace_weights is not None:
-        normalized = {str(k): float(v) for k, v in namespace_weights.items()}
+        normalized = {str(key): float(value) for key, value in namespace_weights.items()}
         if normalized != dict(draft.scoring.namespace_weights):
-            scoring_changes["namespace_weights"] = normalized
             changed["namespace_weights"] = {
                 "from": dict(draft.scoring.namespace_weights),
                 "to": normalized,
             }
-    if diff_complexity_weight is not None:
-        require_knob(ScoringWeights, "diff_complexity_weight", diff_complexity_weight)
-        if diff_complexity_weight != draft.scoring.diff_complexity_weight:
-            scoring_changes["diff_complexity_weight"] = diff_complexity_weight
-            changed["diff_complexity_weight"] = {
-                "from": draft.scoring.diff_complexity_weight,
-                "to": diff_complexity_weight,
-            }
-    if diff_complexity_ceiling is not None:
-        require_knob(ScoringWeights, "diff_complexity_ceiling", diff_complexity_ceiling)
-        if diff_complexity_ceiling != draft.scoring.diff_complexity_ceiling:
-            scoring_changes["diff_complexity_ceiling"] = diff_complexity_ceiling
-            changed["diff_complexity_ceiling"] = {
-                "from": draft.scoring.diff_complexity_ceiling,
-                "to": diff_complexity_ceiling,
-            }
-    if scoring_changes:
-        draft.scoring = _replace_scoring(draft, **scoring_changes)
+            draft.scoring = _replace_scoring(draft, namespace_weights=normalized)
     return DraftPatch(op="set_namespace_weights", changed=changed)
 
 
@@ -709,130 +658,29 @@ def set_proposer_quality(
     *,
     best_of_n: int | None = None,
     critique_enabled: bool | None = None,
-    process_exemplars: int | None = None,
-    recombine: bool | None = None,
-    genealogy: int | None = None,
-    calibration_feedback: int | None = None,
-    recombine_merge: str | None = None,
 ) -> DraftPatch:
-    """Set the proposer-quality levers: best-of-N slate + self-critique.
+    """Set candidate count and critique; screening has its own operation.
 
-    ``best_of_n``
-        How many candidate experiments each propose-step samples before
-        selection. ``1`` is a single sample with no critique. Must be >= 1.
-    ``critique_enabled``
-        Toggles the evaluation self-critique selection pass. Inert at
-        ``best_of_n == 1``.
-    ``process_exemplars``
-        Opts the proposer into up to that many REDACTED drift-anchored event
-        windows per round. ``0`` = off, the default; must be >= 0; read-side
-        only. Read the §5 harm-detection runbook in
-        ``docs/design/PROCESS-EXEMPLARS.md`` before opting in.
-    ``recombine``
-        Opts in the mechanical recombination slot: when ``True`` the last
-        best-of-N slot mints the patch union of two rejected complementary
-        challengers instead of sampling the LLM. REQUIRES ``best_of_n > 1``
-        to have any effect, since a single-sample proposer has no slate slot
-        to mint into. Cost-neutral: the mint REPLACES that slot's evaluation
-        propose call (:mod:`zicato.epoch.recombine`); flipping it rolls the
-        epoch.
-    ``recombine_merge``
-        Chooses HOW that slot composes the union. ``"mechanical"`` (the
-        default) mints the disjoint patch concatenation with no LLM call.
-        ``"llm"`` issues one merge call whose response flows through the
-        normal parse path, and RELAXES disjointness so an OVERLAPPING pair
-        the mechanical mint cannot touch can be merged (PROPOSER.md §2.6.1).
-        Meaningful only with ``recombine`` on; ``"llm"`` rolls the epoch.
-    ``genealogy``
-        Opts in the genealogy channel: up to that many candidate-LINEAGE
-        items — the champion's promoted patch history plus diverse rejected
-        reign candidates, each with a banded outcome — are spliced into the
-        prompt so the proposer can evolve in context. ``0`` = off, the
-        default; must be >= 0; read-side only (:mod:`zicato.proposer.genealogy`).
-    ``calibration_feedback``
-        Opts in the critic-calibration channel: up to that many RECENT
-        graded hypotheses — the proposer's own falsifiable predictions
-        graded against realized outcomes, as hit / miss / unresolved counts
-        plus the overall calibration fraction plus banded per-claim outcomes
-        — are spliced into the prompt, so the proposer sees its OWN miss
-        pattern and predicts more honestly. ``0`` = off, the default; must
-        be >= 0; read-side only (:mod:`zicato.proposer.calibration`).
-
-    COMPOSES with :func:`set_screening`: both edit the same nested
-    ``proposer_quality`` block, and the screen knobs stay that op's. Changing
-    any of these rolls the epoch.
+    A single candidate bypasses critique. Candidate count must be positive.
     """
-    changed: dict[str, Any] = {}
     quality = draft.scoring.proposer_quality
-    quality_changes: dict[str, Any] = {}
+    changes: dict[str, Any] = {}
     if best_of_n is not None:
         require_knob(ProposerQualityConfig, "best_of_n", best_of_n)
         if best_of_n != quality.best_of_n:
-            quality_changes["best_of_n"] = best_of_n
-            changed["best_of_n"] = {"from": quality.best_of_n, "to": best_of_n}
+            changes["best_of_n"] = best_of_n
     if critique_enabled is not None and critique_enabled != quality.critique_enabled:
-        quality_changes["critique_enabled"] = critique_enabled
-        changed["critique_enabled"] = {"from": quality.critique_enabled, "to": critique_enabled}
-    if process_exemplars is not None:
-        require_knob(ProposerQualityConfig, "process_exemplars", process_exemplars)
-        if process_exemplars != quality.process_exemplars:
-            quality_changes["process_exemplars"] = process_exemplars
-            changed["process_exemplars"] = {
-                "from": quality.process_exemplars,
-                "to": process_exemplars,
-            }
-    if recombine is not None and recombine != quality.recombine:
-        quality_changes["recombine"] = recombine
-        changed["recombine"] = {"from": quality.recombine, "to": recombine}
-    if recombine_merge is not None:
-        require_knob(ProposerQualityConfig, "recombine_merge", recombine_merge)
-        if recombine_merge != quality.recombine_merge:
-            quality_changes["recombine_merge"] = recombine_merge
-            changed["recombine_merge"] = {
-                "from": quality.recombine_merge,
-                "to": recombine_merge,
-            }
-    if genealogy is not None:
-        require_knob(ProposerQualityConfig, "genealogy", genealogy)
-        if genealogy != quality.genealogy:
-            quality_changes["genealogy"] = genealogy
-            changed["genealogy"] = {"from": quality.genealogy, "to": genealogy}
-    if calibration_feedback is not None:
-        require_knob(ProposerQualityConfig, "calibration_feedback", calibration_feedback)
-        if calibration_feedback != quality.calibration_feedback:
-            quality_changes["calibration_feedback"] = calibration_feedback
-            changed["calibration_feedback"] = {
-                "from": quality.calibration_feedback,
-                "to": calibration_feedback,
-            }
-    if quality_changes:
+        changes["critique_enabled"] = critique_enabled
+    if changes:
         draft.scoring = _replace_scoring(
-            draft, proposer_quality=dataclasses.replace(quality, **quality_changes)
+            draft, proposer_quality=dataclasses.replace(quality, **changes)
         )
-    return DraftPatch(op="set_proposer_quality", changed=changed)
-
-
-@authored_edit
-def set_experiment_memory(
-    draft: TournamentDraft,
-    *,
-    cross_epoch: bool | None = None,
-) -> DraftPatch:
-    """Set the experiment-memory scoping (what settled history the proposer sees).
-
-    ``cross_epoch=True`` opts settled experiments from PRIOR epochs that
-    share the current contract hash into the proposer's digest (banded,
-    same-epoch entries keep budget priority); ``False`` (the default) is
-    same-epoch-only. A contract field — changing it rolls the epoch.
-    """
-    changed: dict[str, Any] = {}
-    memory = draft.scoring.experiment_memory
-    if cross_epoch is not None and cross_epoch != memory.cross_epoch:
-        draft.scoring = _replace_scoring(
-            draft, experiment_memory=dataclasses.replace(memory, cross_epoch=cross_epoch)
-        )
-        changed["cross_epoch"] = {"from": memory.cross_epoch, "to": cross_epoch}
-    return DraftPatch(op="set_experiment_memory", changed=changed)
+    return DraftPatch(
+        op="set_proposer_quality",
+        changed={
+            name: {"from": getattr(quality, name), "to": value} for name, value in changes.items()
+        },
+    )
 
 
 @authored_edit
@@ -840,31 +688,49 @@ def set_experimental(
     draft: TournamentDraft,
     *,
     tournament_structures: bool | None = None,
+    process_exemplars: int | None = None,
+    recombine: bool | None = None,
+    recombine_merge: str | None = None,
+    genealogy: int | None = None,
+    calibration_feedback: int | None = None,
+    random_baseline_every_n: int | None = None,
+    max_generations_per_contract: int | None = None,
+    diff_complexity_weight: float | None = None,
+    diff_complexity_ceiling: float | None = None,
+    cross_epoch_memory: bool | None = None,
+    standing_rating: str | None = None,
+    resolver: str | None = None,
 ) -> DraftPatch:
-    """Set the contract's opt-ins for features without a measured case.
+    """Edit features whose improvement evidence has not met graduation criteria.
 
-    ``tournament_structures=True`` admits ``single_elim``, ``double_elim``
-    and ``swiss`` as the draft's structure; ``False`` (the default) refuses
-    them, and is itself refused while the draft's structure is one of the
-    three. A contract field — changing it rolls the epoch.
+    Omitted values leave settings unchanged. A generation ceiling of zero
+    clears it; the rating and resolver value ``"none"`` disables that feature.
+    Disabling tournament structures requires an ordinary selected structure.
+    All supplied values are validated before replacing the draft's scoring.
     """
-    changed: dict[str, Any] = {}
+    supplied = locals()
     experimental = draft.scoring.experimental
-    if (
-        tournament_structures is not None
-        and tournament_structures != experimental.tournament_structures
-    ):
+    changes = {
+        item.name: supplied[item.name]
+        for item in dataclasses.fields(experimental)
+        if supplied[item.name] is not None
+    }
+    if changes.get("max_generations_per_contract") == 0:
+        changes["max_generations_per_contract"] = None
+    changes = {
+        name: value for name, value in changes.items() if value != getattr(experimental, name)
+    }
+    if changes:
         draft.scoring = _replace_scoring(
-            draft,
-            experimental=dataclasses.replace(
-                experimental, tournament_structures=tournament_structures
-            ),
+            draft, experimental=dataclasses.replace(experimental, **changes)
         )
-        changed["tournament_structures"] = {
-            "from": experimental.tournament_structures,
-            "to": tournament_structures,
-        }
-    return DraftPatch(op="set_experimental", changed=changed)
+    return DraftPatch(
+        op="set_experimental",
+        changed={
+            name: {"from": getattr(experimental, name), "to": value}
+            for name, value in changes.items()
+        },
+    )
 
 
 @authored_edit
@@ -1411,7 +1277,7 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     # candidate experiments — evaluation LLM CALLS rather than board runs, so the
     # line is labelled and EXCLUDED from the board-runs headline. Real
     # spend the operator should still see priced. An UPPER BOUND under the
-    # recombination slot (proposer_quality.recombine): a round that mints
+    # recombination slot (experimental.recombine): a round that mints
     # a recombination pair REPLACES its last slot's propose call with the
     # free mechanical mint, spending best_of_n − 1 calls that round.
     if quality.best_of_n > 1:
@@ -1455,7 +1321,7 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
 
     # The placebo control arm: one extra no-op challenger every N rounds
     # (a full duel across the train board), amortized to per-round runs.
-    baseline_n = draft.scoring.overfitting.random_baseline_every_n
+    baseline_n = draft.scoring.experimental.random_baseline_every_n
     if baseline_n > 0:
         placebo_runs = math.ceil(replicates * board_size / baseline_n)
         if placebo_runs:
@@ -2383,7 +2249,6 @@ __all__ = [
     "set_gate",
     "set_namespace_weights",
     "set_proposer_quality",
-    "set_experiment_memory",
     "set_experimental",
     "set_goldfive",
     "set_mutation_surface",

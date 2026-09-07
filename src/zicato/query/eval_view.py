@@ -289,14 +289,14 @@ def _holdout_ids(paths: WorkspacePaths, epoch_id: str, board_entries: list[Any])
     unconfigured / unreadable split yields an empty set (every entry train).
     """
     from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
-    from zicato.workspace_loader import overfitting_config_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
 
     if not board_entries:
         return set()
     scoring = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "scoring.json")
-    raw = scoring.get("overfitting") if isinstance(scoring, dict) else None
+    raw = scoring if isinstance(scoring, dict) else {}
     try:
-        cfg = overfitting_config_from_dict(raw)
+        cfg = historical_scoring_weights_from_dict(raw).overfitting
         seed = rotation_seed(cfg, epoch_id)
         _train, holdout = split_board(board_entries, cfg, seed=seed)
     except Exception:  # noqa: BLE001 — best-effort; degrade to no holdout
@@ -1132,14 +1132,11 @@ def _rotation_status(
     from zicato.health.diagnostics import detect_refresh_cadence  # noqa: PLC0415
 
     scoring = _read_json_value(layout_of(paths).epoch_dir(epoch_id) / "scoring.json")
-    raw = scoring.get("overfitting") if isinstance(scoring, dict) else None
-    rotate = bool(raw.get("rotate_holdout")) if isinstance(raw, dict) else False
-    ceiling_raw = raw.get("max_generations_per_contract") if isinstance(raw, dict) else None
-    ceiling = (
-        int(ceiling_raw)
-        if isinstance(ceiling_raw, int) and not isinstance(ceiling_raw, bool) and ceiling_raw >= 1
-        else None
-    )
+    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
+
+    weights = historical_scoring_weights_from_dict(scoring if isinstance(scoring, dict) else {})
+    rotate = weights.overfitting.rotate_holdout
+    ceiling = weights.experimental.max_generations_per_contract
     evaluated = sum(
         1 for exp in experiments if isinstance(exp, dict) and exp.get("outcome") is not None
     )

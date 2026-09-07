@@ -1914,7 +1914,7 @@
       "runtime_cost": [],
       "holdout_budget": null,
       "rotation": {
-        "rotate_holdout": false,
+        "rotate_holdout": true,
         "max_generations_per_contract": null,
         "evaluated_generations": 2,
         "refresh_recommended": false,

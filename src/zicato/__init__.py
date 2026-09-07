@@ -27,10 +27,6 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
     "load_workspace_config": ("zicato.workspace_loader", "load_workspace_config"),
     "load_board": ("zicato.board", "load_board"),
     "ScoringWeights": ("zicato.core.scoring_config", "ScoringWeights"),
-    "recommended_scaffold_weights": (
-        "zicato.core.scoring_config",
-        "recommended_scaffold_weights",
-    ),
     "CallLLM": ("zicato.core.runtime", "CallLLM"),
     "HarnessAdapter": ("zicato.adapters", "HarnessAdapter"),
     "RunnableHarness": ("zicato.adapters", "RunnableHarness"),
@@ -65,9 +61,6 @@ if TYPE_CHECKING:  # static-analysis view of the lazy surface
     from zicato.config import load_config as load_config
     from zicato.core.runtime import CallLLM as CallLLM
     from zicato.core.scoring_config import ScoringWeights as ScoringWeights
-    from zicato.core.scoring_config import (
-        recommended_scaffold_weights as recommended_scaffold_weights,
-    )
     from zicato.orchestrator import EvolveRoundOutcome as EvolveRoundOutcome
     from zicato.orchestrator import evolve_n_rounds as evolve_n_rounds
     from zicato.orchestrator import evolve_once as evolve_once

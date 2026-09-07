@@ -1219,7 +1219,7 @@ def _read_evidence_parameters(
     paths: WorkspacePaths, epoch_id: str, inputs: EpochInputs | None = None
 ) -> tuple[float, int, int] | None:
     """Read the probability bar, replicate budget, and planned candidate count."""
-    from zicato.core.types import TournamentStructure  # noqa: PLC0415
+    from zicato.core.types import ExperimentalConfig, TournamentStructure  # noqa: PLC0415
     from zicato.selection import make_strategy  # noqa: PLC0415
     from zicato.selection.evidence_gate import (  # noqa: PLC0415
         read_promote_confidence_threshold as _read_threshold,
@@ -1245,7 +1245,7 @@ def _read_evidence_parameters(
     try:
         strategy = make_strategy(
             TournamentStructure(structure=tournament.get("structure", "gauntlet"), params=params),
-            experimental_structures=True,
+            experimental=ExperimentalConfig(tournament_structures=True),
         )
     except ValueError:
         return None

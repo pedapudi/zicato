@@ -11,6 +11,7 @@ import pytest
 
 from zicato.contract_draft import operations as ops
 from zicato.contract_draft.draft import DraftStore, TournamentDraft
+from zicato.core.scoring_config import scoring_weights_from_dict
 from zicato.core.types import BoardEntry, ScoringWeights
 from zicato.epoch.contract import compute_contract_hash, resolve_contract_inputs
 from zicato.epoch.lifecycle import current_epoch_id, load_epoch, new_epoch
@@ -40,7 +41,12 @@ def workspace(tmp_path: Path) -> Path:
     brief = tmp_path / "brief.md"
     brief.write_text("# Brief\n\nsteer toward concrete deltas\n", encoding="utf-8")
     scoring = tmp_path / "scoring.json"
-    scoring.write_text(json.dumps({"promote_margin": 0.01}), encoding="utf-8")
+    initial_scoring = {
+        "promote_margin": 0.01,
+        "tournament": {"structure": "gauntlet"},
+        "proposer_quality": {"screen_entries": 0},
+    }
+    scoring.write_text(json.dumps(initial_scoring), encoding="utf-8")
 
     # Workspace config with the contract block + harness identity.
     write_workspace_config(
@@ -64,7 +70,7 @@ def workspace(tmp_path: Path) -> Path:
         name="alpha",
         board_source=board,
         brief_source=brief,
-        weights=ScoringWeights(),
+        weights=scoring_weights_from_dict(initial_scoring),
         entrypoint="pkg.mod:agent",
         mutable_trees=(str(tmp_path / "src"),),
     )

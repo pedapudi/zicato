@@ -29,6 +29,10 @@ use.
 > covers the source-hashing that rolls the epoch when a plugin body
 > changes (issue #19).
 
+The [feature qualification inventory](FEATURE-QUALIFICATION.md) distinguishes
+resolved defaults, experimental controls, and empirical evidence. A configured
+feature or passing correctness test does not itself establish measured benefit.
+
 ## 1. Why both signals
 
 Drift loss alone scores "**how cleanly** did the run execute?". A

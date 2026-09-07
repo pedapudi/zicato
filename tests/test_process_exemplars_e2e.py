@@ -96,7 +96,8 @@ def _bootstrap(tmp_path: Path) -> tuple[Path, str]:
     scoring = json.loads(SCORING_PATH.read_text())
     # The shipped deterministic pins (single-sample proposer, single-run
     # duel) plus the ONE knob under test: the opt-in exemplar channel.
-    scoring["proposer_quality"] = {"best_of_n": 1, "process_exemplars": 2}
+    scoring["proposer_quality"] = {"best_of_n": 1}
+    scoring["experimental"] = {"process_exemplars": 2}
     weights = _scoring_from_dict(scoring)
     cfg = new_epoch(
         workspace,

@@ -81,7 +81,7 @@ def test_declared_mapping_extensions_keep_valid_values():
     raw = {"tournament": {"params": {"extension": {"labels": ["one", "two"], "limit": 3}}}}
     Draft202012Validator(dataclass_schema(ScoringWeights)).validate(raw)
     assert dataclass_to_jsonable(scoring_weights_from_dict(raw))["tournament"] == {
-        "structure": "gauntlet",
+        "structure": "racing",
         "params": raw["tournament"]["params"],
     }
 

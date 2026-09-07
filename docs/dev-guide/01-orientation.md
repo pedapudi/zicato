@@ -336,7 +336,7 @@ into a scalar and gates promotion: `src/zicato/core/scoring_config.py`.
 Nested config blocks ride on it and therefore fold into the contract hash
 automatically (the canonicalizer recurses into nested dataclasses):
 `TournamentStructure`, `OverfittingConfig` (+ `LadderConfig`),
-`ProposerQualityConfig`, `ExperimentMemoryConfig`.
+`ProposerQualityConfig`, `ExperimentalConfig`.
 
 The optional `ScoringWeights.goldfive` field is a different kind of contract
 value. Zicato keeps it as an immutable JSON mapping and loads no Goldfive
@@ -403,7 +403,7 @@ never an entry id.
 (±3 events around an anchor drift) extracted from the champion's
 train-slice `events.jsonl` so the proposer sees HOW a failure unfolds,
 never WHICH entry it unfolded on. Knob:
-`proposer_quality.process_exemplars` (default 0 = off). Extractor:
+`experimental.process_exemplars` (default 0 = off). Extractor:
 `src/zicato/analyzer/process_exemplars.py`; renderer:
 `render_process_exemplars` (`src/zicato/proposer/prompts.py`); round
 seam: `_render_process_exemplars_block`
@@ -515,7 +515,7 @@ edit-class hint, with a self-critique pass selecting the winner.
 `wrap_with_proposer_quality`); hints in `src/zicato/proposer/hints.py`.
 
 **placebo** — the opt-in random-baseline challenger
-(`overfitting.random_baseline_every_n`): every Nth round, one extra
+(`experimental.random_baseline_every_n`): every Nth round, one extra
 challenger whose patch is a semantics-preserving no-op. The gate MUST
 reject it; a promoted placebo raises the CRITICAL `placebo_promoted`
 health finding (gate discrimination is broken). Minted by
@@ -564,7 +564,7 @@ the proposer sees: `PriorExperiment` entries (settled history via the
 index + in-flight siblings in a field round), capped at
 `EXPERIMENT_MEMORY_MAX_ENTRIES = 12`, banded under restricted visibility.
 Assembled by `_load_prior_experiments` (`src/zicato/evolve/ingest.py`);
-opt-in cross-epoch transfer via `ExperimentMemoryConfig.cross_epoch`
+opt-in cross-epoch transfer via `ExperimentalConfig.cross_epoch_memory`
 (same contract hash only). Design: `docs/design/EXPERIMENT-MEMORY.md`.
 
 **journal** — the append-only human narrative per epoch

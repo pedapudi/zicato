@@ -12,7 +12,12 @@ from enum import StrEnum
 from typing import Any, Literal
 
 from zicato.core.constraints import KnobConstraint
-from zicato.core.measurement import MeasurementPurpose, measurement_range
+from zicato.core.measurement import (
+    EVIDENCE_REPLICATE_BASE,
+    MeasurementPurpose,
+    measurement_range,
+    validate_measurement_interval,
+)
 
 # ---------------------------------------------------------------------------
 # Tournament decision / structure
@@ -145,8 +150,8 @@ class Side(StrEnum):
 PassRateMonotonicityScope = Literal["per_entry", "aggregate"]
 
 
-#: Every tournament structure token a contract may name. ``"gauntlet"``
-#: is the default; ``"racing"`` is the structure the scaffold recommends;
+#: Every tournament structure token a contract may name. ``"racing"``
+#: is the shared scoring default; ``"gauntlet"`` is explicitly selectable;
 #: the three in :data:`EXPERIMENTAL_TOURNAMENT_STRUCTURES` resolve only
 #: under the opt-in named by :data:`EXPERIMENTAL_STRUCTURES_KEY`. The
 #: tokens are the closed enum the loader validates against and the keys
@@ -209,6 +214,60 @@ TOURNAMENT_PARAM_CONSTRAINTS: Mapping[str, KnobConstraint] = {
     ),
 }
 
+# The complete recommended specification owns these confirmation values.
+DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD: float = 0.8
+DEFAULT_CONFIRMATION_BUDGET: int = 32
+
+#: Historical fallback when ``promote_confidence_replicates`` is unset:
+#: three fresh paired confirmation draws. Each draw evaluates both contestants;
+#: its execution cost depends on the board. Exhaustion leaves required
+#: confirmation incomplete.
+DEFAULT_REPLICATE_BUDGET: int = 3
+
+
+def read_promote_confidence_threshold(params: Mapping[str, Any]) -> float | None:
+    """Read an explicit probability requirement, or return None when disabled.
+
+    The shared scoring default supplies a threshold. Explicit empty params,
+    null, or zero disable confirmation. Recorded invalid values retain the
+    historical reader behavior and return None. A threshold alone cannot
+    establish credible independent evidence; the adjusted interval must also
+    lie above zero.
+    """
+    raw = params.get("promote_confidence_threshold", None)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0.0 or value >= 1.0:
+        return None
+    return value
+
+
+def read_replicate_budget(params: Mapping[str, Any]) -> int:
+    """The defer→replicate budget for the pre-gate loop.
+
+    Reads ``params["promote_confidence_replicates"]`` — how many extra
+    fresh crowning-pair replicates the driver may spend before the
+    verdict goes terminal (``inconclusive``). Absent / non-integer / negative ⇒
+    :data:`DEFAULT_REPLICATE_BUDGET`. Zero is honoured (defer once, then go
+    inconclusive immediately) so an operator can disable replication while still
+    using the deferred verdict.
+    """
+    raw = params.get("promote_confidence_replicates", None)
+    if raw is None:
+        return DEFAULT_REPLICATE_BUDGET
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_REPLICATE_BUDGET
+    if value < 0:
+        return DEFAULT_REPLICATE_BUDGET
+    validate_measurement_interval(EVIDENCE_REPLICATE_BASE, value, allow_empty=True)
+    return value
+
 
 @dataclass(frozen=True, slots=True)
 class MatchOutcome:
@@ -258,7 +317,8 @@ class TournamentStructure:
     ------
     structure:
         One of :data:`VALID_TOURNAMENT_STRUCTURES`. Defaults to
-        ``"gauntlet"`` — the shipped king-of-the-hill behaviour.
+        ``"gauntlet"`` in this retained-record constructor. Authored scoring
+        resolves omission through its complete racing specification.
     params:
         A structure-specific JSON object, stored and round-tripped
         verbatim as an opaque ``Mapping[str, Any]`` (the same
@@ -270,8 +330,9 @@ class TournamentStructure:
         :data:`TOURNAMENT_PARAM_CONSTRAINTS` holds a value in its
         declared range.
 
-    The default factory :meth:`gauntlet` yields the fully-defaulted
-    gauntlet spec an absent ``tournament`` block resolves to.
+    :meth:`gauntlet` constructs an explicit single-challenger specification
+    without confirmation. Scoring defaults are owned by
+    :func:`_default_tournament_structure`.
     """
 
     structure: str = field(
@@ -297,10 +358,20 @@ class TournamentStructure:
 
     @classmethod
     def gauntlet(cls) -> TournamentStructure:
-        """The fully-defaulted gauntlet spec (the back-compat default)."""
+        """An explicit single-challenger specification without confirmation."""
         return cls(structure="gauntlet", params={})
 
 
 def _default_tournament_structure() -> TournamentStructure:
     """Default-factory for :attr:`ScoringWeights.tournament_structure`."""
-    return TournamentStructure.gauntlet()
+    return TournamentStructure(
+        structure="racing",
+        params={
+            "field_size": 4,
+            "eta": 2,
+            "board_fraction": 0.4,
+            "replicates": 2,
+            "promote_confidence_threshold": DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
+            "promote_confidence_replicates": DEFAULT_CONFIRMATION_BUDGET,
+        },
+    )

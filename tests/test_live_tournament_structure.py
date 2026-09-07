@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from zicato.core.types import TournamentStructure
+from zicato.core.types import ExperimentalConfig, TournamentStructure
 from zicato.evolve.dashboard_projection import (
     _overlay_projected_live_progress,
     _serialise_rounds,
@@ -62,7 +62,7 @@ def _result(matchup, *, left_scalar: float, right_scalar: float) -> MatchupResul
 def _seed(structure: str, field_size: int, **params):
     strategy = make_strategy(
         TournamentStructure(structure=structure, params={"field_size": field_size, **params}),
-        experimental_structures=True,
+        experimental=ExperimentalConfig(tournament_structures=True),
     )
     champion = Contestant(generation_id="v0", role="champion")
     challengers = [

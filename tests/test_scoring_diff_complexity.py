@@ -27,7 +27,7 @@ import pytest
 
 from tests._contract_pins import deterministic_weights
 from zicato.core import DriftCount, LossProfile, ScoringWeights
-from zicato.core.types import Experiment, HypothesisSpec, Patch
+from zicato.core.types import Experiment, ExperimentalConfig, HypothesisSpec, Patch
 from zicato.epoch.contract import scoring_to_canon
 from zicato.scoring.builtins import builtin_scalar, diff_complexity_component
 from zicato.scoring.diff_complexity import (
@@ -177,7 +177,7 @@ def test_builtin_scalar_byte_identical_when_off() -> None:
 
 
 def test_component_value_and_scalar_delta_when_weighted() -> None:
-    weights = ScoringWeights(diff_complexity_weight=0.1)
+    weights = ScoringWeights(experimental=ExperimentalConfig(diff_complexity_weight=0.1))
     diff = {"added": 4, "removed": 0, "patches": 3}  # complexity 7
     # The component is exactly weight * complexity.
     assert diff_complexity_component(weights, diff) == 0.1 * 7.0
@@ -197,8 +197,8 @@ def test_component_value_and_scalar_delta_when_weighted() -> None:
 
 def test_component_appended_last_in_fixed_position() -> None:
     weights = ScoringWeights(
-        diff_complexity_weight=0.1,
         namespace_weights={"drift:": 1.0, "failure:": 1.0, "cost:": 1.0},
+        experimental=ExperimentalConfig(diff_complexity_weight=0.1),
     )
     losses = [_loss("e1", drift_loss=1.0)]
     diff = {"added": 2, "removed": 0, "patches": 1}
@@ -210,7 +210,7 @@ def test_component_appended_last_in_fixed_position() -> None:
 def test_zero_complexity_still_surfaces_component_when_weighted() -> None:
     # A zero-size diff (no patches) with weight > 0 still surfaces the term
     # (as 0.0) because the term is ACTIVE — only the default weight removes it.
-    weights = ScoringWeights(diff_complexity_weight=0.5)
+    weights = ScoringWeights(experimental=ExperimentalConfig(diff_complexity_weight=0.5))
     diff = {"added": 0, "removed": 0, "patches": 0}
     losses = [_loss("e1", drift_loss=1.0)]
     on = aggregate_generation_score(losses, weights, diff_size=diff)
@@ -220,7 +220,7 @@ def test_zero_complexity_still_surfaces_component_when_weighted() -> None:
 
 def test_no_diff_size_means_no_term_even_when_weighted() -> None:
     # The champion side: weight > 0 but no diff size threaded ⇒ term absent.
-    weights = ScoringWeights(diff_complexity_weight=0.5)
+    weights = ScoringWeights(experimental=ExperimentalConfig(diff_complexity_weight=0.5))
     assert diff_complexity_component(weights, None) is None
     losses = [_loss("e1", drift_loss=1.0)]
     on = aggregate_generation_score(losses, weights)  # no diff_size
@@ -238,7 +238,7 @@ def test_ceiling_echoes_diff_size_without_a_scalar_term() -> None:
     # Ceiling ON, weight OFF: the diff size is echoed so the gate's Rule 0 can
     # read it, but the scalar / components are byte-identical to the weight-off
     # path (the ceiling is a gate rule, not a loss nudge).
-    weights = ScoringWeights(diff_complexity_ceiling=10.0)
+    weights = ScoringWeights(experimental=ExperimentalConfig(diff_complexity_ceiling=10.0))
     diff = {"added": 4, "removed": 0, "patches": 3}
     losses = [_loss("e1", drift_loss=2.0)]
     off = aggregate_generation_score(losses, ScoringWeights())
@@ -264,8 +264,10 @@ def test_ceiling_off_and_weight_off_is_byte_identical() -> None:
 def test_canon_omits_ceiling_at_default_and_rolls_when_set() -> None:
     off = scoring_to_canon(ScoringWeights())
     assert "diff_complexity_ceiling" not in off
-    on = scoring_to_canon(ScoringWeights(diff_complexity_ceiling=10.0))
-    assert on["diff_complexity_ceiling"] == 10.0
+    on = scoring_to_canon(
+        ScoringWeights(experimental=ExperimentalConfig(diff_complexity_ceiling=10.0))
+    )
+    assert on["experimental"]["diff_complexity_ceiling"] == 10.0
     assert on != off
 
 
@@ -275,7 +277,7 @@ def test_canon_omits_ceiling_at_default_and_rolls_when_set() -> None:
 
 
 def test_diff_size_evidence_challenger_only() -> None:
-    weights = ScoringWeights(diff_complexity_weight=0.1)
+    weights = ScoringWeights(experimental=ExperimentalConfig(diff_complexity_weight=0.1))
     losses = [_loss("e1", drift_loss=1.0)]
     parent = aggregate_generation_score(losses, weights)  # champion: no diff
     child = aggregate_generation_score(
@@ -304,14 +306,16 @@ def test_canon_omits_field_at_default() -> None:
 
 def test_canon_includes_and_rolls_when_set() -> None:
     off = scoring_to_canon(ScoringWeights())
-    on = scoring_to_canon(ScoringWeights(diff_complexity_weight=0.25))
-    assert on["diff_complexity_weight"] == 0.25
+    on = scoring_to_canon(
+        ScoringWeights(experimental=ExperimentalConfig(diff_complexity_weight=0.25))
+    )
+    assert on["experimental"]["diff_complexity_weight"] == 0.25
     # Setting the weight changes the canonical form ⇒ rolls the epoch.
     assert on != off
 
 
 def test_scoring_weights_round_trips_field() -> None:
-    w = ScoringWeights(diff_complexity_weight=0.3)
+    w = ScoringWeights(experimental=ExperimentalConfig(diff_complexity_weight=0.3))
     assert ScoringWeights.from_json(w.to_json()) == w
     # The default still round-trips (and serialises the field as 0.0).
     d = ScoringWeights()
@@ -342,7 +346,10 @@ def test_ceiling_rejects_oversized_challenger_diff_e2e(
     )
 
     workspace, epoch_id = bootstrap_workspace(
-        tmp_path, weights=deterministic_weights(promote_margin=0.01, diff_complexity_ceiling=1.0)
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=0.01, experimental=ExperimentalConfig(diff_complexity_ceiling=1.0)
+        ),
     )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
@@ -374,7 +381,10 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
     )
 
     workspace, epoch_id = bootstrap_workspace(
-        tmp_path, weights=deterministic_weights(promote_margin=0.01, diff_complexity_ceiling=100.0)
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=0.01, experimental=ExperimentalConfig(diff_complexity_ceiling=100.0)
+        ),
     )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(

@@ -498,7 +498,7 @@ def _collect_epoch_health_inputs(
 
 
 def _epoch_max_generations_per_contract(workspace_root: Path, epoch_id: str) -> int | None:
-    """Read the epoch's ``overfitting.max_generations_per_contract`` cadence.
+    """Read the epoch's ``experimental.max_generations_per_contract`` cadence.
 
     Best-effort: a missing / unreadable ``scoring.json`` yields ``None`` so
     the cadence detector stays silent (OVERFITTING.md §12 #6). Used only to
@@ -507,13 +507,13 @@ def _epoch_max_generations_per_contract(workspace_root: Path, epoch_id: str) -> 
     import json as _json  # noqa: PLC0415
 
     from zicato.core.workspace import scoring_path  # noqa: PLC0415
-    from zicato.workspace_loader import overfitting_config_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
 
     try:
         raw = _json.loads(scoring_path(workspace_root, epoch_id).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return overfitting_config_from_dict(raw.get("overfitting")).max_generations_per_contract
+    return historical_scoring_weights_from_dict(raw).experimental.max_generations_per_contract
 
 
 # ``epoch_noise_floor_inputs`` and ``epoch_preflight_record`` live in

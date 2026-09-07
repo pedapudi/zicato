@@ -54,12 +54,11 @@ function freshDraft() {
       overfitting: {
         enabled: true, holdout_fraction: 0.2, min_board_size_for_split: 8,
         rotate_holdout: true, restrict_proposer_visibility: true,
-        random_baseline_every_n: 0, max_generations_per_contract: null,
-        ladder: { enabled: true, threshold: null, budget: 16, noise_scale: 0 },
+        ladder: { enabled: true, threshold: null, budget: 16 },
       },
       promote_margin: 0, pass_rate_monotonicity: false,
       pass_rate_monotonicity_scope: 'per_entry',
-      pass_weight: 1, diff_complexity_weight: 0, diff_complexity_ceiling: 0,
+      pass_weight: 1,
       default_judge_weight: 1, plan_revision_weight: 0.5,
       task_failure_weight: 10, not_completed_weight: 50,
       severity_weights: { info: 1, warning: 3, critical: 10 },
@@ -70,8 +69,12 @@ function freshDraft() {
       regression_gate_enabled: false, regression_test_command: ['pytest', 'tests/', '-q'],
       regression_timeout_s: 600,
       proposer_quality: { best_of_n: 3, critique_enabled: true, screen_entries: 0, screen_veto_only: false },
-      experiment_memory: { cross_epoch: false },
-      experimental: { tournament_structures: false },
+      experimental: { tournament_structures: false, process_exemplars: 0,
+        recombine: false, recombine_merge: 'mechanical', genealogy: 0,
+        calibration_feedback: 0, random_baseline_every_n: 0,
+        max_generations_per_contract: null, diff_complexity_weight: 0,
+        diff_complexity_ceiling: 0, cross_epoch_memory: false,
+        standing_rating: 'none', resolver: 'none' },
       telemetry_dialect: 'goldfive',
     },
     board: [
@@ -174,7 +177,7 @@ function installBuilderFetch() {
       }
       // mutate the shared draft so the applied envelope is observably different.
       if (body.op === 'set_structure') DRAFT.scoring.tournament.structure = body.args.structure;
-      if (body.op === 'set_experimental') DRAFT.scoring.experimental = { tournament_structures: !!body.args.tournament_structures };
+      if (body.op === 'set_experimental') Object.assign(DRAFT.scoring.experimental, body.args);
       if (body.op === 'set_telemetry_dialect' && body.args.dialect) DRAFT.scoring.telemetry_dialect = body.args.dialect;
       if (body.op === 'set_goldfive') {
         if (body.args.config === null) delete DRAFT.scoring.goldfive;
@@ -712,22 +715,14 @@ function byAria(host, cls, aria) {
   return byClass(host, cls).find((n) => n.getAttribute('aria-label') === aria);
 }
 
-test('builder view: the Overfitting section drives set_holdout (ladder, placebo, rotation)', async () => {
+test('builder view: the Overfitting section drives set_holdout (ladder and rotation)', async () => {
   const host = await mountAt('Overfitting');
-  // the placebo cadence numeric posts random_baseline_every_n.
-  const placebo = byAria(host, 'dn-bld-num', 'Random baseline every N rounds');
-  assert(placebo, 'the placebo-cadence control renders');
-  placebo.value = '5';
-  placebo.dispatchEvent(makeEvent('change'));
-  await tick();
-  let call = OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.random_baseline_every_n === 5);
-  assert(call, 'the placebo cadence posts set_holdout {random_baseline_every_n}');
   // the ladder budget numeric posts a PARTIAL ladder mapping.
   const budget = byAria(host, 'dn-bld-num', 'Ladder budget');
   budget.value = '8';
   budget.dispatchEvent(makeEvent('change'));
   await tick();
-  call = OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.ladder && c.args.ladder.budget === 8);
+  let call = OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.ladder && c.args.ladder.budget === 8);
   assert(call, 'the ladder budget posts set_holdout {ladder:{budget}}');
   // the rotation checkbox posts rotate_holdout.
   const rotate = byAria(host, 'dn-bld-check', 'Rotate holdout');
@@ -772,12 +767,8 @@ test('builder view: the Overfitting section covers the split floor, visibility, 
   assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.ladder && c.args.ladder.enabled === false),
     'the ladder switch posts set_holdout {ladder:{enabled:false}}');
 
-  const noise = byAria(host, 'dn-bld-num', 'Ladder noise scale');
-  noise.value = '0.05';
-  noise.dispatchEvent(makeEvent('change'));
-  await tick();
-  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.ladder && c.args.ladder.noise_scale === 0.05),
-    'the noise-scale row posts set_holdout {ladder:{noise_scale}}');
+  assert(!byAria(host, 'dn-bld-num', 'Ladder noise scale'),
+    'the retired additive control is absent');
 
   // The release threshold: a pinned float, then the NEGATIVE reset that the
   // op reads as the mapping's real null (auto — derive from promote_margin).
@@ -810,23 +801,10 @@ test('builder view: the Weights section drives set_weights + set_namespace_weigh
   assert(nsCall, 'a namespace edit posts set_namespace_weights');
   assertEqual(nsCall.args.namespace_weights['rubric:'], -2, 'the edited key carries the new value');
   assertEqual(nsCall.args.namespace_weights['drift:'], 1, 'the untouched keys ride along (wholesale mapping)');
-  // the parsimony term posts diff_complexity_weight.
-  const mdl = byAria(host, 'dn-bld-num', 'Diff complexity weight');
-  mdl.value = '0.01';
-  mdl.dispatchEvent(makeEvent('change'));
-  await tick();
-  assert(OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.diff_complexity_weight === 0.01),
-    'the MDL term posts set_namespace_weights {diff_complexity_weight}');
-  // the paired parsimony CEILING posts diff_complexity_ceiling.
-  const ceil = byAria(host, 'dn-bld-num', 'Diff complexity ceiling');
-  ceil.value = '10';
-  ceil.dispatchEvent(makeEvent('change'));
-  await tick();
-  assert(OP_CALLS.find((c) => c.op === 'set_namespace_weights' && c.args.diff_complexity_ceiling === 10),
-    'the parsimony ceiling posts set_namespace_weights {diff_complexity_ceiling}');
+
 });
 
-test('builder view: the Proposer section drives set_proposer_quality + set_experiment_memory', async () => {
+test('builder view: the Proposer section drives candidate count and critique', async () => {
   const host = await mountAt('Proposer');
   const bestOf = byAria(host, 'dn-bld-num', 'Best of N');
   assert(bestOf, 'the best-of-N control renders');
@@ -841,54 +819,110 @@ test('builder view: the Proposer section drives set_proposer_quality + set_exper
   await tick();
   assert(OP_CALLS.find((c) => c.op === 'set_proposer_quality' && c.args.critique_enabled === false),
     'the critique toggle posts set_proposer_quality');
+
+});
+
+test('builder view: ordinary sections retain safety and exclude experimental controls', async () => {
+  let host = await mountAt('Proposer');
+  assert(byAria(host, 'dn-bld-num', 'Best of N'), 'candidate count stays ordinary');
+  assert(!byAria(host, 'dn-bld-num', 'Process exemplars'), 'process exemplars belong to Experimental');
+  host = await mountAt('Overfitting');
+  assert(byAria(host, 'dn-bld-check', 'Restrict proposer visibility'), 'visibility safety stays ordinary');
+  assert(!byAria(host, 'dn-bld-num', 'Random baseline every N rounds'), 'placebo cadence belongs to Experimental');
+  host = await mountAt('Weights');
+  assert(!byAria(host, 'dn-bld-num', 'Diff complexity weight'), 'complexity penalty belongs to Experimental');
+});
+
+test('builder view: Experimental controls post their declared settings', async () => {
+  const host = await mountAt('Experimental');
+  // the placebo cadence numeric posts random_baseline_every_n.
+  const placebo = byAria(host, 'dn-bld-num', 'Random baseline every N rounds');
+  assert(placebo, 'the placebo-cadence control renders');
+  placebo.value = '5';
+  placebo.dispatchEvent(makeEvent('change'));
+  await tick();
+  let call = OP_CALLS.find((c) => c.op === 'set_experimental' && c.args.random_baseline_every_n === 5);
+  assert(call, 'the placebo cadence posts set_experimental {random_baseline_every_n}');
+  // the parsimony term posts diff_complexity_weight.
+  const mdl = byAria(host, 'dn-bld-num', 'Diff complexity weight');
+  mdl.value = '0.01';
+  mdl.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_experimental' && c.args.diff_complexity_weight === 0.01),
+    'the MDL term posts set_experimental {diff_complexity_weight}');
+  // the paired parsimony CEILING posts diff_complexity_ceiling.
+  const ceil = byAria(host, 'dn-bld-num', 'Diff complexity ceiling');
+  ceil.value = '10';
+  ceil.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_experimental' && c.args.diff_complexity_ceiling === 10),
+    'the parsimony ceiling posts set_experimental {diff_complexity_ceiling}');
   const exemplars = byAria(host, 'dn-bld-num', 'Process exemplars');
   assert(exemplars, 'the process-exemplars control renders');
   exemplars.value = '2';
   exemplars.dispatchEvent(makeEvent('change'));
   await tick();
-  const exCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'process_exemplars' in c.args);
+  const exCall = OP_CALLS.find((c) => c.op === 'set_experimental' && 'process_exemplars' in c.args);
   assert(exCall && exCall.args.process_exemplars === 2,
-    'the process-exemplars count posts set_proposer_quality {process_exemplars:2} — exact op+args');
+    'the process-exemplars count posts set_experimental {process_exemplars:2} — exact op+args');
   const recombine = byAria(host, 'dn-bld-check', 'Recombination slot');
   assert(recombine, 'the recombination-slot control renders');
   assert(!recombine.checked, 'the recombination slot is unchecked at the False default');
   recombine.checked = true;
   recombine.dispatchEvent(makeEvent('change'));
   await tick();
-  const recCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'recombine' in c.args);
+  const recCall = OP_CALLS.find((c) => c.op === 'set_experimental' && 'recombine' in c.args);
   assert(recCall && recCall.args.recombine === true,
-    'the recombination toggle posts set_proposer_quality {recombine:true} — exact op+args');
+    'the recombination toggle posts set_experimental {recombine:true} — exact op+args');
   const merge = byAria(host, 'dn-bld-check', 'LLM-guided merge');
   assert(merge, 'the LLM-guided-merge control renders');
   assert(!merge.checked, 'the merge mode is unchecked at the "mechanical" default');
   merge.checked = true;
   merge.dispatchEvent(makeEvent('change'));
   await tick();
-  const mergeCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'recombine_merge' in c.args);
+  const mergeCall = OP_CALLS.find((c) => c.op === 'set_experimental' && 'recombine_merge' in c.args);
   assert(mergeCall && mergeCall.args.recombine_merge === 'llm',
-    'the merge toggle posts set_proposer_quality {recombine_merge:"llm"} — exact op+args');
+    'the merge toggle posts set_experimental {recombine_merge:"llm"} — exact op+args');
   const genealogy = byAria(host, 'dn-bld-num', 'Genealogy');
   assert(genealogy, 'the genealogy control renders');
   genealogy.value = '4';
   genealogy.dispatchEvent(makeEvent('change'));
   await tick();
-  const genCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'genealogy' in c.args);
+  const genCall = OP_CALLS.find((c) => c.op === 'set_experimental' && 'genealogy' in c.args);
   assert(genCall && genCall.args.genealogy === 4,
-    'the genealogy count posts set_proposer_quality {genealogy:4} — exact op+args');
+    'the genealogy count posts set_experimental {genealogy:4} — exact op+args');
   const calibration = byAria(host, 'dn-bld-num', 'Calibration feedback');
   assert(calibration, 'the calibration-feedback control renders');
   calibration.value = '5';
   calibration.dispatchEvent(makeEvent('change'));
   await tick();
-  const calCall = OP_CALLS.find((c) => c.op === 'set_proposer_quality' && 'calibration_feedback' in c.args);
+  const calCall = OP_CALLS.find((c) => c.op === 'set_experimental' && 'calibration_feedback' in c.args);
   assert(calCall && calCall.args.calibration_feedback === 5,
-    'the calibration count posts set_proposer_quality {calibration_feedback:5} — exact op+args');
+    'the calibration count posts set_experimental {calibration_feedback:5} — exact op+args');
   const mem = byAria(host, 'dn-bld-check', 'Cross-epoch experiment memory');
   mem.checked = true;
   mem.dispatchEvent(makeEvent('change'));
   await tick();
-  assert(OP_CALLS.find((c) => c.op === 'set_experiment_memory' && c.args.cross_epoch === true),
-    'the memory toggle posts set_experiment_memory');
+  assert(OP_CALLS.find((c) => c.op === 'set_experimental' && c.args.cross_epoch_memory === true),
+    'the memory toggle posts set_experimental');
+  const rating = byAria(host, 'dn-bld-num', 'Standing rating');
+  rating.value = 'bradley_terry';
+  rating.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_experimental' && c.args.standing_rating === 'bradley_terry'),
+    'standing_rating posts the selected method');
+  const resolver = byAria(host, 'dn-bld-num', 'Ranking resolver');
+  resolver.value = 'ranked_pairs';
+  resolver.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_experimental' && c.args.resolver === 'ranked_pairs'),
+    'resolver posts the selected method');
+  const disable = byAria(host, 'dn-bld-num', 'Ranking resolver');
+  disable.value = 'none';
+  disable.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_experimental' && c.args.resolver === 'none'),
+    'resolver sends an explicit disable value');
 });
 
 test('builder view: a no-op re-render of the Proposer section rebuilds ZERO DOM (digest-gated identity)', async () => {
@@ -1372,22 +1406,22 @@ test('builder view: the Gate namespace_monotonicity editor posts the WHOLE mappi
   assertEqual(call.args.namespace_monotonicity['schema:'], true, 'the new key defaults to strict (may not regress)');
 });
 
-test('builder view: the Overfitting section drives max_generations_per_contract (set_holdout)', async () => {
-  const host = await mountAt('Overfitting');
+test('builder view: the Experimental section drives max_generations_per_contract (set_experimental)', async () => {
+  const host = await mountAt('Experimental');
   const ceiling = byAria(host, 'dn-bld-num', 'Max generations per contract');
   assert(ceiling, 'the board-refresh ceiling control renders');
   ceiling.value = '12';
   ceiling.dispatchEvent(makeEvent('change'));
   await tick();
-  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.max_generations_per_contract === 12),
-    'a positive ceiling posts set_holdout {max_generations_per_contract}');
+  assert(OP_CALLS.find((c) => c.op === 'set_experimental' && c.args.max_generations_per_contract === 12),
+    'a positive ceiling posts set_experimental {max_generations_per_contract}');
   // 0 CLEARS the ceiling (the op reserves None for "unchanged", so the form
   // always sends an explicit integer — 0 is a real clear, never a no-send).
   ceiling.value = '0';
   ceiling.dispatchEvent(makeEvent('change'));
   await tick();
-  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.max_generations_per_contract === 0),
-    '0 posts an explicit set_holdout {max_generations_per_contract: 0} (clears the ceiling)');
+  assert(OP_CALLS.find((c) => c.op === 'set_experimental' && c.args.max_generations_per_contract === 0),
+    '0 posts an explicit set_experimental {max_generations_per_contract: 0} (clears the ceiling)');
 });
 
 test('builder view: the Proposer picker lists discovered dirs + builtin default + a free-text path (set_proposer)', async () => {

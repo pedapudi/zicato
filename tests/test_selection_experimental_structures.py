@@ -42,7 +42,7 @@ def _make(structure: str, params: dict[str, object] | None = None):
     """A strategy for an experimental structure under the opt-in."""
     return make_strategy(
         TournamentStructure(structure=structure, params=params or {}),
-        experimental_structures=True,
+        experimental=ExperimentalConfig(tournament_structures=True),
     )
 
 
@@ -78,7 +78,7 @@ def test_opted_in_contract_resolves_each_experimental_structure(structure: str) 
     )
     strategy = make_strategy(
         weights.tournament_structure,
-        experimental_structures=weights.experimental.tournament_structures,
+        experimental=weights.experimental,
     )
     assert isinstance(strategy, EXPERIMENTAL_STRATEGY_REGISTRY[structure])
     assert strategy.field_size() == 2

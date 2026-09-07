@@ -140,44 +140,57 @@ inside `resolve_leader` and, when a Condorcet winner exists, returns it
 before either selectable resolver runs. It is a stage of every
 resolution rather than a `resolver` value.
 
-### 3.2 Smith set (top cycle)
+### 3.2 Smith set (strict dominance)
 
-**Definition.** The smallest non-empty set of contestants who, as a
-group, beat everyone outside the set. Equivalently, the top "tier" of the
-dominance relation: no one outside the Smith set beats anyone inside it.
-When a Condorcet winner exists, the Smith set is exactly that one
-contestant.
+The Smith set is the smallest nonempty set whose **every member strictly beats
+every outsider**. A missing comparison or a net tie establishes no strict win.
+For example, if both `a` and `b` beat `c` but their mutual comparison is
+unresolved, the set is `{a, b}`. A contestant cannot be removed merely because
+it has no recorded win against a retained member.
 
-**Tractability.** Polynomial (O(n²) via the condensation of the dominance
-graph into strongly-connected components, then take the top component).
+The implementation assumes an asymmetric margin matrix, as `build_matrix`
+produces: each pair has at most one positive direction. All contestants observed
+in tied duels remain in that matrix even though the tie creates no winning edge.
+A Condorcet winner strictly beats everyone else, so its singleton is the Smith set.
 
-**In zicato's regime.** Cheap and load-bearing as a **prune**: the
-champion can only ever be among the Smith set, so any contestant outside
-it is provably dominated and need not be considered for promotion. This
-shrinks the field a downstream resolver must reason about, often to a
-single element.
+`smith_set` starts with a contestant maximizing wins minus losses. It then adds
+any outsider that an admitted member does not strictly beat. Each admitted
+member is visited once, comparing it with all remaining outsiders. Scoring and
+closure together take O(n²) time for n contestants.
 
-**Verdict.** **Implemented as a stage.** `smith_set` runs inside
-`resolve_leader` after the Condorcet check and before either selectable
-resolver, which then reads only the pruned field. It is a stage of every
-resolution rather than a `resolver` value.
+To see why the seed is valid, consider any strict dominating set of size s with
+t outsiders. Every insider has score at least `t - (s - 1)`; every outsider has
+score at most `(t - 1) - s`. Thus every insider outscores every outsider and a
+maximum-score contestant belongs to the smallest dominating set. Closure cannot
+add a contestant outside that set, because all its members strictly beat every
+outsider. At termination the retained set itself dominates all outsiders, so it
+is the smallest one. The assumption of asymmetric comparisons also makes that
+smallest set unique: two non-nested dominating sets would require an exclusive
+member of each to beat the other in both directions.
+
+The [independent reference test](../../tests/test_selection_dominance.py)
+enumerates subsets directly from this definition for all pairwise relations on
+up to four contestants, including missing edges, ties, cycles, and complete
+decisive controls. It checks every input permutation. Membership is invariant
+to contestant ordering; the returned tuple preserves that ordering for display.
+
+The prune runs before either selectable resolver. It changes which candidate
+may receive the final champion comparison and can therefore change the persisted
+experimental selection audit. It supplies no empirical qualification for the
+resolver; see [feature qualification](FEATURE-QUALIFICATION.md).
 
 ### 3.3 Schwartz set (GETCHA / top set)
 
 **Definition.** The union of the *minimal* dominant sets — the minimal
-sets from which nothing outside beats anything inside. Closely related to
-the Smith set; they coincide whenever there are no pairwise ties, which
-is essentially always true for zicato (a real-valued loss gap is
-generically non-zero).
+sets from which nothing outside beats anything inside. These coincide with
+the Smith set on complete decisive comparisons. Ties and missing comparisons
+are ordinary inputs in zicato, so that equivalence cannot justify pruning them.
 
 **Tractability.** Polynomial (same SCC machinery as Smith).
 
-**In zicato's regime.** Because exact ties in a continuous loss are
-measure-zero, the Schwartz set and the Smith set are the same set in
-practice. It buys nothing over Smith here.
-
-**Verdict.** **SKIP (subsumed by Smith).** Mentioned for completeness;
-under continuous losses it is the Smith set.
+**Implementation status.** No separate Schwartz-set resolver is implemented.
+The implemented strict-dominance prune preserves unresolved comparisons; a
+weaker relation would require its own correctness and qualification evidence.
 
 ### 3.4 Copeland
 

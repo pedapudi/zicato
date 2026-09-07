@@ -507,6 +507,7 @@ def test_the_reflection_set_gate_op_scales_delta_std_not_the_range() -> None:
     achievable signal. The range stays the COMPARISON statistic.
     """
     from zicato.core import ScoringWeights
+    from zicato.core.tournament import TournamentStructure
     from zicato.reflection import practices as P
     from zicato.tournament.calibration import MARGIN_NOISE_MULTIPLE
 
@@ -521,7 +522,9 @@ def test_the_reflection_set_gate_op_scales_delta_std_not_the_range() -> None:
         "measured_at": "2026-07-01",
     }
     check = P.check_promotion_hygiene(
-        weights=ScoringWeights(promote_margin=0.01),
+        weights=ScoringWeights(
+            promote_margin=0.01, tournament_structure=TournamentStructure.gauntlet()
+        ),
         experiments=[{"generation_id": "g1", "outcome": {"tournament_decision": "promoted"}}],
         board_entries=[],
         noise_floor=floor,

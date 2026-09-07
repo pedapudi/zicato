@@ -18,10 +18,10 @@
 > crowning under any structure is Ladder-mediated on the holdout.
 >
 > Shipped and default-off: both halves of **diff-complexity
-> regularization** (`ScoringWeights.diff_complexity_weight` and
-> `ScoringWeights.diff_complexity_ceiling`) and the
+> regularization** (`ExperimentalConfig.diff_complexity_weight` and
+> `ExperimentalConfig.diff_complexity_ceiling`) and the
 > **random-baseline placebo arm**
-> (`overfitting.random_baseline_every_n`).
+> (`experimental.random_baseline_every_n`).
 >
 > The *Maps to zicato* passages in §3–§11 describe the loop without these
 > mechanisms, which is the rationale each verdict argues from; §12
@@ -647,7 +647,7 @@ through every strategy, via `evolve_field_round` and
 `runner.confirm_crowning_holdout`, so every eligible crown is
 Ladder-mediated on the holdout. Default-off: both halves of
 diff-complexity regularization and the random-baseline placebo arm
-(`overfitting.random_baseline_every_n`). Levers compose; the dependency
+(`experimental.random_baseline_every_n`). Levers compose; the dependency
 arrows are noted.
 
 ```mermaid
@@ -715,7 +715,7 @@ the configured threshold. The proposer receives a threshold-gated
 confirmation rather than raw holdout entries or per-entry results. *Where:*
 `tournament/ladder.py` owns the pure release rule and
 `tournament/governance.py` owns the epoch-scoped state. The default threshold
-comes from `promote_margin`; `ladder.noise_scale` can widen it. *Cost:* one
+comes from `promote_margin`; `ladder.threshold` can pin it. *Cost:* one
 additional holdout-slice comparison for each promotable crowning duel while
 queries remain available. The configured budget counts those adaptive
 consultations. *Behavior after exhaustion:* required confirmation is incomplete
@@ -724,6 +724,14 @@ refresh must address the exhausted evaluation evidence; resetting the counter
 does not create fresh data. Depends on the train/holdout split. The practical accounting
 and durable reservation protocol are defined in
 [§"What query budget means"](#what-query-budget-means).
+
+Authored scoring accepts one release threshold. The retired
+`overfitting.ladder.noise_scale` field represented a fixed threshold addition.
+To migrate an authored file, set `ladder.threshold` to its previous threshold
+(or `promote_margin` when null) plus that increment, then remove `noise_scale`.
+A zero increment can simply be removed. This edit changes the evaluation
+contract and rolls the epoch. It does not alter a frozen epoch: historical
+readers preserve its release rule, original bytes, and recorded hash.
 
 **#3 — Restrict the proposer's per-entry visibility. (SHIPPED.)**
 *What:* §11's restrictions 1–4 — patterns on the training slice, declared
@@ -740,14 +748,14 @@ may require more proposal rounds.
 patches` (the challenger's patch records). (a) The **loss term** — `λ ·
 complexity(diff)` added to the challenger scalar; (b) the **hard ceiling** —
 reject any challenger whose `complexity` exceeds a budget outright. *Where
-(a):* `ScoringWeights.diff_complexity_weight` (default `0.0`) folds a
+(a):* `ExperimentalConfig.diff_complexity_weight` (default `0.0`) folds a
 `diff_complexity` component into the built-in scalar
 (`scoring/builtins.py::builtin_scalar` + `tournament/scoring.py`), surfaced
 through the existing `scalar_components` mechanism and a
 `diff_size:{champion,challenger}:{added,removed,patches}` gate evidence line
 (`tournament/gate.py::diff_size_evidence`); the diff size comes from
 `scoring/diff_complexity.py::diff_size` (the lifted best-of-N `_diff_size`
-proxy). *Where (b):* `ScoringWeights.diff_complexity_ceiling` (default `0.0` =
+proxy). *Where (b):* `ExperimentalConfig.diff_complexity_ceiling` (default `0.0` =
 OFF) is a first-class gate rule in `tournament/gate.py::evaluate_gate`, an
 admissibility veto checked BEFORE the scoring rules. When the ceiling is
 `> 0` and the challenger's diff complexity (`diff_complexity(diff_size)`)
@@ -805,7 +813,7 @@ detector.
 
 **#7 — Random-baseline sanity check. (SHIPPED — the placebo arm.)**
 *What:* every Nth round (opt-in
-`overfitting.random_baseline_every_n`, default off) the orchestrator
+`experimental.random_baseline_every_n`, default off) the orchestrator
 fields one ADDITIONAL challenger whose patch is a semantics-preserving
 no-op — the re-drawn champion, hypothesis marked with the placebo prefix
 (`zicato.core.experiment.PLACEBO_HYPOTHESIS_MARKER`). The gate must

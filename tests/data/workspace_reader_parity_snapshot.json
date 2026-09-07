@@ -641,12 +641,7 @@
     ],
     "proposer_quality": {
       "best_of_n": 3,
-      "calibration_feedback": 0,
       "critique_enabled": true,
-      "genealogy": 0,
-      "process_exemplars": 0,
-      "recombine": false,
-      "recombine_merge": "mechanical",
       "screen_entries": 0,
       "screen_veto_only": false
     },
@@ -655,14 +650,21 @@
       "block_on_containment_violation": false,
       "block_on_gate_contradiction": false,
       "default_judge_weight": 1.0,
-      "diff_complexity_ceiling": 0.0,
-      "diff_complexity_weight": 0.0,
       "drift_kind_aggregation": {},
       "drift_reducer": "",
-      "experiment_memory": {
-        "cross_epoch": false
-      },
       "experimental": {
+        "calibration_feedback": 0,
+        "cross_epoch_memory": false,
+        "diff_complexity_ceiling": 0.0,
+        "diff_complexity_weight": 0.0,
+        "genealogy": 0,
+        "max_generations_per_contract": null,
+        "process_exemplars": 0,
+        "random_baseline_every_n": 0,
+        "recombine": false,
+        "recombine_merge": "mechanical",
+        "resolver": "none",
+        "standing_rating": "none",
         "tournament_structures": false
       },
       "holdout_entry_regression_budget": 0,
@@ -692,12 +694,9 @@
         "ladder": {
           "budget": 16,
           "enabled": true,
-          "noise_scale": 0.0,
           "threshold": null
         },
-        "max_generations_per_contract": null,
         "min_board_size_for_split": 6,
-        "random_baseline_every_n": 0,
         "restrict_proposer_visibility": true,
         "rotate_holdout": true
       },
@@ -711,12 +710,7 @@
       "promote_margin": 0.05,
       "proposer_quality": {
         "best_of_n": 3,
-        "calibration_feedback": 0,
         "critique_enabled": true,
-        "genealogy": 0,
-        "process_exemplars": 0,
-        "recombine": false,
-        "recombine_merge": "mechanical",
         "screen_entries": 0,
         "screen_veto_only": false
       },
@@ -1605,12 +1599,7 @@
     ],
     "proposer_quality": {
       "best_of_n": 3,
-      "calibration_feedback": 0,
       "critique_enabled": true,
-      "genealogy": 0,
-      "process_exemplars": 0,
-      "recombine": false,
-      "recombine_merge": "mechanical",
       "screen_entries": 0,
       "screen_veto_only": false
     },
@@ -1854,14 +1843,21 @@
       "block_on_containment_violation": false,
       "block_on_gate_contradiction": false,
       "default_judge_weight": 1.0,
-      "diff_complexity_ceiling": 0.0,
-      "diff_complexity_weight": 0.0,
       "drift_kind_aggregation": {},
       "drift_reducer": "",
-      "experiment_memory": {
-        "cross_epoch": false
-      },
       "experimental": {
+        "calibration_feedback": 0,
+        "cross_epoch_memory": false,
+        "diff_complexity_ceiling": 0.0,
+        "diff_complexity_weight": 0.0,
+        "genealogy": 0,
+        "max_generations_per_contract": null,
+        "process_exemplars": 0,
+        "random_baseline_every_n": 0,
+        "recombine": false,
+        "recombine_merge": "mechanical",
+        "resolver": "none",
+        "standing_rating": "none",
         "tournament_structures": false
       },
       "holdout_entry_regression_budget": 0,
@@ -1891,12 +1887,9 @@
         "ladder": {
           "budget": 16,
           "enabled": true,
-          "noise_scale": 0.0,
           "threshold": null
         },
-        "max_generations_per_contract": null,
         "min_board_size_for_split": 6,
-        "random_baseline_every_n": 0,
         "restrict_proposer_visibility": true,
         "rotate_holdout": true
       },
@@ -1910,12 +1903,7 @@
       "promote_margin": 0.01,
       "proposer_quality": {
         "best_of_n": 3,
-        "calibration_feedback": 0,
         "critique_enabled": true,
-        "genealogy": 0,
-        "process_exemplars": 0,
-        "recombine": false,
-        "recombine_merge": "mechanical",
         "screen_entries": 0,
         "screen_veto_only": false
       },
@@ -9715,14 +9703,21 @@
       "block_on_containment_violation": false,
       "block_on_gate_contradiction": false,
       "default_judge_weight": 1.0,
-      "diff_complexity_ceiling": 0.0,
-      "diff_complexity_weight": 0.0,
       "drift_kind_aggregation": {},
       "drift_reducer": "",
-      "experiment_memory": {
-        "cross_epoch": false
-      },
       "experimental": {
+        "calibration_feedback": 0,
+        "cross_epoch_memory": false,
+        "diff_complexity_ceiling": 0.0,
+        "diff_complexity_weight": 0.0,
+        "genealogy": 0,
+        "max_generations_per_contract": null,
+        "process_exemplars": 0,
+        "random_baseline_every_n": 0,
+        "recombine": false,
+        "recombine_merge": "mechanical",
+        "resolver": "none",
+        "standing_rating": "none",
         "tournament_structures": false
       },
       "holdout_entry_regression_budget": 0,
@@ -9752,12 +9747,9 @@
         "ladder": {
           "budget": 16,
           "enabled": true,
-          "noise_scale": 0.0,
           "threshold": null
         },
-        "max_generations_per_contract": null,
         "min_board_size_for_split": 6,
-        "random_baseline_every_n": 0,
         "restrict_proposer_visibility": true,
         "rotate_holdout": true
       },
@@ -9771,12 +9763,7 @@
       "promote_margin": 0.05,
       "proposer_quality": {
         "best_of_n": 3,
-        "calibration_feedback": 0,
         "critique_enabled": true,
-        "genealogy": 0,
-        "process_exemplars": 0,
-        "recombine": false,
-        "recombine_merge": "mechanical",
         "screen_entries": 0,
         "screen_veto_only": false
       },
@@ -9830,14 +9817,21 @@
       "block_on_containment_violation": false,
       "block_on_gate_contradiction": false,
       "default_judge_weight": 1.0,
-      "diff_complexity_ceiling": 0.0,
-      "diff_complexity_weight": 0.0,
       "drift_kind_aggregation": {},
       "drift_reducer": "",
-      "experiment_memory": {
-        "cross_epoch": false
-      },
       "experimental": {
+        "calibration_feedback": 0,
+        "cross_epoch_memory": false,
+        "diff_complexity_ceiling": 0.0,
+        "diff_complexity_weight": 0.0,
+        "genealogy": 0,
+        "max_generations_per_contract": null,
+        "process_exemplars": 0,
+        "random_baseline_every_n": 0,
+        "recombine": false,
+        "recombine_merge": "mechanical",
+        "resolver": "none",
+        "standing_rating": "none",
         "tournament_structures": false
       },
       "holdout_entry_regression_budget": 0,
@@ -9867,12 +9861,9 @@
         "ladder": {
           "budget": 16,
           "enabled": true,
-          "noise_scale": 0.0,
           "threshold": null
         },
-        "max_generations_per_contract": null,
         "min_board_size_for_split": 6,
-        "random_baseline_every_n": 0,
         "restrict_proposer_visibility": true,
         "rotate_holdout": true
       },
@@ -9886,12 +9877,7 @@
       "promote_margin": 0.01,
       "proposer_quality": {
         "best_of_n": 3,
-        "calibration_feedback": 0,
         "critique_enabled": true,
-        "genealogy": 0,
-        "process_exemplars": 0,
-        "recombine": false,
-        "recombine_merge": "mechanical",
         "screen_entries": 0,
         "screen_veto_only": false
       },

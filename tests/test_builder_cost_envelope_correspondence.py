@@ -30,7 +30,7 @@ import zicato.dashboard as _dashboard_pkg
 from zicato.board.split import split_board
 from zicato.contract_draft import operations as ops
 from zicato.contract_draft.draft import TournamentDraft
-from zicato.core.types import BoardEntry
+from zicato.core.types import BoardEntry, ProposerQualityConfig, ScoringWeights, TournamentStructure
 
 STATIC_DIR = Path(_dashboard_pkg.__file__).resolve().parent / "static"
 READBACK = STATIC_DIR / "test" / "cost_envelope_readback.mjs"
@@ -48,7 +48,12 @@ def _board(n: int) -> list[BoardEntry]:
 
 
 def _draft(structure: str, entries: int, **params: Any) -> TournamentDraft:
-    draft = TournamentDraft()
+    draft = TournamentDraft(
+        scoring=ScoringWeights(
+            tournament_structure=TournamentStructure.gauntlet(),
+            proposer_quality=ProposerQualityConfig(screen_entries=0),
+        )
+    )
     draft.entries = _board(entries)
     ops.set_experimental(draft, tournament_structures=True)
     ops.set_structure(draft, structure)
@@ -70,7 +75,7 @@ def _gauntlet_with_evidence_gate() -> TournamentDraft:
     )
     ops.set_screening(draft, entries=3)
     ops.set_proposer_quality(draft, best_of_n=3)
-    ops.set_holdout(draft, random_baseline_every_n=4)
+    ops.set_experimental(draft, random_baseline_every_n=4)
     return draft
 
 

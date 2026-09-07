@@ -326,13 +326,13 @@ in every case.
 |---|---|---|
 | `set_structure` | `scoring.tournament_structure.structure` (params preserved) | `structure: str` (validated by `TournamentStructure`) |
 | `set_param` | one `tournament_structure.params[key]` | `key`, `value` (stored verbatim; `None` removes the key) |
-| `set_holdout` | `scoring.overfitting` + per-entry `holdout` tags + nested `ladder` | `enabled`, `fraction`, `tags`, `min_board_size_for_split`, `rotate_holdout`, `restrict_proposer_visibility`, `random_baseline_every_n`, `max_generations_per_contract` (`0` clears), `ladder` (partial dict) |
+| `set_holdout` | `scoring.overfitting` + per-entry `holdout` tags + nested `ladder` | `enabled`, `fraction`, `tags`, `min_board_size_for_split`, `rotate_holdout`, `restrict_proposer_visibility`, `ladder` (partial dict) |
 | `set_proposer` | `draft.proposer_path` | `proposer_path: str \| Path \| None` |
 | `set_weights` | the pass term + the within-channel shapes on `scoring` | `pass_weight`, `per_kind_weights`, `per_judge_weights`, `default_judge_weight`, `plan_revision_weight`, `task_failure_weight`, `not_completed_weight`, `severity_weights` |
 | `set_gate` | the promote and holdout gates on `scoring` | `promote_margin`, `holdout_margin`, `holdout_entry_regression_budget`, monotonicity and containment controls, regression-command controls |
-| `set_namespace_weights` | namespace and patch-complexity scoring | `namespace_weights`, `diff_complexity_weight`, `diff_complexity_ceiling` |
-| `set_proposer_quality` | nested `scoring.proposer_quality` | slate size, critique, process exemplars, recombination, genealogy, calibration feedback, and merge mode |
-| `set_experiment_memory` | `scoring.experiment_memory.cross_epoch` | `cross_epoch: bool` |
+| `set_namespace_weights` | namespace coefficients | `namespace_weights` |
+| `set_proposer_quality` | nested `scoring.proposer_quality` | candidate count and critique |
+| `set_experimental` | nested `scoring.experimental` | unqualified proposal features, diagnostic cadence, generation ceiling, complexity penalty, memory, standing rating, resolver, and tournament structures |
 | `set_goldfive` | optional `scoring.goldfive` JSON document | `config: {}` enables the complete defaulted document, a partial object edits it, and `null` removes it |
 | `set_telemetry_dialect` | `scoring.telemetry_dialect` | `dialect`: `goldfive`, `adk_events`, or `transcript` |
 | `set_mutation_surface` | `scoring.mutation_surface` | `mutation_surface`: complete suffix-to-comment-syntax mapping |
@@ -361,7 +361,7 @@ Four structural facts:
   one contract sub-object. Do not merge them; do not let one clobber the
   other's fields.
 - **Every op validates at the boundary, never silently coerces.** `set_gate`
-  raises `ValueError` on an invalid `monotonicity_scope`; `set_namespace_weights`
+  raises `ValueError` on an invalid `monotonicity_scope`; `set_experimental`
   raises on a negative `diff_complexity_weight`; `edit_board_entry` calls
   `entry.validate()` before the entry lands. A bad edit raises rather than
   corrupting the draft — the dispatch layer turns the raise into a 400.
@@ -972,6 +972,20 @@ naming exactly which touchpoint is missing for which knob (e.g. *"knob
 > enforces the wiring rather than producing it. The
 > op-level pins (`test_builder_gui_coverage.py`) and the serializer-completeness
 > table (`test_contract_serializer_completeness.py`) stay as the coarser nets.
+
+The existing Experimental section renders every field in `ExperimentalConfig`.
+All of those controls use `set_experimental`; the operation validates supplied
+JSON types and the resulting dataclass before replacing any draft state.
+A generation ceiling of zero clears it. The standing-rating and resolver
+selectors use `none` to disable their algorithms. The former memory operation
+is absent; cross-epoch memory is one field of the Experimental operation.
+
+The ordinary sections retain candidate count, critique, screening, visibility
+restrictions, containment checks, and configured regression checks. Experimental
+placement describes qualification status rather than whether a feature is
+useful on every possible target. The supporting artifacts, measurement scope,
+and graduation criteria are maintained in
+[`FEATURE-QUALIFICATION.md`](../design/FEATURE-QUALIFICATION.md).
 
 The recipe that walks all six op-level surfaces is §10.8.
 

@@ -140,7 +140,7 @@ class ScalarContext:
         Carried for plugin/provenance visibility and as the input the built-in
         ``diff_complexity`` term reads. ``None`` (the default) leaves the
         scalar byte-identical — the opt-in term is gated on
-        :attr:`~zicato.core.types.ScoringWeights.diff_complexity_weight` being
+        :attr:`~zicato.core.types.ExperimentalConfig.diff_complexity_weight` being
         ``> 0`` AND this being present.
     """
 

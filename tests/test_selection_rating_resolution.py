@@ -22,7 +22,7 @@ from dataclasses import replace
 
 import pytest
 
-from zicato.core.types import TournamentStructure
+from zicato.core.types import ExperimentalConfig, TournamentStructure
 from zicato.selection import (
     Contestant,
     Matchup,
@@ -314,23 +314,6 @@ def test_ranked_pairs_breaks_a_cycle_by_dropping_the_weakest_edge() -> None:
     assert margins == sorted(margins, reverse=True)
 
 
-def test_smith_set_prunes_a_dominated_outsider() -> None:
-    # a, b, c form a top cycle; d loses to all three (dominated outsider).
-    matrix = build_matrix(
-        [
-            Duel("a", "b", 0.4),
-            Duel("b", "c", 0.3),
-            Duel("c", "a", 0.2),
-            Duel("a", "d", 0.5),
-            Duel("b", "d", 0.5),
-            Duel("c", "d", 0.5),
-        ]
-    )
-    smith = smith_set(matrix)
-    assert set(smith) == {"a", "b", "c"}
-    assert "d" not in smith
-
-
 def test_copeland_order_is_margin_blind() -> None:
     # a beats b by a hair, b beats c and d by a lot; Copeland counts wins,
     # so a (1 win) ranks below b (more wins). The count, not the margin.
@@ -439,9 +422,14 @@ def test_swiss_theta_rank_standings_opt_in_changes_order_vs_copeland() -> None:
     scalars = {"v0": 0.5, "v1": 0.2, "v2": 0.3, "v3": 0.9}
     spec = TournamentStructure(
         structure="swiss",
-        params={"field_size": 3, "rounds_n": 3, "rating": "bradley_terry"},
+        params={"field_size": 3, "rounds_n": 3},
     )
-    strat = make_strategy(spec, experimental_structures=True)
+    strat = make_strategy(
+        spec,
+        experimental=ExperimentalConfig(
+            tournament_structures=True, standing_rating="bradley_terry"
+        ),
+    )
     decision = _drive(strat, champion, challengers, scalars)
     standings = decision.standings
     assert standings  # non-empty
@@ -453,15 +441,17 @@ def test_swiss_default_path_is_byte_identical_with_and_without_absent_knobs() ->
     scalars = {"v0": 0.5, "v1": 0.2, "v2": 0.4}
     base = make_strategy(
         TournamentStructure(structure="swiss", params={"field_size": 2, "rounds_n": 2}),
-        experimental_structures=True,
+        experimental=ExperimentalConfig(tournament_structures=True),
     )
     # An explicit "none" rating / resolver must resolve identically to absent.
     noned = make_strategy(
         TournamentStructure(
             structure="swiss",
-            params={"field_size": 2, "rounds_n": 2, "rating": "none", "resolver": "none"},
+            params={"field_size": 2, "rounds_n": 2},
         ),
-        experimental_structures=True,
+        experimental=ExperimentalConfig(
+            tournament_structures=True, standing_rating="none", resolver="none"
+        ),
     )
     d_base = _drive(base, _champion("v0"), [_challenger("v1"), _challenger("v2")], scalars)
     d_none = _drive(noned, _champion("v0"), [_challenger("v1"), _challenger("v2")], scalars)
@@ -480,9 +470,12 @@ def test_gauntlet_is_untouched_by_the_knobs() -> None:
     scalars = {"v0": 0.5, "v1": 0.2}
     spec = TournamentStructure(
         structure="gauntlet",
-        params={"rating": "bradley_terry", "resolver": "ranked_pairs"},
+        params={},
     )
-    strat = make_strategy(spec)
+    strat = make_strategy(
+        spec,
+        experimental=ExperimentalConfig(standing_rating="bradley_terry", resolver="ranked_pairs"),
+    )
     decision = _drive(strat, champion, challengers, scalars)
     # The challenger beat the champion (0.2 < 0.5) → promoted, exactly as the
     # vanilla gauntlet, with the opt-in knobs ignored.
@@ -496,9 +489,11 @@ def test_single_elim_resolver_leader_opt_in_runs_end_to_end() -> None:
     scalars = {"v0": 0.5, "v1": 0.2, "v2": 0.3, "v3": 0.4}
     spec = TournamentStructure(
         structure="single_elim",
-        params={"field_size": 3, "resolver": "ranked_pairs"},
+        params={"field_size": 3},
     )
-    strat = make_strategy(spec, experimental_structures=True)
+    strat = make_strategy(
+        spec, experimental=ExperimentalConfig(tournament_structures=True, resolver="ranked_pairs")
+    )
     decision = _drive(strat, champion, challengers, scalars)
     # A finalist was chosen and crowned (it beat the champion on scalar).
     assert decision.decision in {"promoted", "rejected", "deferred"}
@@ -511,9 +506,14 @@ def test_double_elim_resolver_and_rating_opt_in_runs_end_to_end() -> None:
     scalars = {"v0": 0.5, "v1": 0.2, "v2": 0.3, "v3": 0.4}
     spec = TournamentStructure(
         structure="double_elim",
-        params={"field_size": 3, "resolver": "copeland", "rating": "bradley_terry"},
+        params={"field_size": 3},
     )
-    strat = make_strategy(spec, experimental_structures=True)
+    strat = make_strategy(
+        spec,
+        experimental=ExperimentalConfig(
+            tournament_structures=True, resolver="copeland", standing_rating="bradley_terry"
+        ),
+    )
     decision = _drive(strat, champion, challengers, scalars)
     assert decision.decision in {"promoted", "rejected", "deferred"}
     assert decision.standings

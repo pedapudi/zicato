@@ -40,7 +40,6 @@ import pytest
 from zicato.core.configuration import persisted_key
 from zicato.core.types import (
     ExperimentalConfig,
-    ExperimentMemoryConfig,
     LadderConfig,
     OverfittingConfig,
     ProposerQualityConfig,
@@ -62,7 +61,6 @@ _CONTRACT_DATACLASSES = [
     OverfittingConfig,
     LadderConfig,
     ProposerQualityConfig,
-    ExperimentMemoryConfig,
     ExperimentalConfig,
 ]
 
@@ -82,34 +80,35 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "enabled": False,
         "threshold": 0.25,
         "budget": 4,
-        "noise_scale": 0.1,
     },
     "OverfittingConfig": {
         "enabled": False,
         "holdout_fraction": 0.42,
         "min_board_size_for_split": 15,
         "restrict_proposer_visibility": False,
-        "ladder": LadderConfig(enabled=False, threshold=0.25, budget=4, noise_scale=0.1),
+        "ladder": LadderConfig(enabled=False, threshold=0.25, budget=4),
         "rotate_holdout": False,
-        "max_generations_per_contract": 9,
-        "random_baseline_every_n": 5,
     },
     "ProposerQualityConfig": {
         "best_of_n": 4,
         "critique_enabled": False,
         "screen_entries": 3,
         "screen_veto_only": True,
+    },
+    "ExperimentalConfig": {
+        "tournament_structures": True,
+        "max_generations_per_contract": 9,
+        "random_baseline_every_n": 5,
         "process_exemplars": 2,
         "recombine": True,
         "genealogy": 4,
         "calibration_feedback": 5,
         "recombine_merge": "llm",
-    },
-    "ExperimentMemoryConfig": {
-        "cross_epoch": True,
-    },
-    "ExperimentalConfig": {
-        "tournament_structures": True,
+        "diff_complexity_weight": 0.2,
+        "diff_complexity_ceiling": 10.0,
+        "cross_epoch_memory": True,
+        "standing_rating": "bradley_terry",
+        "resolver": "ranked_pairs",
     },
     "ScoringWeights": {
         "goldfive": {"fail_fast_on_revision_rejection": True},
@@ -121,8 +120,6 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "plan_revision_weight": 0.9,
         "task_failure_weight": 12.0,
         "not_completed_weight": 75.0,
-        "diff_complexity_weight": 0.2,
-        "diff_complexity_ceiling": 10.0,
         "promote_margin": 0.05,
         "holdout_margin": 0.11,
         "holdout_entry_regression_budget": 2,
@@ -138,11 +135,9 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         ),
         "overfitting": OverfittingConfig(
             enabled=False,
-            max_generations_per_contract=9,
             ladder=LadderConfig(threshold=0.27, budget=8),
         ),
         "proposer_quality": ProposerQualityConfig(best_of_n=5, critique_enabled=False),
-        "experiment_memory": ExperimentMemoryConfig(cross_epoch=True),
         "experimental": ExperimentalConfig(tournament_structures=True),
         "outcome_summarizer_spec": "pkg.mod:summarize_outcomes",
         "pass_transform": {"op": "pow", "exponent": 2.0},
@@ -351,8 +346,7 @@ def test_nested_tournament_and_overfitting_survive_round_trip() -> None:
         ),
         overfitting=OverfittingConfig(
             enabled=False,
-            max_generations_per_contract=9,
-            ladder=LadderConfig(threshold=0.27, budget=4, noise_scale=0.1),
+            ladder=LadderConfig(threshold=0.27, budget=4),
         ),
     )
     reloaded = _scoring_from_dict(scoring_to_dict(w))
@@ -398,17 +392,14 @@ def test_continuous_score_adds_no_scoring_contract_field() -> None:
     assert "metrics" not in field_names
 
 
-def test_experiment_memory_omitted_from_canon_at_default() -> None:
-    """The opt-in cross-epoch memory knob is additive: an unset (or
-    explicitly-default) ``experiment_memory`` block is OMITTED from the
-    canonical scoring form, so every existing epoch keeps its hash; opting
-    in emits the block and rolls the epoch like any contract change."""
+def test_cross_epoch_memory_omitted_from_canon_at_default() -> None:
+    """Inactive cross-epoch memory is omitted; opting in changes the contract."""
     canon_default = scoring_to_canon(ScoringWeights())
     assert "experiment_memory" not in canon_default
 
-    explicit_default = ScoringWeights(experiment_memory=ExperimentMemoryConfig())
+    explicit_default = ScoringWeights(experimental=ExperimentalConfig())
     assert _canon(explicit_default) == _canon(ScoringWeights())
 
-    opted_in = ScoringWeights(experiment_memory=ExperimentMemoryConfig(cross_epoch=True))
-    assert scoring_to_canon(opted_in)["experiment_memory"] == {"cross_epoch": True}
+    opted_in = ScoringWeights(experimental=ExperimentalConfig(cross_epoch_memory=True))
+    assert scoring_to_canon(opted_in)["experimental"]["cross_epoch_memory"] is True
     assert _canon(opted_in) != _canon(ScoringWeights())

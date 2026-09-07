@@ -18,7 +18,6 @@ import pytest
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import (
-    experimental_for,
     pin_deterministic,
     resolved_contract_with_proposer,
 )
@@ -30,7 +29,12 @@ from tests._orchestrator_harness import (
     run_evolve_once,
 )
 from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
-from zicato.core.types import OverfittingConfig, ScoringWeights, TournamentStructure
+from zicato.core.types import (
+    ExperimentalConfig,
+    OverfittingConfig,
+    ScoringWeights,
+    TournamentStructure,
+)
 from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato.evolve.placebo import (
@@ -141,14 +145,16 @@ def test_knob_validation_and_canon_omission() -> None:
     from zicato.epoch.contract import scoring_to_canon
 
     with pytest.raises(ValueError):
-        OverfittingConfig(random_baseline_every_n=-1)
+        ExperimentalConfig(random_baseline_every_n=-1)
 
     default_canon = scoring_to_canon(ScoringWeights())
     assert "random_baseline_every_n" not in default_canon["overfitting"]
 
-    on = ScoringWeights(overfitting=OverfittingConfig(random_baseline_every_n=4))
+    on = ScoringWeights(
+        overfitting=OverfittingConfig(), experimental=ExperimentalConfig(random_baseline_every_n=4)
+    )
     on_canon = scoring_to_canon(on)
-    assert on_canon["overfitting"]["random_baseline_every_n"] == 4
+    assert on_canon["experimental"]["random_baseline_every_n"] == 4
     assert json.dumps(on_canon, sort_keys=True, default=str) != json.dumps(
         default_canon, sort_keys=True, default=str
     )
@@ -235,7 +241,7 @@ def _bootstrap_t0(tmp_path: Path, *, every_n: int) -> tuple[Path, str]:
     brief = tmp_path / "brief.md"
     brief.write_text("# Placebo brief\n- Remove defect tokens.\n")
     raw = json.loads(SCORING_PATH.read_text())
-    raw.setdefault("overfitting", {})["random_baseline_every_n"] = every_n
+    raw.setdefault("experimental", {})["random_baseline_every_n"] = every_n
     weights = _scoring_from_dict(raw)
     cfg = new_epoch(
         workspace,
@@ -370,7 +376,7 @@ def _bootstrap_swiss_with_placebo(tmp_path: Path, *, field_size: int) -> tuple[P
     """A swiss workspace whose contract fields the placebo every round.
 
     Mirrors ``test_orchestrator_multi_challenger._bootstrap_swiss_workspace``
-    with ``overfitting.random_baseline_every_n=1`` stamped on the frozen
+    with ``experimental.random_baseline_every_n=1`` stamped on the frozen
     weights.
     """
     workspace = tmp_path / ".zicato"
@@ -412,8 +418,9 @@ def _bootstrap_swiss_with_placebo(tmp_path: Path, *, field_size: int) -> tuple[P
                     structure="swiss",
                     params={"field_size": field_size, "rounds_n": 1, "replicates": 1},
                 ),
-                experimental=experimental_for("swiss"),
-                overfitting=OverfittingConfig(random_baseline_every_n=1),
+                experimental=ExperimentalConfig(
+                    tournament_structures=True, random_baseline_every_n=1
+                ),
             )
         ),
         auto_close_previous=False,

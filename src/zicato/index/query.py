@@ -661,7 +661,7 @@ def prior_experiments_for_epoch(
       then ``deferred`` if budget remains. Every same-epoch entry is built
       with ``same_contract=True``.
     * **Opt-in cross-epoch transfer** (``cross_epoch=True`` — the
-      ``experiment_memory.cross_epoch`` contract knob;
+      ``experimental.cross_epoch_memory`` contract knob;
       EXPERIMENT-MEMORY.md §3.4 / §5.2): settled experiments from OTHER
       epochs under the SAME ``contract_hash`` fill whatever budget the
       same-epoch entries left, as clearly-flagged ``same_contract=False``

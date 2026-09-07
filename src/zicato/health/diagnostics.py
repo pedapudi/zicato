@@ -900,7 +900,7 @@ def detect_refresh_cadence(
     """Recommend a board refresh once a contract has been mined long enough.
 
     The cadence half of OVERFITTING.md §7 / §12 #6. When the operator sets
-    :attr:`~zicato.core.types.OverfittingConfig.max_generations_per_contract`,
+    :attr:`~zicato.core.types.ExperimentalConfig.max_generations_per_contract`,
     this surfaces a board-refresh **recommendation** (an ``info`` finding,
     never a forced auto-roll) once the number of evaluated generations under
     the contract reaches that ceiling — a cue that the contract has been
@@ -1096,7 +1096,7 @@ def detect_placebo_promoted(
     """CRITICAL when a random-baseline (placebo) challenger was PROMOTED.
 
     The placebo arm (OVERFITTING.md #7,
-    ``overfitting.random_baseline_every_n``) fields a semantics-preserving
+    ``experimental.random_baseline_every_n``) fields a semantics-preserving
     no-op challenger the gate MUST reject — identical behaviour leaves no
     improvement to clear the margin. A promoted placebo therefore means
     the decision procedure is promoting noise: gate discrimination is
@@ -1845,7 +1845,7 @@ def assess_loop_health(
         and passed to every threshold-using detector.
     max_generations_per_contract:
         The cadence ceiling from
-        :attr:`~zicato.core.types.OverfittingConfig.max_generations_per_contract`,
+        :attr:`~zicato.core.types.ExperimentalConfig.max_generations_per_contract`,
         threaded through so :func:`detect_refresh_cadence` can surface a
         board-refresh recommendation. ``None`` (the default) disables the
         cadence detector entirely.

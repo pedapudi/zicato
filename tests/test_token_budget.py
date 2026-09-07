@@ -37,9 +37,11 @@ from tests._orchestrator_harness import (
     run_evolve_once,
 )
 from zicato.core.runtime import RoundTokenLedger, RuntimeConfig
-from zicato.core.types import DriftCount, LossProfile
+from zicato.core.types import DriftCount, LossProfile, TournamentStructure
+from zicato.core.workspace import run_id_for_unit
 from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import new_epoch
+from zicato.tournament.worker_transport import _entry_replicate_index
 
 # Grab the REAL reducer helper before any test masks zicato.telemetry in
 # sys.modules — the unit cache persists a skipped unit through the writer
@@ -106,7 +108,9 @@ def _bootstrap_multi_entry_workspace(
         name="alpha",
         board_source=board_src,
         brief_source=brief_src,
-        weights=deterministic_weights(promote_margin=0.01),
+        weights=deterministic_weights(
+            promote_margin=0.01, tournament_structure=TournamentStructure(structure="gauntlet")
+        ),
         auto_close_previous=False,
     )
 
@@ -141,10 +145,12 @@ def _install_token_heavy_run_single(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, side, match_id
+        del adapter, weights, workspace_root, side, match_id
         calls.append((generation.id, entry.id))
         return LossProfile(
-            run_id=f"r-{generation.id}-{entry.id}",
+            run_id=run_id_for_unit(
+                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+            ),
             entry_id=entry.id,
             generation_id=generation.id,
             epoch_id=epoch_id,

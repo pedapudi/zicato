@@ -14,8 +14,8 @@ from dataclasses import replace
 import pytest
 
 from zicato.core.measurement import MeasurementDraw
-from zicato.core.scoring_config import ScoringWeights, recommended_scaffold_weights
-from zicato.core.types import TournamentStructure
+from zicato.core.scoring_config import ScoringWeights
+from zicato.core.types import ExperimentalConfig, TournamentStructure
 from zicato.selection import Contestant, Matchup, MatchupResult, make_strategy
 from zicato.selection.driver import (
     EvidencePreGate,
@@ -229,7 +229,7 @@ def test_pregate_replicates_then_promotes_on_separation() -> None:
 def test_recommended_racing_confirms_full_and_partial_fields_within_budget(
     applied_count: int,
 ) -> None:
-    specification = recommended_scaffold_weights().tournament_structure
+    specification = ScoringWeights().tournament_structure
     strategy = make_strategy(specification, board_ids=[f"entry-{i}" for i in range(10)])
     champion = _champion()
     challengers = [_challenger(f"v{i}") for i in range(1, applied_count + 1)]
@@ -336,7 +336,7 @@ def test_pregate_holds_a_noisy_swiss_crowning_promote() -> None:
     # 0.01 win.
     s = make_strategy(
         TournamentStructure(structure="swiss", params={"field_size": 2, "rounds_n": 2}),
-        experimental_structures=True,
+        experimental=ExperimentalConfig(tournament_structures=True),
     )
     champ = _champion("v0")
     challengers = [_challenger("v1"), _challenger("v2")]

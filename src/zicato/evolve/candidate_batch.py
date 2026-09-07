@@ -129,7 +129,7 @@ async def produce_candidate_batch(
         _load_prior_experiments(
             workspace_root,
             epoch_id,
-            cross_epoch=prepared.weights.experiment_memory.cross_epoch,
+            cross_epoch=prepared.weights.experimental.cross_epoch_memory,
             writer=prepared.writer,
         )
     )

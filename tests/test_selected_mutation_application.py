@@ -11,7 +11,7 @@ import pytest
 
 from zicato.core.experiment import Experiment, HypothesisSpec
 from zicato.core.mutation import Patch
-from zicato.core.types import Generation, OverfittingConfig, ScoringWeights, TournamentDecision
+from zicato.core.types import ExperimentalConfig, Generation, ScoringWeights, TournamentDecision
 from zicato.epoch.containment import write_containment_manifest, write_mutation_policy
 from zicato.epoch.genstore import DirectoryGenerationStore
 from zicato.epoch.git_genstore import GitGenerationStore
@@ -106,7 +106,7 @@ def test_duplicate_outside_selected_root_cannot_redirect_accepted_edit(
         )
         parent_gen = Generation("v0", "epoch", None, parent, "2026-01-01T00:00:00Z")
         adapter = SimpleNamespace(mutable_subpaths=lambda root: [root / "agent" / selection])
-        weights = ScoringWeights(overfitting=OverfittingConfig(random_baseline_every_n=1))
+        weights = ScoringWeights(experimental=ExperimentalConfig(random_baseline_every_n=1))
         if boundary == "placebo-field":
             field = SimpleNamespace(
                 workspace_root=workspace,

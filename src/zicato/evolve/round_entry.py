@@ -280,6 +280,7 @@ async def _evolve_once(
     proposer_agent = wrap_with_proposer_quality(
         proposer_agent,
         weights.proposer_quality,
+        experimental=weights.experimental,
         breadth_call_llm=config.proposer_breadth_call_llm,
         depth_call_llm=config.proposer_depth_call_llm,
         breadth_model=config.proposer_breadth_model,
@@ -511,7 +512,7 @@ async def _evolve_once(
     )
 
     # --- 5a''. Opt-in process-exemplar block (PROCESS-EXEMPLARS.md) ---
-    # When the contract opts in (proposer_quality.process_exemplars > 0),
+    # When the contract opts in (experimental.process_exemplars > 0),
     # extract up to that many drift-anchored, mechanically-REDACTED event
     # windows from the champion's TRAIN-slice events.jsonl files — the same
     # parent + train partition the patterns above used — so the proposer
@@ -555,7 +556,7 @@ async def _evolve_once(
 
     # --- 5a''. Optional recombination pair ---
     # ONE selection per round, built only when the contract opts in
-    # (proposer_quality.recombine AND best_of_n > 1) — otherwise ``None``
+    # (experimental.recombine AND best_of_n > 1) — otherwise ``None``
     # and no pair even rides the propose path. Plain DATA (not a callable):
     # the selection depends only on round-start state, so the proposer
     # stack stays IO-free. Best-effort by contract — any failure inside
@@ -571,7 +572,7 @@ async def _evolve_once(
 
     # --- 5a'''. Optional genealogy channel ---
     # ONE sampling per round, built only when the contract opts in
-    # (proposer_quality.genealogy > 0) — otherwise () and no items ride the
+    # (experimental.genealogy > 0) — otherwise () and no items ride the
     # propose path. Read-side only (the meter is untouched): the sampler reads
     # the reign's durable records + the Elo fold and returns already-banded,
     # already-capped candidate-lineage items (PARENTS = the champion's promoted
@@ -588,7 +589,7 @@ async def _evolve_once(
 
     # --- 5a''''. Optional critic-calibration channel ---
     # ONE summary per round, built only when the contract opts in
-    # (proposer_quality.calibration_feedback > 0) — otherwise ``None`` and no
+    # (experimental.calibration_feedback > 0) — otherwise ``None`` and no
     # summary rides the propose path. Read-side only (the meter is untouched):
     # the builder joins the reign's durable records with the prediction-accuracy
     # grader's ledger and returns an already-banded, aggregate-count summary of
@@ -618,7 +619,7 @@ async def _evolve_once(
         board_ids=[e.id for e in train_board],
         replicates=replicate_setting.replicates,
         noise_floor_delta_std=replicate_setting.delta_std,
-        experimental_structures=weights.experimental.tournament_structures,
+        experimental=weights.experimental,
     )
     prepared = generation_phase.PreparedRound(
         writer=writer,

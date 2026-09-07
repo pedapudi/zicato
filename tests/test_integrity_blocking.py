@@ -33,6 +33,7 @@ from tests._orchestrator_harness import (
     make_aux_responder,
     run_evolve_once,
 )
+from zicato.core.types import TournamentStructure
 from zicato.evolve.containment import (
     check_containment,
     containment_reason,
@@ -263,7 +264,11 @@ def test_gate_contradiction_block_refuses_unsupported_promote(
     orchestrator re-derives the scalar rule pre-persist and refuses."""
     workspace, epoch_id = bootstrap_workspace(
         tmp_path,
-        weights=deterministic_weights(promote_margin=0.01, block_on_gate_contradiction=True),
+        weights=deterministic_weights(
+            promote_margin=0.01,
+            block_on_gate_contradiction=True,
+            tournament_structure=TournamentStructure(structure="gauntlet"),
+        ),
     )
     install_stub_adapter_factory(monkeypatch)
     # Child is WORSE than the parent — a promote is a contradiction.
@@ -301,7 +306,12 @@ def test_gate_contradiction_block_off_keeps_rigged_promote(
 ) -> None:
     """Default OFF: the same rigged promote persists (alarm-only parity —
     the supervisor's out-of-band scan owns the alarm)."""
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path,
+        weights=deterministic_weights(
+            promote_margin=0.01, tournament_structure=TournamentStructure(structure="gauntlet")
+        ),
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
