@@ -19,8 +19,9 @@ from zicato.tui.app import ZicatoTui  # noqa: E402
 
 async def test_held_terminal_request_keeps_navigation_responsive():
     entered = threading.Event()
-    navigated = threading.Event()
+    finished = threading.Event()
     released = threading.Event()
+    navigation_while_waiting = []
 
     class HeldClient(SnapshotClient):
         hold = False
@@ -29,33 +30,33 @@ async def test_held_terminal_request_keeps_navigation_responsive():
             if self.hold:
                 self.hold = False
                 entered.set()
-                assert released.wait(3)
+                try:
+                    assert released.wait(3)
+                finally:
+                    finished.set()
             return super().get(path)
 
+    class ObservedTui(ZicatoTui):
+        def action_jump(self, index):
+            super().action_jump(index)
+            navigation_while_waiting.append(entered.is_set() and not finished.is_set())
+            released.set()
+
     client = HeldClient(deepcopy(PAYLOADS))
-    app = ZicatoTui(client, route=Route("home", {"epoch": EPOCH}), poll_seconds=3600)
+    app = ObservedTui(client, route=Route("home", {"epoch": EPOCH}), poll_seconds=3600)
     async with app.run_test() as pilot:
         await pilot.pause()
         client.hold = True
 
-        def release():
-            navigated.wait(1)
-            released.set()
-
-        helper = threading.Thread(target=release)
-        helper.start()
         try:
             app.reload()
             assert await asyncio.to_thread(entered.wait, 2)
             await pilot.press("2")
-            responsive = not released.is_set()
-            navigated.set()
             await pilot.pause()
-            assert responsive, "navigation waited for the held HTTP request"
+            assert navigation_while_waiting == [True], "navigation waited for the held HTTP request"
             assert app.console_model.route.lens == "standings"
         finally:
-            navigated.set()
-            helper.join(2)
+            released.set()
 
 
 async def test_navigation_away_and_back_rejects_late_view_and_coalesces(monkeypatch):

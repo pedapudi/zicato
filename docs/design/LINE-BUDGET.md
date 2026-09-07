@@ -50,7 +50,7 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 503,804 | +95,143 |
+| Total | 408,661 | 503,805 | +95,144 |
 | Production | 197,702 | 213,273 | +15,571 |
 | Production logic | 110,276 | 123,728 | +13,452 |
 
@@ -435,3 +435,4 @@ dropped rows named.
 | Remove the duplicate name for defaults (total) | 503,820 | -16 | 503,804 | Issue #395: remove the compatibility function, its public export, and a redundant assertion. Callers construct the shared configuration directly. Migration errors explain that equivalent settings retain their evaluation hash. |
 | Remove the duplicate name for defaults (production) | 213,285 | -12 | 213,273 | Issue #395: remove the forwarding function and its duplicate public export. |
 | Remove the duplicate name for defaults (production logic) | 123,737 | -9 | 123,728 | Issue #395: callers use the existing configuration constructor; no replacement abstraction is introduced. |
+| Assert navigation while data is still loading (total) | 503,804 | +1 | 503,805 | Issue #405: observe navigation inside its handler while the request is held. Remove the helper thread and its one-second release timer. A delayed return from the test driver now passes; a read that blocks the input loop still fails. |
