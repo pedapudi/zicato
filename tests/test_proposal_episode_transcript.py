@@ -154,13 +154,17 @@ def test_a_generation_with_no_episode_answers_nothing(workspace: Path) -> None:
     assert resolve_conversation(_paths(workspace), "v9", gen="v9", epoch=EPOCH) is None
 
 
-def test_an_epoch_that_does_not_hold_the_generation_falls_back_to_the_one_that_does(
+def test_named_epoch_with_no_episode_does_not_borrow_another_epochs_evidence(
     workspace: Path,
 ) -> None:
-    """A generation id is unique workspace-wide, so a wrong epoch still resolves."""
-    resolved = find_proposal_episode_log(_paths(workspace), "2026-08-01-other", GENERATION)
-    assert resolved is not None
-    assert resolved.parent.name == GENERATION
+    layout = WorkspaceLayout.from_root(workspace)
+    other_epoch = "2026-08-01-other"
+    layout.generation_dir(other_epoch, GENERATION).mkdir(parents=True)
+    paths = _paths(workspace)
+    assert find_proposal_episode_log(paths, other_epoch, GENERATION) is None
+    assert resolve_conversation(paths, GENERATION, gen=GENERATION, epoch=other_epoch) is None
+    assert find_proposal_episode_log(paths, EPOCH, GENERATION) is not None
+    assert find_proposal_episode_log(paths, "", GENERATION) is not None
 
 
 def test_a_slate_serves_its_lowest_slot_by_default_and_the_named_slot_on_request(

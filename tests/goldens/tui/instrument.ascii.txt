@@ -1,6 +1,8 @@
 Instrument * refl-2026-07-04
 2026-07-04_e2 * adjudicated * executed * 2026-07-04T11:30:00Z
 
+Board status and outcome distribution
+
 Reflection
 noise floor             0.0044
 decision flip P         0.080
@@ -20,7 +22,14 @@ Findings
 
 Recommendation queue
 retire_entry(entry_id)                zicato inspect reflection apply refl-2026-07-04 f-dead-entry
+  op                      retire_entry
+  args
+    entry id                plan-long-1
 tighten_judge(judge_name, scope)      zicato inspect reflection apply refl-2026-07-04 f-judge-fp
+  op                      tighten_judge
+  args
+    judge name              tool_discipline
+    scope                   recovery
 copy an apply line and run it yourself - this console applies nothing
 
 Judge audit
@@ -37,3 +46,7 @@ No judge has been calibrated ag.    unmeasured    an uncalibrated judge states a
 Reflections
 refl-2026-07-04               adjudicated   executed    2 findings
 refl-2026-07-01               zero-llm      executed    0 findings
+
+Proposer recommendations
+Recommendation evidence is unavailable.
+Review the recorded remedy before applying; run an apply command only after reviewing its remedy.

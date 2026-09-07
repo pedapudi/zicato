@@ -18,14 +18,8 @@
 // only mutates state and the render layer patches keyed nodes, a delta
 // never rebuilds a panel's innerHTML: no flash.
 //
-// THE SEQ NO-OP-SKIP GATE. Every `state_change` and `snapshot` frame carries
-// a top-level progress `seq` plus `terminal` — the orchestrator's true liveness
-// cursor, which advances only on a real transition and never on the heartbeat
-// timer. A `state_change` whose seq does NOT advance (a coalesced beat
-// re-emitting the same seq) writes ZERO DOM: the refresh is skipped. A
-// backwards seq means the log was cleared on a fresh boot, so the client forces
-// a refresh and resets. A frame carrying NO seq degrades to refreshing on every
-// frame.
+// Progress sequence controls liveness. Content revision invalidates reads;
+// view digests decide whether the resulting content needs to be painted.
 
 import { state } from './state.js';
 import { bus } from './bus.js';
@@ -37,26 +31,42 @@ const SSE_BACKOFF_MAX_MS = 30_000;
 let _sse = null;
 let _retry = 0;
 let _refreshTimer = null;
-let _refreshPending = false;
+let _refreshInFlight = false;
+let _requested = 0;
+let _applied = 0;
+let _desiredRevision;
+let _appliedRevision;
+let _connection = 0;
+let _snapshot = 0;
+let _failures = 0;
 
-// Debounced coalesced environment refresh. The frame's `kinds` is
-// advisory only — the single consolidated read refreshes the whole view.
-function refreshAfterEvent() {
-  _refreshPending = true;
-  if (_refreshTimer != null) return;
+function refreshAfterEvent(delay = REFRESH_DEBOUNCE_MS) {
+  if (_refreshTimer != null || _refreshInFlight || _requested === _applied) return;
   _refreshTimer = setTimeout(async () => {
     _refreshTimer = null;
-    if (!_refreshPending) return;
-    _refreshPending = false;
+    _refreshInFlight = true;
+    const requested = _requested;
+    const revision = _desiredRevision;
+    const connection = _connection;
+    const snapshot = _snapshot;
     try {
-      // ONE consolidated read per beat — nothing else. The per-matchup detail
-      // and drift-movement caches are not refetched here: no view reads them, so
-      // a per-beat fetch would be discarded. Drill-downs are on demand.
-      await loadEnvironment();
-    } catch (err) {
-      console.warn('refresh failed:', err);
+      const success = await loadEnvironment({
+        accept: () => connection === _connection && snapshot === _snapshot,
+        contentChanged: revision !== _appliedRevision,
+      });
+      if (success) {
+        _applied = requested;
+        _appliedRevision = revision;
+        _failures = 0;
+      } else if (connection === _connection) {
+        _failures += 1;
+      }
+    } finally {
+      _refreshInFlight = false;
+      refreshAfterEvent(Math.min(SSE_BACKOFF_MAX_MS,
+        REFRESH_DEBOUNCE_MS * Math.pow(2, Math.min(_failures, 7))));
     }
-  }, REFRESH_DEBOUNCE_MS);
+  }, delay);
 }
 
 function scheduleReconnect() {
@@ -67,6 +77,13 @@ function scheduleReconnect() {
 }
 
 export function connectSSE() {
+  _connection += 1;
+  _requested = _applied = 0;
+  _desiredRevision = _appliedRevision = undefined;
+  _failures = 0;
+  if (_refreshTimer != null) clearTimeout(_refreshTimer);
+  _refreshTimer = null;
+  if (_sse) _sse.close();
   state.connecting = true;
   state._changed();
   try {
@@ -75,13 +92,17 @@ export function connectSSE() {
     scheduleReconnect();
     return;
   }
-  _sse.addEventListener('open', () => {
+  const source = _sse;
+  const listen = (name, callback) => source.addEventListener(name, (event) => {
+    if (source === _sse) callback(event);
+  });
+  listen('open', () => {
     state.connected = true;
     state.connecting = false;
     _retry = 0;
     state._changed();
   });
-  _sse.addEventListener('snapshot', (ev) => {
+  listen('snapshot', (ev) => {
     try {
       const frame = JSON.parse(ev.data);
       // Frame is `{ type, data, seq, terminal }`; older servers send the
@@ -92,32 +113,29 @@ export function connectSSE() {
       }
       const payload = (frame && typeof frame === 'object' && frame.data != null)
         ? frame.data : frame;
+      _snapshot += 1;
+      _desiredRevision = _appliedRevision = frame.content_revision;
+      state.contentRevision += 1;
       state.applySnapshot(payload);
     } catch (err) { console.warn('bad snapshot event:', err); }
   });
-  _sse.addEventListener('state_change', (ev) => {
-    // THE SEQ NO-OP-SKIP GATE. Refresh ONLY on a genuine seq advance (or a
-    // rollover = restarted log); a repeat seq (a coalesced no-op beat)
-    // writes ZERO DOM — no fetch, no state touched. A frame with no seq
-    // degrades to refreshing on every frame. The
-    // run-state pill stays current off the heartbeat frame's own
-    // `_changed()` pulse, so STALLED/SETTLED still paint without this fetch.
-    let frame = null;
-    try { frame = ev && ev.data != null ? JSON.parse(ev.data) : null; }
-    catch { frame = null; }
-    if (frame && typeof frame === 'object' && 'seq' in frame) {
-      const verdict = state.noteProgress(frame.seq, frame.terminal);
-      if (verdict.advanced || verdict.rollover) {
-        // A genuine advance nudges the chrome ahead of the debounced fetch
-        // (digest-gated, so a no-op still writes zero DOM).
-        state._changed();
-        refreshAfterEvent();
-      }
-      return;
+  listen('state_change', (ev) => {
+    let frame;
+    try { frame = JSON.parse(ev.data); } catch { frame = {}; }
+    const verdict = state.noteProgress(frame?.seq, frame?.terminal);
+    const kinds = Array.isArray(frame?.kinds) ? frame.kinds : [frame?.kind];
+    const revision = frame?.content_revision;
+    const contentChanged = revision != null
+      ? revision !== _desiredRevision
+      : kinds.some((kind) => kind && kind !== 'heartbeat' && kind !== 'progress');
+    if (contentChanged) _desiredRevision = revision ?? Symbol('content');
+    if (contentChanged || verdict.advanced || verdict.rollover || !verdict.present) {
+      _requested += 1;
+      if (verdict.advanced || verdict.rollover) state._changed();
     }
     refreshAfterEvent();
   });
-  _sse.addEventListener('run_log', (ev) => {
+  listen('run_log', (ev) => {
     pollLogTailAppend();
     // The same frame is the LIVE CONVERSATION signal: it fires when an
     // events.jsonl GREW and names which one. Re-emitted on the bus so a
@@ -130,11 +148,11 @@ export function connectSSE() {
       if (frame && typeof frame === 'object') bus.emit('run_log:grew', frame);
     } catch { /* not a frame we can route */ }
   });
-  _sse.addEventListener('heartbeat', (ev) => {
+  listen('heartbeat', (ev) => {
     try { state.setHeartbeat(JSON.parse(ev.data)); state._changed(); }
     catch { /* ignore */ }
   });
-  _sse.addEventListener('error', () => {
+  listen('error', () => {
     state.connected = false;
     state._changed();
     if (_sse && _sse.readyState === EventSource.CLOSED) scheduleReconnect();

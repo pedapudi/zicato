@@ -35,6 +35,7 @@ export class AppState {
     // + the four-state run pill. -1 = no seq seen yet (vs a real seq 0 = a
     // never-run / empty log). `terminal` flips once a frame marks a cleanly-
     // ended loop; `lastSeqAdvanceAt` = wall-clock ms the cursor last advanced.
+    this.contentRevision = 0;
     this.lastSeq = -1;
     this.terminal = false;
     this.lastSeqAdvanceAt = NaN;

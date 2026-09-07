@@ -517,7 +517,9 @@ def _text_pass_files(
     return out
 
 
-def enumerate_mutations(source_roots: list[Path]) -> list[MutationPoint]:
+def enumerate_mutations(
+    source_roots: list[Path], *, syntax_table: Mapping[str, MarkerSyntax] | None = None
+) -> list[MutationPoint]:
     """Walk source roots and return every mutation point we can find.
 
     Three discovery passes run for each root:
@@ -548,9 +550,11 @@ def enumerate_mutations(source_roots: list[Path]) -> list[MutationPoint]:
         Source-root directories to walk. A root may also be a single
         file. Each is normalised via :meth:`Path.resolve` so the returned
         mutation points carry absolute paths.
+    syntax_table:
+        Explicit syntax for this walk. Omitted, use the process's active table.
     """
 
-    table = active_syntax_table()
+    table = syntax_table if syntax_table is not None else active_syntax_table()
     python_syntax = table[PYTHON_SUFFIX]
     out: list[MutationPoint] = []
     for raw_root in source_roots:

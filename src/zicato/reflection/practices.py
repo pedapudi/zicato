@@ -38,10 +38,16 @@ missing input, never a fabricated verdict).
 
 from __future__ import annotations
 
+import json
 import math
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+from zicato.core.workspace import reflection_practices_path
+from zicato.epoch._storage import RecordError
+from zicato.storage import atomic_write_json
 
 # ---------------------------------------------------------------------------
 # Verdict vocabulary
@@ -140,9 +146,10 @@ class PracticeCheck:
     rationale: str
     proposed_op: dict[str, Any] | None = None
     unmeasured_reason: str | None = None
+    _json: str | None = field(default=None, repr=False, compare=False)
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        values = {
             "check_id": self.check_id,
             "verdict": self.verdict,
             "headline": self.headline,
@@ -151,6 +158,62 @@ class PracticeCheck:
             "proposed_op": dict(self.proposed_op) if self.proposed_op is not None else None,
             "unmeasured_reason": self.unmeasured_reason,
         }
+        stored = json.loads(self._json) if self._json is not None else {}
+        stored.update(values)
+        return stored
+
+    @classmethod
+    def from_json(cls, body: Any) -> PracticeCheck:
+        """Accept a recorded diagnosis without running its check or proposed operation."""
+        if not isinstance(body, dict):
+            raise RecordError("practice check: expected a JSON object")
+        for key in ("check_id", "headline", "rationale"):
+            if not isinstance(body.get(key), str):
+                raise RecordError(f"practice check: {key} must be a string")
+        if not body["check_id"]:
+            raise RecordError("practice check: check_id must not be empty")
+        verdict = body.get("verdict")
+        if verdict not in (VERDICT_SOUND, VERDICT_ATTEND, VERDICT_UNSOUND, VERDICT_UNMEASURED):
+            raise RecordError("practice check: invalid verdict")
+        if not isinstance(body.get("evidence"), dict):
+            raise RecordError("practice check: evidence must be an object")
+        reason = body.get("unmeasured_reason")
+        if "unmeasured_reason" not in body or (reason is not None and not isinstance(reason, str)):
+            raise RecordError("practice check: unmeasured_reason must be a string or null")
+        if (verdict == VERDICT_UNMEASURED and not reason) or (
+            verdict != VERDICT_UNMEASURED and reason is not None
+        ):
+            raise RecordError("practice check: unmeasured_reason disagrees with verdict")
+        if "proposed_op" not in body:
+            raise RecordError("practice check: missing proposed_op")
+        operation = body["proposed_op"]
+        if operation is not None and (
+            not isinstance(operation, dict)
+            or not isinstance(operation.get("op"), str)
+            or not operation["op"]
+            or not isinstance(operation.get("args"), dict)
+        ):
+            raise RecordError("practice check: proposed_op requires a name and argument object")
+        try:
+            encoded = json.dumps(body, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise RecordError(f"practice check: invalid JSON value: {exc}") from exc
+        fields = json.loads(encoded)
+        return cls(
+            **{
+                key: fields[key]
+                for key in (
+                    "check_id",
+                    "verdict",
+                    "headline",
+                    "evidence",
+                    "rationale",
+                    "proposed_op",
+                    "unmeasured_reason",
+                )
+            },
+            _json=encoded,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +221,7 @@ class PracticeReview:
     """The practice review over one contract — a list of :class:`PracticeCheck`."""
 
     checks: tuple[PracticeCheck, ...] = ()
+    _json: str | None = field(default=None, repr=False, compare=False)
 
     def verdict_counts(self) -> dict[str, int]:
         counts = {
@@ -174,10 +238,56 @@ class PracticeReview:
         return [c for c in self.checks if c.verdict == verdict]
 
     def to_json(self) -> dict[str, Any]:
-        return {
-            "checks": [c.to_json() for c in self.checks],
-            "verdict_counts": self.verdict_counts(),
-        }
+        stored = json.loads(self._json) if self._json is not None else {}
+        stored.update(
+            checks=[c.to_json() for c in self.checks], verdict_counts=self.verdict_counts()
+        )
+        return stored
+
+    @classmethod
+    def from_json(cls, body: Any) -> PracticeReview:
+        if not isinstance(body, dict) or not isinstance(body.get("checks"), list):
+            raise RecordError("practice review: expected an object with a checks list")
+        checks = tuple(PracticeCheck.from_json(check) for check in body["checks"])
+        if len({check.check_id for check in checks}) != len(checks):
+            raise RecordError("practice review: duplicate check identity")
+        counts = body.get("verdict_counts")
+        if not isinstance(counts, dict) or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in counts.values()
+        ):
+            raise RecordError("practice review: verdict_counts must contain nonnegative integers")
+        if counts != cls(checks).verdict_counts():
+            raise RecordError("practice review: verdict_counts disagree with checks")
+        try:
+            encoded = json.dumps(body, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise RecordError(f"practice review: invalid JSON value: {exc}") from exc
+        return cls(checks, encoded)
+
+
+def read_practice_review(
+    workspace_root: Path, epoch_id: str, reflection_id: str
+) -> PracticeReview | None:
+    """Read accepted practice facts; only absence returns no review."""
+    path = reflection_practices_path(workspace_root, epoch_id, reflection_id)
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise RecordError(f"practice review {path}: {exc}") from exc
+    return PracticeReview.from_json(body)
+
+
+def write_practice_review(
+    workspace_root: Path, epoch_id: str, reflection_id: str, review: PracticeReview
+) -> Path:
+    """Validate and durably publish checks with their matching verdict counts."""
+    accepted = PracticeReview.from_json(review.to_json())
+    path = reflection_practices_path(workspace_root, epoch_id, reflection_id)
+    atomic_write_json(path, accepted.to_json())
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -1228,6 +1338,8 @@ __all__ = [
     "check_statistical_power",
     "check_weight_revisit",
     "rank_checks_for_report",
+    "read_practice_review",
     "review_practices",
+    "write_practice_review",
     "summarize_corpus",
 ]

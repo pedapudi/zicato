@@ -323,7 +323,7 @@ def test_init_force_refuses_to_discard_a_recorded_lineage(tmp_path: Path) -> Non
     ws = tmp_path / ".zicato"
     ws.mkdir()
     (ws / "config.json").write_text(json.dumps({"instance_id": "first"}), encoding="utf-8")
-    lineage = json.dumps({"epochs": [{"id": "e1", "generations": ["v0", "v1"]}]})
+    lineage = json.dumps({"epochs": [{"id": "e1", "generations": [{"id": "v0"}, {"id": "v1"}]}]})
     (ws / "lineage.json").write_text(lineage, encoding="utf-8")
 
     result = CliRunner().invoke(
@@ -342,7 +342,9 @@ def test_init_force_discards_a_recorded_lineage_when_asked_explicitly(tmp_path: 
     ws = tmp_path / ".zicato"
     ws.mkdir()
     (ws / "config.json").write_text(json.dumps({"instance_id": "first"}), encoding="utf-8")
-    (ws / "lineage.json").write_text(json.dumps({"epochs": [{"id": "e1"}]}), encoding="utf-8")
+    (ws / "lineage.json").write_text(
+        json.dumps({"epochs": [{"id": "e1", "generations": []}]}), encoding="utf-8"
+    )
 
     result = CliRunner().invoke(
         init_cmd,

@@ -4,11 +4,11 @@ Two jobs live here. The first is enumeration: :func:`generation_ids`,
 :func:`run_entry_ids` and :func:`round_indices` answer "which generation /
 run / round records does this epoch hold", and they are the ONLY place in
 the tree that asks. The second is the leaf reads the enumerations feed —
-board, generation score, telemetry, loss — each routed through
+board, telemetry, loss — each routed through
 :class:`~zicato.workspace.layout.WorkspaceLayout` so the filename joins live
 in one place. A record whose shape has an owning codec is not read here:
-``experiment.json`` is decoded by :mod:`zicato.epoch.journal`, which the
-enumerations below still supply the generation ids to. Each reader here
+experiments are decoded by :mod:`zicato.epoch.journal`, and generation scores by
+:mod:`zicato.tournament.scoring`. Both consume the generation enumeration below. Each reader here
 returns the *raw* canonical structure (the parsed JSON dict / list, or the
 parsed JSONL line dicts for the board) and leaves view-specific shaping to
 the caller.
@@ -148,50 +148,6 @@ def read_board(layout: WorkspaceLayout, epoch_id: str) -> list[dict[str, Any]] |
             continue
         lines.append(obj)
     return lines
-
-
-def read_gen_score(layout: WorkspaceLayout, epoch_id: str, generation_id: str) -> dict[str, Any]:
-    """One generation's cached ``gen_score.json`` aggregate, or ``{}``.
-
-    Returns the raw aggregate dict, or ``{}`` when the file is absent or
-    malformed — matching the dashboard's prior ``_read_gen_score``.
-    """
-    score = _read_json_value(layout.gen_score(epoch_id, generation_id))
-    return score if isinstance(score, dict) else {}
-
-
-def read_gen_score_history(
-    layout: WorkspaceLayout, epoch_id: str, generation_id: str
-) -> list[dict[str, Any]]:
-    """Every aggregate ever written for one generation, oldest last.
-
-    The parsed ``gen_score.history.jsonl`` lines (issue #122): one FULL
-    aggregate per write — ``per_entry`` included — each stamped with the
-    ``round_index`` it was measured in and a monotonic ``seq``. The last
-    element is the measurement the flat ``gen_score.json`` still holds;
-    the ones before it are the measurements it overwrote, which is the
-    only way to see that an unchanged champion scored differently across
-    its defences.
-
-    Best-effort like every reader here: a missing / unreadable file
-    yields ``[]`` and a malformed line is skipped, never raised.
-    """
-    try:
-        text = layout.gen_score_history(epoch_id, generation_id).read_text(encoding="utf-8")
-    except OSError:
-        return []
-    out: list[dict[str, Any]] = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict):
-            out.append(obj)
-    return out
 
 
 def read_events_history(

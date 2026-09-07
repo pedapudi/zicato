@@ -630,8 +630,9 @@ def make_builder_endpoints(
 
 
 def _read_suggestions_feed(root: Path) -> dict[str, Any]:
-    """Latest reflection's suggestions for the current epoch (tolerant, operator-side)."""
-    from zicato.reflection.suggestions import read_suggestions_json  # noqa: PLC0415
+    """Latest reflection's accepted suggestions, with canonical corruption explicit."""
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
+    from zicato.reflection.suggestions import read_suggestions  # noqa: PLC0415
 
     empty: dict[str, Any] = {"epoch_id": None, "reflection_id": None, "suggestions": []}
     try:
@@ -645,11 +646,12 @@ def _read_suggestions_feed(root: Path) -> dict[str, Any]:
     reflection_id = _latest_reflection_id(root, epoch_id)
     if reflection_id is None:
         return {"epoch_id": epoch_id, "reflection_id": None, "suggestions": []}
-    return {
-        "epoch_id": epoch_id,
-        "reflection_id": reflection_id,
-        "suggestions": read_suggestions_json(root, epoch_id, reflection_id),
-    }
+    payload = {"epoch_id": epoch_id, "reflection_id": reflection_id, "suggestions": []}
+    try:
+        suggestions = read_suggestions(root, epoch_id, reflection_id)
+    except RecordError as exc:
+        return {**payload, "unreadable": str(exc)}
+    return {**payload, "suggestions": [suggestion.to_json() for suggestion in suggestions]}
 
 
 def _latest_reflection_id(root: Path, epoch_id: str) -> str | None:

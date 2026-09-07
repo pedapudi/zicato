@@ -123,16 +123,8 @@ def _lineage_decisions(workspace_root: Path, epoch_id: str) -> dict[str, bool | 
     """
     from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
 
-    decisions: dict[str, bool | None] = {}
-    for epoch in load_lineage(workspace_root).get("epochs", []):
-        if epoch.get("id") != epoch_id:
-            continue
-        for gen in epoch.get("generations", []):
-            gen_id = gen.get("id")
-            if isinstance(gen_id, str):
-                promoted = gen.get("promoted")
-                decisions[gen_id] = promoted if isinstance(promoted, bool) else None
-    return decisions
+    epoch = load_lineage(workspace_root).epoch(epoch_id)
+    return {generation.id: generation.promoted for generation in epoch.generations} if epoch else {}
 
 
 def prune_generations(

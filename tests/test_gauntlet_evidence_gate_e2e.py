@@ -284,7 +284,7 @@ def test_gauntlet_inconclusive_champion_stands(tmp_path: Path) -> None:
 
     dead = read_inconclusive(workspace, "v1")
     assert dead is not None
-    assert dead["champion_id"] == "v0"
-    assert dead["epoch_id"] == epoch_id
-    assert dead["rating"]["decision"] == "inconclusive"
-    assert len(dead["ci_history"]) == 3
+    assert dead.champion_id == "v0"
+    assert dead.epoch_id == epoch_id
+    assert dead.rating["decision"] == "inconclusive"
+    assert len(dead.ci_history) == 3

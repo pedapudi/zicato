@@ -42,20 +42,10 @@ _PRESERVED_ON_FORCE = "generation_source_backend"
 
 
 def _recorded_epoch_count(workspace_root: Path) -> int:
-    """Return how many epochs the workspace's lineage records.
+    """Count recorded epochs; refuse malformed ancestry before replacing it."""
+    from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
 
-    Tolerant on the file: an absent, unreadable, or malformed
-    ``lineage.json`` records nothing that ``--force`` could destroy, so it
-    reads as zero. Only a well-formed DAG with epochs in it blocks a force.
-    """
-    try:
-        loaded = json.loads((workspace_root / LINEAGE_FILENAME).read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return 0
-    if not isinstance(loaded, dict):
-        return 0
-    epochs = loaded.get("epochs")
-    return len(epochs) if isinstance(epochs, list) else 0
+    return len(load_lineage(workspace_root).epochs)
 
 
 def initialize_workspace(
@@ -94,9 +84,8 @@ def initialize_workspace(
     * ``{workspace_root}/config.json`` — ``{instance_id, created_at,
       generation_source_backend}``
     * ``{workspace_root}/lineage.json`` — empty DAG: ``{"epochs": []}``
-      (the shape :func:`zicato.epoch.lineage.load_lineage` reads; any other
-      shape is rejected as malformed and silently replaced with the empty
-      DAG on the first mutation)
+      (the canonical lineage reader refuses malformed existing records before
+      any mutation can discard ancestry)
     * ``{workspace_root_parent}/scoring.json`` — the FULL recommended
       effective contract (racing field 4, replicates 2, evidence gate on;
       see :func:`zicato.core.scoring_config.recommended_scaffold_weights`),
@@ -153,7 +142,9 @@ def initialize_workspace(
 
     lineage_path = workspace_root / LINEAGE_FILENAME
     if force or not lineage_path.exists():
-        lineage_path.write_text(json.dumps({"epochs": []}, indent=2, sort_keys=True) + "\n")
+        from zicato.epoch.lineage import initialize_lineage  # noqa: PLC0415
+
+        initialize_lineage(workspace_root)
 
     # The generation-store backend is recorded rather than left to the default.
     # Which store a workspace's generations live in is a durable property

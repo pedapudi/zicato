@@ -1,121 +1,243 @@
-"""Cross-epoch lineage DAG persisted as a single ``lineage.json`` file.
+"""Canonical cross-epoch ancestry, generation disposition, and settlement facts.
 
-The DAG is shallow by construction:
-
-* Epochs are linear — at any time exactly one epoch is "current".
-* Generations within an epoch form a linear chain (``v0``, ``v1``, ...).
-* The cross-cutting edge is ``epoch.v0_parent`` pointing at
-  ``previous_epoch:final_generation``, recording how a fresh epoch's
-  baseline relates to the closed predecessor's lineage head.
-
-We persist the whole DAG as one JSON document. The size never grows
-faster than the number of generations across the lifetime of the
-workspace; for the foreseeable scale (hundreds of generations per
-epoch, low single digits of epochs per week) a single file with atomic
-rewrites is the simplest correct thing.
-
-File shape::
-
-    {
-      "format_version": 1,
-      "epochs": [
-        {
-          "id": "2026-04-01_initial",
-          "name": "initial",
-          "started_at": "2026-04-01T10:00:00+00:00",
-          "closed_at": "",
-          "v0_parent": null,
-          "generations": [
-            {
-              "id": "v2",
-              "parent_id": "v1",
-              "promoted": false,
-              "created_at": "2026-04-01T11:00:00+00:00",
-              "round_index": 3,
-              "rejection_reason": "insufficient improvement: 0.7328 vs 0.7188 (margin 0.0200)",
-              "parent_scalar": 0.7188,
-              "child_scalar": 0.7328,
-              "delta_scalar": 0.014
-            },
-            ...
-          ]
-        },
-        ...
-      ]
-    }
-
-Per-generation fields:
-
-``id`` / ``parent_id``
-    The generation and the one it was forked from (``null`` for ``v0``).
-``promoted``
-    TRI-STATE: ``true`` promoted, ``false`` a settled dead branch,
-    ``null`` an applied-but-unresolved in-flight challenger.
-``created_at``
-    ISO-8601 UTC birth timestamp.
-``round_index``
-    The evolve round that MINTED the generation; once set, never
-    re-stamped by a later write.
-``rejection_reason``
-    Why the gate cut it — non-empty ONLY when ``promoted`` is ``false``.
-``parent_scalar`` / ``child_scalar`` / ``delta_scalar``
-    The settling duel's two scalars and their difference; ``null`` when
-    unrecorded (never ``0.0``, which is a legal measurement).
+Epochs retain their predecessor coordinates. Each generation retains its parent,
+birth round, and tri-state disposition: promoted, rejected, or unresolved.
+Absent historical fields stay omitted in the encoded document; numeric zero is
+an observed scalar, never a missing-value sentinel. Present malformed records
+are refused before any mutation can discard history.
 """
 
 from __future__ import annotations
 
 import json
+import math
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from zicato.core.types import EpochConfig, Generation
 from zicato.epoch._storage import (
     RECORD_FORMAT_VERSION,
+    RecordError,
     check_record_format,
     lineage_key,
 )
 from zicato.storage import workspace_backend
+from zicato.workspace.projection import mark_epoch_changed
 
 
-def _empty() -> dict[str, Any]:
-    return {"epochs": []}
+@dataclass(frozen=True, slots=True)
+class LineageGeneration:
+    """One generation's recorded ancestry and disposition, with absent facts explicit."""
+
+    id: str
+    parent_id: str | None
+    promoted: bool | None
+    created_at: str
+    round_index: int | None
+    rejection_reason: str | None
+    parent_scalar: int | float | None
+    child_scalar: int | float | None
+    delta_scalar: int | float | None
+    _json: str = field(repr=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a detached projection with historical omissions preserved."""
+        body: dict[str, Any] = json.loads(self._json)
+        for key in (
+            "id",
+            "parent_id",
+            "promoted",
+            "created_at",
+            "round_index",
+            "rejection_reason",
+            "parent_scalar",
+            "child_scalar",
+            "delta_scalar",
+        ):
+            value = getattr(self, key)
+            if key in body or value != ("" if key == "created_at" else None):
+                body[key] = value
+        return body
+
+
+@dataclass(frozen=True, slots=True)
+class LineageEpoch:
+    id: str
+    name: str
+    started_at: str
+    closed_at: str
+    v0_parent: str | None
+    generations: tuple[LineageGeneration, ...]
+    _json: str = field(repr=False)
+
+    @property
+    def parent_epoch_id(self) -> str | None:
+        return self.v0_parent.split(":", 1)[0] if self.v0_parent else None
+
+    def generation(self, generation_id: str) -> LineageGeneration | None:
+        return next((row for row in self.generations if row.id == generation_id), None)
+
+    def to_dict(self) -> dict[str, Any]:
+        body: dict[str, Any] = json.loads(self._json)
+        for key in ("id", "name", "started_at", "closed_at", "v0_parent"):
+            value = getattr(self, key)
+            if key in body or value != (None if key == "v0_parent" else ""):
+                body[key] = value
+        body["generations"] = [generation.to_dict() for generation in self.generations]
+        return body
+
+
+@dataclass(frozen=True, slots=True)
+class Lineage:
+    epochs: tuple[LineageEpoch, ...]
+    _json: str = field(repr=False)
+    exists: bool = True
+
+    def epoch(self, epoch_id: str) -> LineageEpoch | None:
+        return next((row for row in self.epochs if row.id == epoch_id), None)
+
+    def to_dict(self) -> dict[str, Any]:
+        body: dict[str, Any] = json.loads(self._json)
+        body["epochs"] = [epoch.to_dict() for epoch in self.epochs]
+        return body
+
+
+def _string(row: dict[str, Any], key: str, *, required: bool = False) -> str:
+    value = row.get(key, "")
+    if not isinstance(value, str) or (required and not value):
+        raise RecordError(f"lineage.json: invalid {key}")
+    return value
+
+
+def _parent(row: dict[str, Any], key: str) -> str | None:
+    value = row.get(key)
+    if value is not None and (not isinstance(value, str) or not value):
+        raise RecordError(f"lineage.json: {key} must be a nonempty string or null")
+    return value
+
+
+def _scalar(row: dict[str, Any], key: str) -> int | float | None:
+    value = row.get(key)
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value)
+    ):
+        raise RecordError(f"lineage.json: {key} must be finite or null")
+    return value
+
+
+def decode_lineage(value: Any) -> Lineage:
+    """Accept the version-1 graph without fabricating absent historical fields."""
+    if not isinstance(value, dict) or not isinstance(value.get("epochs"), list):
+        raise RecordError("lineage.json: expected an object with an epochs list")
+    check_record_format(value, "lineage.json")
+    epochs: list[LineageEpoch] = []
+    epoch_ids: set[str] = set()
+    for entry in value["epochs"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("generations"), list):
+            raise RecordError("lineage.json: each epoch requires a generations list")
+        epoch_id = _string(entry, "id", required=True)
+        if epoch_id in epoch_ids:
+            raise RecordError(f"lineage.json: duplicate epoch {epoch_id!r}")
+        epoch_ids.add(epoch_id)
+        generations: list[LineageGeneration] = []
+        ids: set[str] = set()
+        for row in entry["generations"]:
+            if not isinstance(row, dict):
+                raise RecordError(f"lineage.json: epoch {epoch_id!r} has a non-object generation")
+            generation_id = _string(row, "id", required=True)
+            if generation_id in ids:
+                raise RecordError(
+                    f"lineage.json: epoch {epoch_id!r} contains duplicate generation ids"
+                )
+            ids.add(generation_id)
+            promoted = row.get("promoted")
+            if promoted is not None and not isinstance(promoted, bool):
+                raise RecordError(f"lineage generation {generation_id!r} has an invalid verdict")
+            round_index = row.get("round_index")
+            if round_index is not None and (
+                isinstance(round_index, bool) or not isinstance(round_index, int) or round_index < 0
+            ):
+                raise RecordError(
+                    f"lineage.json: generation {generation_id!r} has an invalid round_index"
+                )
+            reason = _string(row, "rejection_reason") if "rejection_reason" in row else None
+            generations.append(
+                LineageGeneration(
+                    generation_id,
+                    _parent(row, "parent_id"),
+                    promoted,
+                    _string(row, "created_at"),
+                    round_index,
+                    reason,
+                    _scalar(row, "parent_scalar"),
+                    _scalar(row, "child_scalar"),
+                    _scalar(row, "delta_scalar"),
+                    json.dumps(row, allow_nan=False),
+                )
+            )
+        epochs.append(
+            LineageEpoch(
+                epoch_id,
+                _string(entry, "name"),
+                _string(entry, "started_at"),
+                _string(entry, "closed_at"),
+                _parent(entry, "v0_parent"),
+                tuple(generations),
+                json.dumps(entry, allow_nan=False),
+            )
+        )
+    return Lineage(tuple(epochs), json.dumps(value, allow_nan=False))
+
+
+def load_lineage(workspace_root: Path) -> Lineage:
+    """Read one strict canonical graph; absence is an empty graph."""
+    try:
+        text = workspace_backend(workspace_root, start=False).read_text(lineage_key())
+        return (
+            Lineage((), '{"epochs": []}', exists=False)
+            if text is None
+            else decode_lineage(json.loads(text))
+        )
+    except (OSError, ValueError) as exc:
+        raise RecordError(f"lineage.json: {exc}") from exc
+
+
+def _replace_lineage(workspace_root: Path, lineage: Lineage, text: str) -> None:
+    before = {row.id: row.to_dict() for row in load_lineage(workspace_root).epochs}
+    after = {row.id: row.to_dict() for row in lineage.epochs}
+    for epoch_id in sorted(before.keys() | after.keys()):
+        if json.dumps(before.get(epoch_id), sort_keys=True) != json.dumps(
+            after.get(epoch_id), sort_keys=True
+        ):
+            mark_epoch_changed(workspace_root, epoch_id)
+    workspace_backend(workspace_root, start=False).write_text(lineage_key(), text)
+
+
+def write_lineage(workspace_root: Path, lineage: Lineage) -> None:
+    """Mark changed epoch projections before atomically replacing the graph."""
+    accepted = decode_lineage(lineage.to_dict())
+    _replace_lineage(
+        workspace_root, accepted, json.dumps(accepted.to_dict(), indent=2, sort_keys=True)
+    )
+
+
+def initialize_lineage(workspace_root: Path) -> None:
+    """Write the empty graph with the initialization format's final newline."""
+    empty = decode_lineage({"epochs": []})
+    _replace_lineage(
+        workspace_root, empty, json.dumps(empty.to_dict(), indent=2, sort_keys=True) + "\n"
+    )
 
 
 def _load_raw(workspace_root: Path) -> dict[str, Any]:
-    """Read ``lineage.json`` through the storage backend.
-
-    A missing file, an unreadable file, or a malformed document all
-    collapse to the empty DAG — the lineage file is rebuilt forward by
-    the mutators, so a tolerant read keeps a one-off corruption from
-    wedging the loop. (This is intentionally more forgiving than the
-    storage backend's default ``read_json``, which surfaces a decode
-    error; lineage is reconstructible, so it absorbs the error here.)
-
-    One deliberate exception: a lineage stamped with a FUTURE
-    ``format_version`` is an INTACT record this build cannot promise to
-    interpret — collapsing it to the empty DAG would silently drop
-    history, so it refuses loudly instead.
-    """
-    backend = workspace_backend(workspace_root, start=False)
-    try:
-        d = backend.read_json(lineage_key())
-    except (OSError, json.JSONDecodeError):
-        return _empty()
-    if not isinstance(d, dict) or "epochs" not in d:
-        return _empty()
-    check_record_format(d, "lineage.json")
-    return d
+    """The lineage owner's detached mutation document."""
+    return load_lineage(workspace_root).to_dict()
 
 
 def _save_raw(workspace_root: Path, raw: dict[str, Any]) -> None:
-    """Atomically write ``lineage.json`` through the storage backend.
-
-    Every save (re)stamps the record-format version — the whole document
-    is rewritten atomically on each mutation, so the stamp rides along.
-    """
     raw["format_version"] = RECORD_FORMAT_VERSION
-    workspace_backend(workspace_root, start=False).write_json(lineage_key(), raw)
+    write_lineage(workspace_root, decode_lineage(raw))
 
 
 def _find_epoch(raw: dict[str, Any], epoch_id: str) -> dict[str, Any] | None:
@@ -138,11 +260,9 @@ def register_epoch(
 ) -> None:
     """Append a new epoch entry to ``lineage.json``.
 
-    ``parent_epoch_id`` is the id of the epoch this one was forked off of
-    (commonly the immediately previous epoch). Stored verbatim as
-    ``v0_parent`` for now; we will populate the ``{epoch}:{gen}`` form
-    once the runner registers ``v0`` for the new epoch via
-    :func:`append_to_lineage`.
+    ``parent_epoch_id`` names the predecessor epoch, optionally followed by
+    ``:generation`` when a retained generation seeds the epoch. The recorded
+    coordinates are preserved verbatim in ``v0_parent``.
     """
     raw = _load_raw(workspace_root)
     if _find_epoch(raw, cfg.id) is not None:
@@ -410,24 +530,39 @@ def _validated_resolution_rows(
     *,
     require_resolved: bool,
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    lineage = load_lineage(workspace_root)
+    validate_generation_resolution_rows(
+        lineage, epoch_id, resolutions, require_resolved=require_resolved
+    )
+    raw = lineage.to_dict()
+    entry = _find_epoch(raw, epoch_id)
+    assert entry is not None
+    return raw, {row["id"]: row for row in entry["generations"]}
+
+
+def validate_generation_resolution_rows(
+    lineage: Lineage,
+    epoch_id: str,
+    resolutions: dict[str, dict[str, Any]],
+    *,
+    require_resolved: bool,
+) -> dict[str, LineageGeneration]:
+    """Compare settlement facts with loaded lineage rows without reading files."""
     if not resolutions:
         raise ValueError("lineage resolution requires at least one generation")
-    raw = _load_raw(workspace_root)
-    entry = _find_epoch(raw, epoch_id)
+    entry = lineage.epoch(epoch_id)
     if entry is None:
         raise RuntimeError(f"lineage does not contain exactly one epoch {epoch_id!r}")
-    _rows, by_id = _indexed_generation_rows(entry, epoch_id)
+    by_id = {row.id: row for row in entry.generations}
 
     for generation_id, resolution in resolutions.items():
         current = by_id.get(generation_id)
         if current is None:
             raise RuntimeError(f"lineage lacks settlement generation {generation_id!r}")
         for key in ("parent_id", "created_at", "round_index"):
-            if current.get(key) != resolution[key]:
+            if getattr(current, key) != resolution[key]:
                 raise RuntimeError(f"lineage generation {generation_id!r} conflicts on {key}")
-        promoted = current.get("promoted")
-        if promoted is not None and not isinstance(promoted, bool):
-            raise RuntimeError(f"lineage generation {generation_id!r} has an invalid verdict")
+        promoted = current.promoted
         if promoted is not None and promoted is not resolution["promoted"]:
             raise RuntimeError(f"lineage generation {generation_id!r} has a different verdict")
         if promoted is not None:
@@ -443,33 +578,23 @@ def _validated_resolution_rows(
                     else None
                 ),
             }
-            if any(current.get(key) != value for key, value in expected.items()):
+            if any(getattr(current, key) != value for key, value in expected.items()):
                 raise RuntimeError(
                     f"lineage generation {generation_id!r} has different settlement facts"
                 )
         if require_resolved and promoted is None:
             raise RuntimeError(f"lineage generation {generation_id!r} lacks its settlement verdict")
-    return raw, by_id
+    return by_id
 
 
 def _indexed_generation_rows(
-    entry: dict[str, Any], epoch_id: str
+    entry: dict[str, Any],
+    epoch_id: str,
 ) -> tuple[list[Any], dict[str, dict[str, Any]]]:
-    """Validate and index one epoch's generation rows."""
-    generations = entry.get("generations")
-    if not isinstance(generations, list):
-        raise RuntimeError(f"epoch {epoch_id!r} has malformed generation lineage")
-    by_id: dict[str, dict[str, Any]] = {}
-    for row in generations:
-        if not isinstance(row, dict):
-            continue
-        generation_id = row.get("id")
-        if not isinstance(generation_id, str) or not generation_id:
-            raise RuntimeError(f"epoch {epoch_id!r} contains an invalid generation id")
-        if generation_id in by_id:
-            raise RuntimeError(f"epoch {epoch_id!r} contains duplicate generation ids")
-        by_id[generation_id] = row
-    return generations, by_id
+    """Index an already accepted epoch's detached mutation rows."""
+    del epoch_id
+    generations = entry["generations"]
+    return generations, {row["id"]: row for row in generations}
 
 
 # ---------------------------------------------------------------------------
@@ -477,50 +602,34 @@ def _indexed_generation_rows(
 # ---------------------------------------------------------------------------
 
 
-def load_lineage(workspace_root: Path) -> dict[str, Any]:
-    """Return the full lineage DAG as a nested dict (a deep copy)."""
-    result: dict[str, Any] = json.loads(json.dumps(_load_raw(workspace_root)))
-    return result
-
-
 def render_lineage_summary(workspace_root: Path) -> str:
-    """Format the lineage as a human-friendly markdown table.
-
-    Operators read this via ``zicato epoch list``; downstream code reads
-    structured data via :func:`load_lineage`.
-    """
-    raw = _load_raw(workspace_root)
-    epochs = raw.get("epochs", [])
-    if not epochs:
+    """Render the accepted graph as the epoch list's Markdown table."""
+    lineage = load_lineage(workspace_root)
+    if not lineage.epochs:
         return "# Lineage\n\n(no epochs recorded yet)\n"
-
-    rows: list[str] = []
-    rows.append("# Lineage")
-    rows.append("")
-    rows.append("| epoch | started_at | closed_at | promoted | rejected | parent |")
-    rows.append("| --- | --- | --- | --- | --- | --- |")
-    for entry in epochs:
-        gens = entry.get("generations", [])
-        promoted = sum(1 for g in gens if g.get("promoted") is True)
-        # A pending (in-flight) generation has ``promoted=None`` — it is
-        # neither promoted nor rejected yet, so it counts toward neither
-        # column until its tournament settles.
-        rejected = sum(1 for g in gens if g.get("promoted") is False and g.get("id") != "v0")
-        parent = entry.get("v0_parent") or "(root)"
-        closed = entry.get("closed_at") or "(open)"
+    rows = [
+        "# Lineage",
+        "",
+        "| epoch | started_at | closed_at | promoted | rejected | parent |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for entry in lineage.epochs:
+        promoted = sum(g.promoted is True for g in entry.generations)
+        rejected = sum(g.promoted is False and g.id != "v0" for g in entry.generations)
         rows.append(
-            f"| {entry.get('id', '')} | "
-            f"{entry.get('started_at', '')} | "
-            f"{closed} | "
-            f"{promoted} | "
-            f"{rejected} | "
-            f"{parent} |"
+            f"| {entry.id} | {entry.started_at} | {entry.closed_at or '(open)'} | "
+            f"{promoted} | {rejected} | {entry.v0_parent or '(root)'} |"
         )
-    rows.append("")
-    return "\n".join(rows)
+    return "\n".join([*rows, ""])
 
 
 __all__ = [
+    "Lineage",
+    "LineageEpoch",
+    "LineageGeneration",
+    "decode_lineage",
+    "write_lineage",
+    "initialize_lineage",
     "register_epoch",
     "mark_closed",
     "append_to_lineage",

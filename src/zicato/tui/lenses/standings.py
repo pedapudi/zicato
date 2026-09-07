@@ -4,7 +4,7 @@ The dashboard draws brackets and ladders; a terminal draws the same model as an
 aligned table with the rung structure carried by indentation. Two shapes:
 
 * **gauntlet** (the default): one row per champion-vs-challenger match-up, with
-  the Δscalar as a signed, champion-anchored bar against the promote margin.
+  the signed Δscalar and the recorded promote margin.
 * **swiss / racing / elimination**: the served standings, with each round or
   rung an indented group, so the field narrowing is legible as shape.
 
@@ -14,6 +14,7 @@ Payloads: ``/api/tournaments``, ``/api/active-tournament``,
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from zicato.tui import present
@@ -29,6 +30,8 @@ from zicato.tui.lenses.base import (
     rating_scale,
     rating_spans,
 )
+from zicato.tui.lenses.review import candidate_review
+from zicato.tui.routes import Route, segment
 from zicato.tui.view import Block, Span, View, columns, digest_of, pad, row, rpad
 
 STATUS_STYLE = {
@@ -51,7 +54,10 @@ class StandingsLens:
 
     @staticmethod
     def render(client: Client, ctx: LensContext) -> View:
-        bracket = as_dict(client.get("/api/tournaments"))
+        if ctx.route.params.get("gen") and not ctx.route.unsupported:
+            return candidate_review(client, ctx.route, ascii_only=ctx.ascii_only)
+        suffix = f"?epoch={segment(ctx.epoch)}" if ctx.epoch else ""
+        bracket = as_dict(client.get("/api/tournaments" + suffix))
         epoch_id = ctx.epoch or bracket.get("epoch_id")
         if not epoch_id:
             return missing(
@@ -59,8 +65,13 @@ class StandingsLens:
                 "no epoch to show standings for",
                 hint="open an epoch with `zicato evolve`, or pass --view /e/<epoch>/gens",
             )
+        ctx = replace(ctx, route=replace(ctx.route, params={**ctx.route.params, "epoch": epoch_id}))
         structure = str(bracket.get("structure") or "gauntlet")
-        lineage = as_list(as_dict(client.get("/api/lineage")).get("generations"))
+        lineage = [
+            g
+            for g in as_list(as_dict(client.get("/api/lineage")).get("generations"))
+            if isinstance(g, dict) and g.get("epoch_id") == epoch_id
+        ]
 
         if structure == "gauntlet":
             blocks, digest_parts = _gauntlet(bracket, lineage, ctx)
@@ -188,6 +199,10 @@ def _gauntlet(
                         "/api/tournaments matchups · " f"ran_at {m.get('ran_at') or present.NULL}"
                     ),
                 ),
+                action=Route(
+                    "standings",
+                    {"epoch": ctx.epoch or str(bracket.get("epoch_id")), "gen": str(challenger)},
+                ).to_path(),
                 selectable=True,
             )
         )
@@ -331,6 +346,13 @@ def _standings_block(
                     decision=status,
                     provenance="served standings (never re-derived client-side)",
                 ),
+                action=Route(
+                    "standings",
+                    {
+                        "epoch": ctx.epoch or str(by_gen.get(gen, {}).get("epoch_id")),
+                        "gen": str(gen),
+                    },
+                ).to_path(),
                 selectable=True,
             )
         )

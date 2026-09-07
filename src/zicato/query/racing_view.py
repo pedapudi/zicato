@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from zicato.query.inputs import EpochInputs
 from zicato.query.paths import (
     WorkspacePaths,
     _resolve_epoch_id,
@@ -52,7 +53,9 @@ def _absent(epoch_id: str | None) -> dict[str, Any]:
     return {"epoch_id": epoch_id, "present": False}
 
 
-def build_racing_field(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
+def build_racing_field(
+    paths: WorkspacePaths, epoch_id: str | None = None, *, inputs: EpochInputs | None = None
+) -> dict[str, Any]:
     """The settled racing ladder for one epoch, joined from the records.
 
     Returns ``{epoch_id, present, structure: "racing", structure_params,
@@ -69,7 +72,7 @@ def build_racing_field(paths: WorkspacePaths, epoch_id: str | None = None) -> di
         return _absent(str(epoch_id))
     if epoch_id is None:
         return _absent(None)
-    bracket = build_bracket(paths, epoch_id)
+    bracket = build_bracket(paths, epoch_id, inputs=inputs)
     all_records = bracket.get("tournaments")
     all_records = all_records if isinstance(all_records, list) else []
     racing = [

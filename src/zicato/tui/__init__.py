@@ -28,7 +28,7 @@ from zicato.tui.routes import Route, parse_route
 #: The message an install without the ``tui`` extra gets.
 MISSING_EXTRA = (
     "the terminal console needs the `tui` extra: install it with "
-    "`uv sync --extra tui` (or `pip install 'zicato[tui]'`)"
+    "`uv sync --all-extras` (or `pip install 'zicato[tui]'`)"
 )
 
 

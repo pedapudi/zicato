@@ -18,7 +18,9 @@ identical digest and returns without touching a widget.
 
 from __future__ import annotations
 
+import asyncio
 import os
+from dataclasses import replace
 from typing import Any
 
 from rich.text import Text
@@ -29,7 +31,7 @@ from textual.widgets import Static
 
 from zicato.tui.client import Client, Event, HttpClient
 from zicato.tui.console import Console
-from zicato.tui.lenses import LENSES
+from zicato.tui.lenses import LENSES, LensContext
 from zicato.tui.routes import Route
 from zicato.tui.view import Row, to_ascii
 
@@ -51,11 +53,14 @@ CSS = """
 Screen { background: $surface; }
 #band { height: 1; padding: 0 1; background: $panel; color: $text; }
 #rail { width: 16; padding: 1 1; }
-#rail.narrow { width: 100%; height: 1; padding: 0 1; }
+#rail.narrow { width: 100%; height: 1; padding: 0 1; layout: horizontal; }
+#rail.narrow .railitem { width: auto; margin-right: 2; }
+#body.narrow { layout: vertical; }
 #body { height: 1fr; }
 #content { padding: 0 2; height: 1fr; }
 #drawer { height: auto; max-height: 9; padding: 0 2; background: $panel; }
 .railitem { height: 1; }
+.railitem.selected { color: $accent; text-style: bold; }
 .cursor { background: $boost; }
 """
 
@@ -105,6 +110,13 @@ class ZicatoTui(App[None]):
         self._row_text: dict[str, str] = {}
         self._cursor_key: str | None = None
         self._help_open = False
+        self._content_revision: Any = None
+        self._desired_revision: Any = None
+        self._refresh_task: asyncio.Task[None] | None = None
+        self._refresh_pending = False
+        self._refresh_generation = 0
+        self._requested_context: LensContext | None = None
+        self._closing = False
 
     # -- layout ------------------------------------------------------------
 
@@ -132,44 +144,89 @@ class ZicatoTui(App[None]):
         self.console_model.resize(self.size.width)
         rail = self.query_one("#rail")
         rail.set_class(self.console_model.context.narrow, "narrow")
+        self.query_one("#body").set_class(self.console_model.context.narrow, "narrow")
         self.reload()
 
     # -- data --------------------------------------------------------------
 
     def reload(self) -> None:
-        """One refresh pass. Repaints only when the digest moved."""
-        changed = self.console_model.refresh()
-        view = self.console_model.view
-        if view is not None:
-            self.connection = "degraded" if view.degraded else "live"
-        self._paint_band()
-        if changed:
-            self._paint_content()
-        self._paint_drawer()
-        self._paint_rail()
+        """Schedule one reader and retain at most one pending refresh."""
+        if self._closing:
+            return
+        context = self.console_model.context
+        if context != self._requested_context:
+            self._refresh_generation += 1
+            self._requested_context = context
+        self._refresh_pending = True
+        if self._refresh_task is None:
+            self._refresh_task = asyncio.create_task(self._refresh())
+
+    async def _refresh(self) -> None:
+        try:
+            while self._refresh_pending and not self._closing:
+                self._refresh_pending = False
+                generation = self._refresh_generation
+                revision = self._desired_revision
+                context = self.console_model.context
+                context = replace(
+                    context, route=replace(context.route, params=dict(context.route.params))
+                )
+                view = await asyncio.to_thread(self.console_model.build_view, context)
+                if self._closing:
+                    return
+                if (
+                    generation != self._refresh_generation
+                    or context != self.console_model.context
+                    or revision != self._desired_revision
+                ):
+                    continue
+                changed = self.console_model.apply_view(view)
+                if not view.degraded:
+                    self._content_revision = revision
+                self.connection = "degraded" if view.degraded else "live"
+                self._paint_band()
+                if changed:
+                    self._paint_content()
+                self._paint_drawer()
+                self._paint_rail()
+        finally:
+            self._refresh_task = None
+
+    def on_unmount(self) -> None:
+        """Stop scheduling and ignore reads that finish after the UI closes."""
+        self._closing = True
+        self._refresh_pending = False
+        client = self.console_model.client
+        if isinstance(client, HttpClient):
+            client.close()
+        if self._refresh_task is not None:
+            self._refresh_task.cancel()
 
     def on_sse(self, event: Event) -> None:
-        """Apply one SSE frame. THE outer no-op gate lives here.
-
-        The stream carries exactly three events and no digest, so the decision
-        "is this frame worth an HTTP request?" is made from ``state_change``'s
-        ``seq`` — before any fetch. A repeated ``seq`` costs nothing at all.
-
-        ``snapshot`` (sent once on connect, and the recovery path after the
-        server drops a subscriber whose queue overflowed) always refreshes: it
-        is the only frame that can resynchronise a screen that missed frames.
-        ``run_log`` moves no lens this build ships, so it is dropped rather
-        than refetched.
-        """
+        """Refresh on content changes or progress; view digests govern painting."""
+        payload = event.data if isinstance(event.data, dict) else {}
+        revision = payload.get("content_revision")
         if event.name == "snapshot":
+            self._desired_revision = revision
             self.reload()
+            return
+        if event.name == "run_log":
+            if self.console_model.route.params.get("detail") in {"health", "logs"}:
+                self.reload()
             return
         if event.name != "state_change":
             return
-        payload = event.data if isinstance(event.data, dict) else {}
-        if not self.console_model.note_progress(payload.get("seq"), payload.get("terminal")):
-            return
-        self.reload()
+        progress = self.console_model.note_progress(payload.get("seq"), payload.get("terminal"))
+        kinds = payload.get("kinds", [payload.get("kind")])
+        content = (
+            revision != self._content_revision
+            if revision is not None
+            else any(kind and kind not in {"heartbeat", "progress"} for kind in kinds)
+        )
+        if content:
+            self._desired_revision = revision
+        if content or progress:
+            self.reload()
 
     def _stream(self) -> None:
         client = self.console_model.client
@@ -184,11 +241,16 @@ class ZicatoTui(App[None]):
                 return
             # The stream ended. The interval poll keeps the screen honest while
             # we wait to reconnect, and the band already says "polling".
-            self.connection = "polling"
+            self.call_from_thread(self._show_polling)
             return
 
+    def _show_polling(self) -> None:
+        if not self._closing:
+            self.connection = "polling"
+            self._paint_band()
+
     def _is_closing(self) -> bool:
-        return not self.is_running
+        return self._closing or not self.is_running
 
     # -- painting ----------------------------------------------------------
 
@@ -211,7 +273,7 @@ class ZicatoTui(App[None]):
     def _paint_rail(self) -> None:
         for lens in LENSES:
             widget = self.query_one(f"#rail-{lens.name}", Static)
-            widget.set_class(lens.name == self.console_model.lens_name, "cursor")
+            widget.set_class(lens.name == self.console_model.lens_name, "selected")
 
     def _paint_content(self) -> None:
         """Reconcile row widgets by key — update only what actually changed."""
@@ -266,6 +328,7 @@ class ZicatoTui(App[None]):
             self._row_widgets[self._cursor_key].set_class(False, "cursor")
         if key and key in self._row_widgets:
             self._row_widgets[key].set_class(True, "cursor")
+            self._row_widgets[key].scroll_visible(animate=False)
         self._cursor_key = key
 
     def _paint_drawer(self) -> None:
@@ -322,6 +385,7 @@ class ZicatoTui(App[None]):
         self.reload()
 
     def action_reload(self) -> None:
+        self._refresh_generation += 1
         self.console_model.view = None
         self._reset_rows()
         self.reload()
@@ -342,8 +406,8 @@ HELP = """\
 j / k or arrows   move        enter  open      b / esc  back
 r  reload         ?  help     q  quit
 1-3               Home · Standings · Instrument
-This build is read-only. An apply line is printed for you to run yourself;
-Candidate, Board and Health are deferred — see docs/design/TUI.md."""
+Read-only: apply commands are printed for you to review and run yourself.
+Open candidates from Standings, board evidence from Instrument, and logs from Home."""
 
 
 def degrade_to_ascii() -> bool:

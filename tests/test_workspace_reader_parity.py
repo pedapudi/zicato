@@ -68,13 +68,28 @@ def test_fixture_exposes_the_ordering_axes(tmp_path: Path) -> None:
     ids happen to sort the same way under both rules cannot tell a numeric
     reader from a lexical one.
     """
-    build_reader_fixture_workspace(tmp_path)
+    ws = build_reader_fixture_workspace(tmp_path)
 
     assert len(RICH_GENERATION_IDS) == 11
     assert "v10" in RICH_GENERATION_IDS
     assert sorted(RICH_GENERATION_IDS) != list(RICH_GENERATION_IDS)
     assert sorted(ENTRY_IDS) != list(ENTRY_IDS)
     assert sorted(EPOCH_IDS) != list(EPOCH_IDS)
+
+    from zicato.tournament.records import read_field_tournament_record
+    from zicato.tournament.scoring import read_gen_score, read_gen_score_history
+    from zicato.workspace import WorkspaceLayout
+
+    layout = WorkspaceLayout.from_root(ws)
+    history = read_gen_score_history(layout, "e2", "v0")
+    assert [row.seq for row in history] == [0, 1]
+    assert history[-1].score.to_dict() == read_gen_score(layout, "e2", "v0").to_dict()
+    field = read_field_tournament_record(layout.field_tournament("e2", "v4"))
+    assert field.champion_generation_id == "v3" and field.promoted_generation_id == "v4"
+    for stage in field.to_dict()["rounds"]:
+        for match in stage["matches"]:
+            assert match["winner"] == match["competitors"][1]
+            assert match["delta_scalar"] < 0
 
 
 def test_fixture_is_reproducible(tmp_path: Path) -> None:

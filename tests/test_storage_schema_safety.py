@@ -207,12 +207,12 @@ class TestLineageFormatVersion:
         append_to_lineage(tmp_path, "e1", gen, None)
         raw = json.loads((tmp_path / "lineage.json").read_text())
         assert raw["format_version"] == 1
-        data = load_lineage(tmp_path)
+        data = load_lineage(tmp_path).to_dict()
         assert data["epochs"][0]["id"] == "e1"
 
     def test_absent_version_reads_as_v1(self, tmp_path: Path) -> None:
         (tmp_path / "lineage.json").write_text(json.dumps({"epochs": []}))
-        assert load_lineage(tmp_path)["epochs"] == []
+        assert load_lineage(tmp_path).to_dict()["epochs"] == []
 
     def test_future_version_refuses_loudly_not_empty(self, tmp_path: Path) -> None:
         # An INTACT record from a newer zicato must refuse — collapsing to
@@ -221,5 +221,5 @@ class TestLineageFormatVersion:
             json.dumps({"format_version": 3, "epochs": [{"id": "e1", "generations": []}]})
         )
         with pytest.raises(RecordFormatError) as excinfo:
-            load_lineage(tmp_path)
+            load_lineage(tmp_path).to_dict()
         assert "lineage.json" in str(excinfo.value)

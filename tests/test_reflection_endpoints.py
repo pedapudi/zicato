@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from tests._reflection_support import finding_body, scorecard_body
 from zicato.core.workspace import (
     reflection_adjudication_path,
     reflection_dir,
@@ -64,29 +65,32 @@ def _seed(workspace: Path) -> None:
             {
                 "reflection_id": REFL,
                 "scorecards": [
-                    {
-                        "judge_name": "j",
-                        "tp": 1,
-                        "fp": 0,
-                        "fn": 0,
-                        "tn": 1,
-                        "ambiguous": 0,
-                        "precision": 1.0,
-                        "recall": 1.0,
-                        "f1": 1.0,
-                        "severity_accuracy": 1.0,
-                        "disagreement_rate": 0.0,
-                        "self_consistency_kappa": None,
-                        "redundant_with": [],
-                        "exercised": True,
-                    }
+                    scorecard_body(
+                        {
+                            "judge_name": "j",
+                            "tp": 1,
+                            "fp": 0,
+                            "fn": 0,
+                            "tn": 1,
+                            "ambiguous": 0,
+                            "precision": 1.0,
+                            "recall": 1.0,
+                            "f1": 1.0,
+                            "severity_accuracy": 1.0,
+                            "disagreement_rate": 0.0,
+                            "self_consistency_kappa": None,
+                            "redundant_with": [],
+                            "exercised": True,
+                        }
+                    )
                 ],
             }
         ),
         encoding="utf-8",
     )
     reflection_findings_path(workspace, EPOCH, REFL).write_text(
-        json.dumps({"reflection_id": REFL, "findings": [{"finding_id": "f1"}]}), encoding="utf-8"
+        json.dumps({"reflection_id": REFL, "findings": [finding_body({"finding_id": "f1"})]}),
+        encoding="utf-8",
     )
     reflection_practices_path(workspace, EPOCH, REFL).write_text(
         json.dumps(
@@ -153,10 +157,26 @@ def _seed(workspace: Path) -> None:
     )
     run_ref = "v1:entryA:r0"
     ap = reflection_adjudication_path(workspace, EPOCH, REFL, "j", run_ref)
-    ap.parent.mkdir(parents=True, exist_ok=True)
-    ap.write_text(
-        json.dumps({"format_version": 1, "judge_name": "j", "run_ref": run_ref, "verdict": "TP"}),
-        encoding="utf-8",
+    from zicato.reflection.adjudication import JudgeAdjudication, write_adjudication
+
+    write_adjudication(
+        ap,
+        JudgeAdjudication(
+            judge_name="j",
+            run_ref=run_ref,
+            observed="fired",
+            adjudicated="should_fire",
+            verdict="TP",
+            severity_match=None,
+            evidence_span="",
+            meta_judge_rationale="",
+            meta_judge_model="independent-judge",
+            adjudicator_self_agreement=None,
+            operator_confirmed=None,
+            fidelity="preview",
+            prompt_version=2,
+            k_adj=1,
+        ),
     )
     ingest_reflection(workspace, None, EPOCH, REFL)
 

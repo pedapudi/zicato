@@ -30,6 +30,7 @@ import statistics
 from typing import Any
 
 from zicato.core.types import TournamentStructure
+from zicato.query.inputs import EpochInputs
 from zicato.query.paths import (
     WorkspacePaths,
     _read_json_value,
@@ -1443,7 +1444,9 @@ def _generation_loss_profiles(
     return out
 
 
-def _epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
+def _epoch_scoring_weights(
+    paths: WorkspacePaths, epoch_id: str, inputs: EpochInputs | None = None
+) -> Any:
     """The epoch's FROZEN ``ScoringWeights``, or the defaults.
 
     The facet scalar must be computed at the same weights the candidate's
@@ -1456,7 +1459,11 @@ def _epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
     from zicato.core import ScoringWeights  # noqa: PLC0415
     from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
-    raw = _read_json_value(layout_of(paths).scoring(epoch_id))
+    raw = (
+        inputs.scoring.copy()
+        if inputs is not None
+        else _read_json_value(layout_of(paths).scoring(epoch_id))
+    )
     if not isinstance(raw, dict):
         return ScoringWeights()
     try:
@@ -1470,6 +1477,8 @@ def facet_scores_for_generation(
     epoch_id: str,
     generation_id: str,
     facets_by_entry_map: dict[str, tuple[str, ...]] | None = None,
+    *,
+    inputs: EpochInputs | None = None,
 ) -> dict[str, Any]:
     """Per-``facet:`` aggregates for one candidate, on the SAME terms as its own.
 
@@ -1557,7 +1566,7 @@ def facet_scores_for_generation(
     losses = _generation_loss_profiles(paths, epoch_id, generation_id)
     if not losses:
         return empty
-    weights = _epoch_scoring_weights(paths, epoch_id)
+    weights = _epoch_scoring_weights(paths, epoch_id, inputs)
 
     # The gate's split, read the way every other eval_view surface reads it,
     # so a facet row and the per-entry `slice` badge beside it can never

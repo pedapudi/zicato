@@ -1,27 +1,18 @@
-"""Instrument — reflection triage and the recommendation queue.
+"""Instrument: reflection evidence, board quality and recommendation remedies.
 
-The gate answers "did the candidate win?". The Instrument answers the prior
-question: can this contract tell? A reflection's findings are triaged here, each
-with the adjudicated evidence behind it, and each recommendation carries the
-exact CLI invocation that applies it.
-
-The TUI never applies anything itself, and in this build it does not even run
-the command for you: the queue PRINTS the exact CLI invocation, and the
-operator runs it. That is the smallest honest surface — the audit trail is the
-operator's own shell history, and there is no privileged mutation path behind
-this lens to review. (The service refuses control POSTs under ``read_only``
-anyway, which is the same conclusion reached from the other direction.)
-
-Payloads: ``/api/reflections``, ``/api/reflection/{id}/summary``,
-``/api/reflection/{id}/scorecards``, ``/api/reflection/{id}/practices``.
+The service supplies findings, recorded evidence and proposed operations. The
+terminal displays those facts, with the existing CLI apply commands as text.
+It does not execute commands or write workspace records.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
+from shlex import quote
 from typing import Any
 
 from zicato.tui import present
-from zicato.tui.client import Client
+from zicato.tui.client import Client, ServiceError
 from zicato.tui.lenses.base import (
     LensContext,
     as_dict,
@@ -30,7 +21,9 @@ from zicato.tui.lenses.base import (
     kv_row,
     missing,
 )
-from zicato.tui.view import Block, Span, View, columns, digest_of, pad, row, rpad
+from zicato.tui.lenses.review import board_review, content_view, record_rows
+from zicato.tui.routes import Route
+from zicato.tui.view import Block, Span, View, columns, pad, row, rpad
 
 #: The severity mark. Redundant with the severity word beside it, which always
 #: prints — so a NO_COLOR, ASCII terminal loses no information.
@@ -53,7 +46,23 @@ class InstrumentLens:
 
     @staticmethod
     def render(client: Client, ctx: LensContext) -> View:
+        if ctx.route.params.get("detail") in {"board", "boards", "evals"}:
+            return board_review(client, ctx.route, ascii_only=ctx.ascii_only)
         epoch_id = ctx.epoch
+        board_link = Block(
+            rows=(
+                row(
+                    "board",
+                    ("Board status and outcome distribution", "plain"),
+                    action=Route(
+                        "instrument",
+                        {"detail": "evals", **({"epoch": epoch_id} if epoch_id else {})},
+                    ).to_path(),
+                    selectable=True,
+                ),
+            )
+        )
+        proposer = _proposer_blocks(client, epoch_id)
         query = f"?epoch={epoch_id}" if epoch_id else ""
         listing = as_list(as_dict(client.get(f"/api/reflections{query}")).get("reflections"))
         reflection_id = ctx.route.params.get("reflection")
@@ -61,13 +70,10 @@ class InstrumentLens:
             latest = _latest(listing)
             reflection_id = latest.get("reflection_id") if latest else None
         if reflection_id is None:
-            return missing(
+            return content_view(
                 InstrumentLens.title,
-                "no reflection has been run for this workspace",
-                hint=(
-                    "run one with `zicato inspect reflection run` — it diagnoses and recommends; "
-                    "it never edits the contract"
-                ),
+                [board_link, *proposer],
+                degraded="No reflection is recorded; board evidence remains available.",
             )
 
         summary = as_dict(client.get(f"/api/reflection/{reflection_id}/summary"))
@@ -75,13 +81,14 @@ class InstrumentLens:
             return missing(
                 InstrumentLens.title,
                 f"reflection {reflection_id} is not in this workspace",
-                hint=str(summary.get("note") or "press 5 with no argument for the latest one"),
+                hint=str(summary.get("note") or "press 3 to choose a recorded reflection"),
             )
         scorecards = as_dict(client.get(f"/api/reflection/{reflection_id}/scorecards"))
         practices = as_dict(client.get(f"/api/reflection/{reflection_id}/practices"))
         findings = [f for f in as_list(summary.get("findings")) if isinstance(f, dict)]
 
         blocks = [
+            board_link,
             _header_block(summary),
             _pillars_block(summary),
             _findings_block(findings, reflection_id),
@@ -89,46 +96,60 @@ class InstrumentLens:
             _judges_block(scorecards),
             _practices_block(practices),
             _listing_block(listing, reflection_id),
+            *proposer,
         ]
-        return View(
-            title=f"Instrument · {reflection_id}",
-            subtitle=_subtitle(summary),
-            blocks=tuple(b for b in blocks if b.rows),
-            digest=digest_of(
-                "instrument",
-                reflection_id,
-                summary.get("executed"),
-                summary.get("mode"),
-                present.fmt(summary.get("noise_floor_max_abs_delta"), 5),
-                present.fmt(summary.get("decision_flip_p"), 5),
-                as_dict(summary.get("pillars")),
-                [
-                    [
-                        f.get("finding_id"),
-                        f.get("severity"),
-                        f.get("title"),
-                        f.get("detail"),
-                        len(as_list(f.get("evidence"))),
-                        as_dict(f.get("proposed_op")).get("op"),
-                    ]
-                    for f in findings
-                ],
-                _scorecard_digest(scorecards),
-                as_dict(practices.get("verdict_counts")),
-                [
-                    [
-                        check.get("check_id"),
-                        check.get("verdict"),
-                        check.get("headline"),
-                        check.get("rationale"),
-                        check.get("unmeasured_reason"),
-                    ]
-                    for check in map(as_dict, as_list(practices.get("checks")))
-                ],
-                [as_dict(r).get("reflection_id") for r in listing],
+        return replace(
+            content_view(
+                f"Instrument · {reflection_id}",
+                [b for b in blocks if b.rows],
+                subtitle=_subtitle(summary),
             ),
             meta={"reflection_id": reflection_id, "epoch_id": summary.get("epoch_id")},
         )
+
+
+def _proposer_blocks(client: Client, epoch_id: str | None) -> list[Block]:
+    """Show the served pending remedies; commands remain plain text."""
+    try:
+        queue = as_dict(client.get("/api/proposer/recommendations"))
+    except ServiceError as exc:
+        return [Block(title="Proposer recommendations", note=str(exc))]
+    rows = []
+    for item in as_list(queue.get("pending")):
+        if not isinstance(item, dict):
+            continue
+        finding_id = item.get("finding_id")
+        owner = item.get("epoch_id")
+        if epoch_id and owner != epoch_id:
+            continue
+        key = f"{owner}:{item.get('reflection_id')}:{finding_id}"
+        rows.extend(record_rows(key, item))
+        if finding_id and owner:
+            command = (
+                f"zicato proposer apply-recommendation {quote(str(finding_id))} "
+                f"--epoch {quote(str(owner))}"
+            )
+            rows.append(row(f"apply:{key}", (command, "accent"), selectable=True))
+    if not rows:
+        rows.append(
+            row(
+                "empty",
+                (
+                    "No pending recommendations for this selection."
+                    if queue.get("found") is True
+                    else "Recommendation evidence is unavailable.",
+                    "faint",
+                ),
+            )
+        )
+    return [
+        Block(
+            title="Proposer recommendations",
+            rows=tuple(rows),
+            note="Review the recorded remedy before applying; "
+            "run an apply command only after reviewing its remedy.",
+        )
+    ]
 
 
 def _latest(listing: list[Any]) -> dict[str, Any] | None:
@@ -275,17 +296,11 @@ def _apply_command(f: dict[str, Any], reflection_id: str) -> str | None:
     finding_id = f.get("finding_id")
     if not op or not finding_id:
         return None
-    return f"zicato inspect reflection apply {reflection_id} {finding_id}"
+    return f"zicato inspect reflection apply {quote(reflection_id)} {quote(str(finding_id))}"
 
 
 def _queue_block(findings: list[dict[str, Any]], reflection_id: str) -> Block:
-    """The recommendation queue: findings that carry a ready-to-apply op.
-
-    Board reflection fills this today. The proposer's own recommendations land
-    in the same queue when the service starts serving them — the row shape and
-    the apply seam below are the join point, and until then the queue honestly
-    shows only the source that exists.
-    """
+    """Board findings with a proposed operation and its operator command."""
     queued = [f for f in findings if as_dict(f.get("proposed_op")).get("op")]
     if not queued:
         return Block()
@@ -311,6 +326,7 @@ def _queue_block(findings: list[dict[str, Any]], reflection_id: str) -> Block:
                 selectable=True,
             )
         )
+        rows.extend(record_rows(f"operation:{f.get('finding_id')}", op, indent=1))
     return Block(
         title="Recommendation queue",
         rows=tuple(rows),
@@ -430,25 +446,6 @@ def _listing_block(listing: list[Any], current: str) -> Block:
             )
         )
     return Block(title="Reflections", rows=tuple(rows))
-
-
-def _scorecard_digest(scorecards: dict[str, Any]) -> Any:
-    return [
-        [
-            j.get("judge_name"),
-            j.get("tp"),
-            j.get("fp"),
-            j.get("fn"),
-            j.get("tn"),
-            present.fmt(j.get("precision"), 4),
-            present.fmt(j.get("recall"), 4),
-            present.fmt(j.get("self_consistency_kappa"), 4),
-            present.fmt(j.get("disagreement_rate"), 4),
-            j.get("exercised"),
-        ]
-        for j in as_list(scorecards.get("judges"))
-        if isinstance(j, dict)
-    ]
 
 
 __all__ = ["InstrumentLens"]

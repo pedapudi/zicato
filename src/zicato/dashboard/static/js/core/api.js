@@ -25,15 +25,18 @@ export async function fetchJson(path) {
 
 // The single coalesced environment read. Tolerates a transient failure
 // — the last-known environment stays painted.
-export async function loadEnvironment() {
+export async function loadEnvironment({ accept = () => true, contentChanged = false } = {}) {
   let env;
   try {
     env = await fetchJson('/api/environment');
   } catch (err) {
     console.warn('loadEnvironment failed:', err);
-    return;
+    return false;
   }
+  if (!env || typeof env !== 'object' || Array.isArray(env) || !accept()) return false;
+  if (contentChanged) state.contentRevision += 1;
   state.applyEnvironment(env);
+  return true;
 }
 
 // /api/health — dashboard-service identity. Fixed for the process

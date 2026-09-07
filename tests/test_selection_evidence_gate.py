@@ -308,18 +308,47 @@ def test_dead_letter_round_trips(tmp_path) -> None:
 
     got = read_inconclusive(ws, "v1")
     assert got is not None
-    assert got["generation_id"] == "v1"
-    assert got["champion_id"] == "v0"
-    assert got["epoch_id"] == "ep1"
-    assert got["rating"]["present"] is True
-    assert got["ci_history"][0]["ci_overlap"] is True
+    assert got.generation_id == "v1"
+    assert got.champion_id == "v0"
+    assert got.epoch_id == "ep1"
+    assert got.rating["present"] is True
+    assert got.ci_history[0]["ci_overlap"] is True
 
     listed = list_inconclusive(ws)
     assert len(listed) == 1
-    assert listed[0]["generation_id"] == "v1"
+    assert listed[0].generation_id == "v1"
 
 
 def test_dead_letter_absent_returns_none(tmp_path) -> None:
     ws = tmp_path / ".zicato"
     assert read_inconclusive(ws, "missing") is None
     assert list_inconclusive(ws) == []
+
+
+def test_dead_letter_codec_refuses_wrong_identity_and_preserves_bytes(tmp_path) -> None:
+    import json
+
+    import pytest
+
+    from zicato.epoch._storage import RecordError
+
+    body = {
+        "generation_id": "v1",
+        "champion_id": "v0",
+        "epoch_id": "epoch-1",
+        "rating": {"p_stronger": 0.5, "replicates_spent": 1},
+        "ci_history": [{"p_stronger": 1, "extra": None}],
+        "reason": "unresolved",
+        "extension": {"integer": 1, "decimal": 1.0},
+    }
+    record = InconclusiveRecord.from_json(body)
+    path = record_inconclusive(tmp_path, record)
+    assert path.read_bytes() == json.dumps(body, indent=2, sort_keys=True).encode()
+    assert read_inconclusive(tmp_path, "v1") == record
+    path.write_text(json.dumps(dict(body, generation_id="v2")), encoding="utf-8")
+    with pytest.raises(RecordError, match="location"):
+        read_inconclusive(tmp_path, "v1")
+    with pytest.raises(RecordError, match="location"):
+        list_inconclusive(tmp_path)
+    with pytest.raises(RecordError, match="ci_history"):
+        InconclusiveRecord.from_json(dict(body, ci_history=[None]))

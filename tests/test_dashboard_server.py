@@ -1771,10 +1771,12 @@ def test_per_entry_for_generation_carries_score_from_loss_json(tmp_path: Path) -
     and surfaces a per-generation ``mean_score`` from gen_score.json."""
     import json as _json
 
+    from zicato.core import LossProfile, ScoringWeights
     from zicato.query import (
         WorkspacePaths,
         build_per_entry_for_generation,
     )
+    from zicato.tournament.scoring import aggregate_generation_score, write_gen_score
 
     ws = tmp_path / ".zicato"
     ws.mkdir()
@@ -1782,10 +1784,23 @@ def test_per_entry_for_generation_carries_score_from_loss_json(tmp_path: Path) -
         ws / "index.db",
         {"r1": _json.dumps({"score": 0.77, "metrics": {"precision": 0.9, "recall": 0.6}})},
     )
-    _write_json(
-        ws / "epochs" / "2026-05-16_e0" / "generations" / "v1" / "gen_score.json",
-        {"generation_id": "v1", "mean_score": 0.77},
+    loss = LossProfile(
+        run_id="r1",
+        entry_id="waffles_single",
+        generation_id="v1",
+        epoch_id="2026-05-16_e0",
+        drift_counts=(),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=100,
+        wall_clock_budget_exceeded=False,
+        expectation_result=None,
+        drift_loss=0.2,
+        pass_fail=True,
+        score=0.77,
+        metrics={"precision": 0.9, "recall": 0.6},
     )
+    write_gen_score(ws, "2026-05-16_e0", "v1", aggregate_generation_score([loss], ScoringWeights()))
 
     paths = WorkspacePaths(ws)
     pe = build_per_entry_for_generation(paths, "2026-05-16_e0", "v1")

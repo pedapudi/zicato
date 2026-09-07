@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from zicato.epoch import _storage as epoch_keys
-from zicato.evolve.settlement_recovery import field_settlement_intent_key
+from zicato.epoch.settlement_receipt import field_settlement_intent_key
 from zicato.runtime import _storage as runtime_keys
 from zicato.storage import workspace_backend
 from zicato.workspace.layout import WORKSPACE_RELATIVE_LAYOUT, WorkspaceLayout, storage_key

@@ -43,6 +43,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
+from zicato.epoch._storage import RecordError
+
 if TYPE_CHECKING:
     from zicato.query.paths import WorkspacePaths
     from zicato.reflection.suggestions import Suggestion
@@ -485,7 +487,10 @@ def _empty_list(reflection_id: str) -> dict[str, Any]:
 
 def build_trace_list(paths: WorkspacePaths, reflection_id: str) -> dict[str, Any]:
     """The trace list: per-trace summary + the pre-computed strip-model (§3.1)."""
-    epoch_id, traces, suggestions = _resolve(paths, reflection_id)
+    try:
+        epoch_id, traces, suggestions = _resolve(paths, reflection_id)
+    except RecordError as exc:
+        return {**_empty_list(reflection_id), "unreadable": str(exc)}
     if epoch_id is None or not traces:
         empty = _empty_list(reflection_id)
         if epoch_id is not None:
@@ -578,7 +583,10 @@ def _reconstructed_turns(trace: ImportedTrace) -> list[dict[str, Any]]:
 
 def build_trace_detail(paths: WorkspacePaths, reflection_id: str, trace_id: str) -> dict[str, Any]:
     """One trace: strip-model + reconstructed conversation + episode anchors (§3.2)."""
-    epoch_id, traces, suggestions = _resolve(paths, reflection_id)
+    try:
+        epoch_id, traces, suggestions = _resolve(paths, reflection_id)
+    except RecordError as exc:
+        return {**_empty_detail(reflection_id, trace_id), "unreadable": str(exc)}
     if epoch_id is None:
         return _empty_detail(reflection_id, trace_id)
     trace = next((t for t in traces if t.trace_id == trace_id), None)
@@ -719,7 +727,10 @@ def build_suggestion_provenance(
     paths: WorkspacePaths, reflection_id: str, suggestion_id: str
 ) -> dict[str, Any]:
     """One suggestion's chain: suggestion → episodes → trace-segment strips (§3.3)."""
-    epoch_id, traces, suggestions = _resolve(paths, reflection_id)
+    try:
+        epoch_id, traces, suggestions = _resolve(paths, reflection_id)
+    except RecordError as exc:
+        return {**_empty_provenance(reflection_id, suggestion_id), "unreadable": str(exc)}
     if epoch_id is None:
         return _empty_provenance(reflection_id, suggestion_id)
 

@@ -73,9 +73,10 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from zicato.epoch._storage import RecordError
+from zicato.epoch.lineage import LineageGeneration
 from zicato.runtime.paths import (
     active_runs_dir,
     active_tournament_log_path,
@@ -262,21 +263,12 @@ def _prune_generation_records(
             raise RuntimeError(f"generation record cleanup failed for {epoch_id}/{generation_id}")
 
 
-def _lineage_generation_rows(workspace_root: Path, epoch_id: str) -> list[dict[str, Any]]:
-    """Every generation node one epoch's lineage holds, resolved or pending."""
+def _lineage_generation_rows(workspace_root: Path, epoch_id: str) -> tuple[LineageGeneration, ...]:
+    """Every accepted generation node in one epoch, resolved or pending."""
     from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
 
-    epoch = next(
-        (
-            row
-            for row in load_lineage(workspace_root).get("epochs", [])
-            if isinstance(row, dict) and row.get("id") == epoch_id
-        ),
-        None,
-    )
-    if epoch is None:
-        return []
-    return [row for row in epoch.get("generations", []) if isinstance(row, dict)]
+    epoch = load_lineage(workspace_root).epoch(epoch_id)
+    return epoch.generations if epoch else ()
 
 
 def _pending_lineage_groups(
@@ -286,21 +278,13 @@ def _pending_lineage_groups(
     """Return unresolved generations grouped by their immutable field coordinates."""
     groups: dict[tuple[int, str], list[str]] = {}
     promoted_groups: set[tuple[int, str]] = set()
-    seen: set[str] = set()
     for row in _lineage_generation_rows(workspace_root, epoch_id):
-        generation_id = row.get("id")
-        if not isinstance(generation_id, str) or not generation_id or generation_id in seen:
-            raise RuntimeError("lineage contains an invalid or duplicate generation id")
-        seen.add(generation_id)
-        promoted = row.get("promoted")
-        if promoted is not None and not isinstance(promoted, bool):
-            raise RuntimeError(
-                f"lineage generation {generation_id!r} has invalid promoted state {promoted!r}"
-            )
+        generation_id = row.id
+        promoted = row.promoted
         if promoted is False:
             continue
-        round_index = row.get("round_index")
-        parent_id = row.get("parent_id")
+        round_index = row.round_index
+        parent_id = row.parent_id
         if (
             not isinstance(round_index, int)
             or isinstance(round_index, bool)
@@ -368,9 +352,7 @@ def _discard_unrecorded_source(
     accounted for. Idempotent: a second call lists no source for them.
     """
     canonical = set(generation_ids(WorkspaceLayout.from_root(workspace_root), epoch_id)) | {
-        generation_id
-        for row in _lineage_generation_rows(workspace_root, epoch_id)
-        if isinstance(generation_id := row.get("id"), str)
+        row.id for row in _lineage_generation_rows(workspace_root, epoch_id)
     }
     unrecorded = tuple(
         generation_id
@@ -393,7 +375,7 @@ def _unrecorded_fields_without_receipts(
     store: GenerationStore,
 ) -> tuple[tuple[int, tuple[str, ...]], ...]:
     """Find pending entrants whose field has no settlement receipt."""
-    from zicato.evolve.settlement_recovery import (  # noqa: PLC0415
+    from zicato.epoch.settlement_receipt import (  # noqa: PLC0415
         field_settlement_intent_key,
     )
     from zicato.storage import workspace_backend  # noqa: PLC0415

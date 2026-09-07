@@ -92,7 +92,7 @@ function digestFor(d) {
       (t.strip_model && Array.isArray(t.strip_model.signals)) ? t.strip_model.signals.length : 0,
       svg.trajectoryStripDigest(t.strip_model, { compact: true }),
     ]);
-    return JSON.stringify({ m: 'list', id: d.reflectionId, found: !!l.found, count: l.trace_count, rows });
+    return JSON.stringify({ m: 'list', id: d.reflectionId, found: !!l.found, count: l.trace_count, unreadable: l.unreadable, rows });
   }
   // detail
   const x = d.detail || {};
@@ -104,7 +104,7 @@ function digestFor(d) {
   ]);
   return JSON.stringify({
     m: 'detail', id: d.reflectionId, trace: d.traceId, found: !!x.found,
-    src: x.source_file, dialect: x.dialect,
+    src: x.source_file, dialect: x.dialect, unreadable: x.unreadable,
     counts: x.signal_counts || {}, note: x.reconstruction_note,
     strip: svg.trajectoryStripDigest(x.strip_model, {}),
     turns, eps,
@@ -162,11 +162,11 @@ function buildList(d, ctx) {
   ]));
 
   const items = Array.isArray(l.traces) ? l.traces : [];
-  if (!l.found || !items.length) {
+  if (l.unreadable || !l.found || !items.length) {
     nodes.push(section('Imported traces', el('div', { class: 'dn-panel' }, [
-      empty(l.found === false
+      empty(l.unreadable || (l.found === false
         ? 'No such reflection (it may not be indexed yet).'
-        : 'No imported traces for this reflection — it was created without a foreign-trace directory, or the import found none.'),
+        : 'No imported traces for this reflection — it was created without a foreign-trace directory, or the import found none.')),
     ])));
     return nodes;
   }
@@ -210,8 +210,8 @@ function buildDetail(d, ctx) {
     el('h1', { class: 'dn-h1' }, ['Trace · ', el('span', { class: 'dn-mono', text: d.traceId })]),
     el('p', { class: 'dn-lede', text: 'One imported foreign trajectory — the strip up top, the reconstructed conversation below, and the mined episodes that motivated the drafted board entries.' }),
   ]));
-  if (!x.found) {
-    nodes.push(section('Trace', el('div', { class: 'dn-panel' }, [empty('No such trace (it may not be indexed under this reflection).')])));
+  if (x.unreadable || !x.found) {
+    nodes.push(section('Trace', el('div', { class: 'dn-panel' }, [empty(x.unreadable || 'No such trace (it may not be indexed under this reflection).')])));
     return nodes;
   }
 

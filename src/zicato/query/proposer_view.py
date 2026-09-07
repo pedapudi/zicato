@@ -6,19 +6,18 @@ renders. The view computes every rate, band, and count; the client renders them
 and derives nothing — the same division of labour ``reflection_view`` keeps
 with the Instrument lens.
 
-Best-effort throughout: a workspace with no epochs, no
-round logs, or no reflection records yields a same-shape payload with empty
-lists, never an exception and never a fabricated zero.
+Absent epochs, round logs, and reflection records produce empty collections.
+A malformed recommendation collection returns the record owner's refusal.
 
-Stays **dashboard-free** (the ``zicato.query`` import contract). It reads
-:mod:`zicato.proposer.scorecard` and :mod:`zicato.proposer.reflection`, both of
-which are pure readers over the workspace.
+Stays dashboard-free. Scorecard aggregation and pending-queue selection remain
+in their domain modules; this module projects their accepted values.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from zicato.epoch._storage import RecordError
 from zicato.query.paths import WorkspacePaths
 
 
@@ -60,18 +59,17 @@ def build_proposer_scorecard(paths: WorkspacePaths, epoch_id: str | None = None)
 def build_proposer_recommendations(paths: WorkspacePaths) -> dict[str, Any]:
     """The pending queue — drafted, carries a remedy, not yet applied.
 
-    Each row is trimmed to what a panel shows: the identity, the severity, the
-    five evidence slots, and the remedy's SHAPE (kind + path + digest) — never
-    the remedy's full text or diff. The operator reads the diff at the terminal,
-    where they can apply it; shipping kilobytes of markdown into a digest the
-    panel folds on every heartbeat would buy nothing and repaint often.
+    Each row includes the finding's evidence and the stored remedy, including
+    its proposed text and diff. Review clients can inspect the exact proposal
+    before presenting an apply command. Summary fields remain available for
+    compact panels that do not display the full remedy.
     """
     from zicato.proposer.reflection import pending_recommendations  # noqa: PLC0415
 
     try:
         pending = pending_recommendations(paths.root)
-    except Exception:  # noqa: BLE001
-        pending = []
+    except (RecordError, OSError) as exc:
+        return {"found": False, "pending": [], "count": 0, "unreadable": str(exc)}
 
     rows: list[dict[str, Any]] = []
     for item in pending:
@@ -91,6 +89,7 @@ def build_proposer_recommendations(paths: WorkspacePaths) -> dict[str, Any]:
                 "remedy_kind": remedy.get("kind", ""),
                 "remedy_path": remedy.get("relative_path", ""),
                 "remedy_sha256": remedy.get("sha256", ""),
+                "remedy": remedy,
             }
         )
     return {"found": True, "pending": rows, "count": len(rows)}

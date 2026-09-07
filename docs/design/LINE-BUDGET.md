@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 477,848 | +69,187 |
-| Production | 197,702 | 205,963 | +8,261 |
-| Production logic | 110,276 | 114,740 | +4,464 |
+| Total | 408,661 | 483,173 | +74,512 |
+| Production | 197,702 | 207,982 | +10,280 |
+| Production logic | 110,276 | 116,981 | +6,705 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -84,33 +84,33 @@ production-logic series per subsystem along a branch's first-parent commits.
 
 | Subsystem | Total | Production | Production logic | Prose share |
 |---|---:|---:|---:|---:|
-| src/zicato/dashboard | 70,434 | 37,605 | 26,200 | 30.3% |
-| src/zicato/query | 20,193 | 20,193 | 12,017 | 40.5% |
-| src/zicato/evolve | 12,634 | 12,634 | 7,656 | 39.4% |
-| src/zicato/reflection | 9,805 | 9,805 | 6,183 | 36.9% |
-| src/zicato/proposer | 11,297 | 11,297 | 5,738 | 49.2% |
-| src/zicato/epoch | 12,312 | 12,312 | 5,727 | 53.5% |
+| src/zicato/dashboard | 70,648 | 37,625 | 26,301 | 30.1% |
+| src/zicato/query | 20,652 | 20,652 | 12,458 | 39.7% |
+| src/zicato/evolve | 11,890 | 11,890 | 7,053 | 40.7% |
+| src/zicato/reflection | 10,277 | 10,277 | 6,699 | 34.8% |
+| src/zicato/epoch | 13,127 | 13,127 | 6,482 | 50.6% |
+| src/zicato/tournament | 11,420 | 11,420 | 6,059 | 46.9% |
+| src/zicato/proposer | 11,379 | 11,379 | 5,852 | 48.6% |
 | crates/supervisor | 15,335 | 12,904 | 5,671 | 56.1% |
-| src/zicato/tournament | 10,917 | 10,917 | 5,644 | 48.3% |
-| src/zicato/cli | 8,206 | 8,206 | 5,189 | 36.8% |
-| src/zicato/analyzer | 7,618 | 7,618 | 4,780 | 37.3% |
-| src/zicato/selection | 5,271 | 5,271 | 2,837 | 46.2% |
-| src/zicato/index | 5,513 | 5,513 | 2,773 | 49.7% |
-| src/zicato/tui | 3,839 | 3,839 | 2,535 | 34.0% |
-| src/zicato/runtime | 5,425 | 5,425 | 2,501 | 53.9% |
+| src/zicato/cli | 8,169 | 8,169 | 5,159 | 36.8% |
+| src/zicato/analyzer | 7,622 | 7,622 | 4,784 | 37.2% |
+| src/zicato/tui | 4,394 | 4,394 | 3,136 | 28.6% |
+| src/zicato/selection | 5,306 | 5,306 | 2,875 | 45.8% |
+| src/zicato/index | 5,399 | 5,399 | 2,699 | 50.0% |
+| src/zicato/runtime | 5,407 | 5,407 | 2,483 | 54.1% |
 | src/zicato/telemetry | 4,709 | 4,709 | 2,249 | 52.2% |
 | src/zicato/core | 6,228 | 6,228 | 1,970 | 68.4% |
 | src/zicato/contract_draft | 2,928 | 2,928 | 1,684 | 42.5% |
-| src/zicato/builder | 2,341 | 2,341 | 1,330 | 43.2% |
-| src/zicato/health | 2,268 | 2,268 | 1,226 | 45.9% |
-| src/zicato/mutation | 2,607 | 2,607 | 1,135 | 56.5% |
+| src/zicato/builder | 2,343 | 2,343 | 1,332 | 43.1% |
+| src/zicato/health | 2,251 | 2,251 | 1,209 | 46.3% |
+| src/zicato/mutation | 2,611 | 2,611 | 1,137 | 56.5% |
 | src/zicato/board | 2,346 | 2,346 | 1,044 | 55.5% |
 | src/zicato/check | 1,566 | 1,566 | 956 | 39.0% |
 | src/zicato/adapters | 2,168 | 2,168 | 793 | 63.4% |
 | src/zicato/testing | 1,447 | 1,447 | 760 | 47.5% |
 | src/zicato/judge_runtime | 1,749 | 1,749 | 740 | 57.7% |
 | src/zicato/_tournament_worker.py | 1,264 | 1,264 | 635 | 49.8% |
-| src/zicato/workspace | 1,623 | 1,623 | 634 | 60.9% |
+| src/zicato/workspace | 1,621 | 1,621 | 628 | 61.3% |
 | src/zicato/synthetic | 1,139 | 1,139 | 544 | 52.2% |
 | src/zicato/scoring | 1,388 | 1,388 | 464 | 66.6% |
 | src/zicato/patterns | 804 | 804 | 417 | 48.1% |
@@ -399,3 +399,6 @@ dropped rows named.
 | Process and workspace ownership (total) | 474,157 | +3,691 | 477,848 | Issues #476, #477 and #478: process-group identity, writer leases, and cancellation ownership, with real-process regressions for failed signals, repeated cancellation, reaping, and orphan cleanup. |
 | Process and workspace ownership (production) | 204,443 | +1,520 | 205,963 | Issues #476, #477 and #478: shared process termination and task joining replace independent cleanup paths; public execution carries an explicit writer through child termination and final publication. |
 | Process and workspace ownership (production logic) | 113,717 | +1,023 | 114,740 | Issues #476, #477 and #478: verified process identity, retained asynchronous ownership, and writer-serialized orphan cleanup. The partial invocation boundary for #484 also validates public calls under the same writer. |
+| Canonical record readers and responsive review clients (total) | 477,848 | +5,325 | 483,173 | Issues #411, #490, #491, #492, #493, #171, and #405: shared record codecs, request input capture, responsive review clients, workspace endpoint identity, parent refusal display, and focused boundary tests. The search fixture uses the existing complete index schema. |
+| Canonical record readers and responsive review clients (production) | 205,963 | +2,019 | 207,982 | Shared record readers replace direct decoding across query, CLI, index, and execution consumers. Request capture, responsive terminal review, and endpoint identity add behavior. The minimal epoch revision hook is a prerequisite; the complete index currency protocol remains separate. |
+| Canonical record readers and responsive review clients (production logic) | 114,740 | +2,241 | 116,981 | Strict record acceptance and inverse codecs, request-owned inputs, asynchronous client refresh, terminal candidate review, and explicit unreadable-record displays. The persisted-record audit retains the remaining ownership work. |

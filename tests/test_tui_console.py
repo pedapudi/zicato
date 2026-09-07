@@ -16,7 +16,7 @@ import pytest
 from tests.tui_fixture import CHALLENGER, EPOCH, PAYLOADS, live_payloads
 from zicato.tui.client import SnapshotClient
 from zicato.tui.console import Console
-from zicato.tui.routes import BROWSER_ONLY, DEFERRED, LENSES, UNSHIPPED, Route, parse_route
+from zicato.tui.routes import BROWSER_ONLY, LENSES, Route, parse_route
 
 
 class MutableClient(SnapshotClient):
@@ -148,13 +148,8 @@ def test_drill_opens_a_reflection_and_back_returns() -> None:
     assert c.back() is False
 
 
-def test_no_lens_offers_a_drill_into_a_deferred_lens() -> None:
-    """A drill that lands back where it started is worse than no drill.
-
-    It clears the back stack and tells the operator nothing. With Candidate
-    deferred, the standings row IS the terminal evidence — the drawer carries
-    the detail the dossier would have.
-    """
+def test_every_drill_names_supported_evidence() -> None:
+    """Every selectable action resolves to a supported terminal address."""
     for lens in LENSES:
         c = console("live", route=Route(lens=lens, params={"epoch": EPOCH}))
         c.refresh()
@@ -221,7 +216,7 @@ def test_browser_hash_paths_resolve_to_the_same_lens(
     assert route.unsupported is None
 
 
-@pytest.mark.parametrize("view", sorted(UNSHIPPED))
+@pytest.mark.parametrize("view", sorted(BROWSER_ONLY))
 def test_every_unshipped_view_lands_somewhere_and_admits_it(view: str) -> None:
     """The render-conformance rule in code.
 
@@ -234,19 +229,14 @@ def test_every_unshipped_view_lands_somewhere_and_admits_it(view: str) -> None:
     assert route.lens in LENSES, "it must land on a lens this build actually ships"
 
 
-def test_a_deferred_candidate_address_still_carries_its_generation() -> None:
-    """`/e/<epoch>/gen/v4` lands on the standings row it would have opened."""
+def test_a_candidate_address_preserves_its_generation() -> None:
+    """A candidate address keeps both coordinates through navigation."""
     route = parse_route(f"/e/{EPOCH}/gen/v4")
     assert route.lens == "standings"
     assert route.params == {"epoch": EPOCH, "gen": "v4"}
-    assert route.unsupported == "candidate"
+    assert route.unsupported is None
+    assert route.to_path() == f"/e/{EPOCH}/gen/v4"
     assert parse_route("candidate/v4").params == {"gen": "v4"}
-
-
-def test_deferred_and_browser_only_are_different_promises() -> None:
-    """One set is coming back; the other never will. Don't merge them."""
-    assert not set(DEFERRED) & set(BROWSER_ONLY)
-    assert "candidate" in DEFERRED and "builder" in BROWSER_ONLY
 
 
 def test_route_round_trips_to_a_browser_path() -> None:

@@ -295,11 +295,13 @@ share a parent edge are NOT walked.
 ## 2. Server-sent event frame types
 
 `GET /events` yields, in order:
-- `event: snapshot` — `{ type:"snapshot", data:{...build_snapshot...} }`
+- `event: snapshot` — `{ type:"snapshot", data:{...build_snapshot...}, content_revision, seq, terminal }`
   on connect. Folded into AppState via `state.applySnapshot`.
-- `event: state_change` — `{ type:"state_change", kind, kinds:[...], ts }`.
+- `event: state_change` — `{ type:"state_change", kind, kinds:[...], content_revision, seq, terminal, ts }`.
   `kinds` is the coalesced set of changed regions. The client debounces
-  and performs ONE `/api/environment` fetch, then `applyEnvironment`.
+  and keeps one `/api/environment` request in flight, then `applyEnvironment`.
+  Content revision invalidates reads independently of progress. Failed reads
+  retry without acknowledging the revision; rendered content digests govern DOM changes.
 - `event: run_log` — `{ type:"run_log", events_path, size, ts }`. Drives
   an append-only `/api/run-log?after=<cursor>` poll.
 - `: ping` — keepalive comment, ignored.

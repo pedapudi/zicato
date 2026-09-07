@@ -380,6 +380,7 @@ function resolveCandidate(dossier, genId, genList, experiments, scalarByGen, cha
 
   return {
     node, baseline, decision, mpts, entries, meanScore, facetScores, mine, gateSpecs, gates,
+    parentInconsistency: d.parent_inconsistency || null,
     judgeComparisons, finalOpponent,
     // the candidate's IDENTITY (§4): the proposer's own idea, reasoning,
     // falsifiable claims and the sites it patched. Null for the seed.
@@ -844,6 +845,7 @@ function projStat(value, key, proj) {
 function candidateDigest(s) {
   return {
     gen: s.node.id, parent: s.node.parent, decision: s.decision, championId: s.championId,
+    parentInconsistency: s.parentInconsistency,
     // the visibility rating stat (int register) — a reindex that moves the
     // rating repaints the dossier; unrated folds null (pre-rating shape).
     rating: ratingTripleDigest(s.rating),
@@ -1011,6 +1013,12 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   const baseline = s.baseline;
   const championId = s.championId;
   const championScalar = s.championScalar;
+  if (s.parentInconsistency) {
+    host.appendChild(el('p', {
+      class: 'dn-panel dn-parent-inconsistency', role: 'status',
+      text: 'Parent comparison unavailable: ' + s.parentInconsistency,
+    }));
+  }
 
   // PROJECTED headline — a candidate with no SETTLED scalar yet (boards still
   // streaming) shows its live PROJECTED scalar / Δ: "~<value>" + a "proj" badge

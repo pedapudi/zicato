@@ -86,8 +86,8 @@ export function gatedSwap(host, digest, build) {
   if (!host) return false;
   const next = String(digest);
   if (host.getAttribute('data-t-digest') === next && host.firstChild) return false;
-  clearChildren(host);
   const built = build();
+  clearChildren(host);
   const nodes = Array.isArray(built) ? built : [built];
   for (const n of nodes) { if (n) host.appendChild(n); }
   host.setAttribute('data-t-digest', next);

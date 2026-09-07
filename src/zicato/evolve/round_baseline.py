@@ -14,21 +14,19 @@ from typing import Any
 from zicato.core.types import (
     Generation,
 )
-from zicato.core.workspace import (
-    generation_dir,
-)
 from zicato.evolve import generation_phase
 from zicato.evolve.epoching import (
     _roll_seed_marker,
 )
 from zicato.evolve.ingest import (
-    _cache_gen_score,
     _index_db_path,
 )
 from zicato.evolve.lifecycle_services import (
     _now_iso,
 )
+from zicato.tournament.scoring import read_gen_score, write_gen_score
 from zicato.util import best_effort
+from zicato.workspace.layout import WorkspaceLayout
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -358,19 +356,16 @@ def _materialize_carried_champion(
 
     # Carry the aggregate (gen_score.json) with the same provenance so a
     # fast first round reuses the champion rather than re-running it.
-    src_score = layout.gen_score(source_epoch, source_generation)
-    if src_score.exists():
-        try:
-            raw = json.loads(src_score.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            log.debug("materialise champion: gen_score read skipped: %s", exc)
-            raw = None
-        if isinstance(raw, dict):
-            raw["generation_id"] = generation_id
-            raw["cached"] = True
-            raw["source_epoch"] = source_epoch
-            raw["source_run"] = source_generation
-            _cache_gen_score(workspace_root, epoch_id, generation_id, raw)
+    score = read_gen_score(layout, source_epoch, source_generation)
+    if score is not None:
+        raw = score.to_dict()
+        raw.update(
+            generation_id=generation_id,
+            cached=True,
+            source_epoch=source_epoch,
+            source_run=source_generation,
+        )
+        write_gen_score(workspace_root, epoch_id, generation_id, raw)
 
     # Fold the materialised runs into the analytical index so the champion
     # reads as scored-but-cached within the epoch.
@@ -408,15 +403,14 @@ def _load_historical_aggregate(
     Raises :class:`FileNotFoundError` when the cache is missing — fast
     mode is meaningless without a parent aggregate.
     """
-    gdir = generation_dir(workspace_root, epoch_id, generation_id)
-    path = gdir / "gen_score.json"
-    if not path.exists():
+    layout = WorkspaceLayout.from_root(workspace_root)
+    score = read_gen_score(layout, epoch_id, generation_id)
+    if score is None:
+        path = layout.gen_score(epoch_id, generation_id)
         raise FileNotFoundError(
             f"fast-mode evolve needs a cached parent aggregate at {path}; "
             "run a full round for the parent generation first"
         )
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise ValueError(f"{path}: expected a JSON object at top level")
+    raw = score.to_dict()
     raw.setdefault("generation_id", generation_id)
     return raw

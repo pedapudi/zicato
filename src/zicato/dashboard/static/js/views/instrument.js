@@ -163,7 +163,7 @@ function digestFor(d) {
     const pending = (((d.recs || {}).pending) || []).map((r) => [
       r.finding_id, r.severity, r.title, r.remedy_kind, r.remedy_path, r.remedy_sha256,
     ]);
-    return JSON.stringify({ m: 'landing', e: d.epochId, items, trend, pending });
+    return JSON.stringify({ m: 'landing', e: d.epochId, items, trend, pending, unreadable: (d.recs || {}).unreadable });
   }
   if (d.mode === 'bill') {
     const s = d.summary || {};
@@ -318,6 +318,10 @@ function buildProposerPanel(d) {
     ])));
   }
 
+  if (d.recs && d.recs.unreadable) {
+    nodes.push(section('Proposer recommendations', el('div', { class: 'dn-panel' }, [empty(d.recs.unreadable)])));
+    return nodes;
+  }
   if (!pending.length) {
     nodes.push(section('Proposer recommendations', el('div', { class: 'dn-panel' }, [
       empty('No pending recommendations.'),

@@ -18,7 +18,7 @@ emit):
   abort cascades, critical drift spikes). One binding covers both the
   ``goldfive`` and ``adk_events`` dialects (TELEMETRY-DIALECTS.md §1).
 * **JUDGE_DISAGREEMENT** — from reflection's adjudicated corpus
-  (:class:`zicato.reflection.adjudicator.JudgeAdjudication`): an ``FP`` / ``FN``
+  (:class:`zicato.reflection.adjudication.JudgeAdjudication`): an ``FP`` / ``FN``
   verdict is an in-run judge vs meta-judge flip.
 * **COVERAGE_GAP** — churned mutation points (the applied-patch history) crossed
   with a board that discriminates nothing (the MATCHUP-RECORD discrimination
@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from zicato.core.loss import is_infra_abort_cause
-from zicato.reflection.adjudicator import VERDICT_FN, VERDICT_FP, JudgeAdjudication
+from zicato.reflection.adjudication import VERDICT_FN, VERDICT_FP, JudgeAdjudication
 from zicato.reflection.corpus import ObservationRun
 from zicato.reflection.trace_import import ImportedTrace
 
@@ -959,47 +959,33 @@ def _scoring_weights(paths: Any, epoch_id: str) -> Any:
 
 
 def _load_latest_adjudications(paths: Any, epoch_id: str) -> list[JudgeAdjudication]:
-    """Every adjudication under the epoch's most recent reflection (or ``[]``).
+    """Read every accepted verdict from the most recent reflection, in file order."""
+    from zicato.core.workspace import reflection_adjudication_dir  # noqa: PLC0415
+    from zicato.reflection.adjudication import read_adjudication  # noqa: PLC0415
 
-    Walks ``adjudication/{judge_name}/*.json`` under the latest reflection dir
-    with the tolerant :func:`~zicato.reflection.adjudicator.read_adjudication`
-    reader; an unreadable verdict file is skipped, an epoch with no reflection
-    yields ``[]`` (an honest zero, never a fabricated flip).
-    """
-    from zicato.reflection.adjudicator import read_adjudication  # noqa: PLC0415
-
-    try:
-        reflection_id = _latest_reflection_id(paths, epoch_id)
-        if reflection_id is None:
-            return []
-        from zicato.core.workspace import reflection_adjudication_dir  # noqa: PLC0415
-
-        adj_root = reflection_adjudication_dir(paths.root, epoch_id, reflection_id)
-        if not adj_root.is_dir():
-            return []
-        out: list[JudgeAdjudication] = []
-        for judge_dir in sorted(adj_root.iterdir()):
-            if not judge_dir.is_dir():
-                continue
-            for verdict_file in sorted(judge_dir.iterdir()):
-                if verdict_file.suffix != ".json":
-                    continue
-                adj = read_adjudication(verdict_file)
-                if adj is not None:
-                    out.append(adj)
-        return out
-    except Exception:  # noqa: BLE001 — best-effort
+    reflection_id = _latest_reflection_id(paths, epoch_id)
+    if reflection_id is None:
         return []
+    adj_root = reflection_adjudication_dir(paths.root, epoch_id, reflection_id)
+    if not adj_root.is_dir():
+        return []
+    out: list[JudgeAdjudication] = []
+    for verdict_file in sorted(adj_root.glob("*/*.json")):
+        adj = read_adjudication(verdict_file)
+        if adj is not None:
+            out.append(adj)
+    return out
 
 
 def _latest_reflection_id(paths: Any, epoch_id: str) -> str | None:
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
     from zicato.query.reflection_view import list_reflections  # noqa: PLC0415
 
-    try:
-        items = list_reflections(paths, epoch_id).get("reflections", [])
-    except Exception:  # noqa: BLE001
-        return None
-    for item in items:  # already newest-first
+    listing = list_reflections(paths, epoch_id)
+    if listing.get("unreadable"):
+        reason = listing["unreadable"][0]["reason"]
+        raise RecordError(f"cannot select reflection evidence: {reason}")
+    for item in listing["reflections"]:
         rid = item.get("reflection_id")
         if isinstance(rid, str) and rid:
             return rid

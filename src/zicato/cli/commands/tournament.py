@@ -297,16 +297,22 @@ def _load_historical_aggregate(
     writes the aggregate to ``gen_score.json`` under the generation's
     directory after a full-mode tournament.
     """
-    gen_dir = generation_dir(workspace_root, epoch_id, generation_id)
-    path = gen_dir / "gen_score.json"
-    if not path.exists():
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
+    from zicato.tournament.scoring import read_gen_score  # noqa: PLC0415
+    from zicato.workspace.layout import WorkspaceLayout  # noqa: PLC0415
+
+    layout = WorkspaceLayout.from_root(workspace_root)
+    try:
+        score = read_gen_score(layout, epoch_id, generation_id)
+    except RecordError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if score is None:
+        path = layout.gen_score(epoch_id, generation_id)
         raise click.ClickException(
             f"fast-mode tournament needs a cached parent aggregate at {path}; "
             "run a full-mode tournament for the parent generation first"
         )
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise click.ClickException(f"{path}: expected a JSON object at top level")
+    raw = score.to_dict()
     raw.setdefault("generation_id", generation_id)
     return raw
 

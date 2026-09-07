@@ -33,6 +33,7 @@ from typing import Any
 from zicato.epoch._storage import RecordError
 from zicato.epoch.journal import read_epoch_experiment_bodies, read_experiment_body
 from zicato.query.decisions import experiment_decision as _experiment_decision
+from zicato.query.inputs import EpochInputs
 from zicato.query.paths import (
     WorkspacePaths,
     _natural_key,
@@ -270,7 +271,11 @@ def _scorecard_from_experiment(experiment: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_hypothesis_accuracy(
-    paths: WorkspacePaths, epoch_id: str, generation_id: str
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    *,
+    inputs: EpochInputs | None = None,
 ) -> dict[str, Any]:
     """``GET /api/hypothesis-accuracy/{epoch}/{gen}`` — per-experiment scorecard.
 
@@ -314,7 +319,14 @@ def build_hypothesis_accuracy(
         "pass_rate": {"predicted": "", "observed": None},
     }
     try:
-        experiment = read_experiment_body(layout_of(paths).root, epoch_id, generation_id)
+        if inputs is not None:
+            inputs.check(paths, epoch_id)
+            captured = inputs.generations.get(generation_id)
+            if captured is not None and captured.unreadable is not None:
+                return {**empty, "unreadable": captured.unreadable}
+            experiment = inputs.experiment(generation_id)
+        else:
+            experiment = read_experiment_body(layout_of(paths).root, epoch_id, generation_id)
     except RecordError as exc:
         # CONDITIONAL key: only a record that is present and unparseable
         # carries it, so an absent record's payload is unchanged.

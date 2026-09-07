@@ -13,6 +13,7 @@ import click
 
 from zicato.cli.example_scaffold import example_paths
 from zicato.cli.init_cmd import initialize_workspace
+from zicato.epoch._storage import RecordError
 
 
 @click.command(
@@ -110,7 +111,7 @@ def init_cmd(
             reset_lineage=reset_lineage,
             example=example,
         )
-    except FileExistsError as exc:
+    except (FileExistsError, RecordError) as exc:
         # Click renders UsageError nicely and exits non-zero.
         raise click.UsageError(str(exc)) from exc
 

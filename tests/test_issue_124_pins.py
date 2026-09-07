@@ -69,7 +69,7 @@ def _gen(
 
 def _node(workspace: Path, epoch_id: str, gid: str) -> dict[str, Any]:
     """The persisted lineage node for ``gid`` (read back through the API)."""
-    data = load_lineage(workspace)
+    data = load_lineage(workspace).to_dict()
     [entry] = [e for e in data["epochs"] if e["id"] == epoch_id]
     [node] = [g for g in entry["generations"] if g["id"] == gid]
     result: dict[str, Any] = node

@@ -39,10 +39,8 @@ import click
     "--view",
     default=None,
     help=(
-        "Open a lens directly. Takes the SAME path the browser's hash router "
-        "takes — `/e/<epoch>/gens`, `/e/<epoch>/instrument` — or a shorthand "
-        "like `standings` or `instrument`. An address for a deferred lens "
-        "still resolves, to the nearest one that exists."
+        "Open a browser path such as `/e/<epoch>/gen/<generation>`, "
+        "`/e/<epoch>/evals` or `/logs`, or a shorthand such as `standings`."
     ),
 )
 @click.option(
@@ -71,8 +69,8 @@ def tui_cmd(
     The browser dashboard's peer surface: the same served payloads, rendered
     for a terminal. Three lenses -- Home, Standings, Instrument -- with 1-3 to
     jump, j/k to move, enter to drill, b to go back, and ? for help.
-    (Candidate, Board and Health are designed and deferred; see
-    docs/design/TUI.md.)
+    Open candidate details from Standings, board evidence from Instrument,
+    and health findings and logs from Home.
 
     READ-ONLY. The console mutates nothing and runs nothing: the Instrument
     lens prints the exact `zicato inspect reflection apply ...` line for you to run.

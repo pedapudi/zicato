@@ -450,16 +450,15 @@ def find_proposal_episode_log(
     Repeated attempts retain separate logs; the most recently written valid
     attempt answers for its candidate or slot.
 
-    A generation id is unique workspace-wide, so an ``epoch_id`` that does not
-    hold the generation falls back to the epoch that does. The returned path
-    is always a Foe episode log: a file that is not one
+    A named epoch confines the lookup to that epoch, including when its
+    episode is absent. An omitted epoch searches the workspace in canonical
+    epoch order. The returned path is always a Foe episode log: a file that is not one
     (:func:`zicato.query.foe_episode.is_episode_log`) is refused rather than
     served, because a proposer transcript reconstructed from any other format
     would claim a fidelity the format does not give.
     """
     layout = layout_of(paths)
-    epoch_ids = [epoch_id] if epoch_id else []
-    epoch_ids += [epoch.id for epoch in iter_epochs(layout) if epoch.id != epoch_id]
+    epoch_ids = [epoch_id] if epoch_id else [epoch.id for epoch in iter_epochs(layout)]
     for candidate_epoch in epoch_ids:
         directories: list[Path] = []
         if slot_index is None:

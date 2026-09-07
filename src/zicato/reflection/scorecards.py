@@ -1,6 +1,6 @@
 """Pillar 3/4 aggregation — per-judge confusion matrices + scorecards.
 
-The adjudicator emits one :class:`~zicato.reflection.adjudicator.JudgeAdjudication`
+The adjudicator emits one :class:`~zicato.reflection.adjudication.JudgeAdjudication`
 per decision; this module folds them into the per-judge
 :class:`JudgeScorecard` the doc's schema pins (BOARD-REFLECTION.md §"judge
 audit"). Every metric is honestly named and honestly scoped:
@@ -29,11 +29,16 @@ one.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+import math
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from zicato.core.workspace import reflection_scorecards_path
+from zicato.epoch._storage import RecordError
 from zicato.judge_runtime.reliability import pairwise_disagreement
-from zicato.reflection.adjudicator import (
+from zicato.reflection.adjudication import (
     VERDICT_AMBIGUOUS,
     VERDICT_FN,
     VERDICT_FP,
@@ -43,6 +48,8 @@ from zicato.reflection.adjudicator import (
 )
 from zicato.reflection.analysis import pearson
 from zicato.reflection.corpus import ObservationRun, judge_answered
+from zicato.storage import atomic_write_json
+from zicato.workspace.projection import mark_epoch_changed
 
 #: Fraction of a judge's decisions that may be ``ambiguous`` before the pile is
 #: itself flagged — an underspecified criterion the adjudicator (and operator)
@@ -82,9 +89,10 @@ class JudgeScorecard:
     ambiguous_pile: bool
     fidelity_tiers: tuple[str, ...]
     recommendation: str = ""
+    _json: str | None = field(default=None, repr=False, compare=False)
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        values = {
             "judge_name": self.judge_name,
             "n_decisions": self.n_decisions,
             "tp": self.tp,
@@ -106,6 +114,145 @@ class JudgeScorecard:
             "fidelity_tiers": list(self.fidelity_tiers),
             "recommendation": self.recommendation,
         }
+        stored = json.loads(self._json) if self._json is not None else {}
+        stored.update(values)
+        return stored
+
+    @classmethod
+    def from_json(cls, body: Any) -> JudgeScorecard:
+        """Accept the scorecard emitted by the aggregation owner without coercion."""
+        if not isinstance(body, dict):
+            raise RecordError("scorecard: expected a JSON object")
+        if not isinstance(body.get("judge_name"), str) or not body["judge_name"]:
+            raise RecordError("scorecard: judge_name must be a nonempty string")
+        counts = ("tp", "fp", "fn", "tn", "ambiguous")
+        for key in (*counts, "n_decisions"):
+            value = body.get(key)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise RecordError(f"scorecard: {key} must be a nonnegative integer")
+        if sum(body[key] for key in counts) != body["n_decisions"]:
+            raise RecordError("scorecard: verdict counts disagree with n_decisions")
+        rates = ("precision", "recall", "f1", "fpr", "severity_accuracy")
+        for key in (*rates, "disagreement_rate", "self_consistency_kappa"):
+            if key not in body:
+                raise RecordError(f"scorecard: missing {key}")
+            value = body[key]
+            if value is None and key != "disagreement_rate":
+                continue
+            minimum = -1 if key == "self_consistency_kappa" else 0
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int | float)
+                or not math.isfinite(value)
+                or not minimum <= value <= 1
+            ):
+                raise RecordError(f"scorecard: invalid {key}")
+        for key in ("exercised", "ambiguous_pile"):
+            if not isinstance(body.get(key), bool):
+                raise RecordError(f"scorecard: {key} must be a boolean")
+        for key in ("redundant_with", "conflicts_with"):
+            if not isinstance(body.get(key), list):
+                raise RecordError(f"scorecard: {key} must be a list")
+            for relation in body[key]:
+                if not isinstance(relation, dict):
+                    raise RecordError(f"scorecard: invalid {key} relation")
+                name, correlation = relation.get("judge"), relation.get("corr")
+                if not isinstance(name, str) or not name:
+                    raise RecordError(f"scorecard: {key} requires a judge name")
+                if (
+                    isinstance(correlation, bool)
+                    or not isinstance(correlation, int | float)
+                    or not math.isfinite(correlation)
+                    or not -1 <= correlation <= 1
+                ):
+                    raise RecordError(f"scorecard: {key} correlation must be in [-1, 1]")
+        tiers = body.get("fidelity_tiers")
+        if not isinstance(tiers, list) or any(
+            tier not in ("preview", "result", "verbatim") for tier in tiers
+        ):
+            raise RecordError("scorecard: invalid fidelity_tiers")
+        if not isinstance(body.get("recommendation"), str):
+            raise RecordError("scorecard: recommendation must be a string")
+        try:
+            encoded = json.dumps(body, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise RecordError(f"scorecard: invalid JSON value: {exc}") from exc
+        fields = json.loads(encoded)
+        return cls(
+            **{
+                key: fields[key]
+                for key in (
+                    "judge_name",
+                    "n_decisions",
+                    *counts,
+                    *rates,
+                    "disagreement_rate",
+                    "self_consistency_kappa",
+                    "exercised",
+                    "ambiguous_pile",
+                    "recommendation",
+                )
+            },
+            redundant_with=tuple(fields["redundant_with"]),
+            conflicts_with=tuple(fields["conflicts_with"]),
+            fidelity_tiers=tuple(tiers),
+            _json=encoded,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Scorecards:
+    """The complete judge scorecard collection published by one reflection."""
+
+    reflection_id: str
+    cards: tuple[JudgeScorecard, ...]
+    _json: str | None = field(default=None, repr=False, compare=False)
+
+    def to_json(self) -> dict[str, Any]:
+        stored = json.loads(self._json) if self._json is not None else {}
+        stored.update(
+            reflection_id=self.reflection_id, scorecards=[c.to_json() for c in self.cards]
+        )
+        return stored
+
+    @classmethod
+    def from_json(cls, body: Any) -> Scorecards:
+        if not isinstance(body, dict) or not isinstance(body.get("scorecards"), list):
+            raise RecordError("scorecards: expected an object with a scorecards list")
+        if not isinstance(body.get("reflection_id"), str) or not body["reflection_id"]:
+            raise RecordError("scorecards: reflection_id must be a nonempty string")
+        cards = tuple(JudgeScorecard.from_json(card) for card in body["scorecards"])
+        if len({card.judge_name for card in cards}) != len(cards):
+            raise RecordError("scorecards: duplicate judge name")
+        try:
+            encoded = json.dumps(body, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise RecordError(f"scorecards: invalid JSON value: {exc}") from exc
+        return cls(body["reflection_id"], cards, encoded)
+
+
+def read_scorecards(workspace_root: Path, epoch_id: str, reflection_id: str) -> Scorecards | None:
+    """Read the canonical collection; an empty collection differs from absence."""
+    path = reflection_scorecards_path(workspace_root, epoch_id, reflection_id)
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise RecordError(f"scorecards {path}: {exc}") from exc
+    record = Scorecards.from_json(body)
+    if record.reflection_id != reflection_id:
+        raise RecordError(f"scorecards {path}: reflection identity differs from its location")
+    return record
+
+
+def write_scorecards(workspace_root: Path, epoch_id: str, record: Scorecards) -> Path:
+    """Validate and mark the projection before durable canonical publication."""
+    accepted = Scorecards.from_json(record.to_json())
+    path = reflection_scorecards_path(workspace_root, epoch_id, accepted.reflection_id)
+    mark_epoch_changed(workspace_root, epoch_id)
+    atomic_write_json(path, accepted.to_json())
+    return path
 
 
 def _safe_div(num: float, den: float) -> float | None:
@@ -372,8 +519,11 @@ __all__ = [
     "CONFLICT_CORR",
     "REDUNDANCY_CORR",
     "JudgeScorecard",
+    "Scorecards",
     "build_scorecard",
     "build_scorecards",
     "build_scorecards_by_fidelity",
     "fleiss_kappa",
+    "read_scorecards",
+    "write_scorecards",
 ]

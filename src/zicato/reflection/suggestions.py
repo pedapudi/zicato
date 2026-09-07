@@ -1,45 +1,22 @@
-"""The eval-suggestion surface (persistence + render + seams).
+"""Persisted evaluation suggestions, admission summaries, and deterministic ranking.
 
-The operator-facing front of eval synthesis (EVAL-SYNTHESIS.md §6). The
-episode extractor mines episodes; **synthesis** turns them into suggestions
-(§3), **admission** stamps admission statistics onto them (§5), and this
-module is what the operator touches: the persisted-suggestion shape, its
-tolerant reader/writer (beside
-``findings.json`` — the reflection persistence idiom), the honest render of the
-admission stats (§5 — measured numbers with n, ``unmeasured`` states, the
-recommended bands as quiet advice, never auto-verdicts), and the two thin SEAM
-protocols the CLI calls into.
-
-Contamination note (§4/§7): everything here is operator-facing only and NEVER
-enters the proposer envelope. Nothing auto-edits a contract — applying a
-suggestion stages a builder DRAFT the operator seals (:mod:`zicato.reflection.apply`).
-
-Seam contract (for the integration merge)
-------------------------------------------
-The three build lanes work against the DOC's shapes rather than against each
-other's branches. This module therefore defines the persisted-suggestion JSON
-shape (:class:`Suggestion`) and two callable seams mirroring the doc:
-
-* :class:`SynthesizeSeam` — ``(episodes, *, allow_llm) -> list[Suggestion]``
-  (``reflection.synthesis.synthesize``).
-* :class:`AdmitSeam` — ``(suggestions, *, probe, workspace_root, epoch_id) ->
-  list[Suggestion]`` (``reflection.admission.admit``).
-
-:func:`resolve_synthesize` / :func:`resolve_admit` late-bind those sibling
-modules (absent ⇒ ``None``, an honest degrade), and both are monkeypatch points
-for the CLI round-trip tests. At integration, the sibling ``synthesize`` /
-``admit`` return dicts or :class:`Suggestion` objects matching this shape; the
-readers accept either.
+Synthesis produces draft artifacts; admission adds measured evidence. This owner
+validates the complete stored collection before exposing suggestions to review
+or draft application. Corruption cannot become an empty or partial inbox.
+The callable protocols resolve synthesis and admission only when requested;
+reading records never starts either operation.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+
+from zicato.epoch._storage import RecordError
+from zicato.storage import atomic_write_json
 
 # --- suggestion types (EVAL-SYNTHESIS.md §3; mirror mining.HINT_*) ----------
 SUGGESTION_REGRESSION_ENTRY: str = "regression_entry"
@@ -75,8 +52,8 @@ SYNTHESIS_REPLICATE_BASE: int = 6000
 class Suggestion:
     """One synthesised, optionally admission-measured eval suggestion (§3–§5).
 
-    The persisted JSON shape is the cross-workstream contract; the fields track
-    EVAL-SYNTHESIS.md §3 (draft artifact), §4 (provenance), and §5 (admission).
+    The persisted fields retain the draft artifact, its provenance, and the
+    optional admission measurements described in EVAL-SYNTHESIS.md §3–§5.
 
     Fields
     ------
@@ -129,9 +106,10 @@ class Suggestion:
     severity_rank: int = 0
     recency_key: int = 0
     coverage_key: int = 0
+    _json: str | None = field(default=None, repr=False, compare=False)
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        values = {
             "suggestion_id": self.suggestion_id,
             "suggestion_type": self.suggestion_type,
             "artifact_kind": self.artifact_kind,
@@ -147,27 +125,76 @@ class Suggestion:
             "recency_key": self.recency_key,
             "coverage_key": self.coverage_key,
         }
+        stored = json.loads(self._json) if self._json is not None else {}
+        stored.update(values)
+        return stored
 
     @classmethod
-    def from_json(cls, raw: dict[str, Any]) -> Suggestion:
-        """Reconstruct a suggestion from its JSON shape (tolerant of extras)."""
-        op = raw.get("proposed_op")
-        adm = raw.get("admission")
+    def from_json(cls, raw: Any) -> Suggestion:
+        """Accept recorded suggestion facts without coercion or probe execution."""
+        if not isinstance(raw, dict):
+            raise RecordError("suggestion: expected a JSON object")
+        for key in ("suggestion_id", "subject", "summary", "rationale"):
+            if not isinstance(raw.get(key), str):
+                raise RecordError(f"suggestion: {key} must be a string")
+        if not raw["suggestion_id"]:
+            raise RecordError("suggestion: suggestion_id must not be empty")
+        vocabularies = {
+            "suggestion_type": (
+                SUGGESTION_REGRESSION_ENTRY,
+                SUGGESTION_COVERAGE_ENTRY,
+                SUGGESTION_JUDGE,
+                SUGGESTION_RUBRIC_REVISION,
+                SUGGESTION_HARDER_VARIANT,
+            ),
+            "artifact_kind": (ARTIFACT_BOARD_ENTRY, ARTIFACT_JUDGE, ARTIFACT_RUBRIC_REVISION),
+            "target_slice": (SLICE_INCOMING_ROTATION, SLICE_TRAIN, SLICE_EXISTING_JUDGE),
+        }
+        for key, vocabulary in vocabularies.items():
+            if raw.get(key) not in vocabulary:
+                raise RecordError(f"suggestion: invalid {key}")
+        for key in ("draft_artifact", "provenance"):
+            if not isinstance(raw.get(key), dict):
+                raise RecordError(f"suggestion: {key} must be an object")
+        for key in ("admission", "proposed_op"):
+            if key not in raw or (raw[key] is not None and not isinstance(raw[key], dict)):
+                raise RecordError(f"suggestion: {key} must be an object or null")
+        operation = raw["proposed_op"]
+        if operation is not None and (
+            not isinstance(operation.get("op"), str)
+            or not operation["op"]
+            or not isinstance(operation.get("args"), dict)
+        ):
+            raise RecordError("suggestion: proposed_op requires a name and argument object")
+        for key in ("severity_rank", "recency_key", "coverage_key"):
+            if isinstance(raw.get(key), bool) or not isinstance(raw.get(key), int):
+                raise RecordError(f"suggestion: {key} must be an integer")
+        try:
+            encoded = json.dumps(raw, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise RecordError(f"suggestion: invalid JSON value: {exc}") from exc
+        fields = json.loads(encoded)
         return cls(
-            suggestion_id=str(raw.get("suggestion_id", "")),
-            suggestion_type=str(raw.get("suggestion_type", "")),
-            artifact_kind=str(raw.get("artifact_kind", "")),
-            subject=str(raw.get("subject", "")),
-            summary=str(raw.get("summary", "")),
-            rationale=str(raw.get("rationale", "")),
-            target_slice=str(raw.get("target_slice", "")),
-            draft_artifact=dict(raw.get("draft_artifact") or {}),
-            proposed_op=dict(op) if isinstance(op, dict) else None,
-            provenance=dict(raw.get("provenance") or {}),
-            admission=dict(adm) if isinstance(adm, dict) else None,
-            severity_rank=int(raw.get("severity_rank", 0) or 0),
-            recency_key=int(raw.get("recency_key", 0) or 0),
-            coverage_key=int(raw.get("coverage_key", 0) or 0),
+            **{
+                key: fields[key]
+                for key in (
+                    "suggestion_id",
+                    "suggestion_type",
+                    "artifact_kind",
+                    "subject",
+                    "summary",
+                    "rationale",
+                    "target_slice",
+                    "draft_artifact",
+                    "proposed_op",
+                    "provenance",
+                    "admission",
+                    "severity_rank",
+                    "recency_key",
+                    "coverage_key",
+                )
+            },
+            _json=encoded,
         )
 
 
@@ -279,48 +306,44 @@ def write_suggestions(
     reflection_id: str,
     suggestions: list[Suggestion],
 ) -> Path:
-    """Atomically write ``suggestions.json`` (tmp + rename); return the path."""
+    """Validate and durably publish suggestions in their deterministic rank order."""
     from zicato.core.workspace import reflection_suggestions_path  # noqa: PLC0415
 
+    if not isinstance(reflection_id, str) or not reflection_id:
+        raise RecordError("suggestions: reflection_id must be a nonempty string")
     path = reflection_suggestions_path(workspace_root, epoch_id, reflection_id)
     payload = {
         "reflection_id": reflection_id,
-        "suggestions": [s.to_json() for s in rank_suggestions(suggestions)],
+        "suggestions": [
+            s.to_json()
+            for s in rank_suggestions([Suggestion.from_json(s.to_json()) for s in suggestions])
+        ],
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    if len({s.suggestion_id for s in suggestions}) != len(suggestions):
+        raise RecordError("suggestions: duplicate suggestion identity")
+    atomic_write_json(path, payload)
     return path
 
 
-def read_suggestions_json(
-    workspace_root: Path, epoch_id: str, reflection_id: str
-) -> list[dict[str, Any]]:
-    """Read the persisted suggestion dicts (tolerant: absence/defect ⇒ ``[]``)."""
+def read_suggestions(workspace_root: Path, epoch_id: str, reflection_id: str) -> list[Suggestion]:
+    """Read the accepted collection; absence is empty and present corruption is explicit."""
     from zicato.core.workspace import reflection_suggestions_path  # noqa: PLC0415
 
     path = reflection_suggestions_path(workspace_root, epoch_id, reflection_id)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError):
+    except FileNotFoundError:
         return []
-    if isinstance(raw, dict):
-        raw = raw.get("suggestions")
-    if not isinstance(raw, list):
-        return []
-    return [s for s in raw if isinstance(s, dict)]
-
-
-def read_suggestions(workspace_root: Path, epoch_id: str, reflection_id: str) -> list[Suggestion]:
-    """Read persisted suggestions as :class:`Suggestion` objects (tolerant)."""
-    out: list[Suggestion] = []
-    for raw in read_suggestions_json(workspace_root, epoch_id, reflection_id):
-        try:
-            out.append(Suggestion.from_json(raw))
-        except (TypeError, ValueError):
-            continue
-    return out
+    except (OSError, ValueError) as exc:
+        raise RecordError(f"suggestions {path}: {exc}") from exc
+    if not isinstance(raw, dict) or not isinstance(raw.get("suggestions"), list):
+        raise RecordError(f"suggestions {path}: expected an object with a suggestions list")
+    if raw.get("reflection_id") != reflection_id:
+        raise RecordError(f"suggestions {path}: reflection identity differs from its location")
+    suggestions = [Suggestion.from_json(item) for item in raw["suggestions"]]
+    if len({s.suggestion_id for s in suggestions}) != len(suggestions):
+        raise RecordError(f"suggestions {path}: duplicate suggestion identity")
+    return suggestions
 
 
 # --- honest admission rendering (EVAL-SYNTHESIS.md §5) ----------------------
@@ -524,7 +547,6 @@ __all__ = [
     "plan_cost",
     "rank_suggestions",
     "read_suggestions",
-    "read_suggestions_json",
     "render_suggestions_md",
     "render_suggestions_table",
     "resolve_admit",

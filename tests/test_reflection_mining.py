@@ -439,7 +439,11 @@ def test_load_latest_adjudications_over_real_writer(tmp_path: Path) -> None:
     assert eps and eps[0].subject == "cite"
 
 
-def test_load_latest_adjudications_tolerates_malformed(tmp_path: Path) -> None:
+def test_load_latest_adjudications_refuses_malformed(tmp_path: Path) -> None:
+    import pytest
+
+    from zicato.epoch._storage import RecordError
+
     paths = WorkspacePaths(tmp_path)
     rid = "refl-20260701000000-mine0002"
     write_plan(
@@ -455,10 +459,10 @@ def test_load_latest_adjudications_tolerates_malformed(tmp_path: Path) -> None:
     )
     good = reflection_adjudication_path(tmp_path, EPOCH, rid, "cite", "v1:login")
     write_adjudication(good, _adj("cite", "v1:login", VERDICT_FP))
-    # a torn sibling file — must be skipped, never crash
+    # A malformed canonical sibling prevents mining a partial evidence collection.
     (good.parent / "torn.json").write_text("{not json", encoding="utf-8")
-    adjs = m._load_latest_adjudications(paths, EPOCH)
-    assert [a.verdict for a in adjs] == [VERDICT_FP]
+    with pytest.raises(RecordError):
+        m._load_latest_adjudications(paths, EPOCH)
 
 
 def test_mutation_churn_from_patch_history() -> None:

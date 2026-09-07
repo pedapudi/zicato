@@ -351,9 +351,9 @@ def test_mutation_point_count_is_off_the_per_request_hot_path(
 
     inner = enumerator.enumerate_mutations
 
-    def counting(roots):
+    def counting(roots, **kwargs):
         calls["n"] += 1
-        return inner(roots)
+        return inner(roots, **kwargs)
 
     monkeypatch.setattr(enumerator, "enumerate_mutations", counting)
 
@@ -381,9 +381,9 @@ def test_mutation_point_count_is_re_walked_once_the_ttl_lapses(
 
     inner = enumerator.enumerate_mutations
 
-    def counting(roots):
+    def counting(roots, **kwargs):
         calls["n"] += 1
-        return inner(roots)
+        return inner(roots, **kwargs)
 
     monkeypatch.setattr(enumerator, "enumerate_mutations", counting)
 

@@ -39,8 +39,8 @@ from tests._orchestrator_harness import (
 from tests.test_orchestrator_multi_challenger import (
     _bootstrap_swiss_workspace,
 )
+from zicato.epoch.settlement_receipt import field_settlement_intent_path
 from zicato.evolve.promote_hook import ON_PROMOTE_TIMEOUT_SECONDS, fire_on_promote
-from zicato.evolve.settlement_recovery import field_settlement_intent_path
 from zicato.health.diagnostics import assess_loop_health, detect_on_promote_hook_failed
 
 # ---------------------------------------------------------------------------

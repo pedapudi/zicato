@@ -21,3 +21,5 @@ Live round
 propose ▸ screen ▸ tournament ▸ gate
 no round in flight
 last decision           promoted
+
+Health findings and logs

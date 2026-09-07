@@ -132,6 +132,18 @@
           }
         ],
         "current_champion": "v0",
+        "champion_record": {
+          "generation_id": "v0",
+          "epoch_id": "e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-03-01T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": null,
+          "elo_se": null,
+          "elo_games": null
+        },
         "holdout": null,
         "delta_scalar_summary": {
           "champion_spine": null,
@@ -518,6 +530,18 @@
         }
       ],
       "current_champion": "v0",
+      "champion_record": {
+        "generation_id": "v0",
+        "epoch_id": "e0",
+        "parent_generation_id": null,
+        "promoted": true,
+        "created_at": "2026-03-01T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
+        "elo": null,
+        "elo_se": null,
+        "elo_games": null
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -634,6 +658,18 @@
         }
       ],
       "current_champion": "v0",
+      "champion_record": {
+        "generation_id": "v0",
+        "epoch_id": "e1",
+        "parent_generation_id": null,
+        "promoted": true,
+        "created_at": "2026-01-01T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
+        "elo": null,
+        "elo_se": null,
+        "elo_games": null
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -1474,8 +1510,59 @@
       "epoch_id": "e1",
       "generation_id": "v1",
       "found": true,
+      "generation": {
+        "generation_id": "v1",
+        "epoch_id": "e1",
+        "parent_generation_id": "v0",
+        "promoted": false,
+        "created_at": "2026-01-01T00:00:00Z",
+        "decision": "rejected",
+        "decision_label": "rejected",
+        "elo": null,
+        "elo_se": null,
+        "elo_games": null
+      },
+      "experiment": {
+        "generation_id": "v1",
+        "parent_generation_id": "v0",
+        "proposed_at": "2026-01-01T00:00:00Z",
+        "hypothesis": {
+          "summary": "hyp e1 v1"
+        },
+        "outcome": {
+          "decision": "rejected",
+          "scalar_score_delta": 0.02
+        },
+        "patches": {},
+        "decision": "rejected",
+        "promoted": false,
+        "decision_label": "rejected"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "e1",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-01-01T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": null,
+          "elo_se": null,
+          "elo_games": null,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "e1",
+        "generation_id": "v1",
+        "judges": []
+      },
       "champion": "v0",
       "parent": "v0",
+      "parent_epoch_id": "e1",
+      "parent_inconsistency": null,
       "structure": "gauntlet",
       "per_entry": {
         "epoch_id": "e1",
@@ -1742,8 +1829,15 @@
       "epoch_id": "e1",
       "generation_id": "bad~id",
       "found": false,
+      "generation": null,
+      "experiment": null,
+      "relatives": [],
+      "lineage_note": null,
+      "per_judge": null,
       "champion": null,
       "parent": null,
+      "parent_epoch_id": null,
+      "parent_inconsistency": null,
       "structure": "gauntlet",
       "per_entry": null,
       "hypothesis_accuracy": null,
@@ -1761,8 +1855,15 @@
       "epoch_id": "e1",
       "generation_id": "v1",
       "found": false,
+      "generation": null,
+      "experiment": null,
+      "relatives": [],
+      "lineage_note": null,
+      "per_judge": null,
       "champion": null,
       "parent": null,
+      "parent_epoch_id": null,
+      "parent_inconsistency": null,
       "structure": "gauntlet",
       "per_entry": null,
       "hypothesis_accuracy": null,
@@ -2986,6 +3087,18 @@
         }
       ],
       "current_champion": "v0",
+      "champion_record": {
+        "generation_id": "v0",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": null,
+        "promoted": true,
+        "created_at": "2026-05-30T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
+        "elo": 1601.881112404967,
+        "elo_se": 149.88256838577433,
+        "elo_games": 2
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -4126,8 +4239,82 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v0",
       "found": true,
+      "generation": {
+        "generation_id": "v0",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": null,
+        "promoted": true,
+        "created_at": "2026-05-30T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
+        "elo": 1601.881112404967,
+        "elo_se": 149.88256838577433,
+        "elo_games": 2
+      },
+      "experiment": {
+        "generation_id": "v0",
+        "parent_generation_id": null,
+        "proposed_at": "2026-05-30T00:00:00Z",
+        "patches": {},
+        "decision": "baseline",
+        "promoted": true,
+        "decision_label": "seed (v0)"
+      },
+      "relatives": [
+        {
+          "generation_id": "v1",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": "v0",
+          "promoted": false,
+          "created_at": "2026-05-30T00:30:00Z",
+          "decision": "rejected",
+          "decision_label": "rejected",
+          "round_index": 0,
+          "elo": 1449.0594437975165,
+          "elo_se": 160.1851199535229,
+          "elo_games": 1,
+          "relationship": "child"
+        },
+        {
+          "generation_id": "v2",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": "v0",
+          "promoted": false,
+          "created_at": "2026-05-30T01:30:00Z",
+          "decision": "rejected",
+          "decision_label": "rejected",
+          "round_index": 1,
+          "elo": 1449.0594437975165,
+          "elo_se": 160.1851199535229,
+          "elo_games": 1,
+          "relationship": "child"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v0",
+        "judges": [
+          {
+            "judge_name": "incorporates_feedback",
+            "weighted_loss": 10.0,
+            "raw_loss": 10.0,
+            "run_count": 1,
+            "weight": 1.0
+          },
+          {
+            "judge_name": "omission",
+            "weighted_loss": 10.0,
+            "raw_loss": 10.0,
+            "run_count": 2,
+            "weight": 1.0
+          }
+        ]
+      },
       "champion": "v0",
       "parent": null,
+      "parent_epoch_id": null,
+      "parent_inconsistency": null,
       "structure": "gauntlet",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -4472,8 +4659,143 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v1",
       "found": true,
+      "generation": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": false,
+        "created_at": "2026-05-30T00:30:00Z",
+        "decision": "rejected",
+        "decision_label": "rejected",
+        "round_index": 0,
+        "elo": 1449.0594437975165,
+        "elo_se": 160.1851199535229,
+        "elo_games": 1
+      },
+      "experiment": {
+        "epoch_id": "2026-05-30_e0",
+        "format_version": 1,
+        "generation_id": "v1",
+        "hypothesis": {
+          "core_idea": "Enforce explicit slide-structure output.",
+          "expected_drift_movements": [
+            {
+              "direction": "decrease",
+              "kind": "omission",
+              "magnitude": "small"
+            }
+          ],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.00 to +0.10",
+          "modulating": [
+            "coordinator_prompt",
+            "oversight_policy"
+          ],
+          "risks": "",
+          "why": "The coordinator's outline omits the slide structure the brief asks for."
+        },
+        "id": "exp_2026-05-30_e0_v1",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": 75.71,
+          "drift_movements": [
+            {
+              "from_rate": 0.5,
+              "hypothesis_match": false,
+              "kind": "omission",
+              "note": "",
+              "to_rate": 0.75
+            }
+          ],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "2026-05-30T01:00:00Z",
+          "rejection_reason": "",
+          "scalar_score_delta": 75.71,
+          "structure": "gauntlet",
+          "tournament_decision": "rejected",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "p1",
+          "p2"
+        ],
+        "proposed_at": "2026-05-30T00:30:00Z",
+        "round_index": 0,
+        "patches": {
+          "coordinator_prompt": {
+            "id": "p1",
+            "mutation_id": "coordinator_prompt",
+            "op": "replace",
+            "new_content": "You are the coordinator.\nAlways emit an explicit slide structure.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Enforce structure."
+          },
+          "oversight_policy": {
+            "id": "p2",
+            "mutation_id": "oversight_policy",
+            "op": "replace",
+            "new_content": "Tighten coordinator oversight.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Tighten oversight."
+          }
+        },
+        "decision": "rejected",
+        "promoted": false,
+        "decision_label": "rejected"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-05-30T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1601.881112404967,
+          "elo_se": 149.88256838577433,
+          "elo_games": 2,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "judges": [
+          {
+            "judge_name": "incorporates_feedback",
+            "weighted_loss": 34.0,
+            "raw_loss": 34.0,
+            "run_count": 1,
+            "weight": 1.0
+          },
+          {
+            "judge_name": "omission",
+            "weighted_loss": 10.0,
+            "raw_loss": 10.0,
+            "run_count": 2,
+            "weight": 1.0
+          }
+        ]
+      },
       "champion": "v0",
       "parent": "v0",
+      "parent_epoch_id": "2026-05-30_e0",
+      "parent_inconsistency": null,
       "structure": "gauntlet",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -4795,8 +5117,132 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v2",
       "found": true,
+      "generation": {
+        "generation_id": "v2",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": false,
+        "created_at": "2026-05-30T01:30:00Z",
+        "decision": "rejected",
+        "decision_label": "rejected",
+        "round_index": 1,
+        "elo": 1449.0594437975165,
+        "elo_se": 160.1851199535229,
+        "elo_games": 1
+      },
+      "experiment": {
+        "epoch_id": "2026-05-30_e0",
+        "format_version": 1,
+        "generation_id": "v2",
+        "hypothesis": {
+          "core_idea": "Tighten coordinator oversight.",
+          "expected_drift_movements": [
+            {
+              "direction": "decrease",
+              "kind": "omission",
+              "magnitude": "small"
+            }
+          ],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.00 to +0.10",
+          "modulating": [
+            "oversight_policy"
+          ],
+          "risks": "",
+          "why": "The oversight policy lets a drifting draft through."
+        },
+        "id": "exp_2026-05-30_e0_v2",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": 1.51,
+          "drift_movements": [
+            {
+              "from_rate": 0.5,
+              "hypothesis_match": true,
+              "kind": "omission",
+              "note": "",
+              "to_rate": 0.4
+            }
+          ],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "2026-05-30T02:00:00Z",
+          "rejection_reason": "",
+          "scalar_score_delta": 1.51,
+          "structure": "gauntlet",
+          "tournament_decision": "rejected",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "p3"
+        ],
+        "proposed_at": "2026-05-30T01:30:00Z",
+        "round_index": 1,
+        "patches": {
+          "oversight_policy": {
+            "id": "p3",
+            "mutation_id": "oversight_policy",
+            "op": "replace",
+            "new_content": "Loosen coordinator oversight.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Loosen oversight."
+          }
+        },
+        "decision": "rejected",
+        "promoted": false,
+        "decision_label": "rejected"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-05-30T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1601.881112404967,
+          "elo_se": 149.88256838577433,
+          "elo_games": 2,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v2",
+        "judges": [
+          {
+            "judge_name": "incorporates_feedback",
+            "weighted_loss": 12.0,
+            "raw_loss": 12.0,
+            "run_count": 1,
+            "weight": 1.0
+          },
+          {
+            "judge_name": "omission",
+            "weighted_loss": 4.0,
+            "raw_loss": 4.0,
+            "run_count": 1,
+            "weight": 1.0
+          }
+        ]
+      },
       "champion": "v0",
       "parent": "v0",
+      "parent_epoch_id": "2026-05-30_e0",
+      "parent_inconsistency": null,
       "structure": "gauntlet",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -5101,8 +5547,143 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v1",
       "found": true,
+      "generation": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": false,
+        "created_at": "2026-05-30T00:30:00Z",
+        "decision": "rejected",
+        "decision_label": "rejected",
+        "round_index": 0,
+        "elo": 1449.0594437975165,
+        "elo_se": 160.1851199535229,
+        "elo_games": 1
+      },
+      "experiment": {
+        "epoch_id": "2026-05-30_e0",
+        "format_version": 1,
+        "generation_id": "v1",
+        "hypothesis": {
+          "core_idea": "Enforce explicit slide-structure output.",
+          "expected_drift_movements": [
+            {
+              "direction": "decrease",
+              "kind": "omission",
+              "magnitude": "small"
+            }
+          ],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.00 to +0.10",
+          "modulating": [
+            "coordinator_prompt",
+            "oversight_policy"
+          ],
+          "risks": "",
+          "why": "The coordinator's outline omits the slide structure the brief asks for."
+        },
+        "id": "exp_2026-05-30_e0_v1",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": 75.71,
+          "drift_movements": [
+            {
+              "from_rate": 0.5,
+              "hypothesis_match": false,
+              "kind": "omission",
+              "note": "",
+              "to_rate": 0.75
+            }
+          ],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "2026-05-30T01:00:00Z",
+          "rejection_reason": "",
+          "scalar_score_delta": 75.71,
+          "structure": "gauntlet",
+          "tournament_decision": "rejected",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "p1",
+          "p2"
+        ],
+        "proposed_at": "2026-05-30T00:30:00Z",
+        "round_index": 0,
+        "patches": {
+          "coordinator_prompt": {
+            "id": "p1",
+            "mutation_id": "coordinator_prompt",
+            "op": "replace",
+            "new_content": "You are the coordinator.\nAlways emit an explicit slide structure.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Enforce structure."
+          },
+          "oversight_policy": {
+            "id": "p2",
+            "mutation_id": "oversight_policy",
+            "op": "replace",
+            "new_content": "Tighten coordinator oversight.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Tighten oversight."
+          }
+        },
+        "decision": "rejected",
+        "promoted": false,
+        "decision_label": "rejected"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-05-30T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1601.881112404967,
+          "elo_se": 149.88256838577433,
+          "elo_games": 2,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "judges": [
+          {
+            "judge_name": "incorporates_feedback",
+            "weighted_loss": 34.0,
+            "raw_loss": 34.0,
+            "run_count": 1,
+            "weight": 1.0
+          },
+          {
+            "judge_name": "omission",
+            "weighted_loss": 10.0,
+            "raw_loss": 10.0,
+            "run_count": 2,
+            "weight": 1.0
+          }
+        ]
+      },
       "champion": "v0",
       "parent": "v0",
+      "parent_epoch_id": "2026-05-30_e0",
+      "parent_inconsistency": null,
       "structure": "gauntlet",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -5464,8 +6045,82 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v0",
       "found": true,
+      "generation": {
+        "generation_id": "v0",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": null,
+        "promoted": true,
+        "created_at": "2026-05-30T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
+        "elo": 1601.881112404967,
+        "elo_se": 149.88256838577433,
+        "elo_games": 2
+      },
+      "experiment": {
+        "generation_id": "v0",
+        "parent_generation_id": null,
+        "proposed_at": "2026-05-30T00:00:00Z",
+        "patches": {},
+        "decision": "baseline",
+        "promoted": true,
+        "decision_label": "seed (v0)"
+      },
+      "relatives": [
+        {
+          "generation_id": "v1",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": "v0",
+          "promoted": false,
+          "created_at": "2026-05-30T00:30:00Z",
+          "decision": "rejected",
+          "decision_label": "rejected",
+          "round_index": 0,
+          "elo": 1449.0594437975165,
+          "elo_se": 160.1851199535229,
+          "elo_games": 1,
+          "relationship": "child"
+        },
+        {
+          "generation_id": "v2",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": "v0",
+          "promoted": false,
+          "created_at": "2026-05-30T01:30:00Z",
+          "decision": "rejected",
+          "decision_label": "rejected",
+          "round_index": 1,
+          "elo": 1449.0594437975165,
+          "elo_se": 160.1851199535229,
+          "elo_games": 1,
+          "relationship": "child"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v0",
+        "judges": [
+          {
+            "judge_name": "incorporates_feedback",
+            "weighted_loss": 10.0,
+            "raw_loss": 10.0,
+            "run_count": 1,
+            "weight": 1.0
+          },
+          {
+            "judge_name": "omission",
+            "weighted_loss": 10.0,
+            "raw_loss": 10.0,
+            "run_count": 2,
+            "weight": 1.0
+          }
+        ]
+      },
       "champion": "v0",
       "parent": null,
+      "parent_epoch_id": null,
+      "parent_inconsistency": null,
       "structure": "gauntlet",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -5810,8 +6465,143 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v1",
       "found": true,
+      "generation": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": false,
+        "created_at": "2026-05-30T00:30:00Z",
+        "decision": "rejected",
+        "decision_label": "rejected",
+        "round_index": 0,
+        "elo": 1449.0594437975165,
+        "elo_se": 160.1851199535229,
+        "elo_games": 1
+      },
+      "experiment": {
+        "epoch_id": "2026-05-30_e0",
+        "format_version": 1,
+        "generation_id": "v1",
+        "hypothesis": {
+          "core_idea": "Enforce explicit slide-structure output.",
+          "expected_drift_movements": [
+            {
+              "direction": "decrease",
+              "kind": "omission",
+              "magnitude": "small"
+            }
+          ],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.00 to +0.10",
+          "modulating": [
+            "coordinator_prompt",
+            "oversight_policy"
+          ],
+          "risks": "",
+          "why": "The coordinator's outline omits the slide structure the brief asks for."
+        },
+        "id": "exp_2026-05-30_e0_v1",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": 75.71,
+          "drift_movements": [
+            {
+              "from_rate": 0.5,
+              "hypothesis_match": false,
+              "kind": "omission",
+              "note": "",
+              "to_rate": 0.75
+            }
+          ],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "2026-05-30T01:00:00Z",
+          "rejection_reason": "",
+          "scalar_score_delta": 75.71,
+          "structure": "gauntlet",
+          "tournament_decision": "rejected",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "p1",
+          "p2"
+        ],
+        "proposed_at": "2026-05-30T00:30:00Z",
+        "round_index": 0,
+        "patches": {
+          "coordinator_prompt": {
+            "id": "p1",
+            "mutation_id": "coordinator_prompt",
+            "op": "replace",
+            "new_content": "You are the coordinator.\nAlways emit an explicit slide structure.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Enforce structure."
+          },
+          "oversight_policy": {
+            "id": "p2",
+            "mutation_id": "oversight_policy",
+            "op": "replace",
+            "new_content": "Tighten coordinator oversight.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Tighten oversight."
+          }
+        },
+        "decision": "rejected",
+        "promoted": false,
+        "decision_label": "rejected"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-05-30T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1601.881112404967,
+          "elo_se": 149.88256838577433,
+          "elo_games": 2,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "judges": [
+          {
+            "judge_name": "incorporates_feedback",
+            "weighted_loss": 34.0,
+            "raw_loss": 34.0,
+            "run_count": 1,
+            "weight": 1.0
+          },
+          {
+            "judge_name": "omission",
+            "weighted_loss": 10.0,
+            "raw_loss": 10.0,
+            "run_count": 2,
+            "weight": 1.0
+          }
+        ]
+      },
       "champion": "v0",
       "parent": "v0",
+      "parent_epoch_id": "2026-05-30_e0",
+      "parent_inconsistency": null,
       "structure": "gauntlet",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -6133,8 +6923,132 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v2",
       "found": true,
+      "generation": {
+        "generation_id": "v2",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": false,
+        "created_at": "2026-05-30T01:30:00Z",
+        "decision": "rejected",
+        "decision_label": "rejected",
+        "round_index": 1,
+        "elo": 1449.0594437975165,
+        "elo_se": 160.1851199535229,
+        "elo_games": 1
+      },
+      "experiment": {
+        "epoch_id": "2026-05-30_e0",
+        "format_version": 1,
+        "generation_id": "v2",
+        "hypothesis": {
+          "core_idea": "Tighten coordinator oversight.",
+          "expected_drift_movements": [
+            {
+              "direction": "decrease",
+              "kind": "omission",
+              "magnitude": "small"
+            }
+          ],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.00 to +0.10",
+          "modulating": [
+            "oversight_policy"
+          ],
+          "risks": "",
+          "why": "The oversight policy lets a drifting draft through."
+        },
+        "id": "exp_2026-05-30_e0_v2",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": 1.51,
+          "drift_movements": [
+            {
+              "from_rate": 0.5,
+              "hypothesis_match": true,
+              "kind": "omission",
+              "note": "",
+              "to_rate": 0.4
+            }
+          ],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "2026-05-30T02:00:00Z",
+          "rejection_reason": "",
+          "scalar_score_delta": 1.51,
+          "structure": "gauntlet",
+          "tournament_decision": "rejected",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "p3"
+        ],
+        "proposed_at": "2026-05-30T01:30:00Z",
+        "round_index": 1,
+        "patches": {
+          "oversight_policy": {
+            "id": "p3",
+            "mutation_id": "oversight_policy",
+            "op": "replace",
+            "new_content": "Loosen coordinator oversight.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Loosen oversight."
+          }
+        },
+        "decision": "rejected",
+        "promoted": false,
+        "decision_label": "rejected"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-05-30T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1601.881112404967,
+          "elo_se": 149.88256838577433,
+          "elo_games": 2,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v2",
+        "judges": [
+          {
+            "judge_name": "incorporates_feedback",
+            "weighted_loss": 12.0,
+            "raw_loss": 12.0,
+            "run_count": 1,
+            "weight": 1.0
+          },
+          {
+            "judge_name": "omission",
+            "weighted_loss": 4.0,
+            "raw_loss": 4.0,
+            "run_count": 1,
+            "weight": 1.0
+          }
+        ]
+      },
       "champion": "v0",
       "parent": "v0",
+      "parent_epoch_id": "2026-05-30_e0",
+      "parent_inconsistency": null,
       "structure": "gauntlet",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -6625,6 +7539,18 @@
         }
       ],
       "current_champion": "v0",
+      "champion_record": {
+        "generation_id": "v0",
+        "epoch_id": "2026-08-01_identity",
+        "parent_generation_id": null,
+        "promoted": true,
+        "created_at": "2026-08-01T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
+        "elo": 1558.6151292645534,
+        "elo_se": 159.73639641300883,
+        "elo_games": 1
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -6808,8 +7734,128 @@
       "epoch_id": "2026-08-01_identity",
       "generation_id": "v2",
       "found": true,
+      "generation": {
+        "generation_id": "v2",
+        "epoch_id": "2026-08-01_identity",
+        "parent_generation_id": "v0",
+        "promoted": false,
+        "created_at": "2026-08-01T00:30:00Z",
+        "decision": "rejected",
+        "decision_label": "rejected",
+        "round_index": 0,
+        "elo": 1441.3848707354466,
+        "elo_se": 159.73639641300883,
+        "elo_games": 1
+      },
+      "experiment": {
+        "epoch_id": "2026-08-01_identity",
+        "format_version": 1,
+        "generation_id": "v2",
+        "hypothesis": {
+          "core_idea": "Name the audience up front and demand a slide outline before prose",
+          "expected_drift_movements": [
+            {
+              "direction": "decrease",
+              "kind": "off_topic",
+              "magnitude": "medium"
+            }
+          ],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.10 to +0.20",
+          "modulating": [
+            "prompt.system",
+            "agent.temperature"
+          ],
+          "risks": "A longer prompt may crowd out the task description.",
+          "why": "The judge flags narrative drift whenever the agent starts writing paragraphs first."
+        },
+        "id": "exp_2026-08-01_identity_v2",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": -0.03,
+          "drift_movements": [
+            {
+              "from_rate": 0.5,
+              "hypothesis_match": true,
+              "kind": "off_topic",
+              "note": "",
+              "to_rate": 0.3
+            }
+          ],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": -0.25,
+          "ran_at": "2026-08-01T01:00:00Z",
+          "rejection_reason": "pass_rate_regressed",
+          "scalar_score_delta": -0.03,
+          "structure": "gauntlet",
+          "tournament_decision": "rejected",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "p1",
+          "p2"
+        ],
+        "proposed_at": "2026-08-01T00:30:00Z",
+        "round_index": 0,
+        "patches": {
+          "prompt.system": {
+            "id": "p1",
+            "mutation_id": "prompt.system",
+            "op": "replace",
+            "new_content": "a\nb\nc",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Lead with the audience."
+          },
+          "agent.temperature": {
+            "id": "p2",
+            "mutation_id": "agent.temperature",
+            "op": "set_numeric",
+            "new_content": null,
+            "new_numeric": 0.3,
+            "new_enum": null,
+            "rationale": "Steadier prose."
+          }
+        },
+        "decision": "rejected",
+        "promoted": false,
+        "decision_label": "rejected"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-08-01_identity",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-08-01T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1558.6151292645534,
+          "elo_se": 159.73639641300883,
+          "elo_games": 1,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-08-01_identity",
+        "generation_id": "v2",
+        "judges": []
+      },
       "champion": "v0",
       "parent": "v0",
+      "parent_epoch_id": "2026-08-01_identity",
+      "parent_inconsistency": null,
       "structure": "gauntlet",
       "per_entry": {
         "epoch_id": "2026-08-01_identity",
@@ -7548,6 +8594,19 @@
         }
       ],
       "current_champion": "v3",
+      "champion_record": {
+        "generation_id": "v3",
+        "epoch_id": "2026-06-01_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-06-01T00:30:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1668.297188382394,
+        "elo_se": 126.7249593380244,
+        "elo_games": 6
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -8294,8 +9353,122 @@
       "epoch_id": "2026-06-01_e0",
       "generation_id": "v3",
       "found": true,
+      "generation": {
+        "generation_id": "v3",
+        "epoch_id": "2026-06-01_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-06-01T00:30:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1668.297188382394,
+        "elo_se": 126.7249593380244,
+        "elo_games": 6
+      },
+      "experiment": {
+        "epoch_id": "2026-06-01_e0",
+        "format_version": 1,
+        "generation_id": "v3",
+        "hypothesis": {
+          "core_idea": "Idea v3.",
+          "expected_drift_movements": [],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.00 to +0.10",
+          "modulating": [
+            "site"
+          ],
+          "risks": "",
+          "why": "The prior round's losses point at this site."
+        },
+        "id": "exp_2026-06-01_e0_v3",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": 0.0,
+          "drift_movements": [],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [
+            {
+              "delta_scalar": -0.16,
+              "match_id": "rung0_m2",
+              "opponent": "v0",
+              "won": true
+            },
+            {
+              "delta_scalar": 1.0,
+              "match_id": "rung1_m0",
+              "opponent": "v0",
+              "won": false
+            },
+            {
+              "delta_scalar": -32.19,
+              "match_id": "racing-final",
+              "opponent": "v0",
+              "won": true
+            }
+          ],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "2026-06-01T00:35:00Z",
+          "rejection_reason": "",
+          "scalar_score_delta": 0.0,
+          "structure": "racing",
+          "tournament_decision": "promoted",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "patch_v3"
+        ],
+        "proposed_at": "2026-06-01T00:30:00Z",
+        "round_index": 0,
+        "patches": {
+          "site": {
+            "id": "patch_v3",
+            "mutation_id": "site",
+            "op": "replace",
+            "new_content": "Edit v3.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Apply the idea."
+          }
+        },
+        "decision": "promoted",
+        "promoted": true,
+        "decision_label": "promoted"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-06-01_e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-06-01T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1592.2098394711106,
+          "elo_se": 119.27445576220985,
+          "elo_games": 8,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-06-01_e0",
+        "generation_id": "v3",
+        "judges": []
+      },
       "champion": "v3",
       "parent": "v0",
+      "parent_epoch_id": "2026-06-01_e0",
+      "parent_inconsistency": null,
       "structure": "racing",
       "per_entry": {
         "epoch_id": "2026-06-01_e0",
@@ -8689,6 +9862,18 @@
         }
       ],
       "current_champion": "v0",
+      "champion_record": {
+        "generation_id": "v0",
+        "epoch_id": "2026-06-01_e0",
+        "parent_generation_id": null,
+        "promoted": true,
+        "created_at": "2026-06-01T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
+        "elo": 1558.6151292645534,
+        "elo_se": 159.73639641300883,
+        "elo_games": 1
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -10131,6 +11316,18 @@
         }
       ],
       "current_champion": "v0",
+      "champion_record": {
+        "generation_id": "v0",
+        "epoch_id": "2026-06-02_e1",
+        "parent_generation_id": null,
+        "promoted": true,
+        "created_at": "2026-06-02T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
+        "elo": 1535.093246869124,
+        "elo_se": 125.05890412150966,
+        "elo_games": 6
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -10579,6 +11776,19 @@
         }
       ],
       "current_champion": "v4",
+      "champion_record": {
+        "generation_id": "v4",
+        "epoch_id": "2026-06-01_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-06-01T00:40:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1705.678469566626,
+        "elo_se": 136.2394073930879,
+        "elo_games": 4
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -11247,6 +12457,18 @@
         }
       ],
       "current_champion": "v0",
+      "champion_record": {
+        "generation_id": "v0",
+        "epoch_id": "2026-06-02_e1",
+        "parent_generation_id": null,
+        "promoted": true,
+        "created_at": "2026-06-02T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
+        "elo": 1535.093246869124,
+        "elo_se": 125.05890412150966,
+        "elo_games": 6
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -11659,6 +12881,19 @@
         }
       ],
       "current_champion": "v1",
+      "champion_record": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1630.260967401915,
+        "elo_se": 143.1918270298256,
+        "elo_games": 3
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -12520,8 +13755,103 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v1",
       "found": true,
+      "generation": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1630.260967401915,
+        "elo_se": 143.1918270298256,
+        "elo_games": 3
+      },
+      "experiment": {
+        "epoch_id": "2026-05-30_e0",
+        "format_version": 1,
+        "generation_id": "v1",
+        "hypothesis": {
+          "core_idea": "Idea v1.",
+          "expected_drift_movements": [],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.00 to +0.10",
+          "modulating": [
+            "site"
+          ],
+          "risks": "",
+          "why": "The prior round's losses point at this site."
+        },
+        "id": "exp_2026-05-30_e0_v1",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": 0.0,
+          "drift_movements": [],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "2026-05-30T00:15:00Z",
+          "rejection_reason": "",
+          "scalar_score_delta": 0.0,
+          "structure": "racing",
+          "tournament_decision": "promoted",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "patch_v1"
+        ],
+        "proposed_at": "2026-05-30T00:10:00Z",
+        "round_index": 0,
+        "patches": {
+          "site": {
+            "id": "patch_v1",
+            "mutation_id": "site",
+            "op": "replace",
+            "new_content": "Edit v1.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Apply the idea."
+          }
+        },
+        "decision": "promoted",
+        "promoted": true,
+        "decision_label": "promoted"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-05-30T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1545.1090597889415,
+          "elo_se": 139.78594815144453,
+          "elo_games": 3,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "judges": []
+      },
       "champion": "v1",
       "parent": "v0",
+      "parent_epoch_id": "2026-05-30_e0",
+      "parent_inconsistency": null,
       "structure": "racing",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -13008,6 +14338,18 @@
         }
       ],
       "current_champion": "v0",
+      "champion_record": {
+        "generation_id": "v0",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": null,
+        "promoted": true,
+        "created_at": "2026-05-30T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
+        "elo": null,
+        "elo_se": null,
+        "elo_games": null
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -13666,6 +15008,19 @@
         }
       ],
       "current_champion": "v1",
+      "champion_record": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1653.6333484331997,
+        "elo_se": 143.09320702575084,
+        "elo_games": 3
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -14674,8 +16029,103 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v1",
       "found": true,
+      "generation": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1653.6333484331997,
+        "elo_se": 143.09320702575084,
+        "elo_games": 3
+      },
+      "experiment": {
+        "epoch_id": "2026-05-30_e0",
+        "format_version": 1,
+        "generation_id": "v1",
+        "hypothesis": {
+          "core_idea": "Idea v1.",
+          "expected_drift_movements": [],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.00 to +0.10",
+          "modulating": [
+            "site"
+          ],
+          "risks": "",
+          "why": "The prior round's losses point at this site."
+        },
+        "id": "exp_2026-05-30_e0_v1",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": -0.12,
+          "drift_movements": [],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "2026-05-30T00:15:00Z",
+          "rejection_reason": "",
+          "scalar_score_delta": -0.12,
+          "structure": "single_elim",
+          "tournament_decision": "promoted",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "patch_v1"
+        ],
+        "proposed_at": "2026-05-30T00:10:00Z",
+        "round_index": 0,
+        "patches": {
+          "site": {
+            "id": "patch_v1",
+            "mutation_id": "site",
+            "op": "replace",
+            "new_content": "Edit v1.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Apply the idea."
+          }
+        },
+        "decision": "promoted",
+        "promoted": true,
+        "decision_label": "promoted"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-05-30T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1541.0590492849155,
+          "elo_se": 129.9095061938662,
+          "elo_games": 5,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "judges": []
+      },
       "champion": "v1",
       "parent": "v0",
+      "parent_epoch_id": "2026-05-30_e0",
+      "parent_inconsistency": null,
       "structure": "single_elim",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -15050,6 +16500,19 @@
         }
       ],
       "current_champion": "v1",
+      "champion_record": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1633.2252800564895,
+        "elo_se": 145.1985826044856,
+        "elo_games": 3
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -15714,8 +17177,103 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v1",
       "found": true,
+      "generation": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1633.2252800564895,
+        "elo_se": 145.1985826044856,
+        "elo_games": 3
+      },
+      "experiment": {
+        "epoch_id": "2026-05-30_e0",
+        "format_version": 1,
+        "generation_id": "v1",
+        "hypothesis": {
+          "core_idea": "Idea v1.",
+          "expected_drift_movements": [],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.00 to +0.10",
+          "modulating": [
+            "site"
+          ],
+          "risks": "",
+          "why": "The prior round's losses point at this site."
+        },
+        "id": "exp_2026-05-30_e0_v1",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": -0.12,
+          "drift_movements": [],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "2026-05-30T00:15:00Z",
+          "rejection_reason": "",
+          "scalar_score_delta": -0.12,
+          "structure": "swiss",
+          "tournament_decision": "promoted",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "patch_v1"
+        ],
+        "proposed_at": "2026-05-30T00:10:00Z",
+        "round_index": 0,
+        "patches": {
+          "site": {
+            "id": "patch_v1",
+            "mutation_id": "site",
+            "op": "replace",
+            "new_content": "Edit v1.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Apply the idea."
+          }
+        },
+        "decision": "promoted",
+        "promoted": true,
+        "decision_label": "promoted"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-05-30T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1470.6353763934271,
+          "elo_se": 142.69446187956828,
+          "elo_games": 3,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "judges": []
+      },
       "champion": "v1",
       "parent": "v0",
+      "parent_epoch_id": "2026-05-30_e0",
+      "parent_inconsistency": null,
       "structure": "swiss",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -16149,6 +17707,19 @@
         }
       ],
       "current_champion": "v1",
+      "champion_record": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1656.7510384649354,
+        "elo_se": 143.30014085504575,
+        "elo_games": 3
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -17235,8 +18806,103 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v1",
       "found": true,
+      "generation": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1656.7510384649354,
+        "elo_se": 143.30014085504575,
+        "elo_games": 3
+      },
+      "experiment": {
+        "epoch_id": "2026-05-30_e0",
+        "format_version": 1,
+        "generation_id": "v1",
+        "hypothesis": {
+          "core_idea": "Idea v1.",
+          "expected_drift_movements": [],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.00 to +0.10",
+          "modulating": [
+            "site"
+          ],
+          "risks": "",
+          "why": "The prior round's losses point at this site."
+        },
+        "id": "exp_2026-05-30_e0_v1",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": -0.12,
+          "drift_movements": [],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "2026-05-30T00:15:00Z",
+          "rejection_reason": "",
+          "scalar_score_delta": -0.12,
+          "structure": "double_elim",
+          "tournament_decision": "promoted",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "patch_v1"
+        ],
+        "proposed_at": "2026-05-30T00:10:00Z",
+        "round_index": 0,
+        "patches": {
+          "site": {
+            "id": "patch_v1",
+            "mutation_id": "site",
+            "op": "replace",
+            "new_content": "Edit v1.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Apply the idea."
+          }
+        },
+        "decision": "promoted",
+        "promoted": true,
+        "decision_label": "promoted"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-05-30T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1561.7585493369984,
+          "elo_se": 126.54658693702089,
+          "elo_games": 6,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "judges": []
+      },
       "champion": "v1",
       "parent": "v0",
+      "parent_epoch_id": "2026-05-30_e0",
+      "parent_inconsistency": null,
       "structure": "double_elim",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -17623,6 +19289,19 @@
         }
       ],
       "current_champion": "v1",
+      "champion_record": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1641.4940497354632,
+        "elo_se": 143.7135649742824,
+        "elo_games": 3
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -18226,6 +19905,18 @@
         }
       ],
       "current_champion": "v0",
+      "champion_record": {
+        "generation_id": "v0",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": null,
+        "promoted": true,
+        "created_at": "2026-05-30T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
+        "elo": null,
+        "elo_se": null,
+        "elo_games": null
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -18762,6 +20453,19 @@
         }
       ],
       "current_champion": "v1",
+      "champion_record": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1633.2252800564895,
+        "elo_se": 145.1985826044856,
+        "elo_games": 3
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -19559,6 +21263,19 @@
         }
       ],
       "current_champion": "v1",
+      "champion_record": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1715.7262843565688,
+        "elo_se": 131.87685392140042,
+        "elo_games": 6
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -20592,6 +22309,19 @@
         }
       ],
       "current_champion": "v1",
+      "champion_record": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1658.367581537957,
+        "elo_se": 141.02073253614483,
+        "elo_games": 3
+      },
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,
@@ -21461,8 +23191,103 @@
       "epoch_id": "2026-05-30_e0",
       "generation_id": "v1",
       "found": true,
+      "generation": {
+        "generation_id": "v1",
+        "epoch_id": "2026-05-30_e0",
+        "parent_generation_id": "v0",
+        "promoted": true,
+        "created_at": "2026-05-30T00:10:00Z",
+        "decision": "promoted",
+        "decision_label": "promoted",
+        "round_index": 0,
+        "elo": 1658.367581537957,
+        "elo_se": 141.02073253614483,
+        "elo_games": 3
+      },
+      "experiment": {
+        "epoch_id": "2026-05-30_e0",
+        "format_version": 1,
+        "generation_id": "v1",
+        "hypothesis": {
+          "core_idea": "Idea v1.",
+          "expected_drift_movements": [],
+          "expected_metric_movements": [],
+          "expected_pass_rate_delta": "+0.00 to +0.10",
+          "modulating": [
+            "site"
+          ],
+          "risks": "",
+          "why": "The prior round's losses point at this site."
+        },
+        "id": "exp_2026-05-30_e0_v1",
+        "outcome": {
+          "champion_eval_mode": "full",
+          "drift_loss_delta": -0.12,
+          "drift_movements": [],
+          "eliminated_in_round": null,
+          "evidence": null,
+          "final_rank": null,
+          "generalization_gap": null,
+          "holdout": null,
+          "holdout_loss": null,
+          "match_record": [],
+          "metric_movements": [],
+          "operator_override": false,
+          "operator_override_reason": "",
+          "pass_rate_delta": 0.0,
+          "ran_at": "2026-05-30T00:15:00Z",
+          "rejection_reason": "",
+          "scalar_score_delta": -0.12,
+          "structure": "racing",
+          "tournament_decision": "promoted",
+          "train_loss": null
+        },
+        "parent_generation_id": "v0",
+        "patch_ids": [
+          "patch_v1"
+        ],
+        "proposed_at": "2026-05-30T00:10:00Z",
+        "round_index": 0,
+        "patches": {
+          "site": {
+            "id": "patch_v1",
+            "mutation_id": "site",
+            "op": "replace",
+            "new_content": "Edit v1.",
+            "new_numeric": null,
+            "new_enum": null,
+            "rationale": "Apply the idea."
+          }
+        },
+        "decision": "promoted",
+        "promoted": true,
+        "decision_label": "promoted"
+      },
+      "relatives": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "2026-05-30_e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-05-30T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": 1549.9771666842853,
+          "elo_se": 128.78330935300502,
+          "elo_games": 5,
+          "relationship": "parent"
+        }
+      ],
+      "lineage_note": null,
+      "per_judge": {
+        "epoch_id": "2026-05-30_e0",
+        "generation_id": "v1",
+        "judges": []
+      },
       "champion": "v1",
       "parent": "v0",
+      "parent_epoch_id": "2026-05-30_e0",
+      "parent_inconsistency": null,
       "structure": "racing",
       "per_entry": {
         "epoch_id": "2026-05-30_e0",
@@ -22251,6 +24076,7 @@
       "mutations": [],
       "experiments": [],
       "current_champion": null,
+      "champion_record": null,
       "holdout": null,
       "delta_scalar_summary": {
         "champion_spine": null,

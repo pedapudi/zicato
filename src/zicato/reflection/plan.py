@@ -28,11 +28,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from zicato.epoch._storage import RecordError, check_record_format
+from zicato.storage import atomic_write_json
+from zicato.workspace.projection import mark_epoch_changed
 
 #: ``format_version`` stamped onto every ``plan.json``. A reader rejects any
 #: other version (absent / older / newer / garbage) by raising — a plan is a
@@ -147,10 +150,11 @@ class ReflectionPlan:
     executed: bool
     created_at: str
     format_version: int = PLAN_FORMAT_VERSION
+    _json: str | None = field(default=None, repr=False, compare=False)
 
     def to_json(self) -> dict[str, Any]:
-        """The JSON shape persisted as ``plan.json`` (lists rather than tuples)."""
-        return {
+        """Return stored fields unchanged, or encode a freshly constructed plan."""
+        fields = {
             "format_version": self.format_version,
             "reflection_id": self.reflection_id,
             "epoch_id": self.epoch_id,
@@ -164,41 +168,79 @@ class ReflectionPlan:
             "executed": self.executed,
             "created_at": self.created_at,
         }
+        if self._json is None:
+            return fields
+        stored: dict[str, Any] = json.loads(self._json)
+        defaults = {
+            "candidates": [],
+            "entries": [],
+            "checks": [],
+            "mode": MODE_ACTIVE,
+            "pre_registered": False,
+            "executed": False,
+            "created_at": "",
+        }
+        stored.update(
+            (key, value)
+            for key, value in fields.items()
+            if key in stored or value != defaults.get(key)
+        )
+        return stored
 
     @classmethod
-    def from_json(cls, data: dict[str, Any]) -> ReflectionPlan:
-        """Rebuild a plan from its ``plan.json`` dict.
-
-        Raises :class:`ValueError` on a ``format_version`` this reader does
-        not own — a pre-registration must never be silently reinterpreted.
-        """
-        version = data.get("format_version")
-        if version != PLAN_FORMAT_VERSION:
-            raise ValueError(
-                f"reflection plan.json format_version {version!r} is not "
-                f"{PLAN_FORMAT_VERSION} — refusing to reinterpret a pre-registration"
-            )
+    def from_json(cls, data: Any) -> ReflectionPlan:
+        """Accept one plan without coercing flags or filling stored omissions."""
+        if not isinstance(data, dict):
+            raise RecordError("reflection plan: expected a JSON object")
+        check_record_format(
+            data, "reflection plan", expected_version=PLAN_FORMAT_VERSION, allow_missing=False
+        )
+        for name in ("reflection_id", "epoch_id"):
+            if not isinstance(data.get(name), str) or not data[name]:
+                raise RecordError(f"reflection plan: {name} must be a nonempty string")
+        for name in ("created_at", "mode"):
+            if name in data and not isinstance(data[name], str):
+                raise RecordError(f"reflection plan: {name} must be a string")
+        mode = data.get("mode", MODE_ACTIVE)
+        if mode not in (MODE_ACTIVE, MODE_PASSIVE):
+            raise RecordError(f"reflection plan: unknown mode {mode!r}")
+        for name in ("candidates", "entries", "checks"):
+            if name in data and (
+                not isinstance(data[name], list)
+                or any(not isinstance(value, str) or not value for value in data[name])
+            ):
+                raise RecordError(f"reflection plan: {name} must be an array of nonempty strings")
+        replicates = data.get("replicates")
+        if isinstance(replicates, bool) or not isinstance(replicates, int) or replicates < 1:
+            raise RecordError("reflection plan: replicates must be a positive integer")
+        for name in ("pre_registered", "executed"):
+            if name in data and not isinstance(data[name], bool):
+                raise RecordError(f"reflection plan: {name} must be a boolean")
+        model = data.get("adjudicator_model")
+        if model is not None and not isinstance(model, str):
+            raise RecordError("reflection plan: adjudicator_model must be a string or null")
+        try:
+            encoded = json.dumps(data, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise RecordError(f"reflection plan: invalid JSON value: {exc}") from exc
         return cls(
-            reflection_id=str(data["reflection_id"]),
-            epoch_id=str(data["epoch_id"]),
-            candidates=tuple(str(c) for c in data.get("candidates", ())),
-            entries=tuple(str(e) for e in data.get("entries", ())),
-            replicates=int(data["replicates"]),
-            adjudicator_model=(
-                str(data["adjudicator_model"])
-                if data.get("adjudicator_model") is not None
-                else None
-            ),
-            checks=tuple(str(c) for c in data.get("checks", ())),
-            mode=str(data.get("mode", MODE_ACTIVE)),
-            pre_registered=bool(data.get("pre_registered", False)),
-            executed=bool(data.get("executed", False)),
-            created_at=str(data.get("created_at", "")),
+            reflection_id=data["reflection_id"],
+            epoch_id=data["epoch_id"],
+            candidates=tuple(data.get("candidates", ())),
+            entries=tuple(data.get("entries", ())),
+            replicates=replicates,
+            adjudicator_model=model,
+            checks=tuple(data.get("checks", ())),
+            mode=mode,
+            pre_registered=data.get("pre_registered", False),
+            executed=data.get("executed", False),
+            created_at=data.get("created_at", ""),
+            _json=encoded,
         )
 
     def mark_executed(self) -> ReflectionPlan:
-        """Return a copy with ``executed=True`` (the plan is frozen)."""
-        return replace(self, executed=True)
+        """Set the completion flag while retaining other recorded fields."""
+        return self.from_json(dict(self.to_json(), executed=True))
 
 
 def new_plan(
@@ -225,11 +267,11 @@ def new_plan(
     return ReflectionPlan(
         reflection_id=rid,
         epoch_id=epoch_id,
-        candidates=tuple(str(c) for c in candidates),
-        entries=tuple(str(e) for e in entries),
-        replicates=int(replicates),
+        candidates=tuple(candidates),
+        entries=tuple(entries),
+        replicates=replicates,
         adjudicator_model=adjudicator_model,
-        checks=tuple(str(c) for c in checks),
+        checks=tuple(checks),
         mode=mode,
         pre_registered=pre_registered,
         executed=False,
@@ -238,37 +280,35 @@ def new_plan(
 
 
 def write_plan(workspace_root: Path, plan: ReflectionPlan) -> Path:
-    """Persist ``plan.json`` atomically; return its path.
-
-    tmp + rename under the reflection's directory
-    (:func:`zicato.core.workspace.reflection_plan_path`). Re-writing an
-    executed plan over its pre-registered self is the normal resume path.
-    """
+    """Validate and durably publish the plan after marking its index projection."""
     from zicato.core.workspace import reflection_plan_path  # noqa: PLC0415
 
+    body = ReflectionPlan.from_json(plan.to_json()).to_json()
     path = reflection_plan_path(workspace_root, plan.epoch_id, plan.reflection_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(plan.to_json(), indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    prior = read_plan(workspace_root, plan.epoch_id, plan.reflection_id)
+    if prior is None or json.dumps(prior.to_json(), sort_keys=True) != json.dumps(
+        body, sort_keys=True
+    ):
+        mark_epoch_changed(workspace_root, plan.epoch_id)
+        atomic_write_json(path, body)
     return path
 
 
 def read_plan(workspace_root: Path, epoch_id: str, reflection_id: str) -> ReflectionPlan | None:
-    """Load a persisted plan; ``None`` when the file is absent.
-
-    A present-but-malformed / wrong-version file raises via
-    :meth:`ReflectionPlan.from_json` — an unreadable pre-registration is an
-    error the operator must see rather than a silent skip.
-    """
+    """Return an accepted plan, or ``None`` only when its file is absent."""
     from zicato.core.workspace import reflection_plan_path  # noqa: PLC0415
 
     path = reflection_plan_path(workspace_root, epoch_id, reflection_id)
     try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return None
-    return ReflectionPlan.from_json(json.loads(raw))
+    except (OSError, ValueError) as exc:
+        raise RecordError(f"reflection plan {path}: {exc}") from exc
+    plan = ReflectionPlan.from_json(body)
+    if plan.epoch_id != epoch_id or plan.reflection_id != reflection_id:
+        raise RecordError(f"reflection plan {path}: recorded identity does not match its location")
+    return plan
 
 
 __all__ = [

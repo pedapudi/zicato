@@ -40,7 +40,7 @@ def test_init_creates_workspace(tmp_path: Path) -> None:
     # The shape the lineage loader reads — a ``nodes``/``edges`` document
     # is rejected as malformed by ``load_lineage`` (issue #124 triage).
     assert lineage == {"epochs": []}
-    assert load_lineage(workspace) == {"epochs": []}
+    assert load_lineage(workspace).to_dict() == {"epochs": []}
 
 
 def test_init_scaffolds_the_proposal_runtime_unfilled(tmp_path: Path) -> None:

@@ -11,75 +11,39 @@ four categories sourced from the live workspace:
 These tests pin the result shape, the per-category cap, the empty-query
 short-circuit, and the exact-vs-substring sort order against a populated
 fixture workspace.
+
+Workspace paths and the index schema come from the shared fixture helpers.
+Search records and expected results remain explicit in each test; malformed
+board cases write their exact bytes through the layout's board path.
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
 
+from tests._workspace_support import (
+    seed_index,
+    set_current_epoch,
+    workspace,
+    write_jsonl,
+    write_text,
+)
 from zicato.dashboard.server import create_app
 from zicato.query import WorkspacePaths, build_search_results
 from zicato.query.judge_view import SEARCH_LIMIT_PER_CATEGORY
-
-
-def _write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-
-
-def _build_search_index(db_path: Path, epoch_id: str, patches: list[tuple]) -> None:
-    """Write the minimal SQLite tables the search reader queries."""
-    conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
-        CREATE TABLE patches (
-            patch_id TEXT PRIMARY KEY,
-            epoch_id TEXT,
-            generation_id TEXT,
-            mutation_id TEXT,
-            op TEXT,
-            rationale TEXT
-        );
-        CREATE TABLE judge_losses (
-            run_id TEXT,
-            judge_name TEXT,
-            weighted_loss REAL,
-            raw_loss REAL,
-            weight REAL,
-            PRIMARY KEY (run_id, judge_name)
-        );
-        """
-    )
-    conn.executemany(
-        "INSERT INTO patches VALUES (?, ?, ?, ?, ?, ?)",
-        patches,
-    )
-    conn.executemany(
-        "INSERT INTO judge_losses VALUES (?, ?, ?, ?, ?)",
-        [
-            ("r1", "no_fabricated_numbers", 0.1, 0.1, 1.0),
-            ("r2", "incorporates_feedback", 0.2, 0.2, 1.0),
-        ],
-    )
-    conn.commit()
-    conn.close()
+from zicato.workspace import WorkspaceLayout
 
 
 @pytest.fixture
 def search_workspace(tmp_path: Path) -> Path:
     """A workspace populated with board entries, judges, and patches."""
-    ws = tmp_path / ".zicato"
+    layout = workspace(tmp_path)
     epoch_id = "2026-05-20_presn"
-    epoch_dir = ws / "epochs" / epoch_id
-    (ws / "runtime" / "active_runs").mkdir(parents=True)
-    (ws / "runtime" / "control").mkdir(parents=True)
-
-    _write(ws / "current_epoch", epoch_id)
+    set_current_epoch(layout, epoch_id)
 
     # Three entries — one matches "q3", one matches "waffles", one
     # matches "metrics" (substring inside id).
@@ -109,10 +73,7 @@ def search_workspace(tmp_path: Path) -> Path:
             ],
         },
     ]
-    _write(
-        epoch_dir / "board.jsonl",
-        "\n".join(json.dumps(line) for line in board_lines) + "\n",
-    )
+    write_jsonl(layout.board(epoch_id), board_lines)
 
     # Patches in the index: one with mutation_id "researcher_instruction"
     # (substring match for "researcher"), one with rationale that
@@ -120,46 +81,66 @@ def search_workspace(tmp_path: Path) -> Path:
     # patches whose mutation_id starts with "noise_" so the per-category
     # limit test has data to work with.
     patches = [
-        (
-            "p1",
-            epoch_id,
-            "v2",
-            "researcher_instruction",
-            "replace",
-            "Adding explicit constraints against tangential content.",
-        ),
-        (
-            "p2",
-            epoch_id,
-            "v3",
-            "coordinator_instruction",
-            "replace",
-            "Improve topicality enforcement in the coordinator.",
-        ),
+        {
+            "patch_id": "p1",
+            "epoch_id": epoch_id,
+            "generation_id": "v2",
+            "mutation_id": "researcher_instruction",
+            "op": "replace",
+            "rationale": "Adding explicit constraints against tangential content.",
+        },
+        {
+            "patch_id": "p2",
+            "epoch_id": epoch_id,
+            "generation_id": "v3",
+            "mutation_id": "coordinator_instruction",
+            "op": "replace",
+            "rationale": "Improve topicality enforcement in the coordinator.",
+        },
     ]
     # 15 noise patches whose mutation_id all begin with "noise_match_" so
     # a search for "noise_match" hits more than SEARCH_LIMIT_PER_CATEGORY.
     for i in range(15):
         patches.append(
-            (
-                f"noise_p{i}",
-                epoch_id,
-                f"v{10 + i}",
-                f"noise_match_{i:02d}",
-                "replace",
-                f"Noise patch {i}",
-            )
+            {
+                "patch_id": f"noise_p{i}",
+                "epoch_id": epoch_id,
+                "generation_id": f"v{10 + i}",
+                "mutation_id": f"noise_match_{i:02d}",
+                "op": "replace",
+                "rationale": f"Noise patch {i}",
+            }
         )
-    _build_search_index(ws / "index.db", epoch_id, patches)
+    seed_index(
+        layout,
+        {
+            "patches": patches,
+            "judge_losses": [
+                {
+                    "run_id": "r1",
+                    "judge_name": "no_fabricated_numbers",
+                    "weighted_loss": 0.1,
+                    "raw_loss": 0.1,
+                    "weight": 1.0,
+                },
+                {
+                    "run_id": "r2",
+                    "judge_name": "incorporates_feedback",
+                    "weighted_loss": 0.2,
+                    "raw_loss": 0.2,
+                    "weight": 1.0,
+                },
+            ],
+        },
+    )
 
-    return ws
+    return layout.root
 
 
 @pytest.fixture
 def static_dir(tmp_path: Path) -> Path:
     d = tmp_path / "static"
-    d.mkdir()
-    (d / "index.html").write_text("<!doctype html><title>zicato</title>", encoding="utf-8")
+    write_text(d / "index.html", "<!doctype html><title>zicato</title>")
     return d
 
 
@@ -218,8 +199,8 @@ def test_build_search_results_judge_scan_degrades_on_a_torn_board(
     siblings survive.
     """
     paths = WorkspacePaths(search_workspace)
-    board = search_workspace / "epochs" / "2026-05-20_presn" / "board.jsonl"
-    _write(
+    board = WorkspaceLayout.from_root(search_workspace).board("2026-05-20_presn")
+    write_text(
         board,
         "\n".join(
             [
@@ -259,7 +240,7 @@ def test_judge_board_scan_survives_a_non_utf8_board(
     """
     from zicato.query.judge_view import _collect_judge_names_from_board_file
 
-    board = search_workspace / "epochs" / "2026-05-20_presn" / "board.jsonl"
+    board = WorkspaceLayout.from_root(search_workspace).board("2026-05-20_presn")
     board.write_bytes(b"\xff\xfe not utf-8 at all\n")
 
     assert _collect_judge_names_from_board_file(board) == set()

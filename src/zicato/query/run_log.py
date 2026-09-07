@@ -130,7 +130,9 @@ def _tail_events(path: Path, limit: int) -> list[dict[str, Any]]:
     return records
 
 
-def _newest_active_run_events(paths: WorkspacePaths) -> Path | None:
+def _newest_active_run_events(
+    paths: WorkspacePaths, active_runs: list[dict[str, Any]] | None = None
+) -> Path | None:
     runs_dir = paths.active_runs_dir
     if not runs_dir.is_dir():
         return None
@@ -146,7 +148,11 @@ def _newest_active_run_events(paths: WorkspacePaths) -> Path | None:
             newest = (mtime, entry)
     if newest is None:
         return None
-    run = _read_json_value(newest[1])
+    run = (
+        next((row for row in active_runs if row.get("run_id") == newest[1].stem), None)
+        if active_runs is not None
+        else _read_json_value(newest[1])
+    )
     if not isinstance(run, dict):
         return None
     events_path = run.get("events_jsonl_path")
@@ -169,9 +175,11 @@ def _newest_epoch_events(paths: WorkspacePaths) -> Path | None:
     return newest[1] if newest is not None else None
 
 
-def locate_events_file(paths: WorkspacePaths) -> Path | None:
+def locate_events_file(
+    paths: WorkspacePaths, *, active_runs: list[dict[str, Any]] | None = None
+) -> Path | None:
     """The ``events.jsonl`` the run-log tails — newest active run first."""
-    candidate = _newest_active_run_events(paths)
+    candidate = _newest_active_run_events(paths, active_runs)
     if candidate is not None and candidate.exists():
         return candidate
     return _newest_epoch_events(paths)
@@ -188,7 +196,13 @@ def _event_cursor(event: dict[str, Any], fallback_index: int) -> int:
     return seq if isinstance(seq, int) else fallback_index
 
 
-def build_run_log(paths: WorkspacePaths, limit: int, after: int | None = None) -> dict[str, Any]:
+def build_run_log(
+    paths: WorkspacePaths,
+    limit: int,
+    after: int | None = None,
+    *,
+    active_runs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """``GET /api/run-log`` body — run-log events plus an append cursor.
 
     Returns ``{"events": [...], "cursor": <int|None>, "events_path": str}``.
@@ -203,7 +217,7 @@ def build_run_log(paths: WorkspacePaths, limit: int, after: int | None = None) -
     ``cursor`` is the largest cursor in the file (``None`` when empty);
     the client passes it back as the next ``after``.
     """
-    path = locate_events_file(paths)
+    path = locate_events_file(paths, active_runs=active_runs)
     all_events = _tail_events(path, RUN_LOG_MAX_LIMIT) if path is not None else []
     cursor: int | None = None
     if all_events:

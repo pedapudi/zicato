@@ -53,18 +53,28 @@ import datetime as _dt
 import difflib
 import hashlib
 import json
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.runtime import CallLLM
-from zicato.core.workspace import (
-    proposer_reflection_findings_path,
-    proposer_reflections_dir,
-)
 from zicato.proposer.prompts import band_rate
+from zicato.proposer.reflection_records import (
+    FORBIDDEN_KEYS,
+    SEVERITY_CRITICAL,
+    SEVERITY_INFO,
+    SEVERITY_WARNING,
+    ProposerFinding,
+    ProposerReflection,
+    ProposerRemedy,
+    RedactionError,
+    assert_redacted,
+    epoch_ids_newest_first,
+    list_reflections,
+    read_finding,
+    write_reflection,
+)
 from zicato.proposer.scorecard import (
     MIN_SAMPLE_N,
     ProposerScorecard,
@@ -75,9 +85,6 @@ from zicato.proposer.scorecard import (
 
 # Severity vocabulary — the board-reflection set, so the two findings surfaces
 # rank and colour identically.
-SEVERITY_CRITICAL: str = "critical"
-SEVERITY_WARNING: str = "warning"
-SEVERITY_INFO: str = "info"
 _SEVERITY_RANK = {SEVERITY_CRITICAL: 3, SEVERITY_WARNING: 2, SEVERITY_INFO: 1}
 
 #: A rate must reach this before an emitter will draft an edit against it. Set
@@ -88,70 +95,6 @@ FIRE_THRESHOLD: float = 0.25
 #: A rate at or above this is CRITICAL rather than a warning — the mechanism is
 #: failing more often than it works.
 CRITICAL_THRESHOLD: float = 0.5
-
-
-# ---------------------------------------------------------------------------
-# Redaction — an active guard rather than a convention
-# ---------------------------------------------------------------------------
-
-#: Keys that must never appear in a persisted proposer-reflection record, at
-#: any depth. Two families: identity keys that name a specific board entry, and
-#: content keys that would carry task/answer/transcript text. The proposer may
-#: learn an aggregate property of its own behaviour; it may never learn what the
-#: board asks.
-FORBIDDEN_KEYS: frozenset[str] = frozenset(
-    {
-        "entry_id",
-        "entry_ids",
-        "entries",
-        "task",
-        "task_text",
-        "question",
-        "prompt",
-        "expected",
-        "expected_output",
-        "answer",
-        "output",
-        "transcript",
-        "turns",
-        "holdout",
-        "holdout_entries",
-        "attributable_regressions",
-        "run_ref",
-        "span",
-        "evidence_span",
-    }
-)
-
-
-class RedactionError(RuntimeError):
-    """A record reached the persist boundary carrying board content."""
-
-
-def assert_redacted(payload: Any, *, where: str = "record") -> None:
-    """Raise :class:`RedactionError` if ``payload`` carries a forbidden key.
-
-    Walks the whole structure — dicts, lists, tuples — because a leak one level
-    down is still a leak. Deliberately a KEY check rather than a value scan: a
-    value scan needs to know the board to know what to look for (and so would
-    have to read it), while the key check is total and needs nothing. Every
-    channel that could carry entry text into a record does so under one of
-    these names, and an emitter that invents a new one is adding a field that
-    must be reviewed anyway.
-    """
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            if str(key).lower() in FORBIDDEN_KEYS:
-                raise RedactionError(
-                    f"{where} carries forbidden key {key!r} — proposer-reflection records "
-                    "hold aggregate mechanism evidence only, never board content "
-                    "(issue #169, 'redacted evidence only')"
-                )
-            assert_redacted(value, where=f"{where}.{key}")
-        return
-    if isinstance(payload, list | tuple):
-        for i, item in enumerate(payload):
-            assert_redacted(item, where=f"{where}[{i}]")
 
 
 # ---------------------------------------------------------------------------
@@ -247,67 +190,6 @@ class ScorecardInvestigation:
 # ---------------------------------------------------------------------------
 # Findings
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class ProposerRemedy:
-    """A ready-to-apply edit to the proposer dir — the finding's remedy slot.
-
-    ``relative_path`` is resolved against the proposer dir; ``new_text`` is the
-    exact bytes the apply command writes; ``sha256`` digests them so an applied
-    recommendation is verifiable afterwards. ``diff`` is the unified diff
-    against what is on disk, for the operator to read before deciding.
-    """
-
-    kind: str
-    relative_path: str
-    new_text: str
-    sha256: str
-    diff: str = ""
-
-    def to_json(self) -> dict[str, Any]:
-        return {
-            "kind": self.kind,
-            "relative_path": self.relative_path,
-            "new_text": self.new_text,
-            "sha256": self.sha256,
-            "diff": self.diff,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class ProposerFinding:
-    """One recommendation, carrying the five-slot evidence convention.
-
-    The slots are the same five board reflection's findings carry, read for a
-    proposer: ``population`` (which proposals, which epochs), ``measured`` (the
-    scorecard numbers that fired it), ``compared_against`` (the banded prior
-    epochs or the base rate), ``remedy`` (the drafted diff — a real payload, not
-    a prose suggestion), and ``remedy_safety`` (what the edit cannot affect).
-    """
-
-    finding_id: str
-    severity: str
-    title: str
-    detail: str
-    population: str
-    measured: tuple[dict[str, Any], ...]
-    compared_against: str
-    remedy: ProposerRemedy | None
-    remedy_safety: str
-
-    def to_json(self) -> dict[str, Any]:
-        return {
-            "finding_id": self.finding_id,
-            "severity": self.severity,
-            "title": self.title,
-            "detail": self.detail,
-            "population": self.population,
-            "measured": [dict(m) for m in self.measured],
-            "compared_against": self.compared_against,
-            "remedy": self.remedy.to_json() if self.remedy is not None else None,
-            "remedy_safety": self.remedy_safety,
-        }
 
 
 #: What the edit an accepted recommendation makes CANNOT affect. Stated once
@@ -785,54 +667,6 @@ def mint_reflection_id(*, now: _dt.datetime | None = None) -> str:
     return f"prefl-{stamp}"
 
 
-def _write_json(path: Path, payload: Any) -> None:
-    """Atomically write ``payload`` as pretty JSON (tmp + rename)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
-
-
-@dataclass(frozen=True, slots=True)
-class ProposerReflection:
-    """One persisted recommend-only pass."""
-
-    reflection_id: str
-    epoch_id: str
-    created_at: str
-    investigation_source: str
-    findings: tuple[ProposerFinding, ...] = ()
-    investigation: Investigation | None = field(default=None)
-
-    def to_json(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "reflection_id": self.reflection_id,
-            "epoch_id": self.epoch_id,
-            "created_at": self.created_at,
-            "investigation_source": self.investigation_source,
-            "findings": [f.to_json() for f in self.findings],
-        }
-        if self.investigation is not None:
-            payload["investigation"] = self.investigation.to_json()
-        return payload
-
-
-def write_reflection(workspace_root: Path, reflection: ProposerReflection) -> Path:
-    """Persist one pass's ``findings.json``; return the path written.
-
-    Runs :func:`assert_redacted` over the FULL payload first. A record that
-    would leak never reaches the disk, and the failure is loud — an emitter bug
-    is a bug rather than a degrade.
-    """
-    payload = reflection.to_json()
-    assert_redacted(payload, where=f"proposer reflection {reflection.reflection_id}")
-    path = proposer_reflection_findings_path(
-        workspace_root, reflection.epoch_id, reflection.reflection_id
-    )
-    _write_json(path, payload)
-    return path
-
-
 def reflect(
     workspace_root: Path,
     epoch_id: str,
@@ -859,75 +693,13 @@ def reflect(
         created_at=created,
         investigation_source=investigation.source,
         findings=tuple(findings),
-        investigation=investigation,
+        investigation=investigation.to_json(),
     )
 
 
 # ---------------------------------------------------------------------------
 # Reading back — the pending queue
 # ---------------------------------------------------------------------------
-
-
-def _epoch_ids_newest_first(workspace_root: Path) -> list[str]:
-    """Epoch ids in reverse canonical order, enumerated from the DIRECTORY.
-
-    Deliberately the directory enumeration rather than
-    :func:`zicato.epoch.lifecycle.list_epochs`: a recommendation lives under
-    ``epochs/<id>/proposer_reflections/`` and is perfectly readable whether or
-    not that epoch's ``config.json`` parses. Requiring the config would make an
-    unreadable contract silently swallow the operator's pending queue.
-    """
-    from zicato.workspace import WorkspaceLayout, list_epoch_ids  # noqa: PLC0415
-
-    try:
-        return list(reversed(list_epoch_ids(WorkspaceLayout.from_root(workspace_root))))
-    except OSError:
-        return []
-
-
-def list_reflections(workspace_root: Path, epoch_id: str) -> list[dict[str, Any]]:
-    """Every persisted pass for ``epoch_id``, newest id first; ``[]`` when none."""
-    base = proposer_reflections_dir(workspace_root, epoch_id)
-    if not base.is_dir():
-        return []
-    out: list[dict[str, Any]] = []
-    for child in sorted(base.iterdir(), reverse=True):
-        if not child.is_dir():
-            continue
-        path = proposer_reflection_findings_path(workspace_root, epoch_id, child.name)
-        payload = _read_json(path)
-        if isinstance(payload, dict):
-            out.append(payload)
-    return out
-
-
-def _read_json(path: Path) -> Any:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def read_finding(
-    workspace_root: Path,
-    finding_id: str,
-    *,
-    epoch_id: str | None = None,
-) -> tuple[str, str, dict[str, Any]] | None:
-    """Find one recommendation by id; return ``(epoch_id, reflection_id, finding)``.
-
-    Searches ``epoch_id`` when given, else every epoch newest-first. Ids are
-    content-stable, so the same recommendation re-derived in a later pass
-    resolves to the newest copy — which is the one whose diff is against the
-    proposer dir as it stands now.
-    """
-    epoch_ids = [epoch_id] if epoch_id is not None else _epoch_ids_newest_first(workspace_root)
-    for eid in epoch_ids:
-        for payload in list_reflections(workspace_root, eid):
-            for finding in payload.get("findings", []):
-                if isinstance(finding, dict) and finding.get("finding_id") == finding_id:
-                    return eid, str(payload.get("reflection_id", "")), finding
-    return None
 
 
 def pending_recommendations(
@@ -944,23 +716,23 @@ def pending_recommendations(
     weakness, same id, already answered.
     """
     applied = applied_recommendation_ids(workspace_root)
-    epochs = _epoch_ids_newest_first(workspace_root)
+    epochs = epoch_ids_newest_first(workspace_root)
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     for eid in epochs:
-        for payload in list_reflections(workspace_root, eid):
-            for finding in payload.get("findings", []):
-                if not isinstance(finding, dict) or finding.get("remedy") is None:
+        for reflection in list_reflections(workspace_root, eid):
+            for finding in reflection.findings:
+                if finding.remedy is None:
                     continue
-                fid = str(finding.get("finding_id", ""))
-                if not fid or fid in seen or fid in applied:
+                fid = finding.finding_id
+                if fid in seen or fid in applied:
                     continue
                 seen.add(fid)
                 out.append(
                     {
-                        **finding,
+                        **finding.to_json(),
                         "epoch_id": eid,
-                        "reflection_id": payload.get("reflection_id", ""),
+                        "reflection_id": reflection.reflection_id,
                     }
                 )
                 if limit is not None and len(out) >= limit:
@@ -1013,10 +785,8 @@ def echo_pending_recommendations(workspace_root: Path) -> None:
 
 def applied_recommendation_ids(workspace_root: Path) -> set[str]:
     """Every recommendation id already applied, from the epoch records + the queue."""
-    from zicato.core.workspace import (  # noqa: PLC0415
-        proposer_staged_recommendations_path,
-    )
     from zicato.epoch.lifecycle import list_epochs  # noqa: PLC0415
+    from zicato.proposer.staging import staged_recommendations  # noqa: PLC0415
 
     applied: set[str] = set()
     try:
@@ -1024,11 +794,7 @@ def applied_recommendation_ids(workspace_root: Path) -> set[str]:
             applied.update(cfg.applied_proposer_recommendations)
     except (OSError, ValueError, FileNotFoundError):
         pass
-    staged = _read_json(proposer_staged_recommendations_path(workspace_root))
-    if isinstance(staged, dict):
-        raw = staged.get("recommendation_ids")
-        if isinstance(raw, list):
-            applied.update(str(x) for x in raw)
+    applied.update(staged_recommendations(workspace_root))
     return applied
 
 

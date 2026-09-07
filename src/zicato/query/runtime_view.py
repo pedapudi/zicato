@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from zicato.query.contracts import LivenessPayload, SnapshotPayload
 from zicato.query.epoch_view import build_epoch_view
+from zicato.query.inputs import CapturedJson
 from zicato.query.paths import (
     WorkspacePaths,
     _iso,
@@ -74,10 +76,10 @@ def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
     heartbeat carrying only the harmonograf fields is returned so the
     deep-links still render.
     """
-    try:
-        hb = read_heartbeat(paths.root)
-    except Exception:
-        hb = None
+    return _heartbeat_view(paths, _on_disk_heartbeat(paths))
+
+
+def _heartbeat_view(paths: WorkspacePaths, hb: dict[str, Any] | None) -> dict[str, Any] | None:
     injected_url = getattr(paths, "harmonograf_url", "") or ""
     if hb is None:
         if injected_url:
@@ -98,7 +100,7 @@ def read_heartbeat_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
                 synthetic["harmonograf_meta_session"] = meta
             return synthetic
         return None
-    out = hb.to_dict()
+    out = dict(hb)
     # Pause-flag presence rides on the heartbeat payload so every runtime
     # read (/api/heartbeat, /api/state, /api/environment, the SSE snapshot)
     # carries the paused state without a second fetch. Additive — an older
@@ -354,7 +356,7 @@ def read_meta_loop_session_id(paths: WorkspacePaths) -> str:
 
 
 def read_active_runs_view(
-    paths: WorkspacePaths, *, now: _dt.datetime | None = None
+    paths: WorkspacePaths, *, now: _dt.datetime | None = None, host_local: bool | None = None
 ) -> list[dict[str, Any]]:
     """``active_runs/*.json`` enriched with computed deadline progress.
 
@@ -381,7 +383,8 @@ def read_active_runs_view(
     reducer persists it in ``loss.json``).
     """
     now = now or _utc_now()
-    host_local = _reader_shares_worker_host(paths)
+    if host_local is None:
+        host_local = _reader_shares_worker_host(paths)
     out: list[dict[str, Any]] = []
     try:
         runs = list_active_runs(paths.root)
@@ -479,7 +482,10 @@ def _reader_shares_worker_host(paths: WorkspacePaths | None) -> bool:
     """
     if paths is None:
         return False
-    raw = read_lock_dict(paths)
+    return _lock_shares_worker_host(read_lock_dict(paths))
+
+
+def _lock_shares_worker_host(raw: dict[str, Any] | None) -> bool:
     if not isinstance(raw, dict):
         return False
     try:
@@ -613,7 +619,41 @@ def _progress_tail(paths: WorkspacePaths) -> tuple[bool, bool, str | None]:
         return (False, False, None)
 
 
-def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -> LivenessPayload:
+@dataclass(frozen=True, slots=True)
+class RuntimeInputs:
+    """Runtime observations shared by one response, including a fixed clock and absence."""
+
+    epoch_id: str | None
+    now: _dt.datetime
+    raw_heartbeat: CapturedJson
+    heartbeat: CapturedJson
+    active_runs: CapturedJson
+    tournament: CapturedJson
+    lock: CapturedJson
+    progress_tail: tuple[bool, bool, str | None]
+
+    @classmethod
+    def capture(cls, paths: WorkspacePaths) -> RuntimeInputs:
+        now = _utc_now()
+        raw_heartbeat = _on_disk_heartbeat(paths)
+        lock = read_lock_dict(paths)
+        return cls(
+            epoch_id=read_current_epoch(paths),
+            now=now,
+            raw_heartbeat=CapturedJson(raw_heartbeat),
+            heartbeat=CapturedJson(_heartbeat_view(paths, raw_heartbeat)),
+            active_runs=CapturedJson(
+                read_active_runs_view(paths, now=now, host_local=_lock_shares_worker_host(lock))
+            ),
+            tournament=CapturedJson(read_active_tournament_dict(paths)),
+            lock=CapturedJson(lock),
+            progress_tail=_progress_tail(paths),
+        )
+
+
+def derive_liveness(
+    paths: WorkspacePaths, *, now: _dt.datetime | None = None, inputs: RuntimeInputs | None = None
+) -> LivenessPayload:
     """THE liveness verdict, including the live epoch when known.
 
     One derivation, read by every live surface, so "is anything running?"
@@ -639,13 +679,15 @@ def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -
     Keys are omit-when-absent and additive; a consumer that does not know
     the block degrades to whatever it read before.
     """
-    now = now or _utc_now()
-    hb = _on_disk_heartbeat(paths)
+    now = inputs.now if inputs is not None else now or _utc_now()
+    hb = inputs.raw_heartbeat.copy() if inputs is not None else _on_disk_heartbeat(paths)
     try:
-        runs = read_active_runs_view(paths)
+        runs = inputs.active_runs.copy() if inputs is not None else read_active_runs_view(paths)
     except Exception:  # noqa: BLE001 — best-effort
         runs = []
-    has_tail, terminal, tail_ts = _progress_tail(paths)
+    has_tail, terminal, tail_ts = (
+        inputs.progress_tail if inputs is not None else _progress_tail(paths)
+    )
 
     last_heartbeat = hb.get("last_heartbeat") if hb is not None else None
     phase = hb.get("phase") if hb is not None else None
@@ -653,7 +695,12 @@ def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -
     # before the progress log existed records a clean end.
     at_rest = hb is not None and bool(str(phase or "").strip()) and not is_active_phase(phase)
 
-    pulse = _is_fresh(last_heartbeat, now) or fresh_run_count(runs, now, paths=paths) > 0
+    active = (
+        any(run.get("fresh") is True for run in runs)
+        if inputs is not None
+        else fresh_run_count(runs, now, paths=paths) > 0
+    )
+    pulse = _is_fresh(last_heartbeat, now) or active
 
     if terminal or at_rest:
         state = LIVENESS_SETTLED
@@ -675,7 +722,9 @@ def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -
     if isinstance(ended_at, str) and ended_at:
         out["ended_at"] = ended_at
     if state == LIVENESS_LIVE:
-        tournament = read_active_tournament_dict(paths)
+        tournament = (
+            inputs.tournament.copy() if inputs is not None else read_active_tournament_dict(paths)
+        )
         epoch_id = (tournament.get("epoch_id") if isinstance(tournament, dict) else None) or (
             hb.get("epoch_id") if hb else None
         )
@@ -752,6 +801,18 @@ def read_effective_settings(paths: WorkspacePaths) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
+def read_lineage_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
+    """Project the accepted graph, retaining absence and an explicit corruption reason."""
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
+    from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
+
+    try:
+        lineage = load_lineage(paths.root)
+    except RecordError as exc:
+        return {"unreadable": str(exc)}
+    return lineage.to_dict() if lineage.exists else None
+
+
 def build_snapshot(paths: WorkspacePaths) -> SnapshotPayload:
     """The full ``/api/state`` snapshot, mirroring the Rust ``Snapshot``.
 
@@ -763,15 +824,18 @@ def build_snapshot(paths: WorkspacePaths) -> SnapshotPayload:
     one answer every live surface reads instead of re-deriving "is
     anything running?" from raw file presence.
     """
+    inputs = RuntimeInputs.capture(paths)
     return {
-        "heartbeat": read_heartbeat_dict(paths),
-        "liveness": derive_liveness(paths),
-        "lock": read_lock_dict(paths),
-        "active_runs": read_active_runs_view(paths),
-        "active_tournament": read_active_tournament_dict(paths),
-        "lineage": _read_json_value(paths.lineage),
-        "epoch_id": read_current_epoch(paths),
-        "epoch": build_epoch_view(paths),
+        "heartbeat": inputs.heartbeat.copy(),
+        "liveness": derive_liveness(paths, inputs=inputs),
+        "lock": inputs.lock.copy(),
+        "active_runs": inputs.active_runs.copy(),
+        "active_tournament": inputs.tournament.copy(),
+        "lineage": read_lineage_dict(paths),
+        "epoch_id": inputs.epoch_id,
+        "epoch": build_epoch_view(paths, inputs.epoch_id)
+        if inputs.epoch_id is not None
+        else {"epoch_id": None},
         "paused": read_paused(paths),
-        "generated_at": _iso(_utc_now()),
+        "generated_at": _iso(inputs.now),
     }

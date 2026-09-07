@@ -170,7 +170,7 @@ def test_dry_run_plans_but_removes_nothing(workspace: Path) -> None:
 
 def test_keep_promoted_only_prunes_settled_rejected(workspace: Path) -> None:
     store = _seed_lineage(workspace)
-    lineage_before = json.dumps(load_lineage(workspace), sort_keys=True)
+    lineage_before = json.dumps(load_lineage(workspace).to_dict(), sort_keys=True)
 
     report = prune_generations(workspace, EPOCH, keep_promoted_only=True, dry_run=False)
     assert report.dry_run is False
@@ -186,7 +186,7 @@ def test_keep_promoted_only_prunes_settled_rejected(workspace: Path) -> None:
 
     # Records are NEVER touched: lineage byte-identical, experiment
     # records for the pruned generations still readable.
-    assert json.dumps(load_lineage(workspace), sort_keys=True) == lineage_before
+    assert json.dumps(load_lineage(workspace).to_dict(), sort_keys=True) == lineage_before
     for gen_id in ("v1", "v2"):
         experiment = read_experiment(workspace, EPOCH, gen_id)
         assert experiment.patches, gen_id

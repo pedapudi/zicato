@@ -1,53 +1,26 @@
-// js/data.js — Variant N's ("Console II") read layer.
-//
-// Self-contained for Variant N. Reuses the SHARED core data layer wholesale
-// (core/api.js, core/state.js, core/sse.js) and adds the small set of
-// cached, failure-tolerant drill-down GETs the dense Console screens need —
-// including the two NEW convergence reads the brief mandates:
-//
-//   * /api/mutations/{epoch_id}            — the mutation surface (sites +
-//     which generations patched each).
-//   * /api/files/{epoch}/{generation}/patches — what each generation
-//     actually changed (per-mutation patch ops).
-//   * /api/epoch/{epoch_id}/analysis       — the ACM publication (the server-
-//     rendered `analysis_html_inline` fragment, `analysis_md` behind it).
-//
-// Each is a thin, cached, failure-tolerant GET — the same discipline as
-// core/api.js. Nothing here mutates AppState; callers own their cache.
+// Cached drill-down reads shared by browser views.
 
 import { fetchJson, enc } from './core/api.js';
 import { state } from './core/state.js';
 
-// A tiny module-level cache keyed by URL. Drill-down payloads are immutable
-// for a completed generation, so caching avoids re-fetching on every
-// change-signal-driven re-render. The refresh path busts keys via invalidate().
-//
-// The cache holds the in-flight PROMISE rather than the resolved value. Two
-// callers that ask for one URL in the same tick must share ONE request: the
-// shell and the home view both read /api/workspace at boot, and the per-epoch
-// reads fan out across views. A value-only cache fills only after the fetch
-// resolves, so every concurrent caller would issue its own duplicate GET.
-//
-// Caching the promise also removes a stale-write race. Writing the cache AFTER
-// awaiting would let a resolving fetch put the pre-invalidation payload back
-// over an invalidate() that landed mid-flight. Since invalidateLive() fires on
-// every live-data change while reads are in flight, a bust meant to surface a
-// fresh candidate would be undone by the very request it superseded. So NOTHING
-// may write the cache after the fetch resolves. An abandoned promise still feeds
-// the callers already holding it — their render began before the bust, so
-// pre-bust data is the honest answer — but it can never re-enter the map, and
-// the next caller starts a fresh fetch.
+// Each URL shares one in-flight request. Failed reads expire after a short
+// backoff; successful absence remains cached. Invalidation removes the entry
+// immediately, so its detached promise cannot overwrite a subsequent read.
 const _cache = new Map();
+const FAILURE_RETRY_MS = 1000;
 
 export function cachedJson(path) {
-  if (_cache.has(path)) return _cache.get(path);
-  // A transient failure resolves to null (and stays cached as null) so the view
-  // paints an honest "unavailable" rather than spinning forever; a later
-  // invalidate() retries. The catch also keeps the cached promise from ever
-  // rejecting, so a shared entry cannot raise in an unrelated caller.
-  const pending = fetchJson(path).catch(() => null);
-  _cache.set(path, pending);
-  return pending;
+  const cached = _cache.get(path);
+  if (cached && Date.now() < cached.retryAt) return cached.promise;
+  const entry = { promise: null, retryAt: Infinity };
+  entry.promise = fetchJson(path).catch(() => {
+    // Successful absence remains cached. Only failed reads expire, and a
+    // detached entry can never restore itself after invalidation.
+    entry.retryAt = Date.now() + FAILURE_RETRY_MS;
+    return null;
+  });
+  _cache.set(path, entry);
+  return entry.promise;
 }
 
 export function invalidate(prefix) {
@@ -101,29 +74,15 @@ export function invalidateLive() {
       || key.startsWith('/api/tournament-structure/')
       || key.startsWith('/api/hypothesis-accuracy/')
       || key.startsWith('/api/calibration-trend')
-      // the reflection LIST (plural) — so a reflection completed while the
-      // dashboard is open surfaces on the next live bust. This prefix does NOT
-      // match the singular, IMMUTABLE `/api/reflection/<id>/…` reads (those
-      // start `/api/reflection/`, not `/api/reflections`), which stay cached.
-      || key.startsWith('/api/reflections')
+      || key.startsWith('/api/reflection')
       || key.startsWith('/api/tournaments')) {
       _cache.delete(key);
     }
   }
 }
 
-// THE UNDER-RENDER FIX. The tree + every candidate-listing view read through the
-// module cache above; invalidateLive() — the ONLY thing that busts those keys —
-// fires solely on a VIEW change (shell.dispatch). So a NEW candidate surfaced
-// mid-round by SSE refreshed AppState's lineage but NOT these cached reads → the
-// tree/view digests never flipped → no repaint, forcing a hard-refresh (which
-// clears this cache). A view-change-only invalidation cannot catch an in-place
-// add. The shell now busts the cache when a candidate lands, keyed off this
-// signature so a no-op beat (identical payload) busts nothing — no flash, no
-// extra fetch. Signed off the data AppState folds from /api/environment (the gen
-// SET: id + tri-state status + birth-round + epoch, plus the epoch roster),
-// id-sorted so it is order-independent — only a real membership/status change
-// flips it; the downstream gen-keyed digests still gate after a bust.
+// Content revision invalidates reads even when candidate membership is stable.
+// The resulting view digests, rather than this signal, determine DOM changes.
 export function liveDataSignature() {
   const lin = (state.lineage && Array.isArray(state.lineage.generations))
     ? state.lineage.generations : [];
@@ -140,7 +99,7 @@ export function liveDataSignature() {
     .sort();
   const wsEpoch = (state.workspace && state.workspace.current_epoch_id != null)
     ? String(state.workspace.current_epoch_id) : '';
-  return JSON.stringify({ gens, epochs, wsEpoch });
+  return JSON.stringify({ gens, epochs, wsEpoch, contentRevision: state.contentRevision });
 }
 
 // ---- typed drill-down reads ----------------------------------------

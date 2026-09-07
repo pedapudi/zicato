@@ -104,8 +104,8 @@ omission.
 
 ## Data binding — where each section is sourced
 
-Prefer the canonical workspace layer (`WorkspaceLayout`, `read_gen_score`,
-`read_loss`), the generation record's own decoder
+Use `WorkspaceLayout` for paths, `tournament/scoring.py::read_gen_score` for
+accepted generation scores, `workspace.read_loss` for loss records, the generation record's decoder
 (`epoch/journal.py` → `read_epoch_experiments`), the durable per-round event log
 (`epoch/round_log.py` → `RoundRecord` fold), the frozen scoring config
 (`scoring.json`, which serialises `ScoringWeights` including

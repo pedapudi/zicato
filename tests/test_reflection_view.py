@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from tests._reflection_support import finding_body, scorecard_body
 from zicato.core import DriftCount, JudgeLoss, LossProfile, ScoringWeights
 from zicato.core.workspace import (
     reflection_adjudication_path,
@@ -117,10 +118,17 @@ def _write_reflection_meta(
         encoding="utf-8",
     )
     reflection_scorecards_path(workspace, EPOCH, REFL).write_text(
-        json.dumps({"reflection_id": REFL, "scorecards": scorecards}), encoding="utf-8"
+        json.dumps(
+            {
+                "reflection_id": REFL,
+                "scorecards": [scorecard_body(card) for card in (scorecards or [])],
+            }
+        ),
+        encoding="utf-8",
     )
     reflection_findings_path(workspace, EPOCH, REFL).write_text(
-        json.dumps({"reflection_id": REFL, "findings": findings}), encoding="utf-8"
+        json.dumps({"reflection_id": REFL, "findings": [finding_body(item) for item in findings]}),
+        encoding="utf-8",
     )
     (reflection_dir(workspace, EPOCH, REFL) / "summary.json").write_text(
         json.dumps(summary), encoding="utf-8"
@@ -167,6 +175,38 @@ def test_list_reflections_file_fallback_without_index(tmp_path: Path) -> None:
     out = rv.list_reflections(_paths(workspace))
     assert [r["reflection_id"] for r in out["reflections"]] == [REFL]
     assert out["reflections"][0]["mode"] == "active"
+
+
+def test_malformed_plan_cannot_reuse_indexed_identity(tmp_path: Path) -> None:
+    import pytest
+
+    from zicato.epoch._storage import RecordError
+    from zicato.index import query as iq
+    from zicato.reflection.plan import new_plan, write_plan
+
+    workspace = tmp_path / ".zicato"
+    _epoch_config(workspace)
+    plan = new_plan(
+        epoch_id=EPOCH,
+        reflection_id=REFL,
+        candidates=["v0"],
+        entries=["entry"],
+        replicates=1,
+        created_at="2026-07-01",
+    )
+    path = write_plan(workspace, plan)
+    ingest_reflection(workspace, None, EPOCH, REFL)
+    path.write_text(json.dumps(dict(plan.to_json(), executed="false")), encoding="utf-8")
+
+    with pytest.raises(RecordError, match="executed"):
+        ingest_reflection(workspace, None, EPOCH, REFL)
+    assert iq.reflection_row(_paths(workspace).index_db, REFL)["executed"] == 0
+    listing = rv.list_reflections(_paths(workspace))
+    assert listing["reflections"] == []
+    assert "executed" in listing["unreadable"][0]["reason"]
+    summary = rv.build_reflection_summary(_paths(workspace), REFL)
+    assert summary["found"] is False and summary["unreadable"] is True
+    assert "executed" in summary["note"]
 
 
 def test_build_reflection_summary_found_and_missing(tmp_path: Path) -> None:
@@ -256,21 +296,26 @@ def test_adjudication_xray_result_tier(tmp_path: Path) -> None:
     _write_reflection_meta(workspace, summary={}, findings=[], scorecards=[])
 
     run_ref = "v1:entryA:r0"
-    reflection_adjudication_path(workspace, EPOCH, REFL, "j", run_ref).parent.mkdir(
-        parents=True, exist_ok=True
-    )
-    reflection_adjudication_path(workspace, EPOCH, REFL, "j", run_ref).write_text(
-        json.dumps(
-            {
-                "format_version": 1,
-                "judge_name": "j",
-                "run_ref": run_ref,
-                "verdict": "TP",
-                "evidence_span": SPAN,
-                "meta_judge_rationale": "the transcript exhibits it",
-            }
+    from zicato.reflection.adjudication import JudgeAdjudication, write_adjudication
+
+    write_adjudication(
+        reflection_adjudication_path(workspace, EPOCH, REFL, "j", run_ref),
+        JudgeAdjudication(
+            judge_name="j",
+            run_ref=run_ref,
+            observed="fired",
+            adjudicated="should_fire",
+            verdict="TP",
+            severity_match=None,
+            evidence_span=SPAN,
+            meta_judge_rationale="the transcript exhibits it",
+            meta_judge_model="independent-judge",
+            adjudicator_self_agreement=None,
+            operator_confirmed=None,
+            fidelity="verbatim",
+            prompt_version=2,
+            k_adj=1,
         ),
-        encoding="utf-8",
     )
 
     xray = rv.build_adjudication_xray(_paths(workspace), REFL, "j", run_ref)
@@ -281,6 +326,16 @@ def test_adjudication_xray_result_tier(tmp_path: Path) -> None:
     assert xray["judge_verdict"]["judge_name"] == "j"
     assert xray["judge_verdict"]["fired"] is True
     assert xray["adjudication"]["verdict"] == "TP"
+
+    path = reflection_adjudication_path(workspace, EPOCH, REFL, "j", run_ref)
+    accepted_bytes = path.read_bytes()
+    path.write_text("null", encoding="utf-8")
+    corrupt = rv.build_adjudication_xray(_paths(workspace), REFL, "j", run_ref)
+    assert corrupt["found"] is False and corrupt["unreadable"] is True
+    assert corrupt["adjudication"] is None
+    assert "JSON object" in corrupt["note"]
+    assert corrupt["transcript"] == xray["transcript"]
+    path.write_bytes(accepted_bytes)
 
 
 def test_adjudication_xray_degrades_on_unknown(tmp_path: Path) -> None:

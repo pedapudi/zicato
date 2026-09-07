@@ -162,14 +162,14 @@ def test_evolve_round_stamps_birth_round_index_on_lineage(
     assert out0.tournament_decision == "promoted"
     assert out0.proposed_generation_id == "v1"
 
-    rounds0 = _lineage_round_index(load_lineage(workspace), epoch_id)
+    rounds0 = _lineage_round_index(load_lineage(workspace).to_dict(), epoch_id)
     assert rounds0["v1"] == 0  # minted in round 0
 
     # Round 1: v1 -> v2, promoted. Birth round of v2 is 1; v1 keeps its.
     out1 = run_evolve_once(workspace, epoch_id, make_aux_responder([]), round_index=1)
     assert out1.proposed_generation_id == "v2"
 
-    rounds1 = _lineage_round_index(load_lineage(workspace), epoch_id)
+    rounds1 = _lineage_round_index(load_lineage(workspace).to_dict(), epoch_id)
     # The carried champion keeps its BIRTH round — not re-stamped to 1.
     assert rounds1["v1"] == 0
     # The newly-minted challenger carries the current round.

@@ -24,11 +24,14 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from tests._reflection_support import scorecard_body
 from tests.test_no_goldfive_import import _ok, _run_without_goldfive
 from zicato.dashboard.server import create_app
 from zicato.query import WorkspacePaths, build_epoch_view, build_judge_roster
 from zicato.query.epoch_view import _parse_board_judges
 from zicato.query.judge_roster import NO_GOLDFIVE_NOTE
+from zicato.reflection.plan import ReflectionPlan, write_plan
+from zicato.reflection.scorecards import Scorecards, write_scorecards
 
 EPOCH = "2026-06-07_e4"
 
@@ -257,28 +260,34 @@ def test_an_unresolvable_epoch_yields_the_empty_shape(workspace: Path, bad: str)
 
 def test_scorecards_link_the_newest_reflection_that_scored_each_judge(workspace: Path) -> None:
     """Two reflections score the same judge; the newer one wins the link."""
-    refls = workspace / "epochs" / EPOCH / "reflections"
     older, newer = "2026-06-01T00:00:00Z", "2026-06-08T00:00:00Z"
     for rid, created in (("refl_old", older), ("refl_new", newer)):
-        _write(
-            refls / rid / "plan.json",
-            json.dumps({"reflection_id": rid, "epoch_id": EPOCH, "created_at": created}),
+        write_plan(
+            workspace,
+            ReflectionPlan(
+                reflection_id=rid,
+                epoch_id=EPOCH,
+                candidates=("v0",),
+                entries=(),
+                replicates=1,
+                adjudicator_model=None,
+                checks=("judge-audit",),
+                mode="passive",
+                pre_registered=False,
+                executed=True,
+                created_at=created,
+            ),
         )
-        _write(
-            refls / rid / "scorecards.json",
-            json.dumps({"scorecards": [{"judge_name": "file_findability", "precision": 0.9}]}),
+        cards = [{"judge_name": "file_findability", "precision": 0.9}]
+        if rid == "refl_new":
+            cards.append({"judge_name": "audience_appropriate", "precision": 0.4})
+        write_scorecards(
+            workspace,
+            EPOCH,
+            Scorecards.from_json(
+                {"reflection_id": rid, "scorecards": [scorecard_body(card) for card in cards]}
+            ),
         )
-    _write(
-        refls / "refl_new" / "scorecards.json",
-        json.dumps(
-            {
-                "scorecards": [
-                    {"judge_name": "file_findability", "precision": 0.9},
-                    {"judge_name": "audience_appropriate", "precision": 0.4},
-                ]
-            }
-        ),
-    )
 
     roster = build_judge_roster(WorkspacePaths(workspace), EPOCH)
     assert roster["scorecards"] == {

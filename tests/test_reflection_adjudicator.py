@@ -684,6 +684,76 @@ def test_cache_hit_when_every_dimension_matches(tmp_path: Path) -> None:
     assert results[0].evidence_span == "STALE-CACHED-SPAN"  # served from cache
 
 
+def test_corrupt_cached_verdict_refuses_without_adjudicator_calls(tmp_path: Path) -> None:
+    from zicato.epoch._storage import RecordError
+
+    workspace = tmp_path / ".zicato"
+    corpus = _one_verbatim_corpus(workspace)
+    path = _seed_cache(
+        workspace,
+        judge="j",
+        run_ref=run_ref_for(corpus[0]),
+        model="m",
+        prompt_version=ADJUDICATOR_PROMPT_VERSION,
+        k_adj=1,
+        fidelity=FIDELITY_VERBATIM,
+    )
+    accepted_bytes = path.read_bytes()
+    path.write_text("null", encoding="utf-8")
+    double = SpanQuoting(should_fire=True)
+    with pytest.raises(RecordError, match="JSON object"):
+        _run(
+            adjudicate_corpus(
+                corpus=corpus,
+                config=_config(workspace, adjudicator=double),
+                epoch_id=EPOCH,
+                reflection_id=REFL,
+                adjudicator_model="m",
+                workspace_root=workspace,
+            )
+        )
+    assert double.calls == 0
+    assert path.read_text() == "null"
+    path.write_bytes(accepted_bytes)
+
+
+def test_adjudication_retains_missing_protocol_fields_as_stale(tmp_path: Path) -> None:
+    from zicato.epoch._storage import RecordError
+
+    path = _seed_cache(
+        tmp_path,
+        judge="j",
+        run_ref="v1:entry:r0",
+        model="m",
+        prompt_version=ADJUDICATOR_PROMPT_VERSION,
+        k_adj=1,
+        fidelity=FIDELITY_VERBATIM,
+    )
+    body = json.loads(path.read_text())
+    for field in ("prompt_version", "k_adj", "meta_judge_model", "raw_response"):
+        del body[field]
+    body["adjudicator_self_agreement"] = 1
+    historical = json.dumps(body, indent=2, sort_keys=True).encode()
+    path.write_bytes(historical)
+    record = read_adjudication(path)
+    assert record is not None
+    assert record.prompt_version == record.k_adj == 0
+    assert record.meta_judge_model == ""
+    write_adjudication(path, record)
+    assert path.read_bytes() == historical
+    from dataclasses import replace
+
+    assert replace(record, k_adj=2).to_json() == dict(body, k_adj=2)
+    for field, value in (
+        ("verdict", "TP"),
+        ("severity_match", 1),
+        ("k_adj", True),
+        ("adjudicator_self_agreement", float("inf")),
+    ):
+        with pytest.raises(RecordError, match=field):
+            JudgeAdjudication.from_json(dict(body, **{field: value}))
+
+
 def test_cache_stale_on_model_swap(tmp_path: Path) -> None:
     workspace = tmp_path / ".zicato"
     corpus = _one_verbatim_corpus(workspace)
@@ -805,15 +875,19 @@ def test_cache_stale_on_fidelity_upgrade(tmp_path: Path) -> None:
     assert results[0].fidelity == FIDELITY_VERBATIM
 
 
-def test_read_adjudication_tolerates_defects(tmp_path: Path) -> None:
+def test_read_adjudication_refuses_present_defects(tmp_path: Path) -> None:
+    from zicato.epoch._storage import RecordError
+
     missing = tmp_path / "nope.json"
     assert read_adjudication(missing) is None
     garbage = tmp_path / "g.json"
     garbage.write_text("not json", encoding="utf-8")
-    assert read_adjudication(garbage) is None
+    with pytest.raises(RecordError):
+        read_adjudication(garbage)
     wrong_version = tmp_path / "wv.json"
     wrong_version.write_text(json.dumps({"format_version": 999}), encoding="utf-8")
-    assert read_adjudication(wrong_version) is None
+    with pytest.raises(RecordError, match="format_version"):
+        read_adjudication(wrong_version)
 
 
 # ---------------------------------------------------------------------------

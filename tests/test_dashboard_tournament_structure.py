@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from zicato.core import TournamentDecision
 from zicato.dashboard.server import create_app
 from zicato.query import (
     WorkspacePaths,
@@ -32,6 +33,8 @@ from zicato.query import (
     build_tournament_structure,
 )
 from zicato.query.runtime_view import _normalize_tournament_statuses
+from zicato.selection.strategy import SelectionDecision
+from zicato.tournament.records import field_tournament_record, write_field_tournament_record
 
 
 def _write_json(path: Path, obj: object) -> None:
@@ -656,28 +659,26 @@ def _write_durable_field_record(
     promoted_generation_ids: list[str] | None,
 ) -> None:
     """Write a durable ``tournaments/field-v1.json`` for the override readback."""
-    record: dict[str, object] = {
-        "tournament_id": f"{EPOCH}:field:v1",
-        "epoch_id": EPOCH,
-        "structure": "swiss",
-        "competitors": [
+    record = field_tournament_record(
+        field_tournament_id=f"{EPOCH}:field:v1",
+        epoch_id=EPOCH,
+        structure="swiss",
+        structure_params={},
+        competitors=[
             {"generation_id": "v0", "seed": 1, "role": "champion"},
             {"generation_id": "v1", "seed": 2, "role": "challenger"},
             {"generation_id": "v2", "seed": 3, "role": "challenger"},
         ],
-        "rounds": [],
-        "standings": [],
-        "field_status": [],
-        "decision": "promoted",
-        "state": "settled",
-    }
-    if override_status is not None:
-        record["override_status"] = override_status
-    if promoted_generation_ids is not None:
-        record["promoted_generation_ids"] = promoted_generation_ids
-    path = ws / "epochs" / EPOCH / "tournaments" / "field-v1.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record), encoding="utf-8")
+        rounds=[],
+        standings=[],
+        field_status=[],
+        decision=SelectionDecision("v1", TournamentDecision.PROMOTED, ""),
+        ran_at="2026-06-01T00:30:00Z",
+        override_status=override_status,
+        promoted_generation_ids=promoted_generation_ids,
+    )
+    assert record is not None
+    write_field_tournament_record(ws, epoch_id=EPOCH, first_challenger_id="v1", record=record)
 
 
 def test_structure_reader_surfaces_override_status(tmp_path: Path) -> None:

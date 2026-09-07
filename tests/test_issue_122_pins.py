@@ -4,7 +4,7 @@ The champion is a single generation id that defends across many rounds, and
 every artifact describing one of its evaluations is keyed by
 ``(epoch, generation, entry)`` with NO round dimension:
 
-* ``generations/<g>/gen_score.json`` — :func:`zicato.evolve.ingest._cache_gen_score`
+* ``generations/<g>/gen_score.json`` — :func:`zicato.tournament.scoring.write_gen_score`
   writes it unconditionally (``ingest.py`` ~47);
 * ``generations/<g>/runs/<entry>/loss.json`` (``loss.r<N>.json`` for
   replicates) — :func:`zicato.tournament.unit_cache._persist_unit_loss`;
@@ -52,8 +52,8 @@ from typing import Any
 import pytest
 
 from zicato.core.types import LossProfile
-from zicato.evolve.ingest import _cache_gen_score
-from zicato.workspace import WorkspaceLayout, read_gen_score, read_loss
+from zicato.tournament.scoring import read_gen_score, write_gen_score
+from zicato.workspace import WorkspaceLayout, read_loss
 
 EPOCH = "2026-07-29_alpha"
 CHAMPION = "v0"
@@ -107,10 +107,10 @@ def test_gen_score_flat_path_still_holds_the_latest_measurement(workspace: Path)
     most recent measurement there.
     """
     layout = WorkspaceLayout.from_root(workspace)
-    _cache_gen_score(workspace, EPOCH, CHAMPION, _aggregate(8.479, 0.75, 2.1))
-    _cache_gen_score(workspace, EPOCH, CHAMPION, _aggregate(5.917, 0.75, 1.4))
+    write_gen_score(workspace, EPOCH, CHAMPION, _aggregate(8.479, 0.75, 2.1))
+    write_gen_score(workspace, EPOCH, CHAMPION, _aggregate(5.917, 0.75, 1.4))
 
-    assert read_gen_score(layout, EPOCH, CHAMPION)["scalar"] == pytest.approx(5.917)
+    assert read_gen_score(layout, EPOCH, CHAMPION).scalar == pytest.approx(5.917)
 
 
 # ---------------------------------------------------------------------------
@@ -126,23 +126,23 @@ def test_gen_score_rewrite_retains_the_prior_measurement(workspace: Path) -> Non
     in the drift term, and it is only visible if all three numbers survive.
     """
     layout = WorkspaceLayout.from_root(workspace)
-    _cache_gen_score(workspace, EPOCH, CHAMPION, _aggregate(8.479, 0.75, 2.1))
-    _cache_gen_score(workspace, EPOCH, CHAMPION, _aggregate(5.917, 0.75, 1.4))
-    _cache_gen_score(workspace, EPOCH, CHAMPION, _aggregate(6.229, 0.75, 1.6))
+    write_gen_score(workspace, EPOCH, CHAMPION, _aggregate(8.479, 0.75, 2.1))
+    write_gen_score(workspace, EPOCH, CHAMPION, _aggregate(5.917, 0.75, 1.4))
+    write_gen_score(workspace, EPOCH, CHAMPION, _aggregate(6.229, 0.75, 1.6))
 
     # The flat file is still the latest, and the archive is the ONE thing
     # that now sits beside it (the pin's original assertion was that the
     # generation directory held nothing else — it holds exactly one more).
-    assert read_gen_score(layout, EPOCH, CHAMPION)["scalar"] == pytest.approx(6.229)
+    assert read_gen_score(layout, EPOCH, CHAMPION).scalar == pytest.approx(6.229)
     gen_dir = layout.gen_score(EPOCH, CHAMPION).parent
     assert sorted(p.name for p in gen_dir.iterdir()) == [
         "gen_score.history.jsonl",
         "gen_score.json",
     ]
 
-    from zicato.workspace import read_gen_score_history  # noqa: PLC0415
+    from zicato.tournament.scoring import read_gen_score_history  # noqa: PLC0415
 
-    history = read_gen_score_history(layout, EPOCH, CHAMPION)
+    history = [row.to_dict() for row in read_gen_score_history(layout, EPOCH, CHAMPION)]
     assert [round(float(m["scalar"]), 3) for m in history] == [8.479, 5.917, 6.229]
     # The pass rate is identical across all three — the swing is pure drift,
     # which is exactly the diagnosis the history is meant to make possible.

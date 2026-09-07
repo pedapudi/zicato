@@ -43,4 +43,20 @@ test('gatedSwap repaints a cleared host even when the digest is unchanged', () =
   assertEqual(host.firstChild.className, 'content', 'the placeholder is replaced by the real paint');
 });
 
+test('failed construction preserves the painted digest and permits retry', () => {
+  const host = document.createElement('div');
+  gatedSwap(host, 'painted', () => el('p', { text: 'original' }));
+  const original = host.firstChild;
+  let failed = false;
+  try { gatedSwap(host, 'changed', () => { throw new Error('render failed'); }); }
+  catch { failed = true; }
+  assert(failed);
+  assertEqual(host.getAttribute('data-t-digest'), 'painted');
+  assert(host.firstChild === original, 'failed build preserves the visible content');
+  assert(gatedSwap(host, 'changed', () => el('p', { text: 'recovered' })));
+  const recovered = host.firstChild;
+  assert(!gatedSwap(host, 'changed', () => { throw new Error('must not build'); }));
+  assert(host.firstChild === recovered, 'identical content remains a DOM no-op');
+});
+
 await run();

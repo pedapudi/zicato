@@ -549,18 +549,16 @@ test('judge audit F4: an evidence chip reads its verdict from the payload, not t
 });
 
 // ====================================================================
-// F5 — invalidateLive busts the reflection LIST but keeps the immutable
-// singular reads (the prefix must not over-match /api/reflection/<id>).
+// Reflection invalidation covers both membership and rewritten summaries.
 // ====================================================================
-test('data F5: invalidateLive busts the cached reflection list but not the singular reads', async () => {
+test('data: invalidateLive refreshes reflection lists and canonical summaries', async () => {
   fresh(); // clears the data cache
   installFixtureMap(reflectionFixtureMap());
   const first = await data.reflections();
   assertEqual((first.reflections || []).length, 2, 'the list fetched + cached (two fixtures)');
   const sumFirst = await data.reflectionSummary(REFLECTION_ID);
   assert(sumFirst.found === true, 'the singular summary fetched + cached');
-  // a NEW reflection completes: the list changes, and a would-be-different
-  // summary is installed. Only the LIST must re-fetch on invalidateLive.
+  // A rewritten summary changes without changing its resource identity.
   const changedSummary = JSON.parse(JSON.stringify(REFLECTION_SUMMARY));
   changedSummary.found = false;
   installFixtureMap({ ...reflectionFixtureMap({ summary: changedSummary }), '/api/reflections': { reflections: [] } });
@@ -568,10 +566,8 @@ test('data F5: invalidateLive busts the cached reflection list but not the singu
   const refetched = await data.reflections();
   assertEqual((refetched.reflections || []).length, 0, 'invalidateLive busted the list → it re-fetched the new (empty) payload');
   const sumAfter = await data.reflectionSummary(REFLECTION_ID);
-  assert(sumAfter.found === true, 'the singular /api/reflection/<id>/summary stayed cached (prefix did not over-match)');
+  assert(sumAfter.found === false, 'the singular summary is re-read after content invalidation');
 });
-
-await run();
 
 // ====================================================================
 // PROPOSER PANEL — the scorecard trend + the pending recommendations.
@@ -668,3 +664,17 @@ test('proposer panel: a changed recommendation queue DOES repaint', async () => 
   await instrument.render(host, CTX, { epochId: EPOCH_ID });
   assert(host.firstChild !== first, 'the digest folds the queue, so a drained queue repaints');
 });
+
+test('proposer panel: updates the shared record refusal without claiming an empty queue', async () => {
+  const host = document.createElement('div');
+  for (const reason of ['Proposer remedy: integrity check failed.', 'Proposer reflection: duplicate finding identity.']) {
+    fresh();
+    installFixtureMap({ ...reflectionFixtureMap(),
+      '/api/proposer/recommendations': { found: false, count: 0, pending: [], unreadable: reason } });
+    await instrument.render(host, CTX, { epochId: EPOCH_ID });
+    assert(textOf(host).includes(reason), 'shows the current server reason');
+    assert(!textOf(host).includes('No pending recommendations'), 'refusal differs from an empty queue');
+  }
+});
+
+await run();

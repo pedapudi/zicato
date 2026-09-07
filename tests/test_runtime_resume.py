@@ -525,7 +525,7 @@ def test_single_discard_retries_when_process_stops_before_lineage_commit(
     monkeypatch.setattr(resume_module, "_field_cleanup_checkpoint", lambda _boundary: None)
     plan = prepare_resume(workspace, EPOCH)
     assert plan.classification == "discard_unrecorded_field"
-    epoch = next(row for row in load_lineage(workspace)["epochs"] if row["id"] == EPOCH)
+    epoch = next(row for row in load_lineage(workspace).to_dict()["epochs"] if row["id"] == EPOCH)
     assert {row["id"] for row in epoch["generations"]}.isdisjoint({"v1"})
 
 

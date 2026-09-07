@@ -12,7 +12,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from zicato.epoch._storage import RecordError
 from zicato.epoch.journal import read_epoch_experiments, read_experiment_if_present
+from zicato.tournament.scoring import read_gen_score
 from zicato.workspace import (
     Epoch,
     WorkspaceLayout,
@@ -23,7 +27,6 @@ from zicato.workspace import (
     natural_key,
     read_board,
     read_epoch_config,
-    read_gen_score,
     read_loss,
 )
 
@@ -288,9 +291,8 @@ def test_read_loss_and_gen_score(tmp_path: Path) -> None:
     layout = WorkspaceLayout.from_root(ws)
     assert read_loss(layout, "e0", "v1", "t1") == {"entry_id": "t1", "drift_loss": 0.5}
     assert read_loss(layout, "e0", "v1", "missing") is None
-    assert read_gen_score(layout, "e0", "v1") == {"scalar": 0.25}
-    # Absent gen_score -> {} (not None), matching the prior reader.
-    assert read_gen_score(layout, "e0", "missing") == {}
+    assert read_gen_score(layout, "e0", "v1").to_dict() == {"scalar": 0.25}
+    assert read_gen_score(layout, "e0", "missing") is None
 
 
 def test_reads_never_raise_on_garbage(tmp_path: Path) -> None:
@@ -301,5 +303,5 @@ def test_reads_never_raise_on_garbage(tmp_path: Path) -> None:
     (ws / "epochs" / "e0" / "generations" / "v1" / "gen_score.json").write_text("[]")
     layout = WorkspaceLayout.from_root(ws)
     assert read_loss(layout, "e0", "v1", "t1") is None
-    # gen_score that parses to a non-dict (list) -> {}.
-    assert read_gen_score(layout, "e0", "v1") == {}
+    with pytest.raises(RecordError, match="expected a JSON object"):
+        read_gen_score(layout, "e0", "v1")

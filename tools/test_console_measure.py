@@ -91,7 +91,8 @@ def test_routes_pass_matches_holes_to_segments(run_json) -> None:
     }
     assert result["served"] > 70
     assert "/api/health" in result["tui_routes"]
-    assert "/api/heartbeat" in result["unread_routes"]
+    assert "/api/heartbeat" in result["tui_routes"]
+    assert "/api/heartbeat" not in result["unread_routes"]
 
 
 def test_assertions_pass_partitions_every_line(run_json) -> None:

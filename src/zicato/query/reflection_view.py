@@ -13,11 +13,8 @@ each reader falls back to the canonical files when the index row is absent
 (the filesystem is canonical and the index is derived; ``AGENTS.md``). This
 module must stay **dashboard-free**
 (the ``zicato.query`` import contract), and it keeps no engine behind a read:
-it imports only the pure reflection submodules (:mod:`~zicato.reflection.plan`,
-:mod:`~zicato.reflection.corpus`, :mod:`~zicato.reflection.analysis`) plus the
-canonical file layout — never :mod:`zicato.reflection.adjudicator` /
-``scorecards`` (which run the meta-judge) or ``findings`` (which reaches the
-builder), and never :mod:`zicato.dashboard`. The transcript x-ray therefore
+it imports reflection record owners and pure analysis, without loading
+adjudication execution or dashboard drivers. The transcript x-ray therefore
 reconstructs from ``result.json`` (preferred) then the verbatim ``judge_io``
 window; the events-preview tier belongs to the adjudicator and is never re-run
 behind a read, so it is honestly reported as unavailable.
@@ -40,7 +37,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from zicato.epoch._storage import RecordError
 from zicato.query.paths import WorkspacePaths, list_epoch_ids
+from zicato.reflection.plan import read_plan
 
 #: Fidelity tiers, strongest first, mirroring the capture ladder in
 #: :mod:`zicato.reflection.corpus`. Kept local so this module needs no import
@@ -90,36 +89,8 @@ def _resolve_epoch(paths: WorkspacePaths, reflection_id: str) -> str | None:
 
 
 def _plan_dict(paths: WorkspacePaths, epoch_id: str, reflection_id: str) -> dict[str, Any] | None:
-    from zicato.core.workspace import reflection_plan_path  # noqa: PLC0415
-
-    raw = _load_json(reflection_plan_path(paths.root, epoch_id, reflection_id))
-    return raw if isinstance(raw, dict) else None
-
-
-def _scorecards_from_file(
-    paths: WorkspacePaths, epoch_id: str, reflection_id: str
-) -> list[dict[str, Any]]:
-    from zicato.core.workspace import reflection_scorecards_path  # noqa: PLC0415
-
-    raw = _load_json(reflection_scorecards_path(paths.root, epoch_id, reflection_id))
-    if isinstance(raw, dict):
-        raw = raw.get("scorecards")
-    if not isinstance(raw, list):
-        return []
-    return [c for c in raw if isinstance(c, dict)]
-
-
-def _findings_from_file(
-    paths: WorkspacePaths, epoch_id: str, reflection_id: str
-) -> list[dict[str, Any]]:
-    from zicato.core.workspace import reflection_findings_path  # noqa: PLC0415
-
-    raw = _load_json(reflection_findings_path(paths.root, epoch_id, reflection_id))
-    if isinstance(raw, dict):
-        raw = raw.get("findings")
-    if not isinstance(raw, list):
-        return []
-    return [f for f in raw if isinstance(f, dict)]
+    plan = read_plan(paths.root, epoch_id, reflection_id)
+    return plan.to_json() if plan is not None else None
 
 
 def _summary_from_file(paths: WorkspacePaths, epoch_id: str, reflection_id: str) -> dict[str, Any]:
@@ -127,15 +98,6 @@ def _summary_from_file(paths: WorkspacePaths, epoch_id: str, reflection_id: str)
 
     raw = _load_json(reflection_dir(paths.root, epoch_id, reflection_id) / "summary.json")
     return raw if isinstance(raw, dict) else {}
-
-
-def _practices_from_file(
-    paths: WorkspacePaths, epoch_id: str, reflection_id: str
-) -> dict[str, Any] | None:
-    from zicato.core.workspace import reflection_practices_path  # noqa: PLC0415
-
-    raw = _load_json(reflection_practices_path(paths.root, epoch_id, reflection_id))
-    return raw if isinstance(raw, dict) else None
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +134,7 @@ def list_reflections(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
     epoch_ids = [epoch_id] if epoch_id else list_epoch_ids(paths)
     by_id: dict[str, dict[str, Any]] = {}
     order: list[str] = []
+    unreadable: dict[tuple[str, str], str] = {}
 
     for eid in epoch_ids:
         try:
@@ -182,12 +145,19 @@ def list_reflections(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
             rid = row["reflection_id"]
             if not isinstance(rid, str) or rid in by_id:
                 continue
+            try:
+                plan = _plan_dict(paths, eid, rid)
+            except RecordError as exc:
+                unreadable[eid, rid] = str(exc)
+                continue
+            if plan is None:
+                continue
             item = {
                 "reflection_id": rid,
-                "epoch_id": row["epoch_id"],
-                "created_at": row["created_at"] or "",
-                "mode": row["mode"] or "",
-                "executed": bool(row["executed"]),
+                "epoch_id": eid,
+                "created_at": plan.get("created_at", ""),
+                "mode": plan.get("mode", ""),
+                "executed": plan.get("executed", False),
                 "noise_floor_max_abs_delta": _opt_num(row["noise_floor_max_abs_delta"]),
                 "decision_flip_p": _opt_num(row["decision_flip_p"]),
                 "n_findings": _opt_int(row["n_findings"]),
@@ -204,9 +174,13 @@ def list_reflections(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
         if not root.exists():
             continue
         for child in sorted(root.iterdir()):
-            if not child.is_dir() or child.name in by_id:
+            if not child.is_dir() or child.name in by_id or (eid, child.name) in unreadable:
                 continue
-            plan = _plan_dict(paths, eid, child.name)
+            try:
+                plan = _plan_dict(paths, eid, child.name)
+            except RecordError as exc:
+                unreadable[eid, child.name] = str(exc)
+                continue
             if plan is None:
                 continue
             by_id[child.name] = _reflection_stub(plan, eid, child.name)
@@ -217,7 +191,13 @@ def list_reflections(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
         key=lambda d: (str(d.get("created_at") or ""), str(d["reflection_id"])),
         reverse=True,
     )
-    return {"reflections": items}
+    payload: dict[str, Any] = {"reflections": items}
+    if unreadable:
+        payload["unreadable"] = [
+            {"epoch_id": eid, "reflection_id": rid, "reason": reason}
+            for (eid, rid), reason in sorted(unreadable.items())
+        ]
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -252,12 +232,25 @@ def build_reflection_summary(paths: WorkspacePaths, reflection_id: str) -> dict[
     epoch_id = _resolve_epoch(paths, reflection_id)
     if epoch_id is None:
         return _empty_summary(reflection_id)
-    plan = _plan_dict(paths, epoch_id, reflection_id)
+    try:
+        plan = _plan_dict(paths, epoch_id, reflection_id)
+    except RecordError as exc:
+        return dict(
+            _empty_summary(reflection_id), epoch_id=epoch_id, note=str(exc), unreadable=True
+        )
     if plan is None:
         return _empty_summary(reflection_id)
 
+    from zicato.reflection.findings import read_findings  # noqa: PLC0415
+
+    try:
+        collection = read_findings(paths.root, epoch_id, reflection_id)
+    except RecordError as exc:
+        return dict(
+            _empty_summary(reflection_id), epoch_id=epoch_id, note=str(exc), unreadable=True
+        )
     summary = _summary_from_file(paths, epoch_id, reflection_id)
-    findings = _findings_from_file(paths, epoch_id, reflection_id)
+    findings = [finding.to_json() for finding in collection.items] if collection is not None else []
     raw_pillars = summary.get("pillars")
     pillars = raw_pillars if isinstance(raw_pillars, dict) else {}
     raw_tiers = summary.get("fidelity_tiers")
@@ -284,54 +277,21 @@ def build_reflection_summary(paths: WorkspacePaths, reflection_id: str) -> dict[
 
 
 def build_judge_scorecards(paths: WorkspacePaths, reflection_id: str) -> dict[str, Any]:
-    """The per-judge scorecards for one reflection — FILE-first, index fallback.
+    """Project accepted canonical cards; corruption cannot reuse indexed evidence."""
+    from zicato.reflection.scorecards import read_scorecards  # noqa: PLC0415
 
-    Files are canonical: the canonical ``scorecards.json`` carries the FULL
-    scorecard shape (``JudgeScorecard.to_json`` — including ``fpr`` and
-    ``conflicts_with``), whereas the ``judge_scorecards`` index projection is a
-    LOSSY subset that drops those columns. So this reader prefers the file when
-    present and the Instrument lens gets every metric it renders; the index
-    projection is the fallback for a file-less / cheap read path (an index built
-    against a workspace whose reflection dir was pruned). Returns
-    ``{reflection_id, judges: [...]}`` — an empty list for an unknown reflection.
-    """
-    # File-first (canonical, full shape).
+    empty = {"reflection_id": reflection_id, "judges": []}
     epoch_id = _resolve_epoch(paths, reflection_id)
-    if epoch_id is not None:
-        from_file = _scorecards_from_file(paths, epoch_id, reflection_id)
-        if from_file:
-            return {"reflection_id": reflection_id, "judges": from_file}
-
-    # Index fallback — the lossy projection (no fpr / conflicts_with).
-    from zicato.index import query as iq  # noqa: PLC0415
-
+    if epoch_id is None:
+        return empty
     try:
-        rows = iq.judge_scorecards_for_reflection(paths.index_db, reflection_id)
-    except Exception:  # noqa: BLE001 — best-effort
-        rows = []
-    if rows:
-        judges = [
-            {
-                "judge_name": r["judge_name"],
-                "tp": _opt_int(r["tp"]),
-                "fp": _opt_int(r["fp"]),
-                "fn": _opt_int(r["fn"]),
-                "tn": _opt_int(r["tn"]),
-                "ambiguous": _opt_int(r["ambiguous"]),
-                "precision": _opt_num(r["precision"]),
-                "recall": _opt_num(r["recall"]),
-                "f1": _opt_num(r["f1"]),
-                "severity_accuracy": _opt_num(r["severity_accuracy"]),
-                "disagreement_rate": _opt_num(r["disagreement_rate"]),
-                "self_consistency_kappa": _opt_num(r["kappa"]),
-                "exercised": bool(r["exercised"]),
-                "redundant_with": _opt_json_list(r["redundant_with_json"]),
-            }
-            for r in rows
-        ]
-        return {"reflection_id": reflection_id, "judges": judges}
-
-    return {"reflection_id": reflection_id, "judges": []}
+        record = read_scorecards(paths.root, epoch_id, reflection_id)
+    except RecordError as exc:
+        return {**empty, "unreadable": str(exc)}
+    return {
+        "reflection_id": reflection_id,
+        "judges": [card.to_json() for card in record.cards] if record is not None else [],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -363,23 +323,24 @@ def build_practice_review(paths: WorkspacePaths, reflection_id: str) -> dict[str
     epoch_id = _resolve_epoch(paths, reflection_id)
     if epoch_id is None:
         return _empty_practice_review(reflection_id)
-    raw = _practices_from_file(paths, epoch_id, reflection_id)
-    if raw is None:
+    from zicato.reflection.practices import read_practice_review  # noqa: PLC0415
+
+    try:
+        review = read_practice_review(paths.root, epoch_id, reflection_id)
+    except RecordError as exc:
+        return dict(
+            _empty_practice_review(reflection_id), epoch_id=epoch_id, note=str(exc), unreadable=True
+        )
+    if review is None:
         payload = _empty_practice_review(reflection_id)
         payload["epoch_id"] = epoch_id
         return payload
-    checks = raw.get("checks")
-    counts = raw.get("verdict_counts")
     return {
         "reflection_id": reflection_id,
         "epoch_id": epoch_id,
         "found": True,
-        "checks": checks if isinstance(checks, list) else [],
-        "verdict_counts": (
-            counts
-            if isinstance(counts, dict)
-            else {"sound": 0, "attend": 0, "unsound": 0, "unmeasured": 0}
-        ),
+        "checks": [check.to_json() for check in review.checks],
+        "verdict_counts": review.verdict_counts(),
     }
 
 
@@ -484,11 +445,21 @@ def build_adjudication_xray(
     )
 
     from zicato.core.workspace import reflection_adjudication_path  # noqa: PLC0415
+    from zicato.reflection.adjudication import read_adjudication  # noqa: PLC0415
 
-    adjudication = _load_json(
-        reflection_adjudication_path(paths.root, epoch_id, reflection_id, judge_name, run_ref)
-    )
-    adjudication = adjudication if isinstance(adjudication, dict) else None
+    try:
+        record = read_adjudication(
+            reflection_adjudication_path(paths.root, epoch_id, reflection_id, judge_name, run_ref)
+        )
+    except RecordError as exc:
+        return dict(
+            _empty_xray(reflection_id, judge_name, run_ref),
+            epoch_id=epoch_id,
+            transcript=transcript,
+            judge_verdict=judge_verdict,
+            unreadable=True,
+            note=str(exc),
+        )
 
     return {
         "reflection_id": reflection_id,
@@ -498,7 +469,7 @@ def build_adjudication_xray(
         "found": True,
         "transcript": transcript,
         "judge_verdict": judge_verdict,
-        "adjudication": adjudication,
+        "adjudication": record.to_json() if record is not None else None,
     }
 
 
@@ -580,16 +551,6 @@ def _opt_int(value: Any) -> int | None:
     if isinstance(value, float):
         return int(value)
     return None
-
-
-def _opt_json_list(value: Any) -> list[Any]:
-    if not isinstance(value, str):
-        return list(value) if isinstance(value, list) else []
-    try:
-        parsed = json.loads(value)
-    except (ValueError, json.JSONDecodeError):
-        return []
-    return parsed if isinstance(parsed, list) else []
 
 
 __all__ = [
