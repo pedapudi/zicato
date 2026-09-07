@@ -59,7 +59,7 @@
 | File | What lives there | Approx. size |
 |---|---|---|
 | `src/zicato/epoch/contract.py` | `ContractInputs`, every `_canon_*`, `compute_contract_hash` / `compute_component_hashes`, `resolve_contract_inputs`, `_SCORING_OMIT_AT_DEFAULT_FIELDS`, `scoring_to_canon`, `scoring_contract_to_canon` | 776 lines |
-| `src/zicato/core/scoring_config.py` | `ScoringWeights`, Zicato-owned nested config dataclasses, the frozen optional Goldfive JSON mapping, the runtime-derived contract-knob registry, `to_json`/`from_json`, `recommended_scaffold_weights` | — |
+| `src/zicato/core/scoring_config.py` | `ScoringWeights`, Zicato-owned nested config dataclasses, the frozen optional Goldfive JSON mapping, the runtime-derived contract-knob registry, `to_json`/`from_json` | — |
 | `src/zicato/integrations/goldfive.py` | Lazy bridge to Goldfive's public configuration document, runtime construction, and implementation identity | — |
 | `src/zicato/core/epoch.py` | `EpochConfig` (the frozen contract record) and `Generation` (one lineage node) | 177 lines |
 | `src/zicato/epoch/lifecycle.py` | `new_epoch`, `close_epoch` / `close_epoch_async`, `load_epoch` / `list_epochs`, `switch_epoch`, `set_epoch_goal` / `set_epoch_noise_floor` / `set_epoch_preflight`, `scoring_to_dict` | 769 lines |
@@ -1450,35 +1450,20 @@ screen is scaffolded and the process-exemplar channel is not.
        -k "round_trip or lifecycle or loader" -q
    ```
 
-5. **Make the scaffold decision.** Decide whether
-   `recommended_scaffold_weights` (`src/zicato/core/scoring_config.py`) sets your
-   knob. The rule is a real distinction rather than a matter of taste:
-   - an **evaluation-side** knob that only changes how candidates are *measured*
-     may be scaffolded — the precedent is the candidate screen, which the
-     scaffold enables explicitly:
-     ```python
-     # src/zicato/core/scoring_config.py — recommended_scaffold_weights (tail)
-             proposer_quality=ProposerQualityConfig(screen_entries=2),
-         )
-     ```
-   - a knob that **widens what the proposer can see** of the board (the
-     overfitting boundary — 05-proposer.md §5.8)
-     must NOT be scaffolded. The precedent is `process_exemplars`: the candidate
-     screen is evaluation-side, while exemplars widen the proposer-visibility
-     channel, so the operator opts in under the harm-detection runbook in
-     `docs/design/PROCESS-EXEMPLARS.md` §5
-     (`ExperimentalConfig.process_exemplars` docstring). It defaults `0` and
-     the scaffold leaves it `0`.
-   In both cases the in-code default stays OFF; only the scaffold — what a
-   freshly created workspace's `scoring.json` spells out — differs. If your knob
-   touches proposer visibility, treat it like `process_exemplars`: write the
-   design note first, because this recipe alone does not cover a
-   visibility-widening knob (14-goals-and-roadmap.md §"Design-first zones"), and
-   leave the scaffold alone.
-   **Verify:**
+5. **Define one default.** The field declarations used by `ScoringWeights()`
+   define defaults for typed construction, initialization, and the editor.
+   Initialization writes only deviations from those defaults. Complete resolved
+   values remain available through inspection and in each saved epoch.
+
+   Recommended screening uses two entries. Optional features under
+   `ExperimentalConfig` remain inactive until explicitly enabled. A change that
+   exposes additional task information to proposal generation requires the
+   restricted feedback review in `05-proposer.md` and the feature's design.
+   Moving a setting in the editor does not justify changing its default.
+
+   Verify that sparse and expanded inputs resolve to the same values and hash:
    ```bash
-   uv run pytest tests/test_scaffold_contract.py -q
-   uv run python -c "from zicato.core.scoring_config import recommended_scaffold_weights as s; print(s().proposer_quality)"
+   uv run pytest tests/test_scaffold_contract.py tests/test_shared_scoring_defaults.py -q
    ```
 
 6. **Wire the builder op + GUI + copilot.** Operators set contract knobs through

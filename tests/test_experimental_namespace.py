@@ -11,7 +11,6 @@ from zicato.core.configuration import ConfigurationError
 from zicato.core.scoring_config import (
     ExperimentalConfig,
     ScoringWeights,
-    recommended_scaffold_weights,
 )
 from zicato.workspace_loader import historical_scoring_weights_from_dict, scoring_weights_from_dict
 
@@ -56,7 +55,7 @@ def test_authored_location_is_explicit_and_archived_value_is_preserved(recorded,
 
 
 def test_recommended_settings_keep_experiments_inactive_and_screening_enabled():
-    recommended = recommended_scaffold_weights()
+    recommended = ScoringWeights()
     assert recommended.experimental == ExperimentalConfig()
     assert recommended.proposer_quality.screen_entries > 0
     assert "experiment_memory" not in {field.name for field in fields(ScoringWeights)}

@@ -252,8 +252,7 @@ Bare `ScoringWeights()` and an empty authored `scoring.json` select racing
 with four candidates, halving factor two, an initial board fraction of 0.4,
 and two ordinary draws per matchup. Candidate screening uses two entries.
 Confirmation permits 32 fresh draws of the selected pair at threshold 0.8.
-The complete specification is owned by the scoring field's default factory;
-`recommended_scaffold_weights()` is a compatibility entry point to those values.
+The scoring field's default factory defines the complete specification.
 
 Initialization writes `{}`. `zicato inspect config --scaffold --complete` displays
 all effective settings, and epoch records retain the complete selected values.

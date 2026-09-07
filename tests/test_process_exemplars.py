@@ -550,9 +550,9 @@ def test_contract_hash_stable_at_default_and_rolls_on_opt_in() -> None:
 def test_scaffold_does_not_enable_process_exemplars() -> None:
     """The deliberate asymmetry with screening (PROCESS-EXEMPLARS.md §4):
     the scaffold turns the screen ON but leaves this knob OFF."""
-    from zicato.core.scoring_config import recommended_scaffold_weights
+    from zicato.core.scoring_config import ScoringWeights
 
-    weights = recommended_scaffold_weights()
+    weights = ScoringWeights()
     assert weights.proposer_quality.screen_entries > 0
     assert weights.experimental.process_exemplars == 0
 

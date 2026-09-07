@@ -1360,11 +1360,6 @@ def omit_at_default_fields() -> frozenset[str]:
     return frozenset(knob.name for knob in contract_knobs() if knob.omit_at_default)
 
 
-def recommended_scaffold_weights() -> ScoringWeights:
-    """Compatibility entry point for the shared scoring defaults."""
-    return ScoringWeights()
-
-
 def scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
     """Validate authored scoring values before constructing the contract.
 
@@ -1392,7 +1387,7 @@ def scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
                 "retired",
                 "remove a zero increment; otherwise set ladder.threshold to the previous "
                 "threshold (or promote_margin when null) plus noise_scale, then remove "
-                "noise_scale. Editing authored scoring creates a different epoch contract",
+                "noise_scale. Preserve the required improvement when migrating",
             )
         from zicato.epoch.contract_serde import recorded_experimental_values  # noqa: PLC0415
 
@@ -1400,8 +1395,8 @@ def scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
             raise ConfigurationError(
                 f"scoring.{path}",
                 "relocated",
-                f"move this authored setting to experimental.{name}; the edit changes "
-                "the evaluation contract. Archived epoch files must remain unchanged",
+                f"move this authored setting to experimental.{name}; equivalent values preserve "
+                "the evaluation contract. Keep archived epoch files unchanged",
             )
         tournament = d.get("tournament")
         if isinstance(tournament, Mapping):

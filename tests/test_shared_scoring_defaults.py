@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from zicato.core.scoring_config import ScoringWeights, recommended_scaffold_weights
+from zicato.core.scoring_config import ScoringWeights
 from zicato.core.tournament import TournamentStructure
 from zicato.epoch.contract import _canon_recorded_scoring, scoring_contract_to_canon
 from zicato.selection.evidence_gate import read_promote_confidence_threshold, read_replicate_budget
@@ -22,8 +22,7 @@ from zicato.workspace_loader import (
 
 @pytest.mark.parametrize("raw", [{}, {"tournament": {}}, {"tournament": {"structure": "racing"}}])
 def test_authored_omission_uses_the_shared_recommendation(raw):
-    expected = recommended_scaffold_weights()
-    assert ScoringWeights() == expected
+    expected = ScoringWeights()
     assert scoring_weights_from_dict(raw) == expected
     expanded = configuration_scaffold(complete=True)["scoring.json"]
     assert scoring_contract_to_canon(scoring_weights_from_dict(raw)) == scoring_contract_to_canon(

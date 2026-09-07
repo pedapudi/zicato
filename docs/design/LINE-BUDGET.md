@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 503,820 | +95,159 |
-| Production | 197,702 | 213,285 | +15,583 |
-| Production logic | 110,276 | 123,737 | +13,461 |
+| Total | 408,661 | 503,804 | +95,143 |
+| Production | 197,702 | 213,273 | +15,571 |
+| Production logic | 110,276 | 123,728 | +13,452 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -94,7 +94,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/proposer | 11,166 | 11,166 | 5,827 | 47.8% |
 | src/zicato/cli | 8,167 | 8,167 | 5,348 | 34.5% |
 | src/zicato/analyzer | 7,619 | 7,619 | 4,800 | 37.0% |
-| src/zicato/core | 7,677 | 7,677 | 3,246 | 57.7% |
+| src/zicato/core | 7,672 | 7,672 | 3,244 | 57.7% |
 | src/zicato/tui | 4,394 | 4,394 | 3,136 | 28.6% |
 | src/zicato/selection | 5,393 | 5,393 | 3,093 | 42.6% |
 | src/zicato/index | 5,451 | 5,451 | 2,822 | 48.2% |
@@ -129,7 +129,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/adapter_factory.py | 120 | 120 | 89 | 25.8% |
 | src/zicato/reasoning.py | 112 | 112 | 83 | 25.9% |
 | src/zicato/import_path.py | 155 | 155 | 60 | 61.3% |
-| src/zicato/__init__.py | 74 | 74 | 48 | 35.1% |
+| src/zicato/__init__.py | 67 | 67 | 41 | 38.8% |
 | src/zicato/orchestrator.py | 14 | 14 | 11 | 21.4% |
 | src/zicato/aux_timeout.py | 15 | 15 | 6 | 60.0% |
 
@@ -432,3 +432,6 @@ dropped rows named.
 | Shared defaults and reduced testing cost (total) | 502,405 | +1,415 | 503,820 | Issues #394, #395, #405, #487, #495 and #498: shared defaults and experimental settings, tests of the recommended execution path, independent ranking checks, fewer repeated measurements, and one verification policy. The native lock owner explicitly releases its lock when cleanup finishes. |
 | Shared defaults and reduced testing cost (production) | 213,489 | -204 | 213,285 | Issues #394 and #395: one set of defaults and one group of experimental settings replace duplicated configuration and editor operations. A stable hash representation removes attempts to recognize several equivalent hashes. The native cleanup guard releases its file lock explicitly. |
 | Shared defaults and reduced testing cost (production logic) | 123,564 | +173 | 123,737 | Issues #394, #395 and #495: typed field migration and validation of supported stored records add executable checks. Shared defaults, feature consumers, and stable hashing remove duplicated logic. The native lock correction adds explicit release at the end of ownership. |
+| Remove the duplicate name for defaults (total) | 503,820 | -16 | 503,804 | Issue #395: remove the compatibility function, its public export, and a redundant assertion. Callers construct the shared configuration directly. Migration errors explain that equivalent settings retain their evaluation hash. |
+| Remove the duplicate name for defaults (production) | 213,285 | -12 | 213,273 | Issue #395: remove the forwarding function and its duplicate public export. |
+| Remove the duplicate name for defaults (production logic) | 123,737 | -9 | 123,728 | Issue #395: callers use the existing configuration constructor; no replacement abstraction is introduced. |

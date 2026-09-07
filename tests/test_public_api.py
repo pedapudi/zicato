@@ -53,7 +53,6 @@ def test_root_surface_is_deliberately_small() -> None:
         "load_board",
         "load_config",
         "load_workspace_config",
-        "recommended_scaffold_weights",
     }
 
 

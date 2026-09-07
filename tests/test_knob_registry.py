@@ -61,7 +61,6 @@ from zicato.core.scoring_config import (
     ScoringWeights,
     contract_knobs,
     omit_at_default_fields,
-    recommended_scaffold_weights,
 )
 from zicato.core.tournament import TournamentStructure
 
@@ -520,7 +519,7 @@ def test_recommended_scaffold_enables_no_experimental_knob() -> None:
     feature graduates by moving out of it; the scaffold turns no flag on.
     Walking the dataclass fields keeps the pin true for a flag added later.
     """
-    scaffold = recommended_scaffold_weights().experimental
+    scaffold = ScoringWeights().experimental
     enabled = [
         knob.name
         for knob in contract_knobs()

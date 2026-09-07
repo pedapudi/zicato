@@ -995,7 +995,7 @@ endorse starting the work.
 
 1. **Premise (cited).** The gauntlet resolves a duel by scalar delta and the
    racing structure by rung survival; the evidence gate adds a Bradley–Terry
-   *confidence* threshold (`recommended_scaffold_weights`,
+   *confidence* threshold (`ScoringWeights`,
    03-contract-and-epochs.md §3.5). A separate winner-resolution pass turns a set
    of pairwise results into an ordering under a social-choice rule:
    `resolve_leader` dispatches to Ranked Pairs or Copeland over a Smith-pruned
