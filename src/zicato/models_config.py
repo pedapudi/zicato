@@ -6,9 +6,10 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from zicato.core.configuration import ConfigurationError, authored_dataclass_from_json
 from zicato.core.types import CallLLM
 
 log = logging.getLogger("zicato.models_config")
@@ -51,12 +52,26 @@ _DEFAULT_ENGINE = {
 
 @dataclass(frozen=True, slots=True)
 class RoleSpec:
-    """One engine: an importable callable or a model plus transport."""
+    """One engine: an importable callable or a model plus transport.
+
+    Fields
+    ------
+    call_llm:
+        Import path of a callable accepting system text, user text, and model name.
+    model:
+        Model name understood by the connection endpoint.
+    endpoint:
+        Connection URL. Null uses the model runtime's default endpoint.
+    api_key_env:
+        Name of the environment variable holding the credential, never its value.
+    revision:
+        Logical deployment label recorded with this engine.
+    """
 
     call_llm: str | None = None
     model: str | None = None
     endpoint: str | None = None
-    api_key_env: str | None = None
+    api_key_env: str | None = field(default=None, metadata={"secret_reference": True})
     revision: str | None = None
 
     @property
@@ -99,32 +114,77 @@ class RoleSpec:
 
 
 def role_spec_from_dict(raw: Any) -> RoleSpec:
-    """Parse and strictly validate one engine."""
-    if not isinstance(raw, Mapping):
-        raise ValueError("model engine must be an object")
-    unknown = set(raw) - {"call_llm", "model", "endpoint", "api_key_env", "revision"}
-    if unknown:
-        raise ValueError(f"unknown model engine keys: {sorted(unknown)}")
-    call_llm = _opt_str(raw.get("call_llm"))
-    model = _opt_str(raw.get("model"))
-    if call_llm and model:
-        raise ValueError("model engine must set exactly one of call_llm or model")
-    if call_llm:
-        if raw.get("endpoint") is not None or raw.get("api_key_env") is not None:
-            raise ValueError("call_llm cannot be combined with endpoint or api_key_env")
-        return RoleSpec(call_llm=call_llm, revision=_opt_str(raw.get("revision")))
-    endpoint = _opt_str(raw.get("endpoint"))
-    api_key_env = _opt_str(raw.get("api_key_env"))
-    if not model and (endpoint or api_key_env):
+    """Validate one authored engine before resolving its connection."""
+    spec = authored_dataclass_from_json(RoleSpec, raw, path="model engine")
+    _validate_engine(spec)
+    return spec
+
+
+def _validate_engine(spec: RoleSpec) -> None:
+    if spec.is_empty and (spec.endpoint or spec.api_key_env):
         raise ValueError("endpoint and api_key_env require model")
-    if not model:
+    if bool(spec.call_llm) == bool(spec.model):
         raise ValueError("model engine must set exactly one of call_llm or model")
-    return RoleSpec(
-        model=model,
-        endpoint=endpoint,
-        api_key_env=api_key_env,
-        revision=_opt_str(raw.get("revision")),
-    )
+    if spec.call_llm and (spec.endpoint is not None or spec.api_key_env is not None):
+        raise ValueError("call_llm cannot be combined with endpoint or api_key_env")
+
+
+@dataclass(frozen=True, slots=True)
+class ModelDeclarations:
+    """Named engines and the public roles assigned to them.
+
+    Fields
+    ------
+    engines:
+        Reusable connections keyed by operator-chosen engine names.
+    roles:
+        Public role names mapped to engine names. Omitted roles inherit their
+        declared evaluation or proposer default.
+    guide:
+        Optional explanatory JSON stored under _guide; never used during execution.
+    """
+
+    engines: Mapping[str, RoleSpec] = field(default_factory=dict)
+    roles: Mapping[str, str] = field(default_factory=dict)
+    guide: Any = field(default=None, metadata={"persisted_name": "_guide"})
+
+    def __post_init__(self) -> None:
+        for name, spec in self.engines.items():
+            if not name.strip():
+                raise ConfigurationError(
+                    "models.engines", "value", "engine names must be non-empty"
+                )
+            try:
+                _validate_engine(spec)
+            except ValueError as exc:
+                raise ConfigurationError(f"models.engines.{name}", "value", str(exc)) from exc
+        for role, engine in self.roles.items():
+            if role not in PUBLIC_MODEL_ROLES:
+                raise ConfigurationError(
+                    f"models.roles.{role}", "unknown", f"expected one of {PUBLIC_MODEL_ROLES}"
+                )
+            if engine not in self.engines:
+                raise ConfigurationError(
+                    f"models.roles.{role}", "value", f"refers to unknown engine {engine!r}"
+                )
+        target = self.selected_name("target")
+        if target in self.engines:
+            for role in PUBLIC_MODEL_ROLES[1:]:
+                if self.selected_name(role) == target:
+                    raise ConfigurationError(
+                        f"models.roles.{role}",
+                        "value",
+                        "must not use the target engine; evaluated and evaluator-side "
+                        "engines must be distinct",
+                    )
+
+    def selected_name(self, public_role: str) -> str:
+        """Apply the role inheritance declared for named engines."""
+        name = self.roles.get(public_role)
+        if name is None and public_role in {"proposer_generate", "proposer_review"}:
+            name = self.roles.get("proposer")
+        name = name or _DEFAULT_ENGINE[public_role]
+        return self.roles.get("proposer", "evaluation") if name == "proposer" else name
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,50 +277,16 @@ def models_config_from_dict(raw: Any) -> ModelsConfig:
         return ModelsConfig()
     if not isinstance(raw, Mapping):
         raise ValueError("models must be an object")
-    if "engines" in raw or "roles" in raw:
-        unknown = set(raw) - {"engines", "roles", "_guide"}
-        if unknown:
-            raise ValueError(f"unknown models keys: {sorted(unknown)}")
-        engines_raw = raw.get("engines", {})
-        roles_raw = raw.get("roles", {})
-        if not isinstance(engines_raw, Mapping) or not isinstance(roles_raw, Mapping):
-            raise ValueError("models.engines and models.roles must be objects")
-        engines: dict[str, RoleSpec] = {}
-        for name, value in engines_raw.items():
-            if not isinstance(name, str) or not name.strip():
-                raise ValueError("engine names must be non-empty strings")
-            engines[name] = role_spec_from_dict(value)
-        assignments: dict[str, str] = {}
-        for role, engine in roles_raw.items():
-            if role not in PUBLIC_MODEL_ROLES:
-                raise ValueError(f"unknown model role {role!r}")
-            if not isinstance(engine, str) or engine not in engines:
-                raise ValueError(f"models.roles.{role} refers to unknown engine {engine!r}")
-            assignments[role] = engine
-
-        def selected_name(public_role: str) -> str:
-            name = assignments.get(public_role)
-            if name is None and public_role in {"proposer_generate", "proposer_review"}:
-                name = assignments.get("proposer")
-            name = name or _DEFAULT_ENGINE[public_role]
-            if name == "proposer":
-                name = assignments.get("proposer", "evaluation")
-            return name
+    if not raw or "engines" in raw or "roles" in raw or "_guide" in raw:
+        declared = authored_dataclass_from_json(ModelDeclarations, raw, path="models")
+        engines = dict(declared.engines)
+        assignments = dict(declared.roles)
 
         def selected(public_role: str) -> RoleSpec:
-            name = selected_name(public_role)
-            return engines.get(name, RoleSpec())
-
-        target = selected("target")
-        for isolated_role in PUBLIC_MODEL_ROLES[1:]:
-            if not target.is_empty and selected_name("target") == selected_name(isolated_role):
-                raise ValueError(
-                    f"models.roles.{isolated_role} must not use the target engine; "
-                    "evaluated and evaluator-side engines must be distinct"
-                )
+            return engines.get(declared.selected_name(public_role), RoleSpec())
 
         return ModelsConfig(
-            target=target,
+            target=selected("target"),
             evaluation=selected("evaluation"),
             builder=selected("builder"),
             judge=selected("judge"),
@@ -420,14 +446,6 @@ def resolve_builder_model(spec: RoleSpec, *, role: str = "builder") -> Any:
     if not spec.model:
         raise ValueError(f"models.{role}: neither a call_llm dotted path nor a model string is set")
     return build_adk_model(spec, role=role)
-
-
-def _opt_str(value: Any) -> str | None:
-    """Coerce an optional JSON value into ``str | None`` (blank ⇒ ``None``)."""
-    if value is None:
-        return None
-    text = str(value)
-    return text or None
 
 
 __all__ = [

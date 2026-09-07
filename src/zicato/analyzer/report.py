@@ -82,6 +82,7 @@ from zicato.analyzer.report_sections import (
     render_title_block,
 )
 from zicato.aux_timeout import aux_call_timeout_s
+from zicato.core.settings import AuxConfig
 from zicato.core.workspace import analysis_path
 
 log = logging.getLogger("zicato.analyzer.report")
@@ -1542,6 +1543,7 @@ async def generate_epoch_report(
     epoch_id: str,
     aux_call_llm: _AuxCallLLM,
     model: str = "",
+    aux_config: AuxConfig | None = None,
 ) -> Path:
     """Regenerate the comprehensive epoch analysis report.
 
@@ -1584,7 +1586,7 @@ async def generate_epoch_report(
     try:
         response = await asyncio.wait_for(
             aux_call_llm(REPORT_SYSTEM_PROMPT, user_prompt, model),
-            timeout=aux_call_timeout_s(),
+            timeout=aux_call_timeout_s(aux_config),
         )
         prose = parse_prose_blocks(response)
         if not prose:
@@ -1597,7 +1599,7 @@ async def generate_epoch_report(
         log.warning(
             "epoch report: evaluation LLM timed out after %.1fs; "
             "writing report with placeholder prose",
-            aux_call_timeout_s(),
+            aux_call_timeout_s(aux_config),
         )
         prose = _placeholder_blocks()
     except Exception as exc:  # noqa: BLE001 — opaque LLM errors are common

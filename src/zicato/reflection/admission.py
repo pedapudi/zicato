@@ -559,11 +559,11 @@ def _load_epoch_weights(workspace_root: Path, epoch_id: str) -> ScoringWeights:
     try:
         import json  # noqa: PLC0415
 
-        from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+        from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
 
         raw = json.loads(scoring_path(workspace_root, epoch_id).read_text(encoding="utf-8"))
         if isinstance(raw, dict):
-            return scoring_weights_from_dict(raw)
+            return historical_scoring_weights_from_dict(raw)
     except Exception:  # noqa: BLE001 — a missing / bad scoring.json → defaults
         pass
     return ScoringWeights()
@@ -605,7 +605,7 @@ def _probe_context(
         config = _placeholder_config(workspace_root)
     try:
         adapter = adapter_factory.make_adapter_from_config(
-            workspace_loader.load_workspace_config(workspace_root)
+            workspace_loader.load_workspace_config(workspace_root), workspace_root=workspace_root
         )
     except (ValueError, OSError, FileNotFoundError, ImportError):
         adapter = object()

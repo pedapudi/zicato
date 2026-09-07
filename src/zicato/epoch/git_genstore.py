@@ -75,6 +75,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import re
 import shutil
 import subprocess
 import tarfile
@@ -86,6 +87,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.types import Patch
+from zicato.core.workspace import generation_dir
 from zicato.epoch.genstore import (
     EPHEMERAL_SCRATCH_DIRNAME,
     EPHEMERAL_SNAPSHOT_PREFIX,
@@ -98,6 +100,11 @@ from zicato.epoch.genstore import (
     is_generation_source_path,
     render_source_diff,
     source_tree_bytes,
+)
+from zicato.epoch.seed_sources import (
+    GIT_ADMIN_BASENAMES,
+    prepare_seed_sources,
+    validated_seed_sources,
 )
 from zicato.epoch.snapshot_scope import gitignore_lines, is_artifact
 
@@ -122,7 +129,7 @@ log = logging.getLogger(__name__)
 #: would otherwise be copied when one generation's worktree seeds the
 #: next (a contract roll), corrupting the new commit. The directory
 #: backend never produced these, so this guard is git-backend-specific.
-_GIT_ADMIN_BASENAMES = frozenset({".git", ".gitignore"})
+_GIT_ADMIN_BASENAMES = GIT_ADMIN_BASENAMES
 
 #: Per-repo locks serialising worktree ADMIN mutations (``worktree add`` /
 #: ``worktree prune``) within this process. git's own repo lock serialises
@@ -249,10 +256,19 @@ class GitGenerationStore:
         self._repo.mkdir(parents=True, exist_ok=True)
         self._git("init", "--initial-branch", "zicato-root", ".")
         self._configure_identity()
+        self._configure_durability()
         gitignore = self._repo / ".gitignore"
         gitignore.write_text("\n".join(gitignore_lines()) + "\n", encoding="utf-8")
         self._git("add", ".gitignore")
         self._commit("zicato: generation repository root")
+
+    def _configure_durability(self) -> None:
+        """Harden committed objects and references in the owned generation repo."""
+        version = re.search(r"\b(\d+)\.(\d+)", self._git("--version"))
+        if version is None or tuple(map(int, version.groups())) < (2, 36):
+            raise RuntimeError("generation publication requires Git 2.36 or newer for durability")
+        self._git("config", "--local", "core.fsync", "committed,reference")
+        self._git("config", "--local", "core.fsyncMethod", "fsync")
 
     def _configure_identity(self) -> None:
         """Pin a fixed committer identity local to the generation repo."""
@@ -561,39 +577,31 @@ class GitGenerationStore:
         make ``git add`` resolve it as a foreign repository and abort; the
         seed ``.gitignore`` is already laid down by ``zicato-root``.
         """
-        self._ensure_repo()
-        sources = [s for s in sources if Path(s).name not in _GIT_ADMIN_BASENAMES]
-        for raw in sources:
-            source = Path(raw).resolve()
-            if not source.exists():
-                raise FileNotFoundError(
-                    f"seed_generation: source tree {source} does not exist on disk"
-                )
-
-        branch = self._epoch_branch(epoch_id)
-        if not self._git_ok("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"):
-            # New epoch branch from the shared root commit.
-            self._git("branch", branch, "zicato-root")
-        self._git("checkout", branch)
-
-        # Lay the source trees into the repo working dir, artifacts
-        # filtered. The .gitignore from zicato-root is already present.
-        for raw in sources:
-            source = Path(raw).resolve()
-            target = self._repo / source.name
-            if target.exists():
-                shutil.rmtree(target) if target.is_dir() else target.unlink()
-            if source.is_file():
-                shutil.copy2(source, target)
-            else:
-                shutil.copytree(source, target, ignore=_artifact_ignore)
-
-        self._stage_working_tree()
-        message = self._format_commit_message(
-            epoch_id, generation_id, parent_generation_id=None, patches=()
-        )
-        self._commit(message)
-        self._tag_generation(epoch_id, generation_id)
+        resolved = validated_seed_sources(sources, excluded_names=_GIT_ADMIN_BASENAMES)
+        if (
+            self.has_generation(epoch_id, generation_id)
+            or generation_dir(self._workspace_root, epoch_id, generation_id).exists()
+        ):
+            raise FileExistsError(
+                f"seed_generation: generation already exists: {epoch_id}/{generation_id}"
+            )
+        self._workspace_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".seed-", dir=self._workspace_root) as directory:
+            prepared = Path(directory) / "snapshot"
+            prepare_seed_sources(resolved, prepared)
+            self._ensure_repo()
+            self._configure_durability()
+            branch = self._epoch_branch(epoch_id)
+            if not self._git_ok("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"):
+                self._git("branch", branch, "zicato-root")
+            self._git("checkout", branch)
+            self._replace_working_tree(prepared)
+            self._stage_working_tree()
+            message = self._format_commit_message(
+                epoch_id, generation_id, parent_generation_id=None, patches=()
+            )
+            self._commit(message)
+            self._tag_generation(epoch_id, generation_id)
         return self.materialize_snapshot(epoch_id, generation_id)
 
     def derive_generation(

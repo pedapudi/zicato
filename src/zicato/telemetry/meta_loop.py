@@ -712,6 +712,7 @@ def build_meta_loop_emitter(
     evolve_started_at_iso: str,
     jsonl_filename: str = "meta_loop_events.jsonl",
     identity_root: Path | None = None,
+    grpc_target: str = "",
 ) -> MetaLoopEmitter:
     """Construct the per-evolve emitter with JSONL + optional harmonograf sinks.
 
@@ -788,7 +789,9 @@ def build_meta_loop_emitter(
     # WARNING logged, so we only add non-None returns.
     if harmonograf_url:
         try:
-            sink = build_meta_loop_sink(harmonograf_url, session_id, identity_root=identity_root)
+            sink = build_meta_loop_sink(
+                harmonograf_url, session_id, identity_root=identity_root, grpc_target=grpc_target
+            )
             if sink is not None:
                 sinks.append(sink)
         except Exception as exc:  # noqa: BLE001 — additive sink only

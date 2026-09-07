@@ -11,7 +11,32 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from zicato.core.measurement import PREFLIGHT_REPLICATE_SPAN
+from zicato.core.adapter_config import DriverImportContext
+from zicato.core.run_context import RunContext
+from zicato.core.runtime_context import TelemetryEndpoints
+from zicato.core.settings import (
+    INFRA_BACKOFF_BASE_S_DEFAULT as INFRA_BACKOFF_BASE_S_DEFAULT,
+)
+from zicato.core.settings import (
+    INFRA_BACKOFF_CAP_S_DEFAULT as INFRA_BACKOFF_CAP_S_DEFAULT,
+)
+from zicato.core.settings import (
+    PREFLIGHT_GATE_DEFAULT as PREFLIGHT_GATE_DEFAULT,
+)
+from zicato.core.settings import (
+    PREFLIGHT_GATE_MODES as PREFLIGHT_GATE_MODES,
+)
+from zicato.core.settings import (
+    PREFLIGHT_PROBE_POINTS_DEFAULT as PREFLIGHT_PROBE_POINTS_DEFAULT,
+)
+from zicato.core.settings import (
+    PREFLIGHT_PROBE_POINTS_MAX as PREFLIGHT_PROBE_POINTS_MAX,
+)
+from zicato.core.settings import (
+    ResolvedConfiguration,
+    RuntimeSettings,
+    resolve_configuration,
+)
 
 # ---------------------------------------------------------------------------
 # Runtime config
@@ -26,48 +51,6 @@ from zicato.core.measurement import PREFLIGHT_REPLICATE_SPAN
 #: provider, look up credentials, etc.). Zicato never inspects or
 #: switches on ``model``.
 CallLLM = Callable[[str, str, str], Awaitable[str]]
-
-#: Default first-deferral backoff (seconds) for the endpoint-outage circuit
-#: (:attr:`RuntimeConfig.infra_backoff_base_s`). Module-level so the evolve
-#: loop — which reads the raw workspace ``runtime`` block without building a
-#: full :class:`RuntimeConfig` — shares one source of truth with the factory.
-INFRA_BACKOFF_BASE_S_DEFAULT: float = 30.0
-
-#: Default ceiling (seconds) on the exponential infra backoff
-#: (:attr:`RuntimeConfig.infra_backoff_cap_s`). See the base default above.
-INFRA_BACKOFF_CAP_S_DEFAULT: float = 480.0
-
-#: Valid values for :attr:`RuntimeConfig.preflight_gate`, weakest first.
-#: ``"off"`` — do not run the achievable-signal pre-flight, UNLESS a
-#: ``contract_preflight: K`` key explicitly requests it; with no such key —
-#: the common case, including deterministic oracles — ``"off"`` runs no
-#: pre-flight at all; ``"warn"`` (the DEFAULT) —
-#: measure it once per epoch at evolve start and LOUDLY warn on a
-#: below-noise-floor / saturated verdict, but never stop; ``"refuse"`` —
-#: additionally HARD-STOP the run before spending rounds when the verdict is
-#: ``refuse``. Cost: ``"warn"``/``"refuse"`` add ~K+1 champion board
-#: evaluations (the A/A draws + one degraded probe) once per epoch at evolve
-#: start; on a real endpoint that is real budget, counted against round 0.
-PREFLIGHT_GATE_MODES: tuple[str, ...] = ("off", "warn", "refuse")
-
-#: Default pre-flight gate mode — measure + warn, never block (recommend-only).
-PREFLIGHT_GATE_DEFAULT: str = "warn"
-
-#: Default CEILING on how many mutation points the pre-flight may degrade
-#: (:attr:`RuntimeConfig.preflight_probe_points`). Five is chosen to cover one
-#: point per declared ``role`` on a realistic multi-agent harness (the
-#: presentation target declares five: coordinator routing, system instruction,
-#: tool description, path logic, topic naming), which is the sample the
-#: round-robin selection in :func:`zicato.epoch.preflight.select_probe_points`
-#: draws. It is a ceiling and not a cost: probing stops at the first point
-#: whose signal clears both the noise floor and ``promote_margin``, so a
-#: healthy contract spends exactly ONE degraded draw, exactly as it did before
-#: issue #106 — the extra evidence is bought only where the alternative is
-#: calling a contract unmeasurable on a sample of one.
-PREFLIGHT_PROBE_POINTS_DEFAULT: int = 5
-
-#: The preflight sample must fit the registry allocation.
-PREFLIGHT_PROBE_POINTS_MAX: int = PREFLIGHT_REPLICATE_SPAN
 
 
 class RoundTokenLedger:
@@ -123,17 +106,13 @@ class RoundTokenLedger:
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeConfig:
+class RuntimeConfig(RuntimeSettings):
     """The runtime-side parameters that bind one zicato instance.
+
+    Operational field descriptions belong to RuntimeSettings.
 
     Fields
     ------
-    instance_id:
-        Identifier for this zicato instance. Distinguishes nested
-        instances when an outer zicato is optimizing an inner zicato
-        (the target-3 dogfood plan). v0 single-instance runs pass a
-        constant (e.g. ``"default"``); future nested runs key
-        workspaces, event streams, and lineage by this id.
     workspace_root:
         Absolute path to the ``.zicato/`` directory this instance
         writes under.
@@ -173,248 +152,12 @@ class RuntimeConfig:
         Optional callable for `proposer_review`, with the same inheritance.
     proposer_breadth_model:
         Model id paired with generate for native and process-backed proposers.
-    seed:
-        Optional integer seed for any zicato-internal random number
-        generators. Adapters may or may not honor it for the system
-        under test. The selected value identifies measurement artifacts and
-        cache reuse. None records an explicitly unseeded execution; missing
-        historical provenance never proves that selection.
-    parallelism:
-        Maximum number of **board units** the tournament runner keeps
-        in flight at once — i.e. "how many boards run in parallel". The
-        unit of scheduling is a board unit: one per board entry. In full
-        mode a board unit runs its champion (parent) and challenger
-        (child) runs CONCURRENTLY, so ``parallelism`` board units mean
-        up to ``2 * parallelism`` run subprocesses alive at once. Fast mode
-        resolves both competitors from the replicate-keyed cache and runs
-        only misses, so its active count ranges from zero to the same ceiling.
-        ``1`` admits one board unit at a time.
-        Values above ``1`` let the runner play several "boards" of the
-        tournament hall simultaneously, bounded by an
-        :class:`asyncio.Semaphore`. The real-world ceiling is almost
-        always the LLM endpoint's own concurrency limit rather than this
-        number — size it against ``2 * parallelism`` — so
-        a modest default (``4``) is a safe starting point; operators
-        raise it only when the endpoint can absorb more in-flight calls.
-        Must be ``>= 1``.
-    host_worker_permits:
-        HOST-WIDE ceiling on board-unit worker subprocesses alive at once,
-        across EVERY orchestrator on the machine. :attr:`parallelism` is a
-        per-process :class:`asyncio.Semaphore` and therefore bounds only
-        the run that owns it: two concurrent ``evolve`` runs on one box
-        admit ``2 * parallelism`` board units between them (up to
-        ``4 * parallelism`` workers in full mode), each resolving a
-        ~246 MB import graph. This knob is the missing bound — a permit
-        taken from a file-lock pool in the user's runtime directory
-        (workspace-EXTERNAL, so the cap spans workspaces) before a worker
-        is spawned and released once it is reaped. See
-        :mod:`zicato.runtime.spawn_permit` and RUNTIME.md §5.5.7.
-
-        ``None`` — the DEFAULT — means AUTO:
-        ``max(4, 2 * os.cpu_count())``, generous enough that
-        a single ordinary run never waits on a permit. ``0`` disables the
-        cap entirely (no filesystem is touched). ``>= 1`` is an explicit
-        ceiling. A run whose permits are all held QUEUES rather than
-        over-subscribing; the throttle degrades OPEN on any
-        infrastructure failure (no usable runtime dir, no ``flock``), so
-        it can never be the reason a run fails to start.
-
-        A RUNTIME tuning knob, NOT part of the frozen evaluation contract
-        — it never enters the scoring canonical form, so changing it does
-        not roll the epoch. Negative values are clamped to ``0`` (off)
-        rather than rejected: a throttle must not fail a run on a typo.
-    worker_permit_dir:
-        Optional absolute, workspace-external directory holding the host-wide
-        worker permit slots. ``None`` uses the platform runtime directory.
-        An absolute path ensures orchestrators launched from different working
-        directories share one permit pool. Configure this only when several
-        orchestrators must share a nonstandard runtime filesystem.
-    log_level:
-        Minimum structured-log severity captured for orchestrator and worker
-        records. One of ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR``, or
-        ``CRITICAL``. The default is ``INFO``.
-    propose_parallelism:
-        Maximum number of best-of-N slate SAMPLES the proposer keeps in
-        flight at once — the propose-phase analogue of :attr:`parallelism`
-        (which bounds board-unit runs). The N samples of a best-of-N slate
-        are genuinely independent (each varies only by a deterministic
-        per-slot hint), so the wrapper gathers them under an
-        :class:`asyncio.Semaphore` sized from this value; the deterministic
-        post-gather pass then emits every ``candidate_sampled`` event and
-        appends every candidate in SLOT order, so the observable outcome is
-        independent of completion order. ``1`` runs the slate fully serially
-        and reproduces the pre-concurrency behaviour byte-for-byte. Default
-        ``4``, mirroring :attr:`parallelism`; the real ceiling is almost
-        always the LLM endpoint's own concurrency limit. A RUNTIME tuning
-        knob, NOT part of the frozen evaluation contract — it never enters
-        the scoring canonical form (it lives on :class:`RuntimeConfig`, which
-        is never fed to the contract canonicalizer), so flipping it does not
-        roll the epoch. Must be ``>= 1``.
-    scrub_worker_env:
-        When ``True``, each tournament worker is spawned with a MINIMAL
-        explicit environment — the process-essential keys plus the
-        ``api_key_env`` names the configured model roles need (and any
-        :attr:`worker_env_passthrough` keys) — instead of inheriting the
-        orchestrator's full environment. This denies a mutated worker
-        read-access to every credential in the orchestrator's process env.
-        Defaults to ``False`` (full inheritance).
-    worker_env_passthrough:
-        Extra environment-variable NAMES a scrubbed worker should still
-        receive (a target that reads a bespoke variable). Only consulted
-        when :attr:`scrub_worker_env` is ``True``; each name is copied from
-        the orchestrator's env only if present. Empty by default.
-    diversity_tolerance:
-        Optional field-diversity overlap ceiling for the multi-challenger
-        (non-gauntlet) path. ``None`` (the default) disables enforcement
-        entirely, leaving the exact-duplicate soft-reject as the only
-        diversity guard. When SET to a fraction in ``(0, 1]``, a challenger
-        whose targeted-mutation-id set overlaps an already-accepted sibling's
-        by a Jaccard ratio STRICTLY GREATER than this tolerance is
-        *soft-rejected* — dropped from the run slate and recorded with a
-        ``diversity_status`` of ``"soft_rejected"`` — so two challengers that
-        touch essentially the same mutation points cannot collapse a field of
-        N into fewer real experiments. A small value (e.g. ``0.5``) rejects
-        heavily-overlapping siblings; ``1.0`` rejects nothing on this basis
-        (no overlap can exceed 1.0), which is functionally equivalent to off.
-        This is a RUNTIME tuning knob, NOT part of the frozen evaluation
-        contract — flipping it does not roll the epoch. Must be in ``(0, 1]``
-        when set.
-    supervisor_kill_wait_s:
-        Seconds the tournament parent waits for the SUPERVISOR to
-        escalate-kill an over-budget worker after the parent writes the
-        kill-request marker, BEFORE falling back to its own last-resort
-        SIGTERM→grace→SIGKILL escalation. The supervisor is the single
-        escalator: this window must comfortably exceed the supervisor's
-        SIGTERM→SIGKILL grace plus its watchdog tick so a healthy
-        supervisor always wins the kill. When NO supervisor is attached
-        (an ad-hoc run with no watchdog, or a supervisor that itself
-        died), this value is the ABORT-LATENCY FLOOR: every over-budget
-        run waits the full window before the parent's fallback reaps the
-        worker. The default (``20.0``) is generous on purpose — a few
-        extra seconds on an already-overrun run is cheap; a leaked worker
-        is not. Tests and supervisor-less harnesses shrink it to keep
-        that floor from dominating wall-clock time.
-    infra_abort_round_threshold:
-        Endpoint-outage circuit breaker. ``0`` (the DEFAULT) is OFF, and
-        an all-infra-aborted round then settles like any other: the
-        aborted runs score worst-case and the child is rejected. When
-        ``>= 1``: after a gauntlet round's tournament settles, the
-        orchestrator counts the duel's INFRA-aborted runs
-        (:func:`zicato.core.loss.is_infra_abort_cause` — worker crashes,
-        parent/supervisor kills; never a genuine budget exhaustion) and,
-        at or above this threshold, the round DEFERS instead of burning
-        the experiment: the tournament's verdict is discarded, nothing
-        is journaled/finalized (the experiment persists un-outcomed, the
-        exact shape the conservative crash-resume already reconciles),
-        and the evolve loop backs off before the next round. A RUNTIME
-        tuning knob, NOT part of the frozen evaluation contract —
-        flipping it does not roll the epoch. Must be ``>= 0``.
-    infra_backoff_base_s:
-        First backoff delay (seconds) after a round defers on the infra
-        circuit; consecutive deferrals double it. Only consulted while
-        :attr:`infra_abort_round_threshold` is on. Must be ``>= 0``.
-    infra_backoff_cap_s:
-        Ceiling (seconds) on the exponential infra backoff. Must be
-        ``>= 0``.
-    preflight_gate:
-        Contract pre-flight gate mode (issue #84). One of
-        :data:`PREFLIGHT_GATE_MODES` — ``"off"`` | ``"warn"`` | ``"refuse"``.
-        At evolve start (round 0, once per epoch, idempotent, best-effort)
-        the loop measures the contract's A/A noise floor AND its degradation
-        signal (champion vs a degraded copy of itself; see
-        :mod:`zicato.epoch.preflight`). ``"warn"`` (the DEFAULT) LOUDLY warns
-        when the measured signal does not clear the noise floor (or the
-        contract is saturated) and lets the run proceed — matching the
-        recommend-only philosophy; ``"refuse"`` additionally HARD-STOPS the
-        run (``PreflightRefusedError``) before rounds burn budget on a
-        contract that cannot be optimized; ``"off"`` runs no pre-flight —
-        UNLESS a ``contract_preflight: K`` key is present, which requests one
-        explicitly. With no such key — the common case, including
-        deterministic oracles that assert their own known answer — ``"off"``
-        measures nothing at all. A RUNTIME tuning knob that is no part of the
-        frozen evaluation contract, so flipping it does not roll the epoch.
-        The ``config.json`` ``"contract_preflight": K`` key sets the number
-        of A/A draws K; absent, K defaults to ``DEFAULT_CALIBRATION_RUNS``.
-        COST: under ``"warn"``/``"refuse"`` the once-per-epoch measurement runs
-        ~K+1 champion board evaluations (the A/A draws + one degraded probe) at
-        evolve start; it is idempotent (persisted; a resume re-reads the record)
-        and skipped entirely on any infra abort (an outage never disqualifies a
-        contract), but on a real endpoint it is real budget counted against
-        round 0.
-    preflight_probe_points:
-        CEILING on how many mutation points the pre-flight may degrade to
-        measure the degradation signal (issue #106). Defaults to
-        :data:`PREFLIGHT_PROBE_POINTS_DEFAULT`; must be ``>= 1`` (``1``
-        reproduces the single-probe behaviour that made one inert point able
-        to veto a whole contract) and ``<=``
-        :data:`PREFLIGHT_PROBE_POINTS_MAX` (the pre-flight's reserved
-        replicate block cannot hold a wider sample). The pre-flight degrades
-        a deterministic, role-diverse sample of this size
-        (:func:`zicato.epoch.preflight.select_probe_points`) and reports the
-        MAX signal, so one point that happens not to reach the deliverable
-        cannot produce a spurious ``refuse``. COST: this is a ceiling rather
-        than a spend — probing stops at the first point clearing both the
-        noise floor and ``promote_margin``, so the healthy case is one
-        degraded draw and the extra evaluations are paid only on a contract
-        that looks unmeasurable.
-        A RUNTIME tuning knob, NOT part of the frozen evaluation contract —
-        changing it does not roll the epoch.
-    preflight_probe_mutation_ids:
-        Explicit pre-flight probe selection: the mutation-point ids to degrade,
-        in order, INSTEAD of the automatic sample (``()`` — the default — means
-        sample automatically). Use it when the operator knows which point
-        carries the contract's signal, e.g. a coordinator instruction that
-        every run exercises. Ignores :attr:`preflight_probe_points` (naming the
-        points answers the selection question) and probes named points even
-        when their degradation is a no-op, so a pin measures exactly what was
-        asked. An id that does not enumerate under the champion snapshot fails
-        the measurement loudly rather than silently falling back to the
-        automatic sample, which would report a verdict measured on points the
-        operator did not choose. ``zicato board preflight
-        --degrade-mutation-id`` is the one-shot equivalent. A RUNTIME tuning
-        knob, NOT part of the frozen evaluation contract.
-    max_tokens_per_round:
-        Per-round token budget. ``0`` (the DEFAULT) is OFF and leaves
-        scheduling untouched. When ``>= 1``, the orchestrator mints
-        a fresh :class:`RoundTokenLedger` per round; every fresh board
-        unit run (parent + child + evidence replicates + candidate
-        screen) folds its opportunistic ``cost:tokens_spent`` into the
-        tally, and once it is spent the schedulers stop LAUNCHING
-        further board units / replicate slots and the round settles with
-        what it has (un-run units record the same budget-exceeded losses
-        a matchup-deadline trip synthesizes; completed replicate slots
-        average as-is). A RUNTIME tuning knob, NOT part of the frozen
-        evaluation contract. Must be ``>= 0``.
     token_ledger:
         The ROUND-scoped mutable :class:`RoundTokenLedger`, rebound per
         round by the orchestrator when :attr:`max_tokens_per_round` is
         on (the ``target_model`` live-object precedent). ``None`` — the
         default, and every round with the knob off — disables every
         ledger consultation. Never read from workspace config.
-    persist_run_results:
-        Persist each run's :class:`~zicato.core.RunResult` (the
-        user-facing transcript + final output) as ``result.json`` beside
-        the run's ``loss.json`` (replicate-slotted ``result.r{n}.json``,
-        see :func:`zicato.tournament.unit_cache.unit_result_path`).
-        DEFAULT ``True`` — always-on with an opt-out, because the
-        artifact is small text and an opt-in would leave board
-        reflection's passive tier permanently starved of verbatim
-        transcripts (BOARD-REFLECTION.md's capture gap). The write is
-        best-effort and atomic; a capture failure NEVER re-scores or
-        aborts a run. A RUNTIME tuning knob, additive, NEVER part of the
-        frozen evaluation contract (never hashed) — flipping it does not
-        roll the epoch.
-    persist_judge_io:
-        Persist every inline judge ``evaluate`` call's verbatim I/O (the
-        exact reasoning text judged + the raw LLM response + the parsed
-        verdict) as an append-only ``judge_io.jsonl`` sidecar beside the
-        run's ``loss.json`` (``judge_io.r{n}.jsonl`` per replicate; see
-        :mod:`zicato.judge_runtime.io_capture`). DEFAULT ``True`` for
-        the same always-on-with-opt-out rationale as
-        :attr:`persist_run_results`; best-effort (a capture failure
-        never changes a verdict or aborts a run). A RUNTIME tuning knob,
-        additive, NEVER contract-hashed — flipping it does not roll the
-        epoch.
     judge_io_sink:
         The LIVE judge-I/O sink object (the
         :class:`zicato.judge_runtime.io_capture.JudgeIOSink` protocol)
@@ -445,13 +188,11 @@ class RuntimeConfig:
     reopen the deferred two-callable validation above.
     """
 
-    instance_id: str
     workspace_root: Path
     target_call_llm: CallLLM
     evaluation_call_llm: CallLLM
-    seed: int | None = None
-    parallelism: int = 4
-    propose_parallelism: int = 4
+    driver_imports: DriverImportContext = DriverImportContext()
+    run_context: RunContext | None = None
     judge_call_llm: CallLLM | None = None
     adjudicator_call_llm: CallLLM | None = None
     user_emulator_call_llm: CallLLM | None = None
@@ -461,17 +202,6 @@ class RuntimeConfig:
     proposer_breadth_model: str | None = None
     proposer_depth_model: str | None = None
     proposer_model: str | None = None
-    scrub_worker_env: bool = False
-    worker_env_passthrough: tuple[str, ...] = ()
-    diversity_tolerance: float | None = None
-    supervisor_kill_wait_s: float = 20.0
-    infra_abort_round_threshold: int = 0
-    infra_backoff_base_s: float = INFRA_BACKOFF_BASE_S_DEFAULT
-    infra_backoff_cap_s: float = INFRA_BACKOFF_CAP_S_DEFAULT
-    max_tokens_per_round: int = 0
-    preflight_gate: str = PREFLIGHT_GATE_DEFAULT
-    preflight_probe_points: int = PREFLIGHT_PROBE_POINTS_DEFAULT
-    preflight_probe_mutation_ids: tuple[str, ...] = ()
     token_ledger: RoundTokenLedger | None = None
     #: The ADK model object (a ``BaseLlm``, typically a ``LiteLlm``) the inner
     #: ADK agents run on, built from a ``models.target`` *model spec* (model +
@@ -483,90 +213,29 @@ class RuntimeConfig:
     #: configured; the adapter falls back to its guarded shim rebind. Typed
     #: ``Any`` so :mod:`zicato.core` carries no import dependency on ADK.
     target_model: Any = None
-    persist_run_results: bool = True
-    persist_judge_io: bool = True
     judge_io_sink: Any = None
-    #: HOST-WIDE ceiling on concurrently-alive worker subprocesses, across
-    #: every orchestrator on the machine (:attr:`parallelism` bounds only
-    #: this process). ``None`` — the default — is AUTO
-    #: (``max(4, 2 * cores)``); ``0`` disables the cap; ``>= 1`` is an
-    #: explicit ceiling. This field remains in its original positional slot;
-    #: later fields append after it so existing positional construction sites
-    #: stay valid. See the class docstring and
-    #: :mod:`zicato.runtime.spawn_permit`.
-    host_worker_permits: int | None = None
-    worker_permit_dir: Path | None = None
-    log_level: str = "INFO"
     #: Goldfive measurement, steering, endpoint, and agent-limit settings from
     #: the epoch's frozen scoring contract. Tournament workers bind this field
     #: from the same :class:`ScoringWeights` instance they use to reduce loss.
     goldfive: Mapping[str, Any] | None = None
+    configuration: ResolvedConfiguration | None = None
+    telemetry: TelemetryEndpoints = TelemetryEndpoints()
 
-    def __post_init__(self) -> None:
-        """Validate the cheap scalar invariants (``parallelism`` + tolerance)."""
-        if self.parallelism < 1:
-            raise ValueError(
-                f"RuntimeConfig.parallelism must be >= 1, got {self.parallelism!r}; "
-                "use 1 for fully sequential board execution"
-            )
-        if self.propose_parallelism < 1:
-            raise ValueError(
-                f"RuntimeConfig.propose_parallelism must be >= 1, got "
-                f"{self.propose_parallelism!r}; use 1 for a fully serial best-of-N slate"
-            )
-        if self.worker_permit_dir is not None and not Path(self.worker_permit_dir).is_absolute():
-            raise ValueError(
-                "RuntimeConfig.worker_permit_dir must be an absolute path so every "
-                "orchestrator uses the same host-wide permit pool"
-            )
-        if self.log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-            raise ValueError(
-                "RuntimeConfig.log_level must be DEBUG, INFO, WARNING, ERROR, or CRITICAL, "
-                f"got {self.log_level!r}"
-            )
-        if self.diversity_tolerance is not None and not (0.0 < self.diversity_tolerance <= 1.0):
-            raise ValueError(
-                "RuntimeConfig.diversity_tolerance must be in (0, 1] or None, "
-                f"got {self.diversity_tolerance!r}; use None to disable "
-                "field-diversity enforcement"
-            )
-        if self.infra_abort_round_threshold < 0:
-            raise ValueError(
-                "RuntimeConfig.infra_abort_round_threshold must be >= 0, got "
-                f"{self.infra_abort_round_threshold!r}; use 0 to disable the "
-                "endpoint-outage circuit"
-            )
-        if self.infra_backoff_base_s < 0 or self.infra_backoff_cap_s < 0:
-            raise ValueError(
-                "RuntimeConfig.infra_backoff_base_s / infra_backoff_cap_s must "
-                f"be >= 0, got {self.infra_backoff_base_s!r} / "
-                f"{self.infra_backoff_cap_s!r}"
-            )
-        if self.max_tokens_per_round < 0:
-            raise ValueError(
-                "RuntimeConfig.max_tokens_per_round must be >= 0, got "
-                f"{self.max_tokens_per_round!r}; use 0 to disable the per-round "
-                "token budget"
-            )
-        if self.preflight_gate not in PREFLIGHT_GATE_MODES:
-            raise ValueError(
-                f"RuntimeConfig.preflight_gate must be one of {PREFLIGHT_GATE_MODES}, "
-                f"got {self.preflight_gate!r}"
-            )
-        if self.preflight_probe_points < 1:
-            raise ValueError(
-                "RuntimeConfig.preflight_probe_points must be >= 1, got "
-                f"{self.preflight_probe_points!r}; use 1 to probe a single "
-                "mutation point (the pre-#106 behaviour)"
-            )
-        if self.preflight_probe_points > PREFLIGHT_PROBE_POINTS_MAX:
-            raise ValueError(
-                "RuntimeConfig.preflight_probe_points must be <= "
-                f"{PREFLIGHT_PROBE_POINTS_MAX} (the width of the pre-flight's "
-                "reserved replicate block), got "
-                f"{self.preflight_probe_points!r}; a wider sample would draw "
-                "into the candidate screen's replicate range"
-            )
+    def operational_configuration(self) -> ResolvedConfiguration:
+        """Return selected settings, including explicit runtime adjustments."""
+        from dataclasses import fields, replace  # noqa: PLC0415
+
+        resolved = self.configuration or resolve_configuration({})
+        updates = {
+            item.name: getattr(self, item.name)
+            for item in fields(RuntimeSettings)
+            if getattr(self, item.name) != getattr(resolved.values.runtime, item.name)
+        }
+        if not updates:
+            return resolved
+        values = replace(resolved.values, runtime=replace(resolved.values.runtime, **updates))
+        sources = {**resolved.sources, **{f"runtime.{key}": "invocation" for key in updates}}
+        return ResolvedConfiguration(values, sources)
 
     def effective_judge_call_llm(self) -> CallLLM:
         """The callable judges run on: :attr:`judge_call_llm` or the evaluation callable.

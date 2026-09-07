@@ -44,7 +44,7 @@ def test_scoring_config_loader_rejects_nan_promotion_margin() -> None:
     """JSON's permissive NaN spelling cannot enter a frozen scoring contract."""
     raw = json.loads('{"promote_margin": NaN}')
 
-    with pytest.raises(ValueError, match="promote_margin must be finite"):
+    with pytest.raises(ValueError, match="scoring.promote_margin: expected a finite number"):
         scoring_weights_from_dict(raw)
 
 

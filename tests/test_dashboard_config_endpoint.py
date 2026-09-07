@@ -25,13 +25,13 @@ from zicato.dashboard.server import create_app
 from zicato.query import WorkspacePaths, read_effective_settings
 from zicato.runtime.effective_settings import (
     SOURCE_HOST_CPU_COUNT,
-    SOURCE_PINNED_FLAG,
+    SOURCE_INVOCATION,
     SOURCE_WORKSPACE,
 )
 from zicato.runtime.state import Heartbeat, write_heartbeat
 
 _RECORDED = {
-    "runtime.parallelism": {"value": 4, "source": SOURCE_PINNED_FLAG},
+    "runtime.parallelism": {"value": 4, "source": SOURCE_INVOCATION},
     "runtime.host_worker_permits": {"value": 20, "source": SOURCE_HOST_CPU_COUNT},
     "health.max_generation_age_days": {"value": 30, "source": SOURCE_WORKSPACE},
 }

@@ -1,12 +1,4 @@
-"""Tests for the ``asyncio.wait_for`` wrappers around aux_call_llm.
-
-Each aux call site (proposer, judge, emulator turn, analysis pass)
-must surface a deterministic outcome when the LLM endpoint hangs past
-the configured budget. We exercise each with a hung-mock that sleeps
-forever and a near-zero budget pinned the way the ``--aux-call-timeout``
-flag pins it (``zicato.config.pin_overrides``) so the test completes in
-milliseconds. The suite-wide autouse fixture clears pins between tests.
-"""
+"""Each evaluation consumer bounds a hung call with its explicit budget."""
 
 from __future__ import annotations
 
@@ -17,13 +9,7 @@ from pathlib import Path
 import pytest
 
 from zicato.aux_timeout import DEFAULT_AUX_CALL_TIMEOUT_S, aux_call_timeout_s
-from zicato.config import pin_overrides
-
-
-def _pin_aux_timeout(seconds: float) -> None:
-    """Pin the aux budget exactly as ``zicato evolve --aux-call-timeout`` does."""
-    pin_overrides({"aux": {"call_timeout_s": seconds}})
-
+from zicato.config import AuxConfig, InvocationOverlay, resolve_configuration
 
 # ---------------------------------------------------------------------------
 # Module-level config
@@ -34,10 +20,9 @@ def test_default_timeout_is_120s() -> None:
     assert aux_call_timeout_s() == DEFAULT_AUX_CALL_TIMEOUT_S
 
 
-def test_pinned_flag_value_wins() -> None:
-    """A pinned ``--aux-call-timeout`` value reaches the bare call-site form."""
-    _pin_aux_timeout(5.5)
-    assert aux_call_timeout_s() == 5.5
+def test_explicit_timeout_value_is_used() -> None:
+    """A caller supplies the budget used by the evaluation consumer."""
+    assert aux_call_timeout_s(AuxConfig(call_timeout_s=5.5)) == 5.5
 
 
 def test_deleted_env_var_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -59,7 +44,7 @@ async def _hung_aux(system: str, user: str, model: str) -> str:
 
 def test_rubric_timeout_returns_rubric_timeout_detail() -> None:
     """A hung rubric aux returns ``passed=False`` with detail ``rubric_judge_timeout``."""
-    _pin_aux_timeout(0.05)
+    aux_config = AuxConfig(call_timeout_s=0.05)
 
     from zicato.board.matchers import evaluate_expectation
     from zicato.board.predicates import Rubric
@@ -74,7 +59,9 @@ def test_rubric_timeout_returns_rubric_timeout_detail() -> None:
         runtime_ms=10,
     )
 
-    outcome = asyncio.run(evaluate_expectation(expectation, result, aux_call_llm=_hung_aux))
+    outcome = asyncio.run(
+        evaluate_expectation(expectation, result, aux_call_llm=_hung_aux, aux_config=aux_config)
+    )
     assert outcome.passed is False
     assert outcome.detail == "rubric_judge_timeout"
 
@@ -91,7 +78,7 @@ async def _target_callable(system: str, user: str, model: str) -> str:
 
 def test_emulator_timeout_aborts_with_emulator_timeout() -> None:
     """A hung emulator-side aux aborts the driver with ``emulator_timeout``."""
-    _pin_aux_timeout(0.05)
+    aux_config = AuxConfig(call_timeout_s=0.05)
 
     from zicato.core.types import BoardEntry, RuntimeConfig, UserPersona
     from zicato.emulator.emulator import EmulatedMultiTurnDriver
@@ -118,6 +105,12 @@ def test_emulator_timeout_aborts_with_emulator_timeout() -> None:
         workspace_root=Path("/tmp"),
         target_call_llm=_target_callable,
         evaluation_call_llm=_hung_aux,
+        configuration=resolve_configuration(
+            {},
+            overlay=InvocationOverlay.from_mapping(
+                {"aux": {"call_timeout_s": aux_config.call_timeout_s}}
+            ),
+        ),
     )
 
     driver = EmulatedMultiTurnDriver()
@@ -134,7 +127,7 @@ def test_emulator_timeout_aborts_with_emulator_timeout() -> None:
 
 def test_analysis_timeout_substitutes_placeholder(tmp_path: Path) -> None:
     """A hung analysis aux writes ``analysis.md`` with a placeholder narrative."""
-    _pin_aux_timeout(0.05)
+    aux_config = AuxConfig(call_timeout_s=0.05)
 
     from zicato.core.workspace import analysis_path
     from zicato.epoch.analysis import generate_analysis
@@ -170,7 +163,7 @@ def test_analysis_timeout_substitutes_placeholder(tmp_path: Path) -> None:
         )
     )
 
-    out_path = asyncio.run(generate_analysis(tmp_path, "epoch_a", _hung_aux))
+    out_path = asyncio.run(generate_analysis(tmp_path, "epoch_a", _hung_aux, aux_config=aux_config))
     assert out_path == analysis_path(tmp_path, "epoch_a")
     text = out_path.read_text()
     assert "analysis LLM timed out" in text

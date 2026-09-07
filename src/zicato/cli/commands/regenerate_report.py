@@ -28,6 +28,7 @@ from pathlib import Path
 
 import click
 
+from zicato.config import resolve_configuration
 from zicato.workspace.config_io import WorkspaceConfig, read_workspace_config
 
 
@@ -178,6 +179,7 @@ def regenerate_report_cmd(workspace: str, epoch: str | None, no_llm: bool) -> No
             epoch_id,
             aux_call_llm,
             model=model,
+            aux_config=resolve_configuration(config.raw).values.aux,
         )
     )
     click.echo(f"Regenerated analysis report for epoch {epoch_id!r} at {out_path}")

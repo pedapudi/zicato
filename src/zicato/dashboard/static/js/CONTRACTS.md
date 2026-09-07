@@ -564,7 +564,7 @@ signature. The router emits `route:changed` on the bus.
 > lifecycle · session taxonomy · the two dashboard surfaces · liveness vs
 > post-mortem). This section is the frontend-contract slice of that doc.
 
-Built from `ZICATO_HARMONOGRAF_URL` surfaced on the heartbeat as
+Built from the invocation's selected service URL, recorded on the heartbeat as
 `harmonograf_url`. Exports `harmonografBase()`, `harmonografRunUrl(rec)`,
 `harmonografLink(run, label)`, `harmonografMini(target, label, aria)`,
 `harmonografGenLink(genId)`, `harmonografSessionId(rec)`,

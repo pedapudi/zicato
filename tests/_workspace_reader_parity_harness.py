@@ -170,6 +170,7 @@ def _write_workspace_config(ws: Path) -> None:
         ws / "config.json",
         {
             "adapter": {
+                "kind": "adk",
                 "entrypoint": "pkg.module:agent",
                 "mutable_trees": ["src/pkg", NEVER_IMPORTED_TREE],
             },

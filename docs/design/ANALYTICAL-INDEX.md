@@ -622,6 +622,7 @@ def ensure_index(
     db_path: Path | None = None,
     *,
     action_out: list[str] | None = None,
+    writer: WorkspaceLock | None = None,
 ) -> Path: ...
 ```
 
@@ -670,27 +671,11 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
 
 **Two properties of that sequence are load-bearing.**
 
-*The scratch path is per-build rather than a fixed `{target}.tmp`.*
-Builders are not serialised against each other. `evolve` builds under
-the workspace lock, but the dashboard's build (§5.3) only *skips when
-it observes* a held lock, so two dashboards both build, as does one
-that lost the read-and-build window to a starting `evolve`. A build
-takes time rather than happening at an instant, and on a shared scratch
-path the overlap is destructive rather than merely wasteful. The second
-builder's cleanup unlinks the inode the first is still writing into;
-the first's `os.replace` then publishes whatever now sits at the path,
-which is the second's *half-built* database; and the sidecar cleanup
-deletes the write-ahead log holding the rest of it. The observed result was
-a valid, **empty** `index.db` — `user_version=0`, zero tables —
-installed by the self-healing path itself, with no exception raised
-anywhere. A partial rather than empty build lands the worse shape: a
-correct `user_version` over missing rows, which nothing has any reason
-to rebuild. With a per-build path the race costs duplicated work and
-nothing else — each builder derives a complete database into its own
-file and the rename publishes one of them whole. Unique names give up
-the fixed name's accidental self-cleaning, so a sweep reclaims scratch
-whose stamped process id is dead; a *live* builder's scratch is never
-touched, or the race would be back.
+*Each build owns a unique scratch path.* Builds and repairs acquire the
+workspace writer lease, or validate the invocation's supplied handle. A
+competing invocation cannot enter the build. Scratch names remain unique so
+an interrupted builder's files cannot be mistaken for an active build. The
+scratch sweep only reclaims files whose recorded process is no longer alive.
 
 *The outgoing sidecars are cleared BEFORE the rename rather than after
 it.* A write-ahead log (WAL) left beside a database it does not belong
@@ -724,9 +709,30 @@ The guard and temp-then-rename are complementary: the guard keeps one
 bad record from aborting the build; the rename keeps an aborted build
 from destroying the existing database.
 
-### 5.2 Per-epoch cursors, validation, and incremental heal
+### 5.2 Epoch revisions, cursor validation, and incremental heal
 
-Schema **v14** adds one additive table.
+Before replacing an indexed canonical record, its writer atomically writes
+a UUID to `index-revisions/<epoch>.revision`. UUID issuance needs no shared
+read/increment step, so delegated workers can issue revisions concurrently.
+Writers cover epoch configuration and lifecycle, lineage, experiments, loss
+records, field tournaments, reflections, and Pareto frontier records.
+
+A complete epoch projection captures the revisions before reading records.
+After SQLite commits, repair writes that snapshot to the database's derived
+`<database-name>.revisions.json` sidecar. A full rebuild acknowledges only
+after publishing the complete database. A crash before acknowledgement leaves
+the revision pending; a later canonical mutation carries a different UUID and
+cannot be cleared by an earlier snapshot. Each database has its own sidecar,
+so building an alternate index does not acknowledge the default index.
+
+Incremental ingestion never acknowledges epoch revisions. Updating one run
+cannot prove that an earlier update to another record reached SQLite. Ordinary
+writes therefore require a complete epoch heal before the next settled-memory
+read or invocation completion, even if their incremental projections succeeded. This conservative
+cost keeps incomplete coverage visible. Manual edits that bypass the writer
+APIs require a full `zicato repair index` rebuild.
+
+The existing schema **v14** cursor table also detects added or removed records:
 
 ```sql
 CREATE TABLE IF NOT EXISTS ingest_cursors (
@@ -809,12 +815,13 @@ def validate_index(
 ) -> tuple[str, ...]: ...
 
 def heal_index(
-    workspace_root: Path, db_path: Path | None = None
+    workspace_root: Path, db_path: Path | None = None,
+    *, writer: WorkspaceLock | None = None,
 ) -> tuple[str, ...]: ...
 ```
 
 `validate_index` returns the sorted ids of **diverged** epochs.
-Three things count as divergence:
+Four conditions count as divergence:
 
 1. an epoch on disk with no cursor row (never ingested, or ingested
    by a build that predates v14),
@@ -827,7 +834,9 @@ Three things count as divergence:
    cursor-writing path already visited. A v13 database migrated *in
    place* by the incremental writers — populated tables, zero cursors —
    would therefore orphan any of its deleted epochs permanently, with
-   `heal_index` reporting nothing to do.
+   `heal_index` reporting nothing to do,
+4. an epoch revision differs from that database's acknowledged revision,
+   including replacements that leave every count unchanged.
 
 `heal_index` re-ingests those epochs and no others, and returns the
 ids it healed. For each one it deletes that epoch's rows and re-projects
@@ -876,7 +885,7 @@ would not have produced.
 
 ### 5.3 The routine paths, and the concurrency rule
 
-**(a) `evolve` start.** The `evolve_n_rounds` preflight runs
+**(a) Invocation startup, proposal memory, and completion.** The `evolve_n_rounds` preflight runs
 `ensure_index` then `heal_index` under `best_effort`, and emits a
 single log line naming what it did:
 
@@ -891,27 +900,19 @@ only that it ran. A fresh build makes the following heal redundant,
 because the build writes every cursor, so the log reports the two as
 alternatives rather than in sequence.
 
-The seam sits immediately **after** `acquire_workspace_lock` and
-before `prepare_resume`, rather than beside the concurrency-report line
-a few statements earlier, which runs *outside* the lock. See the
-concurrency rule below for why that placement is load-bearing.
+The invocation forwards its validated writer handle to the index preflight.
+Recovery and delegated worker cleanup must finish before repair reads records
+and acknowledges revisions. Any remaining active worker record prevents repair.
 
-This is the loop-quality fix named at the top of §5: the proposer's
-experiment memory and mutation track record read the index later in
-the same invocation, and they now read a current one.
+Each candidate batch refreshes dirty epochs before reading settled experiment
+memory. Its mutation track records use the same settled projection. This read
+boundary also covers later rounds within one invocation, including replacements
+that leave file counts unchanged.
 
-It also closes a smaller staleness that nothing else surfaces. §2.3's
-ordering rule writes the canonical file first and the index row second,
-and the orchestrator appends to `lineage.json` *after* the
-`ingest_experiment` dual-write. The two `generations` columns the index
-takes from lineage, `created_at` and `round_index`, therefore land
-empty on the live write and stay that way. Nothing errors; the round simply
-leaves a generation with an unknown birth round. The next round's
-preflight sees the epoch's `lineage_generations_count` move and fills
-the two columns in. That ordering is also why an epoch reads as
-diverged at the *end* of a run: the dual-write order is showing
-through rather than the cursor being wrong, and the heal that follows
-is a real correction rather than redundant work.
+After canonical producers and services finish, invocation cleanup repairs the
+index before releasing its writer. Successful completion leaves the projection
+current. A repair failure logs a warning and leaves its revision markers pending;
+it does not replace an execution failure or change a promotion decision.
 
 **(b) The dashboard / query read path.** `run()` calls `ensure_index`
 **only**, once at server start, never per request. The seam is `run`
@@ -949,27 +950,16 @@ behaviour §7 specifies: a fresh, never-run workspace renders its
 
 **(c) The concurrency rule.**
 
-> A build or a heal runs only under the workspace lock discipline
-> the orchestrator already uses. `evolve` holds `WorkspaceLock` for
-> its whole invocation, so the evolve-start build/heal is naturally
-> exclusive. Any other process that would build — today, only the
-> dashboard's `ensure_index` on an absent or wrong-version database
-> — first checks whether the lock is held by a live process; if it
-> is, it **skips with a log line and does not retry**.
+> Every build and heal acquires the workspace writer lease or validates the
+> supplied `WorkspaceLock`. A second invocation cannot enter, including another
+> invocation in the same process. Delegated workers must finish before repair;
+> a parent lease alone does not prove their records are complete.
 
-Skip-not-wait is the right posture for the dashboard: the running
-`evolve` that holds the lock is itself building or healing the
-index at its own start, so the work the dashboard would do is
-already being done by the process that owns the writes. Waiting
-would block startup on a lock held for the length of an entire
-evolve run; retrying would reintroduce the contention the rule
-exists to avoid. The dashboard renders its degraded empty state for
-one page load and picks the index up on its next start.
-
-`zicato repair index` remains an explicit operator action and is not
-lock-gated. It is the forensic tool, run off the happy path, and §2.4
-states the expectation that it runs while no `evolve` is in flight. A
-run of it that fails leaves the existing database untouched (§5.1).
+The dashboard skips when another writer owns the workspace. Its preliminary
+lock check avoids unnecessary work; acquisition inside `ensure_index` closes
+the race between that check and the build. The explicit `zicato repair index`
+command uses the same lease protocol. It cannot replace a database while an
+invocation is still writing canonical records.
 
 ### 5.4 What still requires `zicato repair index`
 
@@ -979,27 +969,10 @@ the explicit command:
 - **Downgrade recovery.** A database written by a newer zicato
   raises `IndexSchemaNewerError`; auto-deleting it is forbidden, so
   the operator deletes it and rebuilds by hand.
-- **Post-surgery rebuilds — the content-hash residual.** After
-  hand-editing canonical files in a way the cheap signals cannot see.
-  Every signal is a **count**, so the residual is *content change at
-  constant cardinality*, and it has two shapes:
-
-  1. **Value edits.** Correcting a field **inside** an
-     `experiment.json` or a `loss.json`. No count moves.
-  2. **Set swaps.** Removing one file while adding another —
-     deleting generation `v2` and creating `v9`, with its run,
-     leaves `experiments_count`, `runs_count` and the lineage count
-     all unchanged.
-
-  Adding `runs_count` did **not** close shape 2, and it was not
-  expected to: a swap is symmetric in every count by construction.
-  Closing it needs content hashing (an mtime/size digest per epoch,
-  or a per-file hash), which is the one thing §5.2's cost rule rules
-  out — validation runs at every `evolve` start. Neither shape is
-  reachable from the loop, which only ever appends; both are
-  reachable from a human with an editor, which is when the
-  operator knows to reach for this command. A full rebuild
-  re-derives the changed cells.
+- **Manual edits outside the canonical writer APIs.** Changing values or
+  swapping files directly does not issue an epoch revision. If those edits
+  preserve every cursor count, validation cannot detect them. A full rebuild
+  reads the canonical records again and projects the edited values.
 - **Determinism assertion.** Proving the index equals a pure
   re-projection of the files (what the REINDEX-DUMP parity gate
   does) requires the from-scratch path by definition.

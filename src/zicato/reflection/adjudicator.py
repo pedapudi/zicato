@@ -66,6 +66,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.aux_timeout import aux_call_timeout_s
+from zicato.core.settings import AuxConfig
 from zicato.judge_runtime.reliability import _freeze_context, pairwise_disagreement
 from zicato.reflection.adjudication import (
     ADJUDICATED_AMBIGUOUS,
@@ -367,7 +368,7 @@ _RETRY_SUFFIX: str = (
 
 
 async def _adjudicate_once(
-    call_llm: Any, system: str, user: str, model: str
+    call_llm: Any, system: str, user: str, model: str, aux_config: AuxConfig | None = None
 ) -> tuple[dict[str, Any] | None, str]:
     """One adjudication attempt with a single retry; ``(parsed|None, raw)``.
 
@@ -388,16 +389,18 @@ async def _adjudicate_once(
     is still EXACTLY ONE: a first attempt that times out gets the same single
     second chance a first attempt that returns garbage gets.
     """
-    raw = await _call_bounded(call_llm, system, user, model)
+    raw = await _call_bounded(call_llm, system, user, model, aux_config)
     parsed = extract_verdict_json(raw)
     if parsed is not None:
         return parsed, raw
-    raw = await _call_bounded(call_llm, system, user + _RETRY_SUFFIX, model)
+    raw = await _call_bounded(call_llm, system, user + _RETRY_SUFFIX, model, aux_config)
     parsed = extract_verdict_json(raw)
     return parsed, raw
 
 
-async def _call_bounded(call_llm: Any, system: str, user: str, model: str) -> str:
+async def _call_bounded(
+    call_llm: Any, system: str, user: str, model: str, aux_config: AuxConfig | None = None
+) -> str:
     """One adjudicator call under the evaluation timeout; a timeout returns text.
 
     The timeout is rendered as the attempt's RAW RESPONSE rather than raised,
@@ -408,10 +411,12 @@ async def _call_bounded(call_llm: Any, system: str, user: str, model: str) -> st
     """
     try:
         return str(
-            await asyncio.wait_for(call_llm(system, user, model), timeout=aux_call_timeout_s())
+            await asyncio.wait_for(
+                call_llm(system, user, model), timeout=aux_call_timeout_s(aux_config)
+            )
         )
     except TimeoutError:
-        text = f"adjudicator call timed out after {aux_call_timeout_s():.1f}s"
+        text = f"adjudicator call timed out after {aux_call_timeout_s(aux_config):.1f}s"
         log.warning("reflection adjudicator: %s; treating the attempt as malformed", text)
         return text
 
@@ -431,6 +436,7 @@ async def adjudicate_decision(
     adjudicator_model: str,
     k_adj: int = 1,
     context: tuple[Any, str] | None = None,
+    aux_config: AuxConfig | None = None,
 ) -> JudgeAdjudication:
     """Adjudicate ONE judge decision → a :class:`JudgeAdjudication`.
 
@@ -466,7 +472,7 @@ async def adjudicate_decision(
     last_raw = ""
     for _ in range(max(1, int(k_adj))):
         parsed, last_raw = await _adjudicate_once(
-            adjudicator_call_llm, ADJUDICATOR_SYSTEM_PROMPT, user, adjudicator_model
+            adjudicator_call_llm, ADJUDICATOR_SYSTEM_PROMPT, user, adjudicator_model, aux_config
         )
         if parsed is not None:
             parsed_list.append(parsed)
@@ -626,6 +632,7 @@ async def adjudicate_corpus(
                 adjudicator_model=adjudicator_model,
                 k_adj=k_adj,
                 context=ctx_tier,
+                aux_config=config.operational_configuration().values.aux,
             )
             if persist:
                 write_adjudication(path, adjudication)

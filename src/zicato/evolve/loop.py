@@ -14,6 +14,9 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from zicato.core.runtime_context import TelemetryEndpoints
+from zicato.core.settings import InvocationOverlay, ResolvedConfiguration
+from zicato.core.types import ScoringWeights
 from zicato.epoch.preflight import PreflightRefusedError
 from zicato.evolve.invocation import InvocationContext, validated_invocation
 from zicato.logging_stream import install_log_stream, set_log_context
@@ -33,7 +36,9 @@ log = logging.getLogger("zicato.orchestrator")
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 
-def emit_dialect_capability_warnings(workspace_root: Path) -> tuple[str, ...]:
+def emit_dialect_capability_warnings(
+    workspace_root: Path, *, weights: ScoringWeights | None = None
+) -> tuple[str, ...]:
     """Surface the telemetry-dialect capability warnings ONCE, at contract-load.
 
     ``dialect_capability_warnings(weights)`` (LOGGING.md §6) is a pure
@@ -49,7 +54,8 @@ def emit_dialect_capability_warnings(workspace_root: Path) -> tuple[str, ...]:
     from zicato import workspace_loader  # noqa: PLC0415
     from zicato.telemetry.dialects import dialect_capability_warnings  # noqa: PLC0415
 
-    weights = workspace_loader.load_current_scoring(workspace_root)
+    if weights is None:
+        weights = workspace_loader.load_current_scoring(workspace_root)
     warnings = dialect_capability_warnings(weights)
     for warning in warnings:
         log.warning(
@@ -60,7 +66,9 @@ def emit_dialect_capability_warnings(workspace_root: Path) -> tuple[str, ...]:
     return warnings
 
 
-def log_effective_concurrency(workspace_root: Path) -> str:
+def log_effective_concurrency(
+    workspace_root: Path, *, configuration: ResolvedConfiguration | None = None
+) -> str:
     """Log the run's effective concurrency knobs ONCE, at invocation start.
 
     ``parallelism`` decides how many board units run at a time and defaults to
@@ -78,21 +86,19 @@ def log_effective_concurrency(workspace_root: Path) -> str:
     ``make_runtime_config`` call so the operator gets one line per run, not
     one per round. Returns the rendered line so a test can assert it.
     """
+    from zicato.core.settings import resolve_configuration  # noqa: PLC0415
     from zicato.runtime.spawn_permit import (  # noqa: PLC0415
         _usable_cpus,
         effective_permit_count,
     )
-    from zicato.runtime_factory import (  # noqa: PLC0415
-        resolve_host_worker_permits,
-        resolve_parallelism,
-    )
     from zicato.workspace.config_io import read_workspace_config  # noqa: PLC0415
 
-    runtime_dict = read_workspace_config(workspace_root).runtime
-    parallelism, source = resolve_parallelism(runtime_dict)
-    propose_raw = runtime_dict.get("propose_parallelism")
-    propose_parallelism = int(propose_raw) if propose_raw is not None else 4
-    permits_limit, _permits_source = resolve_host_worker_permits(runtime_dict)
+    resolved = configuration or resolve_configuration(read_workspace_config(workspace_root).raw)
+    runtime = resolved.values.runtime
+    parallelism = runtime.parallelism
+    source = resolved.sources["runtime.parallelism"]
+    propose_parallelism = runtime.propose_parallelism
+    permits_limit = runtime.host_worker_permits
     permits = effective_permit_count(permits_limit)
     if permits_limit is None:
         permits_text = f"AUTO -> {permits}"
@@ -254,42 +260,25 @@ async def _apply_rubric_replacement(
     auto_epoch: bool,
     aux_call_llm: CallLLM,
     epoch_name: str | None,
+    invocation: InvocationContext,
 ) -> str:
-    """Apply an operator ``rubric_replacement`` as a contract edit + epoch roll.
-
-    The proposer brief is part of the evaluation contract (board + brief +
-    scoring + harness identity). Replacing it mid-loop must NOT be a silent
-    in-place patch, because generations on either side of the edit are not
-    comparable. So this helper:
-
-    1. Writes the operator's payload to the LIVE proposer brief (the same
-       ``brief_path`` :func:`zicato.epoch.contract.resolve_contract_inputs`
-       hashes into the contract).
-    2. Re-runs :func:`ensure_epoch_for_contract`, which sees the drifted
-       contract hash and rolls a fresh epoch (closing the current one,
-       baselining from its promoted head) when ``auto_epoch`` is set.
-
-    Returns the epoch id the loop should pin for every subsequent round (the
-    rolled epoch when the brief drifted the contract; the current epoch if a
-    no-op replacement somehow left the hash unchanged).
-    """
-    from zicato.epoch.contract import resolve_contract_inputs  # noqa: PLC0415
+    """Publish an operator brief edit under the invocation writer, then resolve its epoch."""
+    from zicato.contract_draft import operations  # noqa: PLC0415
+    from zicato.contract_draft.draft import TournamentDraft  # noqa: PLC0415
     from zicato.evolve.epoching import ensure_epoch_for_contract  # noqa: PLC0415
+    from zicato.tournament.runner import drain_worker_cleanup  # noqa: PLC0415
 
-    brief_path = resolve_contract_inputs(workspace_root).brief_path
-    brief_path.parent.mkdir(parents=True, exist_ok=True)
-    brief_path.write_text(payload, encoding="utf-8")
-    log.warning(
-        "evolve: operator rubric_replacement — wrote %d bytes to the live "
-        "proposer brief %s and rolling the epoch (contract edit)",
-        len(payload),
-        brief_path,
-    )
-    # Re-resolve the epoch: the drifted contract hash rolls a fresh epoch.
+    await drain_worker_cleanup(workspace_root)
+    draft = TournamentDraft.from_workspace(workspace_root)
+    operations.set_brief(draft, payload)
+    operations.apply(draft, workspace_root, confirm=True, writer=invocation.writer)
     return await ensure_epoch_for_contract(
         workspace_root,
         auto_epoch=auto_epoch,
+        writer=invocation.writer,
+        workspace_config=invocation.workspace_config,
         aux_call_llm=aux_call_llm,
+        aux_config=invocation.configuration.values.aux,
         epoch_name=epoch_name,
     )
 
@@ -401,6 +390,7 @@ async def evolve_n_rounds(
     target_call_llm: CallLLM | None = None,
     evaluation_call_llm: CallLLM | None = None,
     instance_id: str = "default",
+    invocation_overlay: InvocationOverlay | None = None,
     fast_mode: bool = False,
     max_consecutive_rejections: int = 3,
     max_proposer_retries: int = 2,
@@ -425,7 +415,9 @@ async def evolve_n_rounds(
         if stop_reason_out is not None:
             stop_reason_out.append("completed")
         return []
-    async with validated_invocation(workspace_root, epoch_id, instance_id) as invocation:
+    async with validated_invocation(
+        workspace_root, epoch_id, instance_id, overlay=invocation_overlay
+    ) as invocation:
         return await _evolve_n_rounds(
             invocation=invocation,
             rounds=rounds,
@@ -463,7 +455,6 @@ async def _evolve_n_rounds(
     writer = invocation.writer
     workspace_root = writer.workspace_root
     instance_id = writer.instance_id
-    from zicato import workspace_loader  # noqa: PLC0415
     from zicato.evolve.dashboard_projection import _mark_run_terminal  # noqa: PLC0415
     from zicato.evolve.epoching import ensure_epoch_for_contract  # noqa: PLC0415
     from zicato.evolve.ingest import index_preflight  # noqa: PLC0415
@@ -492,11 +483,17 @@ async def _evolve_n_rounds(
     # workspace configuration answers, which is the only way ``zicato
     # evolve`` supplies them.
     if target_call_llm is None or evaluation_call_llm is None:
-        role_config = workspace_loader.load_workspace_config(workspace_root)
+        role_config = invocation.workspace_config
+        if invocation.execution_contract is not None:
+            role_config.update(invocation.execution_contract.adapter_configuration)
         if target_call_llm is None:
-            target_call_llm = resolve_role_call_llm(role_config, role="target")
+            target_call_llm = resolve_role_call_llm(
+                role_config, role="target", workspace_root=workspace_root
+            )
         if evaluation_call_llm is None:
-            evaluation_call_llm = resolve_role_call_llm(role_config, role="evaluation")
+            evaluation_call_llm = resolve_role_call_llm(
+                role_config, role="evaluation", workspace_root=workspace_root
+            )
 
     if max_consecutive_rejections <= 0:
         # 0 / negative effectively disables early-stop — protect against
@@ -507,43 +504,13 @@ async def _evolve_n_rounds(
     # Installed here — the shared orchestrator entrypoint — so every
     # ``zicato.*`` ``log.*`` call for the whole loop is captured into
     # ``.zicato/logs/<stamp>-<pid>.jsonl`` with zero call-site changes.
-    # Register release immediately so a later setup failure removes the handler.
-    log_level = (
-        workspace_loader.load_workspace_config(workspace_root)
-        .get("runtime", {})
-        .get("log_level", "INFO")
-    )
-    log_stream = install_log_stream(workspace_root, level=str(log_level))
-    invocation.resources.callback(log_stream.close)
+    # Invocation cleanup retains this stream through final index repair.
+    log_level = invocation.configuration.values.runtime.log_level
+    invocation.log_stream = install_log_stream(workspace_root, level=str(log_level))
     # Tag every orchestrator record with the pinned epoch for this
     # invocation (optional enrichment; the workers bind the full
     # epoch/generation/run context on their side).
     set_log_context(epoch_id=epoch_id)
-    # Install the contract's declared mutation-site syntax table for this
-    # process, before anything enumerates. Deliberately NOT best-effort: a
-    # workspace that declares a file type and then enumerates without it
-    # would present a narrower surface than its own contract, silently.
-    declared_suffixes = workspace_loader.activate_mutation_surface(workspace_root)
-    if declared_suffixes:
-        log.info("mutation surface: declared file types %s", ", ".join(declared_suffixes))
-    # Contract-load preflight: surface the telemetry-dialect capability
-    # warnings ONCE per invocation (relocated out of the per-entry reducer),
-    # beside the epoch-open preflight machinery below. Best-effort.
-    with best_effort(
-        "dialect-capability preflight warnings",
-        on_error=lambda exc: log.debug("dialect-capability preflight skipped: %s", exc),
-    ):
-        emit_dialect_capability_warnings(workspace_root)
-    # Run-start configuration report (issue #126): the concurrency ceilings
-    # in force for this invocation, named once so an operator can tell a
-    # deliberate cap from an unremarked default. Best-effort, like every
-    # other preflight here — a config read must never fail a run.
-    with best_effort(
-        "concurrency configuration report",
-        on_error=lambda exc: log.debug("concurrency configuration report skipped: %s", exc),
-    ):
-        log_effective_concurrency(workspace_root)
-
     # Workspace lock + heartbeat lifecycle. The lock keeps two concurrent
     # orchestrators from corrupting the same workspace; the beater writes
     # ``heartbeat.json`` so the supervisor binary can detect a wedge.
@@ -558,7 +525,7 @@ async def _evolve_n_rounds(
 
         current_epoch = current_epoch_id(workspace_root)
         if current_epoch is not None:
-            _prepared_plan = prepare_resume(workspace_root, current_epoch)
+            _prepared_plan = prepare_resume(workspace_root, current_epoch, writer=writer)
 
         def discard_resume_before_roll(rolling_epoch: str) -> None:
             nonlocal _prepared_plan
@@ -581,15 +548,26 @@ async def _evolve_n_rounds(
         epoch_id = await ensure_epoch_for_contract(
             workspace_root,
             auto_epoch=auto_epoch,
+            writer=writer,
             aux_call_llm=evaluation_call_llm,
+            aux_config=invocation.configuration.values.aux,
+            workspace_config=invocation.workspace_config,
             epoch_name=epoch_name,
             before_contract_roll=discard_resume_before_roll,
         )
         set_log_context(epoch_id=epoch_id)
         if epoch_id != current_epoch:
-            _prepared_plan = prepare_resume(workspace_root, epoch_id)
+            _prepared_plan = prepare_resume(workspace_root, epoch_id, writer=writer)
     else:
-        _prepared_plan = prepare_resume(workspace_root, epoch_id)
+        _prepared_plan = prepare_resume(workspace_root, epoch_id, writer=writer)
+    selected_contract = invocation.select_epoch(epoch_id)
+    from zicato.mutation.markers import install_syntax_table  # noqa: PLC0415
+
+    declared_suffixes = install_syntax_table(selected_contract.scoring.mutation_surface)
+    if declared_suffixes:
+        log.info("mutation surface: declared file types %s", ", ".join(declared_suffixes))
+    emit_dialect_capability_warnings(workspace_root, weights=selected_contract.scoring)
+    log_effective_concurrency(workspace_root, configuration=invocation.configuration)
     # Conservative crash-resume reconciliation (RUNTIME.md §4, ROBUSTNESS.md
     # §2.6) — runs ONCE, right after the lock is held and before any new
     # work. It clears the stale runtime/ state of a prior dead evolve and,
@@ -613,7 +591,7 @@ async def _evolve_n_rounds(
         "index self-heal preflight",
         on_error=lambda exc: log.debug("index self-heal preflight skipped: %s", exc),
     ):
-        log.info("%s", index_preflight(workspace_root))
+        log.info("%s", index_preflight(workspace_root, writer=writer))
     # The orchestrator progress event log is the TRUE
     # liveness signal (its monotonic ``seq`` advances only on a genuine
     # transition, never on the heartbeat timer). Clear any prior invocation's
@@ -626,15 +604,12 @@ async def _evolve_n_rounds(
         on_error=lambda exc: log.debug("progress-log clear skipped: %s", exc),
     ):
         progress_log.clear_log(workspace_root)
-    # Resolve the harmonograf console URL once up front so the supervisor
-    # / dashboard can surface a "watch live" link from the heartbeat for
-    # the whole invocation. When no URL is configured (the default after
-    # #202) the supervisor auto-launches an in-process harmonograf bound
-    # to a free localhost port; invocation cleanup owns its shutdown.
-    # The auto-launched URL is also pushed into ZICATO_HARMONOGRAF_URL
-    # so per-board-run workers attach their per-run sinks to the same
-    # server without any further plumbing.
-    harmonograf_url, harmonograf_handle = _resolve_or_launch_harmonograf(workspace_root)
+    # The invocation owns only services it launched; workers receive both
+    # endpoints explicitly through their runtime payload.
+    harmonograf_url, harmonograf_handle = _resolve_or_launch_harmonograf(
+        workspace_root, invocation.configuration.values.integration
+    )
+    invocation.telemetry = TelemetryEndpoints(harmonograf_url, harmonograf_handle.grpc_target)
     invocation.resources.callback(harmonograf_handle.shutdown)
     # Meta-loop goldfive emitter. One per evolve invocation, stable
     # session id derived from the start ISO — the proposer + analyzer
@@ -646,7 +621,10 @@ async def _evolve_n_rounds(
     # before shutting down its console server.
     evolve_started_at_iso = _now_iso()
     meta_loop_emitter = _build_meta_loop_emitter_safe(
-        workspace_root, harmonograf_url, evolve_started_at_iso
+        workspace_root,
+        harmonograf_url,
+        evolve_started_at_iso,
+        grpc_target=invocation.telemetry.grpc_target,
     )
     if meta_loop_emitter is not None:
         invocation.resources.push_async_callback(meta_loop_emitter.close)
@@ -700,7 +678,8 @@ async def _evolve_n_rounds(
         # double the delay from base up to the cap; any settled round
         # resets the streak. Knobs read once — workspace config is static
         # for the life of one evolve invocation.
-        infra_backoff_base_s, infra_backoff_cap_s = _infra_backoff_knobs(workspace_root)
+        infra_backoff_base_s = invocation.configuration.values.runtime.infra_backoff_base_s
+        infra_backoff_cap_s = invocation.configuration.values.runtime.infra_backoff_cap_s
         infra_deferral_streak = 0
         # The CUMULATIVE round index for the pinned epoch. The loop counter
         # ``round_idx`` is invocation-local (0..rounds-1, used only for the
@@ -750,7 +729,9 @@ async def _evolve_n_rounds(
                     auto_epoch=auto_epoch,
                     aux_call_llm=evaluation_call_llm,
                     epoch_name=epoch_name,
+                    invocation=invocation,
                 )
+                invocation.select_epoch(epoch_id, intentional_roll=True)
                 # The rubric replacement rolled the epoch (a contract edit) — the
                 # new epoch is fresh, so restart its round numbering from its own
                 # base (0 for a brand-new epoch) rather than continuing the prior
@@ -903,7 +884,7 @@ async def _evolve_n_rounds(
                     beater.update(phase=f"infra_backoff:round_{epoch_round_index}:{delay:g}s")
                     beater.bump_now()
                     await _sleep_for_backoff(delay)
-                _reconciled = prepare_resume(workspace_root, epoch_id or "")
+                _reconciled = prepare_resume(workspace_root, epoch_id or "", writer=writer)
                 resume_plan = None if _reconciled.classification == "clean" else _reconciled
                 epoch_round_index += 1
                 continue

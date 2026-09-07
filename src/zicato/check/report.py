@@ -16,6 +16,11 @@ run?" has one answer in one place.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from zicato.epoch.execution import EpochExecutionContract
+
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -105,13 +110,19 @@ def require_workspace_valid(
     *,
     epoch_id: str | None = None,
     live_contract: bool = False,
+    execution_contract: EpochExecutionContract | None = None,
 ) -> CheckReport:
     """Run the mandatory gate; raise with the full report on any stop.
 
     Advisories never raise. They are logged at WARNING so they reach a
     library caller's run log too rather than only the CLI's terminal.
     """
-    with CheckContext(Path(workspace_root), epoch_id=epoch_id, live_contract=live_contract) as ctx:
+    with CheckContext(
+        Path(workspace_root),
+        epoch_id=epoch_id,
+        live_contract=live_contract,
+        execution_contract=execution_contract,
+    ) as ctx:
         report = build_report(ctx)
     for finding in report.advisories:
         log.warning("workspace check: %s: %s", finding.code, finding.summary)

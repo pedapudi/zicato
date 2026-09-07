@@ -340,17 +340,17 @@ def test_analyze_epoch_telemetry_timeout_bounded(tmp_path: Path) -> None:
         ],
     )
 
-    # 0.1 second timeout so the test runs fast — pinned the way the
-    # --aux-call-timeout flag pins it (the env binding is deleted).
-    from zicato.config import pin_overrides
-
-    pin_overrides({"aux": {"call_timeout_s": 0.1}})
+    from zicato.config import AuxConfig
 
     async def hung_aux(_system: str, _user: str, _model: str) -> str:
         await asyncio.sleep(5.0)
         return "never"
 
-    out = asyncio.run(analyze_epoch_telemetry(workspace, epoch_id, hung_aux, round_n=1))
+    out = asyncio.run(
+        analyze_epoch_telemetry(
+            workspace, epoch_id, hung_aux, round_n=1, aux_config=AuxConfig(call_timeout_s=0.1)
+        )
+    )
 
     body = out.read_text(encoding="utf-8")
     assert "timeout" in body.lower()

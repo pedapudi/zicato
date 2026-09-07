@@ -11,16 +11,24 @@ that one ``cached_property`` here and nothing anywhere else.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+from contextlib import ExitStack
+from dataclasses import replace
 from functools import cached_property
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from zicato.epoch.execution import EpochExecutionContract
 
 from zicato.config import HealthConfig, health_config_from_workspace
+from zicato.core.adapter_config import DriverImportContext
 from zicato.core.types import BoardEntry, MutationPoint, ScoringWeights
 from zicato.core.workspace import board_path, scoring_path
+from zicato.driver_imports import driver_import_scope
 from zicato.epoch.lifecycle import current_epoch_id
 from zicato.mutation.enumerator import UnboundSpanMarker
 from zicato.workspace.config_io import WorkspaceConfig, read_workspace_config
@@ -48,13 +56,55 @@ class CheckContext:
         *,
         epoch_id: str | None = None,
         live_contract: bool = False,
+        execution_contract: EpochExecutionContract | None = None,
+        candidate_scoring: dict[str, Any] | None = None,
     ) -> None:
         self.workspace_root = workspace_root
+        if execution_contract is not None:
+            if live_contract or (epoch_id is not None and epoch_id != execution_contract.epoch_id):
+                raise ValueError("captured execution inputs conflict with the requested contract")
+            if execution_contract.workspace_root != workspace_root:
+                raise ValueError("captured execution inputs belong to another workspace")
+            epoch_id = execution_contract.epoch_id
+        self.execution_contract = execution_contract
         self._epoch_override = epoch_id
         self._live_contract = live_contract
+        self._candidate_scoring = (
+            None if candidate_scoring is None else json.loads(json.dumps(candidate_scoring))
+        )
+        self._live_digests: dict[Path, str] = {}
+        from zicato.workspace.contract_publication import assert_contract_publication_complete
+
+        self._live_revision = (
+            assert_contract_publication_complete(workspace_root) if live_contract else None
+        )
         self._temporary_snapshot: TemporaryDirectory[str] | None = None
+        self._imports = ExitStack()
+
+    def _require_live_snapshot(self) -> None:
+        if not self._live_contract:
+            return
+        from zicato.workspace.contract_publication import require_contract_revision
+
+        require_contract_revision(self.workspace_root, self._live_revision)
+        for path, digest in self._live_digests.items():
+            try:
+                actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            except FileNotFoundError:
+                actual = ""
+            if actual != digest:
+                raise ValueError(f"{path}: live contract changed during reading; reload the check")
+
+    def _read_contract_text(self, path: Path) -> str:
+        self._require_live_snapshot()
+        data = path.read_bytes()
+        if self._live_contract:
+            self._live_digests[path] = hashlib.sha256(data).hexdigest()
+        self._require_live_snapshot()
+        return data.decode("utf-8")
 
     def __enter__(self) -> CheckContext:
+        self._imports.enter_context(driver_import_scope(self.driver_imports))
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -62,9 +112,18 @@ class CheckContext:
 
     def close(self) -> None:
         """Release a fresh-workspace snapshot materialised for this check."""
+        self._imports.close()
         if self._temporary_snapshot is not None:
             self._temporary_snapshot.cleanup()
             self._temporary_snapshot = None
+
+    @cached_property
+    def driver_imports(self) -> DriverImportContext:
+        try:
+            return DriverImportContext.from_config(self.config.raw, self.workspace_root)
+        except ValueError:
+            # Adapter construction reports malformed declarations as gate defects.
+            return DriverImportContext()
 
     @cached_property
     def _live_paths(self) -> dict[str, Path | None]:
@@ -89,10 +148,21 @@ class CheckContext:
     @cached_property
     def config(self) -> WorkspaceConfig:
         """The workspace ``config.json``; absent or malformed reads as empty."""
+        self._require_live_snapshot()
         try:
-            return read_workspace_config(self.workspace_root)
+            config = read_workspace_config(self.workspace_root)
         except (OSError, ValueError):
             return WorkspaceConfig.absent(self.workspace_root)
+        if self.execution_contract is not None:
+            raw = {**config.raw, **self.execution_contract.adapter_configuration}
+            return replace(config, raw=raw, source_roots=self.execution_contract.mutable_trees)
+        if self._live_contract and config.exists:
+            if json.loads(self._read_contract_text(config.path)) != config.raw:
+                raise ValueError("workspace config changed during reading; reload the check")
+        elif self._live_contract:
+            self._live_digests[config.path] = ""
+            self._require_live_snapshot()
+        return config
 
     @cached_property
     def health_config(self) -> HealthConfig:
@@ -109,6 +179,14 @@ class CheckContext:
             return health_config_from_workspace(self.config.raw)
         except (KeyError, TypeError, ValueError):
             return HealthConfig()
+
+    @property
+    def proposer_configuration(self) -> dict[str, Any]:
+        """The declaration that constructs the selected epoch's proposer."""
+        if self.execution_contract is not None:
+            external = self.execution_contract.external_proposer
+            return {} if external is None else dict(external.workspace_config)
+        return dict(self.config.raw)
 
     @cached_property
     def _scoring_path(self) -> Path | None:
@@ -141,11 +219,21 @@ class CheckContext:
         from zicato.mutation.markers import syntax_table_from_config  # noqa: PLC0415
         from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
 
+        if self.execution_contract is not None:
+            return self.execution_contract.raw_scoring, self.execution_contract.scoring, None
         path = self._scoring_path
-        if path is None or not path.exists():
+        if self._candidate_scoring is None and (path is None or not path.exists()):
+            if self._live_contract and path is not None:
+                self._live_digests[path] = ""
+                self._require_live_snapshot()
             return {}, ScoringWeights(), None
         try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
+            self._require_live_snapshot()
+            if self._candidate_scoring is not None:
+                loaded = self._candidate_scoring
+            else:
+                assert path is not None
+                loaded = json.loads(self._read_contract_text(path))
             if not isinstance(loaded, dict):
                 raise ValueError(f"expected a JSON object, got {type(loaded).__name__}")
             weights = scoring_weights_from_dict(loaded)
@@ -182,13 +270,12 @@ class CheckContext:
         looks — then falls back to the top-level keys the older
         ``zicato epoch register`` flow persisted.
         """
-        adapter = self.config.raw.get("adapter")
-        raw: Any = None
-        if isinstance(adapter, dict):
-            raw = adapter.get("mutable_trees")
-        if not raw:
-            raw = self.config.raw.get("mutable_trees") or list(self.config.source_roots)
-        return tuple(Path(str(entry)) for entry in raw)
+        from zicato.core.adapter_config import registered_mutable_trees
+
+        try:
+            return registered_mutable_trees(self.config.raw, self.workspace_root)
+        except ValueError:
+            return ()
 
     @cached_property
     def models(self) -> Any:
@@ -220,7 +307,7 @@ class CheckContext:
         from zicato.tournament.worker_transport import adapter_worker_spec  # noqa: PLC0415
 
         try:
-            adapter = make_adapter_from_config(self.config.raw)
+            adapter = make_adapter_from_config(self.config.raw, workspace_root=self.workspace_root)
             return adapter, adapter_worker_spec(adapter), None
         except Exception as exc:  # noqa: BLE001 — any construction failure is the defect
             return None, None, str(exc)
@@ -355,15 +442,19 @@ class CheckContext:
 
     @cached_property
     def _board_or_error(self) -> tuple[tuple[BoardEntry, ...], str | None]:
-        from zicato.board.jsonl import load_board  # noqa: PLC0415
+        from zicato.board.jsonl import parse_board_with_meta  # noqa: PLC0415
 
+        if self.execution_contract is not None:
+            return tuple(self.execution_contract.board_with_meta[0]), None
         path = self._board_path
         if path is None:
             return (), None
         if not path.exists():
             return (), f"board not found at {path}"
         try:
-            return tuple(load_board(path)), None
+            return tuple(
+                parse_board_with_meta(self._read_contract_text(path), source=path)[0]
+            ), None
         except (ValueError, OSError) as exc:
             return (), f"{path}: {exc}"
 

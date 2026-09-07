@@ -549,6 +549,9 @@ def test_rubric_replacement_rolls_the_epoch(
 ) -> None:
     """A rubric_replacement between rounds writes the brief and rolls the epoch."""
     workspace, epoch_id = bootstrap_workspace(tmp_path)
+    (tmp_path / "scoring.json").write_bytes(
+        (workspace / "epochs" / epoch_id / "scoring.json").read_bytes()
+    )
 
     seen_epochs: list[str | None] = []
 

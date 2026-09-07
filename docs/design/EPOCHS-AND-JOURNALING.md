@@ -21,9 +21,8 @@ was thinking and whether it was right — is gone.
 An **epoch** is the unit of evaluation contract. It owns:
 
 - A frozen board (`board.jsonl`).
-- A frozen proposer brief (`brief.md`) — read fresh each
-  round but the file's content is the operator's steering document
-  for the duration.
+- A frozen proposer brief (`brief.md`) containing the operator's steering
+  document for the epoch.
 - A frozen scoring configuration (`scoring.json`) — weights,
   tournament thresholds, tolerance bands.
 - A frozen evaluator identity — Zicato's explicit evaluator revision and any
@@ -32,9 +31,31 @@ An **epoch** is the unit of evaluation contract. It owns:
   the declared adapter block behind it, adapter implementation source
   outside the mutable trees, and the declared mutable-tree paths.
 - A frozen **proposer** — the proposing agent's identity, its tools,
-  and the skill modules under the configured `proposers/<name>/` dir
-  (or the built-in default proposer when none is configured). See
+  and the resolved skill bodies from the configured `proposers/<name>/` directory.
+  Execution requires a configured proposer implementation. See
   [PROPOSER.md](PROPOSER.md).
+
+Epoch creation retains execution declarations and resolved proposer skills in
+`execution.json`, alongside the board, brief, and scoring files. The retained
+proposer value is also supplied to canonical hashing, so a skill file cannot
+change between hashing and capture. Storage paths do not participate in the
+contract identity.
+
+Round preparation consumes one selected `EpochExecutionContract`. Its captured
+bytes are immutable; board entries, scoring objects, and adapter configuration
+are decoded into independent values for consumers that accept mutable mappings.
+Validation uses those same captured inputs. Proposer patch checks receive the
+retained static-check list and adapter declaration, including an explicitly empty
+check list. Editing live configuration or skill files cannot change that round's
+evaluation inputs.
+
+Before spending, execution verifies the retained files and available executable
+dependencies against the recorded contract identity. A changed proposer binary
+or adapter implementation requires restoring that implementation or opening an
+epoch for the changed contract. Historical epochs without `execution.json` may
+reconstruct their declarations and skills only when the result matches their
+recorded contract hash. Missing identity evidence or changed source bytes causes
+execution to refuse the epoch. Historical inspection remains available.
 
 Inside an epoch, generations are linearly ordered (`v0 → v1 → ... →
 vN`). `v0` is the baseline — the system under test as-registered. Each
@@ -68,8 +89,8 @@ An operator starts a new epoch when any of the following hold:
   inside the mutable trees remains generation content and does not cause an
   epoch boundary.
 - The registered mutable-tree path set changes.
-- The **proposer** changes — a different proposer dir is registered, the
-  proposer's custom `agent.py` (or declared identity / tools) is edited,
+- The **proposer** changes — a different proposer dir is registered, its
+  declared implementation identity or tools change,
   or one of its `skills/*.md` modules is added, removed, or
   semantically changed. The agent that proposes the mutations is part of
   the contract, so generations proposed under different proposers are not
@@ -115,6 +136,7 @@ directory.
       brief.md                       # operator-edited; read fresh each round
       scoring.json                   # weights + tournament thresholds
       config.json                    # EpochConfig (id, name, contract_hash, closed)
+      execution.json                 # retained execution declarations and resolved proposer skills
       mutations.json                 # most-recent mutation-point enumeration
       proposer_inputs.jsonl          # one line per proposer LLM call: its rendered input
       generations/

@@ -515,6 +515,7 @@ async def execute_field_tournament(
             infra_threshold=deferred.threshold,
             beater=field_round.beater,
             round_log=field_round.round_log,
+            health_config=field_round.config.operational_configuration().values.health,
         )
     except Exception:
         _clear_active_tournament(field_round.workspace_root)

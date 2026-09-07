@@ -1292,9 +1292,8 @@ import Goldfive through this path.
 
 **Inside the worker** (`src/zicato/_tournament_worker.py`): rebuild the
 adapter and weights from the spec, attach the per-run goldfive
-`JSONLPersistenceSink` (plus the harmonograf live sink when
-`ZICATO_HARMONOGRAF_URL` is set — the loop exports the auto-launched
-URL), `chdir` into the ephemeral checkout, drive
+`JSONLPersistenceSink` (plus the harmonograf live sink when the worker's
+runtime context contains telemetry endpoints), `chdir` into the ephemeral checkout, drive
 `RunnableHarness.run(entry, sinks, config)`, then reduce
 `events.jsonl` → `LossProfile` → `loss.json` and write the result file.
 The run id derives from the run's stable coordinate — per-generation

@@ -34,6 +34,7 @@ from pathlib import Path
 
 import click
 
+from zicato.config import resolve_configuration
 from zicato.workspace.config_io import WorkspaceConfig, read_workspace_config
 
 
@@ -151,6 +152,7 @@ def analyze_telemetry_cmd(workspace: str, epoch: str | None, round_n: int | None
             epoch_id,
             aux_call_llm,
             model=model,
+            aux_config=resolve_configuration(config.raw).values.aux,
             round_n=round_n,
         )
     )

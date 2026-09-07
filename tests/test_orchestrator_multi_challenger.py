@@ -49,6 +49,7 @@ def _bootstrap_swiss_workspace(
     rounds_n: int = 1,
     overfitting: Any | None = None,
     structure: str = "swiss",
+    tournament_params: dict[str, Any] | None = None,
     **proposer: Any,
 ) -> tuple[Path, str]:
     """Create a workspace + a multi-challenger epoch + a v0 baseline snapshot.
@@ -80,7 +81,7 @@ def _bootstrap_swiss_workspace(
                 # directory backend so the git default does not look for git
                 # tags this fixture never writes.
                 "generation_source_backend": "directory",
-                "adapter": {"kind": "stub"},
+                "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
                 # These fixtures assert TOURNAMENT-caching properties (the
                 # champion is never re-run in fast mode). The default-on
                 # achievable-signal pre-flight (issue #84) legitimately runs the
@@ -121,9 +122,13 @@ def _bootstrap_swiss_workspace(
                 tournament_structure=TournamentStructure(
                     structure=structure,
                     params=(
-                        {"field_size": field_size, "rounds_n": rounds_n, "replicates": 1}
-                        if structure == "swiss"
-                        else {"field_size": field_size, "replicates": 1}
+                        tournament_params
+                        if tournament_params is not None
+                        else (
+                            {"field_size": field_size, "rounds_n": rounds_n, "replicates": 1}
+                            if structure == "swiss"
+                            else {"field_size": field_size, "replicates": 1}
+                        )
                     ),
                 ),
                 experimental=experimental_for(structure),
@@ -149,6 +154,9 @@ def _bootstrap_swiss_workspace(
     # v0 must do it too so a rejected round leaves the head at v0 (rather
     # than the dir-scan fallback resolving to the highest vN dir).
     (workspace / "epochs" / cfg.id / "current_generation").write_text("v0\n")
+    from zicato.epoch.journal import write_seed_experiment
+
+    write_seed_experiment(workspace, cfg.id, proposed_at=cfg.created_at)
     return workspace, cfg.id
 
 

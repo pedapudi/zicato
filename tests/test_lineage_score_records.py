@@ -11,6 +11,7 @@ from zicato.epoch._storage import RecordError
 from zicato.epoch.lineage import decode_lineage, initialize_lineage, load_lineage, write_lineage
 from zicato.tournament.scoring import read_gen_score, read_gen_score_history, write_gen_score
 from zicato.workspace.layout import WorkspaceLayout
+from zicato.workspace.projection import epoch_revisions
 
 
 def test_lineage_preserves_omissions_zero_and_cross_epoch_parent(tmp_path: Path) -> None:
@@ -111,6 +112,8 @@ def test_score_and_history_preserve_written_bytes(tmp_path: Path) -> None:
         },
     }
     write_gen_score(tmp_path, "epoch", "v0", aggregate)
+    revisions = epoch_revisions(tmp_path)
+    assert revisions.keys() == {"epoch"}
     payload = {**aggregate, "generation_id": "v0"}
     history = {**payload, "round_index": None, "seq": 0}
     assert (
@@ -126,7 +129,7 @@ def test_score_and_history_preserve_written_bytes(tmp_path: Path) -> None:
     assert "pass_rate" not in score.to_dict()
     score.to_dict()["per_entry"].clear()
     assert score.to_dict()["per_entry"]
-    assert not layout.index_revisions_dir.exists()
+    assert epoch_revisions(tmp_path) == revisions
 
 
 @pytest.mark.parametrize(

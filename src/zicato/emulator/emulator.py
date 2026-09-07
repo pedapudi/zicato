@@ -165,7 +165,7 @@ class EmulatedMultiTurnDriver:
                     config.effective_user_emulator_call_llm()(
                         system_prompt, user_prompt, _DEFAULT_EMULATOR_MODEL
                     ),
-                    timeout=aux_call_timeout_s(),
+                    timeout=aux_call_timeout_s(config.operational_configuration().values.aux),
                 )
             except TimeoutError:
                 aborted = True
@@ -173,7 +173,7 @@ class EmulatedMultiTurnDriver:
                 _log.warning(
                     "run %s aborted: emulator turn timed out after %.1fs (entry=%s)",
                     run_id,
-                    aux_call_timeout_s(),
+                    aux_call_timeout_s(config.operational_configuration().values.aux),
                     entry.id,
                 )
                 break

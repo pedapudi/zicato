@@ -67,7 +67,7 @@
 | `src/zicato/epoch/lineage.py` | the cross-epoch DAG (`register_epoch`, `append_to_lineage`, `mark_closed`, `render_lineage_summary`) | 269 lines |
 | `src/zicato/epoch/journal.py` | `journal.md` + `experiment.json`/patches persistence, `write_seed_experiment`, `RECORD_FORMAT_VERSION` stamping at write | 541 lines |
 | `src/zicato/epoch/_storage.py` | `RECORD_FORMAT_VERSION`, `RecordFormatError`, `check_record_format` (refuse-on-newer), storage-key helpers | — |
-| `src/zicato/epoch/contract_serde.py` | `dataclass_to_jsonable` / `jsonable_to_dataclass` — the field-enumerating serde both the frozen snapshot and the loader route through | — |
+| `src/zicato/epoch/contract_serde.py` | `dataclass_to_jsonable` / `historical_dataclass_from_json` — the field-enumerating serde both the frozen snapshot and the loader route through | — |
 | `src/zicato/scoring/plugins.py` | `spec_with_source_hash` — the source-hash half of `_canon_dotted_spec` | — |
 | `src/zicato/core/runtime.py` | `RuntimeConfig` — the runtime knobs that never roll the epoch (§3.12) | — |
 | `src/zicato/runtime_factory.py` | `make_runtime_config` — parses the workspace-config `runtime` block into a `RuntimeConfig` | — |
@@ -842,6 +842,20 @@ operator omitted `proposer_quality` entirely or spelled out its OFF defaults.
 
 ## 3.5 Serializer completeness — the field-enumerating serde
 
+Authored scoring uses `workspace_loader.scoring_weights_from_dict`. It validates
+unknown keys, nested object shapes, scalar types, and declared ranges before
+conversion. `ConfigurationError` carries the persisted `path` and failure
+`category`; for example, a fractional proposal count fails at
+`scoring.proposer_quality.best_of_n`. Declared mapping fields admit arbitrary
+keys and validate their values. The tournament `params` mapping remains an
+explicit extension point whose strategy owns its parameter semantics.
+
+Frozen records use `historical_scoring_weights_from_dict`, which retains
+compatible conversions and defaults. The strict decoder, historical decoder,
+JSON writer, and editor schema derive their field names from the dataclass
+metadata. The editor schema comes from `core.configuration.dataclass_schema`;
+it includes types, defaults, declared bounds, and closed object keys.
+
 The scoring contract is serialized by two code paths that MUST agree on which
 fields exist:
 
@@ -849,7 +863,7 @@ fields exist:
   `dataclasses.fields()` and therefore covers every field; and
 - the **frozen-epoch snapshot** writer/parser/loader (`scoring_to_dict` /
   `_scoring_from_dict` in `src/zicato/epoch/lifecycle.py`,
-  `scoring_weights_from_dict` in the loader).
+  `historical_scoring_weights_from_dict` in the loader).
 
 A hand-maintained, field-by-field dict on the snapshot path drops whichever
 field its author forgets. The frozen `scoring.json` then omits that field, the
@@ -907,7 +921,7 @@ field:
 
 > ✅ ALWAYS add a serde field through the dataclass (`ScoringWeights` or a nested
 > config) rather than through a hand-written dict. `dataclass_to_jsonable` /
-> `jsonable_to_dataclass` cover it automatically; a bespoke serialization path
+> `historical_dataclass_from_json` cover it automatically; a bespoke serialization path
 > can drop a field again (issue #13). The one place a field is spelled by hand is
 > the guard table, where the hand-curated value is a *test input*; the test
 > raises with an actionable message (`"add one to _NONDEFAULT_VALUES"`) when one
@@ -1023,41 +1037,43 @@ that makes the drift check meaningful.
 
 ## 3.8 The epoch lifecycle
 
-### 3.8.1 `new_epoch` — create + freeze + hash + switch
+### 3.8.1 `new_epoch` — retain, publish, and switch
 
-`new_epoch` (`src/zicato/epoch/lifecycle.py`) is the only supported way to mint
-an epoch. Its steps, in order:
+`new_epoch` (`src/zicato/epoch/lifecycle.py`) acquires the workspace writer or
+validates a supplied handle. Borrowing a writer keeps the caller's ownership
+intact. The operation validates the name, contract files, registered execution
+bindings, and baseline source paths before recording publication intent.
 
-1. if `auto_close_previous` and the current epoch is open, close it first
-   (warning to stderr; the analysis pass needs `aux_call_llm`);
-2. construct the id `{YYYY-MM-DD}_{slug}` (a same-day name collision gets a
-   numeric suffix);
-3. create `epochs/{id}/` and **materialize the frozen board + brief** into it
-   (`_materialize_board` / `_materialize_brief` accept an in-memory `Board` /
-   `ProposerBrief` / a `str` of brief text / a `Path` to copy verbatim);
-4. serialize `weights` to the frozen `scoring.json` through the storage seam;
-5. **compute the contract hash over the just-written frozen copies** plus the
-   adapter reconstruction identity, `mutable_trees`, and proposer identity;
-6. write `config.json`, register the epoch in `lineage.json`;
-7. point the `current_epoch` marker at the new id.
+Preparation retains the board, brief, scoring, execution bindings, component
+hashes, and baseline source in private directories. The contract hash comes from
+the frozen files through the existing canonicalizers. Invalid inputs leave the
+live contract and predecessor unchanged. Once preparation succeeds, the epoch
+intent identifies the retained content and its digest. Recovery publishes the
+epoch directory, lineage, current marker, and predecessor closure using those
+retained inputs and timestamps. A baseline inherited from another generation
+keeps both its epoch and generation coordinates.
 
-The key design property: given in-memory objects, `new_epoch` owns
-canonicalization and persistence end to end. It writes the on-disk files the
-contract hash is computed from, so a caller never needs a prior `.save()`.
+The explicit `epoch new` command holds this writer before recovery or input
+capture. It recovers contract publication before epoch publication, captures the
+supplied files once, and prepares adoption at the registered live destinations.
+Its accepted contract writes are retained as `contract_adoption.json` inside the
+epoch content. The contract publication owner validates paths, expected source
+digests, accepted bytes, and the replacement contract's identity before epoch
+intent is recorded. Recovery adopts the captured live inputs before publishing
+the epoch; it recognizes its completed adoption revision on retry. An intervening
+live edit or another pending publication is a conflict, and recovery preserves
+both the edited files and the pending epoch.
+
+A failure after adoption can leave accepted live inputs alongside the previous
+current epoch. The pending epoch intent lets an explicit retry or automatic epoch
+recovery finish the same epoch without rereading supplied files or creating a
+duplicate. Supplying no scoring file adopts the same defaults that the epoch
+freezes. Read-only commands, including `epoch gc` without `--apply`, do not acquire
+a writer or recover pending publication.
 
 The direct-construction `entrypoint`, `mutable_trees`, and `proposer_path`
-parameters default to empty / `None`, so a caller may omit them. Registered
-workspaces pass `contract=` with the validated adapter document and its source
-specifications. `proposer_path=None` canonicalizes to the built-in default's
-stable form.
-
-> ⚠️ TRAP — `new_epoch`'s `auto_close_previous` default is `True`, but the
-> auto-roll path (§3.8.3) passes `auto_close_previous=False` because
-> `ensure_epoch_for_contract` closes the previous epoch *explicitly* (it needs to
-> re-stamp the closed report and drain stale overrides between the close and the
-> open). If you add a new epoch-creation call site, decide who owns the close: a
-> double close is guarded (`close_epoch` is idempotent on an already-closed
-> epoch) but a *missed* close leaves two epochs looking open.
+parameters remain available. Registered callers pass `contract=` with the
+resolved adapter and proposer identities. These spellings cannot be mixed.
 
 ### 3.8.2 `close_epoch` — mark closed + analysis
 

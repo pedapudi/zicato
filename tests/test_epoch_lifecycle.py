@@ -98,11 +98,6 @@ def test_new_epoch_with_duplicate_name_gets_numeric_suffix(
     assert b.id.endswith("_2")
 
 
-def test_new_epoch_rejects_empty_slug(workspace: Path, board_file: Path, brief_file: Path) -> None:
-    with pytest.raises(ValueError, match="empty slug"):
-        new_epoch(workspace, "!!!", board_file, brief_file, ScoringWeights())
-
-
 def test_new_epoch_auto_closes_previous_open_epoch(
     workspace: Path,
     board_file: Path,

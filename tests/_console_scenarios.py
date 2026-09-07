@@ -85,7 +85,13 @@ CONSOLE_BOARD: tuple[dict[str, Any], ...] = (
 
 
 def _workspace_config() -> dict[str, Any]:
-    return {"adapter": {"entrypoint": "agent.coordinator:app", "mutable_trees": ["agent"]}}
+    return {
+        "adapter": {
+            "kind": "adk",
+            "entrypoint": "agent.coordinator:app",
+            "mutable_trees": ["agent"],
+        }
+    }
 
 
 def _judge(name: str, raw: float, weight: float = 1.0) -> JudgeLoss:

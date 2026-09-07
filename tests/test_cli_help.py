@@ -230,15 +230,24 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
     brief.write_text("Improve the greeting.\n", encoding="utf-8")
     scoring = tmp_path / "scoring.json"
     scoring.write_text(json.dumps({"pass_weight": 1.0}), encoding="utf-8")
+    source = tmp_path / "agent.py"
+    source.write_text('# zicato:mutable id="greeting"\nPROMPT = "hello"\n')
+    from tests._foe_support import stand_in_proposer_block
 
     # config.json with the contract block pointing at the live files.
     (workspace / "config.json").write_text(
         json.dumps(
             {
                 "instance_id": "default",
-                "adk_entrypoint": "pkg.agent:root",
-                "mutable_trees": [],
-                "source_roots": [],
+                "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
+                "generation_source_backend": "directory",
+                "mutable_trees": [str(source)],
+                "source_roots": [str(source)],
+                "proposer": stand_in_proposer_block(tmp_path / "foe"),
+                "runtime": {
+                    "target_call_llm": "tests.test_cli_help:_target_call_llm",
+                    "evaluation_call_llm": "tests.test_cli_help:_aux_call_llm",
+                },
                 "contract": {
                     "board_path": str(board),
                     "rubric_path": str(brief),
@@ -255,20 +264,23 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
 
     async def _fake_evolve_n_rounds(**kwargs: Any) -> list[Any]:
         if kwargs.get("epoch_id") is None:
+            invocation = kwargs["invocation"]
             await ensure_epoch_for_contract(
-                kwargs["workspace_root"],
+                invocation.writer.workspace_root,
                 auto_epoch=kwargs.get("auto_epoch", True),
                 aux_call_llm=_aux_call_llm,
                 epoch_name=kwargs.get("epoch_name"),
+                writer=invocation.writer,
+                workspace_config=invocation.workspace_config,
             )
         stop_reason_out = kwargs.get("stop_reason_out")
         if stop_reason_out is not None:
             stop_reason_out.append("completed")
         return []
 
-    import zicato.orchestrator as orch_mod
+    from zicato.evolve import loop
 
-    monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
+    monkeypatch.setattr(loop, "_evolve_n_rounds", _fake_evolve_n_rounds)
 
     from zicato.epoch.lifecycle import list_epochs
 

@@ -44,7 +44,7 @@
 > | T2 | the canonical-replicate-slot rule | Replicate 0 is the canonical `runs/<entry>/loss.json`; replicate r>0 is the sibling `loss.r<r>.json`. Nothing may write one replicate's sample onto another replicate's slot. |
 > | T3 | the cache-only-budget-exhaustion rule | Only a wall-clock-budget exhaustion is cache-eligible. An **infra abort** (`parent_kill` / `gone_no_result` / `nonzero_exit:{code}` / `prepare_failed` / `result_unreadable`) is NEVER persisted, so a transient blip cannot poison a unit's score for the epoch. |
 > | T4 | the importable-worker-callable rule | Every callable that crosses the worker boundary is a **module-level (or class-attribute) importable object**. A closure-local callable is rejected at spawn time (`_callable_dotted_path`) rather than surfacing later as an opaque worker failure. |
-> | T5 | the config-pins-not-environment rule | Contract and config flags cross the worker boundary through **config pins in the args file** rather than through the environment. A scrubbed worker environment carries only the process-essential keys plus the declared `api_key_env` names. |
+> | T5 | the explicit-worker-input rule | Contract inputs and resolved invocation settings cross the worker boundary through **typed values in the args file**. A scrubbed worker environment carries only the process-essential keys plus the declared `api_key_env` names. |
 > | T6 | the gate-is-the-per-duel-decider rule | `evaluate_gate` is the one accept/reject test for a duel. A `SelectionStrategy` reads a `GateOutcome` and interprets it per its own bracket/Swiss/racing rules; it never re-implements or re-runs the gate. |
 > | T7 | the only-promotion-advances-the-champion rule | The champion pointer advances ONLY on a `"promoted"` `SelectionDecision`. Every layer above the gate (the Bradley–Terry pre-gate, the resolvers, the placebo) can only HOLD a promotion; none can force one. |
 > | T8 | the disjoint-reserved-bases rule | The reserved replicate bases are pairwise disjoint (duels `0..`, calibration `1000`, preflight `2000`, screen `3000`/`3001`, evidence `4000`) so an evaluation draw can neither read nor clobber a canonical replicate slot. |
@@ -66,7 +66,7 @@ owns it, and the selection layer only *reads* its verdict.
 | `src/zicato/tournament/runner.py` | The four public entry points (`run_tournament` full A/B, `run_fast_mode`, `run_matchup`, `confirm_crowning_holdout`), `_run_single` (the run lifecycle — the test suite's monkeypatch anchor), `_gate_with_regression`, `TournamentResult`, the progress-bumping sink | 1636 lines |
 | `src/zicato/tournament/scheduling.py` | The board-unit schedulers: `_run_replicated`, `_run_board_units_full` / `_run_board_units_full_budgeted` / `_run_board_units_fast`, `_run_unit_cache_first` (the cache-first choke point), `_run_full_board_unit`, `_IncrementalScorer`, `_effective_unit_semaphore`, `_token_budget_spent` | 1196 lines |
 | `src/zicato/tournament/unit_cache.py` | The per-unit loss cache + provenance: `_unit_loss_path`, `_resolve_cached_unit`, `_persist_unit_loss`, `_skipped_unit_loss`, `_average_losses`, `_UnitProvenance` | 288 lines |
-| `src/zicato/tournament/worker_transport.py` | The process boundary: `adapter_worker_spec`, `_role_worker_spec` + `_callable_dotted_path`, `scrubbed_worker_env` + `_api_key_env_names`, `_config_pins`, `_checkout_run_snapshot`, `_aborted_loss_profile`, `_weights_spec`, `_entry_to_dict`, the `_stamp_*` context threaders, `_terminate_worker` | 923 lines |
+| `src/zicato/tournament/worker_transport.py` | The process boundary: `adapter_worker_spec`, `_role_worker_spec` + `_callable_dotted_path`, `scrubbed_worker_env` + `_api_key_env_names`, `_configuration_spec`, `_checkout_run_snapshot`, `_aborted_loss_profile`, `_weights_spec`, `_entry_to_dict`, the `_stamp_*` context threaders, `_terminate_worker` | 923 lines |
 | `src/zicato/_tournament_worker.py` | The subprocess worker: the args-file protocol (`_load_args`), `_build_adapter`, `_drive_session`, `_evaluate_expectation`, the config re-pin, the abort provenance stamp, `main` | 838 lines |
 | `src/zicato/tournament/gate.py` | `evaluate_gate` (the three rungs), `GateOutcome`, `holdout_confirms`, `diff_size_evidence`, the tolerance constants | 566 lines |
 | `src/zicato/selection/strategy.py` | The `SelectionStrategy` ABC + the value types (`Contestant`, `Matchup`, `MatchupResult`, `SelectionDecision`, `Standing`, `RoundRecord`, `MatchRecord`), `pending_match_record`, `rung_for_match_id` | 564 lines |
@@ -635,34 +635,43 @@ the worker (`_resolve_role_call_llm`, §6.3.4). Goldfive similarly exposes the
 required names through `RuntimeConfigDocument.secret_env_names` and resolves
 their values only when building its runtime.
 
-**And this is the load-bearing part for a contract author: a flag crosses the
-boundary through a config pin rather than through the environment.** CLI flags that shadow typed-config knobs
-(`--aux-call-timeout`, for example) are pinned process-wide
-via `zicato.config.pin_overrides`; some are consumed *inside* the worker, so
-they must cross. They travel in the args file — a snapshot taken by
-`_config_pins()` — and the worker re-pins them at startup:
+Operational settings cross the worker boundary in the `configuration` JSON
+argument. `_configuration_spec(config)` serializes the runtime's selected
+values and their sources. The worker validates the payload with
+`ResolvedConfiguration.from_json` before constructing its runtime.
+Rubric judging and emulated turns receive the selected evaluation timeout
+through `AuxConfig`. This transport survives environment scrubbing and keeps
+concurrent invocations independent.
 
-```python
-    # Re-pin the orchestrator's process-pinned config overrides (CLI
-    # flags such as --aux-call-timeout) in
-    # THIS fresh interpreter, before anything calls load_config(). The
-    # pins travelled in the args file — the flag-to-config bridge across
-    # the worker subprocess boundary; no environment variable involved.
-    # An absent / empty key (a legacy args file, or no flags pinned)
-    # leaves the worker on its own defaults.
-    config_pins = args.get("config_pins")
-    if config_pins:
-        from zicato.config import pin_overrides
-        pin_overrides(config_pins)
-```
-— `src/zicato/_tournament_worker.py`, `_run`
+The fixed driver import directories are declared in `adapter.import_roots`,
+relative to the workspace parent unless absolute. `DriverImportContext` resolves
+these locations once for execution. The worker argument document carries them
+under `driver_imports`; this channel is independent of the adapter's own worker
+specification and the environment scrubber.
 
-> ⛔ NEVER thread a new worker-consumed flag through an environment variable.
-> The env is scrubbable by contract, so an env-threaded flag silently
-> disappears the moment an operator sets `scrub_worker_env`. Add it to the
-> config-pin snapshot (`_config_pins`) and re-pin it in the worker — that is
-> the ONE flag-to-worker bridge, and it survives the scrub because it rides the
-> args file. This is **the config-pins-not-environment rule**.
+The worker accepts run coordinates from `runtime_context.run` before importing
+target code. Every retained top-level coordinate must agree with that record;
+conflicts fail before any run state or scratch directory is created. Older
+argument documents without `runtime_context` retain their top-level coordinates.
+The accepted record supplies `RuntimeConfig.run_context` throughout execution.
+
+Coordinator entry points keep a process scope around operator code. The worker
+mounts its candidate snapshot before importing the driver, model roles, or
+predicates. It clears conflicting cached driver and target modules and compiles
+source under the declared roots, so preserved timestamps cannot select stale
+bytecode. Loaded candidate modules must resolve inside the snapshot. Custom
+harness provenance records the actual factory file, source hash, and imported
+candidate modules in `harness_load.json`. The coordinator restores its import
+tables after every overlapping use of the same context ends. Different contexts
+that overlap in time require separate processes.
+
+`zicato epoch register --factory module:callable --import-root .` configures a
+custom harness. `--factory-args` and `--factory-options` accept JSON positional
+and keyword arguments. `zicato inspect setup` performs the local gate checks
+without model requests or board execution; `evolve --dry-run` also probes model
+reachability. Setup checks validate callable signatures without invoking grading
+hooks. An optional summarizer failure during execution logs and persists a
+warning while the round continues without its extra marginals.
 
 ### 6.3.3 The adapter spec — `worker_spec()` wins, ADK is the fallback shape
 
@@ -886,7 +895,7 @@ docstring:
 — `src/zicato/_tournament_worker.py`, `_load_args`
 
 The parent (`_run_single`) additionally threads `weights` (§6.3.5) and
-`config_pins` (§6.3.2), and stamps the `generation_id` onto the serialized
+`configuration` (§6.3.2), and stamps the `generation_id` onto the serialized
 entry's `context` (so a session mounted on a throwaway snapshot can still
 identify which generation it is measuring — §6.15). The worker's lifecycle,
 in `_run`:
@@ -964,7 +973,7 @@ stamped:
 1. **Ephemeral checkout** of the generation's snapshot (§6.3.6); a failure here
    → `prepare_failed`.
 2. **Serialize** the args file (entry + adapter spec + role specs + weights +
-   config pins + the ephemeral `snapshot_root`/`scratch_dir`). A serialization
+   resolved configuration and runtime context + the ephemeral `snapshot_root`/`scratch_dir`). A serialization
    failure (a closure, a non-ADK adapter with no `worker_spec`) → `prepare_failed`.
 3. **Spawn** `python -m zicato._tournament_worker <args>` with
    `start_new_session=True` (the worker leads its own process group, so the
@@ -2191,11 +2200,15 @@ environment. The example constructs frames directly on the proto so the
 ```
 — `examples/zicato_examples/target_0_convergence/harness.py`, `_drift_event`
 
-**Step 5 — scratch-dir discipline.** If your harness writes any runtime output,
-route it to `SCRATCH_DIR_ENV` (the per-run scratch dir the worker exports —
-§6.3.6), never next to your own code. The ephemeral checkout is the belt; the
-scratch dir is the braces — but a well-behaved adapter uses the scratch dir so
-nothing ever lands in the snapshot copy at all.
+**Step 5 — scratch-dir discipline.** A harness receives its run coordinates and
+scratch directory through `config.run_context`, a frozen `RunContext`. Write
+runtime artifacts under `config.run_context.scratch_dir`, outside the candidate
+source tree. `ZICATO_RUN_SCRATCH_DIR` remains a compatibility channel for target
+tools that cannot yet receive that context. Remove this variable after every
+shipped target and supported nested target process receives the equivalent
+explicit context and the subprocess regressions no longer require the variable.
+The isolated checkout also contains accidental writes beside candidate source;
+its cleanup removes those writes after the run.
 
 **Step 6 — a stable run id, and the noise seed from stable identifiers.** A
 seeded or deterministic harness must derive its per-run identity and noise from

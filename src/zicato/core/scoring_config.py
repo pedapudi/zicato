@@ -14,7 +14,6 @@ from typing import Any, get_args
 from zicato.core.constraints import (
     KnobConstraint,
     require_finite_mapping,
-    require_finite_number,
     validate_knobs,
 )
 from zicato.core.tournament import (
@@ -65,6 +64,8 @@ RECOMBINE_MERGE_MODES: tuple[str, ...] = ("mechanical", "llm")
 
 def _knob(
     *,
+    persisted_name: str | None = None,
+    description: str | None = None,
     omit_at_default: bool = False,
     builder_op: str | None = None,
     builder_arg: str | None = None,
@@ -120,6 +121,8 @@ def _knob(
     ``KnobConstraint`` stays in ``__post_init__``.
     """
     return {
+        "persisted_name": persisted_name,
+        "description": description,
         "omit_at_default": omit_at_default,
         "builder_op": builder_op,
         "builder_arg": builder_arg,
@@ -305,7 +308,14 @@ class OverfittingConfig:
 
     enabled: bool = field(default=True, metadata=_knob(builder_op="set_holdout"))
     holdout_fraction: float = field(
-        default=0.3, metadata=_knob(builder_op="set_holdout", builder_arg="fraction")
+        default=0.3,
+        metadata=_knob(
+            builder_op="set_holdout",
+            builder_arg="fraction",
+            constraint=KnobConstraint(
+                minimum=0, maximum=1, exclusive_minimum=True, exclusive_maximum=True
+            ),
+        ),
     )
     min_board_size_for_split: int = field(
         default=6,
@@ -336,12 +346,6 @@ class OverfittingConfig:
 
     def __post_init__(self) -> None:
         validate_knobs(self)
-        # An open interval rather than a floor, so it stays here: a fraction of
-        # 0 would hold nothing out and a fraction of 1 would leave nothing to
-        # train on, and neither end is admissible.
-        require_finite_number("holdout_fraction", self.holdout_fraction)
-        if not 0.0 < self.holdout_fraction < 1.0:
-            raise ValueError(f"holdout_fraction must be in (0, 1), got {self.holdout_fraction!r}")
 
     @classmethod
     def defaults(cls) -> OverfittingConfig:
@@ -1127,7 +1131,11 @@ class ScoringWeights:
     # and omitted from the canonical form there, so no contract hash moves.
     holdout_margin: float | None = field(
         default=None,
-        metadata=_knob(omit_at_default=True, builder_op="set_gate"),
+        metadata=_knob(
+            omit_at_default=True,
+            builder_op="set_gate",
+            constraint=KnobConstraint(minimum=0, allow_none=True),
+        ),
     )
     holdout_entry_regression_budget: int = field(
         default=0,
@@ -1170,7 +1178,9 @@ class ScoringWeights:
     )
     tournament_structure: TournamentStructure = field(
         default_factory=_default_tournament_structure,
-        metadata=_knob(builder_op="set_structure", builder_arg="structure"),
+        metadata=_knob(
+            builder_op="set_structure", builder_arg="structure", persisted_name="tournament"
+        ),
     )
     # Anti-overfitting controls (train/holdout split + proposer leakage
     # restriction). Modelled here so it factors into the contract hash
@@ -1178,7 +1188,12 @@ class ScoringWeights:
     # changing any knob — or the one-time default-on rollout — rolls the
     # epoch. Default-on with a safe auto-degrade on small boards. See
     # :class:`OverfittingConfig` and ``docs/design/OVERFITTING.md``.
-    overfitting: OverfittingConfig = field(default_factory=_default_overfitting_config)
+    overfitting: OverfittingConfig = field(
+        default_factory=_default_overfitting_config,
+        metadata=_knob(
+            description="Training and holdout partitions, confirmation, and information limits."
+        ),
+    )
     # Proposer-quality levers: best-of-N sampling + a self-critique pass
     # (FUNCTIONALITY-RECOMMENDATIONS.md §4.1). Modelled here so it factors
     # into the contract hash through the existing scoring canonicalizer with
@@ -1188,7 +1203,10 @@ class ScoringWeights:
     # pin ``best_of_n: 1`` for the historical single-sample proposer. See
     # :class:`ProposerQualityConfig`.
     proposer_quality: ProposerQualityConfig = field(
-        default_factory=_default_proposer_quality_config
+        default_factory=_default_proposer_quality_config,
+        metadata=_knob(
+            description="Candidate sampling, critique, screening, and field composition."
+        ),
     )
     # Experiment-memory scoping (EXPERIMENT-MEMORY.md §3.4): opt-in
     # cross-epoch transfer of settled history under the SAME contract
@@ -1199,7 +1217,10 @@ class ScoringWeights:
     # contract change. See :class:`ExperimentMemoryConfig`.
     experiment_memory: ExperimentMemoryConfig = field(
         default_factory=_default_experiment_memory_config,
-        metadata=_knob(omit_at_default=True),
+        metadata=_knob(
+            omit_at_default=True,
+            description="Scope of settled experiment history available to the proposer.",
+        ),
     )
     # Opt-ins for features without a measured case (issue #394's
     # graduation namespace). Omitted from the canonical form while every
@@ -1207,7 +1228,10 @@ class ScoringWeights:
     # flag turned on rolls the epoch. See :class:`ExperimentalConfig`.
     experimental: ExperimentalConfig = field(
         default_factory=_default_experimental_config,
-        metadata=_knob(omit_at_default=True),
+        metadata=_knob(
+            omit_at_default=True,
+            description="Explicit experimental evaluation and proposal features.",
+        ),
     )
     goldfive: Mapping[str, Any] | None = field(
         default=None,
@@ -1230,7 +1254,15 @@ class ScoringWeights:
     # ``ScoringWeights`` field, it folds into the field-enumerating contract
     # serde + canonicalizer automatically: configuring (or changing) the spec
     # rolls the epoch, exactly like every other contract field.
-    outcome_summarizer_spec: str = ""
+    outcome_summarizer_spec: str = field(
+        default="",
+        metadata=_knob(
+            description=(
+                "Importable function reducing training run results to numeric outcome "
+                "marginals before proposer feedback is bucketed."
+            )
+        ),
+    )
     # Declarative scoring transforms (issue #19). Each is a single
     # ``{"op": "<name>", ...params}`` spec from the
     # :mod:`zicato.scoring.transforms` registry (``linear`` / ``pow`` /
@@ -1279,8 +1311,24 @@ class ScoringWeights:
     # ``_weights_spec`` boundary or the worker would score drift with no plugin
     # while the orchestrator believed otherwise (the per_judge_weights desync
     # class). ``scalar_fn`` is Seam 2 — it runs in the orchestrator.
-    drift_reducer: str = ""
-    scalar_fn: str = ""
+    drift_reducer: str = field(
+        default="",
+        metadata=_knob(
+            description=(
+                "Pure scoring function executed inside the killable worker. It receives the "
+                "transformed built-in drift loss and must return a finite value."
+            )
+        ),
+    )
+    scalar_fn: str = field(
+        default="",
+        metadata=_knob(
+            description=(
+                "Pure aggregate scoring function executed in the coordinator. It receives "
+                "the built-in aggregate scalar and must return a finite value."
+            )
+        ),
+    )
     # Threaded to both the orchestrator and the killable worker through the
     # same field-enumerating serde that carries ``drift_reducer`` across the
     # worker boundary, so the two never score under different dialects.
@@ -1345,8 +1393,6 @@ class ScoringWeights:
                 raise ValueError("goldfive must be an object or null")
             object.__setattr__(self, "goldfive", _freeze_json(self.goldfive))
         validate_knobs(self)
-        if self.holdout_margin is not None:
-            require_finite_number("holdout_margin", self.holdout_margin)
         require_finite_mapping("severity_weights", self.severity_weights)
         require_finite_mapping("per_kind_weights", self.per_kind_weights)
         require_finite_mapping("per_judge_weights", self.per_judge_weights)
@@ -1394,16 +1440,6 @@ class ScoringWeights:
                     f"{plugin_field} must be a dotted-spec string (got "
                     f"{type(value).__name__}); resolution happens at scoring time"
                 )
-        # The holdout confirmation's own margin (issue #118). A tolerance, so a
-        # negative value is meaningless rather than merely aggressive — it would
-        # invert the confirmation into a bar the holdout must clear. Stated here
-        # rather than as a declared bound so the message can name the fallback
-        # the ``None`` token selects.
-        if self.holdout_margin is not None and self.holdout_margin < 0.0:
-            raise ValueError(
-                f"holdout_margin must be >= 0 (or None to reuse promote_margin), "
-                f"got {self.holdout_margin!r}"
-            )
         # An experimental structure is admitted by the contract's own opt-in,
         # checked here so a hand-edited scoring.json is refused at load
         # rather than at round start, after the epoch has already rolled.
@@ -1459,14 +1495,14 @@ class ScoringWeights:
         passes a bare ``Literal`` token through unchanged, so this guard
         lives here at the deserialise seam.
         """
-        from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
+        from zicato.epoch.contract_serde import historical_dataclass_from_json  # noqa: PLC0415
 
         if not isinstance(data, Mapping):
             return cls()
         raw_scope = data.get("pass_rate_monotonicity_scope")
         if raw_scope is not None and raw_scope not in ("per_entry", "aggregate"):
             data = {**data, "pass_rate_monotonicity_scope": cls().pass_rate_monotonicity_scope}
-        return jsonable_to_dataclass(cls, data)
+        return historical_dataclass_from_json(cls, data)
 
 
 def _freeze_json(value: Any) -> Any:
@@ -1580,3 +1616,52 @@ def recommended_scaffold_weights() -> ScoringWeights:
         # proposes × best_of_n × screen_entries panel runs.
         proposer_quality=ProposerQualityConfig(screen_entries=2),
     )
+
+
+def scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
+    """Validate authored scoring values before constructing the contract.
+
+    Unknown fields, malformed nested blocks, and values outside their
+    declared types or ranges raise with the persisted field path. Omitted
+    fields use their declared defaults. Arbitrary keys remain valid in
+    fields declared as mappings; their values follow the declared type.
+    """
+    from zicato.core.configuration import authored_dataclass_from_json  # noqa: PLC0415
+
+    if isinstance(d, Mapping):
+        _reject_retired_scoring_keys(d)
+    return authored_dataclass_from_json(ScoringWeights, d, path="scoring")
+
+
+#: Retired ``scoring.json`` keys, each mapped to a template naming what
+#: replaces it. The field-enumerating loader IGNORES unknown keys, so a
+#: retired one would otherwise degrade invisibly — the contract would score
+#: under a default the operator never chose, with no error and no epoch roll.
+#: Every entry here is a key that once shaped the scalar.
+_RETIRED_SCORING_KEYS: Mapping[str, str] = {
+    "pass_exponent": (
+        '`pass_exponent` is retired — express it as pass_transform={{"op": '
+        '"pow", "exponent": {raw}}} in scoring.json.'
+    ),
+    "drift_weight": (
+        "`drift_weight` is retired — drift is one metric channel among "
+        'several, so express it as namespace_weights={{"drift:": {raw}}} in '
+        "scoring.json."
+    ),
+    "runtime_weight": (
+        "`runtime_weight` is retired — runtime is one metric channel among "
+        'several, so express it as namespace_weights={{"runtime:": {raw}}} in '
+        "scoring.json."
+    ),
+}
+
+
+def _reject_retired_scoring_keys(d: Mapping[str, Any]) -> None:
+    """Reject any retired ``scoring.json`` key with a loud migration error.
+
+    A stale contract fails fast, naming the field that replaced the one it
+    uses, rather than loading with a silently defaulted scalar.
+    """
+    for key, template in _RETIRED_SCORING_KEYS.items():
+        if key in d:
+            raise ValueError(template.format(raw=d[key]))

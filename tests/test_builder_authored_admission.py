@@ -1,0 +1,56 @@
+"""Malformed authored edits fail before the draft can lose their original types."""
+
+from __future__ import annotations
+
+import pytest
+
+from zicato.builder.api import _dispatch_op
+from zicato.contract_draft import operations as ops
+from zicato.contract_draft.draft import TournamentDraft
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments"),
+    [
+        ("set_screening", {"entries": True}),
+        ("set_screening", {"entries": 2.8}),
+        ("set_screening", {"veto_only": "false"}),
+        ("set_proposer_quality", {"best_of_n": "4"}),
+        ("set_gate", {"namespace_monotonicity": {"judge:": "false"}}),
+        ("set_gate", {"regression_test_command": ["pytest", 7]}),
+        ("set_weights", {"per_judge_weights": {"quality": "0.5"}}),
+        ("set_namespace_weights", {"namespace_weights": {"judge:": True}}),
+        ("set_holdout", {"ladder": {"budget": 2.8}}),
+        ("set_holdout", {"ladder": {"enabled": "false"}}),
+    ],
+)
+def test_rest_and_library_reject_types_before_mutating_draft(operation, arguments):
+    for invoke in (
+        lambda draft: _dispatch_op(draft, operation, arguments),
+        lambda draft: getattr(ops, operation)(draft, **arguments),
+    ):
+        draft = TournamentDraft()
+        before = draft.to_dict()
+        with pytest.raises(ValueError):
+            invoke(draft)
+        assert draft.to_dict() == before
+
+
+def test_unknown_rest_argument_is_rejected_without_an_edit():
+    draft = TournamentDraft()
+    before = draft.to_dict()
+    with pytest.raises(ValueError, match="unknown arguments"):
+        _dispatch_op(draft, "set_screening", {"entrys": 7})
+    assert draft.to_dict() == before
+
+
+def test_explicit_clear_values_and_numeric_json_keep_their_meaning():
+    draft = TournamentDraft()
+    ops.set_gate(draft, holdout_margin=0.5)
+    ops.set_gate(draft, holdout_margin=-1)
+    assert draft.scoring.holdout_margin is None
+    ops.set_holdout(draft, max_generations_per_contract=4)
+    ops.set_holdout(draft, max_generations_per_contract=0)
+    assert draft.scoring.overfitting.max_generations_per_contract is None
+    _dispatch_op(draft, "set_weights", {"per_judge_weights": {"quality": 2}})
+    assert draft.scoring.per_judge_weights == {"quality": 2.0}

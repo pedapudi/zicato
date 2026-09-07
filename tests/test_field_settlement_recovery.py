@@ -440,14 +440,19 @@ def test_recovery_preserves_a_deferred_field_receipt(
     tmp_path: Path,
 ) -> None:
     """An evidence-gate hold remains deferred and never advances the champion."""
-    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=2)
-    scoring_path = workspace / "epochs" / epoch_id / "scoring.json"
-    scoring = json.loads(scoring_path.read_text(encoding="utf-8"))
-    # A bar no fit can clear, with budget for the pre-gate to reach the
-    # credibility floor before it holds: the crowning promote lands deferred.
-    scoring["tournament"]["params"]["promote_confidence_threshold"] = 0.999
-    scoring["tournament"]["params"]["promote_confidence_replicates"] = 2
-    scoring_path.write_text(json.dumps(scoring), encoding="utf-8")
+    # The evidence threshold is part of the sealed fixture contract.
+    workspace, epoch_id = _bootstrap_swiss_workspace(
+        tmp_path,
+        field_size=2,
+        rounds_n=2,
+        tournament_params={
+            "field_size": 2,
+            "rounds_n": 2,
+            "replicates": 1,
+            "promote_confidence_threshold": 0.999,
+            "promote_confidence_replicates": 2,
+        },
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -523,10 +528,9 @@ def test_index_refresh_failure_retains_a_repairable_canonical_settlement(
     }
     assert build_health_report(WorkspacePaths(workspace))["healthy"] is False
 
-    # Counts can already match even though the indexed outcomes and promotion
-    # states predate settlement. The retained receipt therefore forces the
-    # evolve preflight to rebuild rather than trusting a no-op cheap heal.
-    assert validate_index(workspace) == ()
+    # The epoch revision exposes stale outcomes even when counts match.
+    # Repairing the projection does not acknowledge the settlement receipt.
+    assert validate_index(workspace) == (epoch_id,)
     rebuild_index(workspace)
     still_pending = json.loads(
         field_settlement_intent_path(workspace, epoch_id, 0).read_text(encoding="utf-8")
@@ -703,11 +707,8 @@ def test_unrecorded_field_cleanup_uses_the_strategy_default_width(
         tmp_path,
         field_size=2,
         structure=structure,
+        tournament_params={"rounds_n": 1} if structure == "swiss" else {},
     )
-    scoring_path = workspace / "epochs" / epoch_id / "scoring.json"
-    scoring = json.loads(scoring_path.read_text(encoding="utf-8"))
-    scoring["tournament"]["params"].pop("field_size")
-    scoring_path.write_text(json.dumps(scoring), encoding="utf-8")
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,

@@ -80,6 +80,7 @@ from zicato.core.measurement import (
     artifact_replicate_index,
     recorded_artifact_measurement,
 )
+from zicato.core.run_context import RunContext
 from zicato.import_path import import_dotted_path
 from zicato.judge_runtime.error_register import judge_error_snapshot
 from zicato.util import best_effort, now_iso
@@ -272,6 +273,7 @@ def _record_harness_load(
     session: Any,
     snapshot_root: Path,
     tree_status: dict[str, str] | None = None,
+    implementation: dict[str, Any] | None = None,
 ) -> None:
     """Record WHAT this generation actually loaded from its snapshot.
 
@@ -319,7 +321,7 @@ def _record_harness_load(
     run.
     """
     absolute_file = str(getattr(session, "entrypoint_file", "") or "")
-    if not absolute_file and not tree_status:
+    if not absolute_file and not tree_status and not implementation:
         return
     entrypoint_file = ""
     if absolute_file:
@@ -359,6 +361,7 @@ def _record_harness_load(
             path,
             {
                 "schema": HARNESS_LOAD_SCHEMA,
+                **({"implementation": implementation} if implementation is not None else {}),
                 "generation_id": generation_id,
                 "entrypoint_file": entrypoint_file or str(previous.get("entrypoint_file") or ""),
                 "trees_verified": sorted(verified),
@@ -598,9 +601,9 @@ async def _drive_session(
         )
         return result, runtime_ms, budget_exceeded
 
-    sig = inspect.signature(session.run)
-    param_names = list(sig.parameters)
-    legacy = len(param_names) >= 2 and param_names[1] in ("sink_path", "events_path")
+    from zicato.adapter_factory import uses_legacy_run
+
+    legacy = uses_legacy_run(session)
 
     if legacy:
         await session.run(entry, events_path)
@@ -635,6 +638,7 @@ async def _evaluate_expectation(
         entry.expectation,
         run_result,
         aux_call_llm=config.effective_judge_call_llm(),
+        aux_config=config.operational_configuration().values.aux,
     )
 
 
@@ -701,33 +705,77 @@ def _write_result(
 # ---------------------------------------------------------------------------
 
 
+def _accepted_run_context(args: dict[str, Any]) -> RunContext:
+    """Accept one run record before importing target code or creating run state."""
+    from dataclasses import fields
+
+    from zicato.core.runtime_context import WorkerRuntimeContext
+
+    legacy = RunContext(
+        Path(args["workspace_root"]),
+        str(args["epoch_id"]),
+        str(args["generation_id"]),
+        str(args["run_id"]),
+        Path(args["snapshot_root"]),
+        Path(args["scratch_dir"]) if args.get("scratch_dir") else None,
+    )
+    if "runtime_context" not in args:
+        return legacy
+    accepted = WorkerRuntimeContext.from_json(args["runtime_context"]).run
+    if accepted is None:
+        raise ValueError("a worker runtime_context must include its run coordinates")
+    mismatches = [
+        item.name
+        for item in fields(RunContext)
+        if getattr(accepted, item.name) != getattr(legacy, item.name)
+    ]
+    if mismatches:
+        raise ValueError(f"runtime_context.run disagrees with worker coordinates: {mismatches}")
+    return accepted
+
+
 async def _run(args: dict[str, Any]) -> None:
+    from zicato.core.adapter_config import DriverImportContext
+    from zicato.driver_imports import driver_import_scope
+
+    run_context = _accepted_run_context(args)
+    context = DriverImportContext.from_document(args.get("driver_imports", {}))
+    with driver_import_scope(context, snapshot_root=run_context.snapshot_root):
+        await _run_with_imports(args, run_context)
+
+
+async def _run_with_imports(args: dict[str, Any], run_context: RunContext) -> None:
     """Execute the single run described by ``args``.
 
     Writes the ``active_runs`` state file with the worker's own pid,
     drives the entry, reduces the loss, and writes ``loss.json`` plus the
     result file. Removes the ``active_runs`` file on a clean exit.
     """
+    from dataclasses import fields  # noqa: PLC0415
+
+    from zicato.config import ResolvedConfiguration, resolve_configuration  # noqa: PLC0415
+    from zicato.core.settings import RuntimeSettings  # noqa: PLC0415
     from zicato.runtime import state as state_mod  # noqa: PLC0415
     from zicato.telemetry import reducer as reducer_mod  # noqa: PLC0415
 
-    # Re-pin the orchestrator's process-pinned config overrides (CLI
-    # flags such as --aux-call-timeout) in
-    # THIS fresh interpreter, before anything calls load_config(). The
-    # pins travelled in the args file — the flag-to-config bridge across
-    # the worker subprocess boundary; no environment variable involved.
-    # An absent or empty key — an args file that pinned no flags — leaves
-    # the worker on its own defaults.
-    config_pins = args.get("config_pins")
-    if config_pins:
-        from zicato.config import pin_overrides  # noqa: PLC0415
+    configuration = (
+        ResolvedConfiguration.from_json(args["configuration"])
+        if "configuration" in args
+        else resolve_configuration(
+            {
+                "runtime": {
+                    item.name: args[item.name]
+                    for item in fields(RuntimeSettings)
+                    if item.name in args
+                }
+            }
+        )
+    )
 
-        pin_overrides(config_pins)
-
-    workspace_root = Path(args["workspace_root"])
-    epoch_id = str(args["epoch_id"])
-    generation_id = str(args["generation_id"])
-    snapshot_root = Path(args["snapshot_root"])
+    workspace_root = run_context.workspace_root
+    epoch_id = run_context.epoch_id
+    generation_id = run_context.generation_id
+    snapshot_root = run_context.snapshot_root
     events_path = Path(args["sink_events_path"])
     loss_path = Path(args["loss_path"])
     result_path = Path(args["result_path"])
@@ -747,11 +795,26 @@ async def _run(args: dict[str, Any]) -> None:
         MeasurementDraw.from_json(args["measurement"]) if "measurement" in args else None,
     )
     if "measurement" in args and measurement != MeasurementDraw.from_index(
-        slot, base_seed=args.get("seed")
+        slot, base_seed=configuration.values.runtime.seed
     ):
         raise ValueError("worker seed differs from the recorded measurement")
-    harmonograf_url = str(args.get("harmonograf_url", "") or "")
-    harmonograf_grpc = str(args.get("harmonograf_grpc", "") or "")
+    from zicato.core.runtime_context import (  # noqa: PLC0415
+        TelemetryEndpoints,
+        WorkerRuntimeContext,
+    )
+
+    runtime_context = (
+        WorkerRuntimeContext.from_json(args["runtime_context"])
+        if "runtime_context" in args
+        else WorkerRuntimeContext(
+            telemetry=TelemetryEndpoints(
+                str(args.get("harmonograf_url", "") or ""),
+                str(args.get("harmonograf_grpc", "") or ""),
+            )
+        )
+    )
+    harmonograf_url = runtime_context.telemetry.web_url
+    harmonograf_grpc = runtime_context.telemetry.grpc_target
     harmonograf_metadata = {
         str(key): str(value) for key, value in (args.get("harmonograf_metadata") or {}).items()
     }
@@ -765,10 +828,8 @@ async def _run(args: dict[str, Any]) -> None:
     # env var unset and the target falls back to its own default.
     from zicato.epoch.snapshot_scope import SCRATCH_DIR_ENV  # noqa: PLC0415
 
-    scratch_dir: Path | None = None
-    scratch_raw = args.get("scratch_dir")
-    if scratch_raw:
-        scratch_dir = Path(scratch_raw)
+    scratch_dir = run_context.scratch_dir
+    if scratch_dir is not None:
         scratch_dir.mkdir(parents=True, exist_ok=True)
         os.environ[SCRATCH_DIR_ENV] = str(scratch_dir)
 
@@ -783,7 +844,7 @@ async def _run(args: dict[str, Any]) -> None:
     # active_runs record the supervisor polices. Re-deriving it here from
     # this process's own view of the entry would give the id two producers,
     # and any skew between the two views silently reproduces issue #250.
-    run_id = str(args["run_id"])
+    run_id = run_context.run_id
     weights = _weights_from_args(args)
     budget_s = float(entry.wall_clock_budget_seconds)
 
@@ -908,8 +969,8 @@ async def _run(args: dict[str, Any]) -> None:
     # failure never re-scores or aborts a run.
     # With both knobs OFF the worker's behavior (files written, loss
     # bytes, exit code) is byte-identical to before the knobs existed.
-    persist_run_results = bool(args.get("persist_run_results", True))
-    persist_judge_io = bool(args.get("persist_judge_io", True))
+    persist_run_results = configuration.values.runtime.persist_run_results
+    persist_judge_io = configuration.values.runtime.persist_judge_io
     judge_io_sink: Any = None
     if persist_judge_io:
         from zicato.judge_runtime.io_capture import (  # noqa: PLC0415
@@ -925,19 +986,23 @@ async def _run(args: dict[str, Any]) -> None:
             judge_io_path_for_loss(loss_path), measurement=measurement, run_id=run_id
         )
 
+    settings = configuration.values.runtime
+    from zicato.core.adapter_config import DriverImportContext
+
     config = RuntimeConfig(
-        instance_id=str(args.get("instance_id", "default")),
+        **{item.name: getattr(settings, item.name) for item in fields(RuntimeSettings)},
+        configuration=configuration,
+        telemetry=runtime_context.telemetry,
         workspace_root=workspace_root,
         target_call_llm=target_call_llm,
         evaluation_call_llm=evaluation_call_llm,
-        seed=args.get("seed"),
         judge_call_llm=judge_call_llm,
         user_emulator_call_llm=user_emulator_call_llm,
         target_model=target_model,
-        persist_run_results=persist_run_results,
-        persist_judge_io=persist_judge_io,
         judge_io_sink=judge_io_sink,
         goldfive=_goldfive_config_for_adapter(weights, adapter_spec),
+        driver_imports=DriverImportContext.from_document(args.get("driver_imports", {})),
+        run_context=run_context,
     )
 
     sinks, tracker = _build_sinks(
@@ -959,6 +1024,9 @@ async def _run(args: dict[str, Any]) -> None:
     ended_at = started_at
     try:
         session = adapter.load(snapshot_root)
+        from zicato.driver_imports import imported_sources
+
+        imported_sources(config.driver_imports, snapshot_root)
         _record_harness_load(
             workspace_root,
             epoch_id=epoch_id,
@@ -1001,6 +1069,37 @@ async def _run(args: dict[str, Any]) -> None:
         # imported and from where. Raises (failing the unit rather than
         # scoring it) when a tree came from outside the snapshot; records a
         # never-imported tree for the generation's health finding otherwise.
+        candidate_sources = imported_sources(config.driver_imports, snapshot_root)
+        if config.driver_imports.roots:
+            from zicato.import_path import import_dotted_path
+            from zicato.scoring.plugins import resolve_plugin_source
+
+            factory_spec = str(adapter_spec.get("factory") or adapter_spec.get("entrypoint") or "")
+            factory = (
+                import_dotted_path(factory_spec, label="harness implementation")
+                if factory_spec
+                else None
+            )
+            factory_module = inspect.getmodule(factory)
+            implementation = {
+                "factory_spec": factory_spec,
+                "factory_file": inspect.getsourcefile(factory_module)
+                if factory_module is not None
+                else None,
+                "factory_source_sha256": resolve_plugin_source(factory_spec),
+                "candidate_modules": {
+                    name: str(Path(source).relative_to(snapshot_root.resolve()))
+                    for name, source in candidate_sources.items()
+                },
+            }
+            _record_harness_load(
+                workspace_root,
+                epoch_id=epoch_id,
+                generation_id=generation_id,
+                session=session,
+                snapshot_root=snapshot_root,
+                implementation=implementation,
+            )
         _verify_trees_after_run(
             workspace_root,
             epoch_id=epoch_id,
@@ -1255,6 +1354,9 @@ def main(argv: list[str] | None = None) -> int:
     args_path = Path(args_argv[0])
     try:
         args = _load_args(args_path)
+        from zicato.runtime.context import bind_worker_runtime_context  # noqa: PLC0415
+
+        bind_worker_runtime_context(args_path, has_context="runtime_context" in args)
     except Exception as exc:  # noqa: BLE001 — surface as a clean non-zero exit
         print(f"zicato._tournament_worker: bad args file: {exc}", file=sys.stderr)
         return 2

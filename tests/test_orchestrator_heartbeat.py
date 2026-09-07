@@ -44,7 +44,7 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
                 # directory backend so the git default does not look for git
                 # tags this fixture never writes.
                 "generation_source_backend": "directory",
-                "adapter": {"kind": "stub"},
+                "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
             }
         )
     )
@@ -79,6 +79,9 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
     (snap / "agent.py").write_text(
         '"""Stub harness source."""\n\n# zicato:mutable id="greeting"\nGREETING = "hello"\n'
     )
+    from zicato.epoch.journal import write_seed_experiment
+
+    write_seed_experiment(workspace, cfg.id, proposed_at=cfg.created_at)
     return workspace, cfg.id
 
 
@@ -106,7 +109,7 @@ def _install_stub_adapter_factory(monkeypatch: pytest.MonkeyPatch) -> None:
             return []
 
     fake_factory = types.ModuleType("zicato.adapter_factory")
-    fake_factory.make_adapter_from_config = lambda cfg: _StubAdapter()  # type: ignore[attr-defined]
+    fake_factory.make_adapter_from_config = lambda cfg, *, workspace_root: _StubAdapter()  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "zicato.adapter_factory", fake_factory)
     import zicato
     import zicato.check
@@ -121,7 +124,11 @@ def _install_telemetry_stubs(
     canned_loss_by_gen: dict[str, float],
     canned_pass_by_gen: dict[str, bool],
 ) -> None:
+    from zicato.telemetry.sink import resolve_harmonograf_grpc_target, resolve_harmonograf_url
+
     sink_mod = types.ModuleType("zicato.telemetry.sink")
+    sink_mod.resolve_harmonograf_url = resolve_harmonograf_url
+    sink_mod.resolve_harmonograf_grpc_target = resolve_harmonograf_grpc_target
 
     def make_run_sink_path(
         *,
@@ -173,13 +180,11 @@ def _install_telemetry_stubs(
 
     # Real, dependency-light meta_loop so the structural-span call sites can
     # import ``meta_span`` (a no-op here — no ambient emitter is bound).
+    import zicato.telemetry as telemetry_pkg
     import zicato.telemetry.meta_loop as meta_loop_mod
 
-    telemetry_pkg = types.ModuleType("zicato.telemetry")
-    telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
-    telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
-    telemetry_pkg.meta_loop = meta_loop_mod  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
+    monkeypatch.setattr(telemetry_pkg, "sink", sink_mod)
+    monkeypatch.setattr(telemetry_pkg, "reducer", reducer_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.meta_loop", meta_loop_mod)

@@ -44,6 +44,7 @@ import click
 from zicato.core.drift_kinds import DriftKind
 from zicato.core.types import BoardEntry, Generation, ScoringWeights
 from zicato.core.workspace import board_path, generation_dir, scoring_path
+from zicato.driver_imports import with_workspace_imports
 
 
 @click.command(
@@ -85,6 +86,7 @@ from zicato.core.workspace import board_path, generation_dir, scoring_path
         "pass this only to force a different count for this one invocation."
     ),
 )
+@with_workspace_imports
 def tournament_cmd(
     parent: str,
     child: str,
@@ -141,7 +143,9 @@ def tournament_cmd(
     child_gen = _build_generation(workspace_root, resolved_epoch_id, child)
 
     try:
-        adapter = adapter_factory.make_adapter_from_config(workspace_config)
+        adapter = adapter_factory.make_adapter_from_config(
+            workspace_config, workspace_root=workspace_root
+        )
         config = runtime_factory.make_runtime_config(
             workspace_config, workspace_root=workspace_root
         )
@@ -268,9 +272,9 @@ def _load_epoch_contract(
     raw_scoring = json.loads(selected_scoring_path.read_text(encoding="utf-8"))
     if not isinstance(raw_scoring, dict):
         raise ValueError(f"{selected_scoring_path}: expected a JSON object at top level")
-    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
 
-    return board, disable_drift, judge_only, scoring_weights_from_dict(raw_scoring)
+    return board, disable_drift, judge_only, historical_scoring_weights_from_dict(raw_scoring)
 
 
 def _build_generation(workspace_root: Path, epoch_id: str, generation_id: str) -> Generation:

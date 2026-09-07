@@ -31,6 +31,7 @@ from tests._orchestrator_harness import (
 )
 from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
 from zicato.core.types import OverfittingConfig, ScoringWeights, TournamentStructure
+from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato.evolve.placebo import (
     build_placebo_experiment,
@@ -381,7 +382,7 @@ def _bootstrap_swiss_with_placebo(tmp_path: Path, *, field_size: int) -> tuple[P
                 "proposer": stand_in_proposer_block(tmp_path / "foe"),
                 "created_at": "2026-05-31T00:00:00Z",
                 "generation_source_backend": "directory",
-                "adapter": {"kind": "stub"},
+                "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
             }
         )
     )
@@ -427,6 +428,7 @@ def _bootstrap_swiss_with_placebo(tmp_path: Path, *, field_size: int) -> tuple[P
         'GREETING = "hello"\n'
     )
     (workspace / "epochs" / cfg.id / "current_generation").write_text("v0\n")
+    write_seed_experiment(workspace, cfg.id, proposed_at=cfg.created_at)
     return workspace, cfg.id
 
 

@@ -169,7 +169,9 @@ STATIC_CHECKS: Mapping[str, Any] = {
 }
 
 
-def declared_static_checks(workspace_root: Path) -> tuple[str, ...]:
+def declared_static_checks(
+    workspace_root: Path, *, workspace_config: Mapping[str, Any] | None = None
+) -> tuple[str, ...]:
     """Return the workspace's declared tier-2 static-check names, in order.
 
     Read from ``{workspace_root}/config.json`` at
@@ -181,6 +183,9 @@ def declared_static_checks(workspace_root: Path) -> tuple[str, ...]:
     the key through this same function and folds it into the proposer
     component of the contract hash.
 
+    A supplied workspace_config is authoritative. This keeps contract capture
+    and validation independent of subsequent live config edits.
+
     Unknown names are dropped (a typo must not silently mean "no checks"
     for a check the operator believes is running — it is reported by
     :func:`run_static_checks` as an explicit finding instead). An absent
@@ -188,10 +193,16 @@ def declared_static_checks(workspace_root: Path) -> tuple[str, ...]:
     omits tier 2 entirely and leaves the contract canon byte-identical to a
     workspace that never heard of this feature.
     """
-    try:
-        contract = read_workspace_config(workspace_root).contract
-    except (OSError, ValueError):
-        return ()
+    if workspace_config is None:
+        try:
+            contract = read_workspace_config(workspace_root).contract
+        except (OSError, ValueError):
+            return ()
+    else:
+        raw_contract = workspace_config.get("contract", {})
+        if not isinstance(raw_contract, Mapping):
+            return ()
+        contract = raw_contract
     declared = contract.get("proposer_static_checks")
     if not isinstance(declared, list):
         return ()
@@ -343,7 +354,9 @@ def run_static_checks(
     return errors, notes
 
 
-def run_load_probe(workspace_root: Path, scratch_root: Path) -> TierResult:
+def run_load_probe(
+    workspace_root: Path, scratch_root: Path, *, adapter_configuration_json: bytes | None = None
+) -> TierResult:
     """Probe ``adapter.load`` against ``scratch_root`` in a subprocess.
 
     Spawns :mod:`zicato.proposer._load_probe` — see that module for why the
@@ -356,7 +369,7 @@ def run_load_probe(workspace_root: Path, scratch_root: Path) -> TierResult:
     config, an unreadable workspace, no adapter configured — is a NOTE; the
     proposer cannot fix the operator's workspace.
     """
-    if not workspace_is_initialized(workspace_root):
+    if adapter_configuration_json is None and not workspace_is_initialized(workspace_root):
         return [], [
             f"load probe skipped: no config.json under {workspace_root} to "
             f"resolve an adapter from"
@@ -369,7 +382,11 @@ def run_load_probe(workspace_root: Path, scratch_root: Path) -> TierResult:
                 "zicato.proposer._load_probe",
                 str(workspace_root),
                 str(scratch_root),
+                *(["--adapter-stdin"] if adapter_configuration_json is not None else []),
             ],
+            input=None
+            if adapter_configuration_json is None
+            else adapter_configuration_json.decode(),
             capture_output=True,
             text=True,
             timeout=LOAD_PROBE_TIMEOUT_SECONDS,
@@ -497,7 +514,11 @@ def _validate_against_context(
             return _report(apply_errors, tiers)
 
         # --- Tier 2: the contract-declared static-check set. ---
-        names = declared_static_checks(ctx.workspace_root)
+        names = (
+            declared_static_checks(ctx.workspace_root)
+            if ctx.static_checks is None
+            else ctx.static_checks
+        )
         static_errors: list[str] = []
         if not names:
             tiers["static_checks"] = {
@@ -516,7 +537,15 @@ def _validate_against_context(
             }
 
         # --- Tier 3: the sandboxed adapter.load probe. ---
-        probe_errors, probe_notes = run_load_probe(ctx.workspace_root, scratch_root)
+        probe_errors, probe_notes = run_load_probe(
+            ctx.workspace_root,
+            scratch_root,
+            **(
+                {"adapter_configuration_json": ctx.adapter_configuration_json}
+                if ctx.adapter_configuration_json is not None
+                else {}
+            ),
+        )
         tiers["load_probe"] = {"ran": True, "errors": probe_errors, "notes": probe_notes}
     finally:
         shutil.rmtree(parent, ignore_errors=True)

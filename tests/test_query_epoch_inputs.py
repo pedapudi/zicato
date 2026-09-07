@@ -322,16 +322,25 @@ def test_mutation_count_uses_selected_epoch_without_changing_process_syntax(
     source = tmp_path / "source"
     source.mkdir()
     (source / "prompt.specimen").write_text('# zicato:mutable:file id="prompt"\nUseful prompt\n')
-    write_workspace_config(layout, {"adapter": {"mutable_trees": [str(source)]}})
+    adapter = {
+        "kind": "import",
+        "factory": "tests._stub_adapter:make_stub_adapter",
+        "mutable_trees": [str(source)],
+    }
+    write_workspace_config(layout, {"adapter": adapter})
     write_epoch(
         layout,
         "declared",
-        scoring={"mutation_surface": {".specimen": {"leaders": ["#"]}}},
+        scoring={
+            "mutation_surface": {".specimen": {"leaders": ["#"]}},
+            # Frozen records retain the historical fractional-to-integer conversion.
+            "proposer_quality": {"best_of_n": 2.8},
+        },
         current=True,
     )
     write_epoch(layout, "undeclared", scoring={})
     other = workspace(tmp_path / "other")
-    write_workspace_config(other, {"adapter": {"mutable_trees": [str(source)]}})
+    write_workspace_config(other, {"adapter": adapter})
     write_epoch(other, "selected", scoring={}, current=True)
     paths = WorkspacePaths(layout.root)
     process_table = dict(active_syntax_table())

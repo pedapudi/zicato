@@ -49,6 +49,7 @@ import hashlib
 import inspect
 import logging
 import math
+import tokenize
 from typing import TYPE_CHECKING, Any
 
 from zicato.import_path import import_dotted_path
@@ -106,7 +107,13 @@ def resolve_plugin_source(dotted: str) -> str | None:
     if module is None:
         return None
     try:
-        source = inspect.getsource(module)
+        source_file = inspect.getsourcefile(module)
+        if source_file is None:
+            raise OSError("module has no source file")
+        # Read the file being executed; a line-cache entry can retain an
+        # earlier body after a same-size edit with a preserved timestamp.
+        with tokenize.open(source_file) as handle:
+            source = handle.read()
     except (OSError, TypeError):
         # A C-extension / builtin / dynamically-constructed module has no
         # inspectable source. Fall back to the spec string only.

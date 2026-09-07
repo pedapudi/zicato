@@ -78,7 +78,7 @@ def atomic_write_text(path: Path, content: str, *, mode: int = 0o644) -> None:
     supported. Readers observe complete payloads even when writers overlap.
     """
     remaining = memoryview(content.encode("utf-8"))
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _mkdir_durable(path.parent)
     while True:
         tmp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
         try:
@@ -112,6 +112,51 @@ def atomic_write_json(path: Path, data: Any) -> None:
     """
     text = json.dumps(data, indent=2, sort_keys=True)
     atomic_write_text(path, text)
+
+
+def sync_directory_tree(path: Path) -> None:
+    """Synchronize prepared files and their directories before publication."""
+    if not path.is_dir():
+        raise FileNotFoundError(f"prepared directory does not exist: {path}")
+    for directory, _children, files in os.walk(path, topdown=False):
+        for name in files:
+            fd = os.open(str(Path(directory) / name), os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        _fsync_dir(Path(directory))
+    _fsync_dir(path.parent)
+
+
+def durable_unlink(path: Path) -> None:
+    """Remove an owned file and synchronize its parent before further cleanup."""
+    path.unlink(missing_ok=True)
+    _fsync_dir(path.parent)
+
+
+def _mkdir_durable(path: Path) -> None:
+    if path.is_dir():
+        return
+    _mkdir_durable(path.parent)
+    path.mkdir(exist_ok=True)
+    _fsync_dir(path.parent)
+
+
+def publish_directory(prepared: Path, destination: Path) -> None:
+    """Rename a synchronized directory into a vacant destination.
+
+    The caller holds mutation ownership while checking vacancy and renaming.
+    Both directories must be on the same filesystem. Synchronize the prepared
+    tree with :func:`sync_directory_tree` before recording publication intent.
+    """
+    if destination.exists():
+        raise FileExistsError(f"publication destination already exists: {destination}")
+    _mkdir_durable(destination.parent)
+    os.rename(prepared, destination)
+    _fsync_dir(destination.parent)
+    if prepared.parent != destination.parent:
+        _fsync_dir(prepared.parent)
 
 
 def atomic_claim(src: Path, dst: Path) -> bool:
@@ -172,5 +217,8 @@ __all__ = [
     "atomic_claim",
     "atomic_write_json",
     "atomic_write_text",
+    "durable_unlink",
+    "publish_directory",
     "read_json",
+    "sync_directory_tree",
 ]

@@ -456,9 +456,10 @@ def test_cli_summary_reports_budget_stop(
             stop_reason_out.append("wall_clock_budget_between_rounds")
         return [_make_outcome(0)]
 
-    import zicato.orchestrator as orch_mod
+    from zicato.evolve import loop
 
-    monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
+    install_evolve_capture(monkeypatch, {})
+    monkeypatch.setattr(loop, "_evolve_n_rounds", _fake_evolve_n_rounds)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -492,9 +493,10 @@ def test_cli_summary_reports_mid_round_abort(
             stop_reason_out.append("wall_clock_budget_mid_round")
         return [_make_outcome(0, decision="rejected")]
 
-    import zicato.orchestrator as orch_mod
+    from zicato.evolve import loop
 
-    monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
+    install_evolve_capture(monkeypatch, {})
+    monkeypatch.setattr(loop, "_evolve_n_rounds", _fake_evolve_n_rounds)
 
     runner = CliRunner()
     result = runner.invoke(

@@ -20,12 +20,12 @@ echoes it, and the gate rejects with the honest reason recorded on the outcome.
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 
 import pytest
 
+from tests._contract_pins import deterministic_weights
 from zicato.core import DriftCount, LossProfile, ScoringWeights
 from zicato.core.types import Experiment, HypothesisSpec, Patch
 from zicato.epoch.contract import scoring_to_canon
@@ -327,13 +327,6 @@ def test_scoring_weights_round_trips_field() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _set_ceiling(workspace: Path, epoch_id: str, ceiling: float) -> None:
-    scoring_path = workspace / "epochs" / epoch_id / "scoring.json"
-    body = json.loads(scoring_path.read_text())
-    body["diff_complexity_ceiling"] = ceiling
-    scoring_path.write_text(json.dumps(body))
-
-
 def test_ceiling_rejects_oversized_challenger_diff_e2e(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -348,8 +341,9 @@ def test_ceiling_rejects_oversized_challenger_diff_e2e(
         run_evolve_once,
     )
 
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
-    _set_ceiling(workspace, epoch_id, 1.0)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path, weights=deterministic_weights(promote_margin=0.01, diff_complexity_ceiling=1.0)
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,
@@ -379,8 +373,9 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
         run_evolve_once,
     )
 
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
-    _set_ceiling(workspace, epoch_id, 100.0)
+    workspace, epoch_id = bootstrap_workspace(
+        tmp_path, weights=deterministic_weights(promote_margin=0.01, diff_complexity_ceiling=100.0)
+    )
     install_stub_adapter_factory(monkeypatch)
     install_telemetry_stubs(
         monkeypatch,

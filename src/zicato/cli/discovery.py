@@ -40,7 +40,7 @@ class ZicatoGroup(click.Group):
 def _advanced_groups() -> tuple[click.Group, ...]:
     from zicato.cli.commands.analyze_telemetry import analyze_telemetry_cmd
     from zicato.cli.commands.board import board_grp
-    from zicato.cli.commands.config import config_env_cmd
+    from zicato.cli.commands.config import config_env_cmd, inspect_config_cmd
     from zicato.cli.commands.epoch import epoch_grp, repair_epoch_goals_cmd
     from zicato.cli.commands.logs import logs_cmd
     from zicato.cli.commands.mutations import mutations_cmd
@@ -59,6 +59,7 @@ def _advanced_groups() -> tuple[click.Group, ...]:
     )
     from zicato.cli.commands.repair_judge_losses import repair_judge_losses_cmd
     from zicato.cli.commands.repair_v0_baseline import repair_v0_baseline_cmd
+    from zicato.cli.commands.setup import setup_cmd
     from zicato.cli.commands.tournament import tournament_cmd
 
     @click.group(short_help="Inspect workspace state and derived analysis.")
@@ -79,6 +80,8 @@ def _advanced_groups() -> tuple[click.Group, ...]:
             {
                 "telemetry": analyze_telemetry_cmd,
                 "environment": config_env_cmd,
+                "config": inspect_config_cmd,
+                "setup": setup_cmd,
                 "logs": logs_cmd,
                 "mutations": mutations_cmd,
                 "reflection": reflect_grp,

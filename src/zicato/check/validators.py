@@ -29,6 +29,7 @@ advisory is naming its code in :data:`ADVISORY_CODES`.
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import os
 import signal
@@ -56,6 +57,7 @@ ADVISORY_CODES: frozenset[str] = frozenset(
         "unbound_span_marker",
         "goldfive_endpoint_revision_unset",
         "no_expectations",
+        "custom_adapter_stock_grading",
     }
 )
 
@@ -79,17 +81,23 @@ def _module_importable(name: str) -> bool:
 _IMPORT_PROBE = """
 import json, sys
 from pathlib import Path
-from zicato.adapter_factory import make_adapter_from_spec
+from zicato.adapter_factory import make_adapter_from_spec, uses_legacy_run
+from zicato.core.adapter_config import DriverImportContext
+from zicato.driver_imports import driver_import_scope, imported_sources
 from zicato.import_path import import_dotted_path
-adapter = make_adapter_from_spec(json.loads(sys.argv[1]))
-root = Path(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] else None
-if root is not None:
-    resolver = getattr(adapter, "mutable_subpaths", None)
-    if callable(resolver):
-        resolver(root)
-    adapter.load(root)
-elif json.loads(sys.argv[1]).get("kind") == "adk":
-    import_dotted_path(json.loads(sys.argv[1])["entrypoint"], label="ADK entrypoint")
+spec = json.loads(sys.argv[1])
+root = Path(sys.argv[2]) if sys.argv[2] else None
+context = DriverImportContext.from_document(json.loads(sys.argv[3]))
+with driver_import_scope(context, snapshot_root=root):
+    adapter = make_adapter_from_spec(spec)
+    if root is not None:
+        resolver = getattr(adapter, "mutable_subpaths", None)
+        if callable(resolver):
+            resolver(root)
+        uses_legacy_run(adapter.load(root))
+        imported_sources(context, root)
+    elif spec.get("kind") == "adk":
+        import_dotted_path(spec["entrypoint"], label="harness entrypoint")
 """
 
 
@@ -260,7 +268,10 @@ def adapter_imports(ctx: CheckContext) -> Iterator[Defect]:
         return
 
     timed_out, returncode, stderr = _run_import_probe(
-        spec, snapshot=str(ctx.generation_snapshot or ""), env=ctx.worker_env
+        spec,
+        snapshot=str(ctx.generation_snapshot or ""),
+        env=ctx.worker_env,
+        driver_imports=ctx.driver_imports.document(),
     )
     if timed_out:
         yield (
@@ -279,7 +290,11 @@ def adapter_imports(ctx: CheckContext) -> Iterator[Defect]:
 
 
 def _run_import_probe(
-    spec: dict[str, Any], *, snapshot: str, env: dict[str, str] | None
+    spec: dict[str, Any],
+    *,
+    snapshot: str,
+    env: dict[str, str] | None,
+    driver_imports: dict[str, Any] | None = None,
 ) -> tuple[bool, int, str]:
     """Run the probe, bounded. Returns ``(timed_out, returncode, stderr)``.
 
@@ -290,7 +305,14 @@ def _run_import_probe(
     no descendant can hold the gate open.
     """
     proc = subprocess.Popen(  # noqa: S603 — fixed argv, spec is JSON
-        [sys.executable, "-c", _IMPORT_PROBE, json.dumps(spec), snapshot],
+        [
+            sys.executable,
+            "-c",
+            _IMPORT_PROBE,
+            json.dumps(spec),
+            snapshot,
+            json.dumps(driver_imports or {}),
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -365,6 +387,7 @@ def model_roles(ctx: CheckContext) -> Iterator[Defect]:
                 str(spec.call_llm),
                 f"models.{role}.call_llm",
                 extra={"role": role},
+                positional_arguments=3,
             )
             continue
         env_name = spec.api_key_env
@@ -411,7 +434,7 @@ def proposal_runtime(ctx: CheckContext) -> Iterator[Defect]:
         load_foe_proposer_config,
     )
 
-    raw = dict(ctx.config.raw)
+    raw = ctx.proposer_configuration
     runtime = raw.get("runtime")
     runtime = runtime if isinstance(runtime, dict) else {}
     if str(runtime.get(PROPOSER_AGENT_KEY) or ""):
@@ -677,6 +700,36 @@ def contract_integrity(ctx: CheckContext) -> Iterator[Defect]:
         yield ("empty_board", "the board has no entries, so nothing is evaluated", {})
         return
 
+    for field in ("outcome_summarizer_spec", "scalar_fn", "drift_reducer"):
+        spec = getattr(ctx.scoring, field, "")
+        if spec:
+            yield from _unresolvable(
+                "grading_hook_unresolvable",
+                str(spec),
+                f"scoring.{field}",
+                positional_arguments=1,
+            )
+    declaration = ctx.config.raw.get("adapter", {})
+    if (
+        isinstance(declaration, dict)
+        and declaration.get("kind") == "import"
+        and not declaration.get("stock_grading_confirmed")
+    ):
+        has_custom_grading = bool(ctx.scoring.outcome_summarizer_spec) or any(
+            entry.expectation is not None and entry.expectation.kind is ExpectationKind.PREDICATE
+            for entry in ctx.board
+        )
+        if not has_custom_grading:
+            yield (
+                "custom_adapter_stock_grading",
+                "the custom adapter uses stock grading; confirm that it measures this target",
+                {
+                    "fix": (
+                        "configure a target predicate or summarizer, or set "
+                        "adapter.stock_grading_confirmed=true"
+                    )
+                },
+            )
     for entry in ctx.board:
         for judge in entry.judges:
             if judge.mode is JudgeMode.PYTHON:
@@ -688,15 +741,30 @@ def contract_integrity(ctx: CheckContext) -> Iterator[Defect]:
                 "predicate_unresolvable",
                 entry.expectation.spec,
                 f"predicate on entry {entry.id!r}",
+                positional_arguments=1,
             )
 
 
 def _unresolvable(
-    code: str, dotted: str, where: str, *, extra: dict[str, Any] | None = None
+    code: str,
+    dotted: str,
+    where: str,
+    *,
+    extra: dict[str, Any] | None = None,
+    positional_arguments: int | None = None,
 ) -> Iterator[Defect]:
     """Yield a defect when ``dotted`` does not import."""
     try:
-        import_dotted_path(dotted, label=where)
+        function = import_dotted_path(dotted, label=where)
+        if not callable(function):
+            raise ValueError("expected a callable")
+        if positional_arguments is not None:
+            try:
+                signature = inspect.signature(function)
+            except ValueError:
+                signature = None
+            if signature is not None:
+                signature.bind(*(object() for _ in range(positional_arguments)))
     except Exception as exc:  # noqa: BLE001 — any import failure is the defect
         yield (code, f"{where} does not resolve: {dotted}", {**(extra or {}), "error": str(exc)})
 

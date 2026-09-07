@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from zicato.core.settings import HealthConfig
 from zicato.core.types import (
     Generation,
 )
@@ -618,6 +619,7 @@ def _assess_and_persist_loop_health(
     token_clip: tuple[int, int] | None = None,
     attributable_regressions: dict[str, dict[str, Any]] | None = None,
     on_promote_failure: tuple[str, str, str] | None = None,
+    health_config: HealthConfig | None = None,
 ) -> tuple[str, bool]:
     """Run the per-round loop-health check and persist its report.
 
@@ -671,6 +673,7 @@ def _assess_and_persist_loop_health(
         epoch_tree_import_gaps,
         workspace_preflight_gate,
     )
+    from zicato.health.summarizer import epoch_summarizer_failures
 
     try:
         losses_by_generation, experiments = _collect_epoch_health_inputs(
@@ -686,7 +689,7 @@ def _assess_and_persist_loop_health(
             experiments,
             board,
             epoch_id,
-            config=_workspace_health_config(workspace_root),
+            config=health_config or _workspace_health_config(workspace_root),
             max_generations_per_contract=_epoch_max_generations_per_contract(
                 workspace_root, epoch_id
             ),
@@ -701,6 +704,7 @@ def _assess_and_persist_loop_health(
             on_promote_failure=on_promote_failure,
             tree_import_gaps=tree_import_gaps,
             settlement_receipt_attention=receipt_attention,
+            summarizer_failures=epoch_summarizer_failures(workspace_root, epoch_id),
         )
     except Exception as exc:  # noqa: BLE001 — health assessment is best-effort
         log.debug("loop-health assessment skipped for %s round %d: %s", epoch_id, round_n, exc)

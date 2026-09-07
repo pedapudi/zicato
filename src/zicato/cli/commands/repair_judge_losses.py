@@ -64,7 +64,7 @@ from zicato.workspace import (
     list_epoch_ids,
     run_entry_ids,
 )
-from zicato.workspace_loader import scoring_weights_from_dict
+from zicato.workspace_loader import historical_scoring_weights_from_dict
 
 
 def _drift_counts_from_events(events_path: Path) -> Counter[tuple[str, str]]:
@@ -125,7 +125,7 @@ def _load_scoring_for_epoch(workspace_root: Path, epoch_id: str) -> ScoringWeigh
 
     The repair runs over historical workspaces where the scoring.json
     may not list every weight key — anything missing falls back to
-    ScoringWeights defaults via :func:`scoring_weights_from_dict`. A
+    ScoringWeights defaults via :func:`historical_scoring_weights_from_dict`. A
     workspace with no scoring.json at all (a partial init) still
     re-derives at default weights so the per-judge attribution is at
     least computable; the operator can re-set per_judge_weights and
@@ -140,7 +140,7 @@ def _load_scoring_for_epoch(workspace_root: Path, epoch_id: str) -> ScoringWeigh
         return ScoringWeights()
     if not isinstance(raw, dict):
         return ScoringWeights()
-    return scoring_weights_from_dict(raw)
+    return historical_scoring_weights_from_dict(raw)
 
 
 def _iter_runs(workspace_root: Path) -> list[tuple[str, str, str]]:

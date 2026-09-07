@@ -1,7 +1,6 @@
 """Builder focus is part of the dashboard command, not a root alias."""
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -23,12 +22,10 @@ def test_builder_deep_link() -> None:
 def test_dashboard_builder_focus_uses_dashboard_server(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from zicato.dashboard import server
+
     captured: dict[str, Any] = {}
-    server = SimpleNamespace(run=lambda **kwargs: captured.update(kwargs))
-    monkeypatch.setitem(
-        __import__("sys").modules, "zicato.dashboard", SimpleNamespace(server=server)
-    )
-    monkeypatch.setitem(__import__("sys").modules, "zicato.dashboard.server", server)
+    monkeypatch.setattr(server, "run", lambda **kwargs: captured.update(kwargs))
 
     result = CliRunner().invoke(
         dashboard_cmd,

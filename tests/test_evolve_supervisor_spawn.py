@@ -27,6 +27,7 @@ from zicato.cli.commands.evolve import (
     _terminate_child,
     _terminate_supervisor,
 )
+from zicato.config import IntegrationConfig
 
 
 def _write_sentinel(tmp_path: Path) -> Path:
@@ -42,18 +43,10 @@ def _write_sentinel(tmp_path: Path) -> Path:
     return script
 
 
-def _pin_supervisor_binary(path: Path) -> None:
-    """Pin the watchdog binary exactly as ``--supervisor-binary`` does."""
-    from zicato.config import pin_overrides
-
-    pin_overrides({"integration": {"supervisor_binary": str(path)}})
-
-
 def test_resolve_supervisor_binary_uses_pinned_flag(tmp_path: Path) -> None:
     """A pinned ``--supervisor-binary`` value short-circuits resolution."""
     sentinel = _write_sentinel(tmp_path)
-    _pin_supervisor_binary(sentinel)
-    resolved = _resolve_supervisor_binary()
+    resolved = _resolve_supervisor_binary(IntegrationConfig(supervisor_binary=str(sentinel)))
     assert resolved == sentinel
 
 
@@ -76,14 +69,13 @@ def test_resolve_supervisor_binary_returns_none_when_missing(
     # Pin a non-executable; resolver should fall through.
     not_executable = tmp_path / "not-exec"
     not_executable.write_text("")
-    _pin_supervisor_binary(not_executable)
     # Strip PATH so the system zicato-supervisor (if any) is unreachable.
     monkeypatch.setenv("PATH", "/nonexistent")
     # The bundled (zicato/_bin/) and dev-checkout (target/release/)
     # paths are computed relative to the package; we can't easily break
     # them, so just confirm we get *some* absolute path if a binary
     # happens to be built, else None.
-    result = _resolve_supervisor_binary()
+    result = _resolve_supervisor_binary(IntegrationConfig(supervisor_binary=str(not_executable)))
     if result is not None:
         assert result.is_absolute()
 
@@ -198,8 +190,9 @@ def test_resolve_pinned_flag_beats_dev_checkout(
     even a present-and-newer dev-checkout build."""
     _bundled, _dev = _fake_checkout(monkeypatch, tmp_path, bundled_mtime=1000.0, dev_mtime=9000.0)
     override = _make_exec(tmp_path / "override" / "zicato-supervisor", 4242.0)
-    _pin_supervisor_binary(override)
-    assert _resolve_supervisor_binary() == override
+    assert (
+        _resolve_supervisor_binary(IntegrationConfig(supervisor_binary=str(override))) == override
+    )
 
 
 def test_resolve_equal_mtime_prefers_dev_checkout(
@@ -226,7 +219,6 @@ def test_supervisor_spawned_with_no_dashboard(
     supervisor must run watchdog-only.
     """
     sentinel = _write_sentinel(tmp_path)
-    _pin_supervisor_binary(sentinel)
 
     captured: dict[str, tuple[str, ...]] = {}
 
@@ -239,7 +231,9 @@ def test_supervisor_spawned_with_no_dashboard(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy_exec)
 
     async def _scenario() -> None:
-        proc = await _maybe_spawn_supervisor(tmp_path, disabled=False)
+        proc = await _maybe_spawn_supervisor(
+            tmp_path, disabled=False, config=IntegrationConfig(supervisor_binary=str(sentinel))
+        )
         assert proc is not None
         await _terminate_child(proc)
 
@@ -253,10 +247,11 @@ def test_supervisor_spawned_with_no_dashboard(
 def test_spawn_and_terminate_round_trip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Spawn the sentinel, observe it's running, terminate it cleanly."""
     sentinel = _write_sentinel(tmp_path)
-    _pin_supervisor_binary(sentinel)
 
     async def _scenario() -> None:
-        proc = await _maybe_spawn_supervisor(tmp_path, disabled=False)
+        proc = await _maybe_spawn_supervisor(
+            tmp_path, disabled=False, config=IntegrationConfig(supervisor_binary=str(sentinel))
+        )
         assert proc is not None
         assert proc.pid > 0
         # Process is alive at this point.
@@ -285,7 +280,7 @@ def test_spawn_missing_binary_returns_none(monkeypatch: pytest.MonkeyPatch, tmp_
     # global-name lookup against the same module globals).
     import zicato.cli.commands.evolve as ev
 
-    monkeypatch.setattr(ev, "_resolve_supervisor_binary", lambda: None)
+    monkeypatch.setattr(ev, "_resolve_supervisor_binary", lambda _config=None: None)
     proc = asyncio.run(ev._maybe_spawn_supervisor(tmp_path, disabled=False))
     assert proc is None
 
@@ -381,7 +376,6 @@ def test_spawn_helpers_isolate_children_in_new_sessions(
     at the dashboard child take down the evolve orchestrator with it.
     """
     sentinel = _write_sentinel(tmp_path)
-    _pin_supervisor_binary(sentinel)
 
     captured: list[dict[str, object]] = []
 
@@ -402,7 +396,9 @@ def test_spawn_helpers_isolate_children_in_new_sessions(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
 
     async def _scenario() -> None:
-        await _maybe_spawn_supervisor(tmp_path, disabled=False)
+        await _maybe_spawn_supervisor(
+            tmp_path, disabled=False, config=IntegrationConfig(supervisor_binary=str(sentinel))
+        )
         await _maybe_spawn_dashboard(tmp_path, 7892, disabled=False)
 
     asyncio.run(_scenario())

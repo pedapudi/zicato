@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from tests._stub_adapter import STUB_ADAPTER_FACTORY
+
 # The real foreign-trace fixture dir (all three dialects + ambiguous + malformed).
 FIXTURES = Path(__file__).parent / "fixtures"
 TRAJ_DIR = FIXTURES / "trajectories"
@@ -48,7 +50,10 @@ def build_workspace(tmp_path: Path) -> tuple[Path, str]:
 
     ws = tmp_path / ".zicato"
     ws.mkdir(parents=True)
-    (ws / "config.json").write_text(json.dumps({"runtime": {}, "adapter": {}}), encoding="utf-8")
+    (ws / "config.json").write_text(
+        json.dumps({"runtime": {}, "adapter": {"kind": "import", "factory": STUB_ADAPTER_FACTORY}}),
+        encoding="utf-8",
+    )
     entry = BoardEntry(id="entryA", kind="single_turn", wall_clock_budget_seconds=30, input="hi")
     board_file = tmp_path / "board.jsonl"
     save_board([entry], board_file)

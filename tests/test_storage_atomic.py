@@ -280,3 +280,60 @@ def test_atomic_claim_missing_source_fsyncs_nothing(
     monkeypatch.setattr(os, "fsync", spying_fsync)
     assert atomic_claim(tmp_path / "ghost.json", tmp_path / "claimed" / "x.json") is False
     assert synced == []
+
+
+def test_directory_publication_syncs_content_and_new_ancestors(tmp_path, monkeypatch) -> None:
+    prepared = tmp_path / "prepared" / "generation"
+    source = prepared / "snapshot" / "value.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VALUE = 1\n")
+    destination = tmp_path / "epochs" / "evaluation" / "generations" / "v0"
+    synchronized = []
+    real_fsync = os.fsync
+    real_rename = os.rename
+
+    def sync(fd):
+        synchronized.append(_fd_path(fd))
+        real_fsync(fd)
+
+    def publish(src, dst):
+        assert source in synchronized
+        assert synchronized.index(source) < synchronized.index(source.parent)
+        assert prepared in synchronized
+        assert destination.parent.parent in synchronized
+        real_rename(src, dst)
+
+    monkeypatch.setattr(os, "fsync", sync)
+    monkeypatch.setattr(os, "rename", publish)
+    atomic_helpers.sync_directory_tree(prepared)
+    atomic_helpers.publish_directory(prepared, destination)
+    assert (destination / "snapshot" / "value.py").read_text() == "VALUE = 1\n"
+    assert synchronized[-2:] == [destination.parent, prepared.parent]
+
+
+def test_directory_publication_preserves_occupied_destination(tmp_path) -> None:
+    prepared = tmp_path / "prepared"
+    destination = tmp_path / "published"
+    prepared.mkdir()
+    destination.mkdir()
+    (prepared / "value.py").write_text("prepared\n")
+    (destination / "value.py").write_text("published\n")
+    with pytest.raises(FileExistsError, match="already exists"):
+        atomic_helpers.publish_directory(prepared, destination)
+    assert (prepared / "value.py").read_text() == "prepared\n"
+    assert (destination / "value.py").read_text() == "published\n"
+
+
+def test_record_write_syncs_each_new_parent_entry(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "records" / "epoch" / "record.json"
+    synchronized = []
+    real_fsync = os.fsync
+
+    def sync(fd):
+        synchronized.append(_fd_path(fd))
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", sync)
+    atomic_write_text(target, "{}\n")
+    assert synchronized[:2] == [tmp_path, tmp_path / "records"]
+    assert synchronized[-1] == target.parent

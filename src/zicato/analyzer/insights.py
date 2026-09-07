@@ -40,6 +40,7 @@ from zicato.analyzer.prompts import (
     render_insight_user_prompt,
 )
 from zicato.aux_timeout import aux_call_timeout_s
+from zicato.core.settings import AuxConfig
 from zicato.core.workspace import epoch_dir
 from zicato.workspace import is_events_file
 
@@ -130,6 +131,7 @@ async def analyze_epoch_telemetry(
     round_n: int | None = None,
     mutation_ids: Sequence[str] | None = None,
     meta_loop_emitter: MetaLoopEmitter | None = None,
+    aux_config: AuxConfig | None = None,
 ) -> Path:
     """Build the decision-event summary, call the LLM, persist the insight.
 
@@ -208,13 +210,13 @@ async def analyze_epoch_telemetry(
     try:
         response = await asyncio.wait_for(
             aux_call_llm(INSIGHT_SYSTEM_PROMPT, user_prompt, model),
-            timeout=aux_call_timeout_s(),
+            timeout=aux_call_timeout_s(aux_config),
         )
     except TimeoutError:
         target.write_text(
             _error_insight_body(
                 epoch_id,
-                f"timeout after {aux_call_timeout_s():.1f}s",
+                f"timeout after {aux_call_timeout_s(aux_config):.1f}s",
             ),
             encoding="utf-8",
         )
@@ -225,7 +227,7 @@ async def analyze_epoch_telemetry(
                     judge_name=judge_name,
                     verdict_kind="boolean",
                     score=None,
-                    detail=f"timeout after {aux_call_timeout_s():.1f}s",
+                    detail=f"timeout after {aux_call_timeout_s(aux_config):.1f}s",
                     latency_s=time.monotonic() - started_at,
                 )
             except Exception:  # noqa: BLE001 — additive telemetry only

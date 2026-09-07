@@ -247,6 +247,7 @@ async def _settle_field_that_produced_nothing(
                 evaluation_model=field_round.evaluation_model,
                 beater=field_round.beater,
                 round_log=field_round.round_log,
+                configuration=field_round.config.operational_configuration(),
             )
     # Still persist the field-status so the dashboard's proposing-step
     # tracker reads "N proposed · 0 applied — all rejected" rather than an

@@ -19,8 +19,8 @@ place and return a structured patch describing what changed. A
 concurrent editing sessions never tread on each other.
 
 The draft can be initialised blank or, via
-:meth:`TournamentDraft.from_workspace`, pre-filled from the CURRENT live
-contract so an editing session opens showing exactly what is running.
+:meth:`TournamentDraft.from_workspace`, pre-filled from the editable live
+contract, including changes awaiting the next execution.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ from zicato.core.types import (
 )
 
 if TYPE_CHECKING:
+    from zicato.contract_draft.publication import ContractSource
     from zicato.core.drift_kinds import DriftKind
 
 
@@ -68,9 +69,9 @@ class ContractComponentDiff:
 class ContractDiff:
     """Which contract components differ between the draft and live.
 
-    A component that differs will roll the epoch on
-    :func:`zicato.contract_draft.operations.apply`. The diff is what the UI
-    renders to warn the operator before they confirm.
+    Applying a changed component updates live inputs; the next execution
+    opens an epoch when the contract differs. The UI renders this diff before
+    the operator confirms the edit.
 
     Fields
     ------
@@ -154,70 +155,44 @@ class TournamentDraft:
     proposer_path: Path | None = None
     disable_drift: tuple[DriftKind, ...] = ()
     judge_only: bool = False
+    source: ContractSource | None = field(default=None, repr=False, compare=False)
 
     # -- construction -----------------------------------------------------
 
     @classmethod
     def from_workspace(cls, workspace_root: Path) -> TournamentDraft:
-        """Initialise a draft from the CURRENT live contract.
+        """Load the editable contract and capture its bytes for conflict detection.
 
-        Reads the workspace's current epoch — its scoring weights, board
-        (with judges / predicates / rubrics and any ``holdout`` tags), the
-        proposer-brief text, and the configured proposer dir — so the
-        builder opens pre-filled with what is running. A missing component
-        degrades to its default (empty board, empty brief, built-in
-        proposer) rather than raising, so a freshly-``init``-ed workspace
-        with no epoch yet still yields an editable draft. A missing scoring
-        contract degrades to the RECOMMENDED scaffold contract
-        (:func:`zicato.core.scoring_config.recommended_scaffold_weights` —
-        racing field 4, replicates 2, evidence gate on), the same full
-        effective contract ``zicato init`` writes, so a blank draft opens on
-        the noise-aware recommendation rather than the bare gauntlet.
+        Frozen epoch files describe past evaluations. Drafts use registered live
+        paths, including files edited before the first epoch exists. Missing
+        components use the scaffold defaults.
         """
-        from zicato.core.scoring_config import recommended_scaffold_weights  # noqa: PLC0415
-        from zicato.workspace_loader import (  # noqa: PLC0415
-            load_current_board_with_meta,
-            load_current_brief,
-            load_current_epoch_config,
-            load_current_scoring,
+        import json
+
+        from zicato.board.jsonl import parse_board_with_meta
+        from zicato.contract_draft.publication import capture_contract_source
+        from zicato.core.scoring_config import recommended_scaffold_weights
+        from zicato.workspace_loader import scoring_weights_from_dict
+
+        source = capture_contract_source(workspace_root)
+        scoring_text = source.file("scoring").text
+        scoring = (
+            recommended_scaffold_weights()
+            if scoring_text is None
+            else scoring_weights_from_dict(json.loads(scoring_text))
         )
-
-        try:
-            scoring = load_current_scoring(workspace_root)
-        except FileNotFoundError:
-            scoring = recommended_scaffold_weights()
-
-        # The WITH-META loader: the board-level ``board_meta`` header
-        # (disable_drift / judge_only) is part of the contract, and
-        # ``apply`` writes the board back — loading entries alone would
-        # silently strip the header from the live contract on apply.
-        try:
-            loaded, disable_drift, judge_only = load_current_board_with_meta(workspace_root)
-            entries = list(loaded)
-        except FileNotFoundError:
-            entries = []
-            disable_drift = ()
-            judge_only = False
-
-        try:
-            brief = load_current_brief(workspace_root).text
-        except FileNotFoundError:
-            brief = ""
-
-        proposer_path: Path | None = None
-        try:
-            cfg = load_current_epoch_config(workspace_root)
-            proposer_path = cfg.proposer_path
-        except FileNotFoundError:
-            proposer_path = None
-
+        board_text = source.file("board").text
+        entries, disable_drift, judge_only = parse_board_with_meta(
+            board_text or "", source=source.file("board").path
+        )
         return cls(
             scoring=scoring,
             entries=entries,
-            brief=brief,
-            proposer_path=proposer_path,
-            disable_drift=tuple(disable_drift),
+            brief=source.file("brief").text or "",
+            proposer_path=source.inputs.proposer_path,
+            disable_drift=disable_drift,
             judge_only=judge_only,
+            source=source,
         )
 
     # -- read-side --------------------------------------------------------
@@ -402,6 +377,7 @@ def _copy_draft(draft: TournamentDraft) -> TournamentDraft:
         proposer_path=draft.proposer_path,
         disable_drift=draft.disable_drift,
         judge_only=draft.judge_only,
+        source=draft.source,
     )
 
 

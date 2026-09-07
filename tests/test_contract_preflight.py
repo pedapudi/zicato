@@ -330,7 +330,10 @@ def _seed_baseline(workspace: Path, epoch_id: str) -> object:
     from zicato.evolve.round_baseline import _ensure_baseline_snapshot
 
     workspace_config = workspace_loader.load_workspace_config(workspace)
-    _ensure_baseline_snapshot(workspace, epoch_id, workspace_config)
+    from zicato.runtime.lock import acquire_workspace_lock
+
+    with acquire_workspace_lock(workspace, "contract-test") as writer:
+        _ensure_baseline_snapshot(workspace, epoch_id, workspace_config, writer=writer)
     champion_id = current_generation(workspace, epoch_id)
     return Generation(
         id=champion_id,

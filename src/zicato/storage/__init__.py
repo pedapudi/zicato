@@ -36,7 +36,10 @@ from zicato.storage._atomic import (
     atomic_claim,
     atomic_write_json,
     atomic_write_text,
+    durable_unlink,
+    publish_directory,
     read_json,
+    sync_directory_tree,
 )
 from zicato.storage.base import StorageBackend
 from zicato.storage.factory import (
@@ -57,5 +60,8 @@ __all__ = [
     "atomic_claim",
     "atomic_write_json",
     "atomic_write_text",
+    "durable_unlink",
+    "publish_directory",
     "read_json",
+    "sync_directory_tree",
 ]

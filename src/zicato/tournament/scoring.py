@@ -312,6 +312,9 @@ def write_gen_score(
         + json.dumps(record, sort_keys=True)
         + "\n"
     )
+    from zicato.workspace.projection import mark_epoch_changed  # noqa: PLC0415
+
+    mark_epoch_changed(workspace_root, epoch_id)
     if torn_tail or not history_path.exists():
         atomic_write_text(history_path, text + line)
     else:

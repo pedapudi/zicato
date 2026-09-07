@@ -34,6 +34,7 @@ from zicato.epoch.genstore import (
     TreeEntry,
 )
 from zicato.epoch.git_genstore import GitGenerationStore
+from zicato.workspace import WorkspaceLayout, generation_ids
 
 # ---------------------------------------------------------------------------
 # Backend parametrisation
@@ -192,7 +193,57 @@ def test_seed_generation_raises_for_missing_source(store: GenerationStore, tmp_p
     # the exception type.
     match = "does not exist" if isinstance(store, DirectoryGenerationStore) else None
     with pytest.raises(FileNotFoundError, match=match):
-        store.seed_generation("e1", "v0", [tmp_path / "ghost"])
+        store.seed_generation(
+            "e1", "v0", [mutable_tree(tmp_path / "registered"), tmp_path / "ghost"]
+        )
+    assert not store.has_generation("e1", "v0")
+    assert store.list_generations("e1") == []
+    assert generation_ids(WorkspaceLayout.from_root(tmp_path / "ws"), "e1") == []
+
+
+def test_seed_rejects_colliding_source_names(store: GenerationStore, tmp_path: Path) -> None:
+    sources = [mutable_tree(tmp_path / "first"), mutable_tree(tmp_path / "second")]
+    with pytest.raises(ValueError, match="duplicate source basename"):
+        store.seed_generation("e1", "v0", sources)
+    assert not store.has_generation("e1", "v0")
+    assert generation_ids(WorkspaceLayout.from_root(tmp_path / "ws"), "e1") == []
+
+
+def test_seed_copy_failure_remains_invisible_and_retry_uses_only_its_sources(
+    store: GenerationStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = mutable_tree(tmp_path / "registered")
+    later = tmp_path / "later"
+    later.mkdir()
+    (later / "unused.py").write_text("UNUSED = True\n", encoding="utf-8")
+    real_copytree = shutil.copytree
+
+    def fail_later(source, destination, *args, **kwargs):
+        assert not store.has_generation("e1", "v0")
+        assert generation_ids(WorkspaceLayout.from_root(tmp_path / "ws"), "e1") == []
+        if Path(source) == later:
+            raise OSError("injected copy failure")
+        return real_copytree(source, destination, *args, **kwargs)
+
+    with monkeypatch.context() as failure:
+        failure.setattr(shutil, "copytree", fail_later)
+        with pytest.raises(OSError, match="injected copy failure"):
+            store.seed_generation("e1", "v0", [first, later])
+    assert not store.has_generation("e1", "v0")
+    assert generation_ids(WorkspaceLayout.from_root(tmp_path / "ws"), "e1") == []
+
+    store.seed_generation("e1", "v0", [later])
+    assert [entry.path for entry in store.list_tree("e1", "v0")] == ["later", "later/unused.py"]
+
+
+def test_seed_refuses_to_replace_a_published_generation(
+    seeded_store: GenerationStore, tmp_path: Path
+) -> None:
+    before = seeded_store.read_file("e1", "v0", "agent/prompts.py")
+    replacement = mutable_tree(tmp_path / "replacement", instr="replacement")
+    with pytest.raises(FileExistsError, match="already exists"):
+        seeded_store.seed_generation("e1", "v0", [replacement])
+    assert seeded_store.read_file("e1", "v0", "agent/prompts.py") == before
 
 
 def test_seed_generation_excludes_run_artifacts(store: GenerationStore, tmp_path: Path) -> None:

@@ -27,8 +27,6 @@ express.
 from __future__ import annotations
 
 import json
-import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -37,11 +35,13 @@ from tests._contract_pins import experimental_for, pin_deterministic
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
     install_stub_adapter_factory,
+    install_telemetry_stubs,
     make_aux_responder,
     run_evolve_once,
 )
 from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile
 from zicato.core.types import OverfittingConfig, ScoringWeights, TournamentStructure
+from zicato.epoch.journal import write_seed_experiment
 from zicato.epoch.lifecycle import new_epoch
 
 # Structures under test + their minimal params (small fields keep the bracket
@@ -73,57 +73,7 @@ def _install_per_entry_telemetry_stubs(
     challenger score differently on the holdout entry than on the train
     entries — the divergence the holdout-confirmation step exists to catch.
     """
-    sink_mod = types.ModuleType("zicato.telemetry.sink")
-
-    def make_run_sink_path(
-        *,
-        workspace_root: Path,
-        epoch_id: str,
-        generation_id: str,
-        entry_id: str,
-        replicate_index: int = 0,
-    ) -> Path:
-        del epoch_id, generation_id, entry_id, replicate_index
-        return workspace_root / "events.jsonl"
-
-    sink_mod.make_run_sink_path = make_run_sink_path  # type: ignore[attr-defined]
-
-    reducer_mod = types.ModuleType("zicato.telemetry.reducer")
-
-    def read_loss_profile(path: Path) -> LossProfile:
-        del path
-        raise FileNotFoundError
-
-    reducer_mod.read_loss_profile = read_loss_profile  # type: ignore[attr-defined]
-
-    supervisor_mod = types.ModuleType("zicato.telemetry.harmonograf_supervisor")
-
-    class _StubHandle:
-        url: str = ""
-
-        def shutdown(self) -> None:
-            return None
-
-    def _stub_start(*_a: object, **_k: object) -> _StubHandle:
-        return _StubHandle()
-
-    supervisor_mod.start_harmonograf = _stub_start  # type: ignore[attr-defined]
-    supervisor_mod.HarmonografHandle = _StubHandle  # type: ignore[attr-defined]
-
-    # Real, dependency-light meta_loop so the structural-span call sites can
-    # import ``meta_span`` (a no-op here — no ambient emitter is bound).
-    import zicato.telemetry.meta_loop as meta_loop_mod
-
-    telemetry_pkg = types.ModuleType("zicato.telemetry")
-    telemetry_pkg.sink = sink_mod  # type: ignore[attr-defined]
-    telemetry_pkg.reducer = reducer_mod  # type: ignore[attr-defined]
-    telemetry_pkg.harmonograf_supervisor = supervisor_mod  # type: ignore[attr-defined]
-    telemetry_pkg.meta_loop = meta_loop_mod  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "zicato.telemetry", telemetry_pkg)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.harmonograf_supervisor", supervisor_mod)
-    monkeypatch.setitem(sys.modules, "zicato.telemetry.meta_loop", meta_loop_mod)
+    install_telemetry_stubs(monkeypatch, canned_loss_by_gen={}, canned_pass_by_gen=pass_by_gen)
 
     import zicato.tournament.runner as _runner_mod
 
@@ -192,7 +142,7 @@ def _bootstrap(
                 # directory backend so the git default does not look for git
                 # tags this fixture never writes.
                 "generation_source_backend": "directory",
-                "adapter": {"kind": "stub"},
+                "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
                 "runtime": {"parallelism": 2, "propose_parallelism": 2},
             }
         )
@@ -253,6 +203,7 @@ def _bootstrap(
         '# zicato:mutable id="greeting"\nGREETING = "hello"\n'
     )
     (workspace / "epochs" / cfg.id / "current_generation").write_text("v0\n")
+    write_seed_experiment(workspace, cfg.id, proposed_at=cfg.created_at)
     return workspace, cfg.id
 
 

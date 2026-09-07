@@ -21,10 +21,10 @@ epoch lifecycle can drain it at creation time without an import cycle.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 from zicato.core.workspace import proposer_staged_recommendations_path
+from zicato.storage import atomic_write_text, durable_unlink
 
 
 def _read(path: Path) -> list[str]:
@@ -39,12 +39,9 @@ def _read(path: Path) -> list[str]:
 
 
 def _write(path: Path, ids: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(
-        json.dumps({"recommendation_ids": ids}, indent=2, sort_keys=True), encoding="utf-8"
+    atomic_write_text(
+        path, json.dumps({"recommendation_ids": ids}, indent=2, sort_keys=True), mode=0o666
     )
-    os.replace(tmp, path)
 
 
 def staged_recommendations(workspace_root: Path) -> tuple[str, ...]:
@@ -76,13 +73,28 @@ def drain_staged_recommendations(workspace_root: Path) -> tuple[str, ...]:
     """
     path = proposer_staged_recommendations_path(workspace_root)
     ids = _read(path)
-    if path.exists():
-        path.unlink(missing_ok=True)
+    acknowledge_staged_recommendations(workspace_root, tuple(ids))
     return tuple(ids)
+
+
+def acknowledge_staged_recommendations(
+    workspace_root: Path, recommendation_ids: tuple[str, ...]
+) -> None:
+    """Remove ids recorded by an epoch while retaining subsequent recommendations."""
+    path = proposer_staged_recommendations_path(workspace_root)
+    ids = _read(path)
+    remaining = [item for item in ids if item not in recommendation_ids]
+    if remaining == ids:
+        return
+    if remaining:
+        _write(path, remaining)
+    else:
+        durable_unlink(path)
 
 
 __all__ = [
     "drain_staged_recommendations",
+    "acknowledge_staged_recommendations",
     "stage_recommendation",
     "staged_recommendations",
 ]

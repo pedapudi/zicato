@@ -94,7 +94,7 @@ def _install_hooked_adapter_factory(
 
     fake_factory = types.ModuleType("zicato.adapter_factory")
 
-    def make_adapter_from_config(workspace_config: dict[str, Any]) -> Any:
+    def make_adapter_from_config(workspace_config: dict[str, Any], *, workspace_root: Path) -> Any:
         del workspace_config
         return _HookedAdapter()
 

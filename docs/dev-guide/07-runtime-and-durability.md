@@ -76,17 +76,36 @@ Three consequences an agent extending zicato must internalize:
    answer when the database is absent, stale, or mid-rebuild. See
    08-supervisor.md §8.9 (the read-only SQLite discipline) for the Rust side's
    contract.
-3. **`zicato repair index` is the recovery story.** It is a drop-and-rebuild:
-   delete `index.db`, walk every epoch / generation / run under `.zicato/`,
-   re-derive every row. Because ingestion is upsert-idempotent (every write
-   is `INSERT ... ON CONFLICT DO UPDATE` on the natural primary key), running
-   it repeatedly is a no-op beyond the file drop.
+3. **`zicato repair index` rebuilds from canonical records.** It derives a
+   complete database in private scratch and publishes it after SQLite commits.
+   A failed derivation preserves the existing database.
+
+Canonical writers call `workspace.projection.mark_epoch_changed` before
+replacing indexed records. The helper atomically publishes a UUID in
+`index-revisions/<epoch>.revision`. It covers epoch configuration, lineage,
+experiments, loss records, field tournaments, reflections, and Pareto records.
+Failure to persist this signal prevents the canonical replacement.
+
+Only a complete epoch projection acknowledges a revision. `heal_index` and
+`rebuild_index` capture the revisions before reading records and write the
+captured values to `index.db.revisions.json` after committing and publishing
+the database. An interruption leaves repair pending. A later mutation issues
+a different UUID, so acknowledging an earlier snapshot cannot clear it.
+Incremental ingestion never acknowledges an epoch revision: one updated run
+cannot prove that every pending record was projected.
+
+Repair acquires the workspace writer lease or validates the supplied `writer`
+handle. The invocation must finish delegated workers, including their resource
+cleanup, before repair starts. Active worker records prevent acknowledgement;
+parallel workers issue UUIDs without a shared read/increment operation. Revision
+files and their acknowledgements never decide promotion or resume. Manual edits
+that bypass canonical writer APIs still require `zicato repair index`.
 
 ### 7.1.1 The dual-write pattern — and its swallow-everything except clause
 
-The live loop keeps the index current with **best-effort dual-writes** at two
-sites, and both follow the same pattern. This is the canonical example; copy
-it verbatim if you ever add a third:
+The run and experiment writers use **best-effort dual-writes**. Other
+incremental projections follow the same rule: canonical data remains valid
+when its index update fails. The run writer provides this example:
 
 ```python
     try:
@@ -114,12 +133,12 @@ it verbatim if you ever add a third:
 ```
 — `src/zicato/tournament/worker_transport.py`, `_ingest_run_into_index`
 
-The two live sites are:
+The run and experiment call sites are:
 
 | Site | Symbol | Fires when | Rows touched |
 |------|--------|-----------|--------------|
 | Run settles | `zicato.tournament.worker_transport._ingest_run_into_index` (called by `zicato.tournament.runner`) | the run's `loss.json` has just been written | `runs`, `loss_profiles`, `metric_counts` |
-| Experiment written / outcome updated | `zicato.orchestrator._ingest_experiment_into_index` | `experiment.json` is written, and again when its outcome lands | `experiments`, `patches`, `tournaments` |
+| Experiment written / outcome updated | `zicato.evolve.ingest._ingest_experiment_into_index` | `experiment.json` is written, and again when its outcome lands | `experiments`, `patches`, `tournaments` |
 
 Read the except clauses carefully — this is the doctrine's teeth:
 
@@ -438,6 +457,57 @@ generation is told apart from one that never existed:
 > reports a garbage-collected epoch as empty.
 
 ---
+
+### Epoch and baseline publication recover from retained content
+
+Epoch creation validates the name, board, brief, scoring, contract hash, and
+baseline source inputs before changing the current epoch. Preparation uses
+workspace directories named `.epoch-publication-*` and `.baseline-seed-*`,
+which epoch and generation discovery do not enumerate. Stored contract paths
+already name their final epoch locations.
+
+The epoch-owned `epoch_publication.json` record captures the prepared directory,
+its file-content digest, contract hash, predecessor closure timestamp, and
+recommendation IDs. The caller holds the workspace writer throughout preparation
+and publication. Automatic rollover reconciles in-flight work after preparation
+succeeds and before recording publication intent.
+
+Recovery validates retained content before publishing the complete epoch
+directory. It registers lineage, switches the current marker, closes the
+predecessor, and acknowledges only the captured recommendation IDs. Each step
+can repeat after interruption. The operation record is removed and its parent
+synchronized before staging cleanup. Missing or changed prepared content raises;
+recovery never substitutes live files under an existing intent.
+
+A published epoch may still need baseline initialization. Its
+`baseline_seed.json` record retains source identity, creation time, backend, and
+optional predecessor epoch and generation coordinates. Baseline recovery checks
+this record before source or record discovery. It publishes the source once,
+then completes lineage, the current-generation marker, and the seed experiment.
+Existing evaluation records and an advanced current-generation marker survive
+recovery. A historical source tree without completed seed records and without an
+intent requires explicit repair; its completeness cannot be inferred from its
+presence.
+
+Both generation stores validate every source path and reject duplicate destination
+basenames before copying. The directory backend publishes the complete generation
+parent with one rename. The git backend copies into an isolated directory before
+installing and committing the tree; its generation tag identifies the published
+source. Recovery can materialize a surviving tag without seeding again.
+Git publication requires Git 2.36 or newer and configures only the owned private
+repository with `core.fsync=committed,reference` and `core.fsyncMethod=fsync`.
+These settings synchronize Git objects and references through Git itself;
+file-copy synchronization alone does not cover object-store publication.
+Fault injection verifies process-interruption recovery. Power-loss durability
+still depends on the operating system, filesystem, and storage device honoring
+synchronization requests; the tests do not simulate a power failure.
+
+Prepared files are synchronized before directory publication. Newly created
+parent directories and both sides of a directory rename are synchronized where
+supported. Epoch and baseline publication persist an index revision before
+canonical mutation so interrupted projection remains detectable. Fault tests
+exercise publication and bookkeeping boundaries in `tests/test_epoch_publication.py`
+and source discovery in `tests/test_genstore_conformance.py`.
 
 ## 7.4 The generation store — and the git backend in depth
 
@@ -953,9 +1023,12 @@ a live process with matching or unavailable identity prevents it.
 `steal_stale=False` refuses either kind of stale-record recovery.
 
 The asynchronous invocation scope, `validated_invocation`, retains the writer
-through resource teardown. Its `InvocationContext.resources` stack registers
-release immediately after each acquisition. One shielded task first drains all
-retained worker owners on their original event loop, then closes the resources.
+through publication recovery, validation, input capture, and resource teardown.
+Contract edits recover before epoch publication, and both complete before live
+inputs are read. Resume and index repair receive the same validated writer.
+Its `InvocationContext.resources` stack registers release immediately after
+each acquisition. One shielded task first drains all retained worker owners on
+their original event loop, then closes the resources.
 The writer is released last. A bounded worker retry cannot establish completion;
 unconfirmed exit keeps the invocation, its writer, and its services alive.
 

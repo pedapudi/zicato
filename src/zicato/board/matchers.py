@@ -62,6 +62,7 @@ from collections.abc import Awaitable, Callable
 
 import jsonschema
 
+from zicato.core.settings import AuxConfig
 from zicato.core.types import Expectation, ExpectationKind, ExpectationResult, RunResult
 from zicato.import_path import import_dotted_path
 
@@ -266,6 +267,7 @@ async def _eval_rubric(
     expectation: Expectation,
     result: RunResult,
     aux_call_llm: Callable[[str, str, str], Awaitable[str]] | None,
+    aux_config: AuxConfig | None = None,
 ) -> ExpectationResult:
     """Dispatch the :attr:`~zicato.core.ExpectationKind.RUBRIC` kind.
 
@@ -276,13 +278,14 @@ async def _eval_rubric(
     """
     from zicato.board.rubric import evaluate_rubric_judge  # noqa: PLC0415
 
-    return await evaluate_rubric_judge(expectation, result, aux_call_llm)
+    return await evaluate_rubric_judge(expectation, result, aux_call_llm, aux_config)
 
 
 async def evaluate_expectation(
     expectation: Expectation,
     result: RunResult,
     aux_call_llm: Callable[[str, str, str], Awaitable[str]] | None = None,
+    aux_config: AuxConfig | None = None,
 ) -> ExpectationResult:
     """Dispatch on ``expectation.kind`` and return an :class:`ExpectationResult`.
 
@@ -328,7 +331,7 @@ async def evaluate_expectation(
     if kind is ExpectationKind.JSON_SCHEMA:
         return _eval_json_schema(expectation, result)
     if kind is ExpectationKind.RUBRIC:
-        return await _eval_rubric(expectation, result, aux_call_llm)
+        return await _eval_rubric(expectation, result, aux_call_llm, aux_config)
     # Enum-typed; belt-and-braces for forward compatibility.
     raise ValueError(f"unknown expectation kind {expectation.kind!r}")
 

@@ -80,22 +80,19 @@ def test_a_top_level_evaluation_model_outranks_the_runtime_block(tmp_path: Path)
     assert read_workspace_config(root).evaluation_model == "from-top-level"
 
 
-def test_wrong_json_types_read_as_the_absent_key_default(tmp_path: Path) -> None:
-    """A key of the wrong shape reads as absent rather than reaching a caller."""
-    root = _workspace(
-        tmp_path,
-        {
-            "runtime": ["not", "an", "object"],
-            "contract": "not an object",
-            "source_roots": "src",
-            "generation_source_backend": 7,
-        },
-    )
-    config = read_workspace_config(root)
-    assert config.runtime == {}
-    assert config.contract == {}
-    assert config.source_roots == ()
-    assert config.generation_source_backend == ""
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("runtime", ["not", "an", "object"]),
+        ("contract", "not an object"),
+        ("source_roots", "src"),
+        ("generation_source_backend", 7),
+    ],
+)
+def test_wrong_json_types_fail_at_the_authored_field(tmp_path: Path, field, value) -> None:
+    root = _workspace(tmp_path, {field: value})
+    with pytest.raises(ValueError, match=f"config.{field}:"):
+        read_workspace_config(root)
 
 
 def test_unparseable_json_raises_naming_the_path(tmp_path: Path) -> None:
@@ -146,10 +143,12 @@ def test_config_write_preserves_format_permissions_and_syncs(
 
     monkeypatch.setattr(os, "open", observed_open)
     monkeypatch.setattr(os, "fsync", observed_fsync)
-    write_workspace_config(tmp_path, {"z": "é", "a": 1})
+    write_workspace_config(tmp_path, {"instance_id": "é", "runtime": {"seed": 1}})
 
     target = tmp_path / "config.json"
-    assert target.read_bytes() == b'{\n  "a": 1,\n  "z": "\\u00e9"\n}\n'
+    assert target.read_bytes() == (
+        b'{\n  "instance_id": "\\u00e9",\n  "runtime": {\n    "seed": 1\n  }\n}\n'
+    )
     assert creation_modes == [0o666]
     assert stat.S_IMODE(target.stat().st_mode) == stat.S_IMODE(reference.stat().st_mode)
     assert synced == ["file", "directory"]

@@ -3,85 +3,49 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
+from zicato.config import ResolvedConfiguration, resolve_configuration
+from zicato.core.adapter_config import DriverImportContext
+from zicato.core.configuration import authored_dataclass_from_json
+from zicato.core.runtime_context import TelemetryEndpoints
+from zicato.core.settings import RuntimeDeclaration, RuntimeSettings
 from zicato.core.types import CallLLM, RuntimeConfig
 from zicato.core.workspace import assert_distinct_callables
+from zicato.driver_imports import with_workspace_imports
 from zicato.import_path import import_dotted_path
 from zicato.models_config import load_models_config, resolve_text_call_llm
 from zicato.runtime.effective_settings import (
-    SOURCE_DEFAULT,
     SOURCE_HOST_CPU_COUNT,
-    SOURCE_PINNED_FLAG,
-    SOURCE_WORKSPACE,
 )
 
 
-def resolve_parallelism(runtime_dict: Mapping[str, Any]) -> tuple[int, str]:
-    """Resolve the effective ``parallelism`` and say where it came from.
-
-    Three-tier precedence:
-
-    1. An explicit ``--parallelism`` flag, pinned into the typed config
-       tree at CLI startup (``zicato.config.pin_overrides``). A
-       per-invocation flag outranks the per-workspace file, so it is
-       checked FIRST — but only when explicitly pinned, so the mere
-       typed-config default never masks the workspace value.
-    2. The workspace config's ``runtime`` block — the same place
-       ``instance_id`` and ``seed`` are read.
-    3. The typed config tree
-       (:attr:`ZicatoConfig.runtime.parallelism` — its default of 4, or
-       whatever an embedding application pinned).
-
-    ``RuntimeConfig.__post_init__`` re-validates ``parallelism >= 1``.
-
-    The second element of the pair names the winning tier, drawn from the
-    shared vocabulary in :mod:`zicato.runtime.effective_settings`, so the
-    run-start configuration line and the recorded settings map agree on what
-    to call each tier. Naming it is what lets an operator tell whether the
-    number they are looking at is one they chose (issue #126): a concurrency
-    ceiling nobody ever wrote down is indistinguishable, from the outside,
-    from a machine that is simply slow.
-    """
-    from zicato.config import load_config, pinned_override  # noqa: PLC0415 — avoid import cycle
-
-    pinned = pinned_override("runtime", "parallelism")
-    if pinned is not None:
-        return int(pinned), SOURCE_PINNED_FLAG
-    raw = runtime_dict.get("parallelism")
-    if raw is not None:
-        return int(raw), SOURCE_WORKSPACE
-    return load_config().runtime.parallelism, SOURCE_DEFAULT
+def resolve_parallelism(
+    runtime_dict: Mapping[str, Any], *, configuration: ResolvedConfiguration | None = None
+) -> tuple[int, str]:
+    """Return concurrency and its invocation-local source."""
+    resolved = configuration or resolve_configuration({"runtime": runtime_dict})
+    return resolved.values.runtime.parallelism, resolved.sources["runtime.parallelism"]
 
 
-def resolve_host_worker_permits(runtime_dict: Mapping[str, Any]) -> tuple[int | None, str]:
-    """Resolve the host-wide worker ceiling and say where it came from.
-
-    Returns the raw ceiling — ``None`` for AUTO (resolved against the host's
-    usable CPU count by
-    :func:`zicato.runtime.spawn_permit.effective_permit_count`), ``0`` for
-    the cap disabled, a positive integer for an explicit ceiling — paired
-    with the tier that set it. AUTO always names the host as its source,
-    whether it was reached by omitting the key or by writing ``true``.
-
-    A JSON ``true`` would otherwise ``int()`` to 1, pinning the whole host to
-    one worker at a time — a silent throughput collapse — and ``false`` to 0.
-    The name reads boolean-ish enough that an operator writing "on" is
-    plausible, and neither number is what they meant, so the intent is
-    mapped: ``true`` is AUTO, ``false`` is off.
-    """
-    raw = runtime_dict.get("host_worker_permits")
-    if isinstance(raw, bool):
-        limit = None if raw else 0
-    else:
-        limit = int(raw) if raw is not None else None
-    if limit is None:
-        return None, SOURCE_HOST_CPU_COUNT
-    return limit, SOURCE_WORKSPACE
+def resolve_host_worker_permits(
+    runtime_dict: Mapping[str, Any], *, configuration: ResolvedConfiguration | None = None
+) -> tuple[int | None, str]:
+    """Return the declared host ceiling; an automatic ceiling names the host."""
+    resolved = configuration or resolve_configuration({"runtime": runtime_dict})
+    value = resolved.values.runtime.host_worker_permits
+    source = (
+        SOURCE_HOST_CPU_COUNT if value is None else resolved.sources["runtime.host_worker_permits"]
+    )
+    return value, source
 
 
-def resolve_role_call_llm(workspace_config: Mapping[str, Any], *, role: str) -> CallLLM:
+@with_workspace_imports
+def resolve_role_call_llm(
+    workspace_config: Mapping[str, Any], *, role: str, workspace_root: Path | None = None
+) -> CallLLM:
     """Resolve one model role to the callable a round runs it on.
 
     Two sources, in order: the ``models`` block's engine for ``role``,
@@ -109,12 +73,15 @@ def resolve_role_call_llm(workspace_config: Mapping[str, Any], *, role: str) -> 
     return _import_callable(str(dotted), kind=f"{role}_call_llm")
 
 
+@with_workspace_imports
 def make_runtime_config(
     workspace_config: Mapping[str, Any],
     *,
     workspace_root: Path | None = None,
     target_call_llm: CallLLM | None = None,
     evaluation_call_llm: CallLLM | None = None,
+    configuration: ResolvedConfiguration | None = None,
+    telemetry: TelemetryEndpoints | None = None,
 ) -> RuntimeConfig:
     """Assemble a :class:`RuntimeConfig` from workspace config + optional overrides.
 
@@ -151,20 +118,17 @@ def make_runtime_config(
         non-string dotted paths; or
         :func:`assert_distinct_callables` rejecting the pair.
     """
-    runtime_dict = workspace_config.get("runtime", {}) or {}
-    if not isinstance(runtime_dict, Mapping):
-        raise ValueError(
-            f"workspace_config['runtime'] must be a mapping, got " f"{type(runtime_dict).__name__}"
-        )
-
-    instance_id = str(runtime_dict.get("instance_id", "default"))
+    resolved = configuration or resolve_configuration(workspace_config)
+    settings = resolved.values.runtime
 
     resolved_root: Path
     if workspace_root is not None:
         resolved_root = Path(workspace_root)
     else:
-        raw_root = runtime_dict.get("workspace_root", ".zicato")
-        resolved_root = Path(str(raw_root))
+        declaration = authored_dataclass_from_json(
+            RuntimeDeclaration, workspace_config.get("runtime", {}), path="config.runtime"
+        )
+        resolved_root = Path(declaration.workspace_root)
 
     # The unified ``models`` block (runtime infra, NOT part of the contract)
     # is the first source for target / evaluation / judge — but an explicit
@@ -175,11 +139,15 @@ def make_runtime_config(
 
     target = target_call_llm
     if target is None:
-        target = resolve_role_call_llm(workspace_config, role="target")
+        target = resolve_role_call_llm(
+            workspace_config, role="target", workspace_root=resolved_root
+        )
 
     aux = evaluation_call_llm
     if aux is None:
-        aux = resolve_role_call_llm(workspace_config, role="evaluation")
+        aux = resolve_role_call_llm(
+            workspace_config, role="evaluation", workspace_root=resolved_root
+        )
 
     # Judges use ``models.judge`` when present; absent, ``judge_call_llm``
     # stays ``None`` and judges fall back to the evaluation callable via
@@ -227,118 +195,6 @@ def make_runtime_config(
         if not models.proposer_depth.uses_call_llm:
             proposer_depth_model = models.proposer_depth.model
 
-    seed_raw = runtime_dict.get("seed")
-    seed: int | None = int(seed_raw) if seed_raw is not None else None
-
-    parallelism, _parallelism_source = resolve_parallelism(runtime_dict)
-
-    # Propose-phase concurrency cap: the best-of-N slate gather's semaphore
-    # size, the propose-side analogue of ``parallelism``. Read from the same
-    # ``runtime`` block; absent ⇒ the dataclass default (4). A value of 1
-    # runs the slate serially.
-    # ``RuntimeConfig.__post_init__`` re-validates ``>= 1``. NOT
-    # part of the frozen contract — a runtime tuning knob only.
-    propose_parallelism_raw = runtime_dict.get("propose_parallelism")
-    propose_parallelism = int(propose_parallelism_raw) if propose_parallelism_raw is not None else 4
-
-    # Host-wide worker ceiling (RUNTIME.md §5.5.7): read from the same
-    # ``runtime`` block. ABSENT / null ⇒ None = AUTO (max(4, 2 x cores)), a
-    # generous cap a single ordinary run never reaches; ``0``
-    # disables it entirely. Unlike ``parallelism`` this bound spans
-    # orchestrators, so two concurrent evolve runs cannot over-subscribe the
-    # box. A runtime tuning knob only — never contract-hashed.
-    host_worker_permits, _permits_source = resolve_host_worker_permits(runtime_dict)
-    permit_dir_raw = runtime_dict.get("worker_permit_dir")
-    if permit_dir_raw is None:
-        worker_permit_dir = None
-    elif not isinstance(permit_dir_raw, str) or not permit_dir_raw:
-        raise ValueError("runtime.worker_permit_dir must be a non-empty absolute path")
-    else:
-        worker_permit_dir = Path(permit_dir_raw).expanduser()
-        if not worker_permit_dir.is_absolute():
-            raise ValueError("runtime.worker_permit_dir must be an absolute path")
-    log_level = str(runtime_dict.get("log_level", "INFO")).upper()
-
-    # Worker env-scrub: opt-in containment read from the same ``runtime``
-    # block. Absent ⇒ off (full environment inheritance).
-    # ``worker_env_passthrough`` is an optional list of extra env-var names a
-    # scrubbed worker should still receive.
-    scrub_worker_env = bool(runtime_dict.get("scrub_worker_env", False))
-    passthrough_raw = runtime_dict.get("worker_env_passthrough") or ()
-    worker_env_passthrough = tuple(str(name) for name in passthrough_raw)
-
-    # Field-diversity overlap ceiling for the multi-challenger path: an
-    # opt-in runtime knob read from the same ``runtime`` block. Absent /
-    # null ⇒ ``None`` (enforcement off — the default behavior, byte-for-byte
-    # unchanged). ``RuntimeConfig.__post_init__`` re-validates the (0, 1]
-    # bound.
-    tolerance_raw = runtime_dict.get("diversity_tolerance")
-    diversity_tolerance = float(tolerance_raw) if tolerance_raw is not None else None
-
-    # Endpoint-outage circuit: opt-in runtime knobs read from the same
-    # ``runtime`` block. Absent ⇒ the dataclass defaults (threshold 0 leaves
-    # the circuit OFF, so no round is ever deferred on infra aborts).
-    # ``RuntimeConfig.__post_init__`` re-validates the >= 0 bounds.
-    from zicato.core.runtime import (  # noqa: PLC0415
-        INFRA_BACKOFF_BASE_S_DEFAULT,
-        INFRA_BACKOFF_CAP_S_DEFAULT,
-        PREFLIGHT_GATE_DEFAULT,
-        PREFLIGHT_PROBE_POINTS_DEFAULT,
-    )
-
-    infra_threshold_raw = runtime_dict.get("infra_abort_round_threshold")
-    infra_abort_round_threshold = int(infra_threshold_raw) if infra_threshold_raw is not None else 0
-    infra_base_raw = runtime_dict.get("infra_backoff_base_s")
-    infra_backoff_base_s = (
-        float(infra_base_raw) if infra_base_raw is not None else INFRA_BACKOFF_BASE_S_DEFAULT
-    )
-    infra_cap_raw = runtime_dict.get("infra_backoff_cap_s")
-    infra_backoff_cap_s = (
-        float(infra_cap_raw) if infra_cap_raw is not None else INFRA_BACKOFF_CAP_S_DEFAULT
-    )
-
-    # Per-round token budget: opt-in runtime knob from the same
-    # ``runtime`` block. Absent ⇒ 0, which leaves scheduling untouched. The
-    # per-round ledger itself is NEVER read from config; the orchestrator
-    # mints one per round when the knob is on.
-    max_tokens_raw = runtime_dict.get("max_tokens_per_round")
-    max_tokens_per_round = int(max_tokens_raw) if max_tokens_raw is not None else 0
-
-    # Board-reflection capture knobs: runtime-only, additive, never part of
-    # the frozen evaluation contract (never hashed). Absent ⇒ True — the
-    # capture is ALWAYS-ON with an opt-out (an opt-in would leave the
-    # reflection tier permanently starved of verbatim run artifacts). Both
-    # writers are best-effort inside the worker; flipping either knob never
-    # rolls the epoch and, when off, the worker is byte-identical to before
-    # the knobs existed.
-    persist_run_results = bool(runtime_dict.get("persist_run_results", True))
-    persist_judge_io = bool(runtime_dict.get("persist_judge_io", True))
-
-    # Achievable-signal pre-flight gate (issue #84): opt-in runtime knob from
-    # the same ``runtime`` block. Absent ⇒ the default ``"warn"`` (measure at
-    # evolve start + LOUDLY warn on a below-floor / saturated verdict, never
-    # block). ``"refuse"`` hard-stops such a run; ``"off"`` skips the
-    # measurement. Validated by ``RuntimeConfig.__post_init__``.
-    preflight_gate = str(runtime_dict.get("preflight_gate", PREFLIGHT_GATE_DEFAULT))
-
-    # Pre-flight probe selection (issue #106): how many mutation points the
-    # achievable-signal probe may degrade (a CEILING — probing short-circuits
-    # once the verdict is settled), and an optional explicit list of point ids
-    # that replaces the automatic role-diverse sample. Both runtime-only and
-    # never hashed: tuning which points get probed must not roll the epoch.
-    probe_points_raw = runtime_dict.get("preflight_probe_points")
-    preflight_probe_points = (
-        int(probe_points_raw) if probe_points_raw is not None else PREFLIGHT_PROBE_POINTS_DEFAULT
-    )
-    probe_ids_raw = runtime_dict.get("preflight_probe_mutation_ids") or ()
-    if isinstance(probe_ids_raw, str):
-        raise ValueError(
-            "runtime.preflight_probe_mutation_ids must be a LIST of mutation-point "
-            f"ids, not a bare string ({probe_ids_raw!r}); a string would be read "
-            "character-by-character as ids"
-        )
-    preflight_probe_mutation_ids = tuple(str(mid) for mid in probe_ids_raw)
-
     # Inner ADK agent model: when ``models.target`` is a *model spec* (a
     # model string, optionally + endpoint/api_key_env), build the ADK model
     # object so the adapter can rebind the target's agents to it with native
@@ -361,13 +217,13 @@ def make_runtime_config(
     assert_distinct_callables(target, aux)
 
     return RuntimeConfig(
-        instance_id=instance_id,
+        **{item.name: getattr(settings, item.name) for item in fields(RuntimeSettings)},
+        configuration=resolved,
+        telemetry=telemetry or TelemetryEndpoints(),
         workspace_root=resolved_root,
+        driver_imports=DriverImportContext.from_config(workspace_config, resolved_root),
         target_call_llm=target,
         evaluation_call_llm=aux,
-        seed=seed,
-        parallelism=parallelism,
-        propose_parallelism=propose_parallelism,
         judge_call_llm=judge,
         adjudicator_call_llm=adjudicator,
         user_emulator_call_llm=user_emulator,
@@ -377,22 +233,7 @@ def make_runtime_config(
         proposer_breadth_model=proposer_breadth_model,
         proposer_depth_model=proposer_depth_model,
         proposer_model=proposer_model,
-        scrub_worker_env=scrub_worker_env,
-        worker_env_passthrough=worker_env_passthrough,
-        diversity_tolerance=diversity_tolerance,
         target_model=target_model,
-        infra_abort_round_threshold=infra_abort_round_threshold,
-        infra_backoff_base_s=infra_backoff_base_s,
-        infra_backoff_cap_s=infra_backoff_cap_s,
-        max_tokens_per_round=max_tokens_per_round,
-        preflight_gate=preflight_gate,
-        preflight_probe_points=preflight_probe_points,
-        preflight_probe_mutation_ids=preflight_probe_mutation_ids,
-        persist_run_results=persist_run_results,
-        persist_judge_io=persist_judge_io,
-        host_worker_permits=host_worker_permits,
-        worker_permit_dir=worker_permit_dir,
-        log_level=log_level,
     )
 
 

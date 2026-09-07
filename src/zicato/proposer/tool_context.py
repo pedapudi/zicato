@@ -73,6 +73,8 @@ class ProposerToolContext:
     epoch_id: str
     mutations: tuple[MutationPoint, ...]
     generation_id: str = ""
+    static_checks: tuple[str, ...] | None = None
+    adapter_configuration_json: bytes | None = None
     forbidden_ids: tuple[str, ...] = ()
     mutation_policy: MutationPolicy | None = None
 

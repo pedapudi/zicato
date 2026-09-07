@@ -791,8 +791,9 @@ def test_cli_health_rejects_typo_in_workspace_health_block(tmp_path: Path) -> No
     runner = CliRunner()
     result = runner.invoke(health_cmd, ["--workspace", str(workspace)])
     assert result.exit_code != 0
-    assert "scoring_windw" in result.output
-    assert "known fields" in result.output
+    assert "config.health.scoring_windw" in result.output
+    assert "unknown field" in result.output
+    assert "Loop health for epoch" not in result.output
 
 
 def test_cli_health_healthy_workspace_exits_zero(tmp_path: Path) -> None:
@@ -864,7 +865,10 @@ def test_cli_health_surfaces_preflight_and_tree_import_findings(tmp_path: Path) 
                 "instance_id": "test",
                 "created_at": "2026-07-29T00:00:00Z",
                 "generation_source_backend": "directory",
-                "adapter": {"kind": "stub"},
+                "adapter": {
+                    "kind": "import",
+                    "factory": "tests._stub_adapter:make_stub_adapter",
+                },
                 # The hard gate: a persisted REFUSE record is graded
                 # critical only under runtime.preflight_gate == "refuse".
                 "runtime": {"preflight_gate": "refuse"},

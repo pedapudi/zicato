@@ -38,6 +38,7 @@ from zicato.core.measurement import (
     MeasurementDraw,
     validate_measurement_interval,
 )
+from zicato.driver_imports import with_workspace_imports
 from zicato.epoch.genstore import EphemeralCheckout
 from zicato.logging_stream import current_log_stream_path
 from zicato.runtime.lock import WorkspaceLock
@@ -113,7 +114,7 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _aborted_loss_profile,
     _callable_dotted_path,
     _checkout_run_snapshot,
-    _config_pins,
+    _configuration_spec,
     _discard_run_snapshot,
     _drift_kind_wire,
     _entry_replicate_index,
@@ -437,6 +438,7 @@ def _wrap_sinks_with_progress(
     return [_ProgressBumpingSink(s, workspace_root, run_id) for s in sinks]
 
 
+@with_workspace_imports
 async def _run_single(
     *,
     adapter: Any,
@@ -645,6 +647,11 @@ async def _run_single(
             if match_id:
                 harmonograf_metadata["zicato.match_id"] = match_id
             adapter_spec = adapter_worker_spec(adapter)
+            from zicato.core.run_context import RunContext  # noqa: PLC0415
+            from zicato.core.runtime_context import (  # noqa: PLC0415
+                TelemetryEndpoints,
+                WorkerRuntimeContext,
+            )
             from zicato.runtime.lock import pid_start_time  # noqa: PLC0415
 
             args_payload = {
@@ -658,6 +665,7 @@ async def _run_single(
                 "scratch_dir": str(scratch_dir),
                 "entry": entry_dict,
                 "adapter": adapter_spec,
+                "driver_imports": config.driver_imports.document(),
                 "target_role": _role_worker_spec(
                     "target", models=_models, fallback_callable=config.target_call_llm
                 ),
@@ -685,24 +693,30 @@ async def _run_single(
                 "result_path": str(result_path),
                 "instance_id": config.instance_id,
                 "seed": config.seed,
-                "harmonograf_url": (_hg_url := _resolve_harmonograf_url(workspace_root)),
-                "harmonograf_grpc": _resolve_harmonograf_grpc(workspace_root, _hg_url),
+                "harmonograf_url": (_hg_url := _resolve_harmonograf_url(workspace_root, config)),
+                "harmonograf_grpc": (
+                    _hg_grpc := _resolve_harmonograf_grpc(workspace_root, _hg_url, config)
+                ),
                 "harmonograf_metadata": harmonograf_metadata,
                 "weights": _weights_spec(weights),
-                # Process-pinned config overrides (CLI flags such as
-                # --aux-call-timeout, pinned
-                # via zicato.config.pin_overrides). The worker re-pins
-                # them at startup so a flag whose knob is consumed
-                # INSIDE the worker (the judge/emulator evaluation-call
-                # budget) crosses the
-                # process boundary without an environment variable.
-                "config_pins": _config_pins(),
+                "configuration": _configuration_spec(config),
+                "runtime_context": WorkerRuntimeContext(
+                    telemetry=TelemetryEndpoints(_hg_url, _hg_grpc),
+                    run=RunContext(
+                        workspace_root,
+                        epoch_id,
+                        generation.id,
+                        run_id,
+                        ephemeral_snapshot,
+                        scratch_dir,
+                    ),
+                ).to_json(),
                 # Board-reflection capture knobs (runtime-only, never
                 # contract-hashed; default True = always-on with an
                 # opt-out). The worker owns both writers — result.json
                 # beside loss.json and the judge_io.jsonl sidecar — so
                 # the knobs cross the process boundary in the args file,
-                # like config_pins.
+                # alongside the selected configuration.
                 "persist_run_results": bool(config.persist_run_results),
                 "persist_judge_io": bool(config.persist_judge_io),
                 # The invocation's operator-log stream path (LOGGING.md §2):
@@ -1064,6 +1078,7 @@ async def _gate_with_regression(
         )
 
 
+@with_workspace_imports
 async def run_tournament(
     *,
     adapter: Any,
@@ -1346,6 +1361,7 @@ async def run_tournament(
         )
 
 
+@with_workspace_imports
 async def run_fast_mode(
     *,
     adapter: Any,
@@ -1630,6 +1646,7 @@ async def run_fast_mode(
         )
 
 
+@with_workspace_imports
 async def run_matchup(
     *,
     adapter: Any,
@@ -1788,6 +1805,7 @@ async def run_matchup(
         )
 
 
+@with_workspace_imports
 async def confirm_crowning_holdout(
     *,
     adapter: Any,

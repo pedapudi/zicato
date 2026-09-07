@@ -1,20 +1,8 @@
-"""Evolve-run lifecycle services split out of :mod:`zicato.orchestrator`.
+"""Invocation-owned service handles, telemetry endpoints, and heartbeat updates.
 
-These are the leaf-level services the evolve loop sets up once per
-invocation and tears down in its ``finally`` block:
-
-* harmonograf console resolution + auto-launch
-  (:func:`_resolve_harmonograf_url`, :func:`_resolve_or_launch_harmonograf`)
-  and the handles that own the launched server's lifecycle
-  (:class:`_NoopShutdownHandle`, :class:`_LaunchedHandle`);
-* environment-variable snapshot/restore for the auto-launched URL + gRPC
-  target (:class:`_EnvVarRestorer`);
-* the best-effort meta-loop emitter factory
-  (:func:`_build_meta_loop_emitter_safe`);
-* two tiny shared utilities — the UTC ISO clock (:func:`_now_iso`) and the
-  heartbeat phase pusher (:func:`_beat`).
-
-Callers import this module directly.
+Service resolution returns explicit browser and native addresses. Only the
+handle that launched a service shuts it down; no coordinator environment
+variables are changed while acquiring or releasing a service.
 """
 
 from __future__ import annotations
@@ -24,6 +12,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from zicato.core.settings import IntegrationConfig
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.util import best_effort
 
@@ -34,22 +23,17 @@ def _now_iso() -> str:
     return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat()
 
 
-def _resolve_harmonograf_url(workspace_root: Path) -> str:
-    """Resolve the harmonograf console URL for this run, or ``""``.
+def _resolve_harmonograf_url(workspace_root: Path, config: IntegrationConfig | None = None) -> str:
+    """Resolve authored or inherited telemetry without starting a service."""
+    from zicato.runtime.context import inherited_runtime_context  # noqa: PLC0415
 
-    Delegates to :func:`zicato.telemetry.sink.resolve_harmonograf_url`,
-    feeding it the workspace ``config.json`` so every source is
-    honoured: the ``--harmonograf-url`` flag (pinned into the typed
-    config tree), the internal ``ZICATO_HARMONOGRAF_URL`` auto-launch
-    handoff, and the ``harmonograf_url`` config key. Best-effort: any
-    failure resolving the config falls back to the empty string so a
-    broken config never blocks an evolve run.
+    if config is not None:
+        from zicato.telemetry.sink import resolve_harmonograf_url  # noqa: PLC0415
 
-    Note this resolves only the *configured* URL — it does NOT trigger
-    auto-launch. :func:`_resolve_or_launch_harmonograf` is the variant
-    the evolve loop uses, which falls back to spawning an in-process
-    server when the configured URL is empty.
-    """
+        return resolve_harmonograf_url(config=config)
+    inherited = inherited_runtime_context()
+    if inherited is not None and inherited.telemetry.web_url:
+        return inherited.telemetry.web_url
     try:
         from zicato import workspace_loader  # noqa: PLC0415
         from zicato.telemetry.sink import resolve_harmonograf_url  # noqa: PLC0415
@@ -58,7 +42,7 @@ def _resolve_harmonograf_url(workspace_root: Path) -> str:
             cfg = workspace_loader.load_workspace_config(workspace_root)
         except Exception:  # noqa: BLE001 — config is optional here
             cfg = None
-        return resolve_harmonograf_url(cfg)
+        return resolve_harmonograf_url(cfg, config=config)
     except Exception as exc:  # noqa: BLE001 — never block a run on this
         log.debug("harmonograf url resolution skipped: %s", exc)
         return ""
@@ -66,43 +50,25 @@ def _resolve_harmonograf_url(workspace_root: Path) -> str:
 
 def _resolve_or_launch_harmonograf(
     workspace_root: Path,
+    config: IntegrationConfig | None = None,
 ) -> tuple[str, Any]:
-    """Return ``(url, handle)`` for the harmonograf console this evolve uses.
-
-    Auto-launch semantics (the default; issue #202):
-
-    * If the operator pinned a URL — the ``--harmonograf-url`` flag or
-      the workspace-config ``harmonograf_url`` key — use it verbatim
-      and return a no-op handle — opt-out lets a long-lived shared
-      harmonograf collect traffic from multiple zicato invocations.
-      (An inherited ``ZICATO_HARMONOGRAF_URL`` handoff from an OUTER
-      zicato invocation short-circuits the launch the same way, so a
-      nested evolve reuses its parent's console.)
-    * Otherwise launch an in-process harmonograf server bound to a free
-      localhost port (see :mod:`zicato.telemetry.harmonograf_supervisor`)
-      and return its URL + a real handle whose ``shutdown()`` the
-      caller MUST invoke at evolve teardown.
-
-    On any auto-launch failure (missing dep, port-bind error, startup
-    timeout), the supervisor logs a warning and returns a no-op handle
-    with ``url=""``. The orchestrator treats that as "JSONL-only
-    telemetry": the live console is additive and never load-bearing.
-
-    Side effect: when auto-launch succeeds, the resolved URL is also
-    written into ``os.environ["ZICATO_HARMONOGRAF_URL"]`` so the
-    tournament runner and worker subprocesses (which re-resolve via
-    :func:`zicato.telemetry.sink.resolve_harmonograf_url`) attach their
-    own per-run sinks to the same server without any further plumbing.
-    The orchestrator restores the pre-launch env var value on shutdown
-    via :class:`_EnvVarRestorer` — a nested evolve invocation that
-    inherits a parent's auto-launched URL won't clobber it.
-    """
-    configured = _resolve_harmonograf_url(workspace_root)
+    """Return an explicit or inherited service, otherwise ensure the workspace service."""
+    configured = _resolve_harmonograf_url(workspace_root, config)
     if configured:
         # Opt-out: external harmonograf in use. No auto-launch, no
         # env-var manipulation, no shutdown needed.
         log.debug("harmonograf auto-launch skipped: external URL configured (%s)", configured)
-        return configured, _NoopShutdownHandle()
+        from zicato.telemetry.sink import (  # noqa: PLC0415
+            _harmonograf_grpc_target,
+            resolve_harmonograf_grpc_target,
+        )
+
+        target = (
+            _harmonograf_grpc_target(configured)
+            if config is not None and config.harmonograf_url
+            else resolve_harmonograf_grpc_target(configured)
+        )
+        return configured, _NoopShutdownHandle(target)
 
     # Route through the per-workspace ensure-helper so an evolve and a
     # concurrently-open standalone dashboard share ONE harmonograf server
@@ -125,34 +91,15 @@ def _resolve_or_launch_harmonograf(
         # Helper's own failure-isolation path already logged a warning.
         return "", _NoopShutdownHandle()
 
-    # Make the resolved URL discoverable to the tournament runner and the
-    # worker subprocesses, both of which re-resolve it via
-    # resolve_harmonograf_url() (whose second lookup step is this internal
-    # env handoff). The restorer is captured on the handle so
-    # shutdown unsets / restores the environment cleanly.
-    restorers: list[_EnvVarRestorer] = []
-    url_restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_URL")
-    url_restorer.set(handle.web_url)
-    restorers.append(url_restorer)
-
-    # The server binds TWO ports: the web URL above (for browser deep-
-    # links) and a native gRPC port the per-run sinks must dial. Export the
-    # gRPC target distinctly so the sink builders dial the gRPC port
-    # instead of stripping the web URL and dialing the web port (which
-    # would silently drop telemetry).
-    grpc_target = getattr(handle, "grpc_target", "") or ""
-    if grpc_target:
-        grpc_restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_GRPC")
-        grpc_restorer.set(grpc_target)
-        restorers.append(grpc_restorer)
-
-    return handle.web_url, _LaunchedHandle(handle, restorers)
+    return handle.web_url, handle
 
 
 def _build_meta_loop_emitter_safe(
     workspace_root: Path,
     harmonograf_url: str,
     evolve_started_at_iso: str,
+    *,
+    grpc_target: str = "",
 ) -> Any:
     """Build the meta-loop emitter; never raise.
 
@@ -178,89 +125,19 @@ def _build_meta_loop_emitter_safe(
             workspace_root,
             harmonograf_url=harmonograf_url,
             evolve_started_at_iso=evolve_started_at_iso,
+            grpc_target=grpc_target,
         )
     return None
 
 
 class _NoopShutdownHandle:
-    """Tiny stand-in for the auto-launch handle when no launch happened.
+    """A referenced external service whose lifetime belongs to another owner."""
 
-    Used in two places: when the operator pinned an external URL (opt-
-    out) and when the supervisor refused to launch (degraded install).
-    Mirrors the ``shutdown()`` contract of the real handle so the
-    orchestrator's ``finally`` block can call it unconditionally.
-    """
-
-    url: str = ""
+    def __init__(self, grpc_target: str = "") -> None:
+        self.grpc_target = grpc_target
 
     def shutdown(self) -> None:
-        return None
-
-
-class _LaunchedHandle:
-    """Composite handle: server lifecycle plus env-var restoration.
-
-    Holds a list of :class:`_EnvVarRestorer` — one for the web URL
-    (``ZICATO_HARMONOGRAF_URL``) and, on the auto-launch path, one for the
-    native gRPC target (``ZICATO_HARMONOGRAF_GRPC``) — so shutdown returns
-    both env vars to their pre-launch state.
-    """
-
-    def __init__(self, inner: Any, restorers: list[_EnvVarRestorer]) -> None:
-        self._inner = inner
-        self._restorers = list(restorers)
-        # ``inner`` may be a ``HarmonografHandle`` (``.url``) or a
-        # ``WorkspaceHarmonografHandle`` (``.web_url``); accept either.
-        self.url = getattr(inner, "url", None) or getattr(inner, "web_url", "")
-
-    def shutdown(self) -> None:
-        # Restore env BEFORE stopping the server so a concurrent
-        # tournament-runner re-resolve does not pick up the auto-launched
-        # URL after the server is gone.
-        for restorer in self._restorers:
-            with best_effort(
-                "env restoration during harmonograf shutdown",
-                on_error=lambda exc: log.debug(
-                    "env restoration during harmonograf shutdown failed: %s", exc
-                ),
-            ):
-                restorer.restore()
-        with best_effort(
-            "harmonograf shutdown",
-            on_error=lambda exc: log.debug("harmonograf shutdown raised: %s", exc),
-        ):
-            self._inner.shutdown()
-
-
-class _EnvVarRestorer:
-    """RAII-style snapshot+restore for a single environment variable.
-
-    Captures the variable's prior value on construction (or its absence)
-    so :meth:`restore` returns the environment to the exact state the
-    process started in. Idempotent — re-calling :meth:`restore` is a
-    no-op.
-    """
-
-    def __init__(self, name: str) -> None:
-        import os  # noqa: PLC0415
-
-        self._os = os
-        self._name = name
-        self._had = name in os.environ
-        self._prior = os.environ.get(name)
-        self._restored = False
-
-    def set(self, value: str) -> None:
-        self._os.environ[self._name] = value
-
-    def restore(self) -> None:
-        if self._restored:
-            return
-        self._restored = True
-        if self._had and self._prior is not None:
-            self._os.environ[self._name] = self._prior
-        else:
-            self._os.environ.pop(self._name, None)
+        pass
 
 
 def _record_progress(workspace_root: Path | None, transition: str | None) -> int | None:

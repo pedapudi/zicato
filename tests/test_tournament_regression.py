@@ -536,7 +536,7 @@ def _make_cli_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
         load_workspace_config=lambda root: {"mutable_trees": []},
     )
     adapter_factory_mod = types.SimpleNamespace(
-        make_adapter_from_config=lambda cfg: object(),
+        make_adapter_from_config=lambda cfg, *, workspace_root: object(),
     )
     runtime_factory_mod = types.SimpleNamespace(
         make_runtime_config=lambda cfg, *, workspace_root: runtime_config(workspace_root),

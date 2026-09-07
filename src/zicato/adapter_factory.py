@@ -1,24 +1,4 @@
-"""Build a :class:`HarnessAdapter` from a workspace config dict or a spec.
-
-The CLI / orchestrator layers do not want to know which adapter shape
-is in use — they read ``config["adapter"]["kind"]`` and hand the rest
-of the adapter sub-dict to this factory. New adapter shapes get a new
-``kind`` value and a small dispatch branch here; the rest of the
-codebase is untouched.
-
-Two entry points, one per direction across the process boundary:
-:func:`make_adapter_from_config` takes what an operator wrote in
-``config.json``; :func:`make_adapter_from_spec` takes the serialised
-worker spec a tournament worker receives as JSON and rebuilds the same
-adapter in a fresh interpreter. They share the ``"import"`` branch, so
-the two constructions cannot drift apart.
-
-The factory does not import vendor SDKs at module level: each branch
-imports its concrete adapter class lazily so the optional dependency
-on goldfive / google-adk only fires when an operator actually selects
-the corresponding kind. Tests that exercise unrelated branches do not
-need the heavy extras installed.
-"""
+"""Construct the declared harness in a coordinator or a fresh worker."""
 
 from __future__ import annotations
 
@@ -27,105 +7,29 @@ from pathlib import Path
 from typing import Any
 
 
-def make_adapter_from_config(workspace_config: Mapping[str, Any]) -> Any:
-    """Dispatch on ``workspace_config['adapter']['kind']`` to build an adapter.
+def make_adapter_from_config(
+    workspace_config: Mapping[str, Any], *, workspace_root: Path | None = None
+) -> Any:
+    """Construct the canonical adapter declaration using workspace-relative driver roots."""
+    from zicato.core.adapter_config import (
+        DriverImportContext,
+        adapter_declaration,
+        registered_mutable_trees,
+    )
+    from zicato.driver_imports import driver_import_scope
 
-    Supported kinds:
-
-    * ``"adk"`` — :class:`zicato.adapters.adk.ADKHarnessAdapter`. Reads
-      ``adapter['entrypoint']`` (a ``"module.path:agent_symbol"`` string)
-      and an optional ``adapter['mutable_trees']`` list of filesystem
-      paths. Missing ``mutable_trees`` defers to the adapter's own
-      best-effort default (the directory of the entrypoint module).
-    * ``"import"`` — a generic factory shape for any non-ADK adapter:
-      ``adapter['factory']`` is a ``"module.path:callable"`` dotted path
-      imported and called with the optional positional
-      ``adapter['args']`` list to produce the adapter object. This is
-      the config-side mirror of the spec a subprocess worker
-      reconstructs (:func:`make_adapter_from_spec`), so a workspace whose
-      harness is a custom adapter can declare it honestly in
-      ``config.json`` instead of relying on a test-side factory
-      monkeypatch.
-
-    What usually travels with a custom adapter
-    ------------------------------------------
-    A target zicato does not ship is rarely graded well by stock
-    machinery, so an operator setting ``adapter.factory`` (or pointing
-    ``adapter.entrypoint`` at their own harness) usually also wants:
-
-    * ``scoring.outcome_summarizer_spec`` — how a finished run is
-      reduced to an outcome for THIS target, rather than the default
-      summary;
-    * a ``predicate`` ``expectation.spec`` on the board entries — a
-      dotted path to their own pass/fail callable, rather than the
-      literal text or regex matchers, which rarely know what good looks
-      like for a bespoke target.
-
-    None of that is enforced: a custom adapter with stock grading is a
-    legitimate, if unusual, configuration. It is recorded here because
-    the coupling is easy to miss and expensive to discover — the loop
-    runs, spends, and optimizes against a grade that was never about
-    this target.
-
-    Compatibility hook for a workspace config that carries
-    ``config['adk_entrypoint']`` and ``config['mutable_trees']`` at the top
-    level rather than under ``config['adapter']``. When ``config['adapter']``
-    is absent but those two keys are present, the config is read as
-    ``kind="adk"``, so such a workspace loads without a manual edit.
-
-    Parameters
-    ----------
-    workspace_config:
-        The dict returned by
-        :func:`zicato.workspace_loader.load_workspace_config` (or any
-        equivalent loader). Treated as read-only.
-
-    Returns
-    -------
-    HarnessAdapter
-        Concrete adapter instance ready for ``load`` /
-        ``mutation_points`` calls.
-
-    Raises
-    ------
-    ValueError
-        Unknown ``kind`` value, or missing required adapter fields.
-    """
-    adapter_dict = workspace_config.get("adapter")
-    if adapter_dict is None:
-        # Legacy fallback — `zicato epoch register` writes these top-level keys.
-        legacy_entry = workspace_config.get("adk_entrypoint")
-        if legacy_entry:
-            adapter_dict = {
-                "kind": "adk",
-                "entrypoint": legacy_entry,
-                "mutable_trees": list(workspace_config.get("mutable_trees", []) or []),
-            }
-        else:
-            raise ValueError(
-                "workspace_config has no 'adapter' block and no legacy "
-                "'adk_entrypoint' key; cannot construct a HarnessAdapter"
-            )
-
-    if not isinstance(adapter_dict, Mapping):
-        raise ValueError(
-            f"workspace_config['adapter'] must be a mapping, got {type(adapter_dict).__name__}"
-        )
-
-    kind = adapter_dict.get("kind")
-    if not kind or not isinstance(kind, str):
-        raise ValueError("workspace_config['adapter']['kind'] must be a non-empty string")
-
-    if kind == "adk":
-        return _build_adk(adapter_dict)
-    if kind == "import":
-        return _build_import(adapter_dict)
-
-    raise ValueError(f"unknown adapter kind {kind!r}")
+    declaration = adapter_declaration(workspace_config)
+    root = workspace_root or Path(".zicato")
+    with driver_import_scope(DriverImportContext.from_config(workspace_config, root)):
+        document = declaration.document()
+        document["mutable_trees"] = [
+            str(tree) for tree in registered_mutable_trees(workspace_config, root)
+        ]
+        return _build_adk(document) if declaration.kind == "adk" else _build_import(document)
 
 
 def _build_adk(adapter_dict: Mapping[str, Any]) -> Any:
-    """Construct an :class:`ADKHarnessAdapter` from its config sub-dict."""
+    """Construct the built-in adapter lazily."""
     entrypoint = adapter_dict.get("entrypoint")
     if not entrypoint or not isinstance(entrypoint, str):
         raise ValueError("adapter kind='adk' requires a non-empty 'entrypoint' string")
@@ -143,16 +47,7 @@ def _build_adk(adapter_dict: Mapping[str, Any]) -> Any:
 
 
 def _build_import(adapter_dict: Mapping[str, Any]) -> Any:
-    """Construct an adapter from an ``{"kind": "import", ...}`` block.
-
-    Shared by :func:`make_adapter_from_config` and
-    :func:`make_adapter_from_spec`, because the two shapes are identical
-    for this kind: ``factory`` is a ``"module.path:callable"`` dotted
-    path and the optional ``args`` list is passed positionally. Sharing
-    it is what keeps the adapter the orchestrator constructs from
-    ``config.json`` and the one a worker reconstructs from its
-    serialised spec the same object.
-    """
+    """Call a module factory with declared positional and keyword arguments."""
     factory_path = adapter_dict.get("factory")
     if not factory_path or not isinstance(factory_path, str):
         raise ValueError("adapter kind='import' requires a non-empty 'factory' dotted path")
@@ -173,35 +68,25 @@ def _build_import(adapter_dict: Mapping[str, Any]) -> Any:
             f"adapter kind='import': factory {factory_path!r} resolved to "
             f"{type(factory).__name__}, expected a callable"
         )
-    return factory(*raw_args)
+    options = adapter_dict.get("options", {})
+    if not isinstance(options, Mapping):
+        raise ValueError("adapter options must be an object of factory keyword arguments")
+    import inspect
+
+    try:
+        signature = inspect.signature(factory)
+    except ValueError:
+        signature = None
+    if signature is not None:
+        try:
+            signature.bind(*raw_args, **options)
+        except TypeError as exc:
+            raise ValueError(f"adapter factory {factory_path!r} arguments: {exc}") from exc
+    return factory(*raw_args, **options)
 
 
 def make_adapter_from_spec(spec: Mapping[str, Any]) -> Any:
-    """Reconstruct a harness adapter from its serialised worker spec.
-
-    The counterpart of :func:`make_adapter_from_config`: the config form
-    is what an operator writes, the spec form is what crosses a process
-    boundary. A tournament worker rebuilds its adapter from this spec in
-    a fresh interpreter, having received it as JSON from
-    :func:`zicato.tournament.worker_transport.adapter_worker_spec`, so
-    the spec carries only what survives serialisation — no workspace
-    config dict and no live objects.
-
-    Two shapes are understood, matching the two ``make_adapter_from_config``
-    kinds:
-
-    * ``{"kind": "adk", "entrypoint": ..., "mutable_trees": [...]}`` — the
-      production shape; reconstructs an
-      :class:`~zicato.adapters.adk.ADKHarnessAdapter` directly.
-    * ``{"kind": "import", "factory": "module:callable", "args": [...]}``
-      — the generic shape for any non-ADK adapter; the dotted path is
-      imported and called with the optional positional ``args``.
-
-    Raises
-    ------
-    ValueError
-        Unknown ``kind``, or missing required fields.
-    """
+    """Reconstruct an adapter from its serializable worker specification."""
     kind = spec.get("kind")
     if kind == "adk":
         from zicato.adapters.adk import ADKHarnessAdapter  # noqa: PLC0415
@@ -213,6 +98,23 @@ def make_adapter_from_spec(spec: Mapping[str, Any]) -> Any:
     if kind == "import":
         return _build_import(spec)
     raise ValueError(f"cannot reconstruct adapter kind {kind!r} from a worker spec")
+
+
+def uses_legacy_run(session: Any) -> bool:
+    """Validate the loaded run method and select its supported calling convention."""
+    import inspect
+
+    run = getattr(session, "run", None)
+    if not callable(run):
+        raise ValueError("adapter.load must return a harness with a callable run method")
+    signature = inspect.signature(run)
+    names = list(signature.parameters)
+    legacy = len(names) >= 2 and names[1] in ("sink_path", "events_path")
+    try:
+        signature.bind(*(object() for _ in range(2 if legacy else 3)))
+    except TypeError as exc:
+        raise ValueError(f"loaded harness run method has incompatible arguments: {exc}") from exc
+    return legacy
 
 
 __all__ = ["make_adapter_from_config", "make_adapter_from_spec"]

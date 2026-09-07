@@ -97,6 +97,7 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
         layout,
         {
             "adapter": {
+                "kind": "adk",
                 "entrypoint": "pkg.module:agent",
                 "mutable_trees": ["src/pkg"],
             }

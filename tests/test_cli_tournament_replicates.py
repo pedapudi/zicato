@@ -44,7 +44,7 @@ def _make_cli_stubs(
         load_workspace_config=lambda root: {"mutable_trees": []},
     )
     adapter_factory_mod = types.SimpleNamespace(
-        make_adapter_from_config=lambda cfg: object(),
+        make_adapter_from_config=lambda cfg, *, workspace_root: object(),
     )
     runtime_factory_mod = types.SimpleNamespace(
         make_runtime_config=lambda cfg, *, workspace_root: runtime_config(workspace_root),
@@ -391,7 +391,8 @@ def test_cli_explicit_epoch_uses_that_epochs_frozen_contract(
         load_workspace_config=lambda root: events.append("config") or {"mutable_trees": []},
     )
     adapter_factory_mod = types.SimpleNamespace(
-        make_adapter_from_config=lambda cfg: events.append("adapter") or object(),
+        make_adapter_from_config=lambda cfg, *, workspace_root: events.append("adapter")
+        or object(),
     )
     runtime_factory_mod = types.SimpleNamespace(
         make_runtime_config=lambda cfg, *, workspace_root: runtime_config(workspace_root),
@@ -445,7 +446,7 @@ def test_cli_workspace_gate_stops_before_adapter_construction_or_spend(
         load_workspace_config=lambda root: events.append("config"),
     )
     adapter_factory_mod = types.SimpleNamespace(
-        make_adapter_from_config=lambda cfg: events.append("adapter"),
+        make_adapter_from_config=lambda cfg, *, workspace_root: events.append("adapter"),
     )
     runtime_factory_mod = types.SimpleNamespace(
         make_runtime_config=lambda cfg, *, workspace_root: events.append("runtime"),

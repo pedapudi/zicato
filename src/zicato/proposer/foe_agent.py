@@ -112,6 +112,8 @@ def build_episode_tools(
     epoch_id: str,
     generation_id: str,
     mutations: Sequence[MutationPoint],
+    static_checks: tuple[str, ...] | None = None,
+    adapter_configuration_json: bytes | None = None,
     forbidden_ids: Sequence[str] = (),
     mutation_policy: MutationPolicy | None = None,
 ) -> EpisodeTools:
@@ -135,6 +137,8 @@ def build_episode_tools(
         epoch_id=epoch_id,
         mutations=tuple(mutations),
         generation_id=generation_id,
+        static_checks=static_checks,
+        adapter_configuration_json=adapter_configuration_json,
         forbidden_ids=tuple(forbidden_ids),
         mutation_policy=mutation_policy,
     )
@@ -288,6 +292,8 @@ class FoeProposerAgent:
                 epoch_id=ctx.epoch_id,
                 generation_id=ctx.parent_generation_id,
                 mutations=ctx.mutations,
+                static_checks=self.config.static_checks,
+                adapter_configuration_json=self.config.adapter_configuration_json,
                 forbidden_ids=ctx.forbidden_ids,
                 mutation_policy=policy,
             )

@@ -13,34 +13,36 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from zicato.config import DashboardConfig, load_config
+from zicato.config import DashboardConfig, load_config, resolve_configuration
+from zicato.workspace.config_io import read_workspace_config
 
 
-def resolve_static_dir(config: DashboardConfig | None = None) -> Path:
-    """Return the path to the bundled dashboard static asset directory.
+def resolve_static_dir(
+    config: DashboardConfig | None = None, *, workspace_root: Path | None = None
+) -> Path:
+    """Resolve selected assets, falling back to the bundled directory.
 
-    Resolution order:
-
-    1. The ``static_dir`` of :class:`~zicato.config.DashboardConfig`,
-       sourced from the ``--static-dir`` flag — useful for tests and
-       for installed wheels that relocate the bundle.
-    2. The in-tree ``zicato/dashboard/static`` directory, next to this
-       module.
-
-    Parameters
-    ----------
-    config:
-        The :class:`~zicato.config.DashboardConfig` carrying
-        ``static_dir`` (the CLI commands build it from the
-        ``--static-dir`` flag). When ``None`` it is loaded via
-        :func:`zicato.config.load_config`.
+    A carried configuration takes precedence. Otherwise, resolve the workspace
+    declaration when a root is supplied, or use defaults. Authored relative
+    paths use the workspace parent as their base. CLI flags are made absolute
+    by their entry point, preserving their meaning relative to the caller.
 
     The path is returned even when it does not exist on disk — the
     dashboard service is responsible for reporting a missing bundle.
     """
-    dashboard = config if config is not None else load_config().dashboard
+    if config is not None:
+        dashboard = config
+    elif workspace_root is not None:
+        dashboard = resolve_configuration(
+            read_workspace_config(workspace_root).raw
+        ).values.dashboard
+    else:
+        dashboard = load_config().dashboard
     if dashboard.static_dir:
-        return Path(dashboard.static_dir)
+        path = Path(dashboard.static_dir)
+        if workspace_root is not None:
+            return (workspace_root.resolve().parent / path).resolve()
+        return path
 
     # zicato/dashboard/static_assets.py -> zicato/dashboard/static
     return Path(__file__).resolve().parent / "static"

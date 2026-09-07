@@ -8,6 +8,7 @@ be reused outside click.
 from __future__ import annotations
 
 from pathlib import Path
+from shlex import quote
 
 import click
 
@@ -86,10 +87,9 @@ def init_cmd(
     predicates that grade it, a proposer that edits it, callables for the
     two model roles, a four-entry board, a proposer brief, and a scoring
     contract. config.json is wired to all of it, so the next command can
-    be `zicato evolve`. It uses no model and needs no endpoint. Put the
-    project directory on PYTHONPATH first — the dotted paths in
-    config.json resolve there, in this process and in every tournament
-    worker.
+    be `zicato evolve`. It uses no model and needs no endpoint. The fixed
+    driver directory is recorded in adapter.import_roots and passed to
+    every validation and tournament subprocess.
 
     \b
     Example:
@@ -125,8 +125,8 @@ def init_cmd(
         state = "already present, left alone" if path in already_there else "written"
         click.echo(f"  {path.name}: {state}")
     click.echo(
-        f"\nexport PYTHONPATH={project_root} to make the example importable, "
-        f"then run `zicato evolve --workspace {workspace_root!s} --rounds 3`."
+        "\nThe example driver import directory is registered in config.json; "
+        f"then run `zicato evolve --workspace {quote(str(workspace_root))} --rounds 3`."
     )
 
 

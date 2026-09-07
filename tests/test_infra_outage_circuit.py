@@ -337,8 +337,8 @@ def test_loop_backs_off_exponentially_and_reconciles(
     reconciles: list[str] = []
     real_prepare_resume = loop_mod.prepare_resume
 
-    def _recording_prepare_resume(root: Path, epoch: str) -> Any:
-        plan = real_prepare_resume(root, epoch)
+    def _recording_prepare_resume(root: Path, epoch: str, *, writer=None) -> Any:
+        plan = real_prepare_resume(root, epoch, writer=writer)
         reconciles.append(plan.classification)
         return plan
 

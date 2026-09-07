@@ -1,6 +1,26 @@
 {
   "current_generation": "v1",
   "experiments": {
+    "v0": {
+      "epoch_id": "<DATE>_t1_swiss",
+      "format_version": 1,
+      "generation_id": "v0",
+      "hypothesis": {
+        "core_idea": "baseline seed",
+        "expected_drift_movements": [],
+        "expected_metric_movements": [],
+        "expected_pass_rate_delta": "",
+        "modulating": [],
+        "risks": "",
+        "why": ""
+      },
+      "id": "exp_<DATE>_t1_swiss_v0",
+      "outcome": null,
+      "parent_generation_id": null,
+      "patch_ids": [],
+      "proposed_at": "<TS>",
+      "round_index": 0
+    },
     "v1": {
       "epoch_id": "<DATE>_t1_swiss",
       "format_version": 1,

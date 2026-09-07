@@ -76,6 +76,7 @@ from typing import TYPE_CHECKING
 from zicato.core.measurement import iter_measurement_artifacts
 from zicato.epoch._storage import RecordError
 from zicato.epoch.lineage import LineageGeneration
+from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.paths import (
     active_runs_dir,
     active_tournament_log_path,
@@ -502,7 +503,9 @@ def _has_any_loss(workspace_root: Path, epoch_id: str, generation_id: str) -> bo
     )
 
 
-def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
+def prepare_resume(
+    workspace_root: Path, epoch_id: str, *, writer: WorkspaceLock | None = None
+) -> ResumePlan:
     """Recover receipts, discard unusable state, and classify one restart.
 
     Settlement receipts complete before generation inspection. Source
@@ -522,9 +525,14 @@ def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
     from zicato.evolve.settlement_recovery import (  # noqa: PLC0415
         recover_field_settlements,
     )
+    from zicato.runtime.lock import acquire_workspace_lock, validate_workspace_lock  # noqa: PLC0415
 
+    if writer is None:
+        with acquire_workspace_lock(workspace_root, "resume") as owned_writer:
+            return prepare_resume(workspace_root, epoch_id, writer=owned_writer)
+    validate_workspace_lock(writer, workspace_root)
     store = default_generation_store(workspace_root)
-    recover_field_settlements(workspace_root, epoch_id)
+    recover_field_settlements(workspace_root, epoch_id, writer=writer)
     # Receipt replay writes the canonical records a settled field is missing,
     # so source coordinates are compared against the registers only once those
     # writes have landed.

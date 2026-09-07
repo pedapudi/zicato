@@ -829,6 +829,12 @@ def test_preflight_measures_draft_contract_against_target0(tmp_path) -> None:
             {
                 "instance_id": "default",
                 "generation_source_backend": "git",
+                "contract": {
+                    "board_path": str(example_dir / "board.jsonl"),
+                    "brief_path": str(tmp_path / "brief.md"),
+                    "scoring_path": str(example_dir / "scoring.json"),
+                    "proposer_path": str(example_dir / "proposer"),
+                },
                 "adapter": {
                     "kind": "import",
                     "factory": "zicato_examples.target_0_convergence.harness:make_adapter",
@@ -857,8 +863,12 @@ def test_preflight_measures_draft_contract_against_target0(tmp_path) -> None:
     # Seed v0 so there is a champion tree to probe.
     from zicato import workspace_loader
     from zicato.evolve.round_baseline import _ensure_baseline_snapshot
+    from zicato.runtime.lock import acquire_workspace_lock
 
-    _ensure_baseline_snapshot(ws, cfg.id, workspace_loader.load_workspace_config(ws))
+    with acquire_workspace_lock(ws, "contract-test") as writer:
+        _ensure_baseline_snapshot(
+            ws, cfg.id, workspace_loader.load_workspace_config(ws), writer=writer
+        )
 
     draft = TournamentDraft.from_workspace(ws)
     res = asyncio.run(ops.preflight(draft, ws, runs=3))

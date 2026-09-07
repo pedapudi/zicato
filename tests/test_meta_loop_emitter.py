@@ -197,7 +197,9 @@ def test_build_meta_loop_emitter_with_harmonograf_url_attaches_extra_sink(
 
     stub_sink = _CapturingSink()
 
-    def _stub_build(url: str, sid: str, *, identity_root: Path | None = None) -> Any:
+    def _stub_build(
+        url: str, sid: str, *, identity_root: Path | None = None, grpc_target: str = ""
+    ) -> Any:
         assert identity_root == tmp_path / "identities"
         return stub_sink
 

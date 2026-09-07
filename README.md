@@ -53,10 +53,9 @@ pip install zicato
 
 mkdir first-zicato && cd first-zicato
 zicato init --example
-export PYTHONPATH=$PWD          # the scaffolded packages are top-level here
 
 zicato inspect mutations --workspace .zicato   # one mutation point: style_rules
-zicato evolve --workspace .zicato --dry-run    # validates; spends nothing
+zicato inspect setup --workspace .zicato      # validates without model requests
 zicato evolve --workspace .zicato --rounds 3
 zicato epoch close --workspace .zicato
 ```

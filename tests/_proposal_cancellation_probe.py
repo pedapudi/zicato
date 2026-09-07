@@ -106,11 +106,11 @@ async def probe(root: Path, boundary: str) -> None:
     def config(binding):
         resolved = real_config(binding)
         if boundary.endswith("timeout"):
-            resolved = replace(resolved, budget=replace(resolved.budget, seconds=0.2))
+            resolved = replace(resolved, budget=replace(resolved.budget, seconds=1))
         return resolved
 
     async def invoke():
-        async with validated_invocation(workspace.root, "e1", "proposal-owner") as invocation:
+        async with validated_invocation(workspace.root, None, "proposal-owner") as invocation:
             return await workspace.agent().propose(
                 replace(workspace.context(), writer=invocation.writer)
             )

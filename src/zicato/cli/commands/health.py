@@ -164,23 +164,18 @@ def _max_generations_per_contract(workspace_dir: Path, epoch_id: str) -> int | N
 def _workspace_health_config(workspace_dir: Path) -> Any:
     """Resolve the detector thresholds from the workspace ``config.json``.
 
-    The ``health`` block is the operator surface for the loop-health
-    thresholds (the former ``ZICATO_HEALTH_*`` env vars, deleted). A
-    missing / unreadable ``config.json`` yields ``None`` — the defaults
-    apply, matching the other best-effort loaders here — but a PRESENT,
-    malformed ``health`` block fails loudly (as a clean CLI error): the
-    operator explicitly wrote it and deserves the typo report rather than a
-    silently defaulted detector.
+    A missing ``config.json`` selects default thresholds. Malformed authored
+    configuration becomes a CLI error retaining the configuration owner's field
+    path, so diagnostics cannot silently substitute different thresholds.
     """
     from zicato.config import health_config_from_workspace  # noqa: PLC0415
     from zicato.workspace_loader import load_workspace_config  # noqa: PLC0415
 
     try:
         cfg = load_workspace_config(workspace_dir)
-    except (FileNotFoundError, ValueError):
-        return None
-    try:
         return health_config_from_workspace(cfg)
+    except FileNotFoundError:
+        return None
     except (KeyError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -256,6 +251,8 @@ def health_cmd(workspace: str, epoch: str | None) -> None:
         workspace_dir, epoch_id
     )
     receipt_attention = epoch_settlement_receipt_attention(workspace_dir, epoch_id)
+    from zicato.health.summarizer import epoch_summarizer_failures
+
     report = assess_loop_health(
         losses_by_generation=losses_by_generation,
         experiments=experiments,
@@ -270,6 +267,7 @@ def health_cmd(workspace: str, epoch: str | None) -> None:
         preflight_gate=workspace_preflight_gate(workspace_dir),
         tree_import_gaps=epoch_tree_import_gaps(workspace_dir, epoch_id) or None,
         settlement_receipt_attention=receipt_attention,
+        summarizer_failures=epoch_summarizer_failures(workspace_dir, epoch_id),
     )
 
     click.echo(render_report(report))

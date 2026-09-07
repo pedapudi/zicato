@@ -27,9 +27,10 @@ import statistics
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from zicato.board.split import HOLDOUT_TAG, split_board
+from zicato.contract_draft.admission import authored_edit
 from zicato.contract_draft.draft import TournamentDraft
 from zicato.core.constraints import require_knob
 from zicato.core.types import (
@@ -40,8 +41,12 @@ from zicato.core.types import (
     ScoringWeights,
     TournamentStructure,
 )
+from zicato.driver_imports import with_workspace_imports
 from zicato.selection.registry import default_replicates_for
 from zicato.selection.strategies.racing import SLICE_SCHEDULES
+
+if TYPE_CHECKING:
+    from zicato.runtime.lock import WorkspaceLock
 
 # ---------------------------------------------------------------------------
 # Result shapes
@@ -264,6 +269,7 @@ def _replace_scoring(draft: TournamentDraft, **changes: Any) -> ScoringWeights:
     return dataclasses.replace(draft.scoring, **changes)
 
 
+@authored_edit
 def set_structure(draft: TournamentDraft, structure: str) -> DraftPatch:
     """Set the tournament structure, preserving the existing params.
 
@@ -291,6 +297,7 @@ def set_structure(draft: TournamentDraft, structure: str) -> DraftPatch:
 _PARAM_CHOICES: dict[str, tuple[str, ...]] = {"slice_schedule": SLICE_SCHEDULES}
 
 
+@authored_edit
 def set_param(draft: TournamentDraft, key: str, value: Any) -> DraftPatch:
     """Set one structure param (``field_size``, ``replicates``, …).
 
@@ -358,6 +365,7 @@ def _coerce_ladder_value(key: str, value: Any) -> Any:
         raise ValueError(f"ladder.{key} must be a number, got {value!r}") from exc
 
 
+@authored_edit
 def set_holdout(
     draft: TournamentDraft,
     *,
@@ -462,6 +470,7 @@ def set_proposer(draft: TournamentDraft, proposer_path: str | Path | None) -> Dr
     )
 
 
+@authored_edit
 def set_weights(
     draft: TournamentDraft,
     *,
@@ -512,6 +521,7 @@ def set_weights(
     return DraftPatch(op="set_weights", changed=changed)
 
 
+@authored_edit
 def set_gate(
     draft: TournamentDraft,
     *,
@@ -641,6 +651,7 @@ def set_gate(
     return DraftPatch(op="set_gate", changed=changed)
 
 
+@authored_edit
 def set_namespace_weights(
     draft: TournamentDraft,
     *,
@@ -692,6 +703,7 @@ def set_namespace_weights(
     return DraftPatch(op="set_namespace_weights", changed=changed)
 
 
+@authored_edit
 def set_proposer_quality(
     draft: TournamentDraft,
     *,
@@ -800,6 +812,7 @@ def set_proposer_quality(
     return DraftPatch(op="set_proposer_quality", changed=changed)
 
 
+@authored_edit
 def set_experiment_memory(
     draft: TournamentDraft,
     *,
@@ -822,6 +835,7 @@ def set_experiment_memory(
     return DraftPatch(op="set_experiment_memory", changed=changed)
 
 
+@authored_edit
 def set_experimental(
     draft: TournamentDraft,
     *,
@@ -853,6 +867,7 @@ def set_experimental(
     return DraftPatch(op="set_experimental", changed=changed)
 
 
+@authored_edit
 def set_goldfive(
     draft: TournamentDraft,
     *,
@@ -892,6 +907,7 @@ def set_goldfive(
     return DraftPatch(op="set_goldfive", changed=changed)
 
 
+@authored_edit
 def set_telemetry_dialect(
     draft: TournamentDraft,
     *,
@@ -924,6 +940,7 @@ def set_telemetry_dialect(
     return DraftPatch(op="set_telemetry_dialect", changed=changed)
 
 
+@authored_edit
 def set_mutation_surface(
     draft: TournamentDraft,
     *,
@@ -961,6 +978,7 @@ def set_mutation_surface(
     return DraftPatch(op="set_mutation_surface", changed=changed)
 
 
+@authored_edit
 def set_screening(
     draft: TournamentDraft,
     *,
@@ -1111,6 +1129,7 @@ def restore_draft(
     draft.proposer_path = source.proposer_path
     draft.disable_drift = tuple(source.disable_drift)
     draft.judge_only = source.judge_only
+    draft.source = source.source
     note = "" if changed else "draft already matches the restore source"
     return DraftPatch(op=op, changed=changed, note=note)
 
@@ -1983,6 +2002,7 @@ def compare_drafts(a: TournamentDraft, b: TournamentDraft) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+@with_workspace_imports
 async def preflight(
     draft: TournamentDraft,
     workspace_root: Path,
@@ -2062,7 +2082,9 @@ async def preflight(
         )
 
     try:
-        adapter = adapter_factory.make_adapter_from_config(workspace_config)
+        adapter = adapter_factory.make_adapter_from_config(
+            workspace_config, workspace_root=workspace_root
+        )
     except (KeyError, ValueError, ImportError) as exc:
         return PreflightResult(
             available=False,
@@ -2154,8 +2176,8 @@ def _predicted_contract_hash(draft: TournamentDraft, workspace_root: Path) -> st
         board_file = tmp_dir / "board.jsonl"
         brief_file = tmp_dir / "brief.md"
         scoring_file = tmp_dir / "scoring.json"
-        # Thread the board_meta header exactly as _write_contract will, so
-        # the dry-run's predicted hash equals the confirmed apply's hash.
+        # Preview and publication include the same board metadata so their
+        # contract hashes agree.
         save_board(
             list(draft.entries),
             board_file,
@@ -2186,82 +2208,119 @@ def _predicted_contract_hash(draft: TournamentDraft, workspace_root: Path) -> st
         return compute_contract_hash(predicted_inputs)
 
 
-def _write_contract(draft: TournamentDraft, workspace_root: Path) -> None:
-    """Write the draft to the workspace's LIVE contract source paths.
+def candidate_scoring(draft: TournamentDraft) -> dict[str, Any]:
+    """Validate edited scoring while preserving unrelated authored omissions."""
+    import json
 
-    Reuses the same canonical contract source locations ``zicato
-    register`` / ``zicato epoch new`` publish (recorded under the
-    ``contract`` key of ``config.json``, defaulting to the conventional
-    location next to ``.zicato/``). Writing the board / brief / scoring
-    there — and recording the resolved paths and proposer back into
-    ``config.json`` — is exactly what the auto-epoch machinery reads on
-    the next ``evolve`` / resolve, so the epoch rolls on its own. This
-    function never rolls the epoch itself and never starts a run.
-    """
-    import json as _json
-
-    from zicato.board.jsonl import save_board
-    from zicato.epoch.contract import default_contract_paths
     from zicato.epoch.lifecycle import scoring_to_dict
-    from zicato.workspace.config_io import read_workspace_config, write_workspace_config
+    from zicato.workspace_loader import scoring_weights_from_dict
 
-    config = dict(read_workspace_config(workspace_root).raw)
-    defaults = default_contract_paths(workspace_root)
-    contract = dict(config.get("contract") or {})
+    after = scoring_to_dict(draft.scoring)
+    if draft.source is None or draft.source.file("scoring").text is None:
+        scoring_weights_from_dict(after)
+        return after
+    original = json.loads(draft.source.file("scoring").text or "{}")
+    before = scoring_to_dict(scoring_weights_from_dict(original))
 
-    default_board = defaults["board_path"]
-    default_brief = defaults["brief_path"]
-    default_scoring = defaults["scoring_path"]
-    assert default_board is not None and default_brief is not None
-    assert default_scoring is not None
+    def merge(
+        raw: dict[str, Any], previous: dict[str, Any], accepted: dict[str, Any]
+    ) -> dict[str, Any]:
+        result = dict(raw)
+        for key in previous.keys() | accepted.keys():
+            if key not in accepted:
+                result.pop(key, None)
+            elif key not in previous or previous[key] != accepted[key]:
+                if isinstance(previous.get(key), dict) and isinstance(accepted[key], dict):
+                    result[key] = merge(dict(raw.get(key) or {}), previous[key], accepted[key])
+                else:
+                    result[key] = accepted[key]
+        return result
 
-    board_target = Path(contract.get("board_path") or default_board)
-    brief_target = Path(contract.get("brief_path") or contract.get("rubric_path") or default_brief)
-    scoring_target = Path(contract.get("scoring_path") or default_scoring)
+    candidate = merge(original, before, after)
+    scoring_weights_from_dict(candidate)
+    return candidate
 
-    board_target.parent.mkdir(parents=True, exist_ok=True)
-    brief_target.parent.mkdir(parents=True, exist_ok=True)
-    scoring_target.parent.mkdir(parents=True, exist_ok=True)
 
-    # The board_meta header (disable_drift / judge_only) round-trips: the
-    # draft carries it from load_current_board_with_meta and it is written
-    # back here — a builder apply on a meta-carrying workspace must never
-    # strip the header from the live contract.
-    save_board(
-        list(draft.entries),
-        board_target,
-        disable_drift=tuple(draft.disable_drift),
-        judge_only=draft.judge_only,
+def _accepted_contract(draft: TournamentDraft) -> dict[str, str]:
+    """Serialize and validate every accepted file before publication starts."""
+    import json
+
+    from zicato.board.jsonl import board_to_jsonl, parse_board_with_meta
+
+    source = draft.source
+    if source is None:
+        raise ValueError("load a draft from the workspace before applying it")
+    board = board_to_jsonl(
+        list(draft.entries), disable_drift=draft.disable_drift, judge_only=draft.judge_only
     )
-    brief_target.write_text(draft.brief, encoding="utf-8")
-    scoring_target.write_text(
-        _json.dumps(scoring_to_dict(draft.scoring), indent=2) + "\n", encoding="utf-8"
+    parse_board_with_meta(board)
+    scoring = json.dumps(candidate_scoring(draft), indent=2) + "\n"
+    config = dict(source.config.raw)
+    contract = dict(source.config.contract)
+    contract.update(
+        board_path=str(source.file("board").path),
+        rubric_path=str(source.file("brief").path),
+        scoring_path=str(source.file("scoring").path),
     )
-
-    contract["board_path"] = str(board_target.resolve())
-    contract["rubric_path"] = str(brief_target.resolve())
-    contract["scoring_path"] = str(scoring_target.resolve())
-    if draft.proposer_path is not None:
-        contract["proposer_path"] = str(Path(draft.proposer_path).resolve())
-    else:
+    if "brief_path" in contract:
+        contract["brief_path"] = str(source.file("brief").path)
+    if draft.proposer_path is None:
         contract.pop("proposer_path", None)
+    else:
+        contract["proposer_path"] = str(draft.proposer_path.resolve())
     config["contract"] = contract
-    write_workspace_config(workspace_root, config)
+    accepted = {
+        "board": board,
+        "brief": draft.brief,
+        "scoring": scoring,
+        "config": json.dumps(config, indent=2, sort_keys=True) + "\n",
+    }
+    # Preserve formatting when an unrelated edit leaves the decoded component
+    # unchanged. Its original bytes still determine the source revision.
+    for component in ("scoring", "config"):
+        original = source.file(component).text
+        if original is not None and json.loads(original) == json.loads(accepted[component]):
+            accepted[component] = original
+    original_board = source.file("board").text
+    if original_board is not None and parse_board_with_meta(
+        original_board
+    ) == parse_board_with_meta(board):
+        accepted["board"] = original_board
+    return accepted
 
 
-def apply(draft: TournamentDraft, workspace_root: Path, confirm: bool) -> ApplyResult:
+def apply(
+    draft: TournamentDraft,
+    workspace_root: Path,
+    confirm: bool,
+    *,
+    writer: WorkspaceLock | None = None,
+) -> ApplyResult:
     """Apply the draft, or preview it.
 
     When ``confirm`` is ``True`` the draft is written to the workspace's
     live contract source paths (board.jsonl, brief.md, scoring.json incl.
     tournament + overfitting + gate + weights, and the proposer dir) via
-    :func:`_write_contract`, and the existing auto-epoch machinery rolls
+    the contract publication owner, and the existing auto-epoch machinery rolls
     the epoch on the next resolve. When ``confirm`` is ``False`` nothing
     is written — the result is a dry-run preview carrying the diff, the
     predicted contract hash, and the cost.
 
     This function NEVER starts a live ``zicato evolve``.
     """
+    from zicato.contract_draft.publication import recover_contract_publication  # noqa: PLC0415
+    from zicato.runtime.lock import acquire_workspace_lock, validate_workspace_lock  # noqa: PLC0415
+
+    if confirm and writer is None:
+        with acquire_workspace_lock(workspace_root, "contract-edit") as owned_writer:
+            return apply(draft, workspace_root, confirm, writer=owned_writer)
+    if writer is not None:
+        validate_workspace_lock(writer, workspace_root)
+        if confirm:
+            recover_contract_publication(workspace_root, writer=writer)
+    if draft.source is not None:
+        draft.source.require_unchanged(workspace_root)
+    candidate_scoring(draft)
     diff = draft.diff_vs_live(workspace_root)
     diff_dict = diff.to_dict()
     cost = estimate_cost(draft)
@@ -2280,7 +2339,15 @@ def apply(draft: TournamentDraft, workspace_root: Path, confirm: bool) -> ApplyR
             warnings=warns,
         )
 
-    _write_contract(draft, workspace_root)
+    from zicato.contract_draft.publication import (  # noqa: PLC0415
+        capture_contract_source,
+        publish_contract,
+    )
+
+    accepted = _accepted_contract(draft)
+    assert draft.source is not None and writer is not None
+    publish_contract(draft.source, accepted, writer=writer)
+    draft.source = capture_contract_source(workspace_root)
     # Recompute the hash from the now-written live contract so the result
     # reflects exactly what the next resolve will see.
     from zicato.epoch.contract import (  # noqa: PLC0415

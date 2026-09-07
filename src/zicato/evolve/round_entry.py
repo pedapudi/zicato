@@ -8,8 +8,12 @@ import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    pass
+
+from zicato.core.settings import InvocationOverlay
 from zicato.core.types import (
     Generation,
 )
@@ -75,6 +79,7 @@ async def evolve_once(
     target_call_llm: CallLLM | None = None,
     evaluation_call_llm: CallLLM | None = None,
     instance_id: str = "default",
+    invocation_overlay: InvocationOverlay | None = None,
     fast_mode: bool = False,
     max_proposer_retries: int = 2,
     beater: HeartbeatBeater | None = None,
@@ -93,7 +98,9 @@ async def evolve_once(
     completed measurements. The heartbeat and round counters let an embedding
     caller report progress through the same execution path as the multi-round API.
     """
-    async with validated_invocation(workspace_root, epoch_id, instance_id) as invocation:
+    async with validated_invocation(
+        workspace_root, epoch_id, instance_id, overlay=invocation_overlay
+    ) as invocation:
         return await _evolve_once(
             invocation=invocation,
             epoch_id=epoch_id,
@@ -131,8 +138,7 @@ async def _evolve_once(
     # Lazy imports — see module docstring.
     from zicato import (  # noqa: PLC0415
         adapter_factory,
-        runtime_factory,
-        workspace_loader,  # noqa: PLC0415
+        runtime_factory,  # noqa: PLC0415
     )
     from zicato.epoch import load_epoch  # noqa: PLC0415
     from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
@@ -143,21 +149,20 @@ async def _evolve_once(
         detect_patterns,
     )
     from zicato.proposer.agent import build_proposer_agent  # noqa: PLC0415
-    from zicato.proposer.external import external_proposer_config  # noqa: PLC0415
-    from zicato.proposer.skills import resolve_proposer_spec  # noqa: PLC0415
     from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
 
     # --- 1. Workspace + epoch artifacts ---
-    workspace_config = workspace_loader.load_workspace_config(workspace_root)
-    if epoch_id is None:
-        resolved_epoch_id = current_epoch_id(workspace_root)
-        if resolved_epoch_id is None:
-            raise FileNotFoundError(
-                f"no current_epoch marker under {workspace_root}; "
-                "pass epoch_id explicitly or run `zicato epoch new`"
-            )
-    else:
-        resolved_epoch_id = epoch_id
+    workspace_config = invocation.workspace_config
+    resolved_epoch_id = epoch_id
+    if resolved_epoch_id is None:
+        selected = invocation.execution_contract
+        resolved_epoch_id = (
+            selected.epoch_id if selected is not None else current_epoch_id(workspace_root)
+        )
+    if resolved_epoch_id is None:
+        raise FileNotFoundError(f"no current_epoch marker under {workspace_root}")
+    execution_contract = invocation.select_epoch(resolved_epoch_id)
+    workspace_config.update(execution_contract.adapter_configuration)
 
     # --- 0. Operator skip_round (the control protocol's operator override) ---
     # A clean safe point — the epoch is resolved but nothing has been
@@ -177,31 +182,14 @@ async def _evolve_once(
         )
         return _skipped_round_outcome(parent_for_skip, _skip_reason)
 
-    board, disable_drift, judge_only = workspace_loader.load_current_board_with_meta(workspace_root)
-    weights = workspace_loader.load_current_scoring(workspace_root)
-    brief = workspace_loader.load_current_brief(workspace_root)
-    # Resolve the epoch's proposer ONCE per evolve invocation — reading the
-    # frozen ``proposer_path`` off the epoch config and turning it into a
-    # skills-aware :class:`ProposerAgent`. ``proposer_path is None`` (the
-    # default) yields the built-in single-shot agent with no skills, so the
-    # propose call is byte-identical to before this surface existed. The
-    # resolution reads the skill files once here, never inside the retry
-    # loop. Every tournament structure reuses the same agent.
+    board, disable_drift, judge_only = execution_contract.board_with_meta
+    weights = execution_contract.scoring
+    brief = execution_contract.brief
     _epoch_cfg = load_epoch(workspace_root, resolved_epoch_id)
-    # ``runtime.proposer_agent`` (absent for every workspace that
-    # configures none) resolved from the SAME builder the contract hash
-    # used, so the identity that was hashed and the agent that runs cannot
-    # be resolved from different inputs.
-    _external_cfg = external_proposer_config(workspace_config, workspace_root)
-    proposer_spec = resolve_proposer_spec(_epoch_cfg.proposer_path, _external_cfg)
-    # Thread the frozen ``proposer_path`` so a custom-agent spec (Design A)
-    # can load ``proposers/<name>/agent.py`` from the same dir the spec was
-    # resolved from. ``None`` (the default / skill-only proposer) yields the
-    # single-shot built-in unchanged.
+    proposer_spec = execution_contract.proposer_spec
     proposer_agent = build_proposer_agent(
         proposer_spec,
-        proposer_path=_epoch_cfg.proposer_path,
-        external_config=_external_cfg,
+        external_config=execution_contract.external_proposer,
     )
     # NOTE: the best-of-N proposer-quality wrapper is interposed BELOW, right
     # after the RuntimeConfig is built, because it threads the config's
@@ -221,12 +209,16 @@ async def _evolve_once(
     # contract hash.
     tournament_spec = weights.tournament_structure
 
-    adapter = adapter_factory.make_adapter_from_config(workspace_config)
+    adapter = adapter_factory.make_adapter_from_config(
+        execution_contract.adapter_configuration, workspace_root=workspace_root
+    )
     config = runtime_factory.make_runtime_config(
         workspace_config,
         workspace_root=workspace_root,
         target_call_llm=target_call_llm,
         evaluation_call_llm=evaluation_call_llm,
+        configuration=invocation.configuration,
+        telemetry=invocation.telemetry,
     )
     # The factory already enforced this but the runner re-checks.
     # We do nothing more here.
@@ -304,7 +296,12 @@ async def _evolve_once(
     # diff against; the operator-facing alternative was to require a
     # manual ``zicato baseline`` invocation, but materialising it on
     # demand here keeps the CLI surface narrow.
-    _ensure_baseline_snapshot(workspace_root, resolved_epoch_id, workspace_config)
+    _ensure_baseline_snapshot(
+        workspace_root,
+        resolved_epoch_id,
+        {**workspace_config, **execution_contract.adapter_configuration},
+        writer=writer,
+    )
     # An interrupted challenger is already the newest generation record. When
     # no champion marker exists, ``current_generation`` therefore falls back
     # to that challenger even though it has not settled. Its persisted
@@ -509,7 +506,9 @@ async def _evolve_once(
     # rendered block is bucketed + identity-free; an empty slice (or no
     # outcome data) renders the EMPTY STRING, so the proposer prompt then
     # carries no such section (OVERFITTING.md §11.4).
-    failure_profile = _render_failure_profile(losses, weights)
+    failure_profile = _render_failure_profile(
+        losses, weights, workspace_root=workspace_root, epoch_id=epoch_id, round_index=round_index
+    )
 
     # --- 5a''. Opt-in process-exemplar block (PROCESS-EXEMPLARS.md) ---
     # When the contract opts in (proposer_quality.process_exemplars > 0),

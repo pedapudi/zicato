@@ -410,6 +410,22 @@ def test_cli_gc_requires_exactly_one_policy(workspace: Path) -> None:
         assert "exactly one" in result.output
 
 
+def test_cli_gc_dry_run_does_not_recover_publications(workspace: Path) -> None:
+    from zicato.cli.commands.epoch import epoch_grp
+
+    _seed_lineage(workspace)
+    # Read-only commands leave interrupted publication to a workspace writer.
+    (workspace / "epoch-publication.json").write_text("interrupted epoch publication\n")
+    (workspace / "contract-publication.json").write_text("interrupted contract publication\n")
+    before = {path: path.read_bytes() for path in workspace.rglob("*") if path.is_file()}
+    result = CliRunner().invoke(
+        epoch_grp, ["gc", EPOCH, "--workspace", str(workspace), "--keep-promoted-only"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "DRY RUN" in result.output
+    assert {path: path.read_bytes() for path in workspace.rglob("*") if path.is_file()} == before
+
+
 # ---------------------------------------------------------------------------
 # Epoch-close hook — additive config knob, default OFF
 # ---------------------------------------------------------------------------

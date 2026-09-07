@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 import sys
 from contextlib import asynccontextmanager
@@ -59,9 +60,11 @@ def test_loop_failure_closes_every_acquired_resource(
     monkeypatch.setattr(
         lifecycle_services,
         "_resolve_or_launch_harmonograf",
-        lambda *_: ("", SimpleNamespace(shutdown=lambda: closed.append("server"))),
+        lambda *_: ("", SimpleNamespace(grpc_target="", shutdown=lambda: closed.append("server"))),
     )
-    monkeypatch.setattr(lifecycle_services, "_build_meta_loop_emitter_safe", lambda *_: emitter)
+    monkeypatch.setattr(
+        lifecycle_services, "_build_meta_loop_emitter_safe", lambda *_, **__: emitter
+    )
     real_start, real_stop = HeartbeatBeater.start, HeartbeatBeater.stop
 
     async def start(beater: HeartbeatBeater) -> None:
@@ -84,7 +87,7 @@ def test_loop_failure_closes_every_acquired_resource(
     monkeypatch.setattr(HeartbeatBeater, "stop", stop)
     monkeypatch.setattr(round_entry, "_evolve_once", round_body)
     if failure_at == "mutation_surface":
-        monkeypatch.setattr("zicato.workspace_loader.activate_mutation_surface", fail)
+        monkeypatch.setattr("zicato.mutation.markers.install_syntax_table", fail)
     if failure_at == "terminal":
         monkeypatch.setattr("zicato.evolve.dashboard_projection._mark_run_terminal", fail)
 
@@ -183,3 +186,57 @@ def test_invocation_retains_writer_until_resistant_descendant_exits(tmp_path: Pa
         timeout=20,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("body_fails", [False, True])
+def test_index_repair_follows_producer_cleanup_and_preserves_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    body_fails: bool,
+) -> None:
+    from zicato.index.ingest import rebuild_index, validate_index
+    from zicato.logging_stream import install_log_stream
+    from zicato.runtime.lock import validate_workspace_lock
+    from zicato.workspace.projection import mark_epoch_changed
+
+    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    rebuild_index(workspace)
+    monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
+    closed: list[str] = []
+    original = RuntimeError("canonical publication failed")
+
+    def repair(root: Path, *, writer: Any) -> None:
+        validate_workspace_lock(writer, root)
+        assert closed == ["producer"]
+        raise OSError("projection unavailable")
+
+    monkeypatch.setattr("zicato.evolve.ingest.index_preflight", repair)
+
+    async def exercise() -> None:
+        async with validated_invocation(workspace, epoch_id, "index-owner") as invocation:
+            invocation.log_stream = install_log_stream(workspace)
+            invocation.resources.callback(closed.append, "producer")
+            mark_epoch_changed(workspace, epoch_id)
+            if body_fails:
+                raise original
+
+    if body_fails:
+        with pytest.raises(RuntimeError) as raised:
+            asyncio.run(exercise())
+        assert raised.value is original
+    else:
+        asyncio.run(exercise())
+    assert validate_index(workspace) == (epoch_id,)
+    assert "index repair required after invocation: projection unavailable" in caplog.messages
+    records = [
+        json.loads(line)
+        for path in (workspace / "logs").glob("*.jsonl")
+        for line in path.read_text().splitlines()
+    ]
+    assert any(
+        record["message"] == "index repair required after invocation: projection unavailable"
+        for record in records
+    )
+    with acquire_workspace_lock(workspace, "following-invocation"):
+        pass

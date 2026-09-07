@@ -448,8 +448,8 @@ def drive_mock_evolve(
         bootstrap_example_workspace,
     )
 
-    def _no_launch(workspace_root: Path) -> tuple[str, object]:
-        del workspace_root
+    def _no_launch(workspace_root: Path, configuration) -> tuple[str, object]:
+        del workspace_root, configuration
         return "", _lifecycle_services._NoopShutdownHandle()
 
     monkeypatch.setattr(_lifecycle_services, "_resolve_or_launch_harmonograf", _no_launch)

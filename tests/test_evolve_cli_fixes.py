@@ -251,7 +251,12 @@ def test_epoch_new_with_tournament_block_does_not_spuriously_roll(
     async def _aux(_system: str, _user: str, _model: str) -> str:
         return "stub analysis"
 
-    resolved = asyncio.run(ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux))
+    from zicato.runtime.lock import acquire_workspace_lock
+
+    with acquire_workspace_lock(workspace, "contract-test") as writer:
+        resolved = asyncio.run(
+            ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux, writer=writer)
+        )
     assert resolved == epoch_id
     assert current_epoch_id(workspace) == epoch_id
 
@@ -290,7 +295,12 @@ def test_epoch_new_then_ensure_epoch_for_contract_keeps_the_epoch(
     async def _aux(_system: str, _user: str, _model: str) -> str:
         return "stub analysis"
 
-    resolved = asyncio.run(ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux))
+    from zicato.runtime.lock import acquire_workspace_lock
+
+    with acquire_workspace_lock(workspace, "contract-test") as writer:
+        resolved = asyncio.run(
+            ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux, writer=writer)
+        )
     assert resolved == epoch_before
     assert current_epoch_id(workspace) == epoch_before
 

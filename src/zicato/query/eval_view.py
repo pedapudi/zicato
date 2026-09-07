@@ -1476,7 +1476,7 @@ def _epoch_scoring_weights(
     the defaults rather than the epoch's own weights.
     """
     from zicato.core import ScoringWeights  # noqa: PLC0415
-    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+    from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
 
     raw = (
         inputs.scoring.copy()
@@ -1486,7 +1486,7 @@ def _epoch_scoring_weights(
     if not isinstance(raw, dict):
         return ScoringWeights()
     try:
-        return scoring_weights_from_dict(raw)
+        return historical_scoring_weights_from_dict(raw)
     except Exception:  # noqa: BLE001 — best-effort; defaults keep the read alive
         return ScoringWeights()
 

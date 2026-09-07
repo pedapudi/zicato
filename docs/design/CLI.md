@@ -43,7 +43,7 @@ proposer
 tournament
   run
 inspect
-  environment | logs | mutations | reflection | telemetry
+  environment | logs | mutations | reflection | setup | telemetry
 repair
   epoch-goals | generation-source-backend | generations | index |
   judge-losses | report | tournament-fk | v0-baseline
@@ -57,6 +57,7 @@ repair
 | Capability | Command |
 |---|---|
 | Register the harness and contract paths | `zicato epoch register` |
+| Validate setup without model requests | `zicato inspect setup` |
 | Generate one candidate | `zicato proposer propose` |
 | Run one isolated comparison | `zicato tournament run PARENT CHILD` |
 | Audit mutation points | `zicato inspect mutations` |

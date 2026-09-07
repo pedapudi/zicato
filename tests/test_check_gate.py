@@ -47,7 +47,10 @@ class _TestAdapter:
     def load(self, generation_root: Path) -> object:
         if self.mode == "broken_load":
             raise RuntimeError(f"refusing snapshot {generation_root}")
-        return object()
+        return self
+
+    async def run(self, entry: Any, sinks: Any, config: Any) -> None:
+        raise AssertionError("setup validation must not execute a board entry")
 
     def mutation_points(self, source_roots: list[Path] | None = None) -> list[Any]:
         del source_roots
@@ -815,6 +818,47 @@ def test_a_clean_workspace_dry_runs_to_zero_without_spending(tmp_path: Path) -> 
     assert "Nothing was spent." in result.output
     assert "1 board entry" in result.output
     assert "1 mutation point" in result.output
+
+
+@pytest.mark.parametrize(
+    ("valid", "dry_run", "replicates"),
+    [(True, True, "2"), (False, True, "2"), (False, False, "2"), (True, True, "true")],
+)
+def test_tournament_override_validation_preserves_every_canonical_file(
+    tmp_path: Path, valid: bool, dry_run: bool, replicates: str
+) -> None:
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": _VALID_ADK_ENTRYPOINT if valid else "missing.module:agent",
+                "mutable_trees": [],
+            }
+        },
+        board=[_entry("e1", expectation={"kind": "expected_text", "spec": "hi"})],
+        scoring={"pass_weight": 1.3},
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+
+    def canonical_files() -> dict[str, bytes]:
+        return {
+            str(path.relative_to(tmp_path)): path.read_bytes()
+            for path in tmp_path.rglob("*")
+            if path.is_file() and "__pycache__" not in path.parts and "runtime" not in path.parts
+        }
+
+    before = canonical_files()
+    result = _evolve(
+        root,
+        *(("--dry-run",) if dry_run else ()),
+        "--tournament-structure",
+        "gauntlet",
+        "--tournament-param",
+        f"replicates={replicates}",
+    )
+    assert (result.exit_code == 0) is (valid and replicates == "2"), result.output
+    assert canonical_files() == before
 
 
 def test_a_dry_run_names_the_ungraded_entries_before_anything_is_spent(

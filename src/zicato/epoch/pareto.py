@@ -582,6 +582,9 @@ def load_frontier(workspace_root: Path, epoch_id: str) -> ParetoFrontier:
 
 def save_frontier(workspace_root: Path, epoch_id: str, frontier: ParetoFrontier) -> None:
     """Atomically write one epoch's record (``.tmp`` + ``fsync`` + rename)."""
+    from zicato.workspace.projection import mark_epoch_changed  # noqa: PLC0415
+
+    mark_epoch_changed(workspace_root, epoch_id)
     atomic_write_json(frontier_path(workspace_root, epoch_id), frontier_to_dict(frontier))
 
 

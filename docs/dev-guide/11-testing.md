@@ -279,53 +279,27 @@ collecting the application suite.
 
 ## 11.2 The autouse fixtures — `tests/conftest.py`
 
-Six autouse fixtures shape every test.
+Five autouse fixtures shape every test.
 
-- **Three isolate process-global state**, so a test neither inherits nor
-  bequeaths it. `_isolate_config_pins` clears the pinned config overrides
-  (§11.2.1). `_isolate_mutation_syntax_table` restores the built-in mutation
-  syntax table, so a workspace that declares an extra file suffix cannot
-  change what a later test enumerates as mutable surface.
-  `_isolate_host_worker_permits` points the host-wide worker-permit pool at
-  a session-private directory, so the suite neither throttles nor is
-  throttled by an operator's concurrent run.
-- **Two neuter production defaults** that would otherwise drag optional
-  dependencies or real I/O into a suite about the loop (§11.2.2). Each of
-  the two takes a `frozenset` of module names that exercise the real path
-  and so skip the stub.
-- **One is a session-scoped safety net**: the dashboard reaper (§11.2.3).
+- **Two isolate shared resources.** `_isolate_mutation_syntax_table`
+  restores built-in mutation syntax so a workspace's additional file types do
+  not affect later tests. `_isolate_host_worker_permits` selects a session
+  directory so tests and an operator's concurrent run use separate pools.
+- **Two replace production defaults** that would otherwise require optional
+  dependencies or real I/O (§11.2.2). Each fixture lists the modules that
+  exercise the real path and skip its replacement.
+- **One cleans up dashboard servers** at session end (§11.2.3).
 
-### 11.2.1 Config-pin isolation
+### 11.2.1 Invocation configuration isolation
 
-CLI commands pin flag values process-wide via `config.pin_overrides`; the
-pins are module-global and would leak across tests. `_isolate_config_pins`
-clears them on BOTH sides so a test neither inherits nor bequeaths a pin:
+CLI flags become an immutable `InvocationOverlay`. Each invocation resolves
+its own workspace values and passes the resulting configuration to runtime
+construction and workers. Tests can interleave different choices without a
+fixture that clears configuration state.
 
-```python
-@pytest.fixture(autouse=True)
-def _isolate_config_pins() -> Iterator[None]:
-    """Clear process-pinned config overrides around every test.
-
-    CLI commands (and tests exercising them) pin flag values process-wide
-    via :func:`zicato.config.pin_overrides`; the pins are module-global
-    state and would otherwise leak from one test into the next. Cleared
-    on BOTH sides so a test neither inherits nor bequeaths pins.
-    """
-    from zicato.config import clear_pinned_overrides
-
-    clear_pinned_overrides()
-    yield
-    clear_pinned_overrides()
-```
-— `tests/conftest.py`, `_isolate_config_pins`
-
-> ✅ ALWAYS clear process-global state on BOTH sides of the `yield` (the
-> clear-global-state-on-both-sides rule). A before-only clear leaks a pin
-> FORWARD (the test that set it poisons the
-> next); an after-only clear leaks a pin BACKWARD (a stray earlier pin
-> poisons this test). Under `-n auto` the leak is nondeterministic — the two
-> tests may not even land on the same worker — so a one-sided clear produces
-> a flake nobody can reproduce.
+`tests/test_invocation_configuration.py` checks that concurrent factories and
+worker payloads retain their own values and sources. `tests/test_cli_config_flags.py`
+checks flag admission and propagation through a real worker process.
 
 ### 11.2.2 The stand-in proposal runtime
 
@@ -824,7 +798,7 @@ importable adapter because each must survive the process crossing:
 | `CooperativeAdapter` | a CANCELLABLE `asyncio.sleep` | the worker's own cooperative budget fires and it self-aborts, exit 0 |
 | `EmittingThenSleepingAdapter` | emits one `run_started` frame then sleeps to cancellation | the terminal-event fix leaves a `run_aborted` frame on disk |
 | `AbortingAdapter` | returns an aborted `RunResult` (a simulated crash) | the reducer's not-completed penalty (without it a near-instant crash scores `drift_loss == 0.0`) |
-| `ConfigProbeAdapter` | records the WORKER process's resolved typed config to `config_probe.json` | a CLI-flag value pinned in the ORCHESTRATOR crossed the subprocess boundary via the args file, no env var |
+| `ConfigProbeAdapter` | records the WORKER process's resolved typed config to `config_probe.json` | the invocation overlay crossed the subprocess boundary through the serialized configuration |
 
 `make_sigterm_ignoring_adapter` is the sharpest example of why these live at
 module level: it installs a `SIGTERM`-ignoring handler INSIDE the worker
@@ -1234,7 +1208,7 @@ exist:
 | tui driver: no import of the other drivers | `zicato.tui` → `cli` / `dashboard` / `builder` (the terminal console speaks HTTP to the served payloads) |
 | the proposer's patch validator has no path to the board | `zicato.proposer`'s validator reaching the board loader, which is what keeps entry text out of the validator's import closure |
 | the modelling and execution layer does not import the loop, the reports, the diagnostics, the read layer, the contract draft, or the drivers | the 24 packages that model, execute, score and store importing `analyzer` / `check` / `contract_draft` / `evolve` / `health` / `orchestrator` / `query` / `reflection` / the four drivers (10-builder-cli-library.md §10.11.3 lists the seven library packages held out of the source list because they sit above the cut) |
-| the shared primitives import nothing else in the library | `aux_timeout` / `config` / `import_path` / `integrations` / `logging_stream` / `storage` / `util` importing any other top-level package (the seven may import each other) |
+| the shared primitives import nothing else in the library | `import_path` / `integrations` / `logging_stream` / `storage` / `util` importing any other top-level package (the five may import each other) |
 
 The declared driver→driver edges are exactly two: `cli → dashboard` (the CLI
 launches the server and resolves its static bundle) and `dashboard →
@@ -2112,7 +2086,7 @@ leaks a real subprocess or a `ztw-snap-*` tree is a test that will flake the
 NEXT test under xdist.
 
 **Step 5 — Prove the boundary crossing rather than only the outcome.** If the
-test is about something crossing INTO the worker (a pinned config flag), read
+test is about something crossing INTO the worker (an invocation configuration value), read
 it back from INSIDE the worker. `ConfigProbeAdapter` writes the worker's
 resolved `load_config()` view to `config_probe.json`, so the test proves the
 value crossed via the args file with NO env var involved (§11.5). Asserting

@@ -19,6 +19,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 import zicato.tournament.runner as runner_mod
+from tests._stub_adapter import STUB_ADAPTER_FACTORY
 from zicato.board.jsonl import save_board
 from zicato.cli.discovery import build_cli_root
 from zicato.core import BoardEntry, Generation, LossProfile, ScoringWeights
@@ -74,7 +75,10 @@ def _seed_workspace(tmp_path: Path) -> tuple[Path, str]:
     """A real-shaped workspace whose lineage recorded a predicate miss on ``login``."""
     ws = tmp_path / ".zicato"
     ws.mkdir(parents=True)
-    (ws / "config.json").write_text(json.dumps({"runtime": {}, "adapter": {}}), encoding="utf-8")
+    (ws / "config.json").write_text(
+        json.dumps({"runtime": {}, "adapter": {"kind": "import", "factory": STUB_ADAPTER_FACTORY}}),
+        encoding="utf-8",
+    )
     login = BoardEntry(
         id="login",
         kind="single_turn",
@@ -171,12 +175,6 @@ def test_unmocked_round_trip_suggest_persists_and_applies(tmp_path: Path) -> Non
 
 def test_unmocked_probe_measures_against_the_fixture_runner(tmp_path: Path, monkeypatch) -> None:
     ws, epoch = _seed_workspace(tmp_path)
-    # An import-kind adapter so make_adapter_from_config resolves; the runner is
-    # mocked, so the adapter object is never dereferenced (the admission-test tier).
-    (ws / "config.json").write_text(
-        json.dumps({"runtime": {}, "adapter": {"kind": "import", "factory": "builtins:object"}}),
-        encoding="utf-8",
-    )
 
     class _Runner:
         def __init__(self) -> None:

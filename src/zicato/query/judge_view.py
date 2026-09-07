@@ -874,7 +874,7 @@ def _mutation_point_count(
     try:
         from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
         from zicato.mutation.markers import syntax_table_from_config  # noqa: PLC0415
-        from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+        from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
 
         raw = (
             _read_json_value(layout_of(WorkspacePaths(workspace_root)).scoring(epoch_id))
@@ -882,7 +882,7 @@ def _mutation_point_count(
             else None
         )
         try:
-            weights = scoring_weights_from_dict(raw) if isinstance(raw, dict) else None
+            weights = historical_scoring_weights_from_dict(raw) if isinstance(raw, dict) else None
         except ValueError:
             weights = None
         table = syntax_table_from_config(weights.mutation_surface if weights is not None else None)

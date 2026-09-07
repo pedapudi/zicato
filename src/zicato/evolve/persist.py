@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from zicato.core.settings import ResolvedConfiguration
 from zicato.core.types import (
     Experiment,
     Generation,
@@ -124,6 +125,7 @@ async def _round_epilogue(
     token_clip: tuple[int, int] | None = None,
     attributable_regressions: dict[str, dict[str, Any]] | None = None,
     on_promote_failure: tuple[str, str, str] | None = None,
+    configuration: ResolvedConfiguration | None = None,
 ) -> tuple[str, bool]:
     """The shared end-of-round tail: loop-health + analyzer + epoch report.
 
@@ -169,6 +171,7 @@ async def _round_epilogue(
         token_clip=token_clip,
         attributable_regressions=attributable_regressions,
         on_promote_failure=on_promote_failure,
+        health_config=configuration.values.health if configuration else None,
     )
     if health_critical:
         _warn_loop_no_signal(epoch_id, round_n, health_summary)
@@ -185,6 +188,7 @@ async def _round_epilogue(
                 epoch_id,
                 evaluation_call_llm,
                 model=evaluation_model,
+                aux_config=configuration.values.aux if configuration else None,
                 round_n=analyzer_round,
                 # Ground the insight prompt in the agent's REAL mutation
                 # surface so the LLM's "Suggested next mutations" section
@@ -212,6 +216,7 @@ async def _persist_rejected_round(
     evaluation_model: str,
     beater: HeartbeatBeater | None,
     round_log: _RoundLogEmitter | None = None,
+    configuration: ResolvedConfiguration | None = None,
 ) -> EvolveRoundOutcome:
     """Persist a gauntlet round rejected before its tournament ever ran.
 
@@ -281,6 +286,7 @@ async def _persist_rejected_round(
         evaluation_model=evaluation_model,
         meta_loop_emitter=None,
         run_analyzer=False,
+        configuration=configuration,
     )
     _beat(
         beater,

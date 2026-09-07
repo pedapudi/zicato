@@ -130,6 +130,7 @@ async def produce_candidate_batch(
             workspace_root,
             epoch_id,
             cross_epoch=prepared.weights.experiment_memory.cross_epoch,
+            writer=prepared.writer,
         )
     )
     from zicato.mutation.policy import MutationPolicy  # noqa: PLC0415

@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from zicato.config import AuxConfig
 from zicato.core import RuntimeConfig, ScoringWeights
 from zicato.core.workspace import reflection_adjudication_path
 from zicato.judge_runtime.io_capture import JudgeIOFileSink, judge_io_path_for_loss
@@ -895,9 +896,7 @@ def test_read_adjudication_refuses_present_defects(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_hung_adjudicator_times_out_into_an_ambiguous_verdict(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_hung_adjudicator_times_out_into_an_ambiguous_verdict(tmp_path: Path) -> None:
     """A never-answering meta-judge yields ambiguous, not a wedged `reflect run`.
 
     Both attempts are bounded by the shared evaluation budget, and the retry is
@@ -906,7 +905,6 @@ def test_a_hung_adjudicator_times_out_into_an_ambiguous_verdict(
     path's contract is that it never raises, and a TimeoutError escaping it
     would take the whole corpus adjudication down on one unlucky decision.
     """
-    monkeypatch.setattr("zicato.reflection.adjudicator.aux_call_timeout_s", lambda: 0.01)
 
     workspace = tmp_path / ".zicato"
     loss_path = _write_loss(workspace, "v1", "entryA", 0, drift=False)
@@ -927,6 +925,7 @@ def test_a_hung_adjudicator_times_out_into_an_ambiguous_verdict(
             decision=dict(corpus[0].judge_decisions[0]),
             run_ref=run_ref_for(corpus[0]),
             adjudicator_call_llm=never_answers,
+            aux_config=AuxConfig(call_timeout_s=0.01),
             adjudicator_model="m",
         )
     )
@@ -939,11 +938,8 @@ def test_a_hung_adjudicator_times_out_into_an_ambiguous_verdict(
     assert "timed out" in (verdict.raw_response or "")
 
 
-def test_a_slow_but_answering_adjudicator_still_scores(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_slow_but_answering_adjudicator_still_scores(tmp_path: Path) -> None:
     """The bound is a ceiling, not a floor — a call inside the budget is normal."""
-    monkeypatch.setattr("zicato.reflection.adjudicator.aux_call_timeout_s", lambda: 5.0)
 
     workspace = tmp_path / ".zicato"
     loss_path = _write_loss(workspace, "v1", "entryA", 0, drift=False)
@@ -964,6 +960,7 @@ def test_a_slow_but_answering_adjudicator_still_scores(
             decision=dict(corpus[0].judge_decisions[0]),
             run_ref=run_ref_for(corpus[0]),
             adjudicator_call_llm=slow_but_valid,
+            aux_config=AuxConfig(call_timeout_s=5.0),
             adjudicator_model="m",
         )
     )

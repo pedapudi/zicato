@@ -1502,11 +1502,11 @@ def _load_epoch_weights(workspace_root: Path | None, epoch_id: str | None) -> An
         return ScoringWeights()
     try:
         from zicato.core.workspace import scoring_path  # noqa: PLC0415
-        from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+        from zicato.workspace_loader import historical_scoring_weights_from_dict  # noqa: PLC0415
 
         raw = json.loads(scoring_path(workspace_root, epoch_id).read_text(encoding="utf-8"))
         if isinstance(raw, dict):
-            return scoring_weights_from_dict(raw)
+            return historical_scoring_weights_from_dict(raw)
     except Exception:  # noqa: BLE001 — a missing / bad scoring.json → defaults
         pass
     return ScoringWeights()
