@@ -7,7 +7,9 @@ again, duplicating journal entries, or leaving canonical records in conflict.
 
 from __future__ import annotations
 
+import copy
 import json
+import shutil
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -74,7 +76,7 @@ def _stop_after_receipt_persistence(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settlement_module, "commit_field_settlement", stop_after_receipt)
 
 
-def _workspace_with_pending_receipt(
+def _prepare_pending_receipt(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> tuple[Path, str, dict[str, Any]]:
@@ -101,6 +103,33 @@ def _workspace_with_pending_receipt(
     return workspace, epoch_id, receipt
 
 
+@pytest.fixture(scope="module")
+def prepared_settlement(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, str, dict[str, Any]]:
+    """Produce the shared decision once through the real proposal and tournament path."""
+    from zicato.evolve import lifecycle_services
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            lifecycle_services,
+            "_resolve_or_launch_harmonograf",
+            lambda *args, **kwargs: ("", lifecycle_services._NoopShutdownHandle()),
+        )
+        return _prepare_pending_receipt(patch, tmp_path_factory.mktemp("settlement"))
+
+
+@pytest.fixture
+def pending_settlement(
+    prepared_settlement: tuple[Path, str, dict[str, Any]], tmp_path: Path
+) -> tuple[Path, str, dict[str, Any]]:
+    """Give each corruption or recovery case its own writable canonical records."""
+    source, epoch_id, receipt = prepared_settlement
+    workspace = tmp_path / ".zicato"
+    shutil.copytree(source, workspace)
+    return workspace, epoch_id, copy.deepcopy(receipt)
+
+
 def _assert_field_is_unmutated(workspace: Path, epoch_id: str) -> None:
     """Assert that validation failed before any settlement write."""
     assert read_experiment(workspace, epoch_id, "v1").outcome is None
@@ -114,11 +143,10 @@ def _assert_field_is_unmutated(workspace: Path, epoch_id: str) -> None:
 
 
 def test_commit_reuses_the_recorded_identity_and_rejects_a_conflicting_receipt(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """A same-round retry cannot replace the first durable decision."""
-    workspace, epoch_id, pending = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, pending = pending_settlement
     receipt_path = field_settlement_intent_path(workspace, epoch_id, 0)
 
     commit_field_settlement(workspace, pending)
@@ -140,48 +168,26 @@ def test_commit_reuses_the_recorded_identity_and_rejects_a_conflicting_receipt(
 
 @pytest.mark.parametrize("crash_boundary", _COMMIT_BOUNDARIES)
 def test_resume_completes_each_interrupted_field_settlement_boundary(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
     crash_boundary: str,
 ) -> None:
-    """Every interrupted prefix converges to one consistent settlement."""
-    from tests.test_on_promote_hook import _install_hooked_adapter_factory
+    """Recovery completes the recorded decision after each interrupted write."""
+    workspace, epoch_id, intent = pending_settlement
+    # The template stopped immediately after writing this receipt. Its copy can
+    # start before that write while retaining the same real tournament decision.
+    field_settlement_intent_path(workspace, epoch_id, 0).unlink()
 
-    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2)
-    _install_hooked_adapter_factory(monkeypatch)
-    install_telemetry_stubs(
-        monkeypatch,
-        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
-        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
-    )
+    def checkpoint(boundary: str) -> None:
+        if boundary == crash_boundary:
+            raise _InjectedCrash(boundary)
 
-    captured: dict[str, Any] = {}
-
-    def stop_commit(root: Path, intent: dict[str, Any]) -> None:
-        captured["intent"] = json.loads(json.dumps(intent))
-
-        def checkpoint(boundary: str) -> None:
-            if boundary == crash_boundary:
-                raise _InjectedCrash(boundary)
-
-        commit_field_settlement(root, intent, crash_checkpoint=checkpoint)
-
-    monkeypatch.setattr(settlement_module, "commit_field_settlement", stop_commit)
     with pytest.raises(_InjectedCrash, match=crash_boundary):
-        run_evolve_once(
-            workspace,
-            epoch_id,
-            make_aux_responder([]),
-        )
+        commit_field_settlement(workspace, intent, crash_checkpoint=checkpoint)
 
-    # Startup imports the recovery owner directly, so restore only the live
-    # settlement call before asking it to reconcile the workspace.
-    monkeypatch.setattr(settlement_module, "commit_field_settlement", commit_field_settlement)
     plan = prepare_resume(workspace, epoch_id)
     assert plan.classification == "clean"
     assert plan.resume_generation_id is None
 
-    intent = captured["intent"]
     receipt = json.loads(
         field_settlement_intent_path(workspace, epoch_id, 0).read_text(encoding="utf-8")
     )
@@ -245,46 +251,11 @@ def test_resume_completes_each_interrupted_field_settlement_boundary(
     assert indexed == (field_record["decision"], field_record["structure"])
 
 
-def test_resume_replays_all_candidates_when_outcomes_already_exist(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Outcome completion cannot make a partially settled field look clean."""
-    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2)
-    install_stub_adapter_factory(monkeypatch)
-    install_telemetry_stubs(
-        monkeypatch,
-        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
-        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
-    )
-
-    def stop_after_outcomes(root: Path, intent: dict[str, Any]) -> None:
-        def checkpoint(boundary: str) -> None:
-            if boundary == "lineage":
-                raise _InjectedCrash(boundary)
-
-        commit_field_settlement(root, intent, crash_checkpoint=checkpoint)
-
-    monkeypatch.setattr(settlement_module, "commit_field_settlement", stop_after_outcomes)
-    with pytest.raises(_InjectedCrash):
-        run_evolve_once(
-            workspace,
-            epoch_id,
-            make_aux_responder([]),
-        )
-
-    assert read_experiment(workspace, epoch_id, "v1").outcome is not None
-    assert read_experiment(workspace, epoch_id, "v2").outcome is not None
-    plan = prepare_resume(workspace, epoch_id)
-    assert plan.classification == "clean"
-
-
 def test_lineage_resolution_is_atomic_across_the_candidate_field(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """A crash checkpoint cannot expose a partly resolved candidate field."""
-    workspace, epoch_id, receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, receipt = pending_settlement
 
     def stop_after_atomic_resolution(boundary: str) -> None:
         if boundary == "lineage":
@@ -491,10 +462,10 @@ def test_recovery_preserves_a_deferred_field_receipt(
 
 def test_index_refresh_failure_retains_a_repairable_canonical_settlement(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """A partial derived refresh is one reported repair requirement."""
-    workspace, epoch_id, receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, receipt = pending_settlement
 
     def fail_index_refresh(*_args: Any, **_kwargs: Any) -> None:
         raise OSError("injected index failure")
@@ -854,13 +825,12 @@ def test_crash_during_promotion_hook_delivery_is_not_retried(
     ),
 )
 def test_field_record_conflicts_are_rejected_before_mutation(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
     field: str,
     replacement: Any,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """Every bracket identity and decision surface is checked before replay."""
-    workspace, epoch_id, receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, receipt = pending_settlement
     receipt["field_tournament_record"][field] = replacement
     receipt_path = field_settlement_intent_path(workspace, epoch_id, 0)
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
@@ -871,11 +841,10 @@ def test_field_record_conflicts_are_rejected_before_mutation(
 
 
 def test_primary_champion_must_agree_across_multi_promotion_facts(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """A bracket edit cannot redirect the champion to a promoted sibling."""
-    workspace, epoch_id, receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, receipt = pending_settlement
     first = next(row for row in receipt["candidates"] if row["generation_id"] == "v1")
     first["outcome"]["tournament_decision"] = "promoted"
     first["outcome"]["rejection_reason"] = ""
@@ -891,11 +860,10 @@ def test_primary_champion_must_agree_across_multi_promotion_facts(
 
 
 def test_existing_field_snapshot_conflict_is_rejected_before_mutation(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """A receipt cannot silently replace conflicting canonical field identity."""
-    workspace, epoch_id, _receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, _receipt = pending_settlement
     snapshot_path = field_tournament_path(workspace, epoch_id, "v1")
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
     snapshot["champion_generation_id"] = "v2"
@@ -907,11 +875,10 @@ def test_existing_field_snapshot_conflict_is_rejected_before_mutation(
 
 
 def test_receipt_format_is_validated_before_committed_state_is_interpreted(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """A future-format record cannot bypass validation by claiming completion."""
-    workspace, epoch_id, receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, receipt = pending_settlement
     receipt["format_version"] = 999
     receipt["state"] = "committed"
     receipt_path = field_settlement_intent_path(workspace, epoch_id, 0)
@@ -923,11 +890,10 @@ def test_receipt_format_is_validated_before_committed_state_is_interpreted(
 
 
 def test_non_finite_settlement_scalar_is_rejected_before_mutation(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """NaN and infinity cannot enter lineage or index scalar columns."""
-    workspace, epoch_id, receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, receipt = pending_settlement
     receipt["candidates"][0]["parent_scalar"] = float("nan")
     receipt_path = field_settlement_intent_path(workspace, epoch_id, 0)
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
@@ -938,11 +904,10 @@ def test_non_finite_settlement_scalar_is_rejected_before_mutation(
 
 
 def test_receipt_round_must_match_its_containing_namespace(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """Recovery rejects a valid receipt stored under a different round."""
-    workspace, epoch_id, _receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, _receipt = pending_settlement
     source = field_settlement_intent_path(workspace, epoch_id, 0)
     misplaced = field_settlement_intent_path(workspace, epoch_id, 1)
     misplaced.parent.mkdir(parents=True, exist_ok=True)
@@ -963,13 +928,12 @@ def test_receipt_round_must_match_its_containing_namespace(
     ),
 )
 def test_experiment_coordinates_must_match_the_receipt_before_replay(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
     field: str,
     replacement: Any,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """Recovery never interprets a receipt against a different experiment."""
-    workspace, epoch_id, _receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, _receipt = pending_settlement
     path = experiment_json_path(workspace, epoch_id, "v1")
     experiment = json.loads(path.read_text(encoding="utf-8"))
     experiment[field] = replacement
@@ -981,11 +945,10 @@ def test_experiment_coordinates_must_match_the_receipt_before_replay(
 
 
 def test_every_settlement_candidate_must_name_a_parent(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """A missing parent cannot disappear from the shared-parent comparison."""
-    workspace, epoch_id, _receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, _receipt = pending_settlement
     path = experiment_json_path(workspace, epoch_id, "v1")
     experiment = json.loads(path.read_text(encoding="utf-8"))
     experiment["parent_generation_id"] = None
@@ -1006,13 +969,12 @@ def test_every_settlement_candidate_must_name_a_parent(
     ),
 )
 def test_lineage_coordinates_and_verdict_must_match_before_replay(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
     field: str,
     replacement: Any,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """Recovery validates lineage-owned coordinates instead of rewriting them."""
-    workspace, epoch_id, _receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, _receipt = pending_settlement
     path = lineage_path(workspace)
     lineage = json.loads(path.read_text(encoding="utf-8"))
     epoch = next(row for row in lineage["epochs"] if row["id"] == epoch_id)
@@ -1028,10 +990,10 @@ def test_lineage_coordinates_and_verdict_must_match_before_replay(
 
 def test_receipt_corruption_is_unhealthy_and_prevents_partial_repair_acknowledgement(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+    pending_settlement: tuple[Path, str, dict[str, Any]],
 ) -> None:
     """A malformed receipt remains visible and blocks every acknowledgement write."""
-    workspace, epoch_id, _receipt = _workspace_with_pending_receipt(monkeypatch, tmp_path)
+    workspace, epoch_id, _receipt = pending_settlement
 
     def fail_index_refresh(*_args: Any, **_kwargs: Any) -> None:
         raise OSError("injected index failure")

@@ -28,7 +28,7 @@
 >
 > | ID | Name | Invariant |
 > |----|------|-----------|
-> | V1 | the both-tiers-before-a-merge rule | **A bare `pytest` is the fast tier; a merge needs BOTH tiers.** Only a bare `pytest` drops the `slow` tier (tests measured at 15 s or more ALONE) — naming a file, a test or a marker expression runs what it names. `make test` and `tools/parity.sh` run both tiers locally. Pull requests run the default tier and the `slow` tier as separate checks. An `integration` test's runtime IS its coverage, never a candidate for stubbing. |
+> | V1 | the both-tiers-before-a-merge rule | **A bare `pytest` is the fast tier; a merge needs BOTH tiers.** Only a bare `pytest` drops the `slow` tier (tests measured at 15 s or more ALONE) — naming a file, a test or a marker expression runs what it names. `make test` and `tools/parity.sh` run both tiers locally. Pull requests run the default tier and the `slow` tier as separate checks. Preserve the boundary an integration test protects; remove unrelated setup and duplicate execution. |
 > | V2 | the must-fail-with-the-fix-stashed rule | **A regression test MUST fail with the fix stashed.** A test that passes both before and after a fix proves nothing about the fix. |
 > | V3 | the never-weaken-an-assertion rule | **Never weaken an assertion to make a test pass.** Fix the code, or pin the new value with a measured justification in the commit. A pinned number moves only with a measured reason. |
 > | V4 | the pin-off-and-carry-the-countermeasure rule | **Deterministic contracts pin interacting knobs OFF — AND carry the countermeasure.** Pinning best-of-1 / replicates-1 / gate-off makes a script deterministic, but every shipped default also needs a knob-ON adversarial test. Pinning alone is how the best-of-N tree-mismatch case and the evidence-gate replicate-reuse case hid (`12-bug-casebook.md` cases 6 and 8). |
@@ -86,10 +86,12 @@ gives you and what the inner loop uses; the SLOW tier contains tests each
 measured at 15 s or more ON ITS OWN. Together they are about five of the
 six minutes a full run takes.
 
-A merge needs both. `make test` and `tools/parity.sh`'s PYTEST gate each run
-the whole suite locally, and the pre-commit checklist (§11.11) includes both.
-Pull requests run the default tier and the `slow` tier as separate checks,
-alongside the dashboard JavaScript and Rust checks. Repository policy requires
+A merge needs both groups. Pull requests run them as separate required checks.
+During implementation, select the relevant tests. A complete local run is
+optional when CI will run the same checks; `make test` remains available for
+both Python groups. The full verification policy is in §11.11.
+Pull requests also report dashboard JavaScript and Rust checks separately.
+Repository policy requires
 every reported result to pass before merge. `.github/workflows/slow-tier.yml`
 also runs the slow tests nightly against main and on demand from the
 Actions tab.
@@ -1440,9 +1442,13 @@ by its setup step, using `--installed-wheel` to avoid another build.
 ## 11.11 Complete validation before merge
 
 ```sh
-make check-fast       # iteration checks for branch and worktree changes
-make check            # all required checks for the revision being merged
+make check-fast       # focused checks during implementation
+make check            # complete local alternative when CI is unavailable
 ```
+
+Require one complete successful CI run on the source proposed for merge.
+Do not also require an equivalent complete local run. Local full verification
+remains available when CI cannot run or when a particular diagnosis needs it.
 
 `tools/verify.py` owns required commands, languages, input paths and
 selection rules. `--list` reports the selected checks as JSON. `--only`

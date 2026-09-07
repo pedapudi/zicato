@@ -50,7 +50,7 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 502,426 | +93,765 |
+| Total | 408,661 | 502,405 | +93,744 |
 | Production | 197,702 | 213,489 | +15,787 |
 | Production logic | 110,276 | 123,564 | +13,288 |
 
@@ -428,3 +428,4 @@ dropped rows named.
 | Accepted invocation inputs and recoverable publication (production) | 211,339 | +2,150 | 213,489 | Issues #364, #387 and #480–#484: shared authored declarations replace global configuration pins and independent coercion. One invocation owns accepted settings, selected epoch inputs, driver scope, telemetry, recovery and cleanup; existing publication owners validate retained writes and dirty revisions. |
 | Accepted invocation inputs and recoverable publication (production logic) | 120,523 | +3,041 | 123,564 | Issues #364, #387 and #480–#484: typed admission and worker reconstruction preserve accepted input forms. Recovery validates retained bytes before publication; settled reads and cleanup enforce projection currency; the score owner persists dirty state before history or flat replacement. |
 | Canonical worker artifacts and retained reader fixtures (total) | 502,389 | +37 | 502,426 | Issues #364, #387 and #480–#482: canonical measurement paths and run identities keep worker transport separate from durable captures. Typed lineage assertions, required score publication markers, read-only revision checks, and retained historical scoring preserve existing lifecycle and reader oracles. |
+| Remove repeated test execution and correct subprocess setup (total) | 502,426 | -21 | 502,405 | Issues #405 and #498: validators run directly where their findings are the subject; recovery cases share prepared input and remove one duplicate test. Subprocess fixtures declare their imports and omit unrelated telemetry server startup. Focused tests retain real process and recovery checks. |

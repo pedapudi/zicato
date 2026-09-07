@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ import pytest
 from click.testing import CliRunner
 
 from tests._foe_support import stand_in_proposer_block
-from zicato.check import CheckContext, Finding, WorkspaceCheckError, build_report
+from zicato.check import CheckContext, Finding, WorkspaceCheckError, build_report, validators
 from zicato.cli.commands.evolve import evolve_cmd
 from zicato.core.types import ScoringWeights
 from zicato.evolve.loop import evolve_n_rounds
@@ -153,15 +154,18 @@ def _models(engines: dict | None = None, **roles: str) -> dict:
     }
 
 
-def _codes(root: Path, *, live_contract: bool = True, **kwargs: object) -> set[str]:
-    """Codes from one gate run, defaulting to the live-contract path.
-
-    ``live_contract=True`` is what ``evolve_n_rounds`` passes whenever no
-    explicit ``--epoch`` was given, which is the common path; the frozen
-    variant is asked for by name.
-    """
+def _codes(
+    root: Path,
+    validator: Callable[[CheckContext], Iterator[validators.Defect]] | None = None,
+    *,
+    live_contract: bool = True,
+    **kwargs: object,
+) -> set[str]:
+    """Run the relevant validator, or the full report for integration assertions."""
     with CheckContext(root, live_contract=live_contract, **kwargs) as ctx:  # type: ignore[arg-type]
-        return {f.code for f in build_report(ctx).findings}
+        if validator is not None:
+            return {code for code, _summary, _detail in validator(ctx)}
+        return {finding.code for finding in build_report(ctx).findings}
 
 
 def _findings(root: Path, *, live_contract: bool = True, **kwargs: object) -> dict[str, bool]:
@@ -197,13 +201,17 @@ def _write_epoch_implementation_identity(root: Path, identity: object) -> None:
 
 def test_frozen_epoch_requires_readable_implementation_identity(tmp_path: Path) -> None:
     root = _workspace(tmp_path / ".zicato", scoring={}, board=[_entry("a")])
-    assert "epoch_implementation_identity_unreadable" in _codes(root, live_contract=False)
+    assert "epoch_implementation_identity_unreadable" in _codes(
+        root, validators.epoch_implementation_identity, live_contract=False
+    )
 
 
 def test_frozen_epoch_refuses_a_different_zicato_evaluator(tmp_path: Path) -> None:
     root = _workspace(tmp_path / ".zicato", scoring={}, board=[_entry("a")])
     _write_epoch_implementation_identity(root, {"zicato_evaluator_revision": 0})
-    assert "epoch_implementation_identity_mismatch" in _codes(root, live_contract=False)
+    assert "epoch_implementation_identity_mismatch" in _codes(
+        root, validators.epoch_implementation_identity, live_contract=False
+    )
 
 
 def test_frozen_goldfive_epoch_refuses_a_different_goldfive_build(tmp_path: Path) -> None:
@@ -229,7 +237,9 @@ def test_frozen_goldfive_epoch_refuses_a_different_goldfive_build(tmp_path: Path
             "zicato_goldfive_integration_revision": ZICATO_GOLDFIVE_INTEGRATION_REVISION,
         },
     )
-    assert "epoch_implementation_identity_mismatch" in _codes(root, live_contract=False)
+    assert "epoch_implementation_identity_mismatch" in _codes(
+        root, validators.epoch_implementation_identity, live_contract=False
+    )
 
 
 # --- hard stop: duplicate mutation ids --------------------------------------
@@ -264,7 +274,7 @@ def test_a_duplicated_id_anywhere_on_the_surface_is_a_hard_stop(tmp_path: Path) 
     (tmp_path / "harness" / "second.py").write_text(
         _MUTABLE.format(point_id="dup"), encoding="utf-8"
     )
-    assert "duplicate_mutation_id" in _codes(root)
+    assert "duplicate_mutation_id" in _codes(root, validators.duplicate_ids)
 
 
 # --- hard stop: a surface the proposer cannot edit --------------------------
@@ -272,7 +282,7 @@ def test_a_duplicated_id_anywhere_on_the_surface_is_a_hard_stop(tmp_path: Path) 
 
 def test_no_declared_trees_is_a_hard_stop(tmp_path: Path) -> None:
     root = _workspace(tmp_path / ".zicato", config={"models": _models()})
-    assert "no_mutable_trees" in _codes(root)
+    assert "no_mutable_trees" in _codes(root, validators.dead_surface)
 
 
 def test_a_tree_that_enumerates_to_nothing_is_a_hard_stop(tmp_path: Path) -> None:
@@ -287,7 +297,7 @@ def test_a_tree_that_enumerates_to_nothing_is_a_hard_stop(tmp_path: Path) -> Non
         },
         trees={"harness": "PROMPT = 'no markers here'\n"},
     )
-    assert "empty_mutation_surface" in _codes(root)
+    assert "empty_mutation_surface" in _codes(root, validators.dead_surface)
 
 
 def test_a_missing_tree_is_named(tmp_path: Path) -> None:
@@ -301,7 +311,7 @@ def test_a_missing_tree_is_named(tmp_path: Path) -> None:
             }
         },
     )
-    assert "missing_mutable_tree" in _codes(root)
+    assert "missing_mutable_tree" in _codes(root, validators.dead_surface)
 
 
 # --- hard stop: the adapter must rebuild in a worker ------------------------
@@ -313,12 +323,12 @@ def test_an_adapter_that_cannot_be_rebuilt_in_a_subprocess_is_a_hard_stop(tmp_pa
         config={"adapter": {"kind": "import", "factory": "no_such_module:make"}},
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "adapter_import_failed" in _codes(root)
+    assert "adapter_import_failed" in _codes(root, validators.adapter_imports)
 
 
 def test_no_adapter_at_all_is_a_hard_stop(tmp_path: Path) -> None:
     root = _workspace(tmp_path / ".zicato", config={"models": _models()})
-    assert "no_adapter" in _codes(root)
+    assert "no_adapter" in _codes(root, validators.adapter_imports)
 
 
 def test_an_adk_entrypoint_that_cannot_load_is_a_hard_stop(tmp_path: Path) -> None:
@@ -327,7 +337,7 @@ def test_an_adk_entrypoint_that_cannot_load_is_a_hard_stop(tmp_path: Path) -> No
         config={"adapter": {"kind": "adk", "entrypoint": "no_such_module:agent"}},
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "adapter_import_failed" in _codes(root)
+    assert "adapter_import_failed" in _codes(root, validators.adapter_imports)
 
 
 def test_fresh_workspace_probe_calls_adapter_load_on_ephemeral_v0(tmp_path: Path) -> None:
@@ -342,7 +352,7 @@ def test_fresh_workspace_probe_calls_adapter_load_on_ephemeral_v0(tmp_path: Path
         },
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "adapter_import_failed" in _codes(root)
+    assert "adapter_import_failed" in _codes(root, validators.adapter_imports)
 
 
 def test_probe_uses_the_adapters_canonical_worker_spec(tmp_path: Path) -> None:
@@ -357,7 +367,7 @@ def test_probe_uses_the_adapters_canonical_worker_spec(tmp_path: Path) -> None:
         },
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "adapter_import_failed" in _codes(root)
+    assert "adapter_import_failed" in _codes(root, validators.adapter_imports)
 
 
 def test_malformed_adapter_integration_capabilities_are_a_hard_stop(tmp_path: Path) -> None:
@@ -372,7 +382,7 @@ def test_malformed_adapter_integration_capabilities_are_a_hard_stop(tmp_path: Pa
         },
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "adapter_import_failed" in _codes(root)
+    assert "adapter_import_failed" in _codes(root, validators.adapter_imports)
 
 
 def test_mutation_checks_use_the_reigning_generation_snapshot(tmp_path: Path) -> None:
@@ -402,7 +412,7 @@ def test_mutation_checks_use_the_reigning_generation_snapshot(tmp_path: Path) ->
     ctx = CheckContext(root)
     assert ctx.generation_snapshot == snapshot
     assert all(point.file.is_relative_to(snapshot) for point in ctx.surface)
-    assert "duplicate_mutation_id" in _codes(root)
+    assert "duplicate_mutation_id" in _codes(root, validators.duplicate_ids)
 
 
 def test_declared_text_syntax_is_used_for_surface_enumeration(tmp_path: Path) -> None:
@@ -420,7 +430,7 @@ def test_declared_text_syntax_is_used_for_surface_enumeration(tmp_path: Path) ->
 
     with CheckContext(root) as ctx:
         assert [point.id for point in ctx.surface] == ["typescript_prompt"]
-    assert "empty_mutation_surface" not in _codes(root)
+    assert "empty_mutation_surface" not in _codes(root, validators.dead_surface)
 
 
 def test_adapter_scoping_excludes_markers_outside_runtime_surface(tmp_path: Path) -> None:
@@ -439,7 +449,7 @@ def test_adapter_scoping_excludes_markers_outside_runtime_surface(tmp_path: Path
     editable.mkdir()
     (editable / "plain.py").write_text("PROMPT = 'unmarked'\n", encoding="utf-8")
 
-    assert "empty_mutation_surface" in _codes(root)
+    assert "empty_mutation_surface" in _codes(root, validators.dead_surface)
 
 
 # --- hard stop: the board and the scoring must agree ------------------------
@@ -481,7 +491,7 @@ def test_an_unreadable_board_is_reported_once(tmp_path: Path) -> None:
     """The parse failure, not the empty board it leaves behind."""
     root = _workspace(tmp_path / ".zicato", board=[], scoring={})
     (root.parent / "board.jsonl").write_text("{not json", encoding="utf-8")
-    codes = _codes(root)
+    codes = _codes(root, validators.contract_integrity)
     assert "board_unreadable" in codes
     assert "empty_board" not in codes
 
@@ -494,10 +504,10 @@ def test_malformed_scoring_is_a_hard_stop(tmp_path: Path, contents: str) -> None
     """Both contract paths: the live file evolve auto-epochs, and the frozen one."""
     root = _workspace(tmp_path / ".zicato", board=[_entry("drift-only")], scoring={})
     (root.parent / "scoring.json").write_text(contents, encoding="utf-8")
-    assert "scoring_unreadable" in _codes(root)
+    assert "scoring_unreadable" in _codes(root, validators.contract_integrity)
 
     (root / "epochs" / _EPOCH / "scoring.json").write_text(contents, encoding="utf-8")
-    assert "scoring_unreadable" in _codes(root, live_contract=False)
+    assert "scoring_unreadable" in _codes(root, validators.contract_integrity, live_contract=False)
 
 
 # --- advisory: a declared thing that contributes nothing --------------------
@@ -636,7 +646,7 @@ def test_advisories_alone_do_not_raise(tmp_path: Path) -> None:
 def test_a_predicate_that_does_not_import_is_a_hard_stop(tmp_path: Path) -> None:
     entry = _entry("e1", expectation={"kind": "predicate", "spec": "no_such_mod:check"})
     root = _workspace(tmp_path / ".zicato", board=[entry], scoring={})
-    assert "predicate_unresolvable" in _codes(root)
+    assert "predicate_unresolvable" in _codes(root, validators.contract_integrity)
 
 
 def test_a_python_judge_that_does_not_import_is_a_hard_stop(tmp_path: Path) -> None:
@@ -648,7 +658,7 @@ def test_a_python_judge_that_does_not_import_is_a_hard_stop(tmp_path: Path) -> N
     }
     entry = _entry("e1", judges=[judge])
     root = _workspace(tmp_path / ".zicato", board=[entry], scoring={})
-    assert "judge_unresolvable" in _codes(root)
+    assert "judge_unresolvable" in _codes(root, validators.contract_integrity)
 
 
 def test_every_defect_is_reported_not_just_the_first(tmp_path: Path) -> None:
@@ -695,7 +705,7 @@ def test_a_mostly_graded_board_is_not_reported(tmp_path: Path) -> None:
         board=[_entry("ungraded"), _graded("a"), _graded("b")],
         scoring={},
     )
-    assert "no_expectations" not in _codes(root)
+    assert "no_expectations" not in _codes(root, validators.board_expectation_coverage)
 
 
 def test_the_gate_and_the_health_report_apply_one_coverage_rule(tmp_path: Path) -> None:
@@ -731,7 +741,7 @@ def test_the_workspace_threshold_governs_both_surfaces(tmp_path: Path) -> None:
         board=[_entry("beta"), _entry("alpha"), _graded("gamma")],
         scoring={},
     )
-    assert "no_expectations" not in _codes(root)
+    assert "no_expectations" not in _codes(root, validators.board_expectation_coverage)
     tuned = health_config_from_workspace(json.loads((root / "config.json").read_text("utf-8")))
     assert detect_no_expectations(list(load_board(root.parent / "board.jsonl")), tuned) == []
 
@@ -936,7 +946,7 @@ def test_a_workspace_declaring_no_proposal_runtime_is_refused(tmp_path: Path) ->
         encoding="utf-8",
     )
 
-    assert "proposal_runtime_unusable" in _codes(root)
+    assert "proposal_runtime_unusable" in _codes(root, validators.proposal_runtime)
 
 
 def test_the_scaffold_s_placeholder_binary_is_refused_by_name(tmp_path: Path) -> None:
@@ -967,7 +977,7 @@ def test_a_binary_that_is_not_there_is_refused(tmp_path: Path) -> None:
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
 
-    assert "proposal_runtime_binary_absent" in _codes(root)
+    assert "proposal_runtime_binary_absent" in _codes(root, validators.proposal_runtime)
 
 
 def test_a_retired_proposer_configuration_is_refused_by_the_gate(tmp_path: Path) -> None:
@@ -980,7 +990,7 @@ def test_a_retired_proposer_configuration_is_refused_by_the_gate(tmp_path: Path)
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
 
-    assert "proposal_runtime_unusable" in _codes(root)
+    assert "proposal_runtime_unusable" in _codes(root, validators.proposal_runtime)
 
 
 def test_an_operator_bound_class_is_left_to_its_own_configuration(tmp_path: Path) -> None:
@@ -997,7 +1007,9 @@ def test_an_operator_bound_class_is_left_to_its_own_configuration(tmp_path: Path
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
 
-    assert not {c for c in _codes(root) if c.startswith("proposal_runtime")}
+    assert not {
+        c for c in _codes(root, validators.proposal_runtime) if c.startswith("proposal_runtime")
+    }
 
 
 def test_implicit_evolve_accepts_a_live_drift_only_contract(tmp_path: Path) -> None:
@@ -1131,7 +1143,7 @@ def test_a_probe_that_never_returns_is_bounded(tmp_path: Path, monkeypatch) -> N
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
     started = time.monotonic()
-    assert "adapter_import_timeout" in _codes(root)
+    assert "adapter_import_timeout" in _codes(root, validators.adapter_imports)
     assert time.monotonic() - started < 20
 
 
@@ -1194,7 +1206,7 @@ def test_a_role_whose_credential_is_set_is_clean(tmp_path: Path, monkeypatch) ->
         },
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "model_role_credential_unset" not in _codes(root)
+    assert "model_role_credential_unset" not in _codes(root, validators.model_roles)
 
 
 def test_a_goldfive_endpoint_credential_must_exist_before_workers_start(
@@ -1215,7 +1227,7 @@ def test_a_goldfive_endpoint_credential_must_exist_before_workers_start(
         board=[_entry("e0")],
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "goldfive_credential_unset" in _codes(root)
+    assert "goldfive_credential_unset" in _codes(root, validators.goldfive_integration)
 
 
 def test_builtin_adk_declares_goldfive_and_requires_the_contract_block(
@@ -1235,7 +1247,7 @@ def test_builtin_adk_declares_goldfive_and_requires_the_contract_block(
         trees={"harness": _MUTABLE.format(point_id="p")},
         include_required_goldfive=False,
     )
-    assert "goldfive_config_missing" in _codes(root)
+    assert "goldfive_config_missing" in _codes(root, validators.goldfive_integration)
 
 
 def test_a_generic_contract_does_not_require_goldfive(tmp_path: Path) -> None:
@@ -1252,7 +1264,7 @@ def test_a_generic_contract_does_not_require_goldfive(tmp_path: Path) -> None:
         board=[_entry("e0")],
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "goldfive_config_missing" not in _codes(root)
+    assert "goldfive_config_missing" not in _codes(root, validators.goldfive_integration)
 
 
 def test_an_import_adapter_can_declare_goldfive_without_a_kind_check(tmp_path: Path) -> None:
@@ -1269,7 +1281,7 @@ def test_an_import_adapter_can_declare_goldfive_without_a_kind_check(tmp_path: P
         board=[_entry("e0")],
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "goldfive_config_missing" in _codes(root)
+    assert "goldfive_config_missing" in _codes(root, validators.goldfive_integration)
 
 
 def test_a_goldfive_declaring_adapter_requires_the_optional_runtime(
@@ -1291,7 +1303,7 @@ def test_a_goldfive_declaring_adapter_requires_the_optional_runtime(
         board=[_entry("e0")],
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "goldfive_runtime_unavailable" in _codes(root)
+    assert "goldfive_runtime_unavailable" in _codes(root, validators.goldfive_integration)
 
 
 def test_invalid_goldfive_config_is_reported_when_worker_environment_is_scrubbed(
@@ -1308,7 +1320,7 @@ def test_invalid_goldfive_config_is_reported_when_worker_environment_is_scrubbed
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
 
-    assert "goldfive_config_invalid" in _codes(root)
+    assert "goldfive_config_invalid" in _codes(root, validators.goldfive_integration)
 
 
 def test_goldfive_local_embedding_requires_its_named_install_extra(
@@ -1328,7 +1340,7 @@ def test_goldfive_local_embedding_requires_its_named_install_extra(
         board=[_entry("e0")],
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "goldfive_runtime_capability_missing" in _codes(root)
+    assert "goldfive_runtime_capability_missing" in _codes(root, validators.goldfive_integration)
 
 
 def test_goldfive_judge_endpoint_requires_its_http_client(
@@ -1348,7 +1360,7 @@ def test_goldfive_judge_endpoint_requires_its_http_client(
         board=[_entry("e0")],
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "goldfive_runtime_capability_missing" in _codes(root)
+    assert "goldfive_runtime_capability_missing" in _codes(root, validators.goldfive_integration)
 
 
 def test_goldfive_implementation_must_match_the_executed_evaluator(
@@ -1368,7 +1380,7 @@ def test_goldfive_implementation_must_match_the_executed_evaluator(
         board=[_entry("e0")],
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "goldfive_implementation_mismatch" in _codes(root)
+    assert "goldfive_implementation_mismatch" in _codes(root, validators.goldfive_integration)
 
 
 def test_a_present_goldfive_endpoint_credential_passes_the_static_check(
@@ -1389,7 +1401,7 @@ def test_a_present_goldfive_endpoint_credential_passes_the_static_check(
         board=[_entry("e0")],
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "goldfive_credential_unset" not in _codes(root)
+    assert "goldfive_credential_unset" not in _codes(root, validators.goldfive_integration)
 
 
 def test_a_generic_adapter_rejects_an_unused_goldfive_block(
@@ -1417,7 +1429,7 @@ def test_a_generic_adapter_rejects_an_unused_goldfive_block(
         board=[_entry("e0")],
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "goldfive_config_unused" in _codes(root)
+    assert "goldfive_config_unused" in _codes(root, validators.goldfive_integration)
     with CheckContext(root, live_contract=True) as ctx:
         assert ctx.worker_env is not None
         assert "GENERIC_UNUSED_GOLDFIVE_KEY" not in ctx.worker_env
@@ -1439,7 +1451,7 @@ def test_a_role_call_llm_that_does_not_import_is_a_hard_stop(tmp_path: Path) -> 
         },
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    assert "model_role_unresolvable" in _codes(root)
+    assert "model_role_unresolvable" in _codes(root, validators.model_roles)
 
 
 def test_an_unconfigured_role_is_not_reported(tmp_path: Path) -> None:
@@ -1455,7 +1467,7 @@ def test_an_unconfigured_role_is_not_reported(tmp_path: Path) -> None:
         },
         trees={"harness": _MUTABLE.format(point_id="p")},
     )
-    codes = _codes(root)
+    codes = _codes(root, validators.model_roles)
     assert not any(code.startswith("model_role") for code in codes)
 
 

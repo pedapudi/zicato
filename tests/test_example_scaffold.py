@@ -1,12 +1,10 @@
 """``zicato init --example``: the seven artifacts, and a round that runs.
 
-The claim the scaffold makes is that a new operator gets from an empty
-directory to a settled round without authoring a file. These cases hold
-it to that in two steps: what the scaffold puts on disk and wires into
-``config.json``, and then the loop itself — a real round, through the
-real proposer seam, the real applier, and the real subprocess tournament
-workers, with no model, no endpoint, and no monkeypatch on the path under
-test.
+Initialization writes a working example into an empty directory. These tests
+check the generated files and execute three rounds with the real proposer,
+patch application, and tournament workers. Deterministic responses avoid model
+calls. Telemetry server startup is tested separately; this fixture retains
+local telemetry while excluding that unrelated service startup.
 
 The scalars are exact. The board has four entries; three of the four
 seeded style rules each fail exactly one of them, and the fourth entry
@@ -134,6 +132,11 @@ def test_the_scaffolded_project_converges_over_three_rounds(tmp_path: Path) -> N
 import asyncio, json, sys
 from pathlib import Path
 from zicato.orchestrator import evolve_n_rounds
+from zicato.evolve import lifecycle_services
+# Service startup has separate integration coverage; retain local telemetry here.
+lifecycle_services._resolve_or_launch_harmonograf = (
+    lambda *args, **kwargs: ("", lifecycle_services._NoopShutdownHandle())
+)
 outcomes = asyncio.run(evolve_n_rounds(
     rounds=3, workspace_root=Path(sys.argv[1]), max_consecutive_rejections=3
 ))

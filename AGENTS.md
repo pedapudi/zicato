@@ -103,13 +103,14 @@ These override convenience. Violating them is a defect.
 
 - Python is managed by `uv`; the CLI entry point is `zicato.cli:main`
   (Click, auto-discovered subcommands under `zicato/cli/commands/`).
-- Use `make check-fast` while iterating and `make check` for complete
-  validation of the revision proposed for merge. Both commands consume
-  `tools/verify.py`, which also supplies CI commands. Complete validation
-  includes both Python test tiers, tool tests, golden comparisons, style,
-  type and import checks, JavaScript, Rust, packaging, prose and line budgets.
-  Every reported required result must pass before merge. `make test` remains
-  available for both Python tiers alone.
+- During implementation, use `make check-fast` or a focused test selection.
+  Require one complete successful CI run on the source proposed for merge.
+  Run `make check` locally when CI is unavailable; an equivalent complete
+  local run is optional when CI will run it. `tools/verify.py` defines the
+  required Python, statistical, browser, parity, native, packaging and static
+  checks. Every required result must pass. `make test` remains available for
+  both Python groups alone. Remove unrelated setup and duplicate execution
+  while retaining the behavior each integration test protects.
 - The CLI is the contract — trust `zicato <command> --help` over the
   design docs when they disagree (the docs drift). Every flag in
   [`docs/design/CLI.md`](docs/design/CLI.md) should match a real option;

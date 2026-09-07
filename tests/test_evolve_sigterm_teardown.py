@@ -154,7 +154,9 @@ def test_sigterm_mid_round_reaps_children_and_releases_lock(tmp_path: Path) -> N
     lock_file = workspace / "runtime" / "lock.json"
 
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(tmp_path) + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = os.pathsep.join(
+        (str(tmp_path), str(Path(__file__).resolve().parents[1]), env.get("PYTHONPATH", ""))
+    )
 
     proc = subprocess.Popen(
         [sys.executable, str(driver), str(workspace), epoch_id, str(pid_file)],

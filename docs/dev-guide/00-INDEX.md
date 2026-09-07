@@ -34,9 +34,10 @@ You almost never read this book front-to-back. Instead:
 6. **Find your task in `13-recipes.md`.** Most changes are a named recipe with
    exact steps and a Verify block. If yours is not, the closest recipe is your
    template.
-7. **Run complete validation on the revision proposed for merge.**
-   `make check` owns that requirement (§below, full detail in
-   `11-testing.md §11.11`). Required failures block merge.
+7. **Require complete CI validation on the source proposed for merge.**
+   Use focused checks during implementation. Run the equivalent `make check`
+   locally when CI is unavailable; do not require both complete runs.
+   See `11-testing.md §11.11`. Required failures block merge.
 
 > ⛔ **NEVER** treat this guide as authoritative *over the code*. If a symbol,
 > path, or line the guide names is not in the current tree, the code is right and
@@ -147,7 +148,7 @@ its case; each ends with "you are about to reintroduce this if…".
 
 ## Complete verification (full detail in `11-testing.md §11.11`)
 
-Use `make check-fast` for iteration and `make check` for complete validation.
+Use `make check-fast` for iteration. CI runs complete validation; `make check` is the local equivalent when needed.
 `tools/verify.py` supplies the commands to both Make and CI. Its complete
 plan includes the known-answer and statistical oracles, independent golden
 comparisons, all language checks, packaging, prose and budget policy.
@@ -168,7 +169,7 @@ namespace / weight · 4. Add a board expectation kind · 5. Add a goldfive
 drift-kind consumer · 6. Extend the deterministic example target (updating both
 oracles honestly) · 7. Add an index table / column (schema bump + migration +
 golden re-capture) · 8. Add an epoch-open step · 9. Change the round pipeline
-safely (the seam-ownership map) · 10. Run the full local verification ladder ·
+safely (the map of module responsibilities) · 10. Run focused checks and require complete CI validation ·
 11. Investigate a red parity gate · 12. Debug a failing tournament end-to-end run
 (the forensic file map) · 13. Safely bump a pinned operating-characteristic
 number · 14. Add a `skills/` entry for a new operator workflow.
