@@ -63,11 +63,9 @@
 | `.github/workflows/slow-tier.yml` | the `slow` tier on pull requests and on demand |
 | `src/zicato/dashboard/static/test/run-all.mjs` | the Node behaviour-suite runner (exit-code-honest) |
 
-The suite is large (about 5,990 Python tests plus the Node suite plus the
-Rust `cargo test`), and it is **process-isolation-clean by construction** —
-`tmp_path` everywhere, dynamic ports via `bind(("127.0.0.1", 0))`,
-tempdir-isolated worker fixtures — so it fans out under `pytest-xdist`
-with no per-test fixes.
+Verification covers Python, dashboard JavaScript, and Rust. Parallel Python
+tests use temporary directories, dynamically allocated ports, and isolated
+worker fixtures. Tests that modify shared process state must restore it.
 
 > ⚠️ TRAP — the repo root is pinned on `sys.path` explicitly by
 > `tests/conftest.py`, NOT left to pytest's implicit `rootdir` insertion.
@@ -947,12 +945,9 @@ count or written into a success baseline.
 
 ### 11.7.1 PYTEST
 
-The full suite, BOTH tiers (about 5,990 tests) — the primary behavioral
-characterization. Reds legitimately whenever a real behaviour changed or a
-test broke. The gate spells its selector out (`pytest -q -m "not node and
-not cascade_oc"`) because a bare `pytest` would gate on the default tier
-alone; it is the same run as `make test`. Parity runs it as gate one because
-a golden diff on top of a red suite is noise.
+This gate selects both Python tiers with `pytest -q -m "not node and
+not cascade_oc"`, matching `make test`. The complete verification plan runs
+the two tiers separately and skips this parity gate to avoid repeating them.
 
 ### 11.7.2 CONTRACT-HASH (incl. checkout-independence)
 

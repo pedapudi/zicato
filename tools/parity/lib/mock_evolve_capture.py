@@ -443,10 +443,10 @@ def drive_mock_evolve(
     from tests.test_example_target_1_racing import (
         EXAMPLE_DIR,
         _install_caching_telemetry_stubs,
-        _make_example_aux_responder,
         _preseed_champion_cache,
         bootstrap_example_workspace,
     )
+    from zicato_examples.target_1_presentation import mocks as example_mocks
 
     def _no_launch(workspace_root: Path, configuration) -> tuple[str, object]:
         del workspace_root, configuration
@@ -548,7 +548,7 @@ def drive_mock_evolve(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=_make_example_aux_responder(),
+            evaluation_call_llm=example_mocks.aux_llm,
             fast_mode=lane.fast_mode,
         )
     )

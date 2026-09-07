@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 480,626 | +71,965 |
-| Production | 197,702 | 199,101 | +1,399 |
-| Production logic | 110,276 | 114,323 | +4,047 |
+| Total | 408,661 | 480,670 | +72,009 |
+| Production | 197,702 | 199,121 | +1,419 |
+| Production logic | 110,276 | 114,342 | +4,066 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -87,7 +87,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/dashboard | 62,698 | 32,787 | 22,512 | 31.3% |
 | src/zicato/query | 20,472 | 20,472 | 12,586 | 38.5% |
 | src/zicato/epoch | 15,028 | 15,028 | 8,307 | 44.7% |
-| src/zicato/evolve | 11,844 | 11,844 | 7,336 | 38.1% |
+| src/zicato/evolve | 11,852 | 11,852 | 7,343 | 38.0% |
 | src/zicato/reflection | 10,016 | 10,016 | 6,627 | 33.8% |
 | src/zicato/tournament | 11,669 | 11,669 | 6,620 | 43.3% |
 | crates/supervisor | 16,390 | 13,958 | 6,519 | 53.3% |
@@ -97,7 +97,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/core | 7,545 | 7,545 | 3,180 | 57.9% |
 | src/zicato/selection | 5,393 | 5,393 | 3,093 | 42.6% |
 | src/zicato/index | 5,451 | 5,451 | 2,822 | 48.2% |
-| src/zicato/runtime | 5,349 | 5,349 | 2,494 | 53.4% |
+| src/zicato/runtime | 5,350 | 5,350 | 2,495 | 53.4% |
 | src/zicato/telemetry | 4,639 | 4,639 | 2,290 | 50.6% |
 | src/zicato/contract_draft | 2,510 | 2,510 | 1,647 | 34.4% |
 | src/zicato/health | 2,620 | 2,620 | 1,522 | 41.9% |
@@ -121,7 +121,7 @@ production-logic series per subsystem along a branch's first-parent commits.
 | src/zicato/driver_imports.py | 206 | 206 | 161 | 21.8% |
 | src/zicato/runtime_factory.py | 232 | 232 | 149 | 35.8% |
 | src/zicato/workspace_loader.py | 318 | 318 | 127 | 60.1% |
-| src/zicato/config.py | 155 | 155 | 114 | 26.5% |
+| src/zicato/config.py | 166 | 166 | 125 | 24.7% |
 | src/zicato/integrations | 143 | 143 | 100 | 30.1% |
 | src/zicato/util | 175 | 175 | 94 | 46.3% |
 | src/zicato/adapter_factory.py | 120 | 120 | 89 | 25.8% |

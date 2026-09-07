@@ -94,7 +94,8 @@ async def test_model_spec_role_defers_the_adk_build_to_first_call(
 
     builds: list[str] = []
 
-    def _fake_resolve(spec: object, *, role: str) -> object:
+    def _fake_resolve(spec: object, *, role: str, transport: object = None) -> object:
+        assert transport is None
         builds.append(role)
 
         async def _call(system: str, user: str, model: str) -> str:
@@ -138,7 +139,8 @@ async def test_deferred_resolution_failure_is_registered_and_typed(
     """
     import zicato.models_config as models_config
 
-    def _boom(spec: object, *, role: str) -> object:
+    def _boom(spec: object, *, role: str, transport: object = None) -> object:
+        assert transport is None
         raise ValueError(f"models.{role}: could not build a call_llm")
 
     monkeypatch.setattr(models_config, "_resolve_model_spec_call_llm", _boom)
@@ -147,7 +149,9 @@ async def test_deferred_resolution_failure_is_registered_and_typed(
         call_llm = lazy_text_call_llm(role_spec_from_dict(_MODEL_SPEC), role="judge")
         assert models_config.deferred_role_failures() == {}, "nothing has been called yet"
 
-        with pytest.raises(models_config.RoleResolutionError):
+        with pytest.raises(
+            models_config.RoleResolutionError, match="models.judge: could not build a call_llm"
+        ):
             await call_llm("s", "u", "m")
         assert "judge" in models_config.deferred_role_failures()
     finally:
@@ -222,7 +226,8 @@ async def test_worker_role_resolution_uses_the_lazy_path(
 
     builds: list[str] = []
 
-    def _fake_resolve(spec: object, *, role: str) -> object:
+    def _fake_resolve(spec: object, *, role: str, transport: object = None) -> object:
+        assert transport is None
         builds.append(role)
 
         async def _call(system: str, user: str, model: str) -> str:

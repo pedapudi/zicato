@@ -159,7 +159,7 @@ def test_validate_proposed_op_accepts_real_args() -> None:
 def test_validate_proposed_op_rejects_unknown_arg_and_op() -> None:
     with pytest.raises(ValueError, match="unknown arg"):
         validate_proposed_op("set_gate", {"not_a_real_arg": 1})
-    with pytest.raises(ValueError, match="unknown builder op"):
+    with pytest.raises(ValueError, match="unknown configuration operation"):
         validate_proposed_op("no_such_op", {"x": 1})
 
 

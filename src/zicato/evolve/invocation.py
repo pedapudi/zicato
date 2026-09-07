@@ -164,7 +164,15 @@ async def validated_invocation(
             if handle is not None:
                 invocation.telemetry = TelemetryEndpoints(handle.web_url, handle.grpc_target)
         if epoch_id is None:
+            from zicato.core.adapter_config import DriverImportContext  # noqa: PLC0415
+            from zicato.driver_imports import driver_import_scope  # noqa: PLC0415
+
             require_workspace_valid(writer.workspace_root, live_contract=True)
+            invocation._imports.enter_context(
+                driver_import_scope(
+                    DriverImportContext.from_config(workspace_config, writer.workspace_root)
+                )
+            )
         else:
             invocation.select_epoch(epoch_id)
         yield invocation

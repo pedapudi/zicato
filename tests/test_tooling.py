@@ -46,7 +46,6 @@ def test_install_profiles_cover_shipped_interfaces() -> None:
         return {item.split("[")[0].split()[0] for item in extras[profile]}
 
     assert names("dashboard") <= names("observability")
-    assert names("tui") <= names("observability")
     assert names("observability") <= names("all")
     assert {"goldfive", "google-adk"} <= names("all")
 

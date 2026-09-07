@@ -12,6 +12,7 @@ The freshness contract is spelled out in ``docs/design/PUBLICATION.md``.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -28,7 +29,9 @@ from zicato.analyzer.report_sections import (
     render_statistical_integrity_section,
     render_title_block,
 )
+from zicato.core.mutation import MutationPoint
 from zicato.core.workspace import analysis_path
+from zicato.mutation.inventory import write_mutation_inventory
 
 
 def _write(path: Path, payload: object) -> None:
@@ -60,7 +63,21 @@ def _base_epoch(tmp_path: Path, *, scoring: dict[str, object], closed: bool = Fa
         encoding="utf-8",
     )
     _write(edir / "scoring.json", scoring)
-    _write(edir / "mutations.json", [{"id": "m", "kind": "prompt_text", "file": "p.txt"}])
+    write_mutation_inventory(
+        edir / "mutations.json",
+        [
+            MutationPoint(
+                id="m",
+                kind="span",
+                file=Path("p.txt"),
+                source_root=Path("."),
+                line_start=1,
+                line_end=1,
+                content="",
+                content_hash=hashlib.sha256(b"").hexdigest(),
+            )
+        ],
+    )
     _write(
         edir / "generations" / "v0" / "experiment.json",
         {

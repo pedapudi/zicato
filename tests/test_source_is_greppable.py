@@ -38,12 +38,11 @@ def test_the_scan_finds_files_to_check() -> None:
     files = _scanned_files()
     assert len(files) > 50, f"the scanned-source walk found only {len(files)} files"
     names = {path.name for path in files}
-    # One from each corner of the tree: a view, the file that carried the
-    # byte, a node test, a stylesheet, and a top-level entry point.
+    # Include view, data, test, stylesheet, and entry-point files.
     assert {
-        "builder.js",
+        "traces.js",
         "board.js",
-        "builder.test.mjs",
+        "traces.test.mjs",
         "console.css",
         "console.js",
     } <= names
