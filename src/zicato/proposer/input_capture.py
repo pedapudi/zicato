@@ -40,10 +40,9 @@ Three invariants hold the writer together:
   continues, the posture every additive write takes — an optional record
   must not become load-bearing.
 
-Torn-tail tolerance lives on the read side: the newline is the commit, and
-:func:`read_proposer_inputs` skips an unparseable final line. An
-unparseable INTERIOR line raises, because under the append-only writer
-only the tail can be torn.
+The reader skips an undecodable final append only when it lacks a newline.
+A malformed newline-terminated row raises, including the last row. Complete
+JSON values must be objects; raw captured bytes remain available for inspection.
 """
 
 from __future__ import annotations
@@ -156,31 +155,34 @@ def read_proposer_inputs(workspace_root: Path, epoch_id: str) -> Iterator[dict[s
     """Yield one epoch's captured proposer inputs, oldest call first.
 
     An absent file yields nothing (no round has proposed yet, or every
-    capture degraded). An unparseable FINAL line is skipped — a crash
-    mid-append costs only the unfinished record. An unparseable interior
-    line raises :class:`ValueError`: under the append-only writer only the
-    tail can be torn, so interior corruption means something bypassed the
-    writer and must surface rather than silently dropping a call.
+    capture degraded). An undecodable final unterminated append is skipped.
+    Complete malformed rows raise :class:`ValueError`, including the last row;
+    they cannot be attributed to an interrupted append. Decoded objects retain
+    their fields, including extension fields, without rewriting the capture.
     """
     from zicato.core.workspace import proposer_inputs_path  # noqa: PLC0415
 
     path = proposer_inputs_path(workspace_root, epoch_id)
-    if not path.exists():
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
         return
-    raw = path.read_text(encoding="utf-8").splitlines()
-    lines = [(i, text) for i, text in enumerate(raw) if text.strip()]
-    for pos, (line_no, text) in enumerate(lines):
+    lines = raw.split(b"\n")
+    for pos, text in enumerate(lines):
+        if not text.strip():
+            continue
         try:
-            record = json.loads(text)
-        except json.JSONDecodeError:
-            if pos == len(lines) - 1:
-                continue  # torn tail — the newline is the commit
+            record = json.loads(text.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError):
+            if pos == len(lines) - 1 and not raw.endswith(b"\n"):
+                continue
             raise ValueError(
-                f"proposer input capture {path} line {line_no + 1} is corrupt "
-                "(not the tail — the append-only invariant was violated)"
+                f"proposer input capture {path} line {pos + 1} is corrupt "
+                "(a complete row violated the append-only invariant)"
             ) from None
-        if isinstance(record, dict):
-            yield record
+        if not isinstance(record, dict):
+            raise ValueError(f"proposer input capture {path} line {pos + 1} must be an object")
+        yield record
 
 
 __all__ = [

@@ -129,12 +129,11 @@ export async function render(host, ctx, params) {
       // The landing carries the PROPOSER panel too: the lens audits the two
       // instruments the loop runs on — the evaluation contract (board
       // reflection) and the thing that writes proposals against it.
-      const [list, prop, recs] = await Promise.all([
+      const [list, prop] = await Promise.all([
         D.reflections(epochId),
         D.proposerScorecard(epochId),
-        D.proposerRecommendations(),
       ]);
-      return { mode: 'landing', epochId, list, prop, recs };
+      return { mode: 'landing', epochId, list, prop };
     },
     digest: (d) => digestFor(d),
     build: (d) => buildFor(d, ctx),
@@ -160,10 +159,7 @@ function digestFor(d) {
       rateKey(c.promote_rate), rateKey(c.validation_failure_rate),
       rateKey(c.screen_veto_rate), (c.margins || {}).achieved_median,
     ]);
-    const pending = (((d.recs || {}).pending) || []).map((r) => [
-      r.finding_id, r.severity, r.title, r.remedy_kind, r.remedy_path, r.remedy_sha256,
-    ]);
-    return JSON.stringify({ m: 'landing', e: d.epochId, items, trend, pending, unreadable: (d.recs || {}).unreadable });
+    return JSON.stringify({ m: 'landing', e: d.epochId, items, trend });
   }
   if (d.mode === 'bill') {
     const s = d.summary || {};
@@ -270,7 +266,7 @@ function buildLanding(d, ctx) {
 }
 
 // ====================================================================
-// PROPOSER PANEL — the scorecard trend + the pending recommendations.
+// Proposal quality by epoch.
 //
 // The lens's second instrument: board reflection audits the evaluation
 // contract, this audits the thing that writes proposals against it. Same
@@ -282,7 +278,6 @@ function buildLanding(d, ctx) {
 function buildProposerPanel(d) {
   const nodes = [];
   const trend = ((d.prop || {}).epochs) || [];
-  const pending = ((d.recs || {}).pending) || [];
 
   if (!trend.length) {
     nodes.push(section('Proposer scorecard', el('div', { class: 'dn-panel' }, [
@@ -318,52 +313,6 @@ function buildProposerPanel(d) {
     ])));
   }
 
-  if (d.recs && d.recs.unreadable) {
-    nodes.push(section('Proposer recommendations', el('div', { class: 'dn-panel' }, [empty(d.recs.unreadable)])));
-    return nodes;
-  }
-  if (!pending.length) {
-    nodes.push(section('Proposer recommendations', el('div', { class: 'dn-panel' }, [
-      empty('No pending recommendations.'),
-      el('p', { class: 'dn-faint', style: 'font-size:12px;margin:6px 0 0;' }, [
-        'Draft some with ', el('code', { class: 'dn-instr-apply', text: 'zicato proposer reflect' }),
-        ' — recommend-only; applying one is a separate, explicit command and rolls the epoch.',
-      ]),
-    ])));
-    return nodes;
-  }
-
-  // Rendered in the lens's EXISTING findings-row grammar (dn-instr-frow) — a
-  // recommendation is a finding, and the console already has one way to say so.
-  const rows = pending.map((r) => {
-    const tone = severityTone(r.severity);
-    const row = el('div', { class: 'dn-instr-frow dn-instr-fs-' + tone });
-    row.appendChild(el('div', { class: 'dn-instr-frow-head' }, [
-      toneMark(tone),
-      el('span', { class: 'dn-instr-frow-verdict dn-instr-t-' + tone, text: String(r.severity || 'info') }),
-      el('span', { class: 'dn-instr-frow-title', text: r.title || r.finding_id || '' }),
-    ]));
-    if (r.detail) row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-why', text: String(r.detail) }));
-    // The five evidence slots, in the caption register the lens reserves for
-    // metadata — population + comparison here, safety below the apply line.
-    row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-ev' }, [
-      'population: ' + (r.population || '—') + ' · compared against: ' + (r.compared_against || '—'),
-    ]));
-    row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-op' }, [
-      'recommendation: ',
-      el('code', { class: 'dn-instr-apply', text: `${r.remedy_kind || 'edit'} ${r.remedy_path || ''}` }),
-      el('span', { class: 'dn-faint dn-instr-applynote' }, [
-        'apply with ',
-        el('code', { class: 'dn-instr-apply', text: `zicato proposer apply-recommendation ${r.finding_id || ''}` }),
-      ]),
-    ]));
-    if (r.remedy_safety) row.appendChild(caption(r.remedy_safety));
-    return row;
-  });
-  nodes.push(section('Proposer recommendations · pending', el('div', { class: 'dn-panel dn-instr-list-panel' }, [
-    el('p', { class: 'dn-lede', text: 'Drafted edits to the proposer dir, waiting on you. Nothing here has been applied and nothing applies itself — the epoch boundary is where applying one is free, because the epoch is rolling anyway.' }),
-    ...rows,
-  ])));
   return nodes;
 }
 
@@ -564,17 +513,14 @@ function practiceRow(c) {
   if (String(c.verdict).toLowerCase() === 'unmeasured' && c.unmeasured_reason) {
     row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-missing', text: 'missing input · ' + String(c.unmeasured_reason) }));
   }
-  // a proposed op — practice checks ride practices.json rather than findings.json, and
-  // `reflect apply` is finding-only (it takes a finding_id and reads
-  // findings.json), so there is no CLI apply target: render the op as copyable
-  // JSON with a faint "apply via the builder" note.
+  // Keep the proposed operation and its values available for manual review.
   const op = c.proposed_op;
   if (op && op.op) {
     row.appendChild(el('code', {
-      class: 'dn-instr-apply', title: 'copy the proposed op — apply it via the builder',
+      class: 'dn-instr-apply', title: 'copy the proposed op — review it before editing the workspace configuration',
       text: JSON.stringify({ op: op.op, args: op.args || {} }),
     }));
-    row.appendChild(el('span', { class: 'dn-faint dn-instr-applynote', text: 'apply via the builder (practice checks are not a reflect apply target)' }));
+    row.appendChild(el('span', { class: 'dn-faint dn-instr-applynote', text: 'review the proposed configuration edit' }));
   }
   return row;
 }
@@ -633,10 +579,7 @@ function findingRow(f, reflectionId, ctx, epochId) {
       'proposed op · ',
       el('span', { class: 'dn-mono', text: f.proposed_op.op + '(' + Object.keys(f.proposed_op.args || {}).join(', ') + ')' }),
     ]));
-    row.appendChild(el('code', {
-      class: 'dn-instr-apply', title: 'copy — apply this finding to a builder draft via the CLI',
-      text: `zicato reflect apply ${reflectionId} ${f.finding_id}`,
-    }));
+    row.appendChild(el('code', { class: 'dn-instr-apply', text: JSON.stringify(f.proposed_op.args || {}) }));
   }
   return row;
 }

@@ -1,90 +1,56 @@
-"""``validate_patches`` — the proposer's closed loop on its own patch set.
+"""Check a proposed patch set against its captured parent without evaluating tasks.
 
-Both existing proposer tiers *emit* a patch set and are done; neither has
-ever seen its own output checked. For a span replace of a short instruction
-that is fine. For a file-marker ``replace`` — where ``new_content`` is an
-entire post-edit module that must satisfy every constraint in
-``docs/design/MUTATION-SURFACE.md`` §6 — emitting the whole module in one
-shot and hoping it satisfies A1–A4 is exactly the workload a tool-using
-agent exists to avoid. Without a validate step, a violation costs a full
-retry round-trip through the propose loop, re-sending the entire manifest.
+:func:`validate_patches` applies a draft patch set to a scratch copy of the
+parent snapshot and reports failures that the proposer can correct before
+submitting it. Checks cover patch structure, source constraints, declared
+static analysis, and loading the configured harness.
 
-This module closes that loop. :func:`validate_patches` applies a DRAFT
-patch set to a scratch copy of the parent snapshot and reports what broke,
-so the proposer drafts, validates, sees ``A4: dropped 'import re'``, fixes
-it, validates again, and only then answers. The bounded retry is then the
-rare fallback rather than the main loop.
+Source checks and loading
+-------------------------
+Patch structure and application must succeed before static analysis or the
+load probe runs. Static-analysis findings and load failures are then
+reported together.
 
-The governing principle
------------------------
-**The proposer may check its patch by any means that consumes no board
-data and produces no scores; it may never execute board entries.**
+1. **Structure and application.** Validate the patch array, mutation ids,
+   operations, payloads, numeric ranges, and enum values. The captured
+   mutation policy verifies the parent snapshot and rejects forbidden
+   edits. Apply accepted patches to a scratch copy, then check Python
+   syntax, mutation-point preservation, required placeholders, and imports
+   through :func:`zicato.mutation.validator.validate_post_apply`.
+2. **Static analysis.** Run the workspace's declared checks on the parent
+   and scratch trees. Report findings introduced by the patch; existing
+   findings do not reject it. :data:`STATIC_CHECKS` owns the supported
+   checks and :func:`declared_static_checks` reads their declaration.
+3. **Load probe.** Resolve the configured harness against the scratch
+   snapshot in a subprocess with a timeout. Loading exercises the same
+   ``adapter.load`` call used before tournament execution.
 
-That line is normative and is written into ``docs/design/PROPOSER.md``.
-Everything here is static: the scratch tree is a copy of the parent
-snapshot, the checks read source, and the tier-3 probe resolves the harness
-entry point without invoking it. If the proposer could test against a slice
-it chose it would be grading its own work — the overfitting failure the
-tournament exists to prevent — so no tier here touches the board, the
-scoring weights, or the judges.
+Evaluation isolation
+--------------------
+The proposer may inspect source and load a harness, but must not consume
+board data, produce scores, or execute board entries. This module's import
+closure excludes :mod:`zicato.board`, :mod:`zicato.adapters`,
+:mod:`zicato.adapter_factory`, :mod:`zicato._tournament_worker`,
+:mod:`zicato.emulator`, and :mod:`zicato.judge_runtime`. The import contract
+and the transitive closure test in ``tests/test_proposer_validate.py``
+enforce that restriction.
 
-The claim is enforced STRUCTURALLY rather than by inspection: this module's import
-closure excludes the whole capability surface — :mod:`zicato.board` (where
-entry text is loaded), :mod:`zicato.adapters` /
-:mod:`zicato.adapter_factory` / :mod:`zicato._tournament_worker` (how a
-harness is loaded and run), and :mod:`zicato.emulator` /
-:mod:`zicato.judge_runtime` (how an entry is judged). It is pinned by an
-import-linter contract in ``pyproject.toml`` and, at runtime, by a
-transitive import-closure test in ``tests/test_proposer_validate.py``.
+The load probe runs :mod:`zicato.proposer._load_probe` as a subprocess so
+this module does not import the adapter factory. The active context comes
+from :mod:`zicato.proposer.tool_context`; importing the broader proposer
+read module would also import the board loader.
 
-That is also why the tier-3 probe lives in its own
-:mod:`zicato.proposer._load_probe` module and is reached by SPAWNING a
-subprocess rather than by importing the adapter factory here. It is why the
-context plumbing this module needs lives in
-:mod:`zicato.proposer.tool_context`: importing
-:mod:`zicato.proposer.tools` for it would drag the analyzer, and through it
-the board loader, into the closure.
-
-:mod:`zicato.scoring` and :mod:`zicato.tournament` are not in that set, and
-that is intended: every module in the repo reaches them through
-``core.types -> core.scoring_config``, which imports them for TYPE
-definitions. That edge is a type-model artifact rather than a capability.
-
-The three tiers
----------------
-Each tier runs only if the previous one passed — there is nothing to lint
-in a tree that would not apply.
-
-1. **Structure + apply (always on).** The shape pass over the ``patches``
-   array (:data:`~zicato.proposer.structured.PATCHES_JSON_SCHEMA`), the
-   cross-check pass (:func:`~zicato.proposer.structured.parse_patch_list` —
-   mutation-id resolution, op/payload discrimination, ``min``/``max`` and
-   enum domains), the pre-image guard (below), the
-   pre-apply surface check
-   (:func:`zicato.mutation.validator.validate_patches`), the applier's own
-   all-or-nothing apply into the scratch tree, and A1–A4
-   (:func:`zicato.mutation.validator.validate_post_apply`).
-2. **Static analysis (opt-in, contract-declared).** The workspace's
-   declared linter / type-checker set, run over the scratch tree — see
-   :data:`STATIC_CHECKS` and :func:`declared_static_checks`. Reported as a
-   DELTA against the same checks run on the parent tree, so a patch is
-   never blamed for the tree's pre-existing lint debt.
-3. **Load probe (on whenever the workspace has a config to resolve an
-   adapter from).** ``adapter.load`` against the scratch snapshot in a
-   subprocess with a timeout — the same call the tournament makes before
-   any entry executes, one expensive round earlier.
-
-The parent binding
-------------------
-The captured mutation policy checks the complete parent source identity and
-its mutation snapshot before application. A proposal cannot use a stale
-snapshot even when the changed parent file is outside its own patch. The
+Parent source identity
+----------------------
+The captured mutation policy checks the complete parent source identity
+and mutation snapshot before application. A proposal cannot use a stale
+snapshot even when a changed parent file lies outside its own patch. The
 policy also rejects forbidden targets and forbidden nested regions changed
-by an allowed whole-file replacement. These checks share the policy used by
-the episode verifier and the generation application guards.
+by an allowed whole-file replacement. Episode verification and generation
+application use the same policy.
 
-The proposer supplies no hashes or additional patch fields. The binding is
-computed from source and the frozen mutation snapshot held by the host.
+The host computes this identity from source and the frozen mutation
+snapshot. The proposer supplies no hashes or additional patch fields.
 """
 
 from __future__ import annotations
@@ -120,12 +86,12 @@ from zicato.workspace.config_io import read_workspace_config, workspace_is_initi
 #: dir, which the OS temp cleaner collects.
 SCRATCH_PREFIX = "ztw-pvalidate-"
 
-#: Per-check wall-clock ceiling for a tier-2 static check, in seconds. A
+#: Per-check wall-clock ceiling for a declared static check, in seconds. A
 #: linter that has not answered in two minutes on one snapshot is wedged;
 #: the check is reported as timed out rather than hanging the proposer.
 STATIC_CHECK_TIMEOUT_SECONDS = 120.0
 
-#: Wall-clock ceiling for the tier-3 load probe, in seconds. Importing a
+#: Wall-clock ceiling for the harness load probe, in seconds. Importing a
 #: harness entry point is fast; a probe that exceeds this is reported as a
 #: timeout, which is itself a finding worth surfacing (an import that hangs
 #: would hang every tournament run too).
@@ -152,7 +118,7 @@ def _argv_compileall(root: Path) -> list[str]:
     return [sys.executable, "-m", "compileall", "-q", str(root)]
 
 
-#: The CLOSED registry of tier-2 static checks a workspace may declare, by
+#: The closed registry of static checks a workspace may declare, by
 #: name. A closed registry — rather than an operator-supplied argv — is
 #: deliberate: the declared set is folded into the contract hash, and a
 #: hashed *name* is a stable, reviewable identity while a hashed command
@@ -172,7 +138,7 @@ STATIC_CHECKS: Mapping[str, Any] = {
 def declared_static_checks(
     workspace_root: Path, *, workspace_config: Mapping[str, Any] | None = None
 ) -> tuple[str, ...]:
-    """Return the workspace's declared tier-2 static-check names, in order.
+    """Return the workspace's declared static-check names, in order.
 
     Read from ``{workspace_root}/config.json`` at
     ``contract.proposer_static_checks`` — the same ``contract`` block that
@@ -186,12 +152,10 @@ def declared_static_checks(
     A supplied workspace_config is authoritative. This keeps contract capture
     and validation independent of subsequent live config edits.
 
-    Unknown names are dropped (a typo must not silently mean "no checks"
-    for a check the operator believes is running — it is reported by
-    :func:`run_static_checks` as an explicit finding instead). An absent
-    key, an unreadable config, or a malformed value all yield ``()``, which
-    omits tier 2 entirely and leaves the contract canon byte-identical to a
-    workspace that never heard of this feature.
+    Nonempty string names are retained in declaration order.
+    :func:`run_static_checks` reports unknown names as notes. An absent
+    key, an unreadable config, or a malformed value yields ``()``, so no
+    static checks run and the declaration contributes no contract input.
     """
     if workspace_config is None:
         try:
@@ -296,12 +260,9 @@ def _run_check(name: str, root: Path) -> tuple[bool, list[str]]:
     return True, [ln for ln in combined.splitlines() if ln.strip()]
 
 
-#: What a tier returns: ``(errors, notes)``. ERRORS are the proposer's to
-#: fix and set ``ok`` to ``False``; NOTES describe something that stopped
-#: the check from running (a checker not installed, a workspace with no
-#: adapter) and are reported without rejecting the patch. Keeping them
-#: apart is load-bearing: a validator that failed a well-formed patch
-#: because a dev tool was missing would teach the proposer to distrust it.
+#: Validation returns ``(errors, notes)``. Errors reject the patch; notes
+#: describe unavailable checks without rejecting it. The proposer can
+#: correct source errors but cannot supply missing workspace dependencies.
 TierResult = tuple[list[str], list[str]]
 
 
@@ -315,9 +276,8 @@ def run_static_checks(
     Each named check runs over ``parent_root`` (the unpatched snapshot) and
     over ``scratch_root`` (the patched one); only findings present in the
     second and absent from the first — compared through
-    :func:`_normalize_finding` — are errors. That delta is what makes tier
-    2 usable at all: real trees carry lint debt, and a validator that
-    blamed a patch for the tree it landed in would fail every draft.
+    :func:`_normalize_finding` — are errors. Existing findings in the
+    parent tree do not count against the proposed patch.
 
     A name not in :data:`STATIC_CHECKS`, and a declared check whose tool is
     absent or which timed out, are NOTES: the operator must learn that
@@ -451,11 +411,11 @@ def _validate_against_context(
     raw_patches: Sequence[Mapping[str, Any]],
     ctx: ProposerToolContext,
 ) -> str:
-    """The tiered validation proper, once the argument has been parsed."""
+    """Validate parsed patches against the active proposal context."""
     mutations_by_id = {mp.id: mp for mp in ctx.mutations}
     tiers: dict[str, Any] = {}
 
-    # --- Tier 1a: shape + cross-check + pre-image, all before any I/O. ---
+    # Validate patch structure and captured parent identity before application.
     structure_errors: list[str] = []
     patches: list[Patch] = []
     try:
@@ -485,7 +445,7 @@ def _validate_against_context(
         return _report(structure_errors, tiers)
     assert policy is not None
 
-    # --- Tier 1b: apply into a scratch copy, then A1-A4. ---
+    # Apply to a scratch copy and verify source constraints.
     from zicato.mutation.applier import apply_patches  # noqa: PLC0415
     from zicato.mutation.validator import validate_post_apply  # noqa: PLC0415
 
@@ -513,7 +473,7 @@ def _validate_against_context(
         if apply_errors:
             return _report(apply_errors, tiers)
 
-        # --- Tier 2: the contract-declared static-check set. ---
+        # Compare declared static checks against the unpatched source.
         names = (
             declared_static_checks(ctx.workspace_root)
             if ctx.static_checks is None
@@ -536,7 +496,7 @@ def _validate_against_context(
                 "notes": static_notes,
             }
 
-        # --- Tier 3: the sandboxed adapter.load probe. ---
+        # Load the configured harness in a bounded subprocess.
         probe_errors, probe_notes = run_load_probe(
             ctx.workspace_root,
             scratch_root,
@@ -565,9 +525,9 @@ def validate_patches(patches_json: str) -> str:
 
     The report is ``{"ok": bool, "errors": [...], "tiers": {...}}``.
     ``errors`` is the flat list to act on; ``tiers`` says which stage each
-    finding came from and which stages ran. Stages run in order and stop at
-    the first that fails, because there is nothing to lint in a tree that
-    would not apply:
+    finding came from and which stages ran. Structure and application
+    failures stop validation. Static checks and the load probe both run
+    after successful application:
 
     1. **structure** — schema shape, mutation-id resolution, op/payload
        discrimination, numeric range and enum domain, and the pre-image
@@ -575,7 +535,7 @@ def validate_patches(patches_json: str) -> str:
        given was enumerated has been rewritten under you, so re-read it
        and re-draft before patching it.
     2. **apply** — the patch set is applied all-or-nothing to a scratch
-       copy of the parent snapshot, then checked against A1–A4: every
+       copy of the parent snapshot, then checked for source integrity: every
        touched ``.py`` file still parses, every patched ``mutation_id``
        still resolves, declared ``required_placeholders`` survive, and the
        post-apply top-level import set is a superset of the pre-apply one.

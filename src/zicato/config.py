@@ -68,11 +68,22 @@ ENVIRONMENT_BOUNDARIES = (
     ),
     EnvironmentBoundary(
         "zicato/models_config.py",
-        ("RoleSpec.to_public_dict", "build_adk_model"),
-        ("<models.engines.<name>.api_key_env>",),
+        (
+            "RoleSpec.to_public_dict",
+            "build_adk_model",
+            "_capture_native_transport",
+            "_build_captured_native_model",
+        ),
+        (
+            "<models.engines.<name>.api_key_env>",
+            "<native client backend, project, location, and endpoint selection>",
+            "<native client credential environment and file references>",
+        ),
         "secrets-boundary",
-        "Read a named credential variable for model construction or availability reporting. "
-        "Availability reports contain a boolean, never the credential.",
+        "Capture the native client's resolved backend, project, location, endpoint, and "
+        "credential reference. Workers reconstruct that connection from captured settings. "
+        "Resolve declared credentials for model construction or availability reporting; "
+        "availability reports contain a boolean, never the credential.",
     ),
     EnvironmentBoundary(
         "zicato/integrations/goldfive.py",
@@ -106,13 +117,6 @@ ENVIRONMENT_BOUNDARIES = (
         ("XDG_RUNTIME_DIR",),
         "operating-system",
         "Locate the operating system's per-user runtime directory for worker permits.",
-    ),
-    EnvironmentBoundary(
-        "zicato/tui/app.py",
-        ("degrade_to_ascii",),
-        ("LC_ALL", "LANG"),
-        "operating-system",
-        "Read the terminal locale to select characters the terminal can display.",
     ),
 )
 

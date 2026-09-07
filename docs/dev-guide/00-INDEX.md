@@ -81,7 +81,7 @@ chapter 01.
 | 07 | `07-runtime-and-durability.md` | CQRS persistence, atomic writes, the git generation store, GC, crash-resume, the control protocol, RoundLog | you touch state files, storage, resume, or the round log |
 | 08 | `08-supervisor.md` | the Rust watchdog/notary — heartbeat, reaping, the hash-chained ledger, diff-containment, the read-only index | you change the supervisor or a state file it reads |
 | 09 | `09-dashboard-and-query.md` | `zicato/query` (lib) vs `zicato/dashboard` (driver), **server-authority**, **digest gating**, the add-a-panel recipe | you change a reader, an endpoint, or a view |
-| 10 | `10-builder-cli-library.md` | the builder contract-IDE, the CLI + flag→invocation overlay, the library facade + import contracts | you change the builder, add a CLI flag, or extend the public API |
+| 10 | `10-cli-and-configuration.md` | contract preparation and publication, CLI settings, the library facade and import contracts | you change contract editing, add a CLI flag, or extend the public API |
 | 11 | `11-testing.md` | the suites, the two oracles, the parity gates, the import contracts, **complete validation** | before merge; when you add a test |
 | 12 | `12-bug-casebook.md` | the twelve shipped bugs as teaching cases + the meta-lessons | before touching any of the six bug-prone surfaces |
 | 13 | `13-recipes.md` | the cookbook — fourteen self-contained, copy-precise recipes | you are about to make a change (find yours first) |
@@ -110,7 +110,7 @@ citing section states the failure mode.
 | **D** | `07-runtime-and-durability.md` | persistence and crash-safety: files canonical and the index derived, best-effort index writes, atomic record writes, torn-tail tolerance for append-only logs, transactional derivation, known-shape ephemeral checkouts, prune-trees-never-records, outcome-before-journal-and-lineage, pid-plus-start-time identity, one writer per event log, best-effort round-log emission, refuse-a-newer-record-format |
 | **S** | `08-supervisor.md` | the supervisor's out-of-band enforcement: out-of-band supervision, never-kill-the-orchestrator, vetted pid signalling, clamped deadlines, confirmed death before reaping, path-confined snapshot collection, a ledger that records without gating, a read-only version-pinned index, the sole worker signaller, read-only fail-open integrity checks, two loops with a fixed trigger priority, a live surface that never blocks or leaks, no cached state across ticks, an operational rather than analytical HTTP surface |
 | **DQ** | `09-dashboard-and-query.md` | the dashboard and query doctrine: server-computes-client-renders, one spelling per wire field, every reader is best-effort, the query layer is library code, change-signals carry no content, a no-op heartbeat rebuilds zero DOM, verdicts are honest about the noise floor, null-degrade under the Rust supervisor, controls gate on writability, the champion is the reigning spine end, a payload-shape change is a clean break, validate an id before it touches the workspace, every JSON GET has a declared contract, lineage owns topology, composite readers share walks |
-| **L** | `10-builder-cli-library.md` | the builder and library boundary: one mutation surface, full coverage for a new knob, an honest cost meter with one owner, recommend-only, the builder never rolls the epoch, explicit invocation settings, a lazy pure facade, the library never imports a driver |
+| **L** | `10-cli-and-configuration.md` | contract and library boundaries: typed edits, strict admission, shared cost estimation, recoverable publication, explicit invocation settings, a lazy facade, and driver-independent library code |
 | **V** | `11-testing.md` | the verification discipline: the full suite is the default, a regression test must fail with the fix stashed, never weaken an assertion, pin a knob off and carry the adversarial countermeasure, a worker resolves callables from a dotted path, fixtures clear global state on both sides, the reaper selects by workspace provenance, parity gates stay green on unchanged behaviour, the import contracts are lint, the exit code is the node signal |
 
 > ⚠️ **TRAP** — `05-proposer.md` also cites the process-exemplar redaction rules
@@ -179,5 +179,5 @@ Cross-cutting recipes also live in their owning chapters: **add a contract knob*
 (`06 §recipes`), **add a proposer tool** / **add a prompt-context channel**
 (`05 §recipes`), **add a runtime state field** / **add a RoundLog event**
 (`07 §recipes`), **add a control route** (`08 §recipe`), **add a reader + endpoint
-+ panel** / **change a payload shape** (`09 §recipes`), **add a builder op** / **add
++ panel** / **change a payload shape** (`09 §recipes`), **add a contract operation** / **add
 a CLI flag** (`10 §recipes`).

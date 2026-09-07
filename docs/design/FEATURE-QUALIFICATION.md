@@ -101,11 +101,11 @@ hash representation and does not start another epoch. An actual change to
 evaluation behavior follows the existing epoch change rule. Historical readers
 preserve enabled behavior and verify the original hash without rewriting stored
 files. The move removes the `experiment_memory` container, which held only one
-field, and its separate builder operation.
+field.
 
 ## Namespace and graduation policy
 
-The Experimental editor group owns the optional controls in the inventory.
+The `experimental` configuration object owns the optional controls in the inventory.
 Recommended configuration leaves that group at its defaults. Screening and
 ordinary safety policy retain their configured behavior.
 

@@ -405,13 +405,13 @@ def _resolve_data_dir(workspace_root: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Per-workspace persistent server (standalone dashboard / builder)
+# Per-workspace persistent server (standalone dashboard)
 # ---------------------------------------------------------------------------
 #
 # A live ``zicato evolve`` auto-launches a harmonograf server that dies
 # with the run. The persisted sessions, however, live on in
 # ``<workspace>/.harmonograf/harmonograf.db``. A standalone ``zicato
-# dashboard`` / ``zicato dashboard --view builder`` wants to surface those persisted
+# dashboard`` displays those persisted
 # sessions for a post-mortem execution view — but the evolve-launched
 # server is gone, so there is no URL to deep-link into.
 #
@@ -425,8 +425,7 @@ def _resolve_data_dir(workspace_root: Path) -> Path:
 # sqlite double-open resolution
 # -----------------------------
 # The ``server.json`` record is the single-server-per-workspace contract.
-# Every launcher — the standalone dashboard, the standalone builder, AND
-# the evolve auto-launch path — routes through this helper, which:
+# Both the standalone dashboard and the evaluation loop use this helper, which:
 #   1. reads ``server.json``; if it names a LIVE server (pid alive AND
 #      the web port answers a TCP connect), reuses it verbatim; else
 #   2. launches a fresh server bound to ``harmonograf.db`` and rewrites
@@ -679,7 +678,7 @@ def ensure_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHa
     """Reuse-or-launch ONE persistent harmonograf server for a workspace.
 
     Bound to the workspace's existing ``.harmonograf/harmonograf.db`` so a
-    standalone dashboard / builder can deep-link into the persisted
+    standalone dashboard can deep-link into the persisted
     sessions even when no live evolve is running.
 
     Resolution:

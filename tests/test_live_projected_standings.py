@@ -64,7 +64,7 @@ def test_projected_round_trips_through_to_from_dict() -> None:
 
 
 def test_old_payload_without_projected_loads_empty() -> None:
-    # an active_tournament.json written before this feature has no `projected`
+    # an Snapshot event envelope written before this feature has no `projected`
     # key — it must load with an EMPTY projected map (additive, default-empty).
     old = ActiveTournament.from_dict(
         {

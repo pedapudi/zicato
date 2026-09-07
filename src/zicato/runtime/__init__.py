@@ -52,7 +52,6 @@ from zicato.runtime.lock import (
 from zicato.runtime.paths import (
     active_run_path,
     active_runs_dir,
-    active_tournament_path,
     control_command_path,
     control_dir,
     control_log_dir,
@@ -90,7 +89,6 @@ __all__ = [
     "heartbeat_path",
     "active_runs_dir",
     "active_run_path",
-    "active_tournament_path",
     "control_dir",
     "control_log_dir",
     "control_command_path",

@@ -224,21 +224,16 @@ export function resolveNonGauntletSt(opts) {
   const structure = String(o.structure || 'gauntlet');
   const liveRaw = (o.liveRaw && typeof o.liveRaw === 'object') ? o.liveRaw : null;
 
-  // (1) LIVE-FIRST — a run in flight for THIS epoch governs the topology so the
-  // ladder fills in rung/round-by-round and in-flight competitors are shown
-  // racing, never prematurely crowned/rejected. The progressive builders
-  // accumulate completed rounds + fill the active one board-by-board; a plain
-  // normalize is the fallback when the structure is not one they handle.
+  // Use this epoch's live topology while a run is in flight. The shared model
+  // preserves completed rounds and overlays active board progress; normalize
+  // payloads without a supported live format.
   let liveSt = null;
   if (liveRaw && (String(liveRaw.structure) === structure || isNonGauntlet(String(liveRaw.structure)))) {
-    const ls = String(liveRaw.structure);
     const epochGens = (Array.isArray(liveRaw.competitors) ? liveRaw.competitors : [])
       .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
-    const args = { at: liveRaw, heartbeat: o.heartbeat, activeRuns: o.activeRuns, epochGens: epochGens.length ? epochGens : null };
-    if (ls === 'racing') liveSt = buildLiveRacingModel(args) || normalizeStructure(liveRaw, true);
-    else if (ls === 'swiss') liveSt = buildLiveSwissModel(args) || normalizeStructure(liveRaw, true);
-    else if (ls === 'single_elim' || ls === 'double_elim') liveSt = buildLiveElimModel(args) || normalizeStructure(liveRaw, true);
-    else liveSt = normalizeStructure(liveRaw, true);
+    liveSt = (isNonGauntlet(liveRaw.structure)
+      ? buildLiveModel(liveRaw, o.heartbeat, o.activeRuns, epochGens.length ? epochGens : null)
+      : null) || normalizeStructure(liveRaw, true);
   }
   // ADOPT the live model when it is flagged live OR when it carries an IN-FLIGHT,
   // STREAMING racing rung (the authoritative streaming-rung signal even when the
@@ -942,9 +937,8 @@ function inflightByGen(activeRuns, epochGens) {
 // `live_progress` map) so the ladder/bracket/funnel fills board-by-board
 // without flashing. A finished match is carried through untouched.
 //
-// Returns null only when the payload is not the matching structure OR carries
-// NEITHER competitors NOR rounds yet — the caller then shows the honest
-// "starting" placeholder.
+// A missing payload or one without competitors and rounds yields null;
+// callers retain their starting-state fallback.
 // Merge a reconstructed lane (computed from active-runs + the projected map)
 // with the strategy's AUTHORITATIVE published lane (the racing strategy): the
 // published projection / scalar / board-progress win when present; the
@@ -1339,22 +1333,6 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     phase: at.phase != null ? at.phase : (heartbeat && heartbeat.phase) || 'running',
     source: 'live',
   }, true);
-}
-
-// Structure-typed wrappers over the ONE unified live-model builder. Each returns
-// null when `at` is not its structure, so the caller can dispatch by shape.
-export function buildLiveRacingModel({ at, heartbeat, activeRuns, epochGens } = {}) {
-  if (!at || typeof at !== 'object' || String(at.structure) !== 'racing') return null;
-  return buildLiveModel(at, heartbeat, activeRuns, epochGens);
-}
-export function buildLiveSwissModel({ at, heartbeat, activeRuns, epochGens } = {}) {
-  if (!at || typeof at !== 'object' || String(at.structure) !== 'swiss') return null;
-  return buildLiveModel(at, heartbeat, activeRuns, epochGens);
-}
-export function buildLiveElimModel({ at, heartbeat, activeRuns, epochGens } = {}) {
-  if (!at || typeof at !== 'object'
-    || (String(at.structure) !== 'single_elim' && String(at.structure) !== 'double_elim')) return null;
-  return buildLiveModel(at, heartbeat, activeRuns, epochGens);
 }
 
 // ── the MATCH-GROUPED LIVE BLOCKS — one block per IN-FLIGHT match ────

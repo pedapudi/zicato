@@ -177,9 +177,12 @@ def test_contract_hash_of_a_disable_drift_board_without_goldfive(tmp_path: Path)
             f"""
             import sys
             from pathlib import Path
+            from zicato.board.jsonl import load_board_rows
             from zicato.epoch.contract import _canon_board_meta
 
-            canon = _canon_board_meta(Path({str(board)!r}))
+            rows = load_board_rows(Path({str(board)!r}))
+            assert rows is not None
+            canon = _canon_board_meta(rows)
             assert '"disable_drift": ["agent_refusal", "tool_error"]' in canon, canon
             assert "goldfive" not in sys.modules, "goldfive leaked into sys.modules"
             print("contract-canon-ok")
@@ -257,6 +260,7 @@ def test_generic_tournament_runs_without_goldfive() -> None:
             from pathlib import Path
 
             import zicato.tournament.runner as runner
+            from tests._runtime_builders import prepare_tournament_epoch
             from zicato.core import (
                 BoardEntry, DriftCount, ExpectationResult, Generation, LossProfile,
                 RuntimeConfig, ScoringWeights,
@@ -275,7 +279,7 @@ def test_generic_tournament_runs_without_goldfive() -> None:
                     run_id=f"{generation.id}-{entry.id}",
                     entry_id=entry.id,
                     generation_id=generation.id,
-                    epoch_id="e0",
+                    epoch_id=generation.epoch_id,
                     drift_counts=(DriftCount("off_topic", "info", 0),),
                     plan_revisions=0,
                     task_failure_ratio=0.0,
@@ -288,30 +292,34 @@ def test_generic_tournament_runs_without_goldfive() -> None:
 
             with tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
+                board = [BoardEntry(
+                    id="e1", kind="single_turn", wall_clock_budget_seconds=10,
+                    input="hello",
+                )]
+                weights = ScoringWeights(telemetry_dialect="transcript")
+                config = RuntimeConfig(
+                    instance_id="test",
+                    workspace_root=root,
+                    target_call_llm=call_llm,
+                    evaluation_call_llm=evaluation_call_llm,
+                )
+                epoch_id = prepare_tournament_epoch(root, config, board, weights)
                 runner._run_single = run_single
                 result = asyncio.run(runner.run_tournament(
                     adapter=object(),
                     parent_gen=Generation(
-                        id="v0", epoch_id="e0", parent_id=None,
+                        id="v0", epoch_id=epoch_id, parent_id=None,
                         snapshot_root=root / "v0", created_at="2024-01-01T00:00:00Z",
                     ),
                     child_gen=Generation(
-                        id="v1", epoch_id="e0", parent_id="v0",
+                        id="v1", epoch_id=epoch_id, parent_id="v0",
                         snapshot_root=root / "v1", created_at="2024-01-01T00:00:00Z",
                     ),
-                    board=[BoardEntry(
-                        id="e1", kind="single_turn", wall_clock_budget_seconds=10,
-                        input="hello",
-                    )],
-                    weights=ScoringWeights(telemetry_dialect="transcript"),
-                    config=RuntimeConfig(
-                        instance_id="test",
-                        workspace_root=root,
-                        target_call_llm=call_llm,
-                        evaluation_call_llm=evaluation_call_llm,
-                    ),
+                    board=board,
+                    weights=weights,
+                    config=config,
                     workspace_root=root,
-                    epoch_id="e0",
+                    epoch_id=epoch_id,
                 ))
                 assert result.outcome.decision == "promoted", result.outcome
                 assert "goldfive" not in sys.modules

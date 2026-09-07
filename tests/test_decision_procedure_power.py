@@ -50,6 +50,11 @@ from tests._decision_report import (
     DecisionTrial,
     implementation_digest,
 )
+from tests._runtime_builders import (
+    empty_evaluation_call,
+    empty_target_call,
+    prepare_tournament_epoch,
+)
 from zicato.board.jsonl import load_board
 from zicato.core import (
     BoardEntry,
@@ -67,6 +72,7 @@ from zicato.core.types import (
     TournamentStructure,
 )
 from zicato.core.workspace import run_dir
+from zicato.epoch.lifecycle import current_epoch_id
 from zicato.import_path import import_dotted_path
 from zicato.selection.driver import (
     EvidencePreGate,
@@ -165,10 +171,10 @@ def _predicate(spec: str) -> Any:
     return import_dotted_path(spec, label="board predicate")
 
 
-def _gen(gen_id: str) -> Generation:
+def _gen(gen_id: str, *, epoch_id: str = "e0") -> Generation:
     return Generation(
         id=gen_id,
-        epoch_id="e0",
+        epoch_id=epoch_id,
         parent_id=None,
         snapshot_root=Path(f"/nonexistent/{gen_id}"),
         created_at="2026-01-01T00:00:00Z",
@@ -176,20 +182,26 @@ def _gen(gen_id: str) -> Generation:
 
 
 def _config(workspace: Path, seed: int) -> RuntimeConfig:
-    async def harness_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def aux_call(system: str, user: str, model: str) -> str:
-        return ""
-
     return RuntimeConfig(
         instance_id="test",
         workspace_root=workspace,
-        target_call_llm=harness_call,
-        evaluation_call_llm=aux_call,
+        target_call_llm=empty_target_call,
+        evaluation_call_llm=empty_evaluation_call,
         seed=seed,
         parallelism=2,
     )
+
+
+def _prepared_epoch(workspace: Path, config: RuntimeConfig, weights: ScoringWeights) -> str:
+    return current_epoch_id(workspace) or prepare_tournament_epoch(
+        workspace, config, list(_board()), weights
+    )
+
+
+def _measured_epoch(workspace: Path) -> str:
+    epoch_id = current_epoch_id(workspace)
+    assert epoch_id is not None, "measurement paths require a prepared epoch"
+    return epoch_id
 
 
 class _NoisyWorld:
@@ -339,16 +351,18 @@ def _computed_matchup(
 
 def _naive_outcome(workspace: Path, seed: int, weights: ScoringWeights) -> Any:
     """One single-sample duel under the naive contract; returns the GateOutcome."""
+    config = _config(workspace, seed)
+    epoch_id = _prepared_epoch(workspace, config, weights)
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen("champion"),
-            right_gen=_gen("challenger"),
+            left_gen=_gen("champion", epoch_id=epoch_id),
+            right_gen=_gen("challenger", epoch_id=epoch_id),
             board=list(_board()),
             weights=weights,
-            config=_config(workspace, seed),
+            config=config,
             workspace_root=workspace,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
     return result.outcome
@@ -387,15 +401,16 @@ def _effective_evaluation(
             )
         assert workspace is not None, "scheduler conformance requires a workspace"
         config = _config(workspace, seed)
+        epoch_id = _prepared_epoch(workspace, config, weights)
         result = await run_matchup(
             adapter=object(),
-            left_gen=_gen(m.left.generation_id),
-            right_gen=_gen(m.right.generation_id),
+            left_gen=_gen(m.left.generation_id, epoch_id=epoch_id),
+            right_gen=_gen(m.right.generation_id, epoch_id=epoch_id),
             board=list(_board()),
             weights=weights,
             config=config,
             workspace_root=workspace,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             replicates=m.replicates,
             replicate_base=replicate_base,
             match_id=m.matchup_id,
@@ -439,31 +454,23 @@ def _aa_world() -> dict[str, tuple[str, ...]]:
     return {"champion": BASE_TOKENS, "challenger": BASE_TOKENS}
 
 
-@pytest.fixture(scope="module")
-def null_report() -> DecisionReport:
-    """Share the complete single-draw control within this module's worker."""
-    return _power_report(BASE_TOKENS, effective=False, seeds=tuple(range(AA_TRIALS)))
-
-
-def _measure_noise_floor(report: DecisionReport) -> tuple[float, float]:
-    deltas = [json.loads(trial.audit_json)["delta_scalar"] for trial in report.trials]
-    return statistics.pstdev(deltas), max(abs(d) for d in deltas)
-
-
 # ---------------------------------------------------------------------------
 # A/A null calibration
 # ---------------------------------------------------------------------------
 
 
-def test_aa_null_calibration_measures_the_noise_floor(null_report):
+def test_aa_null_calibration_measures_the_noise_floor():
     """A generation dueling ITSELF: the A/A delta spread IS the noise floor.
 
     Identical true trees under two generation ids draw independent noise
     (the seed includes the generation id), so the naive single-sample
-    delta_scalar is a pure noise variable. Its spread — recorded and
-    printed here — is the floor every later effect size is compared to.
+    delta_scalar is a pure noise variable. This test compares its spread
+    with the margin and planted effects so parallel workers compute the
+    calibration report once.
     """
-    floor_sd, max_abs = _measure_noise_floor(null_report)
+    report = _power_report(BASE_TOKENS, effective=False, seeds=tuple(range(AA_TRIALS)))
+    deltas = [json.loads(trial.audit_json)["delta_scalar"] for trial in report.trials]
+    floor_sd, max_abs = statistics.pstdev(deltas), max(abs(d) for d in deltas)
     print(
         f"\n[A/A null calibration] trials={AA_TRIALS} sigma={NOISE_SIGMA} "
         f"noise floor (sd of A/A delta_scalar) = {floor_sd:.4f}, "
@@ -476,6 +483,18 @@ def test_aa_null_calibration_measures_the_noise_floor(null_report):
     assert 0.4 <= floor_sd <= 1.0
     # Independent draws per side: at least one trial must land nonzero.
     assert max_abs > 0.0
+    margin_only = replace(NAIVE_WEIGHTS, pass_rate_monotonicity=False)
+    assert margin_only.promote_margin < floor_sd, "the premise: margin below the floor"
+    # The planted effects sit near their advertised multiples of the
+    # measured floor (loose bands: the floor itself is an estimate).
+    assert 0.3 <= DELTA_CASES["small"][1] / floor_sd <= 0.8
+    assert 0.7 <= DELTA_CASES["medium"][1] / floor_sd <= 1.5
+    assert 2.0 <= DELTA_CASES["large"][1] / floor_sd <= 5.0
+    for name, (_tokens, measured_delta) in DELTA_CASES.items():
+        print(
+            f"\n[effect calibration] case={name} measured-delta={measured_delta:.3f} "
+            f"(~{measured_delta / floor_sd:.2f}x floor {floor_sd:.3f})"
+        )
 
 
 def test_aa_effective_contract_false_promotion_rate_is_zero():
@@ -503,7 +522,7 @@ def test_aa_effective_contract_false_promotion_rate_is_zero():
 # ---------------------------------------------------------------------------
 
 
-def test_margin_below_noise_floor_without_evidence_gate_is_unsound(null_report):
+def test_margin_below_noise_floor_without_evidence_gate_is_unsound():
     """promote_margin < noise floor + no evidence gate ⇒ noise alone promotes.
 
     The unsound configuration: with the margin (0.01) far below the
@@ -513,9 +532,7 @@ def test_margin_below_noise_floor_without_evidence_gate_is_unsound(null_report):
     isolates the margin rule itself. The SAME trials under the evidence
     gate promote never: the complete seeded control measures the effect of confirmation.
     """
-    floor_sd, _ = _measure_noise_floor(null_report)
     margin_only = replace(NAIVE_WEIGHTS, pass_rate_monotonicity=False)
-    assert margin_only.promote_margin < floor_sd, "the premise: margin below the floor"
 
     margin_report = _power_report(
         BASE_TOKENS, effective=False, seeds=tuple(range(AA_TRIALS)), weights=margin_only
@@ -527,7 +544,7 @@ def test_margin_below_noise_floor_without_evidence_gate_is_unsound(null_report):
     gated_promotions = sum(trial.decision == "promoted" for trial in gated_report.trials)
     print(
         f"\n[margin-vs-noise] margin={margin_only.promote_margin} "
-        f"< floor={floor_sd:.4f}: unsound-config noise promotions="
+        "unsound-config noise promotions="
         f"{unsound_promotions}/{AA_TRIALS}, "
         f"evidence-gated promotions={gated_promotions}/{AA_EFFECTIVE_TRIALS}"
     )
@@ -612,7 +629,7 @@ def _power_report(
     )
 
 
-def test_power_at_planted_deltas(null_report):
+def test_power_at_planted_deltas():
     """The effective contract's power curve over 0.5x / 1x / 3x-floor effects.
 
     The planted true improvements land (in measured scalar units) at about
@@ -620,22 +637,15 @@ def test_power_at_planted_deltas(null_report):
     must promote the unmissable 3x effect in every seeded trial, and its
     power must be monotone in the effect size.
     """
-    floor_sd, _ = _measure_noise_floor(null_report)
     reports: dict[str, DecisionReport] = {}
     for name, (tokens, measured_delta) in DELTA_CASES.items():
         report = _power_report(tokens, effective=True)
         reports[name] = report
         print(
             f"\n[power/effective] case={name} measured-delta={measured_delta:.3f} "
-            f"(~{measured_delta / floor_sd:.2f}x floor {floor_sd:.3f}) "
             f"power={report.promotion_rate:.2f} over {POWER_TRIALS} trials"
         )
     rates = {name: report.promotion_rate for name, report in reports.items()}
-    # The planted effects really do sit near their advertised multiples of
-    # the measured floor (loose bands: the floor itself is an estimate).
-    assert 0.3 <= DELTA_CASES["small"][1] / floor_sd <= 0.8
-    assert 0.7 <= DELTA_CASES["medium"][1] / floor_sd <= 1.5
-    assert 2.0 <= DELTA_CASES["large"][1] / floor_sd <= 5.0
     # A 3x-floor effect is unmissable: promoted on every seeded trial.
     assert rates["large"] == 1.0
     # Power is monotone in the effect size.
@@ -679,16 +689,18 @@ def _seed_crowning_decision(
     promotions); under the A/A world the pre-gate must then hold it, and the
     audit trail it accumulates is the object under test.
     """
+    config = _config(workspace, seed)
+    epoch_id = _prepared_epoch(workspace, config, NAIVE_WEIGHTS)
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen("champion"),
-            right_gen=_gen("challenger"),
+            left_gen=_gen("champion", epoch_id=epoch_id),
+            right_gen=_gen("challenger", epoch_id=epoch_id),
             board=list(_board()),
             weights=NAIVE_WEIGHTS,
-            config=_config(workspace, seed),
+            config=config,
             workspace_root=workspace,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             match_id="crowning",
             fast=fast,
         )
@@ -719,10 +731,13 @@ def _confirm(
     fast_mode: bool,
     budget: int,
 ) -> tuple[Any, dict[str, Any] | None]:
+    config = _config(workspace, seed)
+    epoch_id = _prepared_epoch(workspace, config, NAIVE_WEIGHTS)
+
     async def _run() -> tuple[Any, dict[str, Any] | None]:
         generations = {
-            "champion": _gen("champion"),
-            "challenger": _gen("challenger"),
+            "champion": _gen("champion", epoch_id=epoch_id),
+            "challenger": _gen("challenger", epoch_id=epoch_id),
         }
 
         async def _run_reserved_matchup(
@@ -749,9 +764,9 @@ def _confirm(
                 right_gen=generations[right_id],
                 board=list(_board()),
                 weights=NAIVE_WEIGHTS,
-                config=_config(workspace, seed),
+                config=config,
                 workspace_root=workspace,
-                epoch_id="e0",
+                epoch_id=epoch_id,
                 replicate_base=replicate_base,
                 fast=fast_mode,
                 match_id=matchup.matchup_id,
@@ -824,7 +839,10 @@ def _measured_loss_path(
     workspace: Path, generation_id: str, entry_id: str, *, seed: int, index: int = 0
 ) -> Path:
     return measurement_artifact_path(
-        run_dir(workspace, "e0", generation_id, entry_id), "loss", index, base_seed=seed
+        run_dir(workspace, _measured_epoch(workspace), generation_id, entry_id),
+        "loss",
+        index,
+        base_seed=seed,
     )
 
 
@@ -892,12 +910,12 @@ def _write_snapshot(root: Path, tokens: tuple[str, ...]) -> None:
     )
 
 
-def _real_gen(tmp_path: Path, gen_id: str, tokens: tuple[str, ...]) -> Generation:
+def _real_gen(tmp_path: Path, gen_id: str, tokens: tuple[str, ...], *, epoch_id: str) -> Generation:
     snapshot = tmp_path / f"snap_{gen_id}"
     _write_snapshot(snapshot, tokens)
     return Generation(
         id=gen_id,
-        epoch_id="e0",
+        epoch_id=epoch_id,
         parent_id=None,
         snapshot_root=snapshot,
         created_at="2026-01-01T00:00:00Z",
@@ -938,18 +956,20 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
 
     def _duel(workspace: Path) -> Any:
         workspace.mkdir()
+        config = _worker_config(workspace, seed=seed)
+        epoch_id = _prepared_epoch(workspace, config, NAIVE_WEIGHTS)
 
         async def _bounded() -> Any:
             return await asyncio.wait_for(
                 run_matchup(
                     adapter=adapter,
-                    left_gen=_real_gen(workspace, "aa-left", BASE_TOKENS),
-                    right_gen=_real_gen(workspace, "aa-right", BASE_TOKENS),
+                    left_gen=_real_gen(workspace, "aa-left", BASE_TOKENS, epoch_id=epoch_id),
+                    right_gen=_real_gen(workspace, "aa-right", BASE_TOKENS, epoch_id=epoch_id),
                     board=list(_board()),
                     weights=NAIVE_WEIGHTS,
-                    config=_worker_config(workspace, seed=seed),
+                    config=config,
                     workspace_root=workspace,
-                    epoch_id="e0",
+                    epoch_id=epoch_id,
                     board_subset=subset,
                     replicates=2,
                     match_id="noisy-aa",
@@ -964,11 +984,12 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
         return result
 
     first = _duel(tmp_path / "ws1")
+    epoch_id = _measured_epoch(tmp_path / "ws1")
     second = _duel(tmp_path / "ws2")
 
     for generation_id in ("aa-left", "aa-right"):
         for entry_id in subset:
-            directory = run_dir(tmp_path / "ws1", "e0", generation_id, entry_id)
+            directory = run_dir(tmp_path / "ws1", epoch_id, generation_id, entry_id)
             r0, r1 = (
                 measurement_artifact_path(directory, "events", index, base_seed=seed)
                 for index in (0, 1)
@@ -1008,7 +1029,7 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
         for entry_id in subset:
             r0 = _resolve_cached_unit(
                 workspace_root=tmp_path / "ws1",
-                epoch_id="e0",
+                epoch_id=epoch_id,
                 generation_id=gen_id,
                 entry_id=entry_id,
                 replicate_index=0,
@@ -1016,7 +1037,7 @@ def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
             )
             r1 = _resolve_cached_unit(
                 workspace_root=tmp_path / "ws1",
-                epoch_id="e0",
+                epoch_id=epoch_id,
                 generation_id=gen_id,
                 entry_id=entry_id,
                 replicate_index=1,

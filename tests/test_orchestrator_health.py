@@ -28,9 +28,9 @@ import pytest
 
 from tests._orchestrator_harness import (
     bootstrap_workspace,
+    evaluation_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
     target_call_llm,
 )
@@ -44,10 +44,7 @@ from zicato.health.diagnostics import HealthFinding, LoopHealth
 def _report(*findings: HealthFinding, healthy: bool) -> LoopHealth:
     """A ``LoopHealth`` carrying ``findings``, as a real assessment returns one.
 
-    ``epoch_id`` and ``checked_at`` are placeholders: the persisted round
-    report is stamped with the round's own epoch id and assessment time by
-    ``_loop_health_to_json``, so the report's own values never reach an
-    assertion here.
+    The assessment fixture binds the selected epoch and retains a fixed timestamp.
     """
     return LoopHealth(
         epoch_id="pinned",
@@ -80,7 +77,9 @@ def _pin_health_assessment(
         **_kwargs: Any,
     ) -> LoopHealth:
         calls.append((losses_by_generation, experiments, board_entries, epoch_id))
-        return health
+        from dataclasses import replace
+
+        return replace(health, epoch_id=epoch_id)
 
     monkeypatch.setattr(diagnostics, "assess_loop_health", assess_loop_health)
 
@@ -105,7 +104,7 @@ def _run_one_round(
     )
     _pin_health_assessment(monkeypatch, health=health, calls=calls)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     return workspace, epoch_id, outcome
 
 
@@ -343,7 +342,7 @@ def test_a_detector_that_raises_costs_the_report_not_the_round(
     # assessment would have collected is lost with it.
     monkeypatch.setattr(diagnostics, "detect_degenerate_scoring", _raises)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "promoted"
     # No assessment completed → no summary, not critical, no report file.
@@ -449,7 +448,7 @@ def test_evolve_n_rounds_stops_on_consecutive_critical_health(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
             max_consecutive_rejections=99,  # isolate the health breaker
         )
     )
@@ -489,7 +488,7 @@ def test_evolve_n_rounds_opt_out_of_health_stop(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
             max_consecutive_rejections=99,
             stop_on_degenerate_health=False,
         )

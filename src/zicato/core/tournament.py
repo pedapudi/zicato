@@ -184,7 +184,7 @@ def experimental_structure_refusal(structure: str) -> str:
     """The one message every surface uses to refuse an experimental structure.
 
     Names the token, states its tier, and names the key that admits it, so
-    the contract loader, the builder, the CLI option, and the strategy
+    the contract loader, configuration edits, the CLI option, and the strategy
     registry refuse with the same wording.
     """
     return (

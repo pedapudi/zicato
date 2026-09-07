@@ -56,7 +56,10 @@ HealthConfig / ``health`` key      Default
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, replace
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from zicato.board.expectation_coverage import measure_expectation_coverage
@@ -64,7 +67,10 @@ from zicato.config import HealthConfig, load_config
 from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
 from zicato.core.runtime import PREFLIGHT_GATE_DEFAULT
 from zicato.core.types import BoardEntry, LossProfile
+from zicato.epoch._storage import RecordError
+from zicato.storage import atomic_write_text
 from zicato.util.iso_time import now_iso as _utcnow_iso
+from zicato.workspace import WorkspaceLayout
 
 # ---------------------------------------------------------------------------
 # Tunable thresholds
@@ -130,6 +136,39 @@ def _resolve_health_config(config: HealthConfig | None) -> HealthConfig:
 # ---------------------------------------------------------------------------
 
 
+def _report_object(raw: Any, name: str) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise RecordError(f"loop health {name} must be an object")
+    try:
+        result: dict[str, Any] = json.loads(json.dumps(raw, allow_nan=False))
+        return result
+    except (TypeError, ValueError) as exc:
+        raise RecordError(f"loop health {name} must contain JSON values") from exc
+
+
+def _report_string(raw: Any, name: str, *, empty: bool = False) -> str:
+    if not isinstance(raw, str) or (not empty and not raw):
+        raise RecordError(f"loop health {name} must be a string")
+    return raw
+
+
+def _report_timestamp(raw: Any, name: str) -> str:
+    text = _report_string(raw, name)
+    try:
+        if datetime.fromisoformat(text).tzinfo is None:
+            raise ValueError("timestamp has no timezone")
+    except ValueError as exc:
+        raise RecordError(f"loop health {name} must be an ISO timestamp with timezone") from exc
+    return text
+
+
+def _report_epoch(raw: Any) -> str:
+    epoch = _report_string(raw, "epoch_id")
+    if epoch in {".", ".."} or any(char in epoch for char in ("/", "\\", "\0")):
+        raise RecordError("loop health epoch_id must be one epoch coordinate")
+    return epoch
+
+
 @dataclass(frozen=True, slots=True)
 class HealthFinding:
     """One diagnostic observation about the evolve loop's health.
@@ -170,6 +209,39 @@ class HealthFinding:
     severity: str
     summary: str
     detail: dict[str, Any] = field(default_factory=dict)
+    _extensions: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    _detail_present: bool = field(default=True, repr=False, compare=False)
+
+    @classmethod
+    def from_json(cls, raw: Any) -> HealthFinding:
+        body = _report_object(raw, "finding")
+        code = _report_string(body.get("code"), "finding code")
+        severity = body.get("severity")
+        if severity not in ("info", "warning", "critical"):
+            raise RecordError("loop health finding severity must be info, warning, or critical")
+        summary = _report_string(body.get("summary"), "finding summary", empty=True)
+        detail = _report_object(body.get("detail", {}), "finding detail")
+        keys = {"code", "severity", "summary", "detail"}
+        return cls(
+            code,
+            severity,
+            summary,
+            detail,
+            {key: value for key, value in body.items() if key not in keys},
+            "detail" in body,
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        body = {
+            **self._extensions,
+            "code": self.code,
+            "severity": self.severity,
+            "summary": self.summary,
+        }
+        if self.detail or self._detail_present:
+            body["detail"] = self.detail
+        self.from_json(body)
+        return _report_object(body, "finding")
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,12 +269,206 @@ class LoopHealth:
         ``False`` — they are observations rather than problems.
     checked_at:
         ISO-8601 UTC timestamp of when the assessment ran.
+
+    ``for_round`` binds the result to its persisted round. ``to_json`` preserves
+    accepted extension fields and historical metadata omissions; finding edits
+    regenerate derived flags and summary text without rerunning detectors.
     """
 
     epoch_id: str
     findings: tuple[HealthFinding, ...]
     healthy: bool
     checked_at: str
+    round_index: int | None = None
+    assessed_at: str | None = None
+    summary: str | None = None
+    has_critical: bool | None = None
+    _extensions: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    _findings_fingerprint: str | None = field(default=None, repr=False, compare=False)
+
+    @classmethod
+    def from_json(cls, raw: Any) -> LoopHealth:
+        body = _report_object(raw, "report")
+        epoch = _report_epoch(body.get("epoch_id"))
+        raw_findings = body.get("findings")
+        if not isinstance(raw_findings, list):
+            raise RecordError("loop health findings must be a list")
+        findings = tuple(HealthFinding.from_json(value) for value in raw_findings)
+        healthy = body.get("healthy")
+        expected_healthy = not any(f.severity in {"warning", "critical"} for f in findings)
+        if type(healthy) is not bool or healthy != expected_healthy:
+            raise RecordError("loop health healthy flag differs from its findings")
+        checked_at = _report_timestamp(body.get("checked_at"), "checked_at")
+        round_index = body.get("round")
+        if "round" in body and (type(round_index) is not int or round_index < 0):
+            raise RecordError("loop health round must be a nonnegative integer")
+        assessed_at = (
+            _report_timestamp(body["assessed_at"], "assessed_at") if "assessed_at" in body else None
+        )
+        summary = (
+            _report_string(body["summary"], "summary", empty=True) if "summary" in body else None
+        )
+        critical = body.get("has_critical")
+        if "has_critical" in body and (
+            type(critical) is not bool
+            or critical != any(f.severity == "critical" for f in findings)
+        ):
+            raise RecordError("loop health critical flag differs from its findings")
+        keys = {
+            "epoch_id",
+            "findings",
+            "healthy",
+            "checked_at",
+            "round",
+            "assessed_at",
+            "summary",
+            "has_critical",
+        }
+        return cls(
+            epoch,
+            findings,
+            healthy,
+            checked_at,
+            round_index,
+            assessed_at,
+            summary,
+            critical,
+            {key: value for key, value in body.items() if key not in keys},
+            json.dumps(raw_findings, sort_keys=True),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        findings = [finding.to_json() for finding in self.findings]
+        preserve_summary = json.dumps(findings, sort_keys=True) == self._findings_fingerprint
+        healthy = not any(f.severity in {"warning", "critical"} for f in self.findings)
+        summary, critical = summarize_loop_health(replace(self, healthy=healthy))
+        body = {
+            **self._extensions,
+            "epoch_id": self.epoch_id,
+            "findings": findings,
+            "healthy": healthy,
+            "checked_at": self.checked_at,
+        }
+        for name, value in (
+            ("round", self.round_index),
+            ("assessed_at", self.assessed_at),
+            ("summary", self.summary if preserve_summary or self.summary is None else summary),
+            ("has_critical", critical if self.has_critical is not None else None),
+        ):
+            if value is not None:
+                body[name] = value
+        self.from_json(body)
+        return _report_object(body, "report")
+
+    def for_round(self, epoch_id: str, round_index: int, *, assessed_at: str) -> LoopHealth:
+        """Stamp a diagnostic result without changing its epoch or rerunning detectors."""
+        if self.epoch_id != epoch_id:
+            raise RecordError("loop health epoch differs from the round being reported")
+        self.to_json()
+        summary, critical = summarize_loop_health(self)
+        return replace(
+            self,
+            round_index=round_index,
+            assessed_at=assessed_at,
+            summary=summary,
+            has_critical=critical,
+        )
+
+
+def health_report_path(workspace_root: Path, epoch_id: str, round_index: int) -> Path:
+    _report_epoch(epoch_id)
+    if type(round_index) is not int or round_index < 0:
+        raise RecordError("loop health round must be a nonnegative integer")
+    return (
+        WorkspaceLayout.from_root(workspace_root).health_dir(epoch_id) / f"round_{round_index}.json"
+    )
+
+
+def read_loop_health(workspace_root: Path, epoch_id: str, round_index: int) -> LoopHealth | None:
+    path = health_report_path(workspace_root, epoch_id, round_index)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except UnicodeError as exc:
+        raise RecordError(f"{path}: invalid UTF-8") from exc
+    try:
+        result = LoopHealth.from_json(json.loads(text))
+        if result.epoch_id != epoch_id or result.round_index not in (None, round_index):
+            raise RecordError("loop health coordinates differ from its location")
+        return result
+    except (RecordError, ValueError) as exc:
+        raise RecordError(f"{path}: {exc}") from exc
+
+
+def read_latest_loop_health(workspace_root: Path, epoch_id: str) -> LoopHealth | None:
+    _report_epoch(epoch_id)
+    directory = WorkspaceLayout.from_root(workspace_root).health_dir(epoch_id)
+    rounds = []
+    try:
+        paths = list(directory.iterdir())
+    except FileNotFoundError:
+        return None
+    for path in paths:
+        if not path.name.startswith("round_") or path.suffix != ".json":
+            continue
+        token = path.stem.removeprefix("round_")
+        if token.isdecimal() and str(int(token)) == token:
+            rounds.append(int(token))
+    return read_loop_health(workspace_root, epoch_id, max(rounds)) if rounds else None
+
+
+def write_loop_health(workspace_root: Path, health: LoopHealth) -> None:
+    body = health.to_json()
+    if health.round_index is None:
+        raise RecordError("persisted loop health requires its round coordinate")
+    atomic_write_text(
+        health_report_path(workspace_root, health.epoch_id, health.round_index),
+        json.dumps(body, indent=2, sort_keys=True) + "\n",
+    )
+
+
+#: Longest ``detail["recommendation"]`` rendered inline on the one-line
+#: health summary; longer remediations are clipped with an ellipsis and
+#: read in full from the round's health JSON.
+_HEALTH_RECOMMENDATION_CLIP = 160
+
+
+def summarize_loop_health(health: LoopHealth) -> tuple[str, bool]:
+    """Render the leading finding, its recommendation, and the critical flag.
+
+    Long recommendations are clipped in the summary and retained in full in
+    the finding's detail object.
+    """
+    findings = list(health.findings)
+    critical = [f for f in findings if f.severity.upper() == "CRITICAL"]
+    has_critical = bool(critical)
+
+    if not findings:
+        return ("loop healthy" if health.healthy else "loop health: no findings"), False
+
+    def _text(f: HealthFinding) -> str:
+        return f.summary.strip() or str(f)
+
+    def _head(f: HealthFinding) -> str:
+        code = f.code.strip()
+        line = f"[{code}] {_text(f)}" if code else _text(f)
+        rec = f.detail.get("recommendation")
+        if isinstance(rec, str) and rec.strip():
+            rec = rec.strip()
+            if len(rec) > _HEALTH_RECOMMENDATION_CLIP:
+                rec = rec[: _HEALTH_RECOMMENDATION_CLIP - 1].rstrip() + "…"
+            line = f"{line} — recommended: {rec}"
+        return line
+
+    if has_critical:
+        head = _head(critical[0])
+        extra = f" (+{len(critical) - 1} more critical)" if len(critical) > 1 else ""
+        return f"CRITICAL: {head}{extra}", True
+
+    head = _head(findings[0])
+    extra = f" (+{len(findings) - 1} more)" if len(findings) > 1 else ""
+    return f"{len(findings)} finding(s): {head}{extra}", False
 
 
 # ---------------------------------------------------------------------------
@@ -1798,6 +2064,21 @@ def detect_settlement_receipt_attention(
     return findings
 
 
+def detect_optional_failures(failures: tuple[dict[str, Any], ...]) -> list[HealthFinding]:
+    """Present retained optional-operation warnings without changing evaluation."""
+    return [
+        HealthFinding(
+            code="optional_operation_failed",
+            severity="warning",
+            summary=(
+                f"{record['fields']['operation']} failed " f"({record['fields']['exception_type']})"
+            ),
+            detail=record,
+        )
+        for record in failures
+    ]
+
+
 def assess_loop_health(
     losses_by_generation: dict[str, list[LossProfile]],
     experiments: list[Any],
@@ -1817,6 +2098,7 @@ def assess_loop_health(
     preflight_gate: str = PREFLIGHT_GATE_DEFAULT,
     attributable_regressions: dict[str, dict[str, Any]] | None = None,
     summarizer_failures: tuple[dict[str, Any], ...] = (),
+    optional_failures: tuple[dict[str, Any], ...] = (),
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -1959,6 +2241,7 @@ def assess_loop_health(
             )
         )
 
+    findings.extend(detect_optional_failures(optional_failures))
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
         epoch_id=epoch_id,
@@ -1979,6 +2262,11 @@ __all__ = [
     "LoopHealth",
     "SettlementReceiptAttention",
     "assess_loop_health",
+    "health_report_path",
+    "read_loop_health",
+    "read_latest_loop_health",
+    "write_loop_health",
+    "summarize_loop_health",
     "detect_attributable_entry_regression",
     "detect_degenerate_scoring",
     "detect_non_differentiating_entry",

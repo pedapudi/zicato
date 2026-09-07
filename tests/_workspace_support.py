@@ -67,6 +67,17 @@ def write_json(path: Path, data: Any, *, indent: int | None = None) -> Path:
     return path
 
 
+def write_tournament(root: Path, data: Mapping[str, Any]) -> None:
+    """Publish a live tournament using the same event writer as execution."""
+    from zicato.runtime.state import ActiveTournament, write_active_tournament
+
+    envelope = dict.fromkeys(
+        ("tournament_id", "parent_generation_id", "child_generation_id", "epoch_id", "started_at"),
+        "",
+    )
+    write_active_tournament(root, ActiveTournament.from_dict({**envelope, **data}))
+
+
 def write_text(path: Path, text: str) -> Path:
     """Write ``text`` verbatim, creating parent directories on demand."""
     path.parent.mkdir(parents=True, exist_ok=True)

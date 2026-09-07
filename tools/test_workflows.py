@@ -101,7 +101,7 @@ def test_statistical_oracles_are_a_visible_pull_request_lane() -> None:
     """Keep the policy triggers, an unfiltered PR lane, and stable status names."""
     document = load_workflow(STATISTICAL_ORACLES)
     events = assert_unfiltered_pull_request(document)
-    required_events = {"pull_request", "schedule", "workflow_dispatch"}
+    required_events = {"pull_request", "workflow_dispatch"}
     assert required_events <= set(events)
 
     job = document["jobs"]["slow-tier"]

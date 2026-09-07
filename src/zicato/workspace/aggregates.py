@@ -25,9 +25,9 @@ table (:func:`zicato.query.judge_view.build_per_judge_for_generation`) and
 the drift-loss curve (:func:`zicato.query.gate_view.build_score_trajectory`)
 stay index-backed, degradation messages included.
 
-Every reader here is best-effort in the same way as the rest of the package:
-a missing, unreadable, or malformed file yields the empty or ``None`` value
-rather than an exception. Numeric fields decoded off a record are handed back
+Readers distinguish missing records from refused input according to their
+owning codec. A missing board yields ``None``; present corruption raises
+``RecordError`` for the consumer to explain. Numeric fields are handed back
 verbatim, because the two consuming layers coerce them differently — the
 query layer projects a JSON payload through
 :func:`zicato.query.paths.coerce_float`, and the totals below coerce for
@@ -170,25 +170,19 @@ def per_judge_loss_totals(
 
 
 def read_board_entries(layout: WorkspaceLayout, epoch_id: str) -> BoardRead | None:
-    """One epoch's board as validated entries, or ``None`` when it will not parse.
+    """One epoch's validated board, or ``None`` when the file is absent.
 
     Parses through :func:`zicato.board.jsonl.load_board_with_meta`, the strict
-    loader that validates each entry against its discriminant. ``None``
-    reports that the board is missing or that the loader rejected it — a
-    board written against an older schema, a malformed line, a duplicate
-    entry id. A caller that can still use the raw lines re-reads them
-    tolerantly; a caller that needs validated entries treats ``None`` as an
-    empty board.
+    loader that validates each entry against its discriminant. Present
+    corruption raises RecordError for the consuming view or report boundary.
     """
-    from zicato.board.jsonl import load_board_with_meta  # noqa: PLC0415
+    from zicato.board.jsonl import load_board_document  # noqa: PLC0415
 
-    try:
-        entries, disable_drift, _judge_only = load_board_with_meta(layout.board(epoch_id))
-    except Exception:  # noqa: BLE001 — best-effort, like every reader here
-        return None
-    return BoardRead(
-        entries=tuple(entries),
-        disable_drift=tuple(str(kind) for kind in disable_drift),
+    board = load_board_document(layout.board(epoch_id))
+    return (
+        BoardRead(entries=tuple(board.entries), disable_drift=tuple(map(str, board.disable_drift)))
+        if board is not None
+        else None
     )
 
 

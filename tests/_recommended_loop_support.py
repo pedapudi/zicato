@@ -97,7 +97,13 @@ def bootstrap(workspace_parent: Path) -> tuple[Path, str, dict[str, Any]]:
                     "factory": "tests._recommended_loop_support:make_adapter",
                 },
                 "mutable_trees": [str(EXAMPLE_ROOT / "agent")],
-                "runtime": {"propose_parallelism": 2, "parallelism": 2, "seed": 17},
+                "runtime": {
+                    "propose_parallelism": 2,
+                    "parallelism": 2,
+                    "seed": 17,
+                    "target_call_llm": "tests._best_of_n_slate_support:target_llm",
+                    "evaluation_call_llm": "tests._best_of_n_slate_support:slate_aux_llm",
+                },
             }
         )
     )

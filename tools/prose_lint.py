@@ -57,11 +57,8 @@ spans are quoted material and are masked before matching; Python strings other
 than docstrings stay unread. JavaScript comments are out of scope, so the
 dashboard client is unread.
 
-Two paths under the scanned roots are skipped, because neither can be fixed
-where the hit appears. `docs/design/CLI.md` is generated from `zicato --help`,
-so its text is help literals owned by the command definitions. The captured
-bytes under `tools/parity/golden` are a record of what a run produced, and
-editing one to satisfy a lint would destroy the evidence it exists to hold.
+Captured output under `tools/parity/golden` is excluded. It records what a run
+produced; editing it to satisfy a prose check would alter the evidence.
 
 One file is exempt from one rule. `CHANGELOG.md` is an explicitly historical
 document, so its chronology is the content it exists to carry and the rule
@@ -106,9 +103,8 @@ DEFAULT_PATHS = (
     "src/zicato",
     "tools",
 )
-# Generated help text and captured run evidence: a hit in either is owned
-# somewhere else, so neither can be fixed where it appears.
-EXCLUDED = ("docs/design/CLI.md", "tools/parity/golden")
+# Captured output is checked through its producers.
+EXCLUDED = ("tools/parity/golden",)
 # Rules that do not apply to one scanned file, keyed by repository-relative
 # path. A changelog is an explicitly historical document: its chronology is
 # the content, so narrating history is what it is for.

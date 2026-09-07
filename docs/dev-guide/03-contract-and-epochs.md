@@ -39,9 +39,10 @@
 >    change to the dotted string and an edit to the resolved plugin body roll
 >    the epoch (§3.3).
 > 5. **Runtime measurements are never hashed.** `EpochConfig.noise_floor` and
->    `.preflight` (and everything on `RuntimeConfig`) are recorded
->    post-creation and never fold into `contract_hash`; writing them never rolls
->    the epoch (§3.6, §3.12).
+>    `.preflight` are recorded after creation and never fold into `contract_hash`.
+>    Operational budgets and concurrency also stay outside the contract. Effective
+>    model roles are captured execution inputs and participate in adapter identity
+>    (§3.2.4); writing measured results never rolls the epoch (§3.6, §3.12).
 > 6. **A legacy `contract_hash` is `None` rather than the empty string.** A
 >    `None` stored hash reads as always-matching; a corrupt or empty *real* hash
 >    must roll rather than read as legacy (§3.8.4).
@@ -69,7 +70,7 @@
 | `src/zicato/epoch/_storage.py` | `RECORD_FORMAT_VERSION`, `RecordFormatError`, `check_record_format` (refuse-on-newer), storage-key helpers | — |
 | `src/zicato/epoch/contract_serde.py` | `dataclass_to_jsonable` / `historical_dataclass_from_json` — the field-enumerating serde both the frozen snapshot and the loader route through | — |
 | `src/zicato/scoring/plugins.py` | `spec_with_source_hash` — the source-hash half of `_canon_dotted_spec` | — |
-| `src/zicato/core/runtime.py` | `RuntimeConfig` — the runtime knobs that never roll the epoch (§3.12) | — |
+| `src/zicato/core/runtime.py` | `RuntimeConfig` — operational settings plus the captured execution-role bytes (§3.12) | — |
 | `src/zicato/runtime_factory.py` | `make_runtime_config` — parses the workspace-config `runtime` block into a `RuntimeConfig` | — |
 
 The topology, per `evolve` invocation (the roll decision runs once, before any round):
@@ -294,12 +295,10 @@ Semantic content only, id-sorted (`src/zicato/epoch/contract.py::_canon_board`):
 - a **missing** board file logs a warning and hashes as the empty string, so a
   board-less workspace still hashes deterministically.
 
-`_canon_board_meta` reads the board-level object *defensively* — it prefers a
-`zicato.board.jsonl.load_board_meta` callable if the board API exposes one,
-otherwise scans the raw JSONL for a line carrying `judges` / `disable_drift` /
-`judge_only` but no entry `id`. The board API exposes `load_board_with_meta`
-rather than `load_board_meta`, so the raw-scan branch is the live path; the
-loader branch stays in place for a board API that exposes `load_board_meta`.
+`board.jsonl.load_board_document` accepts the whole file once. Its typed
+entries supply the canonical entry rows; `_canon_board_meta` projects the
+accepted source header from that same document. A malformed present board
+cannot supply a partial contract.
 `judge_only` is folded in **only when `True`**, so a board that leaves it unset
 keeps the hash it would carry without the flag — the omit-at-default discipline
 (§3.4) applied at the board level.
@@ -311,8 +310,7 @@ de-duplicated set of drift-kind wire strings** rather than as a bare
 judges are armed and therefore the loss surface; swapping `tool_error` for
 `goal_drift` has to roll the epoch just as adding a judge does. Tokens are
 reduced through `judge_runtime.disable.kind_to_wire_string` so `DriftKind`
-members (from the loader branch) and bare strings (from the raw scan) agree on
-one form. Declaration order and repeated kinds are no-ops.
+members and bare strings agree on one form. Declaration order and repeated kinds are no-ops.
 
 The empty set canonicalizes to `false` rather than to `[]` — omit-at-default
 paid at the *value* level. `false` is this form's encoding of "nothing
@@ -335,8 +333,7 @@ plugin) and inline judges are left untouched, so a board that names no plugin
 gains no `spec_source` or `body_source` key at all.
 
 > ✅ ALWAYS route a NEW board-level or per-entry grading channel through the
-> defensive `_meta_get` / `_scan_raw_board_meta` pattern AND fold it at its
-> default only when non-default. The `judge_only`-only-when-`True` line is the
+> board owner, and add its canonical key only when the value is non-default. The `judge_only`-only-when-`True` line is the
 > model: `if judge_only: canon["judge_only"] = True`
 > (`src/zicato/epoch/contract.py::_canon_board_meta`). Emitting a new key
 > unconditionally rolls every board already on disk — invariant #2 broken at
@@ -432,9 +429,9 @@ semantics from sharing an epoch.
 
 The flat omit set is a projection rather than a second registry.
 `contract_knobs()` walks every declared scoring field once at import time,
-preserving its owner, default, omit rule, and builder mapping.
+preserving its owner, default and omit rule.
 `omit_at_default_fields()` projects the omit set from those records, and the
-builder completeness guards consume the same records. Nothing derived from the
+configuration schema and inspection tools consume the same field metadata. Nothing derived from the
 registry is committed to the tree; the records exist only at runtime.
 
 > ⚠️ TRAP — a nested config dataclass folds into the scoring hash the moment it
@@ -483,6 +480,21 @@ promotion. `_dotted_spec_is_within_mutable_trees` enforces the exclusion, and
 Direct `ContractInputs` construction may omit `adapter_spec`. That compatibility
 surface canonicalizes an ADK worker document from `entrypoint`; registered
 workspaces use the validated worker document.
+
+Effective execution roles also belong to this component. `capture_execution_roles`
+resolves inheritance once; `execution_roles_for_runtime` retains actual callable
+overrides. The captured bytes pass through `ContractInputs`, the frozen epoch
+bindings, `RuntimeConfig`, and the worker envelope. `_canon_adapter` orders role
+names before hashing their implementation sources, so JSON key order is irrelevant.
+The runner does not reread live model configuration at each launch.
+
+`bind_runtime_to_epoch` compares actual runtime roles with the selected bindings
+before execution or cache lookup. Both public evolve entry points make the same
+check before auxiliary measurement or proposal work. Direct tournament callers
+prepare an epoch through `new_epoch(contract=...)`; an arbitrary epoch identifier
+cannot authorize durable measurements. Missing historical role bindings remain
+missing when read. The supported standalone construction and credential reference
+semantics are documented in `docs/design/MODEL-CONFIG.md`.
 
 ### 3.2.5 mutable_trees — `_canon_mutable_trees` normalizes without resolving
 
@@ -923,8 +935,7 @@ field:
 
 > ⚠️ TRAP — the tournament structure is persisted under the key `"tournament"`
 > rather than under the field name `"tournament_structure"`. `scoring_to_dict`
-> remaps it for byte-compatibility with every on-disk `scoring.json` and the dashboard
-> builder (`tests/test_contract_serializer_completeness.py::test_tournament_block_uses_legacy_key`).
+> remaps it for byte-compatibility with on-disk `scoring.json` records (`tests/test_contract_serializer_completeness.py::test_tournament_block_uses_legacy_key`).
 > If you rename a contract field, decide explicitly whether the on-disk key moves
 > — a moved key is itself a format change that strands existing snapshots.
 
@@ -1459,60 +1470,29 @@ screen is scaffolded and the process-exemplar channel is not.
    `ExperimentalConfig` remain inactive until explicitly enabled. A change that
    exposes additional task information to proposal generation requires the
    restricted feedback review in `05-proposer.md` and the feature's design.
-   Moving a setting in the editor does not justify changing its default.
+   Exposing a setting through a contract operation does not change its default.
 
    Verify that sparse and expanded inputs resolve to the same values and hash:
    ```bash
    uv run pytest tests/test_scaffold_contract.py tests/test_shared_scoring_defaults.py -q
    ```
 
-6. **Wire the builder op + GUI + copilot.** Operators set contract knobs through
-   the tournament builder rather than by hand-editing `scoring.json`. Three
-   surfaces COMPOSE on the same nested block, so they never clobber each
-   other:
-   - the op in `src/zicato/contract_draft/operations.py` (`set_proposer_quality` /
-     `set_screening` are the models — each `dataclasses.replace`s only its keys
-     on the nested `proposer_quality` block and returns a `DraftPatch`);
-   - the JSON dispatch in `src/zicato/builder/api.py` (the `op ==
-     "set_screening"` / `"set_proposer_quality"` branches) — this is the GUI /
-     settings-panel entry point;
-   - the copilot tool wrapper in `src/zicato/builder/copilot_tools.py` (so the
-     chat copilot can drive the knob), registered in that module's `__all__`.
+6. **Expose the typed contract edit.** Implement the operation in
+   `src/zicato/contract_draft/operations.py`. `set_proposer_quality` and
+   `set_screening` update only their owned fields on the nested configuration,
+   so independent edits compose. Operation argument validation must reject
+   unknown fields and invalid values before modifying the draft.
 
-   …plus a **GUI row** in `static/js/views/builder.js` and an **arg-level
-   assertion** in `static/test/builder.test.mjs`. Five touchpoints, and
-   `tests/test_knob_registry.py` enforces all five — but only for a knob that
-   DECLARES itself, so the declaration is the load-bearing step:
-   ```python
-   # src/zicato/core/scoring_config.py — on the field itself
-   holdout_margin: float | None = field(
-       default=None,
-       metadata=_knob(omit_at_default=True, builder_op="set_gate"),
-   )
-   ```
-   Add `builder_arg` only when the op's arg name differs from the field name
-   (`screen_entries` → `entries`). Use a DOTTED value (`"ladder.threshold"`) when
-   the op takes the knob as a subkey of a partial-mapping argument. The dotted
-   form binds the GUI-row and node-test checks to that subkey, so a sibling's row
-   cannot satisfy them vacuously.
-
-   > ⚠️ TRAP — the knob-coverage pin sees a knob only through its
-   > declaration, so a knob carrying no `builder_op` at all would slip past it
-   > with a working gate and no way to set it from the builder. A second guard
-   > refuses that silence: every contract knob field must either carry a
-   > `builder_op` or be listed in `_NO_BUILDER_OP_KNOBS` with the reason it
-   > should not be exposed (nested container, dotted callable spec, open
-   > TransformSpec mapping). "Not wired yet" is not one of the reasons.
-
-   **Verify:**
+   Declare field descriptions and omission rules on the owning dataclass.
+   Serialization, inspection and generated configuration schemas consume this
+   metadata. Test the operation and field registry:
    ```bash
-   uv run pytest tests/test_builder_operations.py tests/test_builder_api.py \
-       tests/test_builder_copilot.py tests/test_knob_registry.py -q
-   node src/zicato/dashboard/static/test/builder.test.mjs
+   uv run pytest tests/test_contract_operations.py tests/test_contract_edit_validation.py \
+       tests/test_knob_registry.py -q
    ```
 
 7. **Answer the cost-meter question.** Decide whether your knob changes how many
-   board runs a round costs. The builder's `estimate_cost`
+   board runs a round costs. The contract estimator, `estimate_cost`
    (`src/zicato/contract_draft/operations.py`) prices the round. A read-side-only knob leaves it untouched, as
    `process_exemplars` does by only adding prompt content. An evaluation-side knob
    MUST add a `CostLine` so the operator sees and prices the extra spend before
@@ -1522,7 +1502,7 @@ screen is scaffolded and the process-exemplar channel is not.
    `candidate-screen runs` and `best-of-N propose calls` split is the model).
    **Verify:**
    ```bash
-   uv run pytest tests/test_builder_operations.py -k "cost or estimate" -q
+   uv run pytest tests/test_contract_operations.py -k "cost or estimate" -q
    ```
 
 8. **Add the contract-hash byte-identity tests.** In
@@ -1558,7 +1538,7 @@ screen is scaffolded and the process-exemplar channel is not.
 uv sync --all-extras
 uv run pytest tests/test_epoch_contract.py \
     tests/test_contract_serializer_completeness.py \
-    tests/test_knob_registry.py tests/test_builder_operations.py -q
+    tests/test_knob_registry.py tests/test_contract_operations.py -q
 uv run ruff check src/zicato/core/scoring_config.py src/zicato/epoch/contract.py
 uv run mypy src/zicato/core/scoring_config.py src/zicato/epoch/contract.py
 # + the per-branch vendor scan: no model-vendor names, ids, or trailers
@@ -1760,7 +1740,7 @@ Points where the trace changes under non-default inputs:
   (invariant `D12`), which is the storage-wide view of §3.10, and §"The
   generation store", which says what the snapshot a lineage node points at
   actually is.
-- 10-builder-cli-library.md §10.2 — the `set_screening` /
+- 10-cli-and-configuration.md §10.2 — the `set_screening` /
   `set_proposer_quality` surface step 6 of §3.11 wires into.
 - 12-bug-casebook.md §"Case 10" — the case where the contract hash embedded the
   checkout path, behind invariant #1 and §3.2.5; §"The meta-lessons" — the

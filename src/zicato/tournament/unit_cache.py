@@ -355,13 +355,19 @@ def run_result_to_payload(
 
 
 def read_capture_loss(loss_path: Path) -> LossProfile | None:
-    """Read the loss paired with a capture, including a retained attempt."""
+    """Read paired loss; absence permits audit reads, present defects do not.
+
+    Retained attempts follow the same rule. Callers that decline invalid
+    captures may catch ``ValueError`` and fall back to lower-fidelity evidence.
+    """
     from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
 
     try:
         return read_loss_profile(loss_path)
-    except (OSError, KeyError, ValueError):
+    except FileNotFoundError:
         return None
+    except (OSError, KeyError, ValueError, TypeError, AttributeError, OverflowError) as exc:
+        raise ValueError(f"paired loss unavailable at {loss_path}: {exc}") from exc
 
 
 def read_run_result(path: Path, *, expected: LossProfile | None = None) -> dict[str, Any] | None:

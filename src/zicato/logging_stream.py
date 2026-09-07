@@ -26,10 +26,11 @@ import datetime as _dt
 import json
 import logging
 import os
+from collections.abc import Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, cast
 
 #: The workspace subdirectory the streams live under (sibling of
 #: ``runtime/`` and ``epochs/``).
@@ -60,6 +61,19 @@ _STREAM_SUFFIX = ".jsonl"
 _epoch_id: ContextVar[str | None] = ContextVar("zicato_log_epoch_id", default=None)
 _generation_id: ContextVar[str | None] = ContextVar("zicato_log_generation_id", default=None)
 _run_id: ContextVar[str | None] = ContextVar("zicato_log_run_id", default=None)
+_round_index: ContextVar[int | None] = ContextVar("zicato_log_round_index", default=None)
+
+
+@contextlib.contextmanager
+def round_log_context(epoch_id: str | None, round_index: int) -> Iterator[None]:
+    """Bind one round's diagnostic scope and restore the caller on exit."""
+    epoch_token = _epoch_id.set(epoch_id)
+    round_token = _round_index.set(round_index)
+    try:
+        yield
+    finally:
+        _round_index.reset(round_token)
+        _epoch_id.reset(epoch_token)
 
 
 def set_log_context(
@@ -115,6 +129,13 @@ class LogContextFilter(logging.Filter):
         record.zicato_epoch_id = ctx.get("epoch_id")
         record.zicato_generation_id = ctx.get("generation_id")
         record.zicato_run_id = ctx.get("run_id")
+        round_index = _round_index.get()
+        if round_index is not None:
+            fields = getattr(record, "fields", None)
+            record.fields = {
+                **(fields if isinstance(fields, dict) else {}),
+                "round_index": round_index,
+            }
         return True
 
 
@@ -129,7 +150,34 @@ def _iso_millis(created: float) -> str:
     return dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def record_to_dict(record: logging.LogRecord) -> dict[str, Any]:
+class OperationalLogRecord(TypedDict, total=False):
+    """Saved diagnostic row; readers retain extensions and historical omissions.
+
+    Writers always supply timestamp, level, component and message. Readers skip
+    malformed JSON and nonobjects, but do not reject older diagnostic rows for
+    absent fields. These records supply observations, never evaluation decisions.
+    """
+
+    ts: str
+    level: str
+    component: str
+    message: str
+    epoch_id: str
+    generation_id: str
+    run_id: str
+    fields: dict[str, Any]
+
+
+def parse_record_line(line: str) -> OperationalLogRecord | None:
+    """Decode one diagnostic row with the log stream's declared tolerance."""
+    try:
+        value = json.loads(line)
+    except ValueError:
+        return None
+    return cast(OperationalLogRecord, value) if isinstance(value, dict) else None
+
+
+def record_to_dict(record: logging.LogRecord) -> OperationalLogRecord:
     """Project a :class:`logging.LogRecord` to the LOGGING.md §1 shape.
 
     Required keys (``ts`` / ``level`` / ``component`` / ``message``) are
@@ -137,7 +185,7 @@ def record_to_dict(record: logging.LogRecord) -> dict[str, Any]:
     when bound / supplied. ``component`` is the logger name verbatim, so
     no call site has to name itself.
     """
-    out: dict[str, Any] = {
+    out: OperationalLogRecord = {
         "ts": _iso_millis(record.created),
         "level": record.levelname,
         "component": record.name,
@@ -158,6 +206,140 @@ def record_to_dict(record: logging.LogRecord) -> dict[str, Any]:
     if isinstance(fields, dict) and fields:
         out["fields"] = fields
     return out
+
+
+#: Reverse-tail byte budget for the INITIAL (``after is None``) tail. The
+#: reader block-reads backward from EOF looking for ``limit`` complete lines
+#: but never scans more than this many bytes, so the initial paint's read +
+#: RSS is bounded no matter how large the stream has grown: a 250 MB stream
+#: costs the same bounded read as a small one on every follow tick.
+#: Records older than the budget are simply not in the initial tail; the
+#: ``after=`` byte cursor then streams everything appended from there on.
+_TAIL_BYTE_BUDGET = 4 * 1024 * 1024
+
+#: Block size for the backward read.
+_TAIL_BLOCK = 64 * 1024
+
+
+def _level_value(name: str | None) -> int:
+    """Numeric value of a stdlib level NAME; unknown / absent → 0 (DEBUG-)."""
+    if not name:
+        return 0
+    val = logging.getLevelName(str(name).upper())
+    return val if isinstance(val, int) else 0
+
+
+def _records_from_bytes(
+    data: bytes,
+    base_offset: int,
+    *,
+    threshold: int,
+    skip_leading_partial: bool,
+) -> list[dict[str, Any]]:
+    """Parse COMPLETE (newline-terminated) JSONL lines out of ``data``.
+
+    Each returned record carries a ``cursor`` = the byte offset just PAST
+    its terminating newline (i.e. where the next line begins), so passing
+    it back as ``after=`` seeks straight to the following record. An
+    incomplete trailing line (no ``\\n`` yet — a record mid-write) is left
+    unparsed. When ``skip_leading_partial`` is set (a reverse read that
+    started mid-line) the bytes before the first newline are discarded.
+    """
+    out: list[dict[str, Any]] = []
+    start = 0
+    if skip_leading_partial:
+        nl = data.find(b"\n")
+        if nl == -1:
+            return out
+        start = nl + 1
+    while True:
+        nl = data.find(b"\n", start)
+        if nl == -1:
+            break
+        raw = data[start:nl].decode("utf-8", "replace")
+        end_offset = base_offset + nl + 1
+        start = nl + 1
+        rec = parse_record_line(raw)
+        if rec is None:
+            continue
+        if threshold and _level_value(rec.get("level")) < threshold:
+            continue
+        out.append({**rec, "cursor": end_offset})
+    return out
+
+
+def tail_records(
+    path: Path,
+    *,
+    limit: int,
+    level: str | None = None,
+    after: int | None = None,
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Read a stream's records with a level filter + a BYTE-OFFSET cursor.
+
+    Returns ``(records, cursor)``. Each returned record carries an added
+    ``cursor`` = the byte offset just past its line (append-only follow);
+    The second cursor stops after the last complete line so an unfinished
+    append is read again when it completes. It is ``None`` when the file is
+    empty, unreadable, or the bounded tail contains no complete-line boundary.
+
+    * ``level`` keeps only records at or above that level name.
+    * ``after`` is a byte offset: the reader ``seek``s there and reads
+      FORWARD, returning only the records appended since (bounded by the
+      appended size). ``None`` is the INITIAL tail: a bounded reverse
+      block-read from EOF (:data:`_TAIL_BLOCK`-sized blocks backward until
+      ``limit`` complete lines OR :data:`_TAIL_BYTE_BUDGET` bytes), so the
+      whole file is never read. Both paths return at most ``limit`` records.
+    """
+    threshold = _level_value(level)
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            file_size = fh.tell()
+
+            if after is not None:
+                # Forward tail: seek to the cursor, read what was appended.
+                start = max(0, min(int(after), file_size))
+                if start >= file_size:
+                    return [], file_size
+                fh.seek(start)
+                data = fh.read(file_size - start)
+                records = _records_from_bytes(
+                    data, start, threshold=threshold, skip_leading_partial=False
+                )
+                if len(records) > limit:
+                    records = records[-limit:]
+                return records, start + data.rfind(b"\n") + 1
+
+            # Initial tail: bounded reverse block-read from EOF.
+            if file_size == 0:
+                return [], None
+            blocks: list[bytes] = []
+            pos = file_size
+            scanned = 0
+            newlines = 0
+            while pos > 0 and scanned < _TAIL_BYTE_BUDGET:
+                read_size = min(_TAIL_BLOCK, pos)
+                pos -= read_size
+                fh.seek(pos)
+                chunk = fh.read(read_size)
+                blocks.append(chunk)
+                scanned += read_size
+                newlines += chunk.count(b"\n")
+                # ``> limit`` guarantees at least ``limit`` complete lines
+                # remain after dropping the (partial) leading one below.
+                if newlines > limit:
+                    break
+            data = b"".join(reversed(blocks))
+            records = _records_from_bytes(
+                data, pos, threshold=threshold, skip_leading_partial=pos > 0
+            )
+            if len(records) > limit:
+                records = records[-limit:]
+            newline = data.rfind(b"\n")
+            return records, pos + newline + 1 if newline >= 0 else (0 if pos == 0 else None)
+    except (FileNotFoundError, OSError):
+        return [], None
 
 
 class JsonlFormatter(logging.Formatter):

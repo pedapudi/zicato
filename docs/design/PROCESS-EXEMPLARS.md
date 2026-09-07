@@ -231,11 +231,8 @@ silently.
   restating the redaction contract. An empty block is omitted, so the
   knob-off prompt and contract hash are unaffected; both are pinned by
   test.
-- **Builder:** `set_proposer_quality` gains the knob (op + API dispatch +
-  copilot tool); the cost meter is untouched — extraction is a read of
-  events already on disk, zero board runs, zero LLM calls. The
-  builder-copilot skill carries one honest paragraph, including the §5
-  runbook pointer.
+- **Cost:** extraction reads events already on disk and adds no board runs
+  or model calls. Configure it through `experimental.process_exemplars`.
 - **RoundLog:** no entry. A process exemplar is prompt-side input rather
   than a round event, on the same footing as the failure-mode profile.
 

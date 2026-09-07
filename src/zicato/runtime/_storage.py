@@ -48,17 +48,6 @@ def lock_key() -> str:
     return storage_key(_LAYOUT.lock)
 
 
-def active_tournament_key() -> str:
-    """Storage key for the active-tournament SNAPSHOT record.
-
-    Read only as a fallback: an ``active_tournament.json`` file with no
-    event log beside it is still folded into a live view. Nothing writes
-    this key — the live producer appends to the event log instead (see
-    :func:`active_tournament_log_key`).
-    """
-    return storage_key(_LAYOUT.active_tournament)
-
-
 def active_tournament_log_key() -> str:
     """Storage key for the active-tournament EVENT LOG.
 
@@ -131,7 +120,6 @@ def kill_request_key(run_id: str) -> str:
 __all__ = [
     "heartbeat_key",
     "lock_key",
-    "active_tournament_key",
     "active_tournament_log_key",
     "progress_log_key",
     "active_runs_prefix",

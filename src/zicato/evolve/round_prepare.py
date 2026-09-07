@@ -3,7 +3,6 @@
 # ruff: noqa: E402
 from __future__ import annotations
 
-import json
 import logging
 import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__)
 from collections.abc import Awaitable, Callable
@@ -29,11 +28,9 @@ log = logging.getLogger("zicato.orchestrator")
 
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 
-from zicato.evolve.round_baseline import _atomic_write_text
 from zicato.evolve.round_reporting import (
     _collect_epoch_health_inputs,
     _epoch_max_generations_per_contract,
-    _health_round_report_path,
 )
 
 
@@ -665,9 +662,14 @@ def _assess_and_persist_loop_health(
     logged at ``debug`` level and yields ``("", False)``, leaving the round
     to settle on the verdict its duels produced.
     """
-    from zicato.health.diagnostics import assess_loop_health  # noqa: PLC0415
+    from zicato.health.diagnostics import (  # noqa: PLC0415
+        assess_loop_health,
+        summarize_loop_health,
+        write_loop_health,
+    )
     from zicato.health.inputs import (  # noqa: PLC0415
         epoch_noise_floor_inputs,
+        epoch_optional_failures,
         epoch_preflight_record,
         epoch_settlement_receipt_attention,
         epoch_tree_import_gaps,
@@ -705,12 +707,16 @@ def _assess_and_persist_loop_health(
             tree_import_gaps=tree_import_gaps,
             settlement_receipt_attention=receipt_attention,
             summarizer_failures=epoch_summarizer_failures(workspace_root, epoch_id),
+            optional_failures=epoch_optional_failures(workspace_root, epoch_id),
         )
     except Exception as exc:  # noqa: BLE001 — health assessment is best-effort
+        from zicato.util.best_effort import report_optional_failure
+
+        report_optional_failure("loop-health assessment", exc)
         log.debug("loop-health assessment skipped for %s round %d: %s", epoch_id, round_n, exc)
         return "", False
 
-    summary, has_critical = _summarise_loop_health(health)
+    summary, has_critical = summarize_loop_health(health)
 
     # Promote a "declared judge never fired" finding from a soft, buried
     # health-report entry to a LOUD, operator-visible run-level warning:
@@ -736,84 +742,11 @@ def _assess_and_persist_loop_health(
             "loop-health report write skipped for %s round %d: %s", epoch_id, round_n, exc
         ),
     ):
-        report_path = _health_round_report_path(workspace_root, epoch_id, round_n)
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write_text(report_path, _loop_health_to_json(health, epoch_id, round_n))
+        write_loop_health(
+            workspace_root, health.for_round(epoch_id, round_n, assessed_at=_now_iso())
+        )
 
     return summary, has_critical
-
-
-#: Longest ``detail["recommendation"]`` rendered inline on the one-line
-#: health summary; longer remediations are clipped with an ellipsis and
-#: read in full from the round's health JSON.
-_HEALTH_RECOMMENDATION_CLIP = 160
-
-
-def _summarise_loop_health(health: LoopHealth) -> tuple[str, bool]:
-    """Derive a one-line summary + critical flag from a ``LoopHealth`` object.
-
-    The line names the finding's stable ``code``, its measured summary, and
-    — when the detector wrote one — the ``detail["recommendation"]`` saying
-    what to change. The recommendation has to be read out of ``detail``
-    explicitly, because it is one key of a structured dict rather than a
-    field of the finding: without that read the remediation would travel no
-    further than the round's health JSON (issue #129). Still one line — the
-    clip keeps it that way.
-    """
-    findings = list(health.findings)
-    critical = [f for f in findings if f.severity.upper() == "CRITICAL"]
-    has_critical = bool(critical)
-
-    if not findings:
-        return ("loop healthy" if health.healthy else "loop health: no findings"), False
-
-    def _text(f: HealthFinding) -> str:
-        return f.summary.strip() or str(f)
-
-    def _head(f: HealthFinding) -> str:
-        code = f.code.strip()
-        line = f"[{code}] {_text(f)}" if code else _text(f)
-        rec = f.detail.get("recommendation")
-        if isinstance(rec, str) and rec.strip():
-            rec = rec.strip()
-            if len(rec) > _HEALTH_RECOMMENDATION_CLIP:
-                rec = rec[: _HEALTH_RECOMMENDATION_CLIP - 1].rstrip() + "…"
-            line = f"{line} — recommended: {rec}"
-        return line
-
-    if has_critical:
-        head = _head(critical[0])
-        extra = f" (+{len(critical) - 1} more critical)" if len(critical) > 1 else ""
-        return f"CRITICAL: {head}{extra}", True
-
-    head = _head(findings[0])
-    extra = f" (+{len(findings) - 1} more)" if len(findings) > 1 else ""
-    return f"{len(findings)} finding(s): {head}{extra}", False
-
-
-def _loop_health_to_json(health: LoopHealth, epoch_id: str, round_n: int) -> str:
-    """Serialize a ``LoopHealth`` report to a pretty-printed JSON string.
-
-    :class:`~zicato.health.diagnostics.LoopHealth` is a dataclass of
-    dataclasses, so :func:`dataclasses.asdict` carries the whole report —
-    every finding's ``code`` / ``severity`` / ``summary`` / ``detail``
-    included. ``epoch_id`` / ``round`` / ``assessed_at`` are stamped on so
-    the report is self-describing for the dashboard.
-    """
-    import dataclasses as _dataclasses  # noqa: PLC0415
-
-    body: dict[str, Any] = _dataclasses.asdict(health)
-    summary, has_critical = _summarise_loop_health(health)
-    body.update(
-        {
-            "epoch_id": epoch_id,
-            "round": round_n,
-            "assessed_at": _now_iso(),
-            "summary": summary,
-            "has_critical": has_critical,
-        }
-    )
-    return json.dumps(body, default=str, indent=2, sort_keys=True) + "\n"
 
 
 def _warn_loop_no_signal(epoch_id: str, round_n: int, summary: str) -> None:

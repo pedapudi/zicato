@@ -86,6 +86,10 @@ def _bootstrap(tmp_path: Path) -> tuple[Path, str]:
                 "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
+                "runtime": {
+                    "target_call_llm": "zicato_examples.target_0_convergence.mocks:target_llm",
+                    "evaluation_call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm",
+                },
                 "mutable_trees": [str(AGENT_DIR)],
             }
         )

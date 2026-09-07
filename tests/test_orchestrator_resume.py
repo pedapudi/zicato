@@ -38,9 +38,9 @@ import zicato.tournament.runner as _runner_mod
 from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
     bootstrap_workspace,
+    evaluation_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
     target_call_llm,
 )
@@ -87,12 +87,17 @@ def _run_single_counter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     return counts
 
 
+def _aux_must_not_propose(*_a: Any, **_k: Any) -> Any:
+    raise AssertionError("resume re-proposed instead of reusing persisted experiment")
+
+
 def test_resume_reuses_completed_units_without_rerun(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An interrupted v1 tournament resumes; cached units are not re-run."""
     workspace, epoch_id = bootstrap_workspace(
         tmp_path,
+        evaluation_call_llm=_aux_must_not_propose,
         weights=deterministic_weights(
             promote_margin=0.01, tournament_structure=TournamentStructure(structure="gauntlet")
         ),
@@ -118,18 +123,13 @@ def test_resume_reuses_completed_units_without_rerun(
 
     monkeypatch.setattr(settlement_module, "commit_field_settlement", _stop_before_receipt)
     with pytest.raises(RuntimeError, match="injected crash before settlement receipt"):
-        run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+        run_evolve_once(workspace, epoch_id, _aux_must_not_propose)
     monkeypatch.setattr(settlement_module, "commit_field_settlement", real_commit)
 
     gens = workspace / "epochs" / epoch_id / "generations"
     v1_dir = gens / "v1"
     assert (v1_dir / "runs" / "entry_a" / "seed-none" / "loss.json").is_file()
     assert (gens / "v0" / "runs" / "entry_a" / "seed-none" / "loss.json").is_file()
-
-    # An aux responder that RAISES if the proposer is ever consulted —
-    # resume must reuse the persisted experiment, never re-propose.
-    def _aux_must_not_propose(*_a: Any, **_k: Any) -> Any:
-        raise AssertionError("resume re-proposed instead of reusing persisted experiment")
 
     # --- Resume: re-enter the loop with the completed units on disk. ---
     counts = _run_single_counter(monkeypatch)
@@ -196,7 +196,7 @@ def test_clean_workspace_evolve_is_unchanged(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
         )
     )
 

@@ -26,12 +26,13 @@ import json
 import sys
 import textwrap
 import types
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests._runtime_builders import runtime_config
+from tests._runtime_builders import prepare_tournament_epoch, runtime_config
 from zicato.core import (
     BoardEntry,
     DriftCount,
@@ -323,8 +324,8 @@ def _install_run_single_stub(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
-        return canned[(generation.id, entry.id)]
+        del adapter, weights, config, workspace_root, side, match_id
+        return replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
@@ -395,16 +396,19 @@ def test_run_tournament_rejects_when_regression_fails(
         regression_gate_enabled=True,
     )
 
+    board = _board()
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            board=_board(),
+            parent_gen=replace(parent_gen, epoch_id=epoch_id),
+            child_gen=replace(child_gen, epoch_id=epoch_id),
+            board=board,
             weights=weights,
-            config=runtime_config(tmp_path),
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -455,16 +459,19 @@ def test_run_tournament_promotes_when_regression_passes(
         regression_gate_enabled=True,
     )
 
+    board = _board()
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            board=_board(),
+            parent_gen=replace(parent_gen, epoch_id=epoch_id),
+            child_gen=replace(child_gen, epoch_id=epoch_id),
+            board=board,
             weights=weights,
-            config=runtime_config(tmp_path),
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -508,16 +515,19 @@ def test_run_tournament_skips_regression_when_flag_off(
     monkeypatch.setattr("zicato.tournament.runner.run_regression_suite", fake_run)
 
     weights = ScoringWeights(promote_margin=0.01)  # regression_gate_enabled=False
+    board = _board()
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            board=_board(),
+            parent_gen=replace(parent_gen, epoch_id=epoch_id),
+            child_gen=replace(child_gen, epoch_id=epoch_id),
+            board=board,
             weights=weights,
-            config=runtime_config(tmp_path),
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -539,7 +549,9 @@ def _make_cli_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
         make_adapter_from_config=lambda cfg, *, workspace_root: object(),
     )
     runtime_factory_mod = types.SimpleNamespace(
-        make_runtime_config=lambda cfg, *, workspace_root: runtime_config(workspace_root),
+        make_runtime_config=lambda cfg, *, workspace_root, execution_roles: replace(
+            runtime_config(workspace_root), execution_roles=execution_roles
+        ),
     )
     monkeypatch.setattr(
         "zicato.cli.commands.tournament._resolve_workspace_components",
@@ -566,9 +578,14 @@ def test_cli_skip_regression_bypasses_gate(monkeypatch: pytest.MonkeyPatch, tmp_
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    (workspace / "current_epoch").write_text("e0", encoding="utf-8")
-    snap_v0 = workspace / "epochs" / "e0" / "generations" / "v0" / "snapshot"
-    snap_v1 = workspace / "epochs" / "e0" / "generations" / "v1" / "snapshot"
+    epoch_id = prepare_tournament_epoch(
+        workspace,
+        runtime_config(workspace),
+        _board(),
+        ScoringWeights(regression_gate_enabled=True),
+    )
+    snap_v0 = workspace / "epochs" / epoch_id / "generations" / "v0" / "snapshot"
+    snap_v1 = workspace / "epochs" / epoch_id / "generations" / "v1" / "snapshot"
     snap_v0.mkdir(parents=True)
     snap_v1.mkdir(parents=True)
 
@@ -616,9 +633,14 @@ def test_cli_keeps_regression_flag_when_not_skipped(
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    (workspace / "current_epoch").write_text("e0", encoding="utf-8")
-    snap_v0 = workspace / "epochs" / "e0" / "generations" / "v0" / "snapshot"
-    snap_v1 = workspace / "epochs" / "e0" / "generations" / "v1" / "snapshot"
+    epoch_id = prepare_tournament_epoch(
+        workspace,
+        runtime_config(workspace),
+        _board(),
+        ScoringWeights(regression_gate_enabled=True),
+    )
+    snap_v0 = workspace / "epochs" / epoch_id / "generations" / "v0" / "snapshot"
+    snap_v1 = workspace / "epochs" / epoch_id / "generations" / "v1" / "snapshot"
     snap_v0.mkdir(parents=True)
     snap_v1.mkdir(parents=True)
 

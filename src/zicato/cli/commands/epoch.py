@@ -187,20 +187,6 @@ def new_cmd(
                     contract_adoption=adoption,
                 )
     click.echo(f"Created epoch {cfg.id} (now current).")
-    if cfg.applied_proposer_recommendations:
-        click.echo(
-            "  proposer lineage: this epoch runs under the proposer edited by "
-            + ", ".join(cfg.applied_proposer_recommendations)
-        )
-    # The boundary is where applying a proposer recommendation is free — the
-    # epoch is rolling anyway. Silent when nothing is pending.
-    from zicato.proposer.reflection import (  # noqa: PLC0415
-        pending_recommendations,
-        render_recommendation_lines,
-    )
-
-    for line in render_recommendation_lines(pending_recommendations(ws)):
-        click.echo(line)
 
 
 @epoch_grp.command(

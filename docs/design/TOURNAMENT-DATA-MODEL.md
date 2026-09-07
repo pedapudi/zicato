@@ -139,8 +139,8 @@ A tournament is persisted in two places, and the generalization covers
 both:
 
 1. **The live runtime record** — `ActiveTournament` in
-   `src/zicato/runtime/state.py`, one
-   `runtime/active_tournament.json` file the dashboard polls while a
+   `src/zicato/runtime/state.py`, folded from
+   `runtime/active_tournament.events.jsonl`, which the dashboard reads while a
    tournament is in flight. Its per-matchup core is two top-level
    generation ids (`parent_generation_id` / `child_generation_id`) and a
    flat `entries` list of `(entry_id, side)` rows where `side ∈
@@ -160,7 +160,7 @@ to the gauntlet interpretation.
 ### 2.2 The live `ActiveTournament` — generalized
 
 New top-level fields on `ActiveTournament` (all with back-compat
-defaults so an old `active_tournament.json` loads unchanged):
+defaults for `Snapshot` payloads that omit them):
 
 ```jsonc
 {
@@ -418,8 +418,8 @@ crowning verdict for THIS generation (did it become / stay champion).
 
 All of the above rides on the **existing storage seams**:
 
-- The live `ActiveTournament` is one JSON record at
-  `runtime/active_tournament.json` via the `StorageBackend`
+- The live `ActiveTournament` is reconstructed from
+  `runtime/active_tournament.events.jsonl` via the `StorageBackend`
   (`runtime/_storage.py`). The new fields are just more keys in the
   same `to_dict` / `from_dict` — `base.py` / `files.py` /
   `memory.py` are untouched.
@@ -527,7 +527,7 @@ standings / racing ladder for a settled tournament:
 Resolution order (mirrors the existing `build_matchup_grid` fallback
 chain at `state_reader.py:1731`): prefer the SQLite `tournaments` row's
 `rounds_json` / `standings_json`; if the index is absent, read the live
-`active_tournament.json`; if neither, reconstruct a degenerate
+`active_tournament.events.jsonl`; if neither, reconstruct a degenerate
 single-match view from the per-run `loss.json` files. A malformed id
 degrades to an empty structure (HTTP 200), matching every other handler
 in `endpoints.py`.

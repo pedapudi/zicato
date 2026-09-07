@@ -1230,37 +1230,8 @@ test('pickers: typeface (Google Sans Mono default, 12 faces / 4 per mode) + colo
   assertEqual(ui.readType(), 'fraunces', 'typeface persisted');
   assertEqual(ui.normaliseColor('nonsense'), 'monokai', 'unknown colour → monokai');
   assertEqual(ui.normaliseType('nonsense'), 'google-sans-mono', 'unknown typeface → the default');
-  // MIGRATION ON READ: a stored mode id resolves to a face in that group.
-  assertEqual(ui.normaliseType('technical'), 'google-sans-mono', 'a stored "technical" migrates to the first Technical face');
-  assertEqual(ui.normaliseType('editorial'), 'fraunces', 'a stored "editorial" migrates to the first Editorial face');
-  assertEqual(ui.normaliseType('display'), 'archivo-narrow', 'a stored "display" migrates to the first Display face');
-  assertEqual(ui.normaliseType('sans'), 'google-sans-mono', 'the long-dropped Sans id falls back to the default');
   // typeOption resolves to the full option object (real faces).
   assertEqual(ui.typeOption('google-sans-mono').label, 'Google Sans Mono', 'typeOption resolves the option object');
-});
-
-// MIGRATION ON READ for the opaque ids the options carried before they were
-// named after their faces: a preference persisted under one lands on the same
-// faces it selected then, so an operator's stored choice survives the rename.
-test('typeface migration: an option id from the retired scheme resolves to the face it selected', () => {
-  freshState();
-  const retired = {
-    T7: 'google-sans-mono', T9: 'source-sans-3', T12: 'inconsolata', T14: 'ubuntu',
-    E5: 'fraunces', E7: 'bitter', E8: 'literata', E15: 'domine',
-    D2: 'archivo-narrow', D12: 'hanken-grotesk', D14: 'barlow-condensed', D5: 'bricolage-grotesque',
-  };
-  for (const [old, id] of Object.entries(retired)) {
-    assertEqual(ui.normaliseType(old), id, 'a stored "' + old + '" resolves to ' + id);
-  }
-  // the migration runs on the persisted read path too, not just on a passed
-  // value. The key is the current spelling, so this case turns on the stored id
-  // alone; retiring the key spelling is a separate migration, pinned in
-  // settings.test.mjs.
-  window.localStorage.setItem('zicato.console.typeface', 'D14');
-  assertEqual(ui.readType(), 'barlow-condensed', 'a preference already persisted under a retired id reads back as its face');
-  const root = document.createElement('div');
-  shell.applyTypeface('E8', root);
-  assertEqual(root.getAttribute('data-t-type'), 'literata', 'applying a retired id stamps the named id on the root');
 });
 
 // ---- the brand wordmark: dotless ı + the accent dot CENTRED on its stem ----
@@ -1358,12 +1329,6 @@ test('top bar: NO typeface picker and NO scale pill (both → Settings only); co
   assertEqual(allByClass(topbar, 'dt-scale-range').length, 0, 'no page-scale slider in the top bar');
   assert(allByClass(topbar, 'dt-status')[0], 'the live-status pill is still in the top bar');
   assert(allByClass(topbar, 'dt-nav-build')[0], 'the settings link is still in the top bar');
-  // the TOURNAMENT BUILDER is its own top-level view now — a discoverable nav
-  // entry sits beside the ⚙ settings chip and links to the standalone `#/builder`.
-  const navBuilder = allByClass(topbar, 'dt-nav-builder')[0];
-  assert(navBuilder, 'the tournament-builder nav entry is in the top bar (beside settings)');
-  assertEqual(navBuilder.getAttribute('href'), '#/builder', 'the builder nav entry links to the standalone builder view');
-  assertEqual(navBuilder.getAttribute('href'), router.href('builder', {}), 'the builder nav href is the router-canonical link (single source of truth)');
   assert(allByClass(topbar, 'dt-brand')[0], 'the brand is still in the top bar');
 
   // applyTypeface still applies live (the shared store path is intact even with
@@ -1390,61 +1355,6 @@ test('top bar: NO typeface picker and NO scale pill (both → Settings only); co
 // section-host. We mount the real shell, navigate to `#/builder`, and assert
 // the builder's own chrome (.dn-builder) lands in the main view host with NO
 // settings section-host wrapping it (the un-nesting / clutter fix).
-test('view dispatcher: #/builder renders the builder full-width in the main view host (un-nested from settings)', async () => {
-  freshState();
-  const listeners = { hashchange: [] };
-  globalThis.HashChangeEvent = function HashChangeEvent() {};
-  globalThis.EventSource = function EventSource() { this.readyState = 0; this.addEventListener = () => {}; this.close = () => {}; };
-  globalThis.EventSource.CLOSED = 2;
-  globalThis.window = globalThis.window || {};
-  globalThis.window.localStorage = globalThis.window.localStorage || { getItem() { return null; }, setItem() {} };
-  globalThis.window.addEventListener = (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); };
-  // a fetch that serves the env fixtures PLUS the builder's config + draft so
-  // its render() resolves its panes (and a steady draft so the chrome paints).
-  globalThis.fetch = async (path) => {
-    if (String(path).startsWith('/builder/config')) {
-      return { ok: true, json: async () => ({ chat_enabled: false, agent: {}, skills: [] }) };
-    }
-    if (String(path).startsWith('/builder/draft')) {
-      return { ok: true, json: async () => ({ session: 'dashboard', draft: { scoring: { tournament: { structure: 'gauntlet', params: {} } }, board: [], holdout: { train_ids: [], holdout_ids: [] }, proposer: {} }, cost: { board_runs_per_round: 0, breakdown: [] }, warnings: [], diff: { changed_components: [], rolls_epoch: false } }) };
-    }
-    const v = lookupFixture(FIXTURE, path);
-    if (v !== undefined) return { ok: true, json: async () => v };
-    return { ok: false, status: 404, json: async () => ({ error: 'not found: ' + path }) };
-  };
-  const loc = { _hash: '#/builder', search: '' };
-  Object.defineProperty(loc, 'hash', {
-    get() { return this._hash; },
-    set(v) { this._hash = v; for (const fn of (listeners.hashchange || [])) fn(); },
-  });
-  globalThis.location = loc;
-  globalThis.window.location = loc;
-  globalThis.window.dispatchEvent = () => { for (const fn of (listeners.hashchange || [])) fn(); };
-
-  const root = document.createElement('div');
-  document.body.appendChild(root);
-  shell.mountShell(root);
-  // let the async dispatch + the builder's config/draft fetch settle.
-  await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
-
-  const viewhost = allByClass(root, 'dt-viewhost')[0];
-  assert(viewhost, 'the main view host exists');
-  // the builder mounted INSIDE the main view host (full-width) rather than a settings host.
-  const builderRoot = allByClass(viewhost, 'dn-builder')[0];
-  assert(builderRoot, 'the builder chrome (.dn-builder) rendered in the main view host');
-  // it is NOT wrapped in the settings section-host (the un-nesting / clutter fix):
-  // no .dn-settings surface and no settings section-rail in the view host.
-  assertEqual(allByClass(viewhost, 'dn-settings').length, 0, 'the builder is NOT nested inside the settings surface');
-  assertEqual(allByClass(viewhost, 'dn-set-rail').length, 0, 'no settings section-rail wraps the builder (no double rail)');
-  // the builder kept its own four-pane chrome (its own rail + preview pane).
-  assert(allByClass(viewhost, 'dn-bld-preview')[0], 'the builder live-preview pane rendered full-width');
-  // the breadcrumb reads environment › tournament builder (no settings crumb).
-  const crumbs = allByClass(root, 'dt-crumbs')[0];
-  assert(crumbs && (crumbs.textContent || '').toLowerCase().includes('tournament builder'), 'the breadcrumb names the tournament builder');
-  assert(crumbs && !(crumbs.textContent || '').toLowerCase().includes('settings'), 'the builder breadcrumb does NOT pass through settings');
-});
 
 // THE SETTINGS DRAWER OVERLAY. Settings is not a full-page
 // view: `#/settings[/<section>]` opens a routed RIGHT-SIDE DRAWER that paints

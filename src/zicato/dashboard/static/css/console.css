@@ -1083,27 +1083,6 @@
    * PENDING vocabulary (neutral, never bad — a suggested entry is not a
    * regression), visually UNAMBIGUOUS (dashed + faint) so a ghost row can never
    * be mistaken for measured tournament data (the §4 honesty rule). */
-  .dn-evalmtx-ghosthead .dn-evalmtx-ghostcaption { text-align: left; padding: 8px 10px 4px;
-    font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
-    border-top: 1px dashed var(--v2-rule); }
-  .dn-evalmtx-row.dn-evalmtx-ghost { opacity: 0.82; }
-  .dn-evalmtx-row.dn-evalmtx-ghost .dn-evalmtx-ghost-site { border-left: 3px dashed var(--v2-rule); }
-  .dn-evalmtx-ghosthead-cell { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .dn-evalmtx-ghost-tag { font-size: calc(9px * var(--dt-font-scale, 1)); text-transform: uppercase;
-    letter-spacing: 0.05em; color: var(--v2-ink-soft); border: 1px dashed var(--v2-rule); border-radius: 3px;
-    padding: 0 5px; }
-  .dn-evalmtx-ghost-flip { display: inline-flex; min-width: 90px; max-width: 150px; }
-  .dn-evalmtx-cell.dn-evalmtx-ghostcell { text-align: left; width: auto; height: auto; padding: 6px 10px;
-    background: repeating-linear-gradient(135deg, transparent, transparent 6px, var(--v2-rule-soft) 6px, var(--v2-rule-soft) 7px); }
-  .dn-evalmtx-ghostbody { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-  .dn-evalmtx-ghost-note { font-size: calc(10px * var(--dt-font-scale, 1)); font-style: italic; }
-  .dn-evalmtx-ghost-marks { display: inline-flex; align-items: center; gap: 8px; }
-  .dn-evalmtx-ghost-lab { font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.04em; }
-  .dn-evalmtx-ghost-tier { font-size: calc(9.5px * var(--dt-font-scale, 1)); font-family: var(--v2-mono);
-    text-transform: uppercase; letter-spacing: 0.04em; color: var(--v2-ink-soft); }
-  .dn-evalmtx-ghost-apply { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-accent);
-    text-decoration: none; margin-left: auto; }
-  .dn-evalmtx-ghost-apply:hover { text-decoration: underline; }
 
   .dn-patch-block { border: 1px solid var(--v2-rule-soft); border-radius: 4px; padding: 8px 10px; margin: 8px 0; }
   .dn-patch-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
@@ -1363,31 +1342,7 @@
   .dn-bt-convspark { display: inline-block; width: 120px; }
   .dn-bt-inconclusive { font-size: calc(11px * var(--dt-font-scale, 1)); margin: 6px 0 0;
     border-left: 2px solid var(--v2-caution); padding-left: 8px; color: var(--v2-caution); }
-  /* ===  ADMISSION VISUALS (TRAJECTORY-UI.md §2.2a)  ===
-   * A suggestion's admission stats as marks, reusing the shipped vocabulary: the
-   * flip-rate WHISKER (BT-whisker figure + the advisory-ceiling reference rule;
-   * over-ceiling rides caution), the discrimination PIPS (dt-rungstep), and the
-   * evidence TIER (probed = firm, planned = faint). No new colour vocabulary. */
-  .dn-adm { display: grid; gap: 4px; margin: 4px 0; }
-  .dn-adm-tierrow { display: flex; align-items: center; gap: 6px; }
-  .dn-adm-tier { font-size: calc(9.5px * var(--dt-font-scale, 1)); font-family: var(--v2-mono);
-    text-transform: uppercase; letter-spacing: 0.05em; padding: 0 5px; border-radius: 3px; }
-  .dn-adm-tier-firm { color: var(--v2-ink); border: 1px solid var(--v2-rule); }
-  .dn-adm-tier-faint { border: 1px dashed var(--v2-rule); }
-  .dn-adm-row { display: grid; grid-template-columns: 34px minmax(90px, 150px) auto; gap: 8px; align-items: center; }
-  .dn-adm-compact .dn-adm-row { grid-template-columns: minmax(80px, 140px) auto; }
-  .dn-adm-lab { font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.04em; }
-  .dn-adm-whisker { display: block; }
-  /* over the advisory ceiling → the noisy-eval caution tone (extends the shared
-   * dn-bt-theta vocabulary; no new hue). */
-  .dn-bt-theta.dn-caution, .dn-adm-flipdot.dn-caution { fill: var(--v2-caution); }
-  .dn-adm-ceiling { stroke: var(--v2-ink-soft); }
-  .dn-adm-pips { display: inline-flex; align-items: center; gap: 3px; }
-  .dn-adm-pipmore { font-size: calc(9px * var(--dt-font-scale, 1)); }
-  .dn-adm-readout { font-size: calc(10px * var(--dt-font-scale, 1)); white-space: nowrap; }
-  .dn-adm-over { color: var(--v2-caution); }
-  .dn-adm-leak { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-caution);
-    border-left: 2px solid var(--v2-caution); padding-left: 6px; }
+  .dn-bt-theta.dn-caution { fill: var(--v2-caution); }
 
   /* the BT credible-interval band drawn on the radar scalar vertex. */
   .dn-radar-ciband { stroke: var(--v2-accent); stroke-width: 2; opacity: 0.55; }
@@ -3383,24 +3338,17 @@
     .dt-back-text { display: none; }
   }
 
-  /* ===================  tournament builder (B2)  =================== */
-
-  /* the top-bar nav entries — the ⚒ builder (its own full-width view) and the
-   * ⚙ settings chip read as a peer set, so they share one chip rule. */
+  /* Top-bar build and log navigation. */
   .dt-nav-build,
-  .dt-nav-logs,
-  .dt-nav-builder { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
+  .dt-nav-logs { display: inline-flex; align-items: center; gap: 5px; font-family: var(--v2-mono);
     font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); border: 1px solid var(--v2-rule); border-radius: 5px;
     padding: 4px 9px; text-decoration: none; transition: background 0.15s, color 0.15s, border-color 0.15s; }
   .dt-nav-build:hover,
-  .dt-nav-logs:hover,
-  .dt-nav-builder:hover { background: var(--v2-accent); color: var(--v2-paper); border-color: var(--v2-accent); }
+  .dt-nav-logs:hover { background: var(--v2-accent); color: var(--v2-paper); border-color: var(--v2-accent); }
   .dt-nav-build-glyph,
-  .dt-nav-logs-glyph,
-  .dt-nav-builder-glyph { color: var(--v2-accent); }
+  .dt-nav-logs-glyph { color: var(--v2-accent); }
   .dt-nav-build:hover .dt-nav-build-glyph,
-  .dt-nav-logs:hover .dt-nav-logs-glyph,
-  .dt-nav-builder:hover .dt-nav-builder-glyph { color: var(--v2-paper); }
+  .dt-nav-logs:hover .dt-nav-logs-glyph { color: var(--v2-paper); }
 
   /* the ZICATO-LEVEL harmonograf entry — top-bar "execution ↗" deep-link
    * into the meta-loop session. Matches the nav-build chip so the two top-bar
@@ -3413,356 +3361,7 @@
     padding: 4px 9px; text-decoration: none; transition: background 0.15s, color 0.15s, border-color 0.15s; }
   .dt-exec-link:hover { background: var(--v2-accent); color: var(--v2-paper); border-color: var(--v2-accent); }
 
-  /* the view shell: a work column (rail · center · preview) + a fixed chat
-   * column. Real grid layout: the work column is 1fr, the chat column is the
-   * persisted --dn-bld-chat px width, so the form + preview reflow to the
-   * remaining width and NEVER overlap or clip at any chat width.
-   *
-   * FULL-HEIGHT WORKSPACE: the builder is a docked workspace, not a stack of
-   * content-sized cards. Its height is the viewport minus the 50px top bar and
-   * the viewhost's own padding (top = --dt-pad-y, bottom = 96px) — the same
-   * frame the viewhost paints into — so the chat copilot rides as a full-height
-   * docked column rather than a short floating stub. `align-items: stretch`
-   * makes every grid child (work column · chat) take that full height; each
-   * child scrolls INTERNALLY if its content overflows, so nothing clips. */
-  .dn-builder { display: grid; grid-template-columns: 1fr var(--dn-bld-chat, 340px);
-    gap: 18px; align-items: stretch; min-width: 0;
-    height: calc(100vh - 50px - var(--dt-pad-y, 40px) - 96px); min-height: 420px; }
-  .dn-builder[data-chat-collapsed="1"] { grid-template-columns: 1fr 30px; }
-  .dn-bld-work { display: grid; grid-template-columns: minmax(150px, 200px) minmax(0, 1.3fr) minmax(0, 1fr);
-    gap: 18px; align-items: stretch; min-width: 0; min-height: 0; }
-  /* center + preview own the full column height, top-aligned, scrolling
-   * INTERNALLY when their content overflows so the workspace never clips. */
-  .dn-bld-center, .dn-bld-preview { min-height: 0; overflow-y: auto; }
-
-  /* left rail. */
-  .dn-bld-rail { display: flex; flex-direction: column; gap: 3px; position: sticky; top: 8px; min-width: 0; }
-  .dn-bld-railitem { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-    background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 8px 10px;
-    color: var(--v2-ink-soft); font-size: calc(12.5px * var(--dt-font-scale, 1)); cursor: pointer; transition: background 0.12s, color 0.12s, border-color 0.12s; }
-  .dn-bld-railitem:hover { background: var(--v2-rule-soft); color: var(--v2-ink); }
-  .dn-bld-railitem-active { background: var(--v2-rule-soft); color: var(--v2-ink); border-color: var(--v2-rule); }
-  .dn-bld-railglyph { color: var(--v2-accent); font-size: calc(11px * var(--dt-font-scale, 1)); flex: none; width: 14px; text-align: center; }
-  .dn-bld-railitem-done .dn-bld-railglyph { color: var(--v2-good); }
-  .dn-bld-raillabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-
-  /* center column. */
-  .dn-bld-center { min-width: 0; }
-  .dn-bld-flash { display: flex; align-items: center; gap: 8px; justify-content: space-between;
-    background: var(--v2-bad-soft); border: 1px solid var(--v2-bad); border-radius: 4px;
-    color: var(--v2-ink); font-size: calc(12px * var(--dt-font-scale, 1)); padding: 7px 10px; margin-bottom: 10px; }
-  .dn-bld-flash-x { background: transparent; border: none; color: var(--v2-ink-soft); cursor: pointer; font-size: calc(15px * var(--dt-font-scale, 1)); line-height: 1; }
-  .dn-bld-busy { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-bottom: 8px; }
-
-  .dn-bld-row { display: flex; flex-direction: column; gap: 5px; margin: 0 0 14px; min-width: 0; }
-  .dn-bld-rowhead { display: flex; align-items: center; gap: 6px; }
-  .dn-bld-label { font-size: calc(12px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink); }
-  .dn-bld-control { min-width: 0; }
-  .dn-bld-num { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); width: 130px; max-width: 100%;
-    background: var(--v2-paper); color: var(--v2-ink); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 5px 8px; }
-  .dn-bld-num:focus { outline: 2px solid var(--v2-accent); outline-offset: 0; }
-  .dn-bld-checkwrap { display: inline-flex; align-items: center; gap: 7px; font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); cursor: pointer; }
-  .dn-bld-check { accent-color: var(--v2-accent); }
-  .dn-bld-select, .dn-bld-text { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); max-width: 100%;
-    background: var(--v2-paper); color: var(--v2-ink); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 5px 8px; }
-  .dn-bld-text { width: 320px; }
-  .dn-bld-select:focus, .dn-bld-text:focus { outline: 2px solid var(--v2-accent); outline-offset: 0; }
-  .dn-bld-subhead { font-size: calc(12px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink-soft);
-    text-transform: uppercase; letter-spacing: 0.05em; margin: 16px 0 8px; }
-
-  /* structure picker cards. */
-  .dn-bld-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-  .dn-bld-card { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; text-align: left;
-    background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 6px; padding: 11px 12px;
-    color: var(--v2-ink); cursor: pointer; min-width: 0; transition: border-color 0.12s, background 0.12s; }
-  .dn-bld-card:hover { border-color: var(--v2-accent); }
-  .dn-bld-card-on { border-color: var(--v2-accent); background: var(--v2-rule-soft);
-    box-shadow: inset 0 0 0 1px var(--v2-accent); }
-  .dn-bld-cardglyph { color: var(--v2-accent); flex: none; }
-  .dn-bld-cardname { font-size: calc(12.5px * var(--dt-font-scale, 1)); font-weight: 600; }
-  .dn-bld-cardblurb { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); line-height: 1.35; }
-
-  /* board + holdout. */
-  .dn-bld-splitstrip, .dn-bld-previewstrip { display: flex; width: 100%; height: 22px; border-radius: 4px;
-    overflow: hidden; border: 1px solid var(--v2-rule); font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); margin: 4px 0 12px; }
-  .dn-bld-split-train { background: var(--v2-good-soft); color: var(--v2-ink); display: flex; align-items: center;
-    justify-content: center; min-width: 0; overflow: hidden; white-space: nowrap; }
-  .dn-bld-split-hold { background: var(--v2-caution); color: var(--v2-paper); display: flex; align-items: center;
-    justify-content: center; min-width: 0; overflow: hidden; white-space: nowrap; }
-  .dn-bld-boardlist { display: flex; flex-direction: column; gap: 3px; max-height: 480px; overflow-y: auto; }
-  .dn-bld-boardrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px;
-    padding: 5px 8px; border: 1px solid var(--v2-rule-soft); border-radius: 4px; }
-  .dn-bld-boardrow-open { border-color: var(--v2-accent); }
-  .dn-bld-boardrow-main { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
-  .dn-bld-boardrow-main:hover .dn-bld-boardid { color: var(--v2-accent); }
-  .dn-bld-boardid { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: none; max-width: 40%; }
-  .dn-bld-boardkind { font-size: calc(9.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); font-family: var(--v2-mono); flex: none; }
-  .dn-bld-boardbadges { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
-  .dn-bld-judgebadge { display: inline-flex; align-items: center; gap: 3px; }
-  .dn-bld-judgebadge-x { border: none; background: transparent; color: var(--v2-ink-faint); cursor: pointer; font-family: var(--v2-mono); line-height: 1; padding: 0 1px; }
-  .dn-bld-judgebadge-x:hover { color: var(--v2-bad); }
-  .dn-bld-holdtoggle { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); padding: 2px 8px; border-radius: 9px;
-    border: 1px solid var(--v2-rule); background: transparent; color: var(--v2-ink-soft); cursor: pointer; }
-  .dn-bld-holdtoggle.dn-bld-held { background: var(--v2-caution); color: var(--v2-paper); border-color: var(--v2-caution); }
-
-  /* the inline board-entry editor (accordion). */
-  .dn-bld-boardrow-editor, .dn-bld-createeditor { margin: 2px 0 8px; }
-  .dn-bld-entryform { display: flex; flex-direction: column; gap: 9px; padding: 12px 13px;
-    background: var(--v2-panel); border: 1px solid var(--v2-accent); border-radius: 5px; }
-  .dn-bld-ef-row { display: grid; grid-template-columns: 130px minmax(0, 1fr); align-items: start; gap: 10px; }
-  .dn-bld-ef-label { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); padding-top: 6px; }
-  .dn-bld-ef-control { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .dn-bld-ef-hint { font-size: calc(9.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
-  .dn-bld-ef-jsonhint, .dn-bld-ef-ctxhint { font-family: var(--v2-mono); }
-  .dn-bld-ef-sublabel { font-size: calc(10.5px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink-soft); margin-top: 4px; }
-  .dn-bld-area { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); width: 100%; box-sizing: border-box;
-    border: 1px solid var(--v2-rule); border-radius: 4px; background: var(--v2-paper); color: var(--v2-ink); padding: 5px 7px; resize: vertical; }
-  .dn-bld-ef-turn { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: start; margin-bottom: 4px; }
-  .dn-bld-ef-turnbtns { display: flex; gap: 2px; }
-  .dn-bld-ef-turnbtns .dn-bld-btn { padding: 3px 7px; }
-  .dn-bld-ef-driftgrid, .dn-bld-boardmeta-drift { display: flex; flex-wrap: wrap; gap: 8px 14px; }
-  .dn-bld-ef-judge { border: 1px solid var(--v2-rule-soft); border-radius: 4px; padding: 8px; margin-bottom: 6px;
-    display: flex; flex-direction: column; gap: 6px; }
-  .dn-bld-ef-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-  .dn-bld-btn-save { border-color: var(--v2-accent); color: var(--v2-accent); }
-  .dn-bld-btn-save:hover { background: var(--v2-accent); color: var(--v2-paper); }
-  .dn-bld-btn-save[disabled] { opacity: 0.45; cursor: not-allowed; }
-  .dn-bld-btn-del { border-color: var(--v2-bad); color: var(--v2-bad); }
-  .dn-bld-ef-error { display: flex; align-items: flex-start; gap: 7px; padding: 8px 10px; border-radius: 4px;
-    background: var(--v2-bad-soft, var(--v2-panel)); border: 1px solid var(--v2-bad); color: var(--v2-ink); }
-  .dn-bld-ef-error-msg { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); }
-
-  /* board metadata + add + import + brief. */
-  .dn-bld-boardmeta { margin: 10px 0; display: flex; flex-direction: column; gap: 6px; }
-  .dn-bld-subhead-min { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
-  .dn-bld-addentry { margin-top: 8px; }
-  .dn-bld-addrow { display: flex; gap: 8px; align-items: center; }
-  .dn-bld-import { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
-  .dn-bld-import-area { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); width: 100%; box-sizing: border-box;
-    border: 1px solid var(--v2-rule); border-radius: 4px; background: var(--v2-paper); color: var(--v2-ink); padding: 6px 8px; resize: vertical; }
-  .dn-bld-import-report { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); }
-  .dn-bld-import-ok { color: var(--v2-good); }
-  .dn-bld-import-err { color: var(--v2-bad); }
-  .dn-bld-brief { margin: 8px 0 14px; display: flex; flex-direction: column; gap: 6px; }
-  .dn-bld-brief-area { width: 100%; box-sizing: border-box; border: 1px solid var(--v2-rule); border-radius: 4px;
-    background: var(--v2-paper); color: var(--v2-ink); padding: 7px 9px; resize: vertical; font-size: calc(11px * var(--dt-font-scale, 1)); }
-  .dn-bld-brief-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .dn-bld-brief-count { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
-
-  /* proposer + review panels. */
-  .dn-bld-panel { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 11px 13px; }
-  .dn-bld-kv { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; min-width: 0; }
-  .dn-bld-k { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); flex: none; width: 100px; }
-  .dn-bld-v { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .dn-bld-skills { margin: 8px 0 0; padding-left: 16px; font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); }
-  .dn-bld-skill-name { font-weight: 600; color: var(--v2-ink); }
-  .dn-bld-applyrow { display: flex; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
-  .dn-bld-btn { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); padding: 7px 14px; border-radius: 5px;
-    border: 1px solid var(--v2-rule); background: transparent; color: var(--v2-ink); cursor: pointer; transition: background 0.12s, color 0.12s; }
-  .dn-bld-btn-dry:hover { background: var(--v2-rule-soft); }
-  .dn-bld-btn-apply { border-color: var(--v2-accent); color: var(--v2-accent); }
-  .dn-bld-btn-apply:hover { background: var(--v2-accent); color: var(--v2-paper); }
-  .dn-bld-btn-confirm { background: var(--v2-bad); border-color: var(--v2-bad); color: var(--v2-paper); }
-  .dn-bld-applyout { margin-top: 6px; }
-
-  /* ===  the SUGGESTION INBOX CARDS (TRAJECTORY-UI.md §2.2a)  ===
-   * The inbox rows upgraded to cards: summary + rationale + the admission
-   * visuals + (foreign-source) the provenance mini-strip. Quiet register; the
-   * only chips are the ones the head already pills (suggestion type + slice). */
-  .dn-bld-suglist { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  .dn-bld-sugcard { border: 1px solid var(--v2-rule); border-radius: 6px; padding: 9px 11px;
-    display: grid; gap: 6px; background: var(--v2-panel); }
-  .dn-bld-sughead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .dn-bld-sugsummary { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
-  .dn-bld-sugrationale { font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; }
-  .dn-bld-sugadmviz { margin: 2px 0; }
-  .dn-bld-sugadmission { font-size: calc(10.5px * var(--dt-font-scale, 1)); }
-  .dn-bld-sugprov, .dn-bld-sugforeign, .dn-bld-sugroll { font-size: calc(10px * var(--dt-font-scale, 1)); line-height: 1.35; }
-  .dn-bld-sugstripwrap { display: grid; gap: 4px; border-top: 1px dashed var(--v2-rule); padding-top: 6px; }
-  .dn-bld-sugtracelink { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-accent); text-decoration: none; }
-  .dn-bld-sugtracelink:hover { text-decoration: underline; }
-  .dn-bld-sugstrip { min-width: 0; }
-  .dn-bld-sugstrip-fallback { font-size: calc(10px * var(--dt-font-scale, 1)); font-style: italic; }
-
-  /* the info popover. ONE clean ring + a plain lowercase `i` (no pre-circled
-   * glyph — that read as a circle inside the CSS circle). The ring is a faint
-   * theme-token border; the mark is monospace-consistent and centred. */
-  .dn-bld-popwrap { position: relative; display: inline-flex; }
-  .dn-bld-info { display: inline-flex; align-items: center; justify-content: center;
-    width: 15px; height: 15px; line-height: 1; padding: 0; border-radius: 50%;
-    border: 1px solid var(--v2-rule); background: transparent; color: var(--v2-ink-faint);
-    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700; font-style: italic;
-    cursor: help; user-select: none; transition: color 0.12s, border-color 0.12s; }
-  .dn-bld-info:hover, .dn-bld-info:focus { color: var(--v2-accent); border-color: var(--v2-accent); outline: none; }
-  .dn-bld-pop { position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: max-content; max-width: 280px;
-    background: var(--v2-paper); border: 1px solid var(--v2-accent); border-radius: 5px; padding: 9px 11px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); display: none; }
-  .dn-bld-pop-open .dn-bld-pop { display: block; }
-  /* flip to the right edge when the trigger sits in the right half so the panel
-   * never clips off-screen (a pure-CSS containment guard). */
-  .dn-bld-preview .dn-bld-pop, .dn-bld-pop:last-child { right: 0; left: auto; }
-  .dn-bld-pop-title { font-size: calc(11.5px * var(--dt-font-scale, 1)); font-weight: 700; color: var(--v2-ink); margin-bottom: 3px; }
-  .dn-bld-pop-def { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin-bottom: 4px; }
-  .dn-bld-pop-def-v { color: var(--v2-accent); }
-  .dn-bld-pop-body { font-size: calc(11px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); line-height: 1.45; margin: 0; }
-
-  /* the live preview. */
-  .dn-bld-preview { min-width: 0; position: sticky; top: 8px; display: flex; flex-direction: column; gap: 10px; }
-  .dn-bld-figure { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 8px; overflow: hidden; }
-  .dn-bld-figure > svg { display: block; max-width: 100%; }
-  .dn-bld-impact { display: flex; align-items: center; gap: 7px; font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1));
-    color: var(--v2-ink-soft); border: 1px dashed var(--v2-rule); border-radius: 4px; padding: 6px 9px; }
-  .dn-bld-impact-roll { color: var(--v2-caution); border-color: var(--v2-caution); border-style: solid; }
-  /* the READ-ONLY contract preview's impact note — a quiet "current contract"
-   * tag (no apply affordance), set apart from the roll variant by a steady ink. */
-  .dn-bld-impact-current { color: var(--v2-ink-faint); border-style: dashed; }
-  .dn-bld-impact-glyph { font-size: calc(12px * var(--dt-font-scale, 1)); }
-  .dn-bld-cost { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 9px 11px; }
-  .dn-bld-cost-head { display: flex; align-items: baseline; gap: 7px; margin-bottom: 7px; }
-  .dn-bld-cost-num { font-family: var(--v2-mono); font-size: calc(19px * var(--dt-font-scale, 1)); font-variant-numeric: tabular-nums; color: var(--v2-accent); }
-  .dn-bld-cost-lab { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em; color: var(--v2-ink-faint); }
-  .dn-bld-cost-bars { display: flex; flex-direction: column; gap: 4px; }
-  .dn-bld-cost-bar { position: relative; height: 16px; border-radius: 3px; overflow: hidden; background: var(--v2-rule-soft); display: flex; align-items: center; }
-  .dn-bld-cost-barfill { position: absolute; inset: 0 auto 0 0; background: var(--v2-good-soft); }
-  .dn-bld-cost-barlab { position: relative; font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); color: var(--v2-ink); padding: 0 6px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dn-bld-warnings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
-  .dn-bld-warn { display: flex; gap: 7px; font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; border-radius: 4px; padding: 6px 9px; }
-  .dn-bld-warn-warning { background: var(--v2-bad-soft); color: var(--v2-ink); }
-  .dn-bld-warn-info { background: var(--v2-rule-soft); color: var(--v2-ink-soft); }
-  /* refuse — the statistical-unsoundness tier (recommend-only, never a block):
-   * the bad-soft wash plus a hard bad border so it reads a notch above warning. */
-  .dn-bld-warn-refuse { background: var(--v2-bad-soft); color: var(--v2-ink); border: 1px solid var(--v2-bad); }
-  .dn-bld-warn-glyph { flex: none; }
-  .dn-bld-warn-msg { min-width: 0; }
-
-  /* the build-time statistical pre-flight (Review pane): verdict chip + reasons. */
-  .dn-bld-preflight { margin: 10px 0; }
-  .dn-bld-pf { margin-top: 8px; background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 8px 11px; }
-  /* Wraps because the head carries a SECOND chip when the promote_margin
-     window fails (the verdict chip answers signal-vs-noise only). */
-  .dn-bld-pf-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 5px; }
-  .dn-bld-pf-chip { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); letter-spacing: 0.05em;
-    border-radius: 999px; padding: 2px 9px; border: 1px solid var(--v2-rule); }
-  .dn-bld-pf-ok { background: var(--v2-good-soft); border-color: var(--v2-good); }
-  .dn-bld-pf-warn { background: var(--v2-bad-soft); }
-  .dn-bld-pf-refuse { background: var(--v2-bad-soft); border-color: var(--v2-bad); }
-  /* An inert probe leaves the signal UNMEASURED rather than bad, so it takes
-     the neutral treatment of `unavailable` and not the bad-soft of warn/refuse. */
-  .dn-bld-pf-inert { background: var(--v2-rule-soft); border-color: var(--v2-rule); }
-  .dn-bld-pf-unavailable { background: var(--v2-rule-soft); color: var(--v2-ink-faint); }
-  .dn-bld-pf-reasons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px;
-    font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; color: var(--v2-ink-soft); }
-  .dn-bld-refuses { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
-  .dn-bld-refuses-empty { display: none; }
-
-  /* the draft-slot picker (fork/compare lifecycle) — a compact strip at the
-   * bottom of the section rail. */
-  .dn-bld-slots { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--v2-rule);
-    display: flex; flex-direction: column; gap: 6px; }
-  .dn-bld-slots-head { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase;
-    letter-spacing: 0.05em; color: var(--v2-ink-faint); }
-  .dn-bld-slots-pick { width: 100%; }
-  .dn-bld-slots-forkrow { display: flex; gap: 5px; }
-  .dn-bld-slots-name { flex: 1; min-width: 0; width: auto; }
-  /* the revert/undo lifecycle controls under the fork row. */
-  .dn-bld-slots-lifecycle { display: flex; flex-direction: column; gap: 4px; }
-  .dn-bld-slots-lifecyclerow { display: flex; gap: 5px; }
-  .dn-bld-slots-lifecyclerow .dn-bld-btn { flex: 1; }
-  .dn-bld-slots-undonote { font-size: calc(10px * var(--dt-font-scale, 1)); }
-
-  /* B3 mapping-editor add-key rows (weights + gate namespace-monotonicity). */
-  .dn-bld-addkeyrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
-  .dn-bld-addkey-k { flex: 1; min-width: 0; }
-  .dn-bld-addkey-v { width: 84px; flex: none; }
-  .dn-bld-nsmono { margin: 10px 0; display: flex; flex-direction: column; gap: 4px; }
-
-  /* B3 proposer picker + free-text path row. */
-  .dn-bld-proposer-picker { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
-  .dn-bld-proposer-freerow { display: flex; gap: 6px; align-items: center; }
-  .dn-bld-proposer-path { flex: 1; min-width: 0; }
-
-  /* draft compare (Review pane): operand selects + the keyed diff table. */
-  .dn-bld-cmp { margin: 10px 0; }
-  .dn-bld-cmp-controls { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-  .dn-bld-cmp-vs { font-size: calc(10px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
-  .dn-bld-cmp-result { margin-top: 8px; background: var(--v2-panel); border: 1px solid var(--v2-rule);
-    border-radius: 4px; padding: 6px 9px; display: flex; flex-direction: column; gap: 3px; overflow-x: auto; }
-  .dn-bld-cmp-row { display: grid; grid-template-columns: minmax(120px, 1.2fr) 1fr 1fr; gap: 8px;
-    font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.5; align-items: baseline; }
-  .dn-bld-cmp-headrow { color: var(--v2-ink-faint); border-bottom: 1px solid var(--v2-rule-soft); padding-bottom: 3px; }
-  .dn-bld-cmp-key { color: var(--v2-ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dn-bld-cmp-a { color: var(--v2-bad); overflow-wrap: anywhere; }
-  .dn-bld-cmp-b { color: var(--v2-good); overflow-wrap: anywhere; }
-  .dn-bld-cmp-same { margin: 6px 0 0; }
-
-  /* the chat copilot pane — a FULL-HEIGHT docked column, not a content-sized
-   * stub. The grid stretches it to the workspace height; it is a 3-row flex
-   * column (header · log · composer) whose log grows (flex:1) and scrolls, so
-   * the composer pins to the BOTTOM edge even with an empty conversation. */
-  .dn-bld-chat { position: relative; min-width: 0; align-self: stretch; min-height: 0;
-    border: 1px solid var(--v2-rule);
-    border-radius: 6px; background: var(--v2-panel); display: flex; flex-direction: column; }
-  .dn-bld-chat-handle { position: absolute; left: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; }
-  .dn-bld-chat-handle:hover, .dn-bld-chat-handle-drag, .dn-bld-chat-handle:focus { background: var(--v2-accent); opacity: 0.4; outline: none; }
-  .dn-bld-chat-collapsed .dn-bld-chat-handle { display: none; }
-  .dn-bld-chat-body { display: flex; flex-direction: column; min-height: 0; flex: 1; min-width: 0; }
-  .dn-bld-chat-collapsed .dn-bld-chat-body { display: none; }
-  .dn-bld-chat-strip { display: none; }
-  .dn-bld-chat-collapsed .dn-bld-chat-strip { display: flex; align-items: center; justify-content: center; flex: 1;
-    writing-mode: vertical-rl; background: transparent; border: none; color: var(--v2-ink-soft); cursor: pointer;
-    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); letter-spacing: 0.1em; }
-  .dn-bld-chat-strip:hover { color: var(--v2-accent); }
-  .dn-bld-chat-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--v2-rule); }
-  .dn-bld-chat-collapse { background: transparent; border: 1px solid var(--v2-rule); border-radius: 4px;
-    color: var(--v2-ink-soft); cursor: pointer; width: 20px; height: 20px; line-height: 1; flex: none; }
-  .dn-bld-chat-title { font-size: calc(12px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink); }
-  .dn-bld-chat-model { font-size: calc(9.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); margin-left: auto; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; max-width: 50%; }
-  .dn-bld-chat-log { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-  .dn-bld-chat-degrade { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); }
-  .dn-bld-chat-degrade p { margin: 0 0 6px; }
-  .dn-bld-chat-hint { margin: 0; }
-  .dn-bld-bubble { border-radius: 7px; padding: 7px 10px; font-size: calc(12px * var(--dt-font-scale, 1)); line-height: 1.45; max-width: 92%; min-width: 0; word-break: break-word; }
-  .dn-bld-bubble p { margin: 0; }
-  .dn-bld-bubble-user { align-self: flex-end; background: var(--v2-accent); color: var(--v2-paper); }
-  .dn-bld-bubble-asst { align-self: flex-start; background: var(--v2-rule-soft); color: var(--v2-ink); }
-  .dn-bld-bubble-err { color: var(--v2-bad); font-size: calc(11px * var(--dt-font-scale, 1)); margin-top: 5px; }
-  .dn-bld-bubble-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
-  .dn-bld-chip { font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); padding: 1px 6px; border-radius: 8px; border: 1px solid var(--v2-rule); }
-  .dn-bld-chip-tool { color: var(--v2-ink-faint); }
-  .dn-bld-chip-edit { color: var(--v2-good); border-color: var(--v2-good); }
-  .dn-bld-chat-typing { display: flex; gap: 4px; padding: 4px 6px; align-self: flex-start; }
-  .dn-bld-chat-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--v2-ink-faint); animation: dn-bld-typing 1.2s infinite ease-in-out; }
-  .dn-bld-chat-dot:nth-child(2) { animation-delay: 0.2s; }
-  .dn-bld-chat-dot:nth-child(3) { animation-delay: 0.4s; }
-  @keyframes dn-bld-typing { 0%, 60%, 100% { opacity: 0.3; } 30% { opacity: 1; } }
-  .dn-bld-chat-composer { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--v2-rule); }
-  .dn-bld-chat-input { flex: 1; min-width: 0; resize: none; font-family: var(--v2-sans); font-size: calc(12px * var(--dt-font-scale, 1));
-    background: var(--v2-paper); color: var(--v2-ink); border: 1px solid var(--v2-rule); border-radius: 4px; padding: 6px 8px; }
-  .dn-bld-chat-input:disabled { opacity: 0.5; cursor: not-allowed; }
-  .dn-bld-chat-send { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); padding: 0 12px; border-radius: 4px;
-    border: 1px solid var(--v2-accent); background: var(--v2-accent); color: var(--v2-paper); cursor: pointer; flex: none; }
-  .dn-bld-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  @media (prefers-reduced-motion: reduce) {
-    .dn-bld-chat-dot { animation: none; }
-  }
-  @media (max-width: 1080px) {
-    /* stacked single-column fallback: drop the docked full-height frame so the
-     * panes flow as a normal scrolling page (no internal clipping when narrow). */
-    .dn-builder { grid-template-columns: 1fr; height: auto; min-height: 0; }
-    .dn-builder[data-chat-collapsed="1"] { grid-template-columns: 1fr; }
-    .dn-bld-work { grid-template-columns: 1fr; }
-    .dn-bld-center, .dn-bld-preview { overflow-y: visible; }
-    .dn-bld-chat { min-height: 360px; }
-    .dn-bld-chat-handle { display: none; }
-  }
-
-  /* ===================  SETTINGS surface (B3)  =================== */
-  /* A section rail + one section host. The builder section delegates to the
-   * full builder view (its own grid takes over), so the body host is just a
-   * min-0 column the section paints into. Theme tokens only. */
+  /* Settings: section navigation and content. */
 
   .dn-settings { display: grid; grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
     gap: 22px; align-items: start; min-width: 0; }
@@ -3774,19 +3373,7 @@
   a.dn-set-railitem-active { background: var(--v2-rule-soft); color: var(--v2-ink); border-color: var(--v2-rule); }
   .dn-set-railglyph { color: var(--v2-accent); font-size: calc(12px * var(--dt-font-scale, 1)); flex: none; width: 14px; text-align: center; }
   .dn-set-raillabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  /* the LAUNCHER rail entry links OUT to the standalone `#/builder` view — a
-   * trailing ↗ marks it as a navigation away (not an in-host section) and a
-   * hairline below separates it from the in-host sections. */
-  a.dn-set-raillauncher { margin-bottom: 5px; padding-bottom: 11px; border-bottom: 1px solid var(--v2-rule-soft); border-radius: 5px; }
-  .dn-set-raillaunch-glyph { margin-left: auto; color: var(--v2-ink-faint); font-size: 11px; flex: none; }
-  a.dn-set-raillauncher:hover .dn-set-raillaunch-glyph { color: var(--v2-accent); }
   .dn-set-body { min-width: 0; }
-
-  /* the Contract section's READ-ONLY visualization — reuses the builder's
-   * preview pane classes (.dn-bld-preview + children) but un-sticks it (it
-   * leads the section in normal flow, it is not a side rail) and gives it a
-   * sensible max-width so the schematic does not stretch edge-to-edge. */
-  .dn-set-preview.dn-bld-preview { position: static; top: auto; margin: 12px 0; max-width: 560px; }
 
   /* the key/value grid — a read-mostly contract / config roll-up. The
    * contract rows are links into the builder; the static config rows are not. */
@@ -3807,12 +3394,6 @@
     align-items: center; gap: 14px; padding: 8px 10px; border: 1px solid var(--v2-rule-soft);
     border-radius: 4px; }
   .dn-set-appctl { display: flex; align-items: center; min-width: 0; }
-  .dn-set-typeswitch { display: inline-flex; border: 1px solid var(--v2-rule); border-radius: 5px; overflow: hidden; }
-  .dn-set-typebtn { font-size: calc(10px * var(--dt-font-scale, 1)); padding: 4px 9px; background: transparent; cursor: pointer;
-    color: var(--v2-ink-soft); border: none; border-right: 1px solid var(--v2-rule); }
-  .dn-set-typebtn:last-child { border-right: none; }
-  .dn-set-typebtn:hover { color: var(--v2-ink); }
-  .dn-set-typebtn.dn-set-typebtn-on { background: var(--v2-ink-soft); color: var(--v2-paper); }
   .dn-set-rangewrap { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
   .dn-set-range { width: 180px; max-width: 100%; accent-color: var(--v2-accent);
     height: 4px; background: var(--v2-rule); border-radius: 3px; cursor: grab; }
@@ -3828,26 +3409,6 @@
    * a call_llm ⟷ model-spec toggle + the active form's NAME-only fields. The
    * api_key_env field shows the env-var NAME plus a set/unset flag, never a
    * secret value. Theme tokens only. */
-  .dn-set-models { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
-  .dn-set-modelcard { background: var(--v2-panel); border: 1px solid var(--v2-rule); border-radius: 5px;
-    padding: 11px 13px; display: flex; flex-direction: column; gap: 9px; min-width: 0; }
-  .dn-set-modelhead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  .dn-set-modelname { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); font-weight: 600; }
-  .dn-set-modelform { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
-  .dn-set-field { display: grid; grid-template-columns: minmax(120px, 160px) minmax(0, 1fr) auto;
-    align-items: center; gap: 10px; min-width: 0; }
-  .dn-set-fieldlabel { font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--v2-ink-faint); }
-  .dn-set-input { font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink);
-    background: var(--v2-paper); border: 1px solid var(--v2-rule); border-radius: 4px;
-    padding: 4px 8px; min-width: 0; width: 100%; }
-  .dn-set-input:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 1px; }
-  .dn-set-keyflag { font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;
-    padding: 2px 7px; border-radius: 3px; border: 1px solid var(--v2-rule); flex: none; }
-  .dn-set-keyflag-set { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
-  .dn-set-keyflag-unset { color: var(--v2-ink-faint); background: transparent; }
-  .dn-set-modelactions { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
-  .dn-set-modelactions .dn-linkbtn[disabled] { opacity: 0.45; cursor: default; pointer-events: none; }
 
   @media (max-width: 1080px) {
     .dn-settings { grid-template-columns: 1fr; }

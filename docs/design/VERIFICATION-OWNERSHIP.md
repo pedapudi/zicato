@@ -12,7 +12,7 @@ recipes, regression mechanics, and current module paths belong in
   when their fixes are removed.
 - Consolidation may share setup and payload construction, but never removes or
   weakens an assertion.
-- Browser and terminal fixtures originate from the same query-model spellings.
+- Browser fixtures originate from the query-model spellings.
 - Golden changes identify the intentional interface change that caused them.
 - Browser test files run in isolated module graphs. Render caches model one
   page; sharing them across fixture files creates order-dependent evidence.

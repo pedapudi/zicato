@@ -31,6 +31,35 @@ from zicato.workspace import WorkspaceLayout, generation_ids
 
 log = logging.getLogger("zicato.health.inputs")
 
+
+def epoch_optional_failures(workspace_root: Path, epoch_id: str) -> tuple[dict[str, Any], ...]:
+    """Read recent optional-operation warnings from retained invocation streams.
+
+    Each stream uses the log reader's bounded tail. Invocation and byte cursor
+    identify an observation, so reading it again does not invent another failure.
+    Distinct retries retain distinct observations even when they share a run id.
+    """
+    from zicato.logging_stream import LOGS_DIRNAME, list_stream_files, tail_records
+
+    failures: list[dict[str, Any]] = []
+    for path in list_stream_files(workspace_root / LOGS_DIRNAME):
+        records, _ = tail_records(path, limit=2000, level="WARNING")
+        for record in records:
+            if (
+                record.get("epoch_id") != epoch_id
+                or record.get("component") != "zicato.util.best_effort"
+            ):
+                continue
+            fields = record.get("fields")
+            if not isinstance(fields, dict) or not all(
+                isinstance(fields.get(key), str) and fields[key]
+                for key in ("operation", "exception_type")
+            ):
+                continue
+            failures.append({**record, "invocation": path.stem})
+    return tuple(failures)
+
+
 __all__ = [
     "SettlementReceiptAttention",
     "epoch_noise_floor_inputs",

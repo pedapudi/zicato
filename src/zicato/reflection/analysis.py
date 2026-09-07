@@ -440,12 +440,12 @@ def _mean_matrix(
 
 
 def entry_differentiation(*, corpus: list[ObservationRun], epsilon: float = 0.0) -> dict[str, Any]:
-    """Per-entry: does the entry's mean score MOVE across candidates?
+    """Compare per-entry mean scalar across observed candidates.
 
-    A flat entry (spread ``<= epsilon`` across candidates) is information-free
-    — it generalizes ``detect_non_differentiating_entry`` to the reflection
-    corpus. Entries observed under fewer than two candidates cannot yet be
-    judged (``differentiates`` is ``None``).
+    A spread ``<= epsilon`` records no difference beyond that tolerance. It does not
+    establish that the task is impossible or has no value as a regression check.
+    Entries observed under fewer than two candidates cannot yet be compared
+    (``differentiates`` is ``None``).
     """
     entries, candidates, means = _mean_matrix(corpus)
     out: list[dict[str, Any]] = []

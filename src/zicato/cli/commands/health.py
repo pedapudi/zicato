@@ -35,6 +35,7 @@ from zicato.core.workspace import (
 from zicato.health.diagnostics import LoopHealth, assess_loop_health
 from zicato.health.inputs import (
     epoch_noise_floor_inputs,
+    epoch_optional_failures,
     epoch_preflight_record,
     epoch_settlement_receipt_attention,
     epoch_tree_import_gaps,
@@ -268,6 +269,7 @@ def health_cmd(workspace: str, epoch: str | None) -> None:
         tree_import_gaps=epoch_tree_import_gaps(workspace_dir, epoch_id) or None,
         settlement_receipt_attention=receipt_attention,
         summarizer_failures=epoch_summarizer_failures(workspace_dir, epoch_id),
+        optional_failures=epoch_optional_failures(workspace_dir, epoch_id),
     )
 
     click.echo(render_report(report))

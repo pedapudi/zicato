@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,14 +26,8 @@ from zicato.query import WorkspacePaths, build_epoch_view
 from zicato.query.candidate_view import build_candidate_dossier
 from zicato.query.inputs import EpochInputs
 from zicato.query.judge_view import build_environment
-from zicato.query.lineage_view import build_lineage_view
 from zicato.query.runtime_view import RuntimeInputs, build_snapshot, derive_liveness
 from zicato.runtime.state import ActiveRun, Heartbeat, write_active_run, write_heartbeat
-from zicato.tui.client import SnapshotClient
-from zicato.tui.lenses.base import LensContext
-from zicato.tui.lenses.home import HomeLens
-from zicato.tui.routes import Route
-from zicato.tui.view import render_text
 
 
 def test_home_champion_uses_selected_epoch_and_served_evidence(tmp_path: Path) -> None:
@@ -73,27 +66,7 @@ def test_home_champion_uses_selected_epoch_and_served_evidence(tmp_path: Path) -
     seed_index(layout, {"generations": ratings})
     paths = WorkspacePaths(layout.root)
     epoch = build_epoch_view(paths, "selected")
-    payloads = {
-        "/api/workspace": {"current_epoch_id": "earlier"},
-        "/api/epoch?epoch=selected": epoch,
-        "/api/lineage": build_lineage_view(paths),
-    }
-    context = LensContext(route=Route(lens="home", params={"epoch": "selected"}))
-    view = HomeLens.render(SnapshotClient(payloads), context)
-    text = render_text(view)
-    assert "v1  promoted" in text
-    assert "1800" in text
-    assert "1200" not in text
-    champion = next(row for row in view.rows() if row.key == "champion")
-    assert champion.evidence is not None
-    assert "1800" in dict(champion.evidence)["uncertainty"]
-
-    changed = deepcopy(payloads)
-    changed["/api/epoch?epoch=selected"]["champion_record"]["elo"] = 1900.0
-    assert HomeLens.render(SnapshotClient(changed), context).digest != view.digest
-    changed = deepcopy(payloads)
-    changed["/api/lineage"]["generations"][1]["elo"] = 999.0
-    assert HomeLens.render(SnapshotClient(changed), context).digest == view.digest
+    assert epoch["champion_record"]["elo"] == 1800.0
 
 
 def test_champion_without_index_has_unavailable_rating(tmp_path: Path) -> None:

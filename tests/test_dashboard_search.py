@@ -53,23 +53,44 @@ def search_workspace(tmp_path: Path) -> Path:
             "id": "waffles_single",
             "kind": "single_turn",
             "input": "Make a deck about waffles.",
-            "expectation": {"kind": "predicate"},
-            "judges": [{"name": "audience_appropriate", "mode": "inline", "body": "..."}],
+            "budget_s": 1,
+            "expectation": {"kind": "predicate", "spec": "pkg:check"},
+            "judges": [
+                {
+                    "name": "audience_appropriate",
+                    "mode": "inline",
+                    "body": "...",
+                    "severity": "warning",
+                }
+            ],
         },
         {
             "id": "q3_metrics_outline",
             "kind": "single_turn",
             "input": "Outline a deck on quarterly metrics for Q3.",
-            "expectation": {"kind": "predicate"},
+            "budget_s": 1,
+            "expectation": {"kind": "predicate", "spec": "pkg:check"},
         },
         {
             "id": "picky_stakeholder_emulated",
             "kind": "multi_turn_emulated",
-            "input": "Picky stakeholder dialogue.",
-            "expectation": {"kind": "predicate"},
+            "budget_s": 1,
+            "max_turns": 2,
+            "user_persona": {"goal": "Review the deck.", "constraints": "", "stop_when": "Done."},
+            "expectation": {"kind": "predicate", "spec": "pkg:check"},
             "judges": [
-                {"name": "incorporates_feedback", "mode": "inline", "body": "..."},
-                {"name": "no_fabricated_numbers", "mode": "inline", "body": "..."},
+                {
+                    "name": "incorporates_feedback",
+                    "mode": "inline",
+                    "body": "...",
+                    "severity": "warning",
+                },
+                {
+                    "name": "no_fabricated_numbers",
+                    "mode": "inline",
+                    "body": "...",
+                    "severity": "warning",
+                },
             ],
         },
     ]
@@ -226,24 +247,13 @@ def test_build_search_results_judge_scan_degrades_on_a_torn_board(
 def test_judge_board_scan_survives_a_non_utf8_board(
     search_workspace: Path,
 ) -> None:
-    """A board that is not UTF-8 yields no judge names, never an exception.
-
-    ``read_text(encoding="utf-8")`` raises ``UnicodeDecodeError`` — a
-    ``ValueError``, NOT an ``OSError`` — so a reader that guards only on
-    ``OSError`` lets it escape and turns a best-effort reader into a 500.
-
-    Pinned against the judge scan directly rather than through
-    :func:`build_search_results`, because that endpoint ALSO reads the board
-    via ``epoch_view._parse_board`` for its entries category, and that reader
-    still carries the ``OSError``-only guard this test would otherwise trip
-    over. Move this up to the endpoint once ``_parse_board`` degrades too.
-    """
-    from zicato.query.judge_view import _collect_judge_names_from_board_file
-
+    """Invalid UTF-8 yields an explicit board refusal at the search boundary."""
     board = WorkspaceLayout.from_root(search_workspace).board("2026-05-20_presn")
     board.write_bytes(b"\xff\xfe not utf-8 at all\n")
 
-    assert _collect_judge_names_from_board_file(board) == set()
+    result = build_search_results(WorkspacePaths(search_workspace), "audience")
+    assert result["entries"] == result["judges"] == []
+    assert "utf-8" in result["unreadable"]
 
 
 def test_build_search_results_patches_rationale_substring(

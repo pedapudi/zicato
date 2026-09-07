@@ -62,33 +62,6 @@ class CollectionPayload(ObjectPayload, total=False):
     points: list[dict[str, Any]]
     rounds: list[dict[str, Any]]
     findings: list[dict[str, Any]]
-    recommendations: list[dict[str, Any]]
-
-
-class ExecutionPlanPayload(ObjectPayload, total=False):
-    """The epoch's loop as one tree of stages, steps, and work units.
-
-    ``stages`` holds the recursive plan nodes (:meth:`~zicato.query.PlanNode.payload`);
-    ``board`` carries the frozen board's digest and entry count, which is what
-    a client needs to fetch the board ONCE instead of receiving a copy of each
-    entry on every unit node.
-    """
-
-    board: dict[str, Any]
-    stages: list[dict[str, Any]]
-
-
-class LiveExecutionPlanPayload(ExecutionPlanPayload, total=False):
-    """The running epoch's plan, plus the overlay describing what runs now.
-
-    ``liveness`` is the served tri-state the whole overlay gates on;
-    ``overlay`` carries the active path, the in-flight partition, and the
-    phase the path was derived from. The ``stages`` nodes are the durable
-    ones with an added ``active`` flag.
-    """
-
-    liveness: LivenessPayload
-    overlay: dict[str, Any]
 
 
 class DetailPayload(ObjectPayload, total=False):
@@ -189,7 +162,6 @@ ENDPOINT_PAYLOADS.update(
             "/api/matchup/{entry_id}/conversations",
             "/api/mutations/{epoch_id}",
             "/api/mutations/{epoch_id}/{mutation_id}",
-            "/api/proposer/recommendations",
             "/api/proposer/scorecard",
             "/api/reflection/{reflection_id}/practices",
             "/api/reflection/{reflection_id}/suggestion/{suggestion_id}/provenance",
@@ -213,5 +185,3 @@ ENDPOINT_PAYLOADS.update(
 ENDPOINT_PAYLOADS["/api/generation/{epoch_id}/{generation_id}/episode-export"] = (
     ProposalEpisodeExportPayload
 )
-ENDPOINT_PAYLOADS["/api/epoch/{epoch_id}/execution-plan"] = ExecutionPlanPayload
-ENDPOINT_PAYLOADS["/api/live/execution-plan"] = LiveExecutionPlanPayload

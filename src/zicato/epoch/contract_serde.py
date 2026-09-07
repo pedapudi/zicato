@@ -31,7 +31,7 @@ Key naming
 ----------
 One field carries a *persisted-key alias* for backwards compatibility:
 ``ScoringWeights.tournament_structure`` is written under the on-disk key
-``"tournament"`` (the shape the dashboard builder and every existing
+``"tournament"`` (the shape configuration edits and every existing
 ``scoring.json`` use). The field's ``persisted_name`` metadata records
 that spelling for the writer, authored decoder, and historical decoder.
 Every other field is written under its own name,

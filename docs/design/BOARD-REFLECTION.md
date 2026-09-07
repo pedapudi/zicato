@@ -5,8 +5,7 @@
 > evaluation contract itself — debug judges, calibrate the loss function and
 > gate margin, and optimize board composition and tournament design. It is a
 > companion to [`OVERFITTING.md`](OVERFITTING.md), [`SCORING.md`](SCORING.md),
-> [`LOOP-HEALTH.md`](LOOP-HEALTH.md),
-> [`TOURNAMENT-BUILDER.md`](TOURNAMENT-BUILDER.md), and the audit-driven
+> [`LOOP-HEALTH.md`](LOOP-HEALTH.md), and
 > [`FUNCTIONALITY-RECOMMENDATIONS.md`](FUNCTIONALITY-RECOMMENDATIONS.md). The
 > two lists below state what runs today and what remains designed only.
 
@@ -88,14 +87,14 @@ separately, and reports the `disagreement_rate` alongside the Fleiss
 `redundant_with` and `conflicts_with`, skipping zero-variance judges (those that
 always fire or never fire) from that cross-correlation, and groups results by
 fidelity tier. `reflection/findings.py` emits ranked, evidence-linked findings
-whose `proposed_op` names a real builder op validated against that op's
+whose `proposed_op` names a contract operation validated against that op's
 `inspect.signature` at emit time — a margin finding is a
 `set_gate {promote_margin: 2.5× floor}` payload, judge pruning is a
 `set_weights {per_judge_weights: {j: 0.0}}` payload. Scripted double
 adjudicators for tests live in `zicato/testing/adjudicators.py`.
 
 **The command surface.** `zicato inspect reflection`
-(`cli/commands/reflect.py`, auto-discovered) carries five subcommands. `run`
+(`cli/commands/reflect.py`) carries four subcommands. `run`
 builds the corpus by referencing the lineage's artifacts with no LLM calls,
 analyses the four pillars, adjudicates when an independent meta-judge is
 supplied, and persists `corpus.jsonl`, `adjudication/`, `scorecards.json`,
@@ -104,9 +103,8 @@ stops. `--passive` and `--no-llm-adjudication` run the zero-LLM tier. Without
 `--adjudicator-call-llm` the command refuses, so a run never spends adjudicator
 budget the operator did not ask for. `report` renders a stored reflection,
 `practices` runs the contract-and-history practice review, `suggest` synthesises
-eval suggestions (see [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md)), and `apply`
-forks a builder draft and stages the finding's `proposed_op` there rather than
-editing the sealed contract (`reflection/apply.py`).
+eval suggestions (see [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md)). These commands
+produce reports for operator review and do not edit the evaluation contract.
 
 **The index projection and the read side.** The analytical index carries a
 `reflections` table and a `judge_scorecards` table, upserted at finalize and
@@ -131,9 +129,8 @@ decision-flip probability, printing "n/a — insufficient replication" for a nul
 `p_flip`. For discrimination it shows the differentiating-entry and coverage
 tallies. For validity it shows the aggregate judge F1 score (the harmonic mean
 of precision and recall) and the ambiguous pile. For calibration it shows the
-margin-to-noise ratio. Each finding carries a copyable
-`zicato reflect apply <id> <finding_id>` invocation, because the CLI is the
-apply path and the lens itself recommends only. The per-judge judge-audit scorecards show the 2×2
+margin-to-noise ratio. Findings show their proposed changes as read-only
+reports. The per-judge judge-audit scorecards show the 2×2
 confusion matrix, precision, recall, the F1 score, the false positive rate,
 and severity accuracy. Beside those they carry the disagreement rate and the
 self-consistency κ under their own names, plus redundancy and conflict chips. A
@@ -165,7 +162,6 @@ Each item below needs both an operator go-ahead and a live model endpoint:
 - Live meta-judge adjudication against a real endpoint.
 - Run-the-tournament-twice validation of the bootstrap decision-flip estimate.
 - The quick-judge-audit extension to the pre-flight.
-- The builder's Validate panel.
 - The four remaining mockup surfaces (the coherence scatter, the noise cloud,
   the loss-decomposition waterfall, and the live corpus grid). The console's
   bill of health also omits the mockup's arc gauge and top-line pillar verdict,
@@ -336,25 +332,20 @@ constants in `reflection/practices.py` with rationale comments.
 | `statistical_power` | `noise_floor`→σ, replicates, train board size, `promote_margin` | when the minimum detectable effect exceeds the margin, the gate cannot resolve a difference the size of its own threshold, so no promotion at this power carries evidence (ch.04 §3, §13) | `set_param` — raise `replicates` until the minimum detectable effect drops below the margin (capped at 8) |
 | `overfitting_posture` | `overfitting`, `proposer_quality`, board size, promotions | memorization defense must scale with a splittable board (OVERFITTING.md §4/§6/§7) | `set_holdout` / `set_screening` |
 | `loss_monoculture` | corpus term-contributions (or namespace/judge weights) | a monoculture loss optimizes one blind spot (ch.04 §1.5) | `set_namespace_weights` (advisory sketch) |
-| `budget_sanity` | entry wall-clock budgets | a >10×-median entry dominates the round's wall-clock (builder validate heuristic) | authoring only (retune the budget) |
+| `budget_sanity` | entry wall-clock budgets | a >10×-median entry dominates the round's wall-clock (contract validation heuristic) | authoring only (retune the budget) |
 | `calibration_freshness` | `noise_floor` age vs lineage, `promote_margin` | a noise floor measured many generations back calibrates the current gate against the noise of a different lineage state (ch.04 §3, §4) | re-run `zicato board audit` |
 | `placebo_outcomes` | placebo `experiments`, cadence | a rejected placebo proves gate discrimination; a promoted one disproves it (ch.04 §11) | `set_holdout` (set/keep the placebo cadence) |
 | `generalization_trend` | holdout/train gap over lineage, rotation | a widening holdout gap is board memorization (OVERFITTING.md §6/§7) | roll the epoch / `set_holdout` rotation |
 | `promotion_hygiene` | promotions, evidence gate, margin vs floor, holdout | a promotion on a sub-floor margin with no evidence gate promotes noise (ch.04 §3, §6) | `set_gate` — lift `promote_margin` clear of the floor, but only when `2.5 × delta_std` exceeds it. When the floor's range and its dispersion disagree, the check reports the diagnosis and proposes no op, rather than shipping one that would LOWER the margin |
 | `weight_revisit` | default-weighted judges, `scorecards` reliabilities | a judge left at default weight despite divergent measured reliability mis-weights the loss (ch.04 §10) | `set_weights` (advisory `per_judge_weights`) |
 
-### Output shape and the apply path
+### Output shape
 
-The review is a `PracticeReview` (`reflection/practices.py`) — a list of
-`PracticeCheck` results, each `{check_id, verdict, headline (one sentence, numbers
-inline), evidence, rationale (one line), proposed_op, unmeasured_reason}`. A
-`proposed_op` — present only for the mechanically-fixable checks — names a REAL
-builder op and is VALIDATED against that op's signature at emit time via the same
-`validate_proposed_op` the findings use, so a payload the builder would reject
-never ships. The apply path is identical to the findings': the operator carries a
-proposed op to a **builder draft** and seals it there (sealing rolls the epoch);
-the review, like everything reflection produces, is **recommend-only** and
-operator-facing, and never crosses into the proposer envelope.
+The review is a `PracticeReview` of `PracticeCheck` results. Each carries a
+check id, verdict, headline, evidence, rationale, optional `proposed_op`, and
+an unmeasured reason. A proposed operation is checked against its contract
+operation signature at emission. The report is operator-facing and never
+crosses into the proposer envelope or edits a contract.
 
 The review persists as `practices.json` in the reflection directory; the file is
 canonical and the reader degrades on its absence. `reflect run` writes it on
@@ -496,9 +487,8 @@ the process boundary.
 ## Data model — the observation corpus
 
 A reflection's artifacts are stored under the contract it validated:
-`epochs/{epoch_id}/reflections/{reflection_id}/` for a sealed epoch, or a
-builder scratch area for a draft contract. The files are canonical and the
-index rows derived from them are a projection, following the repository rule
+`epochs/{epoch_id}/reflections/{reflection_id}/` for a sealed epoch. The files
+are canonical and the index rows derived from them are a projection, following the repository rule
 that the filesystem is canonical and the index is derived (AGENTS.md, rule 4).
 
 ```
@@ -585,39 +575,20 @@ label authored before the run:
   exercised: bool, recommendation: str }
 ```
 
-## The `reflect` command surface
+## The reflection command surface
 
-```
-zicato inspect reflection [--workspace PATH]
-  --epoch EPOCH_ID                 # contract to validate (default: current)
-  --candidate GEN_ID ...           # default: champion + recent lineage slice
-  --entries ENTRY_ID ...           # default: whole board
-  --replicates K                   # default: from the noise-floor target
-  --adjudicator-call-llm SPEC      # the independent meta-judge; MUST differ from any judge model
-  --checks judge-audit,reliability,coherence,decomposition,discrimination,coverage   # default: all
-  --no-llm-adjudication            # operator-only adjudication → reliability + coverage only (cheap)
-  --pre-register                   # write plan.json and STOP (review before spending)
-  --max-wall-clock-seconds N       # budget ceiling
-  --output PATH                    # report destination
+`zicato inspect reflection` exposes four operations:
 
-zicato inspect reflection report <reflection_id>            # render a stored reflection report
-zicato inspect reflection apply  <reflection_id> <finding_id>  # fork a BUILDER DRAFT + apply the finding's
-                                                 # proposed_op; the operator seals via the
-                                                 # builder (sealing rolls the epoch)
-```
+- `run` builds a corpus, analyzes it, and optionally adjudicates observations.
+- `report` renders a stored reflection.
+- `practices` reviews the contract and operating history.
+- `suggest` produces evaluation suggestions with provenance and admission results.
 
-Two further subcommands sit beside those three: `zicato inspect reflection
-practices` runs the practice review over the contract and history with no
-corpus, and `zicato inspect reflection suggest` synthesises eval suggestions
-(see [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md)).
-
-The **builder's "validate" action calls `reflect`** on the draft contract,
-because validating the instrument belongs at the point where a contract is
-authored and sealed. The builder owns the decision interface; the `reflection/`
-engine owns the analysis. The builder's Validate *panel* is on the
-endpoint-gated list: the builder's preflight op already covers cheap
-authoring-time validation, and `reflect apply`'s draft fork already carries a
-finding into the builder.
+Use each command's `--help` for its options. Live adjudication and admission
+probes require authorization to spend evaluation budget. Reports and
+suggestions are evidence for the operator; accepting a change requires editing
+the workspace contract. The next evolve invocation handles contract drift
+through the normal epoch boundary.
 
 ## The evolve pre-flight checks
 
@@ -693,8 +664,7 @@ surfaces.
 - **`reflection/` engine** — pure analyzers computing the four pillars over the
   observation corpus, plus an active scheduler that reuses the tournament runner
   to *produce* the corpus and an independent meta-judge to *adjudicate* it.
-- **`zicato inspect reflection`** — the deep active validation and its report,
-  and the analysis the builder's "validate" action calls.
+- **`zicato inspect reflection`** — the deep active validation and its report.
 - **evolve pre-flight** — the cheap subset above, default-on.
 - **continuous passive** — offline re-analysis feeding the dashboard and
   loop-health.
@@ -710,10 +680,8 @@ surfaces.
 - `index/` stores the corpus and findings as derived rows, and `analyzer/`
   renders the reflection report at the grain of the epoch report.
 - `health/diagnostics.py` supplies the pre-flight detectors.
-- `builder/` carries the "validate" action and applies recommended edits.
-- `epoch/contract.py` handles the contract edit that applying a recommendation
-  is, which rolls the epoch — so reflection sits at authoring time or an epoch
-  boundary by construction.
+- `epoch/contract.py` computes the identity of evaluation inputs. An accepted
+  manual edit follows the ordinary contract-drift and epoch-boundary rules.
 
 ## Seven design decisions and what they settle
 
@@ -736,8 +704,8 @@ surfaces.
    is a reflection-independent `zicato/query` reader over persisted losses, so
    the continuous passive tier and the dashboard get it without a reflection
    run.
-6. **Findings carry executable builder-op payloads.** Every finding's
-   `proposed_op` names a real builder op and is validated against that op's
+6. **Findings carry structured proposed edits.** Every finding's
+   `proposed_op` names a contract operation and is validated against that op's
    signature at emit time. A margin finding is a
    `set_gate {promote_margin: ...}` payload; judge pruning is a
    `set_weights {per_judge_weights: {judge: 0.0}}` payload. No finding is
@@ -746,11 +714,6 @@ surfaces.
    the zicato-owned `judge_io.jsonl` sidecar (see the capture section) rather
    than in a new frame taxonomy that the round log's three parsers would each
    have to learn.
-
-**Apply path**: `zicato inspect reflection apply <finding_id>` forks a **builder
-draft** and applies the finding's `proposed_op` to it; the operator reviews and
-seals through the builder. Reflection never edits the sealed contract directly,
-so the recommend-only invariant holds end to end.
 
 ## UI — the Instrument lens
 
@@ -768,16 +731,8 @@ parse, href, and crumb functions, and the tree entry). It reuses the console's
 existing idioms: the transcript reader, the board heatmap, per-judge trends, the
 [theme system](CONSOLE-DESIGN-LANGUAGE.md), and the digest-gated render
 discipline. A completed reflection is immutable, so the lens fetches once and
-pins a digest that makes every later repaint a no-op. The **same components**
-embed in the [builder](TOURNAMENT-BUILDER.md) as its **"Validate" step**, which
-is on the endpoint-gated list. So the read side takes the same three-surface
-shape as the engine:
-
-- **console Instrument lens** — monitoring a *sealed* contract: read-only
-  recommendations, the deep `reflect` reports, and the continuous passive tier
-  surfaced inline.
-- **builder Validate panel** — authoring time: the operator runs `reflect` on
-  the **draft** and applies a recommended edit before sealing.
+pins a digest that makes every later repaint a no-op. The Instrument lens shows read-only findings, reflection reports, and
+continuous passive analysis for the selected contract.
 
 The console reports what the loop decided; the Instrument lens reports whether
 the way it decided can be trusted.
@@ -831,12 +786,9 @@ the disagreement highlighted.
   phase**, under the same digest-gated render discipline as the tournament live
   hero.
 
-**From finding to contract edit.** Findings are first-class objects:
-evidence-linked, ranked, each carrying its **proposed contract edit** and a
-**"send to builder"** control. The console offers read-only recommendations that
-the operator carries to the builder; the builder's Validate panel applies one to
-the draft inline. The operator stays at the contract boundary, because the read
-side never auto-edits, matching the engine.
+**From finding to contract edit.** Findings are evidence-linked reports. Each
+shows a proposed change for the operator to assess. The browser does not stage
+or apply that change; contract authoring remains a separate operator action.
 
 **Design-language fit.** The lens uses the console's **"Technical" register**
 with the restraint of a calibration bench: confusion matrices, ROC sweeps, and
@@ -879,12 +831,12 @@ specified in its own design of record
 [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md). It mines episodes from the candidate
 loop's observed behaviour, synthesises draft entries and judges, measures each
 draft's operating characteristics (same-versus-same noise, discrimination,
-leakage) **before** the operator sees it, and stages the survivors into a
-builder draft through the same `reflect apply` seam. Measuring a draft eval
+leakage) **before** the operator sees it, and records the results as suggestions
+for review. Measuring a draft eval
 before adopting it treats the eval as a hypothesis about the target, the same
 way the loop treats a patch. Eval synthesis reuses this document's structure
-whole: the observation corpus, the adjudicated corpus, the
-apply-to-builder-draft mechanism, and the operator-only envelope below. It
+whole: the observation corpus, the adjudicated corpus, and the operator-only
+envelope below. It
 leaves the four pillars unchanged and consumes their demand signals as its raw
 material — the dead, noisy, and redundant lists, the judge scorecards, and the
 calibration ledger's unresolved claim types. It is recommend-only end to end,

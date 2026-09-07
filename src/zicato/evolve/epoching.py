@@ -14,7 +14,7 @@ roll-at-evolve-time decision and its supporting helpers:
 * :func:`_promoted_head_snapshot` — locate an epoch's promoted-head
   snapshot dir (the cross-epoch lineage seed source);
 * the per-component sub-hash reader and drift labeling
-  (:func:`_stored_component_hashes`, :func:`_component_diff_label`) and the
+  (:func:`_component_diff_label`) and the
   v0-seed marker path
   (:func:`_roll_seed_marker`).
 
@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from zicato.core.settings import AuxConfig
+from zicato.epoch.contract import read_component_hashes
 from zicato.util import best_effort
 from zicato.workspace import WorkspaceLayout
 
@@ -71,26 +72,6 @@ def _component_diff_label(prev_components: dict[str, str], cur_components: dict[
     return ", ".join(changed) if changed else "contract"
 
 
-def _stored_component_hashes(workspace_root: Path, epoch_id: str) -> dict[str, str]:
-    """Return the per-component sub-hashes recorded for an epoch.
-
-    The breakdown is written next to ``config.json`` as
-    ``contract_components.json`` at epoch creation or roll time. An epoch
-    that stored none returns an empty dict, and the caller falls back to a
-    generic message.
-    """
-    path = WorkspaceLayout.from_root(workspace_root).contract_components(epoch_id)
-    if not path.exists():
-        return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    return {str(k): str(v) for k, v in raw.items()}
-
-
 async def ensure_epoch_for_contract(
     workspace_root: Path,
     *,
@@ -101,6 +82,7 @@ async def ensure_epoch_for_contract(
     before_contract_roll: Callable[[str], None] | None = None,
     aux_config: AuxConfig | None = None,
     workspace_config: Mapping[str, Any] | None = None,
+    execution_roles: bytes | None = None,
 ) -> str:
     """Resolve the contract under its writer, recovering retained publication first.
 
@@ -125,7 +107,9 @@ async def ensure_epoch_for_contract(
     recovered = recover_epoch_publication(workspace_root, writer=writer)
     if recovered is not None:
         return recovered.id
-    inputs = resolve_contract_inputs(workspace_root, workspace_config=workspace_config)
+    inputs = resolve_contract_inputs(
+        workspace_root, workspace_config=workspace_config, execution_roles=execution_roles
+    )
     current_hash = compute_contract_hash(inputs)
     current_components = compute_component_hashes(inputs)
 
@@ -154,14 +138,15 @@ async def ensure_epoch_for_contract(
         # rolls instead of reading as "no hash stored".
         return cur
 
-    # The contract drifted from the current epoch.
+    stored_components = (
+        read_component_hashes(WorkspaceLayout.from_root(workspace_root).contract_components(cur))
+        or {}
+    )
+    changed = _component_diff_label(stored_components, current_components)
     if not auto_epoch:
-        drifted = _component_diff_label(
-            _stored_component_hashes(workspace_root, cur), current_components
-        )
         raise RuntimeError(
             f"evaluation contract has drifted from the current epoch "
-            f"{cur!r} (changed: {drifted}); either revert the contract "
+            f"{cur!r} (changed: {changed}); either revert the contract "
             "files or run `zicato epoch new` to start a new epoch. "
             "(Remove --no-auto-epoch to let `zicato evolve` roll the "
             "epoch automatically.)"
@@ -205,9 +190,6 @@ async def ensure_epoch_for_contract(
 
             restamp_persisted_report(workspace_root, cur)
 
-    changed = _component_diff_label(
-        _stored_component_hashes(workspace_root, cur), current_components
-    )
     log.info("contract changed (%s) — rolled %s -> %s", changed, cur, new_id)
     print(f"contract changed ({changed}) — rolled {cur} -> {new_id}")
 
@@ -249,15 +231,6 @@ async def ensure_epoch_for_contract(
         f'run `zicato epoch set-goal --epoch {new_id} --goal "..."` to fill it in.'
     )
 
-    # Last, so it is what the operator is left looking at. The boundary is when
-    # applying a proposer recommendation is FREE — the epoch is rolling anyway,
-    # so the edit costs nothing extra in comparability — and this is the only
-    # path that reaches it (the no-roll return above is well upstream). Silent
-    # when nothing is pending, so a boundary without recommendations prints
-    # nothing.
-    from zicato.proposer.reflection import echo_pending_recommendations  # noqa: PLC0415
-
-    echo_pending_recommendations(workspace_root)
     return new_id
 
 

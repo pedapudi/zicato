@@ -15,6 +15,7 @@ Coverage:
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 from pathlib import Path
 
@@ -40,7 +41,9 @@ from zicato.analyzer.report_sections import (
     render_score_sparkline,
     render_score_trajectory_table,
 )
+from zicato.core.mutation import MutationPoint
 from zicato.core.workspace import analysis_path
+from zicato.mutation.inventory import write_mutation_inventory
 
 
 @pytest.mark.parametrize("historical", [False, True])
@@ -107,7 +110,7 @@ def epoch_workspace(tmp_path: Path) -> tuple[Path, str]:
         '{"id": "slides", "kind": "single_turn", "wall_clock_budget_seconds": 60, '
         '"input": "make slides", "weight": 2.0, '
         '"expectation": {"kind": "predicate", "spec": "has exactly 5 slides"}, '
-        '"judges": [{"name": "structure", "mode": "process", "body": "x", '
+        '"judges": [{"name": "structure", "mode": "inline", "body": "x", '
         '"severity": "warning"}]}\n'
         '{"id": "qa", "kind": "single_turn", "wall_clock_budget_seconds": 30, '
         '"input": "answer", "expectation": {"kind": "rubric", "spec": "accurate"}}\n',
@@ -122,11 +125,20 @@ def epoch_workspace(tmp_path: Path) -> tuple[Path, str]:
             "per_judge_weights": {"structure": 2.0},
         },
     )
-    _write(
+    write_mutation_inventory(
         edir / "mutations.json",
         [
-            {"id": "sys_prompt", "kind": "prompt_text", "file": "agent/prompt.txt"},
-            {"id": "temp", "kind": "numeric", "file": "agent/config.py"},
+            MutationPoint(
+                id=mid,
+                kind="span",
+                file=Path(filename),
+                source_root=Path("agent"),
+                line_start=1,
+                line_end=1,
+                content="",
+                content_hash=hashlib.sha256(b"").hexdigest(),
+            )
+            for mid, filename in (("sys_prompt", "agent/prompt.txt"), ("temp", "agent/config.py"))
         ],
     )
     (edir / "journal.md").write_text(

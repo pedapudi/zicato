@@ -637,7 +637,7 @@ def test_active_tournament_round_trips_partial_aggregates(tmp_path: Path) -> Non
 def test_active_tournament_partial_aggregates_default_empty(tmp_path: Path) -> None:
     """A tournament written without partial aggregates reads back empty dicts.
 
-    Back-compat: an active_tournament.json from before the
+    Back-compat: an Snapshot event envelope from before the
     incremental-scorer change has no ``partial_*_agg`` keys; the reader
     must default both to ``{}`` rather than failing.
     """
@@ -649,7 +649,7 @@ def test_active_tournament_partial_aggregates_default_empty(tmp_path: Path) -> N
 
 
 def test_active_tournament_reads_legacy_partial_aggregate_keys(tmp_path: Path) -> None:
-    """A pre-rename active_tournament.json with parent/child keys loads.
+    """A pre-rename Snapshot event envelope with parent/child keys loads.
 
     ``from_dict`` accepts the legacy ``partial_parent_agg`` /
     ``partial_child_agg`` key names so an on-disk file written before the

@@ -67,21 +67,11 @@ dashboard = [
     "uvicorn >= 0.30",
     "watchdog >= 4.0",
 ]
-# The terminal console (`zicato tui`) — a SECOND RENDERER of the dashboard
-# service's payloads, not a second brain. Textual only: the TUI's service
-# client is stdlib urllib, so a terminal install stays small and can review a
-# workspace from a machine that could not serve one. Pinned exactly, because
-# the Pilot snapshot tests compare rendered text and a framework bump can move
-# it.
-tui = [
-    "textual == 8.2.8",
-]
-# Every operator-facing live view: browser, terminal, and execution telemetry.
+# Browser results and execution telemetry.
 observability = [
     "starlette >= 0.40",
     "uvicorn >= 0.30",
     "watchdog >= 4.0",
-    "textual == 8.2.8",
     "harmonograf-client",
     "harmonograf-server",
 ]
@@ -93,7 +83,6 @@ all = [
     "starlette >= 0.40",
     "uvicorn >= 0.30",
     "watchdog >= 4.0",
-    "textual == 8.2.8",
     "harmonograf-client",
     "harmonograf-server",
 ]
@@ -134,7 +123,6 @@ dev = [
     "watchdog >= 4.0",
     "httpx >= 0.27",
     # The terminal console and its Pilot-driven tests.
-    "textual == 8.2.8",
     # The vendored dogfood targets — a separate distribution under
     # examples/, resolved as a uv workspace member (see
     # [tool.uv.sources] below). The test_example_* smoke tests import
@@ -306,7 +294,7 @@ testpaths = ["tests"]
 # therefore runs it in full, whatever tier it is in, so no recipe in this
 # repository has to remember a selector to mean what it says. See the
 # `slow` marker below.
-addopts = "-n auto -m 'not node and not cascade_oc'"
+addopts = "-n 4 -m 'not node and not cascade_oc'"
 # Custom markers. Two of them answer different questions and must not be
 # conflated: `slow` is about a test's measured RUNTIME (which tier
 # schedules it), `integration` is about what a test TOUCHES (a process or
@@ -347,7 +335,6 @@ adapters = "execution"
 analyzer = "coordination"
 aux_timeout = "execution"
 board = "execution"
-builder = "driver"
 check = "coordination"
 cli = "driver"
 config = "execution"
@@ -382,7 +369,6 @@ synthetic = "execution"
 telemetry = "execution"
 testing = "execution"
 tournament = "mixed_library"
-tui = "driver"
 util = "primitive"
 workspace = "execution"
 workspace_loader = "mixed_library"
@@ -391,29 +377,10 @@ workspace_loader = "mixed_library"
 root_packages = ["zicato"]
 
 [[tool.zicato.importlinter.contracts]]
-name = "tui driver: no import of the other drivers (it speaks HTTP, not Python)"
-type = "forbidden"
-source_modules = ["zicato.tui"]
-forbidden_modules = ["zicato.cli", "zicato.dashboard", "zicato.builder"]
-
-[[tool.zicato.importlinter.contracts]]
-name = "dashboard driver: no import of the cli (dashboard -> builder mount is the declared edge)"
+name = "dashboard driver cannot import the CLI"
 type = "forbidden"
 source_modules = ["zicato.dashboard"]
 forbidden_modules = ["zicato.cli"]
-
-[[tool.zicato.importlinter.contracts]]
-name = "builder driver: no import of the other drivers"
-type = "forbidden"
-source_modules = ["zicato.builder"]
-forbidden_modules = ["zicato.cli", "zicato.dashboard"]
-
-[[tool.zicato.importlinter.contracts]]
-name = "cli driver: no direct import of the builder (cli -> dashboard is the declared edge)"
-type = "forbidden"
-source_modules = ["zicato.cli"]
-forbidden_modules = ["zicato.builder"]
-allow_indirect_imports = true
 
 [[tool.zicato.importlinter.contracts]]
 name = "the proposer's patch validator has no path to the board"

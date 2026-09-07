@@ -625,18 +625,22 @@
     "journal_text": "# Journal e10\n\nRound 1 promoted v1. Round 2 rejected v2.\n",
     "mutation_surface": [
       {
+        "content": "You are a release-notes assistant.",
+        "content_hash": "07641c687fb14dea30af4237111d7e639dcc87ad051232519bf61dff09f765e6",
         "file": "src/pkg/agent.py",
         "id": "prompt.system",
-        "kind": "text_block",
-        "line": 12,
-        "preview": "You are a release-notes assistant."
+        "kind": "span",
+        "line_end": 12,
+        "line_start": 12
       },
       {
+        "content": "Plan before answering.",
+        "content_hash": "83cebfe5339a6f93972bfaa696ba9aa4e0979484b5106f9bec13c9b48a3c1576",
         "file": "src/pkg/planner.py",
         "id": "prompt.planner",
-        "kind": "text_block",
-        "line": 40,
-        "preview": "Plan before answering."
+        "kind": "span",
+        "line_end": 40,
+        "line_start": 40
       }
     ],
     "proposer_quality": {
@@ -1583,18 +1587,22 @@
     "journal_text": "# Journal e2\n\nRound 1 promoted v1. Round 2 rejected v2.\n",
     "mutation_surface": [
       {
+        "content": "You are a release-notes assistant.",
+        "content_hash": "07641c687fb14dea30af4237111d7e639dcc87ad051232519bf61dff09f765e6",
         "file": "src/pkg/agent.py",
         "id": "prompt.system",
-        "kind": "text_block",
-        "line": 12,
-        "preview": "You are a release-notes assistant."
+        "kind": "span",
+        "line_end": 12,
+        "line_start": 12
       },
       {
+        "content": "Plan before answering.",
+        "content_hash": "83cebfe5339a6f93972bfaa696ba9aa4e0979484b5106f9bec13c9b48a3c1576",
         "file": "src/pkg/planner.py",
         "id": "prompt.planner",
-        "kind": "text_block",
-        "line": 40,
-        "preview": "Plan before answering."
+        "kind": "span",
+        "line_end": 40,
+        "line_start": 40
       }
     ],
     "proposer_quality": {
@@ -1935,38 +1943,6 @@
   },
   "zicato.analyzer.load_latest_insights::e10": "# Round 1 insights\n\nThe ladder escalated on plan thrash.\n",
   "zicato.analyzer.load_latest_insights::e2": "# Round 1 insights\n\nThe ladder escalated on plan thrash.\n\n# Round 2 insights\n\nThe ladder escalated on plan thrash.\n\n# Round 10 insights\n\nThe ladder escalated on plan thrash.\n",
-  "zicato.analyzer.load_mutation_surface::e10": [
-    {
-      "file": "src/pkg/agent.py",
-      "id": "prompt.system",
-      "kind": "text_block",
-      "line": 12,
-      "preview": "You are a release-notes assistant."
-    },
-    {
-      "file": "src/pkg/planner.py",
-      "id": "prompt.planner",
-      "kind": "text_block",
-      "line": 40,
-      "preview": "Plan before answering."
-    }
-  ],
-  "zicato.analyzer.load_mutation_surface::e2": [
-    {
-      "file": "src/pkg/agent.py",
-      "id": "prompt.system",
-      "kind": "text_block",
-      "line": 12,
-      "preview": "You are a release-notes assistant."
-    },
-    {
-      "file": "src/pkg/planner.py",
-      "id": "prompt.planner",
-      "kind": "text_block",
-      "line": 40,
-      "preview": "Plan before answering."
-    }
-  ],
   "zicato.cli.health.generation_ids::e10": [
     "v0",
     "v1"
@@ -7898,6 +7874,46 @@
     }
   ],
   "zicato.index.validate_index": [],
+  "zicato.mutation.read_mutation_inventory::e10": [
+    {
+      "content": "You are a release-notes assistant.",
+      "content_hash": "07641c687fb14dea30af4237111d7e639dcc87ad051232519bf61dff09f765e6",
+      "file": "src/pkg/agent.py",
+      "id": "prompt.system",
+      "kind": "span",
+      "line_end": 12,
+      "line_start": 12
+    },
+    {
+      "content": "Plan before answering.",
+      "content_hash": "83cebfe5339a6f93972bfaa696ba9aa4e0979484b5106f9bec13c9b48a3c1576",
+      "file": "src/pkg/planner.py",
+      "id": "prompt.planner",
+      "kind": "span",
+      "line_end": 40,
+      "line_start": 40
+    }
+  ],
+  "zicato.mutation.read_mutation_inventory::e2": [
+    {
+      "content": "You are a release-notes assistant.",
+      "content_hash": "07641c687fb14dea30af4237111d7e639dcc87ad051232519bf61dff09f765e6",
+      "file": "src/pkg/agent.py",
+      "id": "prompt.system",
+      "kind": "span",
+      "line_end": 12,
+      "line_start": 12
+    },
+    {
+      "content": "Plan before answering.",
+      "content_hash": "83cebfe5339a6f93972bfaa696ba9aa4e0979484b5106f9bec13c9b48a3c1576",
+      "file": "src/pkg/planner.py",
+      "id": "prompt.planner",
+      "kind": "span",
+      "line_end": 40,
+      "line_start": 40
+    }
+  ],
   "zicato.reflection.coverage": {
     "exercised_kinds": [
       "custom:tone_guard",
@@ -9685,7 +9701,6 @@
     }
   ],
   "zicato.workspace.read_epoch_config::e10": {
-    "applied_proposer_recommendations": [],
     "board_path": "<ws>/epochs/e10/board.jsonl",
     "brief_path": "<ws>/epochs/e10/brief.md",
     "closed": false,
@@ -9789,7 +9804,6 @@
     }
   },
   "zicato.workspace.read_epoch_config::e2": {
-    "applied_proposer_recommendations": [],
     "board_path": "<ws>/epochs/e2/board.jsonl",
     "brief_path": "<ws>/epochs/e2/brief.md",
     "closed": true,

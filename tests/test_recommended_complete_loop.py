@@ -241,8 +241,9 @@ async def test_partial_application_preserves_confirmation_requirements(
         ledger = RoundTokenLedger(1)
         ledger.add(1)
         report["budget_spent_before_tournament"] = ledger.spent
+        config = replace(field_round.prepared.config, token_ledger=ledger)
         return await execute(
-            replace(field_round, config=replace(field_round.config, token_ledger=ledger)),
+            replace(field_round, prepared=replace(field_round.prepared, config=config)),
             candidates,
         )
 

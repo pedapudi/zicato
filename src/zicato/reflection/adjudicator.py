@@ -156,7 +156,10 @@ def _verbatim_context(loss_path: Path, judge_name: str) -> tuple[Any, str] | Non
     )
     from zicato.tournament.unit_cache import read_capture_loss  # noqa: PLC0415
 
-    loss = read_capture_loss(loss_path)
+    try:
+        loss = read_capture_loss(loss_path)
+    except ValueError:
+        return None
     if loss is None:
         return None
     records = read_judge_io(judge_io_path_for_loss(loss_path), expected=loss)
@@ -187,7 +190,10 @@ def _result_context(loss_path: Path) -> tuple[Any, str] | None:
         unit_result_path,
     )
 
-    loss = read_capture_loss(loss_path)
+    try:
+        loss = read_capture_loss(loss_path)
+    except ValueError:
+        return None
     if loss is None:
         return None
     body = read_run_result(unit_result_path(loss_path), expected=loss)

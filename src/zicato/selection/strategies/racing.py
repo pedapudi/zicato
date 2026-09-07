@@ -57,7 +57,7 @@ log = logging.getLogger("zicato.selection.racing")
 #: The nested-prefix schedule: each rung takes a prefix of the authored
 #: JSONL order, and each prefix contains the one before it. The default for
 #: every contract that does not name a schedule.
-LEGACY_SLICE_SCHEDULE = "prefix"
+PREFIX_SLICE_SCHEDULE = "prefix"
 
 #: Nested prefixes of a deterministic permutation derived from the board's
 #: entry ids alone.
@@ -66,7 +66,7 @@ SHUFFLED_SLICE_SCHEDULE = "shuffled_v1"
 #: Every ``slice_schedule`` racing accepts. The builder validates an edit
 #: against this same tuple so a typo is a contract-time error rather than a
 #: round-start one.
-SLICE_SCHEDULES: tuple[str, ...] = (LEGACY_SLICE_SCHEDULE, SHUFFLED_SLICE_SCHEDULE)
+SLICE_SCHEDULES: tuple[str, ...] = (PREFIX_SLICE_SCHEDULE, SHUFFLED_SLICE_SCHEDULE)
 
 
 def _shuffled_order(board_ids: Sequence[str]) -> tuple[str, ...]:
@@ -112,7 +112,7 @@ class RacingStrategy(ChampionGateStrategy):
         self._rung0 = _param_int(self.params, "rung0_board_size", 0)  # 0 ⇒ use fraction
         raw_ids = self.params.get("board_ids", ())
         self._board_ids: tuple[str, ...] = tuple(str(x) for x in raw_ids)
-        self._slice_schedule = str(self.params.get("slice_schedule", LEGACY_SLICE_SCHEDULE))
+        self._slice_schedule = str(self.params.get("slice_schedule", PREFIX_SLICE_SCHEDULE))
         if self._slice_schedule not in SLICE_SCHEDULES:
             valid = ", ".join(repr(s) for s in SLICE_SCHEDULES)
             raise ValueError(
@@ -455,7 +455,7 @@ class RacingStrategy(ChampionGateStrategy):
 
 
 __all__ = [
-    "LEGACY_SLICE_SCHEDULE",
+    "PREFIX_SLICE_SCHEDULE",
     "SLICE_SCHEDULES",
     "SHUFFLED_SLICE_SCHEDULE",
     "RacingStrategy",

@@ -3,8 +3,7 @@
 `zicato.query` owns the business projections rendered by operator interfaces.
 Canonical workspace files remain the source of truth; the analytical index is
 only a rebuildable accelerator. HTTP handlers serialize query results, while
-the browser and terminal render served decisions rather than reconstructing
-them.
+the browser renders served decisions rather than reconstructing them.
 
 ## Contracts
 
@@ -25,7 +24,7 @@ single-epoch workspace.
 
 - A decision is derived once in `zicato.query` and serialized unchanged as
   `decision` plus its presentation-ready `decision_label`. Candidate axes,
-  lineage, epoch feeds, browser views, and terminal views consume those fields.
+  lineage, epoch feeds, and browser views consume those fields.
 - `lineage.json` alone owns generation parentage and tri-state promotion.
   Experiment outcomes are journal detail, never a topology fallback.
 - Index absence or staleness degrades to canonical reads, never a competing

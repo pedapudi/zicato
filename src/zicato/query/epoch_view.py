@@ -1,13 +1,15 @@
-"""epoch_view — extracted from the former dashboard state_reader monolith (pure move)."""
+"""Epoch contract, generation, and decision projections for workspace views."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
-from zicato.proposer.brief import brief_goal
-from zicato.query.board_scan import board_entry_id, iter_board_rows
+from zicato.board.jsonl import load_board_rows
+from zicato.epoch._storage import RecordError
+from zicato.mutation.inventory import read_mutation_inventory
+from zicato.proposer.brief import brief_goal, load_epoch_brief
+from zicato.query.board_scan import board_entry_id
 from zicato.query.decisions import (
     experiment_decision,
     promoted_tristate,
@@ -19,7 +21,6 @@ from zicato.query.paths import (
     _is_finite,
     _natural_key,
     _preview,
-    _read_json_value,
     _resolve_epoch_id,
     coerce_float,
     layout_of,
@@ -58,27 +59,9 @@ def _board_input_preview(entry: dict[str, Any]) -> str | None:
     return None
 
 
-def _parse_board(path: Path) -> list[dict[str, Any]] | None:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None
-    except OSError:
-        return None
+def _project_board(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(obj, dict):
-            continue
-        # The board's first JSONL line is a `board_meta` header object
-        # (it carries `disable_drift` rather than an entry's fields). Skip it
-        # so it does not surface as a spurious all-`—` board row.
+    for obj in rows:
         if obj.get("board_meta") is True:
             continue
         expectation = obj.get("expectation")
@@ -106,69 +89,22 @@ def _parse_board(path: Path) -> list[dict[str, Any]] | None:
     return entries
 
 
-def _parse_board_meta(path: Path) -> dict[str, Any] | None:
-    """The board's optional leading ``board_meta`` header, normalized.
-
-    BOARD-FORMAT §1.0: a board MAY open with a ``{"board_meta": true, ...}``
-    line carrying the board-wide ``disable_drift`` suppression list and the
-    ``judge_only`` flag; when present it MUST be the first line, so only the
-    first non-blank line is examined. Returns ``None`` when the header is
-    absent, unreadable, or **fully default** (an empty suppression list AND
-    ``judge_only`` false) — the writer emits no header at all for a default
-    board, so a default header and no header describe the SAME board, and
-    omitting the key keeps every such epoch's payload byte-identical to the
-    read that predates this block.
-
-    A sibling of :func:`_parse_board` rather than a second return value: that
-    reader's shape is shared with ``judge_view`` and the ``zicato.query``
-    export surface.
-    """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
+def _project_board_meta(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Project accepted metadata; omit the default suppression and judge mode."""
+    if not rows or rows[0].get("board_meta") is not True:
         return None
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(obj, dict) or obj.get("board_meta") is not True:
-            return None  # the first line is an entry ⇒ this board has no header
-        kinds = obj.get("disable_drift")
-        disable_drift = [k for k in kinds if isinstance(k, str)] if isinstance(kinds, list) else []
-        judge_only = obj.get("judge_only") is True
-        if not disable_drift and not judge_only:
-            return None
-        return {"disable_drift": disable_drift, "judge_only": judge_only}
-    return None
+    header = rows[0]
+    disable_drift = header.get("disable_drift", [])
+    judge_only = header.get("judge_only", False)
+    if not disable_drift and not judge_only:
+        return None
+    return {"disable_drift": disable_drift, "judge_only": judge_only}
 
 
-def _parse_board_judges(path: Path) -> dict[str, list[dict[str, Any]]] | None:
-    """The PROCESS judges each board entry declares, keyed by entry id.
-
-    BOARD-FORMAT §1.3: an entry MAY carry ``judges: [{name, mode, body,
-    severity}]`` — the custom judges the adapter appends to the built-in set
-    for that entry's runs. Returns ``{entry_id: [{name, mode, severity}]}``
-    for every entry declaring at least one usable judge, and ``None`` when
-    the board declares none — the key is then omitted, keeping every
-    judge-free epoch's payload byte-identical to the read that predates this
-    block (the :func:`_parse_board_meta` precedent).
-
-    ``body`` is NOT projected for an inline judge: it is the criterion
-    PROMPT, and a roster is not a place to publish prompts. A python judge's
-    body is a dotted import path — the callable's identity rather than prose
-    — so it rides along as ``path``, which is what tells two python judges
-    apart on screen.
-
-    A SIBLING of :func:`_parse_board` rather than a widening of it: that
-    reader's row shape is shared with ``judge_view`` and the
-    ``zicato.query`` export surface, and neither wants a new key.
-    """
+def _project_board_judges(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]] | None:
+    """Project accepted judge identities without publishing inline prompts."""
     by_entry: dict[str, list[dict[str, Any]]] = {}
-    for row in iter_board_rows(path):
+    for row in rows:
         entry_id = board_entry_id(row)
         raw = row.get("judges")
         if entry_id is None or entry_id in by_entry or not isinstance(raw, list):
@@ -197,37 +133,19 @@ def _parse_board_judges(path: Path) -> dict[str, list[dict[str, Any]]] | None:
     return by_entry or None
 
 
-def _parse_mutations(path: Path) -> list[dict[str, Any]] | None:
-    value = _read_json_value(path)
-    if not isinstance(value, list):
-        return None
-    out: list[dict[str, Any]] = []
-    for m in value:
-        if not isinstance(m, dict):
-            continue
-        start = m.get("line_start")
-        end = m.get("line_end")
-        start_i = int(start) if isinstance(start, int | float) else None
-        end_i = int(end) if isinstance(end, int | float) else None
-        if start_i is not None and end_i is not None:
-            lines = str(start_i) if start_i == end_i else f"{start_i}-{end_i}"
-        elif start_i is not None:
-            lines = str(start_i)
-        elif end_i is not None:
-            lines = str(end_i)
-        else:
-            lines = None
-        content = m.get("content")
-        out.append(
-            {
-                "id": m.get("id"),
-                "kind": m.get("kind"),
-                "file": m.get("file"),
-                "lines": lines,
-                "preview": _preview(content) if isinstance(content, str) else None,
-            }
-        )
-    return out
+def _project_mutations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": row["id"],
+            "kind": row["kind"],
+            "file": row["file"],
+            "lines": str(row["line_start"])
+            if row["line_start"] == row["line_end"]
+            else f"{row['line_start']}-{row['line_end']}",
+            "preview": _preview(row["content"]),
+        }
+        for row in rows
+    ]
 
 
 def _read_harness(paths: WorkspacePaths) -> dict[str, Any] | None:
@@ -277,20 +195,11 @@ def _read_text_best_effort(path: Path) -> str:
 
 
 def _read_epoch_brief(epoch_dir: Path) -> str:
-    """The proposer brief text for an epoch.
-
-    ``brief.md`` is the current filename; ``rubric.md`` is read as a
-    fallback, so an epoch created under the older name still resolves. Any
-    read error degrades to an empty string.
-    """
-    for name in ("brief.md", "rubric.md"):
-        try:
-            return (epoch_dir / name).read_text(encoding="utf-8")
-        except FileNotFoundError:
-            continue
-        except OSError:
-            break
-    return ""
+    """Read accepted epoch guidance; absence is empty, corruption is explicit."""
+    try:
+        return load_epoch_brief(epoch_dir).text
+    except FileNotFoundError:
+        return ""
 
 
 def build_epochs_summary(paths: WorkspacePaths) -> list[dict[str, Any]]:
@@ -305,9 +214,13 @@ def build_epochs_summary(paths: WorkspacePaths) -> list[dict[str, Any]]:
     """
     out: list[dict[str, Any]] = []
     for epoch in iter_epochs(layout_of(paths)):
-        paragraph = brief_goal(_read_epoch_brief(epoch.directory))
-        goal = _preview(paragraph) if paragraph else None
-        out.append({"epoch_id": epoch.id, "goal": goal})
+        row: dict[str, Any] = {"epoch_id": epoch.id, "goal": None}
+        try:
+            paragraph = brief_goal(_read_epoch_brief(epoch.directory))
+            row["goal"] = _preview(paragraph) if paragraph else None
+        except RecordError as exc:
+            row["unreadable"] = str(exc)
+        out.append(row)
     return out
 
 
@@ -852,13 +765,20 @@ def build_epoch_view(
     if harness is not None:
         view["harness"] = harness
 
-    board = _parse_board(epoch_dir / "board.jsonl")
+    try:
+        board_rows = load_board_rows(epoch_dir / "board.jsonl")
+    except RecordError as exc:
+        board_rows = None
+        view["unreadable"] = str(exc)
+    board = _project_board(board_rows) if board_rows is not None else None
     if board is not None:
         view["board"] = board
 
-    # Proposer brief: ``brief.md`` is the current filename; ``rubric.md`` is
-    # read as a fallback. Any read error -> empty string.
-    view["brief"] = _read_epoch_brief(epoch_dir)
+    try:
+        view["brief"] = _read_epoch_brief(epoch_dir)
+    except RecordError as exc:
+        view["brief"] = ""
+        view["unreadable"] = f"{view['unreadable']}; {exc}" if "unreadable" in view else str(exc)
 
     scoring = inputs.scoring.copy()
     if scoring is not None:
@@ -874,12 +794,12 @@ def build_epoch_view(
     )
 
     # Board-level ``board_meta`` header (BOARD-FORMAT §1.0): the drift kinds
-    # suppressed for every entry + the judge-only flag. It is authored in the
-    # builder and folds into the contract hash, so a runtime surface that drops
+    # suppressed for every entry + the judge-only flag. The header contributes
+    # to the contract hash, so a runtime view that drops
     # it draws a board that is scored differently from the one it shows.
     # Omitted — like the ``tournament`` block below — when the header is absent
     # or fully default, which is byte-identical to the pre-block read.
-    board_meta = _parse_board_meta(epoch_dir / "board.jsonl")
+    board_meta = _project_board_meta(board_rows or [])
     if board_meta is not None:
         view["board_meta"] = board_meta
 
@@ -887,7 +807,7 @@ def build_epoch_view(
     # custom half of what the board page's Judges panel shows. Same omit-when-
     # absent discipline as the header above: a board whose entries declare no
     # judges reads byte-identical to the pre-block payload.
-    board_judges = _parse_board_judges(epoch_dir / "board.jsonl")
+    board_judges = _project_board_judges(board_rows or [])
     if board_judges is not None:
         view["board_judges"] = board_judges
 
@@ -905,8 +825,13 @@ def build_epoch_view(
     # byte-identical reads for every gauntlet epoch on disk today.
 
     # mutations.json is optional; absent -> empty list (never null).
-    mutations = _parse_mutations(epoch_dir / "mutations.json")
-    view["mutations"] = mutations if mutations is not None else []
+    try:
+        view["mutations"] = _project_mutations(
+            read_mutation_inventory(epoch_dir / "mutations.json") or []
+        )
+    except RecordError as exc:
+        view["mutations"] = []
+        view["unreadable"] = f"{view['unreadable']}; {exc}" if "unreadable" in view else str(exc)
 
     # Experiment log: per-generation hypothesis + outcome + patch content,
     # each stamped with the canonical ``decision`` + tri-state ``promoted``.

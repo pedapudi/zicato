@@ -147,19 +147,21 @@ async def run_field_matchup(
     matchup uses the defaults.
     """
 
+    prepared = field_round.prepared
+
     from zicato.selection.strategy import MatchupResult  # noqa: PLC0415
     from zicato.tournament.runner import run_matchup  # noqa: PLC0415
 
     _beat(
-        field_round.beater,
-        epoch_id=field_round.epoch_id,
+        prepared.beater,
+        epoch_id=prepared.epoch_id,
         generation_id=matchup.right.generation_id,
-        round_index=field_round.round_index,
-        phase=f"tournament:round_{field_round.round_index}:{matchup.matchup_id}",
+        round_index=prepared.round_index,
+        phase=f"tournament:round_{prepared.round_index}:{matchup.matchup_id}",
     )
     result = await run_matchup(
-        writer=field_round.prepared.writer,
-        adapter=field_round.adapter,
+        writer=prepared.writer,
+        adapter=prepared.adapter,
         left_gen=candidates.generation(matchup.left.generation_id),
         right_gen=candidates.generation(matchup.right.generation_id),
         # Internal selection scores on the TRAIN slice only (the holdout
@@ -167,19 +169,19 @@ async def run_field_matchup(
         # rung's ``board_subset`` is intersected against the train board
         # inside ``run_matchup``. Empty holdout ⇒ ``train_board`` IS the
         # full board, so no entry is excluded.
-        board=field_round.train_board,
-        weights=field_round.weights,
-        config=field_round.config,
-        workspace_root=field_round.workspace_root,
-        epoch_id=field_round.epoch_id,
+        board=list(prepared.train_board),
+        weights=prepared.weights,
+        config=prepared.config,
+        workspace_root=prepared.workspace_root,
+        epoch_id=prepared.epoch_id,
         board_subset=matchup.board_subset,
         replicates=matchup.replicates,
         replicate_base=replicate_base,
-        disable_drift=field_round.disable_drift,
-        judge_only=field_round.judge_only,
-        fast=field_round.fast_mode or candidates.resume_cache,
-        round_index=field_round.round_index,
-        total_rounds=field_round.total_rounds,
+        disable_drift=prepared.disable_drift,
+        judge_only=prepared.judge_only,
+        fast=prepared.fast_mode or candidates.resume_cache,
+        round_index=prepared.round_index,
+        total_rounds=prepared.total_rounds,
         match_id=matchup.matchup_id,
         # Opt-in wall-clock cap on this duel's TOTAL board-unit execution.
         # None (the default for every structure that does not set it) keeps
@@ -194,7 +196,7 @@ async def run_field_matchup(
         right_diff_size=candidates.diff_sizes.get(matchup.right.generation_id),
     )
     tallies.raw_results[matchup.matchup_id] = result
-    infra_threshold = int(getattr(field_round.config, "infra_abort_round_threshold", 0) or 0)
+    infra_threshold = int(getattr(prepared.config, "infra_abort_round_threshold", 0) or 0)
     if infra_threshold > 0:
         tallies.infra_aborted_runs += _count_infra_aborted_runs(result)
         if tallies.infra_aborted_runs >= infra_threshold:
@@ -213,18 +215,18 @@ async def run_field_matchup(
         # canonical file, so the within-round measurements the last
         # matchup's write shadows are still on disk (issue #122).
         write_gen_score(
-            field_round.workspace_root,
-            field_round.epoch_id,
+            prepared.workspace_root,
+            prepared.epoch_id,
             matchup.left.generation_id,
             result.parent_agg,
-            round_index=field_round.round_index,
+            round_index=prepared.round_index,
         )
         write_gen_score(
-            field_round.workspace_root,
-            field_round.epoch_id,
+            prepared.workspace_root,
+            prepared.epoch_id,
             matchup.right.generation_id,
             result.child_agg,
-            round_index=field_round.round_index,
+            round_index=prepared.round_index,
         )
         tallies.aggregates[matchup.left.generation_id] = result.parent_agg
         tallies.aggregates[matchup.right.generation_id] = result.child_agg
@@ -233,21 +235,19 @@ async def run_field_matchup(
     # several matchups into one log, so unscoped units and gates would be
     # indistinguishable.
     _emit_tournament_units(
-        field_round.round_log,
+        prepared.round_log,
         result,
         parent_generation_id=matchup.left.generation_id,
         child_generation_id=matchup.right.generation_id,
         matchup_id=matchup.matchup_id,
     )
-    _emit_harness_loaded(
-        field_round.round_log, field_round.workspace_root, field_round.epoch_id, result
-    )
+    _emit_harness_loaded(prepared.round_log, prepared.workspace_root, prepared.epoch_id, result)
     _emit_gate_evaluated(
-        field_round.round_log,
+        prepared.round_log,
         result.outcome,
         parent_agg=result.parent_agg,
         child_agg=result.child_agg,
-        weights=field_round.weights,
+        weights=prepared.weights,
         generation_id=matchup.right.generation_id,
         opponent_generation_id=matchup.left.generation_id,
         matchup_id=matchup.matchup_id,
@@ -281,6 +281,8 @@ def publish_live_structure(
     raises, so a publish failure cannot abort the resolution.
     """
 
+    prepared = field_round.prepared
+
     live_rounds = _serialise_rounds(strategy.live_rounds())
     # Overlay the runner's authoritative per-board ``projected`` map (the
     # scorer's domain) onto the racing rung's per-lane ``live_progress``
@@ -289,22 +291,22 @@ def publish_live_structure(
     # lane's live ``boards_done`` + streaming ``projected_scalar``. The
     # two compose here so the rung carries one authoritative per-lane
     # progress map the dashboard consumes directly.
-    _overlay_projected_live_progress(live_rounds, field_round.workspace_root)
+    _overlay_projected_live_progress(live_rounds, prepared.workspace_root)
     live_standings = _overlay_projected_standings(
         _serialise_standings(strategy.live_standings()),
         live_rounds,
-        field_round.workspace_root,
-        field_round.tournament_spec.structure,
+        prepared.workspace_root,
+        prepared.tournament_spec.structure,
     )
     _publish_active_tournament(
-        field_round.workspace_root,
+        prepared.workspace_root,
         tournament_id=candidates.tournament_id,
-        epoch_id=field_round.epoch_id,
-        structure=field_round.tournament_spec.structure,
-        structure_params=dict(field_round.tournament_spec.params),
+        epoch_id=prepared.epoch_id,
+        structure=prepared.tournament_spec.structure,
+        structure_params=dict(prepared.tournament_spec.params),
         competitors=candidates.competitors,
-        round_index=field_round.round_index,
-        total_rounds=field_round.total_rounds,
+        round_index=prepared.round_index,
+        total_rounds=prepared.total_rounds,
         field_status=candidates.field_status,
         rounds=live_rounds,
         standings=live_standings,
@@ -319,6 +321,8 @@ def record_inconclusive_duel(
 
     Best-effort: a write failure must not abort the round.
     """
+
+    prepared = field_round.prepared
 
     from zicato.selection.dead_letter import (  # noqa: PLC0415
         InconclusiveRecord,
@@ -340,11 +344,11 @@ def record_inconclusive_duel(
         on_error=lambda exc: log.debug("dead-letter record skipped: %s", exc),
     ):
         record_inconclusive(
-            field_round.workspace_root,
+            prepared.workspace_root,
             InconclusiveRecord(
                 generation_id=challenger_id,
                 champion_id=champion_id,
-                epoch_id=field_round.epoch_id,
+                epoch_id=prepared.epoch_id,
                 rating=rating_block(verdict),
                 ci_history=resolution.ci_history,
                 reason=verdict.reason,
@@ -368,17 +372,19 @@ def _open_tournament_envelopes(field_round: FieldRound, candidates: CandidateFie
     duplicates nor corrupts it.
     """
 
+    prepared = field_round.prepared
+
     from zicato.runtime import progress_log  # noqa: PLC0415
 
     _publish_active_tournament(
-        field_round.workspace_root,
+        prepared.workspace_root,
         tournament_id=candidates.tournament_id,
-        epoch_id=field_round.epoch_id,
-        structure=field_round.tournament_spec.structure,
-        structure_params=dict(field_round.tournament_spec.params),
+        epoch_id=prepared.epoch_id,
+        structure=prepared.tournament_spec.structure,
+        structure_params=dict(prepared.tournament_spec.params),
         competitors=candidates.competitors,
-        round_index=field_round.round_index,
-        total_rounds=field_round.total_rounds,
+        round_index=prepared.round_index,
+        total_rounds=prepared.total_rounds,
         field_status=candidates.field_status,
         entries=_field_entries(candidates.competitors),
     )
@@ -389,14 +395,14 @@ def _open_tournament_envelopes(field_round: FieldRound, candidates: CandidateFie
         "progress-log field tournament-start",
         on_error=lambda exc: log.debug("progress-log field tournament-start skipped: %s", exc),
     ):
-        progress_log.append_progress(field_round.workspace_root, progress_log.TOURNAMENT_START)
+        progress_log.append_progress(prepared.workspace_root, progress_log.TOURNAMENT_START)
     _open_field_tournament(
-        field_round.workspace_root,
-        field_tournament_id=f"{field_round.epoch_id}:field:{candidates.first_challenger_id}",
+        prepared.workspace_root,
+        field_tournament_id=f"{prepared.epoch_id}:field:{candidates.first_challenger_id}",
         first_challenger_id=candidates.first_challenger_id,
-        epoch_id=field_round.epoch_id,
-        structure=field_round.tournament_spec.structure,
-        structure_params=dict(field_round.tournament_spec.params),
+        epoch_id=prepared.epoch_id,
+        structure=prepared.tournament_spec.structure,
+        structure_params=dict(prepared.tournament_spec.params),
         competitors=candidates.competitors,
         field_status=candidates.field_status or [],
     )
@@ -414,6 +420,8 @@ def _emit_evidence_trail(
     the id is what keeps their trails apart.
     """
 
+    prepared = field_round.prepared
+
     from zicato.selection.evidence_gate import rating_block  # noqa: PLC0415
 
     gate_evidence = dict(rating_block(evidence.verdict))
@@ -424,7 +432,7 @@ def _emit_evidence_trail(
         else evidence.verdict.challenger_id
     )
     for ci_row in evidence.ci_history:
-        field_round.round_log.emit(
+        prepared.round_log.emit(
             "evidence_replicated",
             {"ci_state": dict(ci_row)},
             {"generation_id": challenger_id},
@@ -445,6 +453,8 @@ async def execute_field_tournament(
     and re-raises.
     """
 
+    prepared = field_round.prepared
+
     from zicato.selection import EvidencePreGate, evaluate_tournament  # noqa: PLC0415
     from zicato.selection.driver import make_evidence_replicate_duel  # noqa: PLC0415
     from zicato.selection.evidence_gate import (  # noqa: PLC0415
@@ -462,7 +472,7 @@ async def execute_field_tournament(
     # parallelism intent and the LLM endpoint's concurrency. Sized as a
     # single matchup's cap would be, so a round with one matchup draws the
     # same cap it would alone.
-    unit_semaphore = asyncio.Semaphore(max(1, int(field_round.config.parallelism)))
+    unit_semaphore = asyncio.Semaphore(max(1, int(prepared.config.parallelism)))
     run_one = partial(run_field_matchup, field_round, candidates, tallies, unit_semaphore)
 
     _open_tournament_envelopes(field_round, candidates)
@@ -476,11 +486,11 @@ async def execute_field_tournament(
     pre_gate: EvidencePreGate | None = None
     replicate_duel = None
     on_inconclusive = None
-    bt_threshold = read_promote_confidence_threshold(field_round.tournament_spec.params)
+    bt_threshold = read_promote_confidence_threshold(prepared.tournament_spec.params)
     if bt_threshold is not None:
         pre_gate = EvidencePreGate(
             threshold=bt_threshold,
-            replicate_budget=read_replicate_budget(field_round.tournament_spec.params),
+            replicate_budget=read_replicate_budget(prepared.tournament_spec.params),
         )
         # Each extra crowning-pair duel runs through the SAME board-unit
         # runner and gate every other duel uses, so a replicate is scored
@@ -494,7 +504,7 @@ async def execute_field_tournament(
 
     try:
         evaluation = await evaluate_tournament(
-            field_round.strategy,
+            prepared.strategy,
             request_field=partial(request_field, candidates),
             run_matchup=run_one,
             on_progress=partial(publish_live_structure, field_round, candidates),
@@ -503,22 +513,22 @@ async def execute_field_tournament(
             on_inconclusive=on_inconclusive,
         )
     except _InfrastructureRoundDeferred as deferred:
-        _clear_active_tournament(field_round.workspace_root)
+        _clear_active_tournament(prepared.workspace_root)
         return _defer_round_infra_outage(
-            workspace_root=field_round.workspace_root,
-            epoch_id=field_round.epoch_id,
+            workspace_root=prepared.workspace_root,
+            epoch_id=prepared.epoch_id,
             parent_id=field_round.parent_id,
             next_id=candidates.base_generation_id,
-            board=field_round.board,
-            round_index=field_round.round_index,
+            board=list(prepared.board),
+            round_index=prepared.round_index,
             infra_aborted=deferred.aborted_runs,
             infra_threshold=deferred.threshold,
-            beater=field_round.beater,
-            round_log=field_round.round_log,
-            health_config=field_round.config.operational_configuration().values.health,
+            beater=prepared.beater,
+            round_log=prepared.round_log,
+            health_config=prepared.config.operational_configuration().values.health,
         )
     except Exception:
-        _clear_active_tournament(field_round.workspace_root)
+        _clear_active_tournament(prepared.workspace_root)
         raise
 
     gate_evidence: dict[str, Any] | None = None
@@ -542,7 +552,7 @@ async def execute_field_tournament(
         champion_eval_mode=_resolve_round_champion_mode(
             tallies.champion_cached_units,
             tallies.champion_fresh_units,
-            fast_requested=field_round.fast_mode,
+            fast_requested=prepared.fast_mode,
         ),
     )
 

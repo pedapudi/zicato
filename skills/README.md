@@ -33,7 +33,7 @@ model connection; a **role** selects an engine for a job. The common workspace
 defines `target` (an optional LLM binding consumed only when the target adapter
 needs one) and `evaluation` (the internal default). Advanced roles are
 `proposer`, `proposer_generate`, `proposer_review`, `user_emulator`, `judge`,
-`adjudicator`, and `builder`.
+and `adjudicator`.
 
 `proposer_generate` and `proposer_review` are generic best-of-N stages, not
 reasoning settings. They inherit `proposer`, which inherits `evaluation`.
@@ -70,16 +70,6 @@ compound entry. This invariant applies throughout the catalog.
 | `zicato-write-brief` | Author/refine the proposer brief (`brief.md`): the epoch goal, the mutation budget, constraints, and the `## Forbidden` mutation ids the proposer may not touch. |
 | `zicato-override-seams` | The three **override seams** for when the defaults don't fit: a custom `HarnessAdapter` for a non-ADK target (the mutation surface, `worker_spec`, and the telemetry you now owe — including the dialect choice and what each dialect can measure), the `predicate` expectation for partial credit or a per-entry `metrics` decomposition, and `outcome_summarizer_spec` for a proposer failure category zicato doesn't compute. Every seam attaches by dotted path; each fails quiet in its own way, so the skill says what silence looks like. |
 | `zicato-tune-scoring` | Edit `scoring.json`: drift-loss weights, `per_judge_weights`/`default_judge_weight`, pass/fail predicates, and the promotion gate — Rule 0 diff-complexity ceiling (opt-in, `0.0` = off), Rule 1 scalar margin (`promote_margin`), Rule 2 pass-rate monotonicity (on, `per_entry`), Rule 3 per-namespace monotonicity (on for `rubric:` / `schema:`, off for `drift:`), then the holdout confirmation whenever the board has a holdout slice (on by default: any `holdout`-tagged entry, else a hash split once the board reaches 6 entries). |
-
-*GUI builder copilot (assemble the contract through a draft, apply rolls the
-epoch). Its model comes only from the named `builder` role; `builder.json`
-contains presentation settings (skills and theme), never a second model
-connection. The copilot↔draft mechanism and consequence-forward principle are
-documented in [`docs/design/TOURNAMENT-BUILDER.md`](../docs/design/TOURNAMENT-BUILDER.md):*
-| Skill | What it does |
-|---|---|
-| `zicato-build-tournament` | The **tournament-builder copilot's** whole-contract walkthrough — structure, `field_size`/`replicates`, per-structure params, the board & train/holdout split, the proposer, and the gate — edited as a DRAFT and applied only on confirmation. Consequence-forward: surface the COST (board-runs ≈ `field_size × replicates × rounds/rungs` + holdout-confirm) and the epoch-roll before every `apply`; never starts a live run. Defers structure to `zicato-design-tournament-structure`, board craft to `zicato-build-board`, holdout to `OVERFITTING.md`, proposer to `zicato-design-proposer`, gate to `SCORING.md`. |
-| `zicato-build-board` | The **board-builder copilot's** deep board-craft guide — entries (single/multi-turn, expectations, the `holdout` tag, weight), judges, emulator isolation, one-session-per-run boundaries, and how loss knobs *shape* an objective. Designs for discrimination and holds out a slice so the proposer cannot memorize the board. Edits a DRAFT, applies on confirmation. |
 
 ### Tier 2 — Run the loop
 | Skill | What it does |

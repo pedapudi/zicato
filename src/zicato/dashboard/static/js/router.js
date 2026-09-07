@@ -24,11 +24,10 @@
 // breadcrumb, back button, and every view share one signature.
 
 export const PREFIX = '#';
-export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'instrument', 'traces', 'evals', 'publication', 'builder', 'logs', 'settings'];
+export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'instrument', 'traces', 'evals', 'publication', 'logs', 'settings'];
 
 // The Settings section a bare `#/settings` opens: the read-mostly contract
-// roll-up. The tournament builder is its own view rather than a Settings
-// section. Shared with views/settings.js so the router's `up()` and the view
+// roll-up. Shared with views/settings.js so the router's `up()` and the view
 // agree on the default.
 export const DEFAULT_SETTINGS_SECTION = 'contract';
 
@@ -62,20 +61,9 @@ export function parseRoute(hash) {
   // bare `#/` prefix: the path part is everything after the leading slash.
   const parts = raw.replace(/^\/+/, '').split('/').filter(Boolean).map(dec);
   if (!parts.length || parts[0] === 'home') return { view: 'home', params: {}, cmp };
-  // SETTINGS homes the contract / models / appearance sections. The tournament
-  // builder is its own first-class VIEW (below), and Settings keeps only a
-  // launcher to it.
-  // `#/settings[/<section>]` deep-links a section; a bare `#/settings` opens
-  // the default (contract) section.
   if (parts[0] === 'settings') return { view: 'settings', params: { section: parts[1] || null }, cmp };
-  // `#/builder` is the tournament builder's own first-class view. One
-  // route-agnostic builder module backs every entry point — the top-bar nav
-  // entry, this deep link, the Settings launcher, and the standalone
-  // `zicato dashboard --view builder` command, which deep-links here — and it
-  // renders FULL-WIDTH in the main view host.
-  if (parts[0] === 'builder') return { view: 'builder', params: {}, cmp };
   // `#/logs` is the workspace-level operator-log pane (LOGGING.md), a peer of
-  // builder and settings. It sits outside any epoch because the streams are
+  // settings. It sits outside any epoch because the streams are
   // per-invocation.
   if (parts[0] === 'logs') return { view: 'logs', params: {}, cmp };
   if (parts[0] !== 'e') return { view: 'home', params: {}, cmp };
@@ -142,8 +130,6 @@ export function href(view, params, opts) {
     case 'settings':
       base = p.section ? `${PREFIX}/settings/${enc(p.section)}` : PREFIX + '/settings';
       break;
-    // `#/builder` is the canonical link to the standalone tournament-builder view.
-    case 'builder': base = PREFIX + '/builder'; break;
     // `#/logs` is the workspace-level operator-log pane.
     case 'logs': base = PREFIX + '/logs'; break;
     case 'epoch': base = e || (PREFIX + '/'); break;
@@ -234,9 +220,6 @@ export function up(route) {
       // landing (or the default `contract` section) steps up to environment.
       if (p.section && p.section !== DEFAULT_SETTINGS_SECTION) return { view: 'settings', params: {} };
       return { view: 'home', params: {} };
-    // the builder is its OWN view now — it steps up to environment (the crumb
-    // reads environment › tournament builder).
-    case 'builder': return { view: 'home', params: {} };
     // the operator-log pane is workspace-level — it steps up to environment.
     case 'logs': return { view: 'home', params: {} };
     case 'epoch': return { view: 'home', params: {} };
@@ -306,8 +289,6 @@ export function crumbTrail(route) {
       }
       return [home, { label: 'settings', current: true }];
     }
-    case 'builder':
-      return [home, { label: 'tournament builder', current: true }];
     case 'logs':
       return [home, { label: 'operator log', current: true }];
     case 'epoch':

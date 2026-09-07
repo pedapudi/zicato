@@ -6,11 +6,6 @@ name: statistical and end-to-end oracles
 
 on:
   pull_request:
-  schedule:
-    # 07:00 UTC daily. Nothing depends on the exact hour; it is outside the
-    # working day in the maintainer's timezone so a red result is waiting
-    # rather than interrupting.
-    - cron: "0 7 * * *"
   workflow_dispatch:
 
 jobs:

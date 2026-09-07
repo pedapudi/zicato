@@ -1,6 +1,6 @@
 ---
 name: zicato-dev-guide
-description: The entry point for CHANGING zicato's own source (not operating a workspace). Routes to the full 14-chapter development guide under docs/dev-guide/ (~23k lines, code-grounded), and inlines the non-negotiables an agent must never skip — the 10 Golden Rules, the chapter map (which chapter owns which surface), the pre-commit verification ladder, and the twelve shipped bugs with the one-line tell for each. Use whenever you edit orchestrator/proposer/tournament/selection/scoring/runtime/storage/supervisor/dashboard/builder/CLI code, add a contract knob, touch the evaluation statistics or the overfitting envelope, or write tests. The operator skills (zicato-evolve, zicato-design-boards, …) teach how to RUN the loop; this teaches how to safely CHANGE it.
+description: The entry point for CHANGING zicato's own source (not operating a workspace). Routes to the full 14-chapter development guide under docs/dev-guide/ (~23k lines, code-grounded), and inlines the non-negotiables an agent must never skip — the 10 Golden Rules, the chapter map (which chapter owns which surface), the pre-commit verification ladder, and the twelve shipped bugs with the one-line tell for each. Use whenever you edit orchestrator/proposer/tournament/selection/scoring/runtime/storage/supervisor/dashboard/CLI code, add a contract knob, touch the evaluation statistics or the overfitting envelope, or write tests. The operator skills (zicato-evolve, zicato-design-boards, …) teach how to RUN the loop; this teaches how to safely CHANGE it.
 ---
 
 # Contributing to zicato
@@ -54,7 +54,7 @@ because breaking it caused a real failure.
 | state files / storage / resume / the round log | `07-runtime-and-durability.md` | the persistence and crash-safety rules, **D1–D12** |
 | the Rust supervisor | `08-supervisor.md` | the out-of-band enforcement rules, **S1–S14** |
 | a reader / endpoint / view | `09-dashboard-and-query.md` | the dashboard/query doctrine, **DQ1–DQ15** (+ G10) |
-| the builder / a CLI flag / the public API | `10-builder-cli-library.md` | the builder and library-boundary rules, **L1–L8** |
+| contract preparation / a CLI flag / the public API | `10-cli-and-configuration.md` | configuration validation, publication, and public API behavior |
 | tests | `11-testing.md` | the verification discipline, **V1–V10** |
 
 Cross-cutting **recipes** live in `13-recipes.md` (14 of them) and in the owning

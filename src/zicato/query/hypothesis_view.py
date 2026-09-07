@@ -40,14 +40,7 @@ from zicato.query.paths import (
     _resolve_epoch_id,
     layout_of,
 )
-
-# Plateau band: a realised movement whose magnitude is within this of zero
-# is read as "neutral" / flat when deriving the OBSERVED direction. Mirrors
-# :data:`zicato.tournament.detail.PLATEAU_EPSILON` so the observed-direction
-# label this reader surfaces lines up with the canonical grader's sign test.
-# This is ONLY used to LABEL the observed direction for display — the
-# match/miss verdict is always lifted from the stamped flag, never recomputed.
-_PLATEAU_EPSILON = 1e-9
+from zicato.tournament.detail import PLATEAU_EPSILON
 
 
 def _as_opt_float(value: Any) -> float | None:
@@ -75,9 +68,9 @@ def _observed_direction(from_value: float | None, to_value: float | None) -> str
     if from_value is None or to_value is None:
         return None
     delta = to_value - from_value
-    if delta < -_PLATEAU_EPSILON:
+    if delta < -PLATEAU_EPSILON:
         return "decrease"
-    if delta > _PLATEAU_EPSILON:
+    if delta > PLATEAU_EPSILON:
         return "increase"
     return "neutral"
 

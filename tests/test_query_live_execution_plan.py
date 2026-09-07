@@ -50,7 +50,6 @@ from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-08-20_live"
 ENTRIES = ("login", "search")
-LIVE_ROUTE = "/api/live/execution-plan"
 
 #: A mid-round phase: the tournament is running round 0.
 RUNNING_PHASE = "tournament:round_0:rung0_m0"
@@ -75,7 +74,11 @@ def _workspace(tmp_path: Path) -> Path:
         json.dumps({"id": EPOCH, "created_at": "2026-08-20T00:00:00Z"}), encoding="utf-8"
     )
     layout.board(EPOCH).write_text(
-        "\n".join(json.dumps({"id": entry, "input": "go"}) for entry in ENTRIES) + "\n",
+        "\n".join(
+            json.dumps({"id": entry, "kind": "single_turn", "input": "go", "budget_s": 1})
+            for entry in ENTRIES
+        )
+        + "\n",
         encoding="utf-8",
     )
     return root
@@ -496,21 +499,6 @@ def test_every_missing_input_degrades_to_the_response_shape(mid_round: Path, rem
         assert key in plan, f"{removed}: missing {key}"
     for key in ("in_flight", "placed", "unplaced", "other_epoch", "active_path", "note"):
         assert key in plan["overlay"], f"{removed}: missing overlay.{key}"
-
-
-def test_the_route_declares_a_payload_contract() -> None:
-    assert LIVE_ROUTE in ENDPOINT_PAYLOADS
-
-
-def test_the_endpoint_serves_the_live_plan(mid_round: Path, tmp_path: Path) -> None:
-    static = tmp_path / "static"
-    static.mkdir(exist_ok=True)
-    response = TestClient(create_app(mid_round, static)).get(LIVE_ROUTE)
-    assert response.status_code == 200
-    body = response.json()
-    assert body["epoch_id"] == EPOCH
-    assert body["liveness"]["state"] == "live"
-    assert body["overlay"]["active_path"][0] == f"e:{EPOCH}/round:0"
 
 
 # ---------------------------------------------------------------------------

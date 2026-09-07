@@ -43,9 +43,9 @@ import pytest
 
 from tests._orchestrator_harness import (
     bootstrap_workspace,
+    evaluation_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
     target_call_llm,
 )
@@ -183,7 +183,7 @@ def test_warn_mode_survives_an_all_refuse_preflight_past_the_breaker_threshold(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
             stop_reason_out=stop_reason,
         )
     )
@@ -227,7 +227,7 @@ def test_refuse_mode_still_refuses_at_the_pre_flight(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
             stop_reason_out=stop_reason,
         )
     )
@@ -314,7 +314,7 @@ def _pin_probe_ids(workspace: Path, ids: list[str]) -> None:
 
 
 def _run_once(workspace: Path, epoch_id: str) -> Any:
-    return run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    return run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
 
 def test_an_unknown_pinned_probe_id_refuses_the_run_under_the_hard_gate(

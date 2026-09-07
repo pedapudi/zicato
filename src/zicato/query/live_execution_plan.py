@@ -20,11 +20,10 @@ Both live surfaces are projections of one read
 The phase string is decoded in one place —
 :func:`zicato.query.loop_view.build_round_pipeline` — and
 :func:`build_live_surfaces` reads it once, projects it onto plan nodes, and
-returns both projections: the plan for ``/api/live/execution-plan`` and the
-same verdict for ``/api/live/pipeline``, which the round-pipeline stepper
-renders. Serving them from one read is what stops the stepper saying "gate"
-while the plan marks Run active, or the two reporting different counts of
-the same in-flight records. The overlay gates on the served liveness verdict
+returns both projections: the library's live plan and the verdict served
+by ``/api/live/pipeline``, which the round-pipeline stepper renders. Both
+projections share the phase and in-flight count from that read. The overlay
+gates on the served liveness verdict
 the stepper gates on. A workspace whose files froze months ago still holds a
 mid-round phase and seven ``active_runs`` records. It must serve its durable
 plan with an EMPTY overlay rather than a tree full of nodes reading
@@ -171,7 +170,7 @@ class RuntimePlanOverlay:
 
 
 def build_live_execution_plan(paths: WorkspacePaths) -> dict[str, Any]:
-    """``GET /api/live/execution-plan`` — the running epoch's plan and overlay.
+    """Describe the running epoch's plan and live overlay.
 
     Returns the durable plan's shape
     (:func:`~zicato.query.execution_plan.build_execution_plan`) with three

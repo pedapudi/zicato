@@ -85,6 +85,7 @@ class EpochPublication:
     content_identity: str
     predecessor_id: str | None
     predecessor_closed_at: str | None
+    # Retained in format 1 so interrupted publications remain readable.
     recommendation_ids: tuple[str, ...]
 
     def write(self, workspace_root: Path) -> None:

@@ -18,9 +18,6 @@ group with zero wiring elsewhere):
   live-run gate never silently spends budget.
 * ``zicato inspect reflection report`` — render a stored reflection's report (Markdown, or
   ``--json`` for the raw dict).
-* ``zicato inspect reflection apply`` — carry a finding's proposed edit to a BUILDER DRAFT
-  (never the sealed contract); the operator seals it through the builder, which
-  is the gated step that rolls the epoch.
 
 Running reflection never rolls the epoch — it is measurement rather than evolution.
 """
@@ -541,6 +538,7 @@ def _reflect_execute(
     derived = findings_mod.derive_findings(
         scorecards=scorecards,
         adjudications=adjudications,
+        corpus=corpus,
         promote_margin=promote_margin,
         noise_floor_max_abs_delta=(float(floor_max_abs) if floor_max_abs is not None else None),
         noise_floor_delta_std=(float(floor_delta_std) if floor_delta_std is not None else None),
@@ -861,9 +859,6 @@ def _render_report_md(
         op = f.get("proposed_op")
         if op:
             lines.append(f"- proposed op: `{op.get('op')}` {json.dumps(op.get('args', {}))}")
-            lines.append(
-                f"- apply with: `zicato inspect reflection apply {rid} {f.get('finding_id')}`"
-            )
         for ev in f.get("evidence", []):
             span = str(ev.get("span") or "")[:80]
             # The chip's OWN verdict and judge, never inferred from the
@@ -1086,8 +1081,8 @@ def suggest_cmd(
     live admission probes SPEND real champion budget and are endpoint-gated —
     they run ONLY under ``--probe`` (default OFF: plan-mode shows what they would
     spend, spending nothing). Suggestions persist beside ``findings.json`` and
-    render through ``zicato inspect reflection report``. Recommend-only: apply stages a
-    builder draft, never the sealed contract.
+    render through ``zicato inspect reflection report``. Operators review the
+    suggestions and edit workspace configuration files before a subsequent evaluation.
 
     ``--from-trajectories <dir>`` bootstraps the instrument from a directory of
     foreign agent trace files (TRAJECTORY-BOOTSTRAP.md §6): the traces are
@@ -1188,7 +1183,7 @@ def suggest_cmd(
     click.echo(sug_mod.render_suggestions_table(suggestions))
     click.echo(
         f"review: `zicato inspect reflection report {rid}`; "
-        f"stage: `zicato inspect reflection apply {rid} <suggestion_id>`"
+        "Review suggested edits and update the workspace files before the next evaluation."
     )
 
 
@@ -1204,87 +1199,6 @@ def _mint_reflection_id(epoch_id: str) -> str:
     from zicato.reflection.plan import make_reflection_id  # noqa: PLC0415
 
     return make_reflection_id(_now_iso())
-
-
-@reflect_grp.command("apply", short_help="Carry a finding/suggestion edit to a builder draft.")
-@click.argument("reflection_id")
-@click.argument("item_id")
-@click.option("--workspace", default=".zicato", show_default=True, help="Workspace root.")
-@click.option("--epoch", "epoch_id", default=None, help="Epoch owning the reflection.")
-def apply_cmd(reflection_id: str, item_id: str, workspace: str, epoch_id: str | None) -> None:
-    """Fork a builder draft from the live contract and stage a finding's or
-    suggestion's op.
-
-    ``item_id`` is a finding id (``find-…``) or an eval-suggestion id
-    (``sug-…``). NEVER writes the sealed contract — the operator reviews the
-    staged draft and seals it through the builder, which is the gated step that
-    rolls the epoch.
-    """
-    from zicato.epoch._storage import RecordError  # noqa: PLC0415
-    from zicato.reflection.apply import (  # noqa: PLC0415
-        FindingNotActionableError,
-        FindingNotFoundError,
-        SuggestionNotFoundError,
-        apply_finding_to_draft,
-        apply_suggestion_to_draft,
-    )
-
-    workspace_root = Path(workspace).resolve()
-    resolved_epoch = _resolve_reflection_epoch(workspace_root, reflection_id, epoch_id)
-    if resolved_epoch is None:
-        raise click.ClickException(f"no reflection {reflection_id!r} found under {workspace_root}")
-
-    # A suggestion id (sug-) stages through the suggestion seam; anything else is
-    # a finding. Both fork a draft and never touch the sealed contract.
-    if item_id.startswith("sug-"):
-        try:
-            applied_s = apply_suggestion_to_draft(
-                workspace_root=workspace_root,
-                epoch_id=resolved_epoch,
-                reflection_id=reflection_id,
-                suggestion_id=item_id,
-            )
-        except (SuggestionNotFoundError, RecordError) as exc:
-            raise click.ClickException(str(exc)) from exc
-        except FindingNotActionableError as exc:
-            raise click.ClickException(str(exc)) from exc
-        _echo_applied(
-            f"suggestion {item_id} ({applied_s.suggestion_type})",
-            applied_s.slot_name,
-            applied_s.op,
-            applied_s.args,
-            applied_s.diff,
-        )
-        return
-
-    try:
-        applied = apply_finding_to_draft(
-            workspace_root=workspace_root,
-            epoch_id=resolved_epoch,
-            reflection_id=reflection_id,
-            finding_id=item_id,
-        )
-    except (FindingNotFoundError, RecordError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    except FindingNotActionableError as exc:
-        raise click.ClickException(str(exc)) from exc
-    _echo_applied(f"finding {item_id}", applied.slot_name, applied.op, applied.args, applied.diff)
-
-
-def _echo_applied(
-    label: str, slot_name: str, op: str, args: dict[str, Any], diff: dict[str, Any]
-) -> None:
-    """Print the staged-onto-draft confirmation shared by finding + suggestion apply."""
-    click.echo(f"staged {label} onto builder draft slot {slot_name!r}")
-    click.echo(f"  op: {op} {json.dumps(args)}")
-    changed = diff.get("changed_components") or diff.get("components") or []
-    if changed:
-        click.echo(f"  draft now differs from live in: {changed}")
-    click.echo(
-        "next: open the tournament builder, review the "
-        f"{slot_name!r} draft, and apply it there — rolling the epoch is "
-        "the builder's gated step (reflect never writes the sealed contract)."
-    )
 
 
 def _resolve_reflection_epoch(

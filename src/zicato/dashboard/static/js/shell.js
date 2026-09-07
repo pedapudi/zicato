@@ -57,11 +57,10 @@ import * as instrument from './views/instrument.js';
 import * as traces from './views/traces.js';
 import * as evals from './views/evals.js';
 import * as publication from './views/publication.js';
-import * as builder from './views/builder.js';
 import * as logs from './views/logs.js';
 import * as settings from './views/settings.js';
 
-const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, instrument, traces, evals, publication, builder, logs, settings };
+const RENDERERS = { home, epoch, gens, candidate, diff, boards, board, mutations, instrument, traces, evals, publication,  logs, settings };
 
 export const THEMES = COLOR_THEMES.map((t) => t[0]);
 export const TYPEFACES = TYPE_THEMES.map((t) => t[0]);
@@ -581,27 +580,13 @@ export function mountShell(root) {
     // evolution itself). Filled by renderExecLink, digest-gated so a no-op
     // heartbeat never repaints it. See docs/design/HARMONOGRAF.md §3b.
     (_execHost = el('span', { class: 'dt-nav-exec', 'aria-live': 'polite' })),
-    // the TOURNAMENT BUILDER entry — a ⚒ that opens the builder as its OWN
-    // first-class, full-width view (`#/builder`). It is promoted out of Settings
-    // (where it was nested behind the settings rail — double rails + a cramped
-    // centre) so its four panes get the whole viewport. Sits beside the ⚙ so the
-    // two top-level surfaces read as peers; the same route-agnostic builder
-    // module backs this entry, the Settings launcher, and the CLI deep-link.
-    el('a', { class: 'dt-nav-builder', href: href('builder', {}), title: 'Tournament builder (compose the evaluation contract)', 'aria-label': 'Open the tournament builder' }, [
-      el('span', { class: 'dt-nav-builder-glyph', 'aria-hidden': 'true', text: '⚒' }),
-      el('span', { class: 'dt-nav-builder-text', text: 'builder' }),
-    ]),
     // the OPERATOR-LOG entry — the workspace-level `#/logs` pane (LOGGING.md).
-    // A peer of the builder / settings surfaces; reads the structured stream
+    // Reads the structured stream
     // for one evolve / reflect invocation.
     el('a', { class: 'dt-nav-logs', href: href('logs', {}), title: 'Operator log (the structured log stream for one invocation)', 'aria-label': 'Open the operator log' }, [
       el('span', { class: 'dt-nav-logs-glyph', 'aria-hidden': 'true', text: '☰' }),
       el('span', { class: 'dt-nav-logs-text', text: 'log' }),
     ]),
-    // the SETTINGS entry — a ⚙ that opens the Settings surface (contract roll-up
-    // · models / LLM endpoints · appearance). Settings keeps a launcher to the
-    // standalone `#/builder` view, which is where the builder lives. Uses
-    // the router href so the route stays the single source of truth.
     el('a', { class: 'dt-nav-build', href: href('settings', {}), title: 'Settings (contract · models · appearance)', 'aria-label': 'Open settings' }, [
       el('span', { class: 'dt-nav-build-glyph', 'aria-hidden': 'true', text: '⚙' }),
       el('span', { class: 'dt-nav-build-text', text: 'settings' }),

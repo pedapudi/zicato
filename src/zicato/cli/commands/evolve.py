@@ -67,6 +67,7 @@ from typing import TYPE_CHECKING, Any
 import click
 
 from zicato.config import DashboardConfig, IntegrationConfig, InvocationOverlay
+from zicato.core.configuration import ConfigurationError
 from zicato.driver_imports import with_workspace_imports
 from zicato.runtime.lock import WorkspaceLock
 
@@ -456,21 +457,10 @@ def _read_dashboard_endpoint(endpoint_file: Path) -> tuple[str, int | None]:
     mid-write (unparseable), or missing a port — every one of which the
     caller treats as "not ready yet" and keeps polling.
     """
-    try:
-        raw = endpoint_file.read_text(encoding="utf-8")
-    except OSError:
-        return _DASHBOARD_HOST, None
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return _DASHBOARD_HOST, None
-    if not isinstance(payload, dict):
-        return _DASHBOARD_HOST, None
-    port = payload.get("port")
-    host = payload.get("host") or _DASHBOARD_HOST
-    if not isinstance(port, int):
-        return str(host), None
-    return str(host), port
+    from zicato.runtime.state import read_dashboard_endpoint
+
+    endpoint = read_dashboard_endpoint(endpoint_file)
+    return (endpoint.host, endpoint.port) if endpoint else (_DASHBOARD_HOST, None)
 
 
 async def _terminate_child(proc: asyncio.subprocess.Process | None) -> None:
@@ -812,7 +802,7 @@ def _dry_run_and_exit(
 )
 @click.option(
     "--dashboard-port",
-    default=7892,
+    default=DashboardConfig.DEFAULT_PORT,
     show_default=True,
     type=click.IntRange(min=1, max=65535),
     help="Port for the dashboard HTTP server (bound on 127.0.0.1).",
@@ -872,7 +862,10 @@ def evolve_cmd(
         if has_tournament_edit:
             draft = _tournament_draft(workspace_root, tournament_structure, tournament_params)
             candidate = operations.candidate_scoring(draft)
-        _dry_run_and_exit(workspace_root, epoch, candidate_scoring=candidate)
+        try:
+            _dry_run_and_exit(workspace_root, epoch, candidate_scoring=candidate)
+        except ConfigurationError as exc:
+            raise click.ClickException(str(exc)) from exc
 
     def prepare_contract(writer: WorkspaceLock) -> None:
         if not has_tournament_edit:
@@ -1007,7 +1000,7 @@ def evolve_cmd(
     except WorkspaceCheckError as exc:
         click.echo(render_report(exc.report), nl=False)
         raise click.ClickException(str(exc)) from exc
-    except (FileNotFoundError, RuntimeError, BadPatchSetError) as exc:
+    except (FileNotFoundError, RuntimeError, BadPatchSetError, ConfigurationError) as exc:
         # FileNotFoundError: missing config / epoch marker.
         # RuntimeError: contract drift under --no-auto-epoch, or a
         # missing baseline.

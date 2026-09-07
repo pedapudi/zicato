@@ -114,7 +114,7 @@ function digestFor(d) {
 function buildFor(d, ctx) {
   if (d.mode === 'landing') return buildLanding(d, ctx);
   if (d.mode === 'list') return buildList(d, ctx);
-  return buildDetail(d, ctx);
+  return buildDetail(d);
 }
 
 // ====================================================================
@@ -203,7 +203,7 @@ function traceRow(t, d, ctx) {
 // DETAIL — the full strip over the reconstructed conversation, with the
 // episode anchors cross-linking strip spans ↔ conversation ↔ suggestions.
 // ====================================================================
-function buildDetail(d, ctx) {
+function buildDetail(d) {
   const x = d.detail || {};
   const nodes = [];
   nodes.push(el('div', { class: 'dn-pagehead' }, [
@@ -253,12 +253,11 @@ function buildDetail(d, ctx) {
     caption('turn lane (user above / agent below the baseline, width ∝ √text length, capped) · adverse-signal cluster (aggregate counts, not real timeline positions) · shaded cost budget · bracketed mined episodes'),
   ])));
 
-  // the episode anchors — each links the strip span ↔ the conversation ↔ the
-  // suggestions it motivated (href into the builder inbox).
+  // Episode selection connects the strip span to its conversation region.
   if (!episodes.length) {
     epHost.appendChild(empty('No mined episodes for this trace — the import found no adverse-signal or behavioral episode to draft from.'));
   } else {
-    for (const e of episodes) epHost.appendChild(episodeAnchor(e, ctx, focus));
+    for (const e of episodes) epHost.appendChild(episodeAnchor(e, focus));
   }
   nodes.push(section('Episodes · trace region → episode → suggestion', epHost));
 
@@ -274,7 +273,7 @@ function buildDetail(d, ctx) {
   return nodes;
 }
 
-function episodeAnchor(e, ctx, focus) {
+function episodeAnchor(e, focus) {
   const tone = stripTone(e.tone);
   const sugs = Array.isArray(e.suggestion_ids) ? e.suggestion_ids : [];
   const anchor = e.span && e.span.anchor;
@@ -298,16 +297,12 @@ function episodeAnchor(e, ctx, focus) {
   if (Number.isFinite(e.severity_rank)) noteBits.push('severity ' + e.severity_rank);
   if (noteBits.length) row.appendChild(caption(noteBits.join(' · ')));
 
-  // the linked suggestions — inline links into the builder inbox (recommend-only:
-  // every affordance terminates at a builder draft the operator seals).
+  // Retain the recorded suggestion IDs for review.
   if (sugs.length) {
     const kids = ['drafted · '];
     sugs.forEach((sid, i) => {
       if (i) kids.push(' · ');
-      kids.push(el('a', {
-        class: 'dn-trace-ep-sug dn-mono', href: ctx.href('builder', {}),
-        title: 'open the builder inbox to review this suggestion', text: sid,
-      }));
+      kids.push(el('span', { class: 'dn-trace-ep-sug dn-mono', text: sid }));
     });
     row.appendChild(el('p', { class: 'dn-faint dn-trace-ep-sugs' }, kids));
   } else {

@@ -218,18 +218,16 @@ def test_read_board_lines_and_missing(tmp_path: Path) -> None:
     (ws / "epochs" / "e0").mkdir(parents=True)
     board = ws / "epochs" / "e0" / "board.jsonl"
     board.write_text(
-        '{"board_meta": true, "disable_drift": false}\n'
+        '{"board_meta": true, "disable_drift": []}\n'
         "\n"  # blank line skipped
-        "not json\n"  # non-JSON skipped
-        '"a string"\n'  # non-dict skipped
-        '{"id": "t1", "kind": "single_turn"}\n'
+        '{"id": "t1", "kind": "single_turn", "input": "Task", "budget_s": 1}\n'
     )
     layout = WorkspaceLayout.from_root(ws)
     lines = read_board(layout, "e0")
     assert lines is not None
     assert lines == [
-        {"board_meta": True, "disable_drift": False},
-        {"id": "t1", "kind": "single_turn"},
+        {"board_meta": True, "disable_drift": []},
+        {"id": "t1", "kind": "single_turn", "input": "Task", "budget_s": 1},
     ]
     # Missing file -> None.
     assert read_board(layout, "missing") is None

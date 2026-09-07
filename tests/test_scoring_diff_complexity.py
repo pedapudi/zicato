@@ -339,9 +339,9 @@ def test_ceiling_rejects_oversized_challenger_diff_e2e(
     the champion pointer does not advance."""
     from tests._orchestrator_harness import (
         bootstrap_workspace,
+        evaluation_call_llm,
         install_stub_adapter_factory,
         install_telemetry_stubs,
-        make_aux_responder,
         run_evolve_once,
     )
 
@@ -358,7 +358,7 @@ def test_ceiling_rejects_oversized_challenger_diff_e2e(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason.startswith("diff_complexity_ceiling:")
@@ -374,9 +374,9 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
     (complexity 2 <= 100) — the ceiling only vetoes over-budget diffs."""
     from tests._orchestrator_harness import (
         bootstrap_workspace,
+        evaluation_call_llm,
         install_stub_adapter_factory,
         install_telemetry_stubs,
-        make_aux_responder,
         run_evolve_once,
     )
 
@@ -393,7 +393,7 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     assert outcome.tournament_decision == "promoted"
 
 

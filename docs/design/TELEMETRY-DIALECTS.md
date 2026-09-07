@@ -343,16 +343,9 @@ the committed fixture must reproduce the committed numbers to the bit.
 - **Additional dialects.** The registry is open; a new dialect is a new
   `reduce_<name>` producer plus a registry entry plus a KAT fixture.
 
-The **GUI / builder surface** is now built (it was the deferred follow-up
-here). The dialect is exposed as the `set_telemetry_dialect` builder op —
-declared through the field's `_knob(builder_op=…, builder_arg="dialect")`
-metadata and wired (guard-driven, `test_knob_registry.py`) through the API
-dispatch, the copilot tool, and a `<select>` row in the builder's Weights
-panel. The row renders the selected dialect's capability tier (§2 / §3.3 /
-§4) inline as a quiet caption, and changing the dialect rolls the epoch like
-any scoring change (a non-default value reintroduces the omitted contract
-key). It is still the first knob added under the declarative-knob-registry
-discipline (REIMPLEMENTATION.md Finding 3).
+Choose the dialect through `scoring.json`'s `telemetry_dialect` field.
+The `set_telemetry_dialect` contract operation validates the same declaration.
+A change to the effective dialect changes the evaluation contract.
 
 ## 9. Cross-references
 

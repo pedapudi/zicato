@@ -10,14 +10,7 @@ import {
 } from '../ui.js';
 import { DEFAULT_SETTINGS_SECTION } from '../router.js';
 import * as data from '../data.js';
-import { getModels, saveModels, getDraft } from '../builder/api.js';
-// REUSE the builder's live-PREVIEW renderer (NOT a fork): the frozen current
-// contract is the same shape the builder draft has, so the Contract section
-// renders the SAME schematic + cost meter + board/holdout strip + validation
-// diagnostics READ-ONLY, bound to /api/epoch. The cost / validation are the
-// SERVER envelope from the builder draft fetch (C6: no client-side re-estimate);
-// absent that envelope the cost panel degrades to an honest "unavailable" line.
-import { previewNodes } from '../builder/preview.js';
+import { fetchJson } from '../core/api.js';
 // REUSE the SAME swatch-dropdown component the top bar renders (NOT a fork): the
 // settings theme picker is the very same control, so the two render identically
 // and stay in lockstep through the shared store (applyTheme → syncSwatchDropdowns).
@@ -42,19 +35,7 @@ const SECTIONS = [
   { id: 'appearance', label: 'Appearance', glyph: '◑' },
 ];
 
-const LAUNCHER = { view: 'builder', label: 'Tournament builder', glyph: '⚒' };
 
-const MODEL_ROLES = [
-  ['target', 'Target LLM (optional)', 'Model injected only when the target adapter supports it.'],
-  ['evaluation', 'Evaluation', 'Default internal model work.'],
-  ['builder', 'Builder', 'The tournament-builder copilot.'],
-  ['judge', 'Judge', 'Constrained scoring role; not a proposer session.'],
-  ['adjudicator', 'Adjudicator', 'Independently audits judges; must not reuse the judge.'],
-  ['user_emulator', 'User emulator', 'Constrained text role for multi-turn tasks.'],
-  ['proposer', 'Proposer', 'Default for candidate generation and refinement.'],
-  ['proposer_generate', 'Proposer generate', 'Generates candidate alternatives.'],
-  ['proposer_review', 'Proposer review', 'Critiques, selects, and revises candidates.'],
-];
 const SECTION_IDS = SECTIONS.map((s) => s.id);
 // The default section a bare `#/settings` opens — sourced from the router so the
 // view and the router's `up()` agree on it.
@@ -64,9 +45,6 @@ let _active = DEFAULT_SECTION;
 let _railHost = null;
 let _sectionHost = null;
 let _ctx = null;
-let _models = null;
-let _modelsDirty = false;
-let _modelsStatus = '';
 let _themeDropdown = null;
 let _typeDropdown = null;
 
@@ -95,15 +73,6 @@ export async function render(host, ctx, params) {
 function renderRail() {
   const digest = 'rail|' + _active;
   gatedSwap(_railHost, digest, () => {
-    const launcher = el('a', {
-      class: 'dn-set-railitem dn-set-raillauncher',
-      href: _ctx.href(LAUNCHER.view, {}),
-      title: 'Open the tournament builder (full-width view)',
-    }, [
-      el('span', { class: 'dn-set-railglyph', 'aria-hidden': 'true', text: LAUNCHER.glyph }),
-      el('span', { class: 'dn-set-raillabel', text: LAUNCHER.label }),
-      el('span', { class: 'dn-set-raillaunch-glyph', 'aria-hidden': 'true', text: '↗' }),
-    ]);
     const items = SECTIONS.map((s) => el('a', {
       class: 'dn-set-railitem' + (s.id === _active ? ' dn-set-railitem-active' : ''),
       href: _ctx.href('settings', { section: s.id }),
@@ -112,7 +81,7 @@ function renderRail() {
       el('span', { class: 'dn-set-railglyph', 'aria-hidden': 'true', text: s.glyph }),
       el('span', { class: 'dn-set-raillabel', text: s.label }),
     ]));
-    return [launcher, ...items];
+    return items;
   });
 }
 
@@ -140,10 +109,6 @@ async function renderContract() {
   const trainCount = split.train_count != null ? split.train_count : board.length;
   const holdoutCount = split.holdout_count != null ? split.holdout_count : 0;
 
-  const draft = await getDraft();
-  const cost = (draft && draft.cost && typeof draft.cost === 'object') ? draft.cost : null;
-  const warnings = (draft && Array.isArray(draft.warnings)) ? draft.warnings : [];
-
   const digest = JSON.stringify({
     epoch: c.epoch_id || null, board: board.length, structure, params,
     train: trainCount, hold: holdoutCount,
@@ -153,10 +118,6 @@ async function renderContract() {
     mono: !!scoring.pass_rate_monotonicity,
     holdFrac: overfitting.holdout_fraction, ofEnabled: overfitting.enabled,
     proposer: proposer ? (proposer.agent_id || '') : null,
-    // the server envelope folds in so an unavailable→available transition (or a
-    // moved cost) repaints; null cost ⇒ the honest "unavailable" line.
-    cost: cost ? [cost.board_runs_per_round, (cost.breakdown || []).length] : null,
-    warn: warnings.length,
   });
 
   gatedSwap(_sectionHost, 'contract|' + digest, () => {
@@ -165,252 +126,52 @@ async function renderContract() {
     const margin = scoring.promote_margin != null ? scoring.promote_margin : 0;
     const holdFrac = overfitting.holdout_fraction != null ? overfitting.holdout_fraction : null;
     const rows = [
-      contractRow('Board', `${board.length} ${board.length === 1 ? 'entry' : 'entries'}`, 'builder'),
-      contractRow('Proposer brief', briefLines ? `${briefLines} lines` : 'none', 'builder'),
-      contractRow('Tournament structure', structure, 'builder'),
-      contractRow('Promote margin', String(margin), 'builder'),
-      contractRow('Pass-rate monotonicity', scoring.pass_rate_monotonicity ? 'required' : 'off', 'builder'),
+      contractRow('Board', `${board.length} ${board.length === 1 ? 'entry' : 'entries'}`),
+      contractRow('Proposer brief', briefLines ? `${briefLines} lines` : 'none'),
+      contractRow('Tournament structure', structure),
+      contractRow('Promote margin', String(margin)),
+      contractRow('Pass-rate monotonicity', scoring.pass_rate_monotonicity ? 'required' : 'off'),
       // The holdout confirmation's own bounds, shown ONLY once pinned. Both
       // default to "reuse the train-side rule", and a row reading the same
       // number twice would be noise; but left unshown when they ARE pinned,
       // this summary implies the promote margin governs the holdout too —
       // exactly the single-knob confusion the separate bounds exist to end.
       ...(scoring.holdout_margin != null
-        ? [contractRow('Holdout margin', String(scoring.holdout_margin), 'builder')] : []),
+        ? [contractRow('Holdout margin', String(scoring.holdout_margin))] : []),
       ...(scoring.holdout_entry_regression_budget
         ? [contractRow('Holdout regression budget',
             `${scoring.holdout_entry_regression_budget} ${scoring.holdout_entry_regression_budget === 1 ? 'entry' : 'entries'}`,
-            'builder')] : []),
+)] : []),
       contractRow('Overfitting guard',
         overfitting.enabled === false ? 'disabled'
-          : (holdFrac != null ? `holdout ${holdFrac}` : 'on'), 'builder'),
-      contractRow('Proposer', (proposer && proposer.agent_id) || '—', 'builder'),
+          : (holdFrac != null ? `holdout ${holdFrac}` : 'on')),
+      contractRow('Proposer', (proposer && proposer.agent_id) || '—'),
     ];
-    // The read-only preview model: the SAME shape the builder's preview reads,
-    // but with no diff (nothing to apply) and the cost / warnings taken from the
-    // SERVER envelope (the builder draft fetch above). An absent envelope drives
-    // the honest "cost preview unavailable" line via `costUnavailable`.
-    const preview = el('aside', { class: 'dn-set-preview dn-bld-preview', 'aria-label': 'Contract visualization' },
-      previewNodes({
-        structure, params, cost: cost || {}, warnings, costUnavailable: !cost,
-        boardCount: board.length, trainCount, holdoutCount,
-        readonly: true, heading: 'Contract at a glance',
-      }));
     return [
       section('Contract — current epoch',
-        el('p', { class: 'dn-lede', text: 'A read-only view of the evaluation contract this epoch runs on — its tournament schematic, the estimated board-runs per round, the train / holdout split, and any validation diagnostics. Open the tournament builder to edit any of it (a change rolls the epoch).' }),
-        preview,
+        el('p', { class: 'dn-lede', text: 'The evaluation settings frozen for this epoch. Edit the workspace files or use the CLI to configure a subsequent evaluation.' }),
         el('div', { class: 'dn-set-kvgrid' }, rows),
-        el('a', { class: 'dn-linkbtn', href: _ctx.href('builder', {}), text: 'Edit in the tournament builder →' })),
+      ),
     ];
   });
 }
 
-function contractRow(label, value, linkView) {
-  return el('a', {
-    class: 'dn-set-kvrow', href: _ctx.href(linkView, {}),
-    title: 'edit in the tournament builder',
-  }, [
+function contractRow(label, value) {
+  return el('div', { class: 'dn-set-kvrow' }, [
     el('span', { class: 'dn-set-k', text: label }),
     el('span', { class: 'dn-set-v', text: value }),
   ]);
 }
 
-let _modelsEdit = null;
-
-function blankRoleEdit() {
-  return { use_call_llm: false, call_llm: '', model: '', revision: '', endpoint: '', api_key_env: '', api_key_env_set: false };
-}
-
-function roleEditFromPublic(spec) {
-  const s = spec || {};
-  const useCallLlm = !!s.call_llm;
-  return {
-    use_call_llm: useCallLlm,
-    call_llm: s.call_llm || '',
-    model: s.model || '',
-    revision: s.revision || '',
-    endpoint: s.endpoint || '',
-    api_key_env: s.api_key_env || '',
-    api_key_env_set: !!s.api_key_env_set,
-  };
-}
-
-function roleSpecFromEdit(edit) {
-  if (edit.use_call_llm) {
-    return edit.call_llm ? { call_llm: edit.call_llm, ...(edit.revision ? { revision: edit.revision } : {}) } : {};
-  }
-  if (!edit.model) return {};
-  return { model: edit.model, revision: edit.revision || null, endpoint: edit.endpoint || null, api_key_env: edit.api_key_env || null };
-}
-
-function seedModelsEdit() {
-  const view = (_models && _models.models) || {};
-  _modelsEdit = { engines: {}, roles: { ...(view.roles || {}) }, guide: view._guide || null };
-  for (const [name, spec] of Object.entries(view.engines || {})) {
-    _modelsEdit.engines[name] = roleEditFromPublic(spec);
-  }
-}
-
 async function renderModels() {
-  if (_models == null) { _models = await getModels(); seedModelsEdit(); }
-  if (_modelsEdit == null) seedModelsEdit();
-
-  const digest = JSON.stringify({ edit: _modelsEdit, dirty: _modelsDirty, status: _modelsStatus });
-  gatedSwap(_sectionHost, 'models|' + digest, () => {
-    if (_models == null) return [empty('Could not load the models settings.')];
+  const env = await fetchJson('/settings/models').catch(() => null);
+  gatedSwap(_sectionHost, 'models|' + JSON.stringify(env && env.models), () => {
+    if (!env) return [empty('Could not load the models settings.')];
     return [
-      section('Models / LLM endpoints',
-        el('p', { class: 'dn-lede', text: 'Define reusable engines once, then assign roles. The target is adapter-defined and may need no LLM; target config is only its optional model assignment.' }),
-        el('p', { class: 'dn-faint', text: 'Only credential-variable names are stored. Model specs support native proposers; call_llm paths steer text/custom consumers only. Role assignment never changes the role protocol.' }),
-        el('div', { class: 'dn-set-models' }, Object.entries(_modelsEdit.engines).map(engineCard)),
-        addEngineButton(),
-        el('div', { class: 'dn-set-models' }, MODEL_ROLES.map(roleAssignment)),
-        modelsActions()),
+      section('Models', el('p', { class: 'dn-lede', text: 'Configure model engines and roles in the workspace configuration file.' }),
+        el('pre', { text: JSON.stringify(env.models || {}, null, 2) })),
     ];
   });
-}
-
-function engineCard([id, edit]) {
-  return el('div', { class: 'dn-set-modelcard', 'data-engine': id }, [
-    el('div', { class: 'dn-set-modelhead' }, [
-      el('span', { class: 'dn-set-modelname', text: id }),
-    ]),
-    formToggle(id, edit),
-    edit.use_call_llm ? callLlmForm(id, edit) : modelSpecForm(id, edit),
-  ]);
-}
-
-function addEngineButton() {
-  const button = el('button', { class: 'dn-linkbtn', type: 'button', text: '+ engine' });
-  button.addEventListener('click', () => {
-    let name = !_modelsEdit.engines.target ? 'target'
-      : (!_modelsEdit.engines.evaluation ? 'evaluation' : 'engine-1');
-    let n = 1; while (_modelsEdit.engines[name]) { n += 1; name = 'engine-' + n; }
-    _modelsEdit.engines[name] = blankRoleEdit(); markDirty();
-  });
-  return button;
-}
-
-function roleAssignment([id, label, hint]) {
-  const select = el('select', { class: 'dn-set-input', 'aria-label': label });
-  select.appendChild(el('option', { value: '', text: 'inherit default' }));
-  for (const name of Object.keys(_modelsEdit.engines)) {
-    select.appendChild(el('option', { value: name, text: name,
-      selected: _modelsEdit.roles[id] === name ? 'selected' : null }));
-  }
-  select.addEventListener('change', () => {
-    if (select.value) _modelsEdit.roles[id] = select.value;
-    else delete _modelsEdit.roles[id];
-    markDirty();
-  });
-  return el('label', { class: 'dn-set-modelcard' }, [
-    el('span', { class: 'dn-set-modelname', text: label }),
-    el('span', { class: 'dn-faint', text: hint }), select,
-  ]);
-}
-
-function formToggle(id, edit) {
-  const mk = (useCallLlm, text) => {
-    const on = edit.use_call_llm === useCallLlm;
-    const b = el('button', {
-      class: 'dn-set-typebtn' + (on ? ' dn-set-typebtn-on' : ''),
-      type: 'button', 'aria-pressed': String(on),
-      'data-form': useCallLlm ? 'call_llm' : 'model', text,
-    });
-    b.addEventListener('click', () => {
-      if (edit.use_call_llm !== useCallLlm) { edit.use_call_llm = useCallLlm; markDirty(); }
-    });
-    return b;
-  };
-  return el('div', { class: 'dn-set-typeswitch', role: 'group', 'aria-label': id + ' form' }, [
-    mk(false, 'model spec'), mk(true, 'call_llm path'),
-  ]);
-}
-
-function callLlmForm(id, edit) {
-  return el('div', { class: 'dn-set-modelform' }, [
-    textField(id + '-call_llm', 'call_llm', edit.call_llm, 'pkg.mod:fn', (v) => { edit.call_llm = v; markDirty(); }),
-    textField(id + '-revision', 'revision', edit.revision, 'deployment revision', (v) => { edit.revision = v; markDirty(); }),
-  ]);
-}
-
-function modelSpecForm(id, edit) {
-  return el('div', { class: 'dn-set-modelform' }, [
-    textField(id + '-model', 'model', edit.model, 'model id', (v) => { edit.model = v; markDirty(); }),
-    textField(id + '-revision', 'revision', edit.revision, 'deployment revision', (v) => { edit.revision = v; markDirty(); }),
-    textField(id + '-endpoint', 'endpoint', edit.endpoint, 'provider default', (v) => { edit.endpoint = v; markDirty(); }),
-    apiKeyEnvField(id, edit),
-  ]);
-}
-
-function apiKeyEnvField(id, edit) {
-  const indicator = el('span', {
-    class: 'dn-set-keyflag ' + (edit.api_key_env_set ? 'dn-set-keyflag-set' : 'dn-set-keyflag-unset'),
-    text: edit.api_key_env ? (edit.api_key_env_set ? 'set' : 'unset') : '—',
-    title: 'whether the named environment variable is currently set (the value is never read)',
-  });
-  const field = textField(id + '-api_key_env', 'api_key_env (name)', edit.api_key_env, 'API_KEY_ENV_VAR', (v) => { edit.api_key_env = v; markDirty(); });
-  field.appendChild(indicator);
-  return field;
-}
-
-function textField(name, label, value, placeholder, onInput) {
-  const input = el('input', {
-    class: 'dn-set-input dn-mono', type: 'text', name, value: value || '',
-    placeholder: placeholder || '', 'aria-label': label, autocomplete: 'off', spellcheck: 'false',
-  });
-  input.addEventListener('input', () => {
-    const v = input.value != null ? input.value : input.getAttribute('value');
-    onInput(String(v || ''));
-  });
-  return el('label', { class: 'dn-set-field' }, [
-    el('span', { class: 'dn-set-fieldlabel', text: label }),
-    input,
-  ]);
-}
-
-function modelsActions() {
-  const save = el('button', {
-    class: 'dn-linkbtn', type: 'button',
-    disabled: _modelsDirty ? null : 'disabled', text: 'Save models config',
-  });
-  save.addEventListener('click', onSaveModels);
-  const status = _modelsStatus
-    ? el('span', { class: 'dn-faint', text: _modelsStatus })
-    : null;
-  return el('div', { class: 'dn-set-modelactions' }, [save, status]);
-}
-
-function markDirty() {
-  _modelsDirty = true;
-  _modelsStatus = '';
-  redrawModels();
-}
-
-async function onSaveModels() {
-  const payload = { engines: {}, roles: _modelsEdit.roles };
-  for (const [name, edit] of Object.entries(_modelsEdit.engines)) {
-    payload.engines[name] = roleSpecFromEdit(edit);
-  }
-  if (_modelsEdit.guide) payload._guide = _modelsEdit.guide;
-  const res = await saveModels(payload);
-  if (res && res.error) {
-    _modelsStatus = 'save failed: ' + res.error;
-  } else {
-    _models = res || _models;
-    seedModelsEdit();
-    _modelsDirty = false;
-    _modelsStatus = 'saved · does not roll the epoch';
-  }
-  redrawModels();
-}
-
-function redrawModels() {
-  if (_active === 'models' && _sectionHost) {
-    _sectionHost.removeAttribute('data-t-digest');
-    renderModels();
-  }
 }
 
 function renderAppearance() {

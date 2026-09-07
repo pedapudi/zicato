@@ -418,13 +418,6 @@ export function reflectionXray(reflectionId, judge, runRef) {
   return cachedJson(`/api/reflection/${enc(reflectionId)}/xray/${enc(judge)}/${enc(runRef)}`);
 }
 
-// ---- Proposer panel (proposer scorecard + recommendations) -----------
-//
-// Two reads under the same lens. Unlike a completed reflection these are NOT
-// immutable — a round appends to the trend and a reflect pass appends to the
-// queue — so they use the uncached `json()` and are folded into the view's
-// digest, which is what keeps a no-op heartbeat from repainting them.
-
 // The per-epoch scorecard trend; `?epoch=` also details that one epoch's card.
 export async function proposerScorecard(epochId) {
   const path = epochId != null
@@ -432,11 +425,6 @@ export async function proposerScorecard(epochId) {
     : '/api/proposer/scorecard';
   try { return await fetchJson(path); } catch (err) { return null; }
 }
-// The pending recommendation queue (workspace-wide, newest epoch first).
-export async function proposerRecommendations() {
-  try { return await fetchJson('/api/proposer/recommendations'); } catch (err) { return null; }
-}
-
 // ---- Traces surface (imported foreign trajectories · TRAJECTORY-UI.md §3) ----
 //
 // The persisted `imported/*.json` + `suggestions.json` under a reflection are
@@ -462,16 +450,6 @@ export function trace(reflectionId, traceId) {
 // payload (a null here means a transport failure only).
 export function suggestionProvenance(reflectionId, suggestionId) {
   return cachedJson(`/api/reflection/${enc(reflectionId)}/suggestion/${enc(suggestionId)}/provenance`);
-}
-
-// The persisted `reflect suggest` inbox feed for the workspace ({epoch_id,
-// reflection_id, suggestions[]}) — the SAME feed the builder inbox reads. The
-// Evals ghost rows (TRAJECTORY-UI.md §2.2b) join it against the eval matrix
-// client-side. A pre-feature / read-only backend degrades to null (the GET
-// throws), so the ghost-row block renders nothing extra and the matrix stays
-// byte-identical.
-export function builderSuggestions() {
-  return cachedJson('/builder/suggestions');
 }
 
 // The per-entry EVAL DOSSIER (EVAL-VIEW.md §3.2) — the board-as-instrument lens

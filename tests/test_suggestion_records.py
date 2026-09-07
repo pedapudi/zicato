@@ -6,7 +6,6 @@ from dataclasses import replace
 import pytest
 
 from tests._workspace_support import workspace, write_epoch
-from zicato.builder.api import _read_suggestions_feed
 from zicato.core.workspace import reflection_suggestions_path
 from zicato.epoch._storage import RecordError
 from zicato.query.paths import WorkspacePaths
@@ -16,7 +15,6 @@ from zicato.query.trace_view import (
     build_trace_list,
 )
 from zicato.reflection import suggestions as owner
-from zicato.reflection.apply import find_suggestion
 
 
 def _suggestion():
@@ -73,16 +71,15 @@ def test_malformed_collection_cannot_expose_one_suggestion(tmp_path):
     body["suggestions"].append("malformed member")
     path.write_text(json.dumps(body))
     with pytest.raises(RecordError):
-        find_suggestion(tmp_path, "epoch", "reflection", "suggestion")
+        owner.read_suggestions(tmp_path, "epoch", "reflection")
 
 
-def test_null_suggestions_are_unreadable_in_inbox_and_trace_views(tmp_path):
+def test_null_suggestions_are_unreadable_in_trace_views(tmp_path):
     layout = workspace(tmp_path)
     write_epoch(layout, "epoch", current=True)
     path = reflection_suggestions_path(layout.root, "epoch", "reflection")
     path.parent.mkdir(parents=True)
     path.write_text("null")
-    assert _read_suggestions_feed(layout.root)["unreadable"]
     paths = WorkspacePaths(layout.root)
     for view in (
         build_trace_list(paths, "reflection"),

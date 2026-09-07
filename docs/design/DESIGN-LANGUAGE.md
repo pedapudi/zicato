@@ -331,8 +331,8 @@ Sticky, blurred, hairline-bottomed (`console4.css` L1274; assembled in
 3. **`.dt-crumbs`** — breadcrumb trail (mono, faint), `.dt-crumb` links +
    `.dt-crumb-sep`.
 4. `.dt-topbar-spacer` (flex spacer).
-5. **`.dt-nav-build`** — a `⚙ settings` entry (opens the Settings surface, which
-   homes the tournament builder).
+5. **`.dt-nav-build`** — a `⚙ settings` entry (opens read-only contract and model
+   configuration plus editable appearance preferences).
 6. **Colour swatch dropdown** (`.dt-cd`, §6) and the **typeface switch**
    (`.dt-type-switch`, 3 inline buttons).
 7. **`.dt-scale-pill`** — the page-scale slider (§4.4).
@@ -504,35 +504,6 @@ Takeaways for any new timeline: **faint dashed/thin gridlines** (`0.6` width,
 that lifts to `1` on hover, the **one emphasis** carried by `--v2-accent`, and a
 `hov()` hovercard on each bar.
 
-### 5.4 Worked snippet — a structure glyph (`structureGlyphSvg`)
-
-The 24×24 line-art icons for tournament structures — pure `currentColor`,
-`stroke-width: 1.6`, round caps/joins, optional faded cut-arms via `fill-opacity`
-(`builder/model.js` L203):
-
-```js
-const GLYPH = {
-  gauntlet:    { dots: [{cx:7,cy:12,r:2.4},{cx:17,cy:12,r:2.4}], paths: ['M9.8,12 H14.2'] },
-  swiss:       { paths: ['M5,7 H17', 'M5,12 H14', 'M5,17 H19'] },
-  single_elim: { paths: ['M5,7 H11 V12', 'M5,17 H11 V12', 'M11,12 H19'] },
-  double_elim: { paths: ['M5,6 H11 V11', 'M5,11 H11', 'M11,11 H19', 'M5,16 H11 V11', 'M5,20 H17'] },
-  racing:      { dots: [ {cx:7,cy:7,r:1.8}, {cx:12,cy:7,r:1.8}, {cx:17,cy:7,r:1.8,o:0.32},
-                         {cx:9.5,cy:12,r:1.8}, {cx:14.5,cy:12,r:1.8,o:0.32}, {cx:12,cy:17,r:1.8} ] },
-};
-export function structureGlyphSvg(structure) {
-  const g = GLYPH[structure] || GLYPH.gauntlet;
-  // stroked paths: <g fill="none" stroke="currentColor" stroke-width="1.6"
-  //                   stroke-linecap="round" stroke-linejoin="round">
-  // filled dots:   <g fill="currentColor" stroke="none">  (a faded cut → fill-opacity)
-  return svgEl('svg', { class: 'dn-bld-cardglyph', width: 24, height: 24,
-    viewBox: '0 0 24 24', role: 'img', 'aria-hidden': 'true', focusable: 'false' }, kids);
-}
-```
-
-A compact-glyph wordbank for the structures also exists for inline labels
-(`builder/model.js` L46): `gauntlet ⚔ · single_elim ◣ · double_elim ◳ ·
-swiss ⇄ · racing ⥥`.
-
 ### 5.5 The figure catalogue
 
 The full inventory of figures (purpose-mapped) is documented in
@@ -629,38 +600,6 @@ The Settings surface (`.dn-settings`) is a section **rail + host**:
 rotating `.chev`). The epoch publication renders as panels rather than a tab
 strip.
 
-### 6.7 The resizable chat-copilot pane (`.dn-bld-chat`)
-
-A full-height docked column — a 3-row flex column (header · scrolling log ·
-composer) inside the builder grid (`console4.css` L2308):
-
-```html
-<aside class="dn-bld-chat">
-  <div class="dn-bld-chat-handle"></div>          <!-- col-resize drag handle -->
-  <div class="dn-bld-chat-head">
-    <button class="dn-bld-chat-collapse">‹</button>
-    <span class="dn-bld-chat-title">copilot</span>
-    <span class="dn-bld-chat-model">…model…</span>
-  </div>
-  <div class="dn-bld-chat-log">
-    <div class="dn-bld-bubble dn-bld-bubble-user">…</div>   <!-- accent fill, right -->
-    <div class="dn-bld-bubble dn-bld-bubble-asst">…</div>   <!-- rule-soft, left -->
-    <div class="dn-bld-chat-typing"><span class="dn-bld-chat-dot"></span>…</div>
-  </div>
-  <div class="dn-bld-chat-composer">
-    <textarea class="dn-bld-chat-input"></textarea>
-    <button class="dn-bld-chat-send">send</button>
-  </div>
-</aside>
-```
-
-Resizable via `.dn-bld-chat-handle` (a `7px` `col-resize` strip that highlights
-accent on hover/focus); collapsible (`.dn-bld-chat-collapsed` swaps to a vertical
-`.dn-bld-chat-strip`). User bubbles fill `--v2-accent` (`--v2-paper` text) and
-align right; assistant bubbles sit on `--v2-rule-soft` and align left. The typing
-dots animate but disable under `prefers-reduced-motion`. Below `1080px` the
-docked frame collapses to a normal scrolling single column.
-
 ### 6.8 The swatch / typeface pickers
 
 - **Colour** — `.dt-cd` swatch dropdown: a `.dt-cd-trigger` (current name + a
@@ -731,7 +670,7 @@ The discipline in full:
   positions* (GPU-friendly `transform` / `opacity` / `width`); digest-gating
   governs *structure*.
 - The **only** keyframe animations are the status-pill pulse (`dt-run-pulse`),
-  the in-flight-count pulse, and the copilot typing dots — all gated behind
+  and the in-flight-count pulse — all gated behind
   `@media (prefers-reduced-motion: reduce)` to instant.
 - Theme/colour transitions are `background 0.18s ease, color 0.18s ease` on the
   root; hovercard fade is `120ms`, also reduced-motion-aware.

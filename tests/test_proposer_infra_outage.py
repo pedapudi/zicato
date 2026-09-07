@@ -14,7 +14,6 @@ settlement the classification routes to.
 
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -188,27 +187,24 @@ def test_the_deferral_leaves_nothing_behind(tmp_path: Path) -> None:
     assert decision["provenance"]["promoted_generation_id"] is None
 
 
-def _field_round(**overrides: Any) -> Any:
-    """A stand-in for :class:`FieldRound` carrying only the read attributes.
-
-    The names are checked against the real dataclass, so a rename that would
-    break the settlement fails here rather than passing against a stub that
-    kept the old name.
-    """
-    declared = {field.name for field in dataclasses.fields(FieldRound)}
-    unknown = set(overrides) - declared
-    assert not unknown, f"not FieldRound attributes: {sorted(unknown)}"
-    attributes: dict[str, Any] = {
-        "epoch_id": "epoch_1",
-        "parent_id": "v0",
-        "round_index": 1,
-        "total_rounds": 1,
-        "beater": None,
-        "round_log": _RecordingRoundLog(),
-        "tournament_spec": SimpleNamespace(structure="gauntlet", params={}),
-    }
-    attributes.update(overrides)
-    return SimpleNamespace(**attributes)
+def _field_round(*, workspace_root: Path, field_size: int) -> FieldRound:
+    """Round state for transport-failure settlement, without execution resources."""
+    prepared: Any = SimpleNamespace(
+        workspace_root=workspace_root,
+        epoch_id="epoch_1",
+        round_index=1,
+        total_rounds=1,
+        beater=None,
+        round_log=_RecordingRoundLog(),
+        tournament_spec=SimpleNamespace(structure="gauntlet", params={}),
+    )
+    return FieldRound(
+        prepared=prepared,
+        parent_id="v0",
+        field_size=field_size,
+        evaluation_call_llm=None,
+        evaluation_model="",
+    )
 
 
 def _rejection(generation_id: str, attempts: list[str] | None) -> CandidateRejection:

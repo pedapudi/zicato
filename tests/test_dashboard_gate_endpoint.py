@@ -340,6 +340,37 @@ def test_gate_aggregate_scope_fires_on_net_regression(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_gate_aggregate_scope_explains_continuous_score_regression(tmp_path: Path) -> None:
+    champion = _gen_score(
+        scalar=0.50,
+        pass_rate=1.0,
+        per_entry={"task": {"drift_loss": 0.5, "pass_fail": True, "score": 0.9}},
+    )
+    challenger = _gen_score(
+        scalar=0.20,
+        pass_rate=1.0,
+        per_entry={"task": {"drift_loss": 0.2, "pass_fail": True, "score": 0.4}},
+    )
+    champion["mean_score"] = 0.9
+    challenger["mean_score"] = 0.4
+    ws = _make_workspace(
+        tmp_path,
+        champion=champion,
+        challenger=challenger,
+        scoring={"pass_rate_monotonicity_scope": "aggregate"},
+    )
+
+    result = build_gate_breakdown(WorkspacePaths(ws), EPOCH_ID, "v0", "v1")
+
+    assert result["decision"] == "rejected"
+    assert "fell by 0.500000" in result["reason"]
+    assert result["deciding_rule"] == "pass_rate_monotonicity"
+    rule = next(rule for rule in result["rules"] if rule["id"] == "pass_rate_monotonicity")
+    assert rule["status"] == "fail"
+    assert rule["fired"] is True
+    assert rule["detail"] == "overall 0.90 → 0.40 (-0.50; aggregate scope)"
+
+
 def test_gate_endpoint_serves_breakdown(tmp_path: Path, static_dir: Path) -> None:
     champion = _gen_score(
         scalar=0.50,

@@ -18,13 +18,14 @@ crisp.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 import zicato.tournament.runner as runner_mod
-from tests._runtime_builders import runtime_config
+from tests._runtime_builders import prepare_tournament_epoch, runtime_config
 from zicato.board.split import HOLDOUT_TAG
 from zicato.core import (
     BoardEntry,
@@ -71,8 +72,8 @@ def _stub_run_single(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
-        return canned[(generation.id, entry.id)]
+        del adapter, weights, config, workspace_root, side, match_id
+        return replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
@@ -113,16 +114,19 @@ def _run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, holdout_child_drift
     canned[("v0", "h0")] = _loss(generation_id="v0", entry_id="h0", drift_loss=2.0)
     canned[("v1", "h0")] = _loss(generation_id="v1", entry_id="h0", drift_loss=holdout_child_drift)
     _stub_run_single(monkeypatch, canned)
+    weights = ScoringWeights(promote_margin=0.1)
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     return asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=_gen(tmp_path, "v0", None),
-            child_gen=_gen(tmp_path, "v1", "v0"),
+            parent_gen=replace(_gen(tmp_path, "v0", None), epoch_id=epoch_id),
+            child_gen=replace(_gen(tmp_path, "v1", "v0"), epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(promote_margin=0.1),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -157,7 +161,7 @@ def _run_full_with_call_log(
     *,
     train_child_drift: float,
     weights: ScoringWeights,
-) -> tuple[Any, list[tuple[str, str]]]:
+) -> tuple[Any, list[tuple[str, str]], str]:
     calls: list[tuple[str, str]] = []
 
     async def fake_run_single(
@@ -172,31 +176,37 @@ def _run_full_with_call_log(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, weights, config, workspace_root, side, match_id
         calls.append((generation.id, entry.id))
         drift = 2.0 if generation.id == "v0" else train_child_drift
-        return _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=drift)
+        return replace(
+            _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=drift),
+            epoch_id=epoch_id,
+        )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    board = _board()
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=_gen(tmp_path, "v0", None),
-            child_gen=_gen(tmp_path, "v1", "v0"),
-            board=_board(),
+            parent_gen=replace(_gen(tmp_path, "v0", None), epoch_id=epoch_id),
+            child_gen=replace(_gen(tmp_path, "v1", "v0"), epoch_id=epoch_id),
+            board=board,
             weights=weights,
-            config=runtime_config(tmp_path),
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
-    return result, calls
+    return result, calls, epoch_id
 
 
 def test_full_tournament_train_rejection_never_launches_holdout_units(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    result, calls = _run_full_with_call_log(
+    result, calls, epoch_id = _run_full_with_call_log(
         monkeypatch,
         tmp_path,
         train_child_drift=3.0,
@@ -210,7 +220,7 @@ def test_full_tournament_train_rejection_never_launches_holdout_units(
 
     from zicato.core.workspace import ladder_state_path
 
-    assert not ladder_state_path(tmp_path, "e0").exists()
+    assert not ladder_state_path(tmp_path, epoch_id).exists()
 
 
 def test_full_tournament_exhausted_budget_never_launches_holdout_units(
@@ -222,7 +232,7 @@ def test_full_tournament_exhausted_budget_never_launches_holdout_units(
         promote_margin=0.1,
         overfitting=OverfittingConfig(ladder=LadderConfig(budget=0)),
     )
-    result, calls = _run_full_with_call_log(
+    result, calls, epoch_id = _run_full_with_call_log(
         monkeypatch,
         tmp_path,
         train_child_drift=1.0,
@@ -258,20 +268,27 @@ def test_full_tournament_reservation_failure_never_launches_holdout_units(
     ) -> LossProfile:
         calls.append((generation.id, entry.id))
         drift = 2.0 if generation.id == "v0" else 1.0
-        return _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=drift)
+        return replace(
+            _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=drift),
+            epoch_id=generation.epoch_id,
+        )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
+    board = _board()
+    weights = ScoringWeights(promote_margin=0.1)
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     with pytest.raises(LadderStateError, match="cannot persist Ladder state"):
         asyncio.run(
             run_tournament(
                 adapter=object(),
-                parent_gen=_gen(tmp_path, "v0", None),
-                child_gen=_gen(tmp_path, "v1", "v0"),
-                board=_board(),
-                weights=ScoringWeights(promote_margin=0.1),
-                config=runtime_config(tmp_path),
+                parent_gen=replace(_gen(tmp_path, "v0", None), epoch_id=epoch_id),
+                child_gen=replace(_gen(tmp_path, "v1", "v0"), epoch_id=epoch_id),
+                board=board,
+                weights=weights,
+                config=config,
                 workspace_root=tmp_path,
-                epoch_id="e0",
+                epoch_id=epoch_id,
             )
         )
 
@@ -319,19 +336,22 @@ def _confirm(
     train_outcome = GateOutcome(
         decision="promoted", reason="", delta_scalar=-1.0, delta_pass_rate=0.0
     )
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights(promote_margin=0.1)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     return asyncio.run(
         confirm_crowning_holdout(
             adapter=object(),
-            champion_gen=_gen(tmp_path, "v0", None),
-            challenger_gen=_gen(tmp_path, "v1", "v0"),
+            champion_gen=replace(_gen(tmp_path, "v0", None), epoch_id=epoch_id),
+            challenger_gen=replace(_gen(tmp_path, "v1", "v0"), epoch_id=epoch_id),
             board=board,
             train_outcome=train_outcome,
             train_parent_agg=_agg(2.0),
             train_child_agg=_agg(1.0),
-            weights=ScoringWeights(promote_margin=0.1),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 

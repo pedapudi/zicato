@@ -103,7 +103,8 @@ fn write_state(paths: &reader::WorkspacePaths) {
             {"entry_id": "e2", "status": "queued"},
         ],
     });
-    std::fs::write(paths.active_tournament(), serde_json::to_vec(&at).unwrap()).unwrap();
+    let event = serde_json::json!({"seq": 1, "ts": now, "type": "Snapshot", "payload": at});
+    std::fs::write(paths.active_tournament_log(), format!("{event}\n")).unwrap();
 
     let ar = serde_json::json!({
         "run_id": "run-1",

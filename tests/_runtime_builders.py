@@ -15,10 +15,66 @@ explicitly or builds the object itself.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any
 
-from zicato.core import Generation, RuntimeConfig
+from zicato.board.jsonl import save_board
+from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
+from zicato.epoch.contract import ContractInputs
+from zicato.epoch.lifecycle import new_epoch, scoring_to_dict
 from zicato.epoch.lineage import append_to_lineage
+from zicato.models_config import execution_roles_for_runtime
+from zicato.runtime.lock import acquire_workspace_lock
+from zicato.tournament.scoring import write_gen_score
+
+
+async def empty_target_call(system: str, user: str, model: str) -> str:
+    return ""
+
+
+async def empty_evaluation_call(system: str, user: str, model: str) -> str:
+    return ""
+
+
+def prepare_tournament_epoch(
+    workspace_root: Path,
+    config: RuntimeConfig,
+    board: list[BoardEntry],
+    weights: ScoringWeights,
+    *,
+    name: str = "tournament",
+) -> str:
+    """Publish the supplied evaluation inputs and return their actual epoch id."""
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=".tournament-inputs-", dir=workspace_root) as temporary:
+        source = Path(temporary)
+        board_path, brief_path, scoring_path = (
+            source / "board.jsonl",
+            source / "brief.md",
+            source / "scoring.json",
+        )
+        save_board(board, board_path)
+        brief_path.write_text("# Goal\nMeasure the supplied deterministic candidate.\n")
+        scoring_path.write_text(json.dumps(scoring_to_dict(weights)))
+        inputs = ContractInputs(
+            board_path=board_path,
+            brief_path=brief_path,
+            scoring_path=scoring_path,
+            entrypoint="",
+            mutable_trees=(),
+            execution_roles=execution_roles_for_runtime(config),
+        )
+        return new_epoch(workspace_root, name, board_path, brief_path, weights, contract=inputs).id
+
+
+def record_tournament_score(
+    workspace_root: Path, epoch_id: str, generation_id: str, aggregate: dict[str, Any]
+) -> None:
+    """Publish a fixture's historical score through its canonical writer."""
+    with acquire_workspace_lock(workspace_root, "fixture-score"):
+        write_gen_score(workspace_root, epoch_id, generation_id, aggregate)
 
 
 def runtime_config(tmp_path: Path) -> RuntimeConfig:
@@ -31,17 +87,11 @@ def runtime_config(tmp_path: Path) -> RuntimeConfig:
     test's subject.
     """
 
-    async def harness_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def aux_call(system: str, user: str, model: str) -> str:
-        return ""
-
     return RuntimeConfig(
         instance_id="test",
         workspace_root=tmp_path,
-        target_call_llm=harness_call,
-        evaluation_call_llm=aux_call,
+        target_call_llm=empty_target_call,
+        evaluation_call_llm=empty_evaluation_call,
     )
 
 

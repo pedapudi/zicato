@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 
 from tests._orchestrator_harness import (
+    evaluation_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
 )
 from tests.test_orchestrator_multi_challenger import _bootstrap_swiss_workspace
@@ -59,7 +59,7 @@ def test_field_accumulates_in_flight_siblings(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
     )
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     tasks = _episode_tasks(workspace, epoch_id)
     assert len(tasks) == 3
@@ -103,7 +103,7 @@ def test_failed_challenger_contributes_no_sibling(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     tasks = _episode_tasks(workspace, epoch_id)
     assert len(tasks) == 2
@@ -141,7 +141,7 @@ def test_duplicate_sibling_is_soft_rejected_for_field_diversity(
 
     from zicato.runtime.state import read_active_tournament
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     active = read_active_tournament(workspace)
     assert active is not None
@@ -187,7 +187,7 @@ def test_same_ids_different_idea_is_not_a_duplicate(
 
     from zicato.runtime.state import read_active_tournament
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     active = read_active_tournament(workspace)
     assert active is not None
@@ -254,7 +254,7 @@ def test_overlap_soft_reject_fires_under_diversity_tolerance(
     # fires; only the id-overlap guard can reject here.
     from zicato.runtime.state import read_active_tournament
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     active = read_active_tournament(workspace)
     assert active is not None
@@ -298,7 +298,7 @@ def test_overlap_enforcement_absent_is_byte_compatible(
 
     from zicato.runtime.state import read_active_tournament
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     active = read_active_tournament(workspace)
     assert active is not None

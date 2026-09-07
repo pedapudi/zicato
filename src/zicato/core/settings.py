@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, ClassVar
 
 from zicato.core.configuration import (
     ConfigurationError,
@@ -151,11 +151,11 @@ class DashboardConfig:
         Filesystem path to the bundled dashboard static-asset directory,
         or empty string to fall back to the in-tree
         ``zicato/dashboard/static`` directory. Operators set it with
-        ``zicato dashboard --static-dir`` / ``zicato dashboard --view builder
-        --static-dir``. Useful for installed wheels that relocate the
+        ``zicato dashboard --static-dir``. Useful for installed wheels that relocate the
         bundle and for tests.
     """
 
+    DEFAULT_PORT: ClassVar[int] = 7892
     static_dir: str = ""
 
 

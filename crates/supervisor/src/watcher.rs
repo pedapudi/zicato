@@ -52,7 +52,7 @@ fn classify(path: &Path, paths: &WorkspacePaths) -> ChangeKind {
     if path == paths.lock() {
         return ChangeKind::Lock;
     }
-    if path == paths.active_tournament() || path == paths.active_tournament_log() {
+    if path == paths.active_tournament_log() {
         return ChangeKind::ActiveTournament;
     }
     if path == paths.lineage() {
@@ -169,7 +169,7 @@ mod tests {
         let p = WorkspacePaths::new(tmp.path().to_path_buf());
         assert_eq!(classify(&p.heartbeat(), &p), ChangeKind::Heartbeat);
         assert_eq!(
-            classify(&p.active_tournament(), &p),
+            classify(&p.active_tournament_log(), &p),
             ChangeKind::ActiveTournament
         );
         assert_eq!(

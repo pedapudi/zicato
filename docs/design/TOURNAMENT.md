@@ -249,7 +249,7 @@ The bracket is driven by the `tournaments` table in the
 analytical index ([ANALYTICAL-INDEX.md §3.8](ANALYTICAL-INDEX.md#38-tournaments)) —
 the bracket *is* `SELECT * FROM tournaments WHERE epoch_id = ?
 ORDER BY round`. The in-flight round's partial state comes from
-`.zicato/runtime/active_tournament.json` (the index only has
+`.zicato/runtime/active_tournament.events.jsonl` (the index only has
 settled rounds).
 
 ### 2.2 Clicking through to a matchup
@@ -624,7 +624,7 @@ persisted cost record.
 > Enforcement is the worker's per-run wall-clock cancellation
 > ([RUNTIME.md](RUNTIME.md), `src/zicato/_tournament_worker.py`); see
 > [TOURNAMENT-STRUCTURES.md §3.5](TOURNAMENT-STRUCTURES.md#35-racing-the-endorsed-bracket-shaped-option).
-> The builder's live cost meter, in turn, estimates per-round board-runs from
+> The contract cost estimator estimates per-round board-runs from
 > each structure's **default replicates** (gauntlet, swiss, single-elim and
 > double-elim = 2, racing = 1) rather than a flat `1`, so the projected cost
 > matches the schedule a structure runs

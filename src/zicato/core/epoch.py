@@ -36,8 +36,7 @@ class EpochConfig:
         Absolute path to the frozen ``board.jsonl`` for this epoch.
     brief_path:
         Absolute path to the frozen ``brief.md`` proposer brief the
-        proposer reads each round. (Earlier revisions named this field
-        ``rubric_path`` and the file ``rubric.md``; both were renamed.)
+        proposer reads each round.
     scoring:
         The frozen :class:`ScoringWeights` for this epoch.
     closed:
@@ -108,17 +107,6 @@ class EpochConfig:
         ``config.json``'s ``"contract_preflight": K``); read back by the
         loop-health detector
         (:func:`zicato.health.diagnostics.detect_preflight_verdict`).
-    applied_proposer_recommendations:
-        The proposer-reflection recommendation ids applied into the proposer
-        dir that produced this epoch's proposals — proposer LINEAGE, saying
-        *why* the proposer changed between this epoch and the one before it.
-        Stamped at epoch creation by draining the workspace's staged queue
-        (``zicato proposer apply-recommendation`` fills it). Like
-        :attr:`goal` / :attr:`noise_floor` this is a RECORD about the epoch,
-        NOT a contract input: it never folds into the contract hash. The edit
-        it names already rolled the hash on its own, by being an edit to a
-        hashed proposer input. Defaults to ``()`` so epoch ``config.json``
-        files written before the field landed load cleanly.
     """
 
     id: str
@@ -144,10 +132,7 @@ class EpochConfig:
     # ``None`` when never run; missing in an epoch ``config.json`` written
     # before this field landed ⇒ ``None``.
     preflight: dict[str, object] | None = None
-    # Proposer-reflection recommendation ids applied into this epoch's
-    # proposer (proposer lineage, never hashed). Empty for an epoch whose
-    # proposer was not changed by an applied recommendation, and for every
-    # epoch written before this field landed.
+    # Historical provenance is retained when an epoch record is rewritten.
     applied_proposer_recommendations: tuple[str, ...] = ()
 
 

@@ -1647,8 +1647,8 @@ keeps its zero-tolerance rule, so neither field can loosen the primary
 decision.
 
 `preflight.holdout_window_note` renders the feasibility note — prose on the
-pre-flight record (`holdout_note`), printed by `zicato board preflight` and
-surfaced in the builder panel, never a verdict and never a refusal. It names
+pre-flight record (`holdout_note`) and printed by `zicato board preflight`.
+The note is advisory and cannot refuse execution. It names
 both facts an operator cannot otherwise see without doing the arithmetic: that
 one entry flipping moves the holdout scalar by about `pass_weight / N`, and
 that at budget `0` a single flip rejects at **every** margin, which raising the
@@ -1952,8 +1952,10 @@ licensed by an end-to-end anchor.
 ### 13.3 A/A nulls first
 
 Before any power claim, measure the null. The harness plants σ=0.22 and
-derives the analytic floor (~0.663). `_measure_noise_floor` runs 60 seeded A/A
-single-sample duels and asserts the measured sd lands in `[0.4, 1.0]`. A floor
+derives the analytic floor (~0.663). The null-calibration test runs 60 seeded A/A
+single-sample duels and checks the floor, margin premise, and planted-effect scales
+from that report. Parallel workers therefore compute the calibration once.
+The measured sd must land in `[0.4, 1.0]`. A floor
 of ~0 would mean the draws stopped varying, which is a seeding regression, and a
 floor outside that band would mean the noise model broke. Then the null is run through the
 *decision procedures*: the naive contract's noise-promotion rate (fact #1) and
@@ -2088,8 +2090,8 @@ uv run zicato board audit --workspace <ws>   # then inspect the epoch record + h
    the threshold without a budget uses `DEFAULT_REPLICATE_BUDGET = 3`, which
    can leave a true improvement inconclusive.
 2. Price it before running: each evidence replicate is a fresh
-   2-sides × board sweep. The builder's cost meter line exists for this purpose
-   (10-builder-cli-library.md §"The honest cost meter").
+   2-sides × board sweep. The contract estimator reports that cost
+   (10-cli-and-configuration.md §10.3).
 3. Expect and monitor the dead-letter queue
    (`runtime/inconclusive/*.json`) — an `inconclusive` terminal is a designed
    outcome rather than an error; a *stream* of them means the budget cannot

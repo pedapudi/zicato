@@ -31,6 +31,7 @@ from zicato.evolve.round_context import (
     _build_genealogy_items,
     _build_recombination_pair,
 )
+from zicato.mutation.inventory import write_mutation_inventory
 from zicato.runtime.control_consumer import (
     claim_skip_round,
 )
@@ -43,6 +44,7 @@ from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.lock import validate_workspace_lock
 from zicato.runtime.resume import ResumePlan
 from zicato.util.best_effort import best_effort
+from zicato.workspace import WorkspaceLayout
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -58,7 +60,6 @@ from zicato.evolve.decision_support import (
 )
 from zicato.evolve.round_api import EvolveRoundOutcome, _declared_custom_judge_names
 from zicato.evolve.round_baseline import (
-    _dump_mutations_snapshot,
     _ensure_baseline_snapshot,
 )
 from zicato.evolve.round_prepare import (
@@ -101,19 +102,22 @@ async def evolve_once(
     async with validated_invocation(
         workspace_root, epoch_id, instance_id, overlay=invocation_overlay
     ) as invocation:
-        return await _evolve_once(
-            invocation=invocation,
-            epoch_id=epoch_id,
-            target_call_llm=target_call_llm,
-            evaluation_call_llm=evaluation_call_llm,
-            fast_mode=fast_mode,
-            max_proposer_retries=max_proposer_retries,
-            beater=beater,
-            round_index=round_index,
-            total_rounds=total_rounds,
-            meta_loop_emitter=meta_loop_emitter,
-            resume_plan=resume_plan,
-        )
+        from zicato.logging_stream import round_log_context
+
+        with round_log_context(epoch_id, round_index):
+            return await _evolve_once(
+                invocation=invocation,
+                epoch_id=epoch_id,
+                target_call_llm=target_call_llm,
+                evaluation_call_llm=evaluation_call_llm,
+                fast_mode=fast_mode,
+                max_proposer_retries=max_proposer_retries,
+                beater=beater,
+                round_index=round_index,
+                total_rounds=total_rounds,
+                meta_loop_emitter=meta_loop_emitter,
+                resume_plan=resume_plan,
+            )
 
 
 async def _evolve_once(
@@ -161,6 +165,9 @@ async def _evolve_once(
         )
     if resolved_epoch_id is None:
         raise FileNotFoundError(f"no current_epoch marker under {workspace_root}")
+    from zicato.logging_stream import set_log_context
+
+    set_log_context(epoch_id=resolved_epoch_id)
     execution_contract = invocation.select_epoch(resolved_epoch_id)
     workspace_config.update(execution_contract.adapter_configuration)
 
@@ -212,14 +219,18 @@ async def _evolve_once(
     adapter = adapter_factory.make_adapter_from_config(
         execution_contract.adapter_configuration, workspace_root=workspace_root
     )
-    config = runtime_factory.make_runtime_config(
+    config = invocation.runtime_config or runtime_factory.make_runtime_config(
         workspace_config,
         workspace_root=workspace_root,
         target_call_llm=target_call_llm,
         evaluation_call_llm=evaluation_call_llm,
         configuration=invocation.configuration,
         telemetry=invocation.telemetry,
+        execution_roles=execution_contract.execution_roles,
     )
+    from zicato.epoch.execution import bind_runtime_to_epoch  # noqa: PLC0415
+
+    config = bind_runtime_to_epoch(config, workspace_root, resolved_epoch_id)
     # The factory already enforced this but the runner re-checks.
     # We do nothing more here.
     if config.instance_id != instance_id:
@@ -447,7 +458,13 @@ async def _evolve_once(
     # Best-effort: snapshot the enumerated mutation surface so the
     # dashboard can render it for the in-progress epoch. A failure to
     # write the snapshot must never abort the round.
-    _dump_mutations_snapshot(workspace_root, resolved_epoch_id, mutations)
+    with best_effort(
+        "mutation inventory publication",
+        on_error=lambda exc: log.debug("mutation inventory publication skipped: %s", exc),
+    ):
+        write_mutation_inventory(
+            WorkspaceLayout.from_root(workspace_root).mutations(resolved_epoch_id), mutations
+        )
     # --- 4. Patterns ---
     # The proposer + detectors + loss summary see the TRAIN slice ONLY
     # (OVERFITTING.md §11.1, §12 #1): the holdout's per-entry behaviour is

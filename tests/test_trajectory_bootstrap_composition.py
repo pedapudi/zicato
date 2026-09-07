@@ -36,7 +36,7 @@ from click.testing import CliRunner
 
 from tests._cli_support import registered_workspace
 from zicato.cli.discovery import build_cli_root
-from zicato.core.workspace import board_path, reflection_suggestions_path
+from zicato.core.workspace import reflection_suggestions_path
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 _TRAJ_DIR = _FIXTURES / "trajectories"
@@ -125,32 +125,6 @@ def test_full_chain_unmocked_bootstrap_to_builder_draft(tmp_path: Path) -> None:
     foreign = entry_sug["provenance"]["foreign_source"]  # type: ignore[index]
     assert foreign["dialect"] in {"goldfive", "adk_events", "transcript"}
     assert foreign["source_file"]
-
-    # 5: real apply stages the bootstrap entry into a builder draft; the SEALED
-    # contract is byte-unchanged.
-    before = board_path(ws, epoch_id).read_bytes()
-    from zicato.reflection.apply import apply_suggestion_to_draft
-
-    applied = apply_suggestion_to_draft(
-        workspace_root=ws,
-        epoch_id=epoch_id,
-        reflection_id=reflection_id,
-        suggestion_id=str(entry_sug["suggestion_id"]),
-    )
-    assert applied.op == "add_board_entry"
-    assert "board" in applied.diff["changed_components"]
-    assert board_path(ws, epoch_id).read_bytes() == before  # sealed contract untouched
-
-    # 6: the builder inbox feed sees the persisted bootstrap suggestion.
-    from zicato.builder.api import _read_suggestions_feed
-
-    feed = _read_suggestions_feed(ws)
-    feed_ids = {s["suggestion_id"] for s in feed["suggestions"]}
-    assert str(entry_sug["suggestion_id"]) in feed_ids
-    feed_sug = next(
-        s for s in feed["suggestions"] if s["suggestion_id"] == entry_sug["suggestion_id"]
-    )
-    assert feed_sug["provenance"]["foreign_source"]["source_file"] == foreign["source_file"]
 
 
 def test_full_chain_is_goldfive_optional(tmp_path: Path) -> None:

@@ -220,6 +220,23 @@ def parse_brief(text: str) -> ProposerBrief:
     return ProposerBrief(text=text, forbidden_ids=forbidden_ids, preferred_ids=preferred_ids)
 
 
+def load_epoch_brief(epoch_dir: Path) -> ProposerBrief:
+    """Read the canonical brief.md guidance for an epoch.
+
+    An empty brief is valid guidance. Unreadable present input raises
+    RecordError and cannot select a different file's contents.
+    """
+    path = epoch_dir / "brief.md"
+    try:
+        return load_brief(path)
+    except FileNotFoundError:
+        raise
+    except (OSError, UnicodeError) as exc:
+        from zicato.epoch._storage import RecordError  # noqa: PLC0415
+
+        raise RecordError(f"brief {path} cannot be read: {exc}") from exc
+
+
 def enforce_forbidden(
     patches: list[Patch] | tuple[Patch, ...], forbidden_ids: tuple[str, ...]
 ) -> list[str]:
@@ -251,5 +268,6 @@ __all__ = [
     "ProposerBrief",
     "brief_goal",
     "load_brief",
+    "load_epoch_brief",
     "enforce_forbidden",
 ]

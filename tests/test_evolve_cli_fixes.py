@@ -378,23 +378,11 @@ def test_epoch_new_streamlined_flow_files_already_in_place(tmp_path: Path) -> No
 
 
 def test_supervisor_and_dashboard_have_distinct_default_ports() -> None:
-    """The watchdog supervisor and dashboard default to different ports.
+    """The dashboard and supervisor port search ranges must not overlap."""
+    from zicato.config import DashboardConfig
 
-    A shared default is what made the dashboard walk ``+1`` and the
-    reported URL point at the wrong server. The dashboard's Python
-    default is 7892; the supervisor's Rust default must not equal it,
-    and the two ``+1`` walk ranges must be disjoint.
-    """
-    # The dashboard's preferred port — assert the ``python -m
-    # zicato.dashboard`` argparse default directly from its source.
-    # Resolve through the installed package so the src/ layout move
-    # does not break the path.
-    import zicato.dashboard as _dashboard_pkg
-
-    main_py = Path(_dashboard_pkg.__file__).resolve().parent / "__main__.py"
-    main_py_text = main_py.read_text(encoding="utf-8")
-    assert '"--port", type=int, default=7892' in main_py_text
-    dashboard_default = 7892
+    dashboard_default = DashboardConfig.DEFAULT_PORT
+    assert dashboard_default == 7892
 
     # The supervisor's default lives in the Rust CLI; assert it via the
     # source so the two defaults cannot silently re-converge. The crate

@@ -39,7 +39,7 @@ zicato evolve    # the single happy-path entry point to the loop
 ```
 
 Everything else (`board`, `propose`, `tournament`, `epoch`, `reindex`,
-`mutations`, `health`, `builder`, `dashboard`, …) is an advanced / debug
+`mutations`, `health`, `dashboard`, …) is an advanced / debug
 tool for driving one stage in isolation or opening a view on the
 workspace. `evolve` orchestrates the loop for you.
 

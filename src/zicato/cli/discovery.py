@@ -7,7 +7,7 @@ from importlib.metadata import PackageNotFoundError, version
 import click
 
 HAPPY_PATH_COMMANDS = ("init", "evolve")
-DIRECT_COMMANDS = (*HAPPY_PATH_COMMANDS, "dashboard", "tui", "health")
+DIRECT_COMMANDS = (*HAPPY_PATH_COMMANDS, "dashboard", "health")
 GROUP_COMMANDS = ("board", "epoch", "proposer", "tournament", "inspect", "repair")
 
 
@@ -124,9 +124,8 @@ def build_cli_root() -> click.Group:
     from zicato.cli.commands.evolve import evolve_cmd
     from zicato.cli.commands.health import health_cmd
     from zicato.cli.commands.init import init_cmd
-    from zicato.cli.commands.tui import tui_cmd
 
-    for command in (init_cmd, evolve_cmd, dashboard_cmd, tui_cmd, health_cmd, *_advanced_groups()):
+    for command in (init_cmd, evolve_cmd, dashboard_cmd, health_cmd, *_advanced_groups()):
         root.add_command(command)
     return root
 

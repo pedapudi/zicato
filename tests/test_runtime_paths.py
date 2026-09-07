@@ -7,7 +7,7 @@ from pathlib import Path
 from zicato.runtime.paths import (
     active_run_path,
     active_runs_dir,
-    active_tournament_path,
+    active_tournament_log_path,
     control_command_path,
     control_dir,
     control_log_dir,
@@ -29,7 +29,7 @@ def test_top_level_files_live_directly_under_runtime(tmp_path: Path) -> None:
     rt = runtime_dir(tmp_path)
     assert lock_path(tmp_path) == rt / "lock.json"
     assert heartbeat_path(tmp_path) == rt / "heartbeat.json"
-    assert active_tournament_path(tmp_path) == rt / "active_tournament.json"
+    assert active_tournament_log_path(tmp_path) == rt / "active_tournament.events.jsonl"
 
 
 def test_active_runs_dir_and_per_run_paths(tmp_path: Path) -> None:
@@ -86,7 +86,7 @@ def test_paths_do_not_touch_filesystem(tmp_path: Path) -> None:
     _ = heartbeat_path(tmp_path)
     _ = active_runs_dir(tmp_path)
     _ = active_run_path(tmp_path, "foo")
-    _ = active_tournament_path(tmp_path)
+    _ = active_tournament_log_path(tmp_path)
     _ = control_dir(tmp_path)
     _ = control_log_dir(tmp_path)
     _ = control_command_path(tmp_path, "pause_epoch")

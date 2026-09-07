@@ -103,7 +103,11 @@ def _bootstrap(
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
                 "mutable_trees": [str(AGENT_DIR)],
-                "runtime": {"propose_parallelism": propose_parallelism},
+                "runtime": {
+                    "propose_parallelism": propose_parallelism,
+                    "target_call_llm": "tests._best_of_n_slate_support:target_llm",
+                    "evaluation_call_llm": "tests._best_of_n_slate_support:slate_aux_llm",
+                },
             }
         )
     )

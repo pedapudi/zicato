@@ -1,10 +1,7 @@
 // js/views/boardstatus.js — the BOARD-STATUS surface for one epoch.
 //
-// The runtime counterpart to the tournament builder's "Board & holdout"
-// section: it communicates the TRAIN / HOLDOUT split and where + when each
-// slice is played. Three panels, all DEFENSIVELY derived from /api/epoch so
-// they degrade to honest empty states (never crash) before the overfitting
-// `#2` Ladder / `#5` generalization-gap detector land:
+// Shows the training and holdout split, when each part runs, and their loss
+// difference. Three panels read the selected epoch and tolerate missing data:
 //
 //   1. THE SPLIT — one STAT LINE (train / holdout / % held out in the shipped
 //      stat idiom) with the board-level facts as CHIPS beside it, over the
@@ -120,7 +117,7 @@ function splitModel(ep) {
 // serves it: the drift kinds suppressed for every entry + the judge-only flag.
 // Both fold into the contract hash, so they describe how THIS board is scored —
 // a runtime surface that omits them draws a board the operator cannot recognise
-// from the one the builder authored. Absent / fully default ⇒ null (the server
+// from the authored value. Absent / fully default ⇒ null (the server
 // omits the key for a default board, and there is nothing to say about it).
 function metaModel(ep) {
   const m = ep.board_meta && typeof ep.board_meta === 'object' ? ep.board_meta : null;
@@ -287,9 +284,6 @@ function factChips(split, meta) {
       'no holdout configured — every entry is train'));
   }
   if (meta && meta.judgeOnly) {
-    // WORDING IS THE BUILDER'S, VERBATIM (views/builder.js's board-metadata
-    // panel) — the two surfaces name the same flag, so they must not describe
-    // it in two different sentences.
     chips.push(factChip('judgeonly', 'judge-only',
       'judge-only board — score on judges alone, no steering'));
   }

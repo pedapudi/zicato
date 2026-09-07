@@ -76,7 +76,7 @@ Files consumed:
 - `.zicato/runtime/heartbeat.json` — `{pid, instance_id, last_heartbeat, phase, epoch_id, generation_id, round}`
 - `.zicato/runtime/lock.json` — `{pid, instance_id, started_at, workspace}`
 - `.zicato/runtime/active_runs/{run_id}.json` — `{run_id, pid, entry_id, generation_id, started_at, last_progress, deadline, phase, progress, message}`
-- `.zicato/runtime/active_tournament.json` — `{tournament_id, generation_id, parent_generation_id, round, entries[], gate, partial_aggregate, predicted_verdict}`
+- `.zicato/runtime/active_tournament.events.jsonl` — `{tournament_id, generation_id, parent_generation_id, round, entries[], gate, partial_aggregate, predicted_verdict}`
 - `.zicato/current_epoch` — single-line epoch id marker
 - `.zicato/lineage.json` — `{generations[], edges[]}`
 

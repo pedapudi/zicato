@@ -258,13 +258,10 @@ Two placement rules fall out of the table:
 > deleted by `clear_runtime_state` on every restart). Choosing the wrong tree
 > is the difference between "record" and "will silently vanish on resume".
 
-> ⚠️ TRAP: `active_tournament.json` still has a path helper
-> (`zicato.runtime.paths.active_tournament_path`) but is a FALLBACK-ONLY
-> snapshot — the live producer writes the event log
-> (`active_tournament.events.jsonl`) and readers fold it
-> (`zicato.runtime.tournament_log.fold_active_tournament`), reading the
-> snapshot only when no log exists. New code must never write the snapshot
-> file.
+Live tournament state comes only from `runtime/active_tournament.events.jsonl`.
+`zicato.runtime.tournament_log.fold_active_tournament` reconstructs it;
+an absent or empty log yields no tournament. Cleanup removes this log
+and leaves unrelated saved files untouched.
 
 ---
 
@@ -302,8 +299,10 @@ require a domain lock or explicit single-writer ownership to avoid lost updates.
 
 Workspace configuration uses `write_workspace_config` to serialize sorted,
 indented JSON with a trailing newline, then calls `atomic_write_text`. Shared
-record writes create files with mode `0644`; configuration writes use `0666`.
-Both creation modes are restricted by the process umask.
+record writes default to mode `0644`; configuration writes use `0666` and
+artifact manifests use `0600`. Explicit creation modes are restricted by the
+process umask. Derived report writers pass `mode=None` to preserve an existing
+regular file's permissions, or use `0666` subject to umask for a missing file.
 
 Step 5 is the part naive reimplementations forget: `os.replace` mutates the
 *directory*, and on POSIX the directory entry must itself be fsynced for the
@@ -653,6 +652,12 @@ filenames: inventory is deterministic filesystem work performed after the
 harness emits them. Checkout cleanup can then remove `run-scratch` without
 making the deliverable undiscoverable.
 
+Use `tournament.artifacts.read_artifact_manifest` for persisted inventories.
+It selects the exact loss companion, validates the shared manifest shape and
+paired measurement provenance, and checks copied-file confinement. Transcript
+queries retain readable events when artifact evidence is unreadable and expose
+the artifact error separately; they never substitute another draw's manifest.
+
 Under git the checkout is a per-run `git worktree add --detach` immediately
 followed by unlinking the worktree's `.git` pointer file and pruning the
 registration — the run is left with a plain throwaway tree, no path back into
@@ -947,7 +952,7 @@ worker the client cannot see is gone.
 The live tournament view is a **single-writer append-only event log**
 (`runtime/active_tournament.events.jsonl`,
 `src/zicato/runtime/tournament_log.py`) with a four-token vocabulary. A
-mutable `active_tournament.json` that several writers read-modify-wrote would
+mutable tournament record that several writers read-modify-wrote would
 lose updates against itself; one atomic append per transition cannot:
 
 | Event | Payload | Written by | Fold semantics |
@@ -961,10 +966,9 @@ Every state transition is one atomic append — never a read-modify-write — so
 concurrent writers cannot lose each other's updates. Readers call
 `read_active_tournament(workspace_root)`
 (`zicato.runtime.state`), which folds the log via
-`tournament_log.fold_active_tournament` and falls back to the snapshot file
-only when no log exists. The fold **shares the merge helpers with the
-snapshot writer** (`_fold_projected_into_live_progress`, `_fold_one_lane` in
-`state.py`) so the folded view is byte-identical to the snapshot's —
+`tournament_log.fold_active_tournament`. A missing log yields no tournament. The fold **shares the merge helpers with the
+full-envelope event publisher** (`_fold_projected_into_live_progress`, `_fold_one_lane` in
+`state.py`) so the folded view agrees with the published envelope —
 producer/consumer parity by shared code rather than by reimplementation.
 
 Two behavioural details encoded in `_fold_one_lane` that dashboards depend

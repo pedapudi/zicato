@@ -300,6 +300,10 @@ def _bootstrap(
                 "created_at": "2026-07-01T00:00:00Z",
                 "generation_source_backend": "git",
                 "adapter": adapter_block or DETERMINISTIC_ADAPTER,
+                "runtime": {
+                    "target_call_llm": "zicato_examples.target_0_convergence.mocks:target_llm",
+                    "evaluation_call_llm": "zicato_examples.target_0_convergence.mocks:aux_llm",
+                },
                 "mutable_trees": [str(agent_dir or AGENT_DIR)],
                 **(extra_config or {}),
             }

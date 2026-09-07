@@ -13,14 +13,20 @@ the historical single-run behaviour.
 from __future__ import annotations
 
 import types
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from tests._runtime_builders import runtime_config
+from tests._runtime_builders import (
+    prepare_tournament_epoch,
+    record_tournament_score,
+    runtime_config,
+)
 from zicato.core import BoardEntry, ScoringWeights
 from zicato.core.tournament import TournamentStructure
+from zicato.epoch.lifecycle import current_epoch_id
 from zicato.tournament.gate import GateOutcome
 from zicato.tournament.runner import TournamentResult
 
@@ -36,10 +42,8 @@ def _board() -> list[BoardEntry]:
     ]
 
 
-def _make_cli_stubs(
-    monkeypatch: pytest.MonkeyPatch, *, weights: ScoringWeights | None = None
-) -> None:
-    """Wire CLI-side stubs so ``tournament_cmd`` runs without a real workspace."""
+def _make_cli_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use deterministic runtime construction with the real frozen contract reader."""
     loader_mod = types.SimpleNamespace(
         load_workspace_config=lambda root: {"mutable_trees": []},
     )
@@ -47,15 +51,13 @@ def _make_cli_stubs(
         make_adapter_from_config=lambda cfg, *, workspace_root: object(),
     )
     runtime_factory_mod = types.SimpleNamespace(
-        make_runtime_config=lambda cfg, *, workspace_root: runtime_config(workspace_root),
+        make_runtime_config=lambda cfg, *, workspace_root, execution_roles: replace(
+            runtime_config(workspace_root), execution_roles=execution_roles
+        ),
     )
     monkeypatch.setattr(
         "zicato.cli.commands.tournament._resolve_workspace_components",
         lambda: (loader_mod, adapter_factory_mod, runtime_factory_mod),
-    )
-    monkeypatch.setattr(
-        "zicato.cli.commands.tournament._load_epoch_contract",
-        lambda root, epoch_id: (_board(), (), False, weights or ScoringWeights()),
     )
     monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *args, **kwargs: None)
 
@@ -76,30 +78,27 @@ def _fake_result() -> TournamentResult:
     )
 
 
-def _make_workspace(tmp_path: Path) -> Path:
+def _make_workspace(tmp_path: Path, weights: ScoringWeights | None = None) -> Path:
     workspace = tmp_path / "ws"
-    workspace.mkdir()
-    (workspace / "current_epoch").write_text("e0", encoding="utf-8")
-    snap_v0 = workspace / "epochs" / "e0" / "generations" / "v0" / "snapshot"
-    snap_v1 = workspace / "epochs" / "e0" / "generations" / "v1" / "snapshot"
-    snap_v0.mkdir(parents=True)
-    snap_v1.mkdir(parents=True)
+    epoch_id = prepare_tournament_epoch(
+        workspace, runtime_config(workspace), _board(), weights or ScoringWeights()
+    )
+    for generation_id in ("v0", "v1"):
+        (workspace / "epochs" / epoch_id / "generations" / generation_id / "snapshot").mkdir(
+            parents=True
+        )
     return workspace
 
 
-def _seed_historical_aggregate(workspace: Path, epoch_id: str, generation_id: str) -> None:
-    """Write the ``gen_score.json`` fast-mode reads as the parent's cached aggregate."""
-    import json
-
-    from zicato.core.workspace import generation_dir
-
-    gen_dir = generation_dir(workspace, epoch_id, generation_id)
-    gen_dir.mkdir(parents=True, exist_ok=True)
-    (gen_dir / "gen_score.json").write_text(
-        json.dumps(
-            {"scalar": 1.0, "pass_rate": 1.0, "base_seed": None, "generation_id": generation_id}
-        ),
-        encoding="utf-8",
+def _seed_historical_aggregate(workspace: Path, generation_id: str) -> None:
+    """Publish the selected epoch's parent aggregate for fast-mode admission."""
+    epoch_id = current_epoch_id(workspace)
+    assert epoch_id is not None
+    record_tournament_score(
+        workspace,
+        epoch_id,
+        generation_id,
+        {"scalar": 1.0, "pass_rate": 1.0, "base_seed": None, "generation_id": generation_id},
     )
 
 
@@ -177,11 +176,11 @@ def test_cli_full_mode_honors_structure_params_replicates(
 
     from zicato.cli.commands.tournament import tournament_cmd
 
-    workspace = _make_workspace(tmp_path)
     weights = ScoringWeights(
         tournament_structure=TournamentStructure(structure="gauntlet", params={"replicates": 4})
     )
-    _make_cli_stubs(monkeypatch, weights=weights)
+    workspace = _make_workspace(tmp_path, weights)
+    _make_cli_stubs(monkeypatch)
 
     captured: dict[str, Any] = {}
 
@@ -214,7 +213,7 @@ def test_cli_fast_mode_defaults_to_the_structure_resolved_replicates(
 
     workspace = _make_workspace(tmp_path)
     _make_cli_stubs(monkeypatch)
-    _seed_historical_aggregate(workspace, "e0", "v0")
+    _seed_historical_aggregate(workspace, "v0")
 
     captured: dict[str, Any] = {}
 
@@ -244,7 +243,7 @@ def test_cli_fast_mode_replicates_override_reproduces_old_behavior(
 
     workspace = _make_workspace(tmp_path)
     _make_cli_stubs(monkeypatch)
-    _seed_historical_aggregate(workspace, "e0", "v0")
+    _seed_historical_aggregate(workspace, "v0")
 
     captured: dict[str, Any] = {}
 
@@ -278,11 +277,12 @@ def test_fast_cli_remeasures_a_champion_without_requested_seed_and_parent_proof(
     from click.testing import CliRunner
 
     from zicato.cli.commands.tournament import tournament_cmd
-    from zicato.tournament.scoring import write_gen_score
 
     workspace = _make_workspace(tmp_path)
     _make_cli_stubs(monkeypatch)
-    write_gen_score(workspace, "e0", "v0", {"scalar": 1.0, **aggregate})
+    epoch_id = current_epoch_id(workspace)
+    assert epoch_id is not None
+    record_tournament_score(workspace, epoch_id, "v0", {"scalar": 1.0, **aggregate})
     captured: dict[str, Any] = {}
 
     async def paired(**kwargs: Any) -> TournamentResult:
@@ -311,7 +311,9 @@ def test_fast_cli_refuses_a_champion_aggregate_for_another_generation(
 
     workspace = _make_workspace(tmp_path)
     _make_cli_stubs(monkeypatch)
-    (workspace / "epochs/e0/generations/v0/gen_score.json").write_text(
+    epoch_id = current_epoch_id(workspace)
+    assert epoch_id is not None
+    (workspace / "epochs" / epoch_id / "generations/v0/gen_score.json").write_text(
         json.dumps({"scalar": 1.0, "generation_id": "v2", "base_seed": None})
     )
     calls: list[dict[str, Any]] = []
@@ -335,19 +337,11 @@ def test_cli_explicit_epoch_uses_that_epochs_frozen_contract(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An explicit epoch selects its own board, scoring, gate, and output paths."""
-    import json
-
     from click.testing import CliRunner
 
-    from zicato.board.jsonl import save_board
     from zicato.cli.commands.tournament import tournament_cmd
-    from zicato.core.workspace import board_path, scoring_path
 
     workspace = tmp_path / "ws"
-    workspace.mkdir()
-    current_epoch = "current_epoch"
-    selected_epoch = "selected_epoch"
-    (workspace / "current_epoch").write_text(current_epoch, encoding="utf-8")
 
     current_board = [
         BoardEntry(
@@ -365,21 +359,22 @@ def test_cli_explicit_epoch_uses_that_epochs_frozen_contract(
             input="selected",
         )
     ]
-    for epoch_id, board, replicates in (
-        (current_epoch, current_board, 7),
-        (selected_epoch, selected_board, 5),
+    epochs = {}
+    for name, board, replicates in (
+        ("selected", selected_board, 5),
+        ("current", current_board, 7),
     ):
-        board_path(workspace, epoch_id).parent.mkdir(parents=True, exist_ok=True)
-        save_board(board, board_path(workspace, epoch_id))
         weights = ScoringWeights(
             tournament_structure=TournamentStructure(
                 structure="gauntlet",
                 params={"replicates": replicates},
             )
         )
-        scoring_path(workspace, epoch_id).write_text(
-            json.dumps(weights.to_json()), encoding="utf-8"
+        epochs[name] = prepare_tournament_epoch(
+            workspace, runtime_config(workspace), board, weights, name=name
         )
+    selected_epoch = epochs["selected"]
+    assert current_epoch_id(workspace) == epochs["current"]
 
     for generation_id in ("v0", "v1"):
         (workspace / "epochs" / selected_epoch / "generations" / generation_id / "snapshot").mkdir(
@@ -395,7 +390,9 @@ def test_cli_explicit_epoch_uses_that_epochs_frozen_contract(
         or object(),
     )
     runtime_factory_mod = types.SimpleNamespace(
-        make_runtime_config=lambda cfg, *, workspace_root: runtime_config(workspace_root),
+        make_runtime_config=lambda cfg, *, workspace_root, execution_roles: replace(
+            runtime_config(workspace_root), execution_roles=execution_roles
+        ),
     )
     monkeypatch.setattr(
         "zicato.cli.commands.tournament._resolve_workspace_components",

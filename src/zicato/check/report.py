@@ -90,9 +90,19 @@ def build_report(ctx: CheckContext) -> CheckReport:
     the first, so an operator fixes a batch instead of rediscovering the
     next one after each round.
     """
+    config_findings: tuple[Finding, ...] = ()
+    if error := ctx.config_error:
+        config_findings = (
+            Finding(
+                code="workspace_config_unreadable",
+                summary="the workspace configuration cannot be read",
+                detail={"path": str(ctx.config.path), "error": error},
+            ),
+        )
     return CheckReport(
         workspace_root=str(ctx.workspace_root),
-        findings=tuple(
+        findings=config_findings
+        + tuple(
             Finding(
                 code=code,
                 summary=summary,

@@ -23,9 +23,9 @@ import pytest
 
 from tests._orchestrator_harness import (
     bootstrap_workspace,
+    evaluation_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
     target_call_llm,
 )
@@ -106,7 +106,7 @@ def test_evolve_once_triggers_index_ingest(monkeypatch: pytest.MonkeyPatch, tmp_
     experiment_calls: list[tuple[Any, ...]] = []
     _install_fake_index(monkeypatch, run_calls=run_calls, experiment_calls=experiment_calls)
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     # Full A/B tournament runs the single board entry under both v0 and
     # v1 → two ingest_run calls.
@@ -150,7 +150,7 @@ def test_evolve_once_survives_index_ingest_failure(
     )
 
     # The round must NOT raise even though every ingest call throws.
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "promoted"
     # The ingest calls were still attempted (they raised internally).
@@ -188,7 +188,7 @@ def test_evolve_once_runs_without_index_sibling(
 
     monkeypatch.setattr("builtins.__import__", _blocking_import)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "promoted"
 
@@ -231,7 +231,7 @@ def test_evolve_n_rounds_builds_and_heals_the_index_at_start(
                 workspace_root=workspace,
                 epoch_id=epoch_id,
                 target_call_llm=target_call_llm,
-                evaluation_call_llm=make_aux_responder([]),
+                evaluation_call_llm=evaluation_call_llm,
                 instance_id="preflight-test",
             )
         )
@@ -282,7 +282,7 @@ def test_evolve_n_rounds_heals_a_diverged_index_before_the_first_round(
                 workspace_root=workspace,
                 epoch_id=epoch_id,
                 target_call_llm=target_call_llm,
-                evaluation_call_llm=make_aux_responder([]),
+                evaluation_call_llm=evaluation_call_llm,
                 instance_id="heal-test",
             )
         )
@@ -328,7 +328,7 @@ def test_the_index_preflight_never_aborts_a_run(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
             instance_id="boom-test",
         )
     )
@@ -359,7 +359,7 @@ def test_round_settlement_populates_lineage_derived_columns(
                 workspace_root=workspace,
                 epoch_id=epoch_id,
                 target_call_llm=target_call_llm,
-                evaluation_call_llm=make_aux_responder([]),
+                evaluation_call_llm=evaluation_call_llm,
                 instance_id=instance_id,
             )
         )

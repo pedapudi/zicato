@@ -24,7 +24,7 @@ from zicato.board.jsonl import save_board
 from zicato.cli.discovery import build_cli_root
 from zicato.core import BoardEntry, Generation, LossProfile, ScoringWeights
 from zicato.core.board import Expectation, ExpectationKind
-from zicato.core.workspace import board_path, generation_dir, reflection_suggestions_path
+from zicato.core.workspace import generation_dir, reflection_suggestions_path
 from zicato.epoch.lifecycle import new_epoch
 from zicato.index.schema import apply_schema
 from zicato.tournament.unit_cache import _unit_loss_path
@@ -112,7 +112,7 @@ def _run(args: list[str]) -> object:
     return CliRunner(mix_stderr=False).invoke(build_cli_root(), args)
 
 
-def test_unmocked_round_trip_suggest_persists_and_applies(tmp_path: Path) -> None:
+def test_unmocked_suggestion_is_persisted(tmp_path: Path) -> None:
     ws, epoch = _seed_workspace(tmp_path)
 
     # NO monkeypatch of resolve_synthesize / resolve_admit — the real seams run.
@@ -141,36 +141,6 @@ def test_unmocked_round_trip_suggest_persists_and_applies(tmp_path: Path) -> Non
     # Provenance carried the synthesiser tier + the motivating episode's keys.
     assert reg["provenance"]["synthesizer"] == "mechanical"
     assert reg["severity_rank"] > 0
-
-    # Real apply carries the drafted entry into a builder draft — the sealed
-    # contract stays byte-unchanged.
-    before = board_path(ws, epoch).read_bytes()
-    applied = _run(
-        [
-            "inspect",
-            "reflection",
-            "apply",
-            _REFLECTION_ID,
-            reg["suggestion_id"],
-            "--workspace",
-            str(ws),
-        ]
-    )
-    assert applied.exit_code == 0, applied.output
-    assert "add_board_entry" in applied.output
-    assert board_path(ws, epoch).read_bytes() == before
-
-    from zicato.reflection.apply import apply_suggestion_to_draft  # noqa: PLC0415
-
-    result_apply = apply_suggestion_to_draft(
-        workspace_root=ws,
-        epoch_id=epoch,
-        reflection_id=_REFLECTION_ID,
-        suggestion_id=reg["suggestion_id"],
-    )
-    assert result_apply.op == "add_board_entry"
-    assert result_apply.patch["changed"]["entry_id"].startswith("login__regression")
-    assert "board" in result_apply.diff["changed_components"]
 
 
 def test_unmocked_probe_measures_against_the_fixture_runner(tmp_path: Path, monkeypatch) -> None:

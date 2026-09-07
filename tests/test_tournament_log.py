@@ -1,39 +1,19 @@
-"""Tests for the active-tournament EVENT LOG (RUNTIME-V2 Phase 3).
-
-The in-progress tournament's live state migrated from a mutable
-``active_tournament.json`` SNAPSHOT (multiple read-modify-writers racing
-the same file) to a single-writer, append-only EVENT LOG
-(:mod:`zicato.runtime.tournament_log`). The public ``state`` helpers keep
-their signatures but now append typed events; a reader FOLDS the log into
-the same :class:`ActiveTournament` the snapshot held.
-
-These pin the new behaviour:
-
-* the live producer writes the JSONL log, NOT the legacy snapshot file;
-* every state-mutating helper is ONE append (no read-modify-write), and
-  the fold reproduces the snapshot view byte-for-byte;
-* a ``Snapshot`` republish supersedes prior state but carries the runner's
-  accumulated live deltas forward (the dashboard keeps the live standing);
-* INTERLEAVED writers (the orchestrator republish + the runner's per-board
-  delta) cannot lose each other's update — the lost-update race the
-  snapshot had is gone;
-* a compat reader still surfaces a legacy ``active_tournament.json``;
-* ``clear`` drops both the log and the legacy snapshot.
-"""
+"""Tournament event reconstruction, interleaved updates and state clearing."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+import pytest
+
 from zicato.runtime import tournament_log
-from zicato.runtime.paths import active_tournament_log_path, active_tournament_path
+from zicato.runtime.paths import active_tournament_log_path
 from zicato.runtime.state import (
     ActiveTournament,
     ActiveTournamentEntry,
     clear_active_tournament,
     read_active_tournament,
-    read_active_tournament_snapshot,
     update_tournament_entry,
     update_tournament_partial_aggregate,
     update_tournament_projected,
@@ -64,11 +44,11 @@ def _sample() -> ActiveTournament:
 
 def test_write_produces_the_event_log_not_the_legacy_snapshot(tmp_path: Path) -> None:
     write_active_tournament(tmp_path, _sample())
-    # The new live-state file is the append-only JSONL event log.
+    # The producer appends a typed, sequenced event.
     log_path = active_tournament_log_path(tmp_path)
     assert log_path.exists(), "the active-tournament event log is written"
-    # The legacy mutable snapshot is NOT written by the live producer.
-    assert not active_tournament_path(tmp_path).exists(), "no legacy snapshot file"
+    # A publication leaves unrelated runtime paths absent.
+    assert not (tmp_path / "runtime" / "active_tournament.json").exists(), "no legacy snapshot file"
     # The first line is a typed, sequenced Snapshot event.
     first = json.loads(log_path.read_text().splitlines()[0])
     assert first["type"] == "Snapshot"
@@ -211,39 +191,21 @@ def test_projected_update_folds_into_live_progress_in_the_reader(tmp_path: Path)
 # ---------------------------------------------------------------------------
 
 
-def test_compat_reader_folds_a_legacy_snapshot_when_no_log(tmp_path: Path) -> None:
-    """A pre-RUNTIME-V2 ``active_tournament.json`` snapshot (no event log)
-    is still surfaced by the folded read — the migration's compat path.
-    """
-    legacy = {
-        "tournament_id": "t",
-        "parent_generation_id": "v1",
-        "child_generation_id": "v2",
-        "epoch_id": "e",
-        "started_at": "2026-06-09T10:00:00Z",
-        "phase": "running",
-        "entries": [{"entry_id": "b0", "side": "child", "status": "completed"}],
-    }
-    active_tournament_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
-    active_tournament_path(tmp_path).write_text(json.dumps(legacy))
-    # No event log present → the fold falls back to the legacy snapshot.
-    assert not tournament_log.has_log(tmp_path)
-    got = read_active_tournament(tmp_path)
-    assert got is not None
-    assert got.tournament_id == "t"
-    assert got.entries[0].status == "completed"
-    # The direct compat reader sees the same legacy snapshot.
-    assert read_active_tournament_snapshot(tmp_path) is not None
-
-
-def test_clear_removes_both_the_log_and_the_legacy_snapshot(tmp_path: Path) -> None:
-    write_active_tournament(tmp_path, _sample())
-    # Also drop a stale legacy snapshot to prove clear drops both.
-    active_tournament_path(tmp_path).write_text("{}")
-    clear_active_tournament(tmp_path)
-    assert not active_tournament_log_path(tmp_path).exists()
-    assert not active_tournament_path(tmp_path).exists()
+@pytest.mark.parametrize(
+    "log_contents", [None, "", '{"seq":1,"ts":"t","type":"EntryUpdate","payload":{}}\n']
+)
+def test_missing_live_state_ignores_and_preserves_saved_snapshot(
+    tmp_path: Path, log_contents: str | None
+) -> None:
+    snapshot = tmp_path / "runtime" / "active_tournament.json"
+    snapshot.parent.mkdir(parents=True)
+    saved = json.dumps(_sample().to_dict())
+    snapshot.write_text(saved)
+    if log_contents is not None:
+        active_tournament_log_path(tmp_path).write_text(log_contents)
     assert read_active_tournament(tmp_path) is None
+    clear_active_tournament(tmp_path)
+    assert snapshot.read_text() == saved
 
 
 def test_read_is_none_when_nothing_written(tmp_path: Path) -> None:

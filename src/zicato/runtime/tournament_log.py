@@ -3,9 +3,7 @@
 Several writers publish the in-progress tournament's live state: the
 orchestrator's full-envelope republish (once per scheduled batch) and the
 runner's per-board-unit updates (entry transitions, partial aggregates,
-projected standings). Were that state one mutable ``active_tournament.json``
-file, each writer would read-modify-write it and the slower of two racing
-writers would silently drop the other's update.
+projected standings). Every update is appended to the same event log.
 
 So the state is instead a **single-writer, append-only EVENT LOG** built on
 :class:`zicato.runtime.channel.EventLog`. Every
@@ -44,10 +42,8 @@ the semantics, so the two cannot drift apart.
 
 When no event log exists
 ------------------------
-:func:`fold_active_tournament` falls back to a plain
-``active_tournament.json`` snapshot, so a hand-written or hand-edited
-snapshot still surfaces. :func:`clear_log` removes the log and that
-snapshot together, so a cleared tournament reads ``None`` either way.
+:func:`fold_active_tournament` returns ``None``. :func:`clear_log` removes
+only the event log; unrelated saved workspace files remain untouched.
 """
 
 from __future__ import annotations
@@ -56,7 +52,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from zicato.runtime._storage import active_tournament_key, active_tournament_log_key
+from zicato.runtime._storage import active_tournament_log_key
 from zicato.runtime.channel import EventLog
 from zicato.runtime.paths import ensure_runtime_dirs
 from zicato.storage import workspace_backend
@@ -135,14 +131,9 @@ def has_log(workspace_root: Path) -> bool:
 
 
 def clear_log(workspace_root: Path) -> None:
-    """Remove the event log AND any snapshot beside it. Idempotent.
-
-    A cleared tournament must read ``None`` from BOTH the log and the
-    fallback snapshot, so clearing removes both keys.
-    """
+    """Remove the event log. A missing log is already clear."""
     backend = workspace_backend(workspace_root, start=False)
     backend.delete(active_tournament_log_key())
-    backend.delete(active_tournament_key())
 
 
 # ---------------------------------------------------------------------------
@@ -157,8 +148,7 @@ def fold_active_tournament(workspace_root: Path) -> Any | None:
     applies every later delta in append order. Returns ``None`` when the
     tournament has been cleared or never started.
 
-    When no event log exists, falls back to reading a plain
-    ``active_tournament.json`` snapshot.
+    An absent or empty event log carries no live tournament state.
     """
     # Lazy import to avoid an import cycle (state imports this module).
     from zicato.runtime.state import (  # noqa: PLC0415
@@ -166,13 +156,11 @@ def fold_active_tournament(workspace_root: Path) -> Any | None:
         _apply_entry_update,
         _champion_ids,
         _fold_projected_into_live_progress,
-        read_active_tournament_snapshot,
     )
 
     events = _log(workspace_root).read()
     if not events:
-        # No log — fall back to the plain snapshot.
-        return read_active_tournament_snapshot(workspace_root)
+        return None
 
     # Start from the last Snapshot (a Snapshot resets the fold) + the
     # deltas that follow it.

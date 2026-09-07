@@ -2,8 +2,8 @@
 
 A bounded knob names the values it admits once, in the metadata of the
 dataclass field that holds it. The contract loader applies every
-declaration when it builds the frozen contract, and the tournament builder
-consults the same declaration before it edits a draft, so one rule has one
+declaration when it builds the frozen contract, and configuration operations
+consult the same declaration before it edits a draft, so one rule has one
 wording whichever surface refuses the value.
 
 Rejection messages name the CONTRACT field rather than the argument the
@@ -160,7 +160,7 @@ def require_knob(owner: type[Any], name: str, value: object) -> None:
     """Refuse a value the named contract knob's declared constraint forbids.
 
     The entry point for a surface that validates BEFORE constructing the
-    contract dataclass — the tournament builder rejects an edit at the
+    contract dataclass. Configuration edits are checked at the
     operation boundary, where it can name the argument, instead of letting
     the draft carry the value to a later ``dataclasses.replace``.
     """

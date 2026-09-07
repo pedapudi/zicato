@@ -73,9 +73,9 @@ class Suggestion:
         judge JSON synthesis drafted (validated against the real loader before
         it ships, §3).
     proposed_op:
-        The ``{op, args}`` the apply seam stages onto a builder draft
-        (``add_board_entry`` / ``add_judge``), or ``None`` when no mechanical op
-        applies yet (a rubric revision — the recorded gap).
+        A suggested configuration operation (``add_board_entry`` or
+        ``add_judge``), or ``None`` when the edit requires manual review.
+        No operation runs automatically.
     provenance:
         The §4 block (miner_version, source_episodes, source_refs,
         source_lineage_ids, suggestion_type, target_slice).
@@ -478,7 +478,7 @@ def render_suggestions_table(suggestions: list[Suggestion]) -> str:
             f"{i:>2}. [{s.suggestion_type}] {s.subject} -> {s.target_slice}\n"
             f"    {s.summary}\n"
             f"    admission: {format_admission(s.admission)}\n"
-            f"    apply: zicato inspect reflection apply <reflection_id> {s.suggestion_id}"
+            f"    suggestion: {s.suggestion_id}"
         )
     return "\n".join(lines)
 
@@ -507,13 +507,6 @@ def render_suggestions_md(suggestions: list[Suggestion]) -> list[str]:
             src = str(foreign.get("source_file", "?"))
             dialect = str(foreign.get("dialect", "?"))
             lines.append(f"- foreign source: {src} ({dialect}) — trajectory bootstrap")
-        if s.proposed_op:
-            lines.append(
-                "- apply with: `zicato inspect reflection apply "
-                f"{{reflection_id}} {s.suggestion_id}`"
-            )
-        else:
-            lines.append("- apply: recommendation only (no mechanical op — an authoring decision)")
         lines.append("")
     return lines
 

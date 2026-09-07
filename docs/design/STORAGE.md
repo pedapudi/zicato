@@ -31,7 +31,7 @@ three of the five.
 
 | # | Data kind | What it is |
 |---|---|---|
-| 1 | **Runtime state** | The orchestrator's live state, read by the supervisor and the dashboard: `heartbeat.json`, `lock.json`, `active_tournament.json`, the per-run `active_runs/*.json`, and the control-protocol flag files. |
+| 1 | **Runtime state** | The orchestrator's live state, read by the supervisor and the dashboard: `heartbeat.json`, `lock.json`, `active_tournament.events.jsonl`, the per-run `active_runs/*.json`, and the control-protocol flag files. |
 | 2 | **Telemetry** | The `goldfive.v1.Event` stream of each tournament run — one `events.jsonl` per run. |
 | 3 | **Generation source trees** | The post-apply system-under-test source at each generation: a tagged commit under Git or `generations/vN/snapshot/` under the directory backend. |
 | 4 | **Lineage / experiments / journals** | The typed evolutionary record: `experiment.json` + per-patch files, `journal.md`, `lineage.json`, per-epoch `config.json` / `board.jsonl` / `scoring.json` / `brief.md`, cached `gen_score.json`. |
@@ -346,6 +346,16 @@ sorted relative paths, sizes, media types, and content hashes, with no absolute
 scratch paths or timestamps. It therefore survives scratch cleanup and is both
 grader-readable and reproducible from the filesystem source of truth.
 
+`tournament.artifacts` owns manifest construction, structural acceptance and
+reading. Its codec preserves extension fields and requires consistent file
+metadata, skipped entries and totals. Workers record the measurement and run
+identity; known-seed readers require these to match the paired loss, including
+inside retained attempt directories. Historical unqualified manifests remain
+available for audit. Copied paths must remain beneath the selected artifact
+directory without links, and their recorded sizes must match regular files.
+An absent manifest returns no inventory. A present unreadable or mismatched
+manifest reports an error while leaving the manifest and copied files intact.
+
 The adapter contract also carries snapshot hygiene. `HarnessAdapter`
 declares `run_output_names`, the extra artifact names, and
 `mutable_subpaths(generation_root)`, the narrowed mutable surface the
@@ -387,8 +397,8 @@ and `racing`. Every persisted field is additive, so the gauntlet shape
 stays compact. The generalization touches three records and adds no new
 storage mechanism; it rides on the seams described in §5.1 and §5.2.
 
-**(a) The live runtime record** — `runtime/active_tournament.json`
-(`ActiveTournament`), one JSON record via `StorageBackend`. It carries a
+**(a) The live runtime record** — `runtime/active_tournament.events.jsonl`
+folds into `ActiveTournament`. The event log carries a
 **structure envelope** alongside the existing two-side fields:
 
 - `structure` / `structure_params` — copied from the epoch contract at

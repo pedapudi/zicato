@@ -16,6 +16,7 @@ endpoint-outage circuit deferred.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 
 from zicato.evolve import generation_phase
@@ -32,7 +33,7 @@ log = logging.getLogger("zicato.orchestrator")
 
 
 def _open_field_round(prepared: generation_phase.PreparedRound) -> FieldRound:
-    """Expand one round's prepared state into the names its phases read.
+    """Resolve field size, evaluation settings, and the round's event log.
 
     Narration — a rejected round's summary sentence, the round epilogue —
     describes what the round did rather than generating a candidate, so it is
@@ -49,29 +50,16 @@ def _open_field_round(prepared: generation_phase.PreparedRound) -> FieldRound:
     it already opened the round on.
     """
 
+    if prepared.round_log is None:
+        prepared = replace(
+            prepared,
+            round_log=_RoundLogEmitter(
+                prepared.workspace_root, prepared.epoch_id, prepared.round_index
+            ),
+        )
     return FieldRound(
         prepared=prepared,
-        round_log=prepared.round_log
-        or _RoundLogEmitter(prepared.workspace_root, prepared.epoch_id, prepared.round_index),
-        workspace_root=prepared.workspace_root,
-        workspace_config=prepared.workspace_config,
-        epoch_id=prepared.epoch_id,
-        round_index=prepared.round_index,
-        total_rounds=prepared.total_rounds,
         parent_id=prepared.parent_generation.id,
-        adapter=prepared.adapter,
-        config=prepared.config,
-        weights=prepared.weights,
-        board=list(prepared.board),
-        train_board=list(prepared.train_board),
-        tournament_spec=prepared.tournament_spec,
-        strategy=prepared.strategy,
-        mutations=list(prepared.mutations),
-        disable_drift=prepared.disable_drift,
-        judge_only=prepared.judge_only,
-        fast_mode=prepared.fast_mode,
-        beater=prepared.beater,
-        meta_loop_emitter=prepared.meta_loop_emitter,
         evaluation_call_llm=prepared.config.evaluation_call_llm,
         evaluation_model=str(prepared.workspace_config.get("evaluation_model", "")),
         field_size=prepared.strategy.field_size(),

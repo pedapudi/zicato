@@ -380,7 +380,8 @@ def test_the_reader_tolerates_an_absent_file(tmp_path: Path) -> None:
     assert list(read_proposer_inputs(tmp_path, _EPOCH)) == []
 
 
-def test_the_reader_skips_a_torn_final_line(tmp_path: Path) -> None:
+@pytest.mark.parametrize("tail", [b'{"role":"proposal","user":"half a rec', b'{"user":"\xe2\x82'])
+def test_the_reader_skips_a_torn_final_line(tmp_path: Path, tail: bytes) -> None:
     capture_proposer_input(
         workspace_root=tmp_path,
         epoch_id=_EPOCH,
@@ -389,11 +390,39 @@ def test_the_reader_skips_a_torn_final_line(tmp_path: Path) -> None:
         user="u",
     )
     path = proposer_inputs_path(tmp_path, _EPOCH)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write('{"role":"proposal","user":"half a rec')
+    with path.open("ab") as fh:
+        fh.write(tail)
 
     records = _records(tmp_path)
     assert [r["user"] for r in records] == ["u"]
+
+
+@pytest.mark.parametrize("tail", [b'{"role":\n', b'{"role":\n\n', b"[]\n", b"[]", b"\xff\n"])
+def test_the_reader_refuses_a_complete_malformed_final_row(tmp_path: Path, tail: bytes) -> None:
+    capture_proposer_input(
+        workspace_root=tmp_path, epoch_id=_EPOCH, role=ROLE_PROPOSAL, system="s", user="u"
+    )
+    path = proposer_inputs_path(tmp_path, _EPOCH)
+    raw = path.read_bytes() + tail
+    path.write_bytes(raw)
+
+    with pytest.raises(ValueError, match="proposer input capture"):
+        _records(tmp_path)
+
+    assert path.read_bytes() == raw
+
+
+def test_a_complete_captured_object_without_newline_remains_readable(tmp_path: Path) -> None:
+    capture_proposer_input(
+        workspace_root=tmp_path, epoch_id=_EPOCH, role=ROLE_PROPOSAL, system="s", user="u"
+    )
+    path = proposer_inputs_path(tmp_path, _EPOCH)
+    expected = _records(tmp_path)
+    raw = path.read_bytes().removesuffix(b"\n")
+    path.write_bytes(raw)
+
+    assert _records(tmp_path) == expected
+    assert path.read_bytes() == raw
 
 
 def test_the_reader_raises_on_interior_corruption(tmp_path: Path) -> None:

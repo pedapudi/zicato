@@ -45,7 +45,6 @@ from zicato.core.workspace import (
     mutations_json_path,
     patch_json_path,
     patches_dir,
-    rubric_path,
     run_dir,
     scoring_path,
 )
@@ -109,7 +108,6 @@ def test_all_epoch_helpers_descend_uniformly(tmp_path: Path) -> None:
     assert mutations_json_path(tmp_path, "e0") == edir / "mutations.json"
     assert brief_path(tmp_path, "e0") == edir / "brief.md"
     # legacy alias resolves to the current brief.md path
-    assert rubric_path(tmp_path, "e0") == edir / "brief.md"
 
 
 def test_lineage_path_descends(tmp_path: Path) -> None:

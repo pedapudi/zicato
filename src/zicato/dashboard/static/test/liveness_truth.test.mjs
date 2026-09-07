@@ -2,7 +2,7 @@
 //
 // THE BUG. A real workspace, dead since June, rendered LIVE on every view. Its
 // runtime files all still say "busy": heartbeat.json names
-// `tournament:round_0:racing-final`, active_tournament.json reads
+// `tournament:round_0:racing-final`, active_tournament.events.jsonl reads
 // `phase: "running"`, and seven active_runs records sit on disk. Liveness was
 // read off that FILE PRESENCE, so two months later the console opened with a
 // breathing LIVE pill, 100%-forever progress bars, "deciding…" figures and

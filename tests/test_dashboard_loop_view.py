@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from tests._workspace_support import write_tournament
 from zicato.dashboard.server import create_app
 from zicato.query import (
     WorkspacePaths,
@@ -552,9 +553,7 @@ def _pipeline_workspace(
         encoding="utf-8",
     )
     if tournament is not None:
-        (ws / "runtime" / "active_tournament.json").write_text(
-            json.dumps(tournament), encoding="utf-8"
-        )
+        write_tournament(ws, tournament)
     started = now.isoformat().replace("+00:00", "Z")
     deadline = (now + _dt.timedelta(minutes=3)).isoformat().replace("+00:00", "Z")
     for i in range(runs):

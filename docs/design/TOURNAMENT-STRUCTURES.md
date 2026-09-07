@@ -309,10 +309,10 @@ specifications. These fallbacks do not replace the complete shared scoring defau
 > `params["replicates"]` is unset" (`src/zicato/selection/registry.py`). A
 > strategy resolves its own default in `__init__` against the same ClassVar
 > the map reads, so the map and the live strategy can never disagree. The
-> builder cost estimator reads `default_replicates_for` rather than assuming a
+> contract cost estimator reads `default_replicates_for` rather than assuming a
 > flat `1`, so the cost meter matches the schedule a structure actually runs
 > (gauntlet / swiss / single-elim / double-elim default to `2`, racing to
-> `1`) — see §4.0 and [`TOURNAMENT-BUILDER.md §4`](TOURNAMENT-BUILDER.md#4-the-consequence-forward-principle).
+> `1`) — see §4.0 and [the contract cost estimator](../dev-guide/10-cli-and-configuration.md#103-estimating-evaluation-cost).
 
 ### 3.1 `gauntlet` (the default)
 
@@ -470,7 +470,7 @@ Two registries map the `structure` string to its class:
 `swiss`. `make_strategy` resolves an experimental token only when the
 contract's `experimental.tournament_structures` flag is `true`; otherwise
 it raises, naming the token and that key, as the contract loader, the
-builder and `zicato evolve --tournament-structure` do. Any structure
+contract validator and `zicato evolve --tournament-structure` do. Any structure
 constructed with `field_size == 1` degrades to `gauntlet` semantics (one
 challenger, one full-board duel) rather than erroring — the same graceful
 degeneracy fast mode already uses when no champion cache exists

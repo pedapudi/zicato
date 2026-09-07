@@ -38,7 +38,7 @@ import { gatedSwap } from './ui.js';
 import { runStateLabel, LIVENESS, livenessBandText } from './livestatus.js';
 import {
   racingModel, swissModel, elimModel, gauntletModel, gauntletModelDigest, normalizeStructure,
-  buildLiveRacingModel, buildLiveSwissModel, buildLiveElimModel, buildLiveModel,
+  buildLiveModel,
   liveMatchBlocks, liveMatchBlocksDigest,
 } from './tournament_model.js';
 
@@ -1132,6 +1132,7 @@ export class LiveController {
       .map((c) => c && c.generation_id).filter((g) => g != null).map(String);
     const gens = epochGens.length ? epochGens : null;
     const onCompetitor = this.onCompetitor || undefined;
+    const st = buildLiveModel(at, heartbeat, activeRuns, gens) || normalizeStructure(at, true);
 
     if (structure === 'racing') {
       // build the unified LIVE model (published rounds + active-runs overlay) so
@@ -1139,7 +1140,6 @@ export class LiveController {
       // the racing model (which recovers championScalar from the live aggregate /
       // projected standings — degrades gracefully to a delta-only domain when the
       // champion scalar is unrecoverable mid-race).
-      const st = buildLiveRacingModel({ at, heartbeat, activeRuns, epochGens: gens }) || normalizeStructure(at, true);
       const model = racingModel(st);
       if (!model || !model.hasRungs) return null;
       // FULL-WIDTH HERO: the scalar number-line IS the primary viz, so it scales
@@ -1158,7 +1158,6 @@ export class LiveController {
       // FULL-WIDTH HERO: the swiss ladder scales aspect-locked to fill the hero
       // width (`responsive` → the svg.dn-swissladder-hero max-width cap governs),
       // matching racing's full-width track. A wide figure → fills to its cap.
-      const st = buildLiveSwissModel({ at, heartbeat, activeRuns, epochGens: gens }) || normalizeStructure(at, true);
       const model = swissModel(st);
       if (!model || !model.hasRounds) return null;
       const opts = {
@@ -1171,7 +1170,6 @@ export class LiveController {
       return { node, digest: 'swiss|' + swissDigest(model) };
     }
     if (structure === 'single_elim' || structure === 'double_elim') {
-      const st = buildLiveElimModel({ at, heartbeat, activeRuns, epochGens: gens }) || normalizeStructure(at, true);
       const model = elimModel(st);
       if (!model || !model.hasMatches) return null;
       // ELIM hero: the concentric-ring radial — the single-round PRIMARY for
@@ -1193,7 +1191,6 @@ export class LiveController {
       // bars — the SAME final liked gauntlet figure, in mini. Built from the
       // unified live model so in-flight challengers carry their board-progress
       // lane + projected scalar.
-      const st = buildLiveModel(at, heartbeat, activeRuns, gens) || normalizeStructure(at, true);
       const model = gauntletModel(st);
       if (!model || !model.hasField) return null;
       // FULL-WIDTH HERO: the field bars scale aspect-locked to fill the hero width

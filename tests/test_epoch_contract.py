@@ -750,11 +750,12 @@ def test_missing_board_differs_from_present_board(tmp_path: Path) -> None:
 
 def test_canon_board_meta_stable_for_board_without_meta(tmp_path: Path) -> None:
     """An entry-only board canonicalizes to a stable empty-meta form."""
+    from zicato.board.jsonl import load_board_rows
     from zicato.epoch.contract import _canon_board_meta
 
     board = tmp_path / "board.jsonl"
     board.write_text(_BOARD_LINE_A + "\n")
-    meta = _canon_board_meta(board)
+    meta = _canon_board_meta(load_board_rows(board) or [])
     # Empty-meta form: no judges, drift not disabled.
     assert json.loads(meta) == {"judges": [], "disable_drift": False}
 
@@ -762,19 +763,20 @@ def test_canon_board_meta_stable_for_board_without_meta(tmp_path: Path) -> None:
 def test_canon_board_meta_picks_up_judges_and_disable_drift(tmp_path: Path) -> None:
     """A board-level metadata object feeds judges + disable_drift into the form.
 
-    The board-level metadata is a JSON object carrying ``judges`` /
-    ``disable_drift`` but no entry ``id``; it is scanned out of the raw
-    board file. The exact on-disk placement of that object alongside
-    entry rows is owned by ``zicato.board`` and reconciled at
-    integration time.
+    The leading board_meta header retains extension fields alongside
+    the validated suppression list.
     """
+    from zicato.board.jsonl import load_board_rows
     from zicato.epoch.contract import _canon_board_meta
 
     board = tmp_path / "board.jsonl"
     board.write_text(
-        json.dumps({"judges": [{"name": "j1"}], "disable_drift": ["tool_error"]}) + "\n"
+        json.dumps(
+            {"board_meta": True, "judges": [{"name": "j1"}], "disable_drift": ["tool_error"]}
+        )
+        + "\n"
     )
-    meta = json.loads(_canon_board_meta(board))
+    meta = json.loads(_canon_board_meta(load_board_rows(board) or []))
     assert meta["disable_drift"] == ["tool_error"]
     assert meta["judges"] == [{"name": "j1"}]
 
@@ -794,11 +796,12 @@ def _board_with_disable_drift(kinds: list[str]) -> str:
 
 def test_canon_board_meta_keeps_the_sorted_kind_list(tmp_path: Path) -> None:
     """The canonical form carries the sorted kind list, not a bare flag."""
+    from zicato.board.jsonl import load_board_rows
     from zicato.epoch.contract import _canon_board_meta
 
     board = tmp_path / "board.jsonl"
     board.write_text(_board_with_disable_drift(["tool_error", "agent_refusal"]))
-    meta = json.loads(_canon_board_meta(board))
+    meta = json.loads(_canon_board_meta(load_board_rows(board) or []))
     assert meta["disable_drift"] == ["agent_refusal", "tool_error"]
 
 
@@ -836,6 +839,7 @@ def test_empty_disable_drift_hashes_like_a_board_with_no_header(tmp_path: Path) 
     hash byte-for-byte as it did before ``disable_drift`` became a kind
     list, so no existing workspace rolls its epoch for this change.
     """
+    from zicato.board.jsonl import load_board_rows
     from zicato.epoch.contract import _canon_board_meta
 
     absent = tmp_path / "absent.jsonl"
@@ -846,9 +850,14 @@ def test_empty_disable_drift_hashes_like_a_board_with_no_header(tmp_path: Path) 
         json.dumps({"board_meta": True, "disable_drift": []}) + "\n" + _BOARD_LINE_A + "\n"
     )
 
-    assert _canon_board_meta(absent) == _canon_board_meta(empty)
+    assert _canon_board_meta(load_board_rows(absent) or []) == _canon_board_meta(
+        load_board_rows(empty) or []
+    )
     # The historic canonical bytes, pinned literally.
-    assert json.loads(_canon_board_meta(absent)) == {"judges": [], "disable_drift": False}
+    assert json.loads(_canon_board_meta(load_board_rows(absent) or [])) == {
+        "judges": [],
+        "disable_drift": False,
+    }
 
 
 def test_canon_judges_is_order_independent() -> None:
@@ -1230,25 +1239,6 @@ def test_resolve_contract_inputs_defaults_when_no_contract_key(
     # Defaults sit next to the workspace dir (the operator's project root).
     assert inputs.board_path == (tmp_path / "board.jsonl").resolve()
     assert inputs.brief_path == (tmp_path / "brief.md").resolve()
-
-
-def test_resolve_contract_inputs_default_brief_falls_back_to_legacy_file(
-    tmp_path: Path,
-) -> None:
-    """When no ``brief.md`` exists but a legacy ``rubric.md`` does, use it.
-
-    Workspaces created before the rename keep an operator-side
-    ``rubric.md``; the default resolver prefers it over a non-existent
-    ``brief.md`` so those workspaces resolve without a file rename.
-    """
-    workspace = tmp_path / ".zicato"
-    workspace.mkdir()
-    (workspace / "config.json").write_text(
-        json.dumps({"adk_entrypoint": "pkg.mod:agent", "mutable_trees": []})
-    )
-    (tmp_path / "rubric.md").write_text("# legacy brief\n")
-    inputs = resolve_contract_inputs(workspace)
-    assert inputs.brief_path == (tmp_path / "rubric.md").resolve()
 
 
 # ---------------------------------------------------------------------------

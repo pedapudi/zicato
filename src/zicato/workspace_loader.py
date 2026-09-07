@@ -34,24 +34,10 @@ from zicato.core.types import (
     ScoringWeights,
     TournamentStructure,
 )
-from zicato.core.workspace import board_path, epoch_dir, scoring_path
+from zicato.core.workspace import board_path, brief_path, scoring_path
 from zicato.epoch.lifecycle import current_epoch_id, load_epoch
 from zicato.proposer.brief import ProposerBrief, load_brief
 from zicato.workspace.config_io import read_workspace_config
-
-
-def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
-    """Path to the frozen proposer brief (``brief.md``) for one epoch.
-
-    When no ``brief.md`` exists, ``rubric.md`` is read as a fallback
-    spelling of the same file.
-    """
-    brief = epoch_dir(workspace_root, epoch_id) / "brief.md"
-    if not brief.exists():
-        legacy = epoch_dir(workspace_root, epoch_id) / "rubric.md"
-        if legacy.exists():
-            return legacy
-    return brief
 
 
 def load_workspace_config(workspace_root: Path) -> dict[str, Any]:
@@ -167,7 +153,7 @@ def load_current_tournament(workspace_root: Path) -> TournamentStructure:
 def load_current_brief(workspace_root: Path) -> ProposerBrief:
     """Load the current epoch's parsed :class:`ProposerBrief`."""
     eid = _resolve_current_epoch(workspace_root)
-    path = _epoch_brief_path(workspace_root, eid)
+    path = brief_path(workspace_root, eid)
     if not path.exists():
         raise FileNotFoundError(f"brief.md not found at {path}; the current epoch is incomplete")
     return load_brief(path)

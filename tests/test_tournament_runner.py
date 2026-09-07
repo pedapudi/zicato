@@ -29,7 +29,11 @@ from typing import Any
 import pytest
 
 import zicato.tournament.runner as runner_mod
-from tests._runtime_builders import runtime_config
+from tests._runtime_builders import (
+    prepare_tournament_epoch,
+    record_tournament_score,
+    runtime_config,
+)
 from zicato.core import (
     BoardEntry,
     DriftCount,
@@ -40,6 +44,7 @@ from zicato.core import (
     ScoringWeights,
 )
 from zicato.core import BoardEntry as _BoardEntry
+from zicato.core.types import OverfittingConfig
 from zicato.core.workspace import run_id_for_unit
 from zicato.tournament.gate import GateOutcome
 from zicato.tournament.runner import (
@@ -131,9 +136,9 @@ def _stub_run_single(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side
+        del adapter, weights, config, workspace_root, side
         call_log.append((generation.id, entry.id))
-        return canned[(generation.id, entry.id)]
+        return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
     return call_log
@@ -198,16 +203,17 @@ def test_run_tournament_iterates_board_for_both_generations(
     weights = ScoringWeights(promote_margin=0.01)
     config = runtime_config(tmp_path)
 
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
             weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -269,16 +275,19 @@ def test_run_tournament_rejects_when_child_regresses_pass_rate(
     _stub_run_single(monkeypatch, canned=canned)
 
     config = runtime_config(tmp_path)
+    board = _make_board()
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            board=_make_board(),
-            weights=ScoringWeights(),
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
+            board=board,
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -364,12 +373,12 @@ def test_run_tournament_stamps_each_entry_on_the_correct_side(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, epoch_id
+        del adapter, weights, config
         # Exactly the transitions the real _run_single performs, keyed on
         # (entry_id, side).
         update_tournament_entry(workspace_root, entry.id, side, status="running")
         update_tournament_entry(workspace_root, entry.id, side, status="completed")
-        return canned[(generation.id, entry.id)]
+        return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
@@ -389,16 +398,18 @@ def test_run_tournament_stamps_each_entry_on_the_correct_side(
     monkeypatch.setattr(_state_mod, "clear_active_tournament", capturing_clear)
 
     config = runtime_config(tmp_path)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -450,15 +461,19 @@ def test_run_fast_mode_runs_only_child(monkeypatch: pytest.MonkeyPatch, tmp_path
     }
 
     config = runtime_config(tmp_path)
+    board = _make_board()
+    weights = ScoringWeights(promote_margin=0.01)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
-            child_gen=child_gen,
-            board=_make_board(),
-            weights=ScoringWeights(promote_margin=0.01),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
+            board=board,
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             parent_historical_agg=parent_historical,
             parent_generation_id="v0",
         )
@@ -467,8 +482,10 @@ def test_run_fast_mode_runs_only_child(monkeypatch: pytest.MonkeyPatch, tmp_path
     # Only the child was run.
     assert set(call_log) == {("v1", "entry_a"), ("v1", "entry_b")}
 
-    # Parent agg passes through unchanged; child agg fresh from this run.
-    assert result.parent_agg is parent_historical
+    # The recorded parent values survive readback without sharing the caller's map.
+    assert result.parent_agg == parent_historical
+    result.parent_agg["per_entry"]["entry_a"]["drift_loss"] = 99.0
+    assert parent_historical["per_entry"]["entry_a"]["drift_loss"] == 2.0
     assert result.child_agg["scalar"] == 0.5
     assert result.parent_generation_id == "v0"
     assert result.child_generation_id == "v1"
@@ -506,15 +523,18 @@ def test_run_fast_mode_never_runs_the_champion(
     }
 
     config = runtime_config(tmp_path)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     asyncio.run(
         run_fast_mode(
             adapter=object(),
-            child_gen=child_gen,
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             parent_historical_agg=parent_historical,
             parent_generation_id="v0",
             # Explicit: this test pins SINGLE-PASS arithmetic (one run per
@@ -561,7 +581,7 @@ def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_p
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, weights, config, workspace_root, side, match_id
         # The replicate index reaches the run through the entry context —
         # the same seam a seeded harness reads to vary its noise draw.
         slot = _entry_replicate_index(entry)
@@ -571,13 +591,16 @@ def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_p
         # expectation fired (1.0/0.0 for a bool matcher), and ``score`` is
         # the continuous outcome axis the scalar reads.
         return dataclasses.replace(
-            _loss(
-                generation_id=generation.id,
-                entry_id=entry.id,
-                drift_loss=1.0 if passed else 3.0,
-                pass_fail=passed,
+            dataclasses.replace(
+                _loss(
+                    generation_id=generation.id,
+                    entry_id=entry.id,
+                    drift_loss=1.0 if passed else 3.0,
+                    pass_fail=passed,
+                ),
+                score=1.0 if passed else 0.0,
             ),
-            score=1.0 if passed else 0.0,
+            epoch_id=epoch_id,
         )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
@@ -594,15 +617,19 @@ def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_p
         "generation_id": "v0",
     }
 
+    weights = ScoringWeights(pass_weight=1.0)
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
-            child_gen=child_gen,
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(pass_weight=1.0),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             parent_historical_agg=parent_historical,
             parent_generation_id="v0",
             replicates=2,
@@ -645,14 +672,19 @@ def test_run_fast_mode_replicate_slots_reuse_the_unit_cache(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, workspace_root, epoch_id, side, match_id
+        del adapter, weights, workspace_root, side, match_id
         call_log.append((entry.id, _entry_replicate_index(entry)))
         return dataclasses.replace(
-            _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True),
-            run_id=run_id_for_unit(
-                generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+            dataclasses.replace(
+                _loss(
+                    generation_id=generation.id, entry_id=entry.id, drift_loss=1.0, pass_fail=True
+                ),
+                run_id=run_id_for_unit(
+                    generation.id, entry.id, _entry_replicate_index(entry), base_seed=config.seed
+                ),
+                score=1.0,
             ),
-            score=1.0,
+            epoch_id=epoch_id,
         )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
@@ -668,16 +700,21 @@ def test_run_fast_mode_replicate_slots_reuse_the_unit_cache(
         "generation_id": "v0",
     }
 
+    weights = ScoringWeights(pass_weight=1.0)
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
+
     def _go(replicates: int) -> None:
         asyncio.run(
             run_fast_mode(
                 adapter=object(),
-                child_gen=child_gen,
+                child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
                 board=board,
-                weights=ScoringWeights(pass_weight=1.0),
-                config=runtime_config(tmp_path),
+                weights=weights,
+                config=config,
                 workspace_root=tmp_path,
-                epoch_id="e0",
+                epoch_id=epoch_id,
                 parent_historical_agg=parent_historical,
                 parent_generation_id="v0",
                 replicates=replicates,
@@ -729,12 +766,17 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, weights, config, workspace_root, side, match_id
         call_log.append((entry.id, _entry_replicate_index(entry)))
         return dataclasses.replace(
-            _loss(generation_id=generation.id, entry_id=entry.id, drift_loss=0.0, pass_fail=True),
-            score=1.0,
-            tokens_spent=1000,
+            dataclasses.replace(
+                _loss(
+                    generation_id=generation.id, entry_id=entry.id, drift_loss=0.0, pass_fail=True
+                ),
+                score=1.0,
+                tokens_spent=1000,
+            ),
+            epoch_id=epoch_id,
         )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
@@ -753,15 +795,19 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
     # Slot 0 (two entries x 1000 tokens) overruns the budget on its own, so
     # slot 1 must not be scheduled at all.
     ledger = RoundTokenLedger(max_tokens=1500)
+    weights = ScoringWeights(pass_weight=1.0)
+    config = dataclasses.replace(runtime_config(tmp_path), token_ledger=ledger)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
-            child_gen=child_gen,
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(pass_weight=1.0),
-            config=dataclasses.replace(runtime_config(tmp_path), token_ledger=ledger),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             parent_historical_agg=parent_historical,
             parent_generation_id="v0",
             replicates=2,
@@ -774,7 +820,7 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
     assert result.child_agg["mean_score"] == pytest.approx(1.0)
     # ...and slot 1's cache file was never written, so a later, unbudgeted
     # round can still evaluate it honestly.
-    assert not _unit_loss_path(tmp_path, "e0", "v1", board[0].id, 1).exists()
+    assert not _unit_loss_path(tmp_path, epoch_id, "v1", board[0].id, 1).exists()
 
 
 def test_run_fast_mode_single_replicate_is_byte_identical(
@@ -804,15 +850,19 @@ def test_run_fast_mode_single_replicate_is_byte_identical(
         "generation_id": "v0",
     }
 
+    weights = ScoringWeights(promote_margin=0.01)
+    config = runtime_config(tmp_path)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
-            child_gen=child_gen,
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(promote_margin=0.01),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             parent_historical_agg=parent_historical,
             parent_generation_id="v0",
             replicates=1,
@@ -846,16 +896,18 @@ def test_no_cache_first_round_runs_champion_via_full_path(
     call_log = _stub_run_single(monkeypatch, canned=canned)
 
     config = runtime_config(tmp_path)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -898,15 +950,18 @@ def test_run_fast_mode_respects_parallelism_bound(
     }
 
     config = dataclasses.replace(runtime_config(tmp_path), parallelism=3)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
-            child_gen=child_gen,
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             parent_historical_agg=parent_historical,
             parent_generation_id="v0",
             # Explicit: this test pins SINGLE-PASS arithmetic (one run per
@@ -952,16 +1007,19 @@ def test_tournament_result_is_json_serializable(
     _stub_run_single(monkeypatch, canned=canned)
     config = runtime_config(tmp_path)
 
+    board = _make_board()
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            board=_make_board(),
-            weights=ScoringWeights(),
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
+            board=board,
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -1023,7 +1081,7 @@ class _ConcurrencyStub:
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side
+        del adapter, weights, config, workspace_root, side
         self.call_log.append((generation.id, entry.id))
         self.in_flight += 1
         self.peak = max(self.peak, self.in_flight)
@@ -1031,7 +1089,7 @@ class _ConcurrencyStub:
             # A handful of yields so overlapping runs actually interleave.
             for _ in range(5):
                 await asyncio.sleep(0)
-            return self._canned[(generation.id, entry.id)]
+            return dataclasses.replace(self._canned[(generation.id, entry.id)], epoch_id=epoch_id)
         finally:
             self.in_flight -= 1
             self.completed.append((generation.id, entry.id))
@@ -1058,16 +1116,18 @@ def test_run_generation_respects_parallelism_bound(
     monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
 
     config = dataclasses.replace(runtime_config(tmp_path), parallelism=3)
+    weights = ScoringWeights(overfitting=OverfittingConfig(enabled=False))
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -1120,7 +1180,7 @@ def test_run_tournament_runs_champion_and_challenger_concurrently(
             side: str,
             match_id: str = "",
         ) -> LossProfile:
-            del adapter, weights, config, workspace_root, epoch_id
+            del adapter, weights, config, workspace_root
             live = self.in_flight.setdefault(entry.id, set())
             live.add(generation.id)
             try:
@@ -1131,7 +1191,7 @@ def test_run_tournament_runs_champion_and_challenger_concurrently(
                     if len(live) > len(seen):
                         self.widest[entry.id] = set(live)
                     await asyncio.sleep(0)
-                return canned[(generation.id, entry.id)]
+                return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
             finally:
                 live.discard(generation.id)
 
@@ -1139,16 +1199,18 @@ def test_run_tournament_runs_champion_and_challenger_concurrently(
     monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
 
     config = dataclasses.replace(runtime_config(tmp_path), parallelism=1)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -1179,20 +1241,24 @@ def test_run_generation_result_matches_sequential_under_parallelism(
         for i in range(6)
     }
 
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights(overfitting=OverfittingConfig(enabled=False))
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+
     def _run(parallelism: int) -> dict[str, tuple[float, float]]:
         stub = _ConcurrencyStub(canned)
         monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
-        config = dataclasses.replace(runtime_config(tmp_path), parallelism=parallelism)
+        selected_config = dataclasses.replace(config, parallelism=parallelism)
         result = asyncio.run(
             run_tournament(
                 adapter=object(),
-                parent_gen=parent_gen,
-                child_gen=child_gen,
+                parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+                child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
                 board=board,
-                weights=ScoringWeights(),
-                config=config,
+                weights=weights,
+                config=selected_config,
                 workspace_root=tmp_path,
-                epoch_id="e0",
+                epoch_id=epoch_id,
             )
         )
         return {
@@ -1231,16 +1297,18 @@ def test_run_generation_parallelism_one_runs_one_board_unit_at_a_time(
     monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
 
     config = dataclasses.replace(runtime_config(tmp_path), parallelism=1)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -1308,17 +1376,19 @@ def test_run_generation_surfaces_failure_under_concurrency(
     monkeypatch.setattr(runner_mod, "_run_single", failing_run_single)
 
     config = dataclasses.replace(runtime_config(tmp_path), parallelism=4)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     with pytest.raises(RuntimeError, match="worker blew up"):
         asyncio.run(
             run_tournament(
                 adapter=object(),
-                parent_gen=parent_gen,
-                child_gen=child_gen,
+                parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+                child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
                 board=board,
-                weights=ScoringWeights(),
+                weights=weights,
                 config=config,
                 workspace_root=tmp_path,
-                epoch_id="e0",
+                epoch_id=epoch_id,
             )
         )
 
@@ -1363,13 +1433,16 @@ def _capture_run_single(monkeypatch: pytest.MonkeyPatch) -> list[BoardEntry]:
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side
+        del adapter, weights, config, workspace_root, side
         seen.append(entry)
-        return _loss(
-            generation_id=generation.id,
-            entry_id=entry.id,
-            drift_loss=1.0,
-            pass_fail=True,
+        return dataclasses.replace(
+            _loss(
+                generation_id=generation.id,
+                entry_id=entry.id,
+                drift_loss=1.0,
+                pass_fail=True,
+            ),
+            epoch_id=epoch_id,
         )
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
@@ -1393,16 +1466,18 @@ def test_runner_stamps_board_disable_drift_onto_entry_context(
     seen = _capture_run_single(monkeypatch)
     config = runtime_config(tmp_path)
 
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             disable_drift=("tool_error", "agent_refusal"),
         )
     )
@@ -1440,16 +1515,18 @@ def test_runner_empty_disable_drift_leaves_entries_untouched(
     seen = _capture_run_single(monkeypatch)
     config = runtime_config(tmp_path)
 
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             # disable_drift defaults to ().
         )
     )
@@ -1515,16 +1592,19 @@ def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(
     child_gen = _make_generation(tmp_path, "v1", "v0")
     seen = _capture_run_single(monkeypatch)
     config = runtime_config(tmp_path)
+    board = entries
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
-            board=entries,
-            weights=ScoringWeights(),
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
+            board=board,
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             disable_drift=disable_drift,
         )
     )
@@ -1597,16 +1677,19 @@ def test_absent_progress_consumer_only_computes_final_aggregates(monkeypatch, tm
     monkeypatch.setattr(scheduling, "_runtime_state", lambda: None)
     monkeypatch.setattr(scheduling, "aggregate_generation_score", aggregate)
     monkeypatch.setattr(runner, "aggregate_generation_score", aggregate)
+    weights = ScoringWeights()
+    config = dataclasses.replace(runtime_config(tmp_path), parallelism=2)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         runner.run_matchup(
             adapter=object(),
-            left_gen=parent,
-            right_gen=child,
+            left_gen=dataclasses.replace(parent, epoch_id=epoch_id),
+            right_gen=dataclasses.replace(child, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
-            config=dataclasses.replace(runtime_config(tmp_path), parallelism=2),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
     assert calls == [4, 4]
@@ -1657,16 +1740,18 @@ def test_partial_aggregate_is_written_as_each_board_unit_completes(
     monkeypatch.setattr(state_mod, "update_tournament_partial_aggregate", _capturing_update)
 
     config = dataclasses.replace(runtime_config(tmp_path), parallelism=1)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
-            parent_gen=parent_gen,
-            child_gen=child_gen,
+            parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -1719,9 +1804,9 @@ def test_partial_aggregate_is_visible_before_all_boards_finish(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, workspace_root, epoch_id, side
+        del adapter, weights, config, workspace_root, side
         await gates[entry.id].wait()
-        return canned[(generation.id, entry.id)]
+        return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", gated_run_single)
 
@@ -1729,16 +1814,18 @@ def test_partial_aggregate_is_visible_before_all_boards_finish(
 
     async def _driver() -> TournamentResult:
         config = dataclasses.replace(runtime_config(tmp_path), parallelism=4)
+        weights = ScoringWeights()
+        epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
         task = asyncio.ensure_future(
             run_tournament(
                 adapter=object(),
-                parent_gen=parent_gen,
-                child_gen=child_gen,
+                parent_gen=dataclasses.replace(parent_gen, epoch_id=epoch_id),
+                child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
                 board=board,
-                weights=ScoringWeights(),
+                weights=weights,
                 config=config,
                 workspace_root=tmp_path,
-                epoch_id="e0",
+                epoch_id=epoch_id,
             )
         )
         # Let the tournament reach the point where all four board units
@@ -1823,15 +1910,18 @@ def test_fast_mode_persists_running_partial_aggregate(
 
     config = runtime_config(tmp_path)
     parent_historical["base_seed"] = config.seed
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
-            child_gen=child_gen,
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             parent_historical_agg=parent_historical,
             parent_generation_id="v0",
             # Explicit: this test pins SINGLE-PASS arithmetic (one run per
@@ -1901,7 +1991,7 @@ def test_run_fast_mode_publishes_active_tournament(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, epoch_id
+        del adapter, weights, config
         # Mirror the real ``_run_single``'s state writes.
         update_tournament_entry(workspace_root, entry.id, side, status="running")
         if "snapshot" not in midflight:
@@ -1909,7 +1999,7 @@ def test_run_fast_mode_publishes_active_tournament(
             if snap is not None:
                 midflight["snapshot"] = snap
         update_tournament_entry(workspace_root, entry.id, side, status="completed")
-        return canned[(generation.id, entry.id)]
+        return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
@@ -1930,15 +2020,18 @@ def test_run_fast_mode_publishes_active_tournament(
     }
 
     config = runtime_config(tmp_path)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     asyncio.run(
         run_fast_mode(
             adapter=object(),
-            child_gen=child_gen,
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             parent_historical_agg=parent_historical,
             parent_generation_id="v0",
             round_index=1,
@@ -2007,11 +2100,11 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, config, epoch_id
+        del adapter, weights, config
         # The runner published the record up-front — these updates land.
         update_tournament_entry(workspace_root, entry.id, side, status="running")
         update_tournament_entry(workspace_root, entry.id, side, status="completed")
-        return canned[(generation.id, entry.id)]
+        return dataclasses.replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
@@ -2043,15 +2136,18 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
     }
 
     config = runtime_config(tmp_path)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    record_tournament_score(tmp_path, epoch_id, "v0", parent_historical)
     asyncio.run(
         run_fast_mode(
             adapter=object(),
-            child_gen=child_gen,
+            child_gen=dataclasses.replace(child_gen, epoch_id=epoch_id),
             board=board,
-            weights=ScoringWeights(),
+            weights=weights,
             config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             parent_historical_agg=parent_historical,
             parent_generation_id="v0",
         )

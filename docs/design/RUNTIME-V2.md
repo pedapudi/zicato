@@ -20,7 +20,7 @@ channels, each with its own file format, write discipline, atomicity guarantee,
 and polling or inotify path:
 
 - **live state** — orchestrator/runner *produce* `heartbeat.json`,
-  `active_runs/*`, `active_tournament.json`; dashboard + supervisor *consume*.
+  `active_runs/*`, `active_tournament.events.jsonl`; dashboard + supervisor *consume*.
 - **control commands** — dashboard *produces* `control/*`; the orchestrator
   *consumes* them at its safe points
   (`src/zicato/runtime/control_consumer.py`). The consumer was unwired when
@@ -99,7 +99,7 @@ view is derived from it, so views cannot contradict each other.
 
 | hand-rolled channel today | replacement |
 |---|---|
-| `active_tournament.json` snapshot (dual-writer) | **one tournament `EventLog`** (orchestrator single-writer) |
+| Tournament live updates | Implemented: `active_tournament.events.jsonl`, folded by both readers |
 | `heartbeat.json` + `active_runs/*` | a runtime `EventLog` |
 | `control/*` commands | a **`CommandQueue`** (wire the consumer) |
 | `control/kill_requests/*` | a `CommandQueue` |

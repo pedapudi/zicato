@@ -105,7 +105,12 @@ def _scoring_dict(*, merge_mode: str | None) -> dict:
     }
 
 
-def _bootstrap_workspace(tmp_path: Path, *, merge_mode: str | None) -> tuple[Path, str]:
+def _bootstrap_workspace(
+    tmp_path: Path,
+    *,
+    merge_mode: str | None,
+    evaluation_call_llm: str = "zicato_examples.target_0_convergence.mocks_recombine_merge:aux_llm",
+) -> tuple[Path, str]:
     """Single-marker workspace + one epoch; v0 seeded by the production path."""
     agent_dir = tmp_path / "agent"
     agent_dir.mkdir()
@@ -123,6 +128,10 @@ def _bootstrap_workspace(tmp_path: Path, *, merge_mode: str | None) -> tuple[Pat
                 "created_at": "2026-07-01T00:00:00Z",
                 "generation_source_backend": "directory",
                 "adapter": ADAPTER_BLOCK,
+                "runtime": {
+                    "target_call_llm": "zicato_examples.target_0_convergence.mocks:target_llm",
+                    "evaluation_call_llm": evaluation_call_llm,
+                },
                 "mutable_trees": [str(agent_dir)],
             }
         )
@@ -271,7 +280,11 @@ def test_llm_merge_garbage_response_degrades_to_fresh_sample(tmp_path: Path) -> 
     completes normally (a merge failure must never fail a propose), and the
     champion stays v0 (both fallback samples are sub-margin single fixes).
     """
-    workspace, epoch_id = _bootstrap_workspace(tmp_path, merge_mode="llm")
+    workspace, epoch_id = _bootstrap_workspace(
+        tmp_path,
+        merge_mode="llm",
+        evaluation_call_llm="tests.test_recombination_merge_known_answer:_garbage_merge_aux",
+    )
     outcomes = _run_rounds(workspace, epoch_id, 3, aux=_garbage_merge_aux)
 
     assert [o.tournament_decision for o in outcomes] == ["rejected", "rejected", "rejected"]

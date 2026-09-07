@@ -219,6 +219,8 @@ class RuntimeConfig(RuntimeSettings):
     #: from the same :class:`ScoringWeights` instance they use to reduce loss.
     goldfive: Mapping[str, Any] | None = None
     configuration: ResolvedConfiguration | None = None
+    # Immutable worker-role documents retained from the selected execution contract.
+    execution_roles: bytes | None = None
     telemetry: TelemetryEndpoints = TelemetryEndpoints()
 
     def operational_configuration(self) -> ResolvedConfiguration:

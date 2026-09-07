@@ -97,7 +97,7 @@ zicato evolve    # the single happy-path entry point to the loop
 ```
 
 Everything else (`board`, `epoch`, `proposer`, `tournament`, `inspect`,
-`repair`, `health`, `dashboard`, `tui`) is an advanced or debug tool for
+`repair`, `health`, `dashboard`) is an advanced or debug tool for
 driving one stage in isolation; `zicato --help` is the authority on the
 current set. `evolve` orchestrates the whole
 loop: it is a thin CLI shell over `evolve_n_rounds`
@@ -106,25 +106,18 @@ loop: it is a thin CLI shell over `evolve_n_rounds`
 `zicato.orchestrator.evolve_once`) up to N times. Chapter 02 walks one round
 end to end.
 
-### 1.3 Library first, three drivers on top
+### 1.3 The CLI and dashboard use the library
 
-zicato is a **library first** — the surface declared in
-`src/zicato/__init__.py` (lazy re-exports; importing `zicato` stays cheap
-so `zicato --help` is fast). Three *drivers* sit on top and consume that
-surface:
+The public library is declared in `src/zicato/__init__.py`. Its lazy exports
+keep importing `zicato` cheap, including command help. Two drivers use it:
 
-- `zicato.cli` — the `zicato` command line (Click; auto-discovered
-  subcommands under `src/zicato/cli/commands/`).
-- `zicato.dashboard` — the dashboard HTTP server (Starlette + SSE
-  (Server-Sent Events)).
-- `zicato.builder` — the tournament-builder GUI backend (deterministic,
-  no LLM, no frontend).
+- `zicato.cli` provides the command line through the explicit command tree
+  in `cli/discovery.py`.
+- `zicato.dashboard` provides the HTTP server and browser views.
 
-Library packages never import the drivers; the only allowed driver→driver
-edges are `cli → dashboard` and `dashboard → builder`. Import-linter
-contracts in `pyproject.toml` (`[tool.zicato.importlinter]`) enforce both rules,
-and `make import-lint` runs them. See §3 (repo map) for the per-package
-rules and the green-gates rule (§4).
+Library packages cannot import either driver. The CLI may launch the dashboard;
+the dashboard cannot import the CLI. Namespace roles and import contracts in
+`pyproject.toml` enforce these boundaries through `make import-lint`.
 
 ---
 
@@ -689,19 +682,11 @@ Layout: `src/zicato/` (the Python package, src-layout),
 behavior-preserving refactor oracle), `docs/design/` (the design corpus),
 `tests/` (2800+ tests).
 
-Import rules below reflect the machine-enforced contracts in
-`pyproject.toml [tool.zicato.importlinter]`:
-
-```toml
-[[tool.importlinter.contracts]]
-name = "the library must not import the drivers (cli / dashboard / builder)"
-type = "forbidden"
-```
-*(pyproject.toml, `[tool.zicato.importlinter]` — run `make import-lint`)*
-
-Unless stated otherwise, "must never import" below means "forbidden by
-those contracts"; every library package is forbidden from importing
-`zicato.cli`, `zicato.dashboard`, `zicato.builder`.
+Namespace roles in `pyproject.toml [tool.zicato.namespace_roles]` classify
+library and driver code. `tools/check_imports.py` derives the broad import
+boundaries from those roles; the explicit import-linter contracts cover narrower
+restrictions. `make import-lint` runs both. Every library package is forbidden
+from importing `zicato.cli` or `zicato.dashboard`.
 
 ### 3.1 The library packages (`src/zicato/…`)
 
@@ -879,7 +864,7 @@ adapter construction from `config.json`, `RuntimeConfig` construction
 resolution, the evaluation call timeout wrapper. The common configuration is
 two engines: `target` supplies an optional target LLM to a model-capable
 adapter, while `evaluation` serves internal work. The target itself is
-adapter-defined and may consume no model. `judge`, `user_emulator`, `builder`,
+adapter-defined and may consume no model. `judge`, `user_emulator`,
 and `proposer` inherit evaluation;
 `proposer_generate` / `proposer_review` may override the base proposer. See
 `docs/design/MODEL-CONFIG.md` for the schema and noun definitions.
@@ -900,38 +885,25 @@ subprocess entry point, the process boundary that isolates one run.
 Everything it needs crosses the wire as JSON plus dotted import paths —
 see the module-level-callable rule (§4).
 
-**`contract_draft/`** — an evaluation contract as an editable draft:
-`draft.py` (`TournamentDraft`, the mutable working copy, and `DraftStore`,
-one draft per session) and `operations.py` (the one place each contract
-edit is implemented — `set_structure`, `set_gate`, `set_screening`, …,
-plus `estimate_cost`, `validate`, `preflight`, `apply`). The builder
-driver serves this package over HTTP and its copilot drives the same
-draft; `reflection/` stages a finding's proposed edit on a draft it never
-seals. Must not import a driver.
+**`contract_draft/`** — typed contract preparation and publication.
+`draft.py` captures candidate board, brief, scoring and configuration inputs.
+`operations.py` owns edits such as `set_structure`, `set_gate` and
+`set_screening`, plus cost estimation, validation and application. Publication
+checks the captured input revision and supports recovery after interruption.
+This package must not import a driver.
 
 ### 3.2 The drivers
 
-**`cli/`** — Click root + auto-discovered subcommands
-(`cli/commands/*.py`, one file per command; a broken plugin module logs
-and is skipped). The CLI is the contract: trust `zicato <cmd> --help`
-over any design doc. `docs/design/CLI.md` is a GENERATED artifact —
-regenerate it from `--help` on CLI changes. May import the dashboard
-(launch + static resolution); must not import the builder directly
-(reaches it only transitively through `dashboard.server`'s mount —
-`allow_indirect_imports = true` on that contract).
+**`cli/`** — the Click root and explicit command tree in `cli/discovery.py`.
+The CLI may launch the dashboard. Command help is the authority on available
+commands and flags; `docs/design/CLI.md` describes that command contract.
+The generated help snapshot lives in `tools/parity/golden/cli_help.txt`.
 
 **`dashboard/`** — the Starlette server, endpoints, SSE broker
 (`sse.py` — coalesced `state_change` frames),
 and the static JS bundle (`static/js/…`) with its Node behaviour suite
 (`static/test/`, run by `make node-test`). Must never import the CLI.
 Render discipline follows digest-gated rendering (§4).
-
-**`builder/`** — the deterministic tournament-builder backend:
-`config.py` (builder.json), `api.py` (REST routes the dashboard mounts),
-`copilot_tools.py` (the chat copilot's tool surface). The draft it edits
-and the operations that edit it are library code in `contract_draft/`;
-this package holds no second edit path. Must not import cli or
-dashboard.
 
 ### 3.3 Outside `src/`
 
@@ -970,12 +942,12 @@ committed goldens; the green-gates rule (§4) requires them green.
 
 **`docs/design/`** — the design corpus (~40 documents). Start with
 `ARCHITECTURE.md`. Design docs can drift; code and `--help` are
-canonical. `docs/design/CLI.md` is generated. This guide
+canonical. `docs/design/CLI.md` is hand-authored. This guide
 (`docs/dev-guide/`) cites design docs for *rationale* and code for
 *facts*.
 
 **`tests/`** — the suite (about 5,990 tests). The default run is
-parallel (`-n auto`) and is the FAST TIER: it excludes the Node shim and
+parallel with four pytest workers (`-n 4`) and is the FAST TIER: it excludes the Node shim and
 the opt-in cascade measurement by marker, and the `slow` tier by a hook
 that fires only when nothing was named on the command line. Markers: `slow` (one test
 measured at 15 s or more), `integration` (crosses a process or network

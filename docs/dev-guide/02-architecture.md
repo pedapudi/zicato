@@ -491,8 +491,9 @@ the first draw.
 
 `enumerate_mutations(_resolve_mutable_trees(adapter, parent_snapshot))` —
 zero mutation points is a hard `RuntimeError` ("did the adapter declare
-its mutable_trees?"). `_dump_mutations_snapshot` writes the surface for
-the dashboard, best-effort.
+its mutable_trees?"). `mutation.inventory.write_mutation_inventory` writes
+the enumeration atomically. The round retains best-effort publication: a
+snapshot failure is logged and does not abort execution.
 
 Then the anti-overfitting boundary — worth reading verbatim because
 every downstream proposer input flows through it:
@@ -904,11 +905,12 @@ Final heartbeat (`PROMOTE`/`REJECT` progress transition),
 changes the number of candidates and scheduled matchups. Every width retains
 the same execution pipeline.
 
-`evolve_field_round` is a facade. It expands the `PreparedRound` into a
-`FieldRound` — the round's coordinates, contract inputs, and runtime seams
-under the names its phases use (`src/zicato/evolve/generation_phase.py`) —
-and calls four phase functions in order, each with explicit inputs and
-outputs:
+`evolve_field_round` retains the `PreparedRound` inside a `FieldRound` with
+the derived parent identifier, field size, and evaluation settings
+(`src/zicato/evolve/generation_phase.py`). Phases read shared inputs through
+the prepared value. Its board slices and mutation inventory remain tuples;
+APIs requiring lists receive local copies. The field opener resolves an absent
+round log once on the prepared value. Four phase functions run in order:
 
 | Phase | Module | Returns |
 |---|---|---|

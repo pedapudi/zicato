@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from errno import EIO
 from pathlib import Path
 from typing import Any
@@ -69,16 +70,27 @@ def _fsync_dir(directory: Path) -> None:
         os.close(fd)
 
 
-def atomic_write_text(path: Path, content: str, *, mode: int = 0o644) -> None:
+def atomic_write_text(path: Path, content: str, *, mode: int | None = 0o644) -> None:
     """Atomically replace ``path`` with ``content``.
 
-    Creates parent directories as needed. The replacement uses ``mode``
-    subject to the process umask. The completed temporary file is synced
+    Creates parent directories as needed. An explicit ``mode`` is subject to
+    the process umask. ``None`` preserves an existing regular file's permissions
+    or creates a file with mode 0o666 subject to umask. The temporary file is synced
     before replacement; its parent directory is synced afterwards where
     supported. Readers observe complete payloads even when writers overlap.
     """
     remaining = memoryview(content.encode("utf-8"))
     _mkdir_durable(path.parent)
+    retained_mode = None
+    if mode is None:
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISREG(metadata.st_mode):
+                retained_mode = stat.S_IMODE(metadata.st_mode)
+        mode = retained_mode if retained_mode is not None else 0o666
     while True:
         tmp = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
         try:
@@ -88,6 +100,8 @@ def atomic_write_text(path: Path, content: str, *, mode: int = 0o644) -> None:
             continue
     try:
         try:
+            if retained_mode is not None:
+                os.chmod(tmp, retained_mode)
             while remaining:
                 written = os.write(fd, remaining)
                 if written == 0:

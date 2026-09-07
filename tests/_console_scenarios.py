@@ -32,6 +32,7 @@ from tests._workspace_support import (
     write_json,
     write_lineage,
     write_text,
+    write_tournament,
     write_workspace_config,
 )
 from zicato.core.experiment import (
@@ -58,7 +59,7 @@ CACHED_SOURCE_EPOCH = "2026-05-29_e0"
 #: The two board entries of the shared browser fixture: one single-turn task
 #: with a predicate expectation and one emulated multi-turn task.
 CONSOLE_BOARD: tuple[dict[str, Any], ...] = (
-    {"board_meta": True, "disable_drift": False},
+    {"board_meta": True, "disable_drift": []},
     {
         "id": "waffles_single",
         "kind": "single_turn",
@@ -71,12 +72,12 @@ CONSOLE_BOARD: tuple[dict[str, Any], ...] = (
     {
         "id": "picky_stakeholder_emulated",
         "kind": "multi_turn_emulated",
-        "persona": {
-            "name": "picky stakeholder",
-            "goals": ["a crisp deck"],
-            "style": "terse",
-            "max_turns": 4,
+        "user_persona": {
+            "goal": "a crisp deck",
+            "constraints": "Act as a picky stakeholder; be terse.",
+            "stop_when": "The deck is crisp.",
         },
+        "max_turns": 4,
         "wall_clock_budget_seconds": 360,
         "weight": 1.0,
         "tags": ["hard"],
@@ -541,7 +542,9 @@ class EpochSpec:
     fields: tuple[FieldRecord, ...] = ()
     closed: bool = False
     goal: str = "g"
-    board: Sequence[Any] = ({"id": "b1", "kind": "single_turn", "input": "Draft.", "weight": 1.0},)
+    board: Sequence[Any] = (
+        {"id": "b1", "kind": "single_turn", "input": "Draft.", "weight": 1.0, "budget_s": 1},
+    )
 
 
 def _stamp(created_at: str, minutes: int) -> str:
@@ -1426,11 +1429,12 @@ def build_swiss_all_rejected_workspace(tmp_path: Path) -> Path:
         ),
     )
     layout = WorkspaceLayout.from_root(root)
-    write_json(
-        layout.active_tournament,
+    write_tournament(
+        layout.root,
         {
             "tournament_id": f"{CONSOLE_EPOCH}:field:v1",
             "epoch_id": CONSOLE_EPOCH,
+            "round_index": 1,
             "structure": "swiss",
             "phase": "proposing",
             "structure_params": {"rounds": 2},
@@ -1440,7 +1444,6 @@ def build_swiss_all_rejected_workspace(tmp_path: Path) -> Path:
             "field_status": [dict(row) for row in field_status],
             "state": "in_progress",
         },
-        indent=2,
     )
     return root
 
@@ -1633,11 +1636,12 @@ def _racing_round_workspace(tmp_path: Path, *, live: bool) -> Path:
         ),
     )
     if live:
-        write_json(
-            WorkspaceLayout.from_root(root).active_tournament,
+        write_tournament(
+            WorkspaceLayout.from_root(root).root,
             {
                 "tournament_id": f"{CONSOLE_EPOCH}:field:v1",
                 "epoch_id": CONSOLE_EPOCH,
+                "round_index": 1,
                 "structure": "racing",
                 "phase": "tournament:round_1:running",
                 "structure_params": dict(_RACING_ROUND_PARAMS),
@@ -1657,7 +1661,6 @@ def _racing_round_workspace(tmp_path: Path, *, live: bool) -> Path:
                 "field_status": [],
                 "state": "in_progress",
             },
-            indent=2,
         )
     return root
 
@@ -1728,12 +1731,13 @@ def build_identity_workspace(tmp_path: Path) -> Path:
             "tournament": {"structure": "gauntlet", "params": {}},
         },
         board=[
-            {"board_meta": True, "disable_drift": False},
+            {"board_meta": True, "disable_drift": []},
             *(
                 {
                     "id": e,
                     "kind": "single_turn",
                     "input": f"Task {e}.",
+                    "budget_s": 1,
                     "expectation": {"kind": "predicate", "spec": "ok"},
                     "weight": 1.0,
                 }

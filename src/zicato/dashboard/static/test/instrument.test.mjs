@@ -150,10 +150,9 @@ test('bill of health: findings are DE-TAGGED quiet rows — a tone glyph + word,
   assert(hasClass(host, 'dn-instr-fs-bad'), 'the critical finding carries the bad tone accent');
   const t = textOf(host);
   assert(t.includes('critical'), 'the severity word is present as tone-coloured text (not a chip)');
-  // the copyable apply invocation stays — but only for an ACTIONABLE finding
-  // (one with a proposed_op; reflect apply refuses a null-op finding).
+  // Findings with proposed operations retain their editable values.
   const applies = allByClass(host, 'dn-instr-apply');
-  assert(applies.some((n) => (n.textContent || '').includes(`zicato reflect apply ${REFLECTION_ID} find-0a1b2c3d`)), 'the exact CLI invocation with reflection_id + finding_id');
+  assert(applies.some((n) => (n.textContent || '').includes('promote_margin')), 'the proposed configuration values are available for review');
 });
 
 test('bill of health: evidence renders as inline x-ray links in the row prose, not chip strips', async () => {
@@ -294,15 +293,16 @@ test('practice review: an unmeasured check names its missing input faint', async
   assert((missing[0].textContent || '').includes('no corpus term-contributions'), 'names the missing input');
 });
 
-test('practice review: a proposed_op renders as copyable JSON + an "apply via the builder" note', async () => {
+test('practice review: a proposed edit renders as copyable JSON for manual review', async () => {
   fresh();
   installFixtureMap(reflectionFixtureMap());
   const host = document.createElement('div');
   await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
   const t = textOf(host);
-  // practice checks are NOT a `reflect apply` target — the op is copyable JSON.
+  // The operation and its values remain available as copyable JSON.
   assert(t.includes('"op":"set_param"') || t.includes('"op": "set_param"'), 'the proposed op is copyable JSON');
-  assert(t.includes('apply via the builder'), 'the faint "apply via the builder" note (no CLI apply for practice checks)');
+  assert(t.includes('review the proposed configuration edit'), 'the proposed edit remains available for manual review');
+  assert(!t.includes('reflect apply'), 'the note does not reference a removed command');
   // a NO-proposed-op practice row (the sound affirmation) shows neither.
   const rows = allByClass(host, 'dn-instr-frow');
   const soundRow = rows.find((r) => ((allByClass(r, 'dn-instr-frow-verdict')[0] || {}).textContent || '').trim() === 'sound');
@@ -611,20 +611,6 @@ test('proposer panel: a thin sample is marked provisional', async () => {
   assert(textOf(host).includes('33%? (1/3)'), 'a provisional rate carries the ? marker');
 });
 
-test('proposer panel: a pending recommendation names its remedy and its apply command', async () => {
-  fresh();
-  installFixtureMap(reflectionFixtureMap());
-  const host = document.createElement('div');
-  await instrument.render(host, CTX, { epochId: EPOCH_ID });
-  const t = textOf(host);
-  assert(t.includes('Post-apply check A4 fails'), 'the recommendation title');
-  assert(t.includes('skills/preserve-imports.md'), 'the remedy path');
-  assert(t.includes('zicato proposer apply-recommendation prec-9f3a12bc'), 'the apply command');
-  // The five evidence slots reach the panel — a recommendation is evidence-led.
-  assert(t.includes('population:') && t.includes('compared against:'), 'the evidence slots');
-  // It renders in the lens's EXISTING findings-row grammar rather than new chrome.
-  assert(hasClass(host, 'dn-instr-frow'), 'reuses the findings-row grammar');
-});
 
 test('proposer panel: null-degrades when the reads are unavailable', async () => {
   fresh();
@@ -637,8 +623,6 @@ test('proposer panel: null-degrades when the reads are unavailable', async () =>
   const t = textOf(host);
   assert(t.includes('No proposer scorecard yet'), 'honest empty scorecard state');
   assert(t.includes('zicato proposer scorecard'), 'points at the CLI entry point');
-  assert(t.includes('No pending recommendations'), 'honest empty queue state');
-  assert(t.includes('zicato proposer reflect'), 'points at the drafting command');
 });
 
 test('proposer panel: an identical repaint rebuilds ZERO DOM', async () => {
@@ -653,28 +637,6 @@ test('proposer panel: an identical repaint rebuilds ZERO DOM', async () => {
   assertEqual(host.innerHTMLWriteCount(), writes1, 'no innerHTML writes on the no-op repaint');
 });
 
-test('proposer panel: a changed recommendation queue DOES repaint', async () => {
-  fresh();
-  installFixtureMap(reflectionFixtureMap());
-  const host = document.createElement('div');
-  await instrument.render(host, CTX, { epochId: EPOCH_ID });
-  const first = host.firstChild;
-  installFixtureMap({ ...reflectionFixtureMap(),
-    '/api/proposer/recommendations': { found: true, count: 0, pending: [] } });
-  await instrument.render(host, CTX, { epochId: EPOCH_ID });
-  assert(host.firstChild !== first, 'the digest folds the queue, so a drained queue repaints');
-});
 
-test('proposer panel: updates the shared record refusal without claiming an empty queue', async () => {
-  const host = document.createElement('div');
-  for (const reason of ['Proposer remedy: integrity check failed.', 'Proposer reflection: duplicate finding identity.']) {
-    fresh();
-    installFixtureMap({ ...reflectionFixtureMap(),
-      '/api/proposer/recommendations': { found: false, count: 0, pending: [], unreadable: reason } });
-    await instrument.render(host, CTX, { epochId: EPOCH_ID });
-    assert(textOf(host).includes(reason), 'shows the current server reason');
-    assert(!textOf(host).includes('No pending recommendations'), 'refusal differs from an empty queue');
-  }
-});
 
 await run();

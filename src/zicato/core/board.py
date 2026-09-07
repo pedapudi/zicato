@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from zicato.core.drift_kinds import DriftSeverity, validate_drift_kind
 
@@ -444,6 +444,11 @@ def validate_board_entry(d: Mapping[str, Any]) -> BoardEntry:
 
     Raises :class:`ValueError` on any structural problem.
     """
+
+    for key in ("id", "kind", "wall_clock_budget_seconds"):
+        if key not in d:
+            detail = f"; expected one of {get_args(BoardEntryKind)}" if key == "kind" else ""
+            raise ValueError(f"missing required field {key!r}{detail}")
 
     expectation_dict = d.get("expectation")
     expectation: Expectation | None

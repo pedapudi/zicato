@@ -1,14 +1,7 @@
-"""Tests for the ``/settings/models`` REST surface (the unified models config).
-
-Covers the secret-safe GET (api_key_env NAME + a set/unset flag, never the
-value), the POST round-trip (persisted into ``config.json`` ``models`` block,
-NAMES only), and the read-only 403. The api_key_env value is asserted to never
-appear in any response body.
-"""
+"""The dashboard shows configured models without exposing secrets or accepting edits."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -81,104 +74,19 @@ def test_get_set_flag_false_when_env_unset(
     assert body["models"]["engines"]["evaluation"]["api_key_env_set"] is False
 
 
-def test_post_persists_models_block_names_only(client: TestClient, workspace: Path) -> None:
-    payload = {
-        "models": {
-            "engines": {
-                "target": {"call_llm": "pkg.harness:fn"},
-                "evaluation": {"call_llm": "pkg.evaluation:fn"},
-                "judge": {"model": "judge-x", "endpoint": None, "api_key_env": _ENV_NAME},
-            },
-            "roles": {"judge": "judge"},
-        }
-    }
-    resp = client.post("/settings/models", json=payload)
-    assert resp.status_code == 200
-    # The on-disk config.json now carries the models block — NAMES only.
-    on_disk = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
-    assert on_disk["models"]["engines"]["judge"]["model"] == "judge-x"
-    assert on_disk["models"]["engines"]["judge"]["api_key_env"] == _ENV_NAME
-    assert _SECRET not in json.dumps(on_disk)
-    # The echoed view is secret-safe + flags the epoch is NOT rolled.
-    body = resp.json()
-    assert body["rolls_epoch"] is False
-    assert "api_key_env_set" in body["models"]["engines"]["judge"]
+@pytest.mark.parametrize(
+    "path", ["/settings/models", "/builder/op", "/builder/apply", "/builder/chat"]
+)
+def test_dashboard_configuration_cannot_be_written(client, workspace, path):
+    config = workspace / "config.json"
+    before = config.read_bytes()
+    response = client.post(path, json={"models": {"engines": {}, "roles": {}}})
+    assert response.status_code in {404, 405}
+    assert config.read_bytes() == before
 
 
-def test_post_round_trips_proposer_generate_review(client: TestClient, workspace: Path) -> None:
-    payload = {
-        "models": {
-            "engines": {
-                "generate": {"call_llm": "pkg.generate:fn"},
-                "review": {"model": "review-x", "endpoint": None, "api_key_env": _ENV_NAME},
-            },
-            "roles": {"proposer_generate": "generate", "proposer_review": "review"},
-        }
-    }
-    resp = client.post("/settings/models", json=payload)
-    assert resp.status_code == 200
-    on_disk = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
-    assert on_disk["models"]["roles"]["proposer_generate"] == "generate"
-    assert on_disk["models"]["engines"]["review"]["model"] == "review-x"
-    assert _SECRET not in json.dumps(on_disk)
-    # The echoed secret-safe view carries both roles.
-    echoed = resp.json()["models"]
-    assert echoed["roles"]["proposer_review"] == "review"
-    assert "api_key_env_set" in echoed["engines"]["review"]
-
-
-def test_post_preserves_other_config_keys(client: TestClient, workspace: Path) -> None:
-    """Writing the models block leaves every other config.json key intact."""
-    client.post(
-        "/settings/models",
-        json={"models": {"engines": {"target": {"call_llm": "pkg:fn"}}, "roles": {}}},
-    )
-    on_disk = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
-    assert on_disk["instance_id"] == "default"
-
-
-def test_post_preserves_models_guide(client: TestClient, workspace: Path) -> None:
-    guide = {"nouns": {"engine": "reusable connection"}, "example": {"roles": {}}}
-    payload = {
-        "models": {
-            "engines": {
-                "target": {"call_llm": "pkg:target"},
-                "evaluation": {"call_llm": "pkg:evaluation"},
-            },
-            "roles": {},
-            "_guide": guide,
-        }
-    }
-    assert client.post("/settings/models", json=payload).status_code == 200
-    on_disk = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
-    assert on_disk["models"]["_guide"] == guide
-
-
-def test_post_rejects_unknown_engine_reference(client: TestClient) -> None:
-    resp = client.post(
-        "/settings/models",
-        json={"models": {"engines": {}, "roles": {"judge": "missing"}}},
-    )
-    assert resp.status_code == 400
-
-
-def test_post_empty_models_drops_the_block(client: TestClient, workspace: Path) -> None:
-    """All-unconfigured roles ⇒ the models block is removed (reads back default)."""
-    resp = client.post("/settings/models", json={"models": {"engines": {}, "roles": {}}})
-    assert resp.status_code == 200
-    on_disk = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
-    assert on_disk["models"] == {"engines": {}, "roles": {}}
-
-
-def test_post_missing_models_object_is_400(client: TestClient) -> None:
-    resp = client.post("/settings/models", json={"nope": 1})
-    assert resp.status_code == 400
-
-
-def test_post_is_403_in_read_only(workspace: Path, tmp_path: Path) -> None:
-    static = tmp_path / "static-ro"
-    static.mkdir()
-    app = create_app(workspace, static, read_only=True)
-    ro = TestClient(app)
-    resp = ro.post("/settings/models", json={"models": {}})
-    assert resp.status_code == 403
+@pytest.mark.parametrize(
+    "path", ["/builder/config", "/builder/draft", "/api/proposer/recommendations"]
+)
+def test_dashboard_has_no_editor_or_proposer_recommendation_endpoint(client, path):
+    assert client.get(path).status_code == 404

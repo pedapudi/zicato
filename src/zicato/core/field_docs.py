@@ -15,7 +15,7 @@ _EMPHASIS = re.compile(r"(?<![\w*])\*(?!\s)([^*\n]+?)\*(?![\w*])")
 
 
 def plain_text(text: str) -> str:
-    """Return docstring markup as the plain text the builder shows.
+    """Convert docstring markup to plain text for configuration descriptions.
 
     A cross-reference role keeps its target (``:attr:`X.y``` reads ``X.y``;
     a leading ``~`` keeps the last dotted component, as the rendered

@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from zicato.core.configuration import ConfigurationError, authored_dataclass_from_json
@@ -17,7 +19,6 @@ log = logging.getLogger("zicato.models_config")
 MODEL_ROLES: tuple[str, ...] = (
     "target",
     "evaluation",
-    "builder",
     "judge",
     "adjudicator",
     "user_emulator",
@@ -28,7 +29,6 @@ MODEL_ROLES: tuple[str, ...] = (
 PUBLIC_MODEL_ROLES: tuple[str, ...] = (
     "target",
     "evaluation",
-    "builder",
     "judge",
     "adjudicator",
     "user_emulator",
@@ -40,7 +40,6 @@ PUBLIC_MODEL_ROLES: tuple[str, ...] = (
 _DEFAULT_ENGINE = {
     "target": "target",
     "evaluation": "evaluation",
-    "builder": "evaluation",
     "judge": "evaluation",
     "adjudicator": "evaluation",
     "user_emulator": "evaluation",
@@ -193,7 +192,6 @@ class ModelsConfig:
 
     target: RoleSpec = RoleSpec()
     evaluation: RoleSpec = RoleSpec()
-    builder: RoleSpec = RoleSpec()
     judge: RoleSpec = RoleSpec()
     adjudicator: RoleSpec = RoleSpec()
     proposer_breadth: RoleSpec = RoleSpec()
@@ -288,7 +286,6 @@ def models_config_from_dict(raw: Any) -> ModelsConfig:
         return ModelsConfig(
             target=selected("target"),
             evaluation=selected("evaluation"),
-            builder=selected("builder"),
             judge=selected("judge"),
             adjudicator=selected("adjudicator"),
             user_emulator=selected("user_emulator"),
@@ -311,14 +308,209 @@ def load_models_config(workspace_config: Mapping[str, Any]) -> ModelsConfig:
     return models_config_from_dict(workspace_config.get("models"))
 
 
-def resolve_text_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
+def capture_execution_roles(workspace_config: Mapping[str, Any]) -> bytes:
+    """Capture effective role inheritance and nonsecret worker transport settings."""
+    models = load_models_config(workspace_config)
+    runtime = workspace_config.get("runtime") or {}
+    roles = {}
+    captured: dict[RoleSpec, dict[str, Any]] = {}
+    for role in (*MODEL_ROLES, "proposer"):
+        spec = getattr(models, role)
+        if spec.is_empty:
+            dotted = runtime.get(f"{role}_call_llm")
+            if dotted is None and role not in {"target", "evaluation"}:
+                dotted = runtime.get("evaluation_call_llm")
+            if not dotted:
+                continue
+            spec = RoleSpec(call_llm=dotted)
+        if spec not in captured:
+            document = {"models_role": spec.to_worker_spec()}
+            if spec.model and not spec.endpoint and not spec.api_key_env:
+                document["transport"] = _capture_native_transport(spec, role=role)
+            captured[spec] = document
+        roles[role] = captured[spec]
+    return json.dumps(roles, sort_keys=True, separators=(",", ":")).encode()
+
+
+def execution_roles_from_json(raw: bytes) -> dict[str, Any]:
+    """Validate captured role documents before hashing or worker reconstruction."""
+    roles = json.loads(raw)
+    allowed = set(MODEL_ROLES) | {"proposer"}
+    if not isinstance(roles, dict) or set(roles) - allowed:
+        raise ValueError("captured execution roles must be an object of configured role names")
+    for document in roles.values():
+        _captured_role_spec(document)
+    return roles
+
+
+def _captured_role_spec(document: Any) -> RoleSpec:
+    """Validate one captured role, including its native credential reference."""
+    if not isinstance(document, dict) or set(document) - {"models_role", "transport"}:
+        raise ValueError("invalid captured worker role")
+    spec = role_spec_from_dict(document.get("models_role"))
+    if "transport" not in document:
+        return spec
+    transport = document["transport"]
+    required = {"model_factory", "client_factory", "base_url", "api_version"}
+    optional = {"project", "location", "api_key_env", "credential_file"}
+    if (
+        not spec.model
+        or spec.endpoint
+        or spec.api_key_env
+        or not isinstance(transport, dict)
+        or set(transport) != required | optional | {"backend"}
+        or type(transport["backend"]) is not bool
+        or any(not isinstance(transport[name], str) or not transport[name] for name in required)
+        or any(
+            transport[name] is not None
+            and (not isinstance(transport[name], str) or not transport[name])
+            for name in optional
+        )
+        or bool(transport["api_key_env"])
+        and bool(transport["credential_file"])
+    ):
+        raise ValueError("invalid captured native transport")
+    return spec
+
+
+def execution_roles_for_runtime(config: Any) -> bytes:
+    """Describe the actual callables, retaining declared revisions when they agree."""
+    from zicato.import_path import _callable_dotted_path
+
+    declared = (
+        execution_roles_from_json(config.execution_roles)
+        if config.execution_roles is not None
+        else {}
+    )
+    roles = {}
+    for role in (*MODEL_ROLES, "proposer"):
+        fn = getattr(config, f"{role}_call_llm", None)
+        if fn is None:
+            fn = config.evaluation_call_llm
+        captured = getattr(fn, "__zicato_worker_role__", None)
+        if captured is not None:
+            roles[role] = json.loads(captured)
+            continue
+        document = declared.get(role, {})
+        dotted = document.get("models_role", {}).get("call_llm")
+        if dotted and _import_call_llm(dotted, role=role) is fn:
+            roles[role] = document
+        else:
+            roles[role] = {"models_role": {"call_llm": _callable_dotted_path(fn)}}
+    return json.dumps(roles, sort_keys=True, separators=(",", ":")).encode()
+
+
+def resolve_worker_role(document: Mapping[str, Any], *, role: str, lazy: bool = False) -> CallLLM:
+    """Reconstruct one captured worker role through the model configuration owner."""
+    if "models_role" not in document and "dotted" in document:
+        document = {"models_role": {"call_llm": document["dotted"]}}
+    spec = _captured_role_spec(document)
+    resolve = lazy_text_call_llm if lazy else resolve_text_call_llm
+    return resolve(spec, role=role, transport=document.get("transport"))
+
+
+def _capture_native_transport(spec: RoleSpec, *, role: str) -> dict[str, Any]:
+    """Observe the installed native client's resolved settings without a request."""
+    from google.adk.models.registry import LLMRegistry
+    from google.auth import _cloud_sdk
+
+    credential_file = os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or (
+        _cloud_sdk.get_application_default_credentials_path()  # type: ignore[no-untyped-call]
+    )
+    client = None
+    try:
+        assert spec.model is not None
+        model: Any = LLMRegistry.new_llm(spec.model)
+        client = model.api_client
+        resolved = client._api_client
+        key = resolved.api_key
+        key_env = next(
+            (
+                name
+                for name in ("GOOGLE_API_KEY", "GEMINI_API_KEY")
+                if key and os.getenv(name) == key
+            ),
+            None,
+        )
+        if key_env:
+            credential_file = None
+        else:
+            if not Path(credential_file).is_file():
+                credential_file = None
+            if not resolved.project or not resolved.location:
+                raise ValueError("native execution requires a resolved project and location")
+        result = {
+            "model_factory": f"{type(model).__module__}:{type(model).__qualname__}",
+            "client_factory": f"{type(client).__module__}:{type(client).__qualname__}",
+            "backend": bool(client.vertexai),
+            "project": resolved.project if client.vertexai else None,
+            "location": resolved.location if client.vertexai else None,
+            "base_url": resolved._http_options.base_url,
+            "api_version": resolved._http_options.api_version,
+            "api_key_env": key_env,
+            "credential_file": credential_file,
+        }
+        return result
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ConfigurationError(f"models.{role}", "value", str(exc)) from exc
+    finally:
+        if client is not None:
+            client.close()
+
+
+def _build_captured_native_model(spec: RoleSpec, transport: Mapping[str, Any]) -> Any:
+    """Reconstruct a native client through its public constructor and model hook."""
+    from functools import cached_property
+
+    from zicato.import_path import import_dotted_path
+
+    model_type = import_dotted_path(transport["model_factory"], label="captured model factory")
+    client_type = import_dotted_path(transport["client_factory"], label="captured client factory")
+    key_env = transport["api_key_env"]
+    key = os.getenv(key_env) if key_env else None
+    if key_env and not key:
+        raise ConfigurationError(
+            "models", "value", f"credential environment variable {key_env!r} is not set"
+        )
+    credentials = None
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+    if transport["credential_file"]:
+        from google.auth import load_credentials_from_file
+
+        credentials, _ = load_credentials_from_file(transport["credential_file"], scopes=scopes)  # type: ignore[no-untyped-call]
+    elif key_env is None:
+        from google.auth import default
+
+        credentials, _ = default(scopes=scopes)
+
+    class CapturedModel(model_type):  # type: ignore[misc,valid-type]
+        @cached_property
+        def api_client(self) -> Any:
+            return client_type(
+                vertexai=transport["backend"],
+                project=transport["project"],
+                location=transport["location"],
+                api_key=key,
+                credentials=credentials,
+                http_options={
+                    "base_url": transport["base_url"],
+                    "api_version": transport["api_version"],
+                },
+            )
+
+    return CapturedModel(model=spec.model)
+
+
+def resolve_text_call_llm(
+    spec: RoleSpec, *, role: str, transport: Mapping[str, Any] | None = None
+) -> CallLLM:
     """Resolve an engine to the text-call seam."""
     if spec.uses_call_llm:
         assert spec.call_llm is not None  # narrowed by uses_call_llm
         return _import_call_llm(spec.call_llm, role=role)
     if not spec.model:
         raise ValueError(f"models.{role}: neither a call_llm dotted path nor a model string is set")
-    return _resolve_model_spec_call_llm(spec, role=role)
+    return _resolve_model_spec_call_llm(spec, role=role, transport=transport)
 
 
 def _import_call_llm(dotted: str, *, role: str) -> CallLLM:
@@ -334,10 +526,14 @@ def _import_call_llm(dotted: str, *, role: str) -> CallLLM:
     return result  # type: ignore[no-any-return]
 
 
-def build_adk_model(spec: RoleSpec, *, role: str) -> Any:
+def build_adk_model(
+    spec: RoleSpec, *, role: str, transport: Mapping[str, Any] | None = None
+) -> Any:
     """Build a native model object; read credentials only here."""
     if not spec.model:
         raise ValueError(f"models.{role}: a model string is required to build an ADK model")
+    if transport is not None:
+        return _build_captured_native_model(spec, transport)
     if not spec.endpoint and not spec.api_key_env:
         return spec.model
     try:
@@ -364,9 +560,11 @@ def build_adk_model(spec: RoleSpec, *, role: str) -> Any:
     return LiteLlm(**kwargs)
 
 
-def _resolve_model_spec_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
+def _resolve_model_spec_call_llm(
+    spec: RoleSpec, *, role: str, transport: Mapping[str, Any] | None = None
+) -> CallLLM:
     """Adapt a native model to the text-call seam."""
-    model = build_adk_model(spec, role=role)
+    model = build_adk_model(spec, role=role, transport=transport)
     try:
         from goldfive._llm_detect import make_default_adk_call_llm
     except ImportError as exc:
@@ -382,6 +580,10 @@ def _resolve_model_spec_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
             f"{spec.model!r} (ADK could not resolve it to a model); check the "
             "model id / endpoint, or use the call_llm dotted-path form"
         )
+    document = {"models_role": spec.to_worker_spec()}
+    if transport is not None:
+        document["transport"] = dict(transport)
+    call_llm.__zicato_worker_role__ = json.dumps(document, sort_keys=True).encode()  # type: ignore[attr-defined]
     return call_llm
 
 
@@ -402,7 +604,9 @@ def clear_deferred_role_failures() -> None:
     _DEFERRED_ROLE_FAILURES.clear()
 
 
-def lazy_text_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
+def lazy_text_call_llm(
+    spec: RoleSpec, *, role: str, transport: Mapping[str, Any] | None = None
+) -> CallLLM:
     """Resolve native engines on first call and register resolution failure."""
     if spec.uses_call_llm:
         assert spec.call_llm is not None  # narrowed by uses_call_llm
@@ -418,7 +622,7 @@ def lazy_text_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
     async def _lazy_call_llm(system: str, user: str, model: str) -> str:
         if not resolved:
             try:
-                resolved.append(_resolve_model_spec_call_llm(spec, role=role))
+                resolved.append(_resolve_model_spec_call_llm(spec, role=role, transport=transport))
             except Exception as exc:
                 # Record BEFORE raising: the caller may be a judge, and every
                 # judge boundary swallows. See ``deferred_role_failures``.
@@ -436,18 +640,6 @@ def lazy_text_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:
     return _lazy_call_llm
 
 
-def resolve_builder_model(spec: RoleSpec, *, role: str = "builder") -> Any:
-    """Resolve the builder engine to a native model or custom callable."""
-    if spec.uses_call_llm:
-        assert spec.call_llm is not None
-        from zicato.import_path import import_dotted_path
-
-        return import_dotted_path(spec.call_llm, label=f"models.{role}.call_llm")
-    if not spec.model:
-        raise ValueError(f"models.{role}: neither a call_llm dotted path nor a model string is set")
-    return build_adk_model(spec, role=role)
-
-
 __all__ = [
     "MODEL_ROLES",
     "RoleSpec",
@@ -460,6 +652,5 @@ __all__ = [
     "RoleResolutionError",
     "deferred_role_failures",
     "clear_deferred_role_failures",
-    "resolve_builder_model",
     "build_adk_model",
 ]

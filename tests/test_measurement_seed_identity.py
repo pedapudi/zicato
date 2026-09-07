@@ -11,7 +11,12 @@ from pathlib import Path
 import pytest
 
 from tests._contract_pins import deterministic_weights
-from tests._runtime_builders import make_generation, runtime_config
+from tests._runtime_builders import (
+    make_generation,
+    prepare_tournament_epoch,
+    record_tournament_score,
+    runtime_config,
+)
 from tests._subprocess_worker_support import (
     CompletingAdapter,
     evaluation_call_llm,
@@ -338,15 +343,21 @@ def test_replicate_fold_retains_seed_provenance_without_claiming_unknown_draws()
 async def test_cached_champion_requires_requested_parent_and_seed(
     tmp_path: Path, aggregate
 ) -> None:
-    with pytest.raises(ValueError, match="generation and seed"):
+    config = replace(runtime_config(tmp_path), seed=17)
+    weights = deterministic_weights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, [], weights)
+    record_tournament_score(
+        tmp_path, epoch_id, "v0", {"generation_id": "v0", "base_seed": 17, "scalar": 1.0}
+    )
+    with pytest.raises(ValueError, match="selected epoch's recorded score"):
         await run_fast_mode(
             adapter=object(),
-            child_gen=make_generation(tmp_path, "v1"),
+            child_gen=replace(make_generation(tmp_path, "v1"), epoch_id=epoch_id),
             board=[],
-            weights=deterministic_weights(),
-            config=replace(runtime_config(tmp_path), seed=17),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             parent_historical_agg=aggregate,
             parent_generation_id="v0",
         )

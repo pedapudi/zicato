@@ -55,7 +55,7 @@ def test_init_never_clobbers_an_existing_scoring_json(tmp_path: Path) -> None:
     assert existing.read_text() == '{"promote_margin": 0.5}\n'
 
 
-def test_builder_blank_draft_opens_on_the_recommended_contract(tmp_path: Path) -> None:
+def test_configuration_draft_uses_recommended_contract(tmp_path: Path) -> None:
     from zicato.contract_draft.draft import TournamentDraft
 
     workspace = tmp_path / ".zicato"

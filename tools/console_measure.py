@@ -58,7 +58,6 @@ ENTRY = STATIC / "console.js"
 INDEX_HTML = STATIC / "index.html"
 STYLESHEETS = (STATIC / "css" / "console.css", STATIC / "style.css")
 DASHBOARD_PY = Path("src/zicato/dashboard")
-TUI_DIR = Path("src/zicato/tui")
 PY_ROOT = Path("src/zicato")
 
 CLASS_TOKEN = re.compile(r"[A-Za-z_][\w-]*")
@@ -637,37 +636,25 @@ def measure_routes(root: Path) -> dict[str, object]:
             for m in re.finditer(r"(/api/[^\s'\"`]*|/events\b)", s.text):
                 browser.add(_normalise_route(m.group(1)))
         browser.update(_normalise_route(r) for r in _concatenated_routes(text))
-    tui: set[str] = set()
-    for path in sorted((root / TUI_DIR).rglob("*.py")):
-        for value in _python_route_strings(path):
-            for m in re.finditer(r"(/api/[^\s'\"]*|/events\b)", value):
-                tui.add(_normalise_route(m.group(1)))
 
     def matches(route: str, reads: set[str]) -> bool:
         return any(_route_matches(route, r) for r in reads)
 
     read_by_browser = sorted(r for r in served if matches(r, browser))
-    read_by_tui = sorted(r for r in served if matches(r, tui))
-    unread = sorted(r for r in served if r not in read_by_browser and r not in read_by_tui)
+    unread = sorted(r for r in served if r not in read_by_browser)
     return {
         "served": len(served),
         "read_by_browser": len(read_by_browser),
-        "read_by_tui": len(read_by_tui),
         "unread": len(unread),
         "unread_routes": unread,
-        "tui_routes": read_by_tui,
     }
 
 
 def print_routes(result: dict[str, object]) -> None:
     print(f"served routes                  {result['served']:>4}")
     print(f"read by the browser console    {result['read_by_browser']:>4}")
-    print(f"read by the terminal console   {result['read_by_tui']:>4}")
-    print(f"read by neither                {result['unread']:>4}")
-    print("\nterminal console reads:")
-    for r in result["tui_routes"]:  # type: ignore[union-attr]
-        print(f"  {r}")
-    print("\nread by neither:")
+    print(f"read by no browser view                {result['unread']:>4}")
+    print("\nread by no browser view:")
     for r in result["unread_routes"]:  # type: ignore[union-attr]
         print(f"  {r}")
 

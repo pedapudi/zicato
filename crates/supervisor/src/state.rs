@@ -134,7 +134,7 @@ pub struct ActiveRun {
     pub message: Option<String>,
 }
 
-/// `.zicato/runtime/active_tournament.json`
+/// Folded from `.zicato/runtime/active_tournament.events.jsonl`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActiveTournament {
     #[serde(default)]

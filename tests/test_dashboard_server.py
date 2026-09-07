@@ -9,6 +9,7 @@ stream connects and the conversation endpoints reconstruct transcripts.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sqlite3
@@ -17,7 +18,10 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from tests._workspace_support import write_tournament
+from zicato.core.mutation import MutationPoint
 from zicato.dashboard.server import create_app
+from zicato.mutation.inventory import write_mutation_inventory
 
 # ---------------------------------------------------------------------------
 # Fixture workspace
@@ -87,8 +91,8 @@ def _populate_workspace(ws: Path) -> Path:
     )
 
     # active tournament
-    _write_json(
-        runtime / "active_tournament.json",
+    write_tournament(
+        runtime.parent,
         {
             "tournament_id": "tourn_e0_v1",
             "parent_generation_id": "v0",
@@ -227,7 +231,7 @@ def _populate_workspace(ws: Path) -> Path:
                 "wall_clock_budget_seconds": 180,
                 "weight": 1.0,
                 "tags": ["smoke"],
-                "expectation": {"kind": "predicate"},
+                "expectation": {"kind": "predicate", "spec": "fixture:check"},
             }
         )
         + "\n",
@@ -235,17 +239,19 @@ def _populate_workspace(ws: Path) -> Path:
     _write(epoch_dir / "brief.md", "# Proposer brief\nBe clear.\n")
     _write_json(epoch_dir / "scoring.json", {"weights": {"drift_loss": 1.0}})
     _write_json(epoch_dir / "config.json", {"contract_hash": "h1", "closed": False})
-    _write_json(
+    write_mutation_inventory(
         epoch_dir / "mutations.json",
         [
-            {
-                "id": "m1",
-                "kind": "span",
-                "file": "agent/a.py",
-                "line_start": 1,
-                "line_end": 4,
-                "content": "hello",
-            }
+            MutationPoint(
+                id="m1",
+                kind="span",
+                file=Path("agent/a.py"),
+                source_root=Path("agent"),
+                line_start=1,
+                line_end=4,
+                content="hello",
+                content_hash=hashlib.sha256(b"hello").hexdigest(),
+            )
         ],
     )
     _write_json(
@@ -259,7 +265,14 @@ def _populate_workspace(ws: Path) -> Path:
             "epoch_id": epoch_id,
             "healthy": False,
             "checked_at": "2026-05-16T04:29:00Z",
-            "findings": [{"code": "non_differentiating_entry"}],
+            "findings": [
+                {
+                    "code": "non_differentiating_entry",
+                    "severity": "warning",
+                    "summary": "Entry does not distinguish candidates.",
+                    "detail": {},
+                }
+            ],
         },
     )
 
@@ -426,7 +439,9 @@ def test_active_tournament_matches_file(client: TestClient, workspace: Path) -> 
     r = client.get("/api/active-tournament")
     assert r.status_code == 200
     body = r.json()
-    on_disk = json.loads((workspace / "runtime" / "active_tournament.json").read_text())
+    on_disk = json.loads(
+        (workspace / "runtime" / "active_tournament.events.jsonl").read_text().splitlines()[-1]
+    )["payload"]
     assert body["tournament_id"] == on_disk["tournament_id"]
     assert body["parent_generation_id"] == "v0"
     assert body["child_generation_id"] == "v1"
@@ -754,7 +769,9 @@ def test_active_tournament_normalizes_completed_to_done(
     layer normalizes the producer's spelling so the front-end sees a
     canonical ``done`` and the entry cannot mislabel as ``queued``.
     """
-    on_disk = json.loads((workspace / "runtime" / "active_tournament.json").read_text())
+    on_disk = json.loads(
+        (workspace / "runtime" / "active_tournament.events.jsonl").read_text().splitlines()[-1]
+    )["payload"]
     raw_statuses = {(e["entry_id"], e["side"]): e["status"] for e in on_disk["entries"]}
     assert raw_statuses[("waffles_single", "parent")] == "completed"
 
@@ -811,30 +828,6 @@ def test_epoch_view(client: TestClient) -> None:
     assert body["mutations"][0]["lines"] == "1-4"
 
 
-def test_epoch_view_brief_falls_back_to_legacy_rubric_md(workspace: Path) -> None:
-    """A pre-rename epoch with only ``rubric.md`` still populates ``brief``."""
-    from zicato.query import WorkspacePaths, build_epoch_view
-
-    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
-    # Simulate an epoch frozen before the rename: rename brief.md back
-    # to the legacy rubric.md.
-    (epoch_dir / "brief.md").rename(epoch_dir / "rubric.md")
-
-    view = build_epoch_view(WorkspacePaths(workspace))
-    assert view["brief"].startswith("# Proposer brief")
-
-
-def test_epoch_view_brief_prefers_brief_md_over_legacy(workspace: Path) -> None:
-    """When both files exist, ``brief.md`` wins over the legacy name."""
-    from zicato.query import WorkspacePaths, build_epoch_view
-
-    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
-    _write(epoch_dir / "rubric.md", "# legacy brief\nold\n")
-
-    view = build_epoch_view(WorkspacePaths(workspace))
-    assert view["brief"].startswith("# Proposer brief")
-
-
 def test_epoch_view_board_skips_board_meta_header(workspace: Path) -> None:
     """The board's ``board_meta`` header line is not a board entry.
 
@@ -857,7 +850,7 @@ def test_epoch_view_board_skips_board_meta_header(workspace: Path) -> None:
                         "wall_clock_budget_seconds": 180,
                         "weight": 1.0,
                         "tags": ["smoke"],
-                        "expectation": {"kind": "predicate"},
+                        "expectation": {"kind": "predicate", "spec": "fixture:check"},
                     }
                 ),
             ]
@@ -905,18 +898,6 @@ def test_build_epochs_summary_goal_none_when_no_goal_section(workspace: Path) ->
     _write(epoch_dir / "brief.md", "# Proposer brief\n\n## Preferred edits\n\nNo goal here.\n")
     summary = build_epochs_summary(WorkspacePaths(workspace))
     assert summary[0]["goal"] is None
-
-
-def test_build_epochs_summary_reads_legacy_rubric_md(workspace: Path) -> None:
-    """The goal distillation falls back to the legacy ``rubric.md`` name."""
-    from zicato.query import WorkspacePaths
-    from zicato.query.epoch_view import build_epochs_summary
-
-    epoch_dir = workspace / "epochs" / "2026-05-16_e0"
-    (epoch_dir / "brief.md").unlink()
-    _write(epoch_dir / "rubric.md", "# Epoch\n\n## Goal\n\nStabilise the schema.\n")
-    summary = build_epochs_summary(WorkspacePaths(workspace))
-    assert summary[0]["goal"] == "Stabilise the schema."
 
 
 def test_environment_includes_epochs_summary(client: TestClient) -> None:
@@ -2802,18 +2783,16 @@ async def test_sse_coalesces_burst_into_one_state_change(workspace: Path) -> Non
                 json.dumps({"pid": i, "instance_id": "x", "started_at": "z"}),
                 encoding="utf-8",
             )
-        (runtime / "active_tournament.json").write_text(
-            json.dumps(
-                {
-                    "tournament_id": "t",
-                    "parent_generation_id": "v0",
-                    "child_generation_id": "v1",
-                    "epoch_id": "2026-05-16_e0",
-                    "started_at": "z",
-                    "entries": [],
-                }
-            ),
-            encoding="utf-8",
+        write_tournament(
+            runtime.parent,
+            {
+                "tournament_id": "t",
+                "parent_generation_id": "v0",
+                "child_generation_id": "v1",
+                "epoch_id": "2026-05-16_e0",
+                "started_at": "z",
+                "entries": [],
+            },
         )
 
         # Collect frames for a short window; skip keepalive pings.
@@ -3454,8 +3433,8 @@ def _populate_fast_mode_cached_workspace(
         },
     )
 
-    _write_json(
-        runtime / "active_tournament.json",
+    write_tournament(
+        runtime.parent,
         {
             "tournament_id": f"tourn_{epoch_id}_{challenger_gen}",
             "parent_generation_id": cached_gen,
@@ -3964,7 +3943,7 @@ def _add_second_epoch(workspace: Path, epoch_id: str = "2026-05-17_e1") -> str:
                 "wall_clock_budget_seconds": 240,
                 "weight": 2.0,
                 "tags": ["e1"],
-                "expectation": {"kind": "rubric"},
+                "expectation": {"kind": "rubric", "spec": "Answer the task."},
             }
         )
         + "\n",

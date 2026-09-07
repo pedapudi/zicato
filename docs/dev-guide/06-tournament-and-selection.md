@@ -2058,23 +2058,20 @@ the token at load time.
 inherit `2`. Do NOT hardcode a replicate count anywhere else — every consumer
 reads the ClassVar (§6.8.3).
 
-**Step 4 — builder paramSpecs.** Add your params (`replicates`, and any
-structure-specific knob) to the builder's per-structure paramSpec table
-(`model.js::paramSpecsFor`) so the GUI can render honest fields and the CLI can
-document them. The full-coverage rule for a new knob names every place a knob
-must appear (10-builder-cli-library.md §10.7). An unspecced param is invisible
-to operators.
+**Step 4 — contract parameters.** Add the structure's parameters to the typed
+contract operations and validate them before publishing a draft. Document their
+defaults and accepted values alongside the strategy. The field-declaration
+rules are in 10-cli-and-configuration.md §10.7.
 
-**Step 5 — the cost meter.** The builder cost estimator multiplies board size ×
+**Step 5 — the cost meter.** The contract cost estimator multiplies board size ×
 `field_size` × `default_replicates_for(structure)` × the structure's own
 matchup count. If your structure schedules a non-obvious number of duels
 (round-robin is `n·(n−1)/2` + 1 crowning), teach the estimator your matchup
 count. An estimator that does not know your matchup count under-reports the
 cost, which is the failure `STRUCTURE_DEFAULT_REPLICATES` closes for the
 replicate factor — see `registry.py`'s comment on the swiss/elim default of 2.
-Give each new cost line a draft fixture in
-`tests/test_builder_cost_envelope_correspondence.py`, whose coverage assertion
-reds until one reaches the line.
+Exercise each added cost line with a draft fixture in
+`tests/test_contract_operations.py`, checking the expected number of board runs.
 
 **Step 6 — the gate-owns-decisions invariant.** Re-read your `record_result` and
 `champion`, and assert in a test that with a gate that always REJECTS your
@@ -2277,7 +2274,7 @@ uv run pytest tests/test_best_of_n_tree_integrity.py -q
 - 08-supervisor.md — the kill-request single-escalator handshake (`_run_single`'s
   supervisor delegation); confirmed-dead-only reaping of `ztw-snap-*` orphans;
   the promotion-gate notary that re-derives the scalar-margin rung out of band.
-- 10-builder-cli-library.md — the structure paramSpecs and the cost meter the
+- 10-cli-and-configuration.md — the structure paramSpecs and the cost meter the
   §6.14 recipe threads.
 - 11-testing.md — the genstore conformance suite;
   `tests/test_best_of_n_tree_integrity.py` (the subprocess-worker end-to-end

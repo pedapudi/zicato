@@ -37,9 +37,9 @@ import pytest
 from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
     bootstrap_workspace,
+    evaluation_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
     target_call_llm,
 )
@@ -134,7 +134,7 @@ def test_all_infra_aborted_round_defers_un_outcomed(
 ) -> None:
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=1)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
     assert "deferred_infra" in outcome.rejection_reason
@@ -182,7 +182,7 @@ def test_field_infrastructure_threshold_accumulates_across_matchups(
     )
     _install_infra_abort_run_single(monkeypatch)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     # Each two-sided, single-entry matchup contributes two infrastructure
     # aborts. No individual matchup reaches three, but the Swiss matchup plus
@@ -210,7 +210,7 @@ def test_deferred_round_reconciles_cleanly_and_recovers(
     endpoint settles the re-run round normally."""
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=1)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
 
     # Infra aborts are never persisted to the unit cache, so a full-outage
@@ -227,7 +227,7 @@ def test_deferred_round_reconciles_cleanly_and_recovers(
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
-    healed = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    healed = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     assert healed.tournament_decision == "promoted"
     assert healed.proposed_generation_id == "v1"
 
@@ -239,7 +239,7 @@ def test_partial_outage_leaves_resume_in_place_classification(
     the cached units are worth keeping and the cache HITs them on re-run."""
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=1)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
 
     # Simulate one completed unit having landed before the outage (a real
@@ -263,7 +263,7 @@ def test_threshold_off_settles_exactly_as_today(
     ``rejected`` outcome — the un-opted-in path is untouched."""
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=None)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "rejected"
     v1_dir = workspace / "epochs" / epoch_id / "generations" / "v1"
@@ -306,6 +306,11 @@ def _promoted_outcome(round_idx: int) -> EvolveRoundOutcome:
     )
 
 
+async def _permissive_aux(system: str, user: str, model: str) -> str:
+    del system, user, model
+    return ""
+
+
 def test_loop_backs_off_exponentially_and_reconciles(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -313,12 +318,8 @@ def test_loop_backs_off_exponentially_and_reconciles(
     import zicato.evolve.round_entry as round_entry
     import zicato.orchestrator as orch
 
-    workspace, epoch_id = bootstrap_workspace(tmp_path)
+    workspace, epoch_id = bootstrap_workspace(tmp_path, evaluation_call_llm=_permissive_aux)
     _set_runtime_block(workspace, {"infra_backoff_base_s": 0.01, "infra_backoff_cap_s": 0.02})
-
-    async def _permissive_aux(system: str, user: str, model: str) -> str:
-        del system, user, model
-        return ""
 
     decisions = ["defer", "defer", "defer", "promote", "defer"]
     calls: list[int] = []

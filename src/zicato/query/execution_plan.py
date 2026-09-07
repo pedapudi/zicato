@@ -93,13 +93,20 @@ from zicato.core.measurement import (
     seed_qualifier,
     unit_artifact_name,
 )
+from zicato.epoch._storage import RecordError
 from zicato.epoch.round_log import (
+    CandidateSampled,
+    CandidateScreened,
+    CritiqueSelected,
     DecisionRecorded,
+    EvidenceReplicated,
+    ExperimentMinted,
     GateEvaluated,
     HarnessLoaded,
     HoldoutReleased,
     PatchesApplied,
     ProposalAttempted,
+    ProposalEpisodeSettled,
     RoundLogEnvelope,
     RoundRecord,
     ValidationFailed,
@@ -708,24 +715,86 @@ def _typed(events: list[RoundLogEnvelope], cls: type) -> list[Any]:
     return [e.event for e in events if isinstance(e.event, cls)]
 
 
+def _event_scope(
+    envelope: RoundLogEnvelope, step: str, *, comparison: bool = False
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Read recorded ownership without copying arbitrary scope extensions."""
+    scope = envelope.scope
+    coordinates: dict[str, Any] = {"event_seq": envelope.seq}
+    missing = []
+    if scope.generation_id:
+        coordinates["generation_id"] = scope.generation_id
+    else:
+        missing.append("generation_id")
+    if scope.step == step:
+        coordinates["step"] = step
+    else:
+        missing.append("step")
+    if comparison:
+        for key in ("matchup_id", "opponent_generation_id"):
+            value = scope.attributes.get(key)
+            if isinstance(value, str) and value:
+                coordinates[key] = value
+            else:
+                missing.append(key)
+    note = {"note": "missing or invalid event scope: " + ", ".join(missing)} if missing else {}
+    return coordinates, note
+
+
 def _propose_step(
     step_id: str, events: list[RoundLogEnvelope], record: RoundRecord, closed: bool
 ) -> PlanNode:
     """The round's proposal session: one node per attempt the log recorded."""
-    attempts = _typed(events, ProposalAttempted)
+    attempts = [e for e in events if isinstance(e.event, ProposalAttempted)]
     children: list[PlanNode] = []
-    for ordinal, attempt in enumerate(attempts, start=1):
+    for envelope in attempts:
+        attempt = envelope.event
+        assert isinstance(attempt, ProposalAttempted)
         errors = list(attempt.errors)
+        coordinates, note = _event_scope(envelope, "propose")
         children.append(
             PlanNode(
-                id=f"{step_id}/attempt:{ordinal}",
+                id=f"{step_id}/event:{envelope.seq}",
                 kind="proposal_attempt",
-                label=f"Attempt {ordinal}",
+                label=f"Proposal event {envelope.seq}",
                 purpose="One proposer draw, and whether it settled.",
                 status=STATUS_FAILED if errors else STATUS_DONE,
-                coordinates={"slot_index": attempt.slot_index},
-                outcome={"errors": errors},
+                provenance=PROVENANCE_PARTIAL if note else PROVENANCE_EXACT,
+                coordinates={**coordinates, "slot_index": attempt.slot_index},
+                outcome={"errors": errors, **note},
             )
+        )
+    candidates: dict[str, list[RoundLogEnvelope]] = {}
+    unattributed = []
+    for envelope in events:
+        if isinstance(
+            envelope.event,
+            ProposalAttempted
+            | ProposalEpisodeSettled
+            | CandidateSampled
+            | CandidateScreened
+            | CritiqueSelected
+            | ExperimentMinted,
+        ):
+            coordinates, note = _event_scope(envelope, "propose")
+            if note:
+                unattributed.append({**coordinates, **note})
+            else:
+                candidates.setdefault(envelope.scope.generation_id, []).append(envelope)
+    summaries = []
+    for generation_id, candidate_events in candidates.items():
+        candidate = fold_round_record(candidate_events).proposal
+        summaries.append(
+            {
+                "generation_id": generation_id,
+                "attempts": candidate.attempts,
+                "candidates_sampled": candidate.candidates_sampled,
+                "candidates_screened": candidate.candidates_screened,
+                "screen_vetoes": candidate.screen_vetoes,
+                "critique_index": candidate.critique_index,
+                "critique_reason": candidate.critique_reason,
+                "experiment_ids": list(candidate.experiment_ids),
+            }
         )
     session = record.proposal
     outcome = {
@@ -733,8 +802,8 @@ def _propose_step(
         "candidates_sampled": session.candidates_sampled,
         "candidates_screened": session.candidates_screened,
         "screen_vetoes": session.screen_vetoes,
-        "critique_index": session.critique_index,
-        "critique_reason": session.critique_reason,
+        "candidates": summaries,
+        "unattributed_events": unattributed,
         "experiment_ids": list(session.experiment_ids),
     }
     if session.experiment_ids:
@@ -743,58 +812,71 @@ def _propose_step(
         status = STATUS_FAILED
     else:
         status = STATUS_SKIPPED if closed else STATUS_PLANNED
-    return _step_node(step_id, "propose", status, outcome, tuple(children))
+    return _step_node(
+        step_id,
+        "propose",
+        status,
+        outcome,
+        tuple(children),
+        provenance=PROVENANCE_PARTIAL if unattributed else PROVENANCE_EXACT,
+    )
 
 
 def _apply_step(step_id: str, events: list[RoundLogEnvelope], closed: bool) -> PlanNode:
-    """Patch application, plus the validation failure when there was one.
-
-    A PASSING validation writes no event, so this step never draws a
-    "validated" node it did not read — the empty ``validation_findings``
-    on a step that applied patches is the whole record.
-    """
-    applied = _typed(events, PatchesApplied)
-    failures = _typed(events, ValidationFailed)
-    entrypoints = {e.generation_id: e.entrypoint_file for e in _typed(events, HarnessLoaded)}
+    """Keep each application and validation failure under its recorded owner."""
+    entrypoints = {
+        envelope.scope.generation_id: event.entrypoint_file
+        for envelope in events
+        if isinstance(event := envelope.event, HarnessLoaded)
+        and envelope.scope.generation_id
+        and envelope.scope.generation_id == event.generation_id
+    }
     children: list[PlanNode] = []
-    for applied_event in applied:
-        generation_id = applied_event.generation_id
-        children.append(
-            PlanNode(
-                id=f"{step_id}/{generation_id}",
-                kind="apply_patches",
-                label=f"Patches applied — {generation_id}",
-                purpose="The experiment's patches became a generation snapshot.",
-                status=STATUS_DONE,
-                coordinates={"generation_id": generation_id},
-                outcome={"entrypoint_file": entrypoints.get(generation_id, "")},
-            )
-        )
+    generation_ids: list[str] = []
     findings: list[str] = []
-    for failure in failures:
-        findings.extend(failure.findings)
-    if failures:
+    failures = 0
+    for envelope in events:
+        event = envelope.event
+        if not isinstance(event, PatchesApplied | ValidationFailed):
+            continue
+        coordinates, note = _event_scope(envelope, "apply")
+        outcome: dict[str, Any]
+        if isinstance(event, PatchesApplied):
+            generation_ids.append(event.generation_id)
+            if envelope.scope.generation_id and envelope.scope.generation_id != event.generation_id:
+                coordinates.pop("generation_id", None)
+                note = {"note": "event scope disagrees with the recorded application generation"}
+            kind, label, status = "apply_patches", "Patches applied", STATUS_DONE
+            purpose = "The experiment's patches became a generation snapshot."
+            outcome = {"entrypoint_file": entrypoints.get(coordinates.get("generation_id", ""), "")}
+        else:
+            failures += 1
+            findings.extend(event.findings)
+            kind, label, status = "validate", "Validation", STATUS_FAILED
+            purpose = "Snapshot validation rejected the applied patches."
+            outcome = {"findings": list(event.findings)}
         children.append(
             PlanNode(
-                id=f"{step_id}/validation",
-                kind="validate",
-                label="Validation",
-                purpose="Snapshot validation rejected the applied patches.",
-                status=STATUS_FAILED,
-                outcome={"findings": findings},
+                id=f"{step_id}/event:{envelope.seq}",
+                kind=kind,
+                label=label,
+                purpose=purpose,
+                status=status,
+                coordinates=coordinates,
+                outcome={**outcome, **note},
+                provenance=PROVENANCE_PARTIAL if note else PROVENANCE_EXACT,
             )
         )
-    if failures:
-        status = STATUS_FAILED
-    elif applied:
-        status = STATUS_DONE
-    else:
-        status = STATUS_SKIPPED if closed else STATUS_PLANNED
+    status = (
+        STATUS_FAILED
+        if failures
+        else (STATUS_DONE if generation_ids else (STATUS_SKIPPED if closed else STATUS_PLANNED))
+    )
     return _step_node(
         step_id,
         "apply",
         status,
-        {"generation_ids": [e.generation_id for e in applied], "validation_findings": findings},
+        {"generation_ids": generation_ids, "validation_findings": findings},
         tuple(children),
     )
 
@@ -833,63 +915,79 @@ def _run_step(
     )
 
 
-def _gate_step(
-    step_id: str, events: list[RoundLogEnvelope], record: RoundRecord, closed: bool
-) -> PlanNode:
-    """The gate's evaluations, and the holdout release when it happened.
-
-    A round with no ``holdout_released`` event did not release a holdout;
-    on a closed round that absence is a ``skipped`` node the server
-    states, because a gap in the tree tells the reader nothing.
-    """
+def _gate_step(step_id: str, events: list[RoundLogEnvelope], closed: bool) -> PlanNode:
+    """Retain each recorded comparison and released holdout in event order."""
     children: list[PlanNode] = []
-    for ordinal, gate in enumerate(_typed(events, GateEvaluated), start=1):
+    evidence_trail = []
+    gates = holdouts = 0
+    for envelope in events:
+        event = envelope.event
+        if not isinstance(event, GateEvaluated | HoldoutReleased | EvidenceReplicated):
+            continue
+        coordinates, note = _event_scope(
+            envelope, "gate", comparison=isinstance(event, GateEvaluated)
+        )
+        provenance = PROVENANCE_PARTIAL if note else PROVENANCE_EXACT
+        if isinstance(event, EvidenceReplicated):
+            evidence_trail.append(
+                {
+                    **event.ci_state,
+                    "coordinates": coordinates,
+                    **note,
+                    "provenance": provenance,
+                }
+            )
+            continue
+        outcome: dict[str, Any]
+        if isinstance(event, GateEvaluated):
+            gates += 1
+            kind, label = "gate_evaluation", "Gate evaluation"
+            purpose = "The promote gate compared the two sides."
+            outcome = {
+                "decision": event.decision,
+                "deciding_rule": event.rule_fired,
+                "champion_scalar": event.champion_scalar,
+                "challenger_scalar": event.challenger_scalar,
+                "margin_required": event.margin_required,
+                "attributable_regressions": list(event.attributable_regressions),
+            }
+        else:
+            holdouts += 1
+            kind, label = "holdout_release", "Holdout release"
+            purpose = "The Ladder released the holdout-confirmation bit."
+            outcome = {"confirmed": event.confirmed}
         children.append(
             PlanNode(
-                id=f"{step_id}/evaluation:{ordinal}",
-                kind="gate_evaluation",
-                label=f"Gate evaluation {ordinal}",
-                purpose="The promote gate compared the two sides.",
+                id=f"{step_id}/event:{envelope.seq}",
+                kind=kind,
+                label=label,
+                purpose=purpose,
                 status=STATUS_DONE,
-                outcome={
-                    "decision": gate.decision,
-                    # The gate names the rule that REJECTED; a clean
-                    # promotion fires none, so this is empty rather than a
-                    # rule name the server made up.
-                    "deciding_rule": gate.rule_fired,
-                    "champion_scalar": gate.champion_scalar,
-                    "challenger_scalar": gate.challenger_scalar,
-                    "margin_required": gate.margin_required,
-                    "attributable_regressions": list(gate.attributable_regressions),
-                },
+                coordinates=coordinates,
+                provenance=provenance,
+                outcome={**outcome, **note},
             )
         )
-    holdout: HoldoutReleased | None = record.holdout
-    children.append(
-        PlanNode(
-            id=f"{step_id}/holdout",
-            kind="holdout_release",
-            label="Holdout release",
-            purpose="The Ladder released the holdout-confirmation bit.",
-            status=(
-                STATUS_DONE
-                if holdout is not None
-                else (STATUS_SKIPPED if closed else STATUS_PLANNED)
-            ),
-            outcome={"confirmed": holdout.confirmed if holdout is not None else None},
+    if not holdouts:
+        children.append(
+            PlanNode(
+                id=f"{step_id}/holdout",
+                kind="holdout_release",
+                label="Holdout release",
+                purpose="The Ladder released the holdout-confirmation bit.",
+                status=STATUS_SKIPPED if closed else STATUS_PLANNED,
+                outcome={"confirmed": None},
+            )
         )
-    )
-    gates = _typed(events, GateEvaluated)
-    if gates:
-        status = STATUS_DONE
-    else:
-        status = STATUS_SKIPPED if closed else STATUS_PLANNED
     return _step_node(
         step_id,
         "gate",
-        status,
-        {"evidence_trail": [dict(row) for row in record.evidence_trail]},
+        STATUS_DONE if gates else (STATUS_SKIPPED if closed else STATUS_PLANNED),
+        {"evidence_trail": evidence_trail},
         tuple(children),
+        provenance=PROVENANCE_PARTIAL
+        if any("note" in row for row in evidence_trail)
+        else PROVENANCE_EXACT,
     )
 
 
@@ -944,6 +1042,7 @@ def _step_node(
     children: tuple[PlanNode, ...] = (),
     *,
     progress: dict[str, int] | None = None,
+    provenance: str = PROVENANCE_EXACT,
 ) -> PlanNode:
     label, purpose = next((lbl, pur) for key, lbl, pur in ROUND_STEPS if key == step)
     return PlanNode(
@@ -952,7 +1051,7 @@ def _step_node(
         label=label,
         purpose=purpose,
         status=status,
-        provenance=_rolled(PROVENANCE_EXACT, children),
+        provenance=_rolled(provenance, children),
         progress=progress,
         outcome=outcome,
         children=children,
@@ -987,7 +1086,7 @@ def _round_stage(
         _run_step(
             paths, epoch_id, f"{stage_id}/run", generation_ids, board_entry_ids, closed=closed
         ),
-        _gate_step(f"{stage_id}/gate", events, record, closed),
+        _gate_step(f"{stage_id}/gate", events, closed),
         _decide_step(f"{stage_id}/decide", events, generation_ids, lineage, experiments, closed),
     )
     bands = _band_steps(paths, epoch_id, stage_id, band_generation_ids, stated)
@@ -1107,7 +1206,7 @@ def _empty_plan_model(epoch_id: str | None, note: str) -> ExecutionPlan:
 
 
 def build_execution_plan(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
-    """``GET /api/epoch/{epoch_id}/execution-plan`` — what the epoch's loop did.
+    """Describe the epoch's recorded stages, steps, and work units.
 
     Returns::
 
@@ -1121,18 +1220,17 @@ def build_execution_plan(paths: WorkspacePaths, epoch_id: str | None = None) -> 
     baseline, then every round on disk in index order, then the rounds the
     run still owes.
 
-    Node ids are stable between responses so a client can diff a served
-    tree against the one it holds and keep a node open. The grammar is
-    positional, each level omitted where it does not apply::
+    Node ids follow recorded coordinates so a client can retain its open
+    nodes between responses. Each level is omitted where it does not apply::
 
         e:<epoch_id>[/round:<n>|/baseline][/<step>][/<key>...]
 
     where a step's child keys are the natural key of that level:
     ``<generation_id>`` for a board sweep or an applied patch set,
     ``<entry_id>/r<replicate>`` for a work unit, ``a<n>`` for one of that
-    unit's superseded attempts, and ``attempt:<n>`` / ``evaluation:<n>``
-    for a proposal attempt or a gate evaluation (their log order, which is
-    append-only and therefore stable). A stage's measurement bands are
+    unit's superseded attempts, and ``event:<seq>`` for a recorded proposal,
+    gate or holdout event. Removing an event cannot renumber its neighbors.
+    A stage's measurement bands are
     ``band:<band_key>``, each draw under one keyed
     ``<generation_id>/<entry_id>/r<replicate>``.
 
@@ -1144,11 +1242,9 @@ def build_execution_plan(paths: WorkspacePaths, epoch_id: str | None = None) -> 
 
 
 def build_execution_plan_model(paths: WorkspacePaths, epoch_id: str | None = None) -> ExecutionPlan:
-    """Build the typed model used by both execution-plan endpoints.
+    """Build the typed model shared by durable and live plan readers.
 
-    This is the shared reader seam. It keeps the public endpoint's
-    best-effort guarantee and always returns a model, including for an absent
-    or unreadable epoch.
+    Always return a model, including for an absent or unreadable epoch.
     """
     try:
         resolved = _resolve_epoch_id(paths, epoch_id)
@@ -1158,7 +1254,9 @@ def build_execution_plan_model(paths: WorkspacePaths, epoch_id: str | None = Non
         return _empty_plan_model(None, "no epoch")
     try:
         return _build(paths, resolved)
-    except Exception:  # noqa: BLE001 — the endpoint never returns a 500
+    except RecordError as exc:
+        return _empty_plan_model(resolved, str(exc))
+    except Exception:  # noqa: BLE001 — unreadable inputs produce an empty plan
         return _empty_plan_model(resolved, "epoch could not be read")
 
 
@@ -1180,6 +1278,8 @@ def _build(paths: WorkspacePaths, epoch_id: str) -> ExecutionPlan:
             payload = event.event
             generation_id = ""
             if isinstance(payload, PatchesApplied | HarnessLoaded):
+                if event.scope.generation_id and event.scope.generation_id != payload.generation_id:
+                    continue
                 generation_id = payload.generation_id
             if generation_id and generation_id not in named:
                 named.append(generation_id)

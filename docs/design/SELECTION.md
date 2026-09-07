@@ -1049,7 +1049,7 @@ duels, and the lever that buys confidence is **how many times each
 candidate is re-evaluated** rather than the bracket shape. `single_elim`,
 `double_elim` and `swiss` resolve only when the contract sets
 `experimental.tournament_structures` to `true`; the contract loader, the
-strategy registry, the builder and the CLI refuse them otherwise, each
+strategy registry, contract validator, and CLI refuse them otherwise, each
 naming that key. They serve an operator who wants to try a cheap-field
 regime, such as a large proposer fan-out under a generous budget.
 `racing` is the one structure whose noise handling the literature

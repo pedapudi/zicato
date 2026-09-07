@@ -49,6 +49,7 @@ import click
 
 from zicato.core.types import MutationPoint, Pattern
 from zicato.core.workspace import (
+    brief_path,
     epoch_dir,
     generation_dir,
 )
@@ -58,20 +59,6 @@ from zicato.proposer.brief import load_brief
 from zicato.proposer.proposer import ProposerError
 from zicato.workspace import WorkspaceLayout, generation_ids, next_generation_id
 from zicato.workspace.config_io import WorkspaceConfig, read_workspace_config
-
-
-def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
-    """Path to the frozen proposer brief (``brief.md``) for one epoch.
-
-    ``rubric.md`` is accepted as a fallback spelling of the same file.
-    """
-    brief = epoch_dir(workspace_root, epoch_id) / "brief.md"
-    if not brief.exists():
-        legacy = epoch_dir(workspace_root, epoch_id) / "rubric.md"
-        if legacy.exists():
-            return legacy
-    return brief
-
 
 # ---------------------------------------------------------------------------
 # Workspace loading helpers
@@ -413,7 +400,7 @@ async def _propose(
         config = _load_workspace_config(workspace_dir)
         epoch_id = _resolve_epoch(workspace_dir, epoch)
 
-        brief_file = _epoch_brief_path(workspace_dir, epoch_id)
+        brief_file = brief_path(workspace_dir, epoch_id)
         if not brief_file.exists():
             raise click.ClickException(
                 f"No proposer brief at {brief_file}. Create it before proposing."

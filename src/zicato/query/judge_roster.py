@@ -27,7 +27,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from zicato.query.epoch_view import _parse_board_meta
+from zicato.board.jsonl import load_board_rows
+from zicato.epoch._storage import RecordError
+from zicato.query.epoch_view import _project_board_meta
 from zicato.query.paths import (
     WorkspacePaths,
     _read_json_value,
@@ -146,7 +148,11 @@ def build_judge_roster(paths: WorkspacePaths, epoch_id: str | None = None) -> di
         return roster
     layout = layout_of(paths)
 
-    meta = _parse_board_meta(layout.board(epoch_id)) or {}
+    try:
+        meta = _project_board_meta(load_board_rows(layout.board(epoch_id)) or []) or {}
+    except RecordError as exc:
+        roster["unreadable"] = str(exc)
+        return roster
     kinds = sorted({kind_to_wire_string(k) for k in meta.get("disable_drift", ())})
     roster["disable_drift"] = kinds
 

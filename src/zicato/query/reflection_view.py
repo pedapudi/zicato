@@ -372,7 +372,10 @@ def _transcript_from_result(loss_ref: str | None) -> dict[str, Any] | None:
         unit_result_path,
     )
 
-    loss = read_capture_loss(Path(loss_ref))
+    try:
+        loss = read_capture_loss(Path(loss_ref))
+    except ValueError:
+        return None
     if loss is None:
         return None
     body = read_run_result(unit_result_path(Path(loss_ref)), expected=loss)
@@ -397,7 +400,10 @@ def _transcript_from_judge_io(loss_ref: str | None, judge_name: str) -> dict[str
     )
     from zicato.tournament.unit_cache import read_capture_loss  # noqa: PLC0415
 
-    loss = read_capture_loss(Path(loss_ref))
+    try:
+        loss = read_capture_loss(Path(loss_ref))
+    except ValueError:
+        return None
     if loss is None:
         return None
     for rec in read_judge_io(judge_io_path_for_loss(Path(loss_ref)), expected=loss):

@@ -122,7 +122,7 @@ interrupted with Ctrl-C:
 | `--workspace <path>` | `.zicato` | Workspace root to serve. |
 | `--host <addr>` | `127.0.0.1` | Bind address. |
 | `--port <port>` | `7892` | Preferred port (walks `+1` if taken). |
-| `--view <name>` | `overview` | The view the URL opens on; `builder` opens the contract editor. |
+| `--view <name>` | `overview` | The read-only workspace view the URL opens on. |
 | `--static-dir <path>` | unset | Asset directory to serve, shadowing the `dashboard.static_dir` config knob. Unset serves the bundled directory. |
 
 > **Planned modes.** Two richer modes are **not yet shipped** as
@@ -135,11 +135,6 @@ interrupted with Ctrl-C:
 
 The automatic spawn is the common path, and it needs no command of its
 own: `evolve` starts the service.
-
-> **Builder focus.** `zicato dashboard --view builder` is the same service launched focused on
-> the tournament builder (it prints the `#/builder` deep-link); the builder is
-> also reachable inside any running dashboard via the top-bar ⚙ Settings entry.
-> See [`TOURNAMENT-BUILDER.md`](TOURNAMENT-BUILDER.md).
 
 ## 3. Architecture (HTTP + SSE)
 
@@ -272,7 +267,7 @@ different cadences:
 
 | Tier | Files | Written | Read for |
 |---|---|---|---|
-| **Canonical, live** | `runtime/active_tournament.json`, `runtime/heartbeat.json`, `runtime/active_runs/*.json`, `lineage.json`, per-run `events.jsonl` | Live — the moment state changes, by the orchestrator or the worker that owns the file | The live dashboard: anything that must reflect *right now* |
+| **Canonical, live** | `runtime/active_tournament.events.jsonl`, `runtime/heartbeat.json`, `runtime/active_runs/*.json`, `lineage.json`, per-run `events.jsonl` | Live — the moment state changes, by the orchestrator or the worker that owns the file | The live dashboard: anything that must reflect *right now* |
 | **Derived, lagging** | `index.db` (SQLite) | Dual-written at **generation/round boundaries** only (see [ANALYTICAL-INDEX.md §2.3](ANALYTICAL-INDEX.md#23-the-orchestrator-dual-writes-live)); fully rebuildable via `zicato repair index` | Resolved historical / analytical queries: closed decisions, cross-run aggregates |
 
 `index.db` is a **derived analytical cache**. It is rebuilt from
@@ -288,7 +283,7 @@ tournament until the generation boundary. A decision view that read its
 in-progress matchup from `index.db` would therefore render blank for
 the whole duration of every round — the window in which an operator
 most wants to watch the decision form. The decision view reads
-`runtime/active_tournament.json` through `GET /api/active-tournament`
+`runtime/active_tournament.events.jsonl` through `GET /api/active-tournament`
 instead, and reads the index only for decisions that have already
 closed.
 
@@ -318,7 +313,7 @@ this document names the level instead.
 | **Workspace** | `L0` | cross-epoch | Is the lineage climbing, and is any loop unhealthy? Answered by the lineage figure zoomed to epochs, the loop-health banner, and the recent-decisions strip. | `/api/workspace`, `/api/health-report`, `/api/lineage` |
 | **Epoch** | `L1` | one epoch | What contract is this epoch deciding under, and how have its decisions gone? Answered by the epoch header, the lineage figure, the contract diff, and the per-entry and per-judge heatmaps. | `/api/epoch`, `/api/lineage`, `/api/contract-diff/...`, the per-judge endpoints |
 | **Generation** | `L2` | one generation | Did the change this generation made pay off? Answered by the hypothesis-to-outcome panel, the drift-movement chart, and the patches. | `/api/lineage`, `/api/generation/...`, `/api/drift-movements/...`, `/api/files/...` |
-| **Decision (round)** | `L3` | one promote/reject | Was this promote or reject right, and why? The centerpiece: gate ladder, per-entry diverging champion-versus-challenger chart, scalar waterfall, primary-driver judge, margin band, and the promote/reject controls. | live `active_tournament.json` for the in-flight decision; `/api/round/.../gate` plus the index for closed ones |
+| **Decision (round)** | `L3` | one promote/reject | Was this promote or reject right, and why? The centerpiece: gate ladder, per-entry diverging champion-versus-challenger chart, scalar waterfall, primary-driver judge, margin band, and the promote/reject controls. | live `active_tournament.events.jsonl` for the in-flight decision; `/api/round/.../gate` plus the index for closed ones |
 | **Run** | `L4` | one run | What did this single side actually do? Answered by the transcript diff, the drift annotations, and the harmonograf deep-link. | `/api/run/...`, transcript endpoints, `/api/run-log` |
 
 ### 4.1 The lineage ribbon — one figure at three zoom levels
@@ -576,7 +571,7 @@ on the decision view composes endpoints that serve other views as well
 > deterministic projection — best case, worst case, and current trend —
 > computed from the board entries that have finished. Once the best and
 > worst cases agree, the decision is settled early. The projection is
-> computed from `active_tournament.json` alone, with no model call and
+> computed from `active_tournament.events.jsonl` alone, with no model call and
 > no randomness, so the same partial results always yield the same
 > projection.
 
@@ -901,8 +896,7 @@ The route table:
 | `GET /api/epoch/{epoch_id}/journal` and `.../journal.md` | Journal as data or rendered markdown. |
 | `GET /api/epoch/{epoch_id}/analysis` and `.../analysis.html` | Analysis as data or rendered HTML. |
 | `POST /api/control/{pause,resume,skip-round,kill/{run_id},promote/{gen},reject/{gen},brief}` | Control surface (§6.2). |
-| `GET/POST /settings/models` | Secret-safe per-role LLM config (harness · evaluation · builder · judge) for the Settings drawer's Models section — only the `api_key_env` NAME + a set/unset flag is ever serialized, never a secret (`settings_api.py`). |
-| `GET /builder/config`, `GET /builder/draft`, `POST /builder/op`, `POST /builder/apply`, `POST /builder/chat` (SSE) | The tournament-builder REST surface (the form + the copilot share one draft / op vocabulary). See [TOURNAMENT-BUILDER.md](TOURNAMENT-BUILDER.md). |
+| `GET /settings/models` | Read-only model-engine and role configuration for Settings. Only credential-variable names and set/unset flags are serialized; secret values are omitted (`settings_api.py`). |
 
 The sections below detail the endpoints whose response shape is
 load-bearing.
@@ -952,7 +946,7 @@ reassembled on the client from `/api/matchup-grid/...` and
 #### `GET /api/state`
 
 Returns a complete live snapshot (`state_reader.build_snapshot`),
-joining `heartbeat.json`, `active_tournament.json`, `active_runs/*`,
+joining `heartbeat.json`, `active_tournament.events.jsonl`, `active_runs/*`,
 and derived `epochs/` + index data. It is the same shape sent as the
 SSE `snapshot` frame and used on first load and on reconnect.
 

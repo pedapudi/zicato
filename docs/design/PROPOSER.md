@@ -1056,14 +1056,14 @@ canonical; the design CLI documentation drifts. The flag is
 
 ---
 
-## 6. The proposer scorecard + recommend-only self-reflection
+## 6. The proposer scorecard
 
 The loop measures the proposer on every round at no extra cost. Every round
 log records the proposal attempts it made, the validator errors they hit, the
 screen's verdict on each slate candidate, the gate's numbers on the child that
 reached it, and the terminal decision. The scorecard (§6.1) reads those signals
-as a picture of proposer quality; reflection (§6.2) is the gated path for
-acting on it.
+as a picture of proposer quality. It does not edit the proposer or generate
+proposer-edit recommendations.
 
 ### 6.1 The scorecard (`zicato proposer scorecard`)
 
@@ -1101,34 +1101,7 @@ An error carrying no recognised code counts under `unclassified` — the honest
 bucket for a proposer parse failure, a slate slot's credential lapse, or a log
 written before the codes existed.
 
-### 6.2 Reflection (`zicato proposer reflect`) — recommend-only
-
-`zicato/proposer/reflection.py` diagnoses the scorecard and drafts the edit:
-each finding carries the five-slot evidence convention (population, measured,
-compared-against, remedy, remedy-safety) where the **remedy is a ready-to-apply
-`skills/*.md` file plus its unified diff and SHA-256**. Records land under
-`epochs/<id>/proposer_reflections/<id>/findings.json`.
-
-The **investigation substrate is pluggable**: `InvestigationSource` returns an
-`Investigation`, and `ScorecardInvestigation` reads the scorecard plus a
-BANDED history of prior epochs. A richer substrate implements the same
-protocol and returns the same `Investigation`, so one drops in without
-reshaping a persisted record. Historical
-rates are banded through `band_rate` for the same reason the failure-mode
-channel bands its marginals (§2.5): the comparison slot is the one number a
-drafting model reads round over round, and the exact rate would be a response
-surface to climb.
-
-Emission is **deterministic and free** — no model is called, so the operator's
-queue is reproducible from the same round logs. `--draft-with-llm` adds an
-optional polish pass over the remedy's prose through the evaluation-call seam,
-wrapped in `aux_call_timeout_s` like every other aux call site; a failed,
-timed-out, or empty call keeps the deterministic remedy rather than degrading
-it. The budget matters more here than elsewhere: the remedy is already complete
-before the model is asked anything, so a pass that blocked on a dead endpoint
-would be waiting for nothing.
-
-### 6.2.1 Two round-log subtleties the reader must respect
+### 6.2 Reading repeated round attempts
 
 **Re-run rounds.** One `round_log.jsonl` can hold more than one attempt at the
 same round index — a round that applied patches but died before its experiment
@@ -1153,44 +1126,6 @@ a candidate: a revise whose propose call raised emits no `candidate_screened` at
 all, so the rate answers "when the revise produced something, did it survive"
 rather than "did the revise mechanism work at all".
 
-### 6.3 The four invariants, and where each one lives
-
-| Invariant | Mechanism |
-|---|---|
-| **Never mid-epoch** | The only writer into the proposer dir is `apply_recommendation`, and its edit is contract drift, so the next `evolve` rolls the epoch before proposing. |
-| **Never self-applied** | There is no import edge from `reflection.py` to `apply_recommendation.py`; a test reads the module source to pin the absent edge. |
-| **Redacted evidence only** | `assert_redacted` walks every record at the persist boundary and RAISES on an identity/content key at any depth. The scorecard never carries an `entry_id` by construction (it counts units and ignores `attributable_regressions`); the guard is what keeps a future emitter honest. |
-| **Every accepted edit is hashed** | The remedy carries the SHA-256 of the exact bytes; `apply-recommendation` re-verifies before writing, so an edited record cannot be applied under its original id. |
-
-One consequence of that last row: `_canon_proposer` folds a skill as
-`{name, sha256(normalized body)}` and does **not** hash the frontmatter
-`description`, so rewording a description is cosmetic and correctly does not
-roll. A drafted remedy is safe from that because its heading and its
-evidence line live in the *body* — but only by layout, so both halves are pinned:
-a description-only edit must not roll (the canon's semantics, which this feature
-must not drift), and a drafted remedy's replacement must.
-
-### 6.4 The boundary and the apply gate
-
-Pending recommendations are printed at both epoch boundaries — evolve's
-auto-roll and `zicato epoch new` — because that is the moment applying one is
-free: the epoch is rolling anyway.
-
-`zicato proposer apply-recommendation <id>` writes the skill into the LIVE
-proposer dir and parks the id in `proposer_staged.json`. The write **rolls the
-contract hash** (skills fold into `_canon_proposer`, §4), so the next `evolve`
-opens a fresh epoch — and `new_epoch` drains the queue into that epoch's
-`applied_proposer_recommendations`, which is proposer lineage: the record says
-*why* the proposer changed. The staged queue exists because apply cannot know
-which epoch will pick its edit up; the epoch that actually runs under the
-edited proposer claims it.
-
-`applied_proposer_recommendations` is a RECORD about the epoch, never a
-contract input — it does not fold into the contract hash. The edit it names
-already rolled the hash on its own.
-
----
-
 ## 7. Cross-references
 
 | Topic | Document |
@@ -1204,5 +1139,3 @@ already rolled the hash on its own.
 | The failure-mode feedback channel — anti-leakage (train-slice, banded, identity-free) | [OVERFITTING.md §11](OVERFITTING.md), `src/zicato/analyzer/outcome_marginals.py` |
 | The `zicato epoch register` command reference | [CLI.md](CLI.md) |
 | The post-apply check codes the scorecard classifies on (§6.1) | [MUTATION-SURFACE.md](MUTATION-SURFACE.md), `src/zicato/mutation/validator.py` |
-| The recommend-only reflection pattern this mirrors (findings, five-slot evidence, apply-to-a-draft) | [BOARD-REFLECTION.md](BOARD-REFLECTION.md), `src/zicato/reflection/findings.py` |
-| The redaction envelope the reflection substrate reuses | [OVERFITTING.md §11](OVERFITTING.md), §2.5 above |

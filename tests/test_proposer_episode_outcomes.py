@@ -22,7 +22,6 @@ from zicato.core.types import (
 )
 from zicato.epoch.round_log import ProposalEpisodeSettled, RoundLog, fold_round_record
 from zicato.proposer.proposer import ProposerBlocked, ProposerError, ProposerExhausted
-from zicato.proposer.reflection import assert_redacted
 from zicato.proposer.scorecard import read_epoch_scorecard
 
 #: The complete blocked vocabulary Foe's log format declares, transcribed
@@ -100,18 +99,6 @@ def test_both_new_endings_still_reach_a_handler_written_for_the_old_one() -> Non
     """Every round degrades the same way; only the record distinguishes them."""
     assert isinstance(ProposerBlocked("looping-tool-call"), ProposerError)
     assert isinstance(ProposerExhausted("model_calls"), ProposerError)
-
-
-def test_no_ending_message_can_carry_board_content() -> None:
-    for outcome in (
-        ProposerBlocked("edit-outside-mutation-point", "src/prompt.py lines 4-9").outcome,
-        ProposerExhausted("model_calls").outcome,
-        ProposerError(["the transport ended without a done chunk"]).outcome,
-    ):
-        assert_redacted(
-            {"kind": outcome.kind, "code": outcome.code, "message": outcome.message},
-            where="proposal_episode_settled",
-        )
 
 
 def test_the_round_log_records_the_ending_and_the_fold_reads_it_back(tmp_path: Path) -> None:

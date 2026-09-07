@@ -28,8 +28,7 @@ contract is enforced through `<ws>/.harmonograf/server.json`:
   it REUSES it (`launched=False`, caller must not shut it down).
   Otherwise it launches a fresh server (`start_harmonograf`) bound to the
   workspace db, rewrites `server.json`, and returns `launched=True`.
-* Every launcher routes through this helper: `zicato dashboard` /
-  `zicato dashboard --view builder` (`dashboard/server.py:_ensure_workspace_harmonograf`)
+* Every launcher routes through this helper: `zicato dashboard` (`dashboard/server.py:_ensure_workspace_harmonograf`)
   AND a live `zicato evolve` (`orchestrator.py:_resolve_or_launch_harmonograf`).
   Because all paths consult `server.json` first, no two processes ever
   open the same sqlite file: whoever wins the race writes the record, the

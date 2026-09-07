@@ -109,15 +109,17 @@ def test_duplicate_outside_selected_root_cannot_redirect_accepted_edit(
         weights = ScoringWeights(experimental=ExperimentalConfig(random_baseline_every_n=1))
         if boundary == "placebo-field":
             field = SimpleNamespace(
-                workspace_root=workspace,
-                epoch_id="epoch",
                 parent_id="v0",
-                round_index=1,
-                adapter=adapter,
-                prepared=SimpleNamespace(parent_generation=parent_gen),
-                weights=weights,
+                prepared=SimpleNamespace(
+                    workspace_root=workspace,
+                    epoch_id="epoch",
+                    round_index=1,
+                    adapter=adapter,
+                    parent_generation=parent_gen,
+                    weights=weights,
+                    mutations=tuple(points),
+                ),
                 field_size=2,
-                mutations=points,
             )
             monkeypatch.setattr(
                 "zicato.evolve.field_candidates._publish_proposing_slot", lambda *args: None

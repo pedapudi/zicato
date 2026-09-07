@@ -131,7 +131,7 @@ async def test_pending_contract_is_read_only_in_preview_and_recovers_before_exec
 ):
     from click.testing import CliRunner
 
-    from tests.test_builder_draft_apply import workspace as workspace_fixture
+    from tests.test_contract_draft_apply import workspace as workspace_fixture
     from zicato.cli.commands.evolve import evolve_cmd
     from zicato.contract_draft import operations, publication
     from zicato.contract_draft.draft import TournamentDraft

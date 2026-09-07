@@ -32,9 +32,9 @@ import pytest
 from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
     bootstrap_workspace,
+    evaluation_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
     target_call_llm,
 )
@@ -485,7 +485,7 @@ def test_a_FIELD_round_that_crowns_the_placebo_leaves_the_record_untouched(
         tokens_by_gen={"v0": 1000, "v1": 1000, "v2": 1000, "v3": 1100},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     # The round really did crown the placebo — otherwise this pins nothing.
     assert outcome.tournament_decision == "promoted"
@@ -1159,7 +1159,7 @@ def _drive_round(
     )
     _install_costed_run_single(monkeypatch, drift_by_gen=drift_by_gen, tokens_by_gen=tokens_by_gen)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     return workspace, epoch_id, outcome
 
 
@@ -1260,7 +1260,7 @@ def test_a_promotion_retires_a_newly_dominated_member_end_to_end(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
             max_consecutive_rejections=3,
         )
     )
@@ -1394,7 +1394,7 @@ def _drive_swiss_round(
     )
     _install_costed_run_single(monkeypatch, drift_by_gen=drift_by_gen, tokens_by_gen=tokens_by_gen)
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     return workspace, epoch_id, outcome
 
 

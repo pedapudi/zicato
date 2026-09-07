@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 import zicato.tournament.runner as runner_mod
-from tests._runtime_builders import runtime_config
+from tests._runtime_builders import prepare_tournament_epoch, runtime_config
 from zicato.core import (
     BoardEntry,
     Generation,
@@ -76,10 +76,10 @@ def _board() -> list[BoardEntry]:
     ]
 
 
-def _gen(tmp_path: Path, gen_id: str) -> Generation:
+def _gen(tmp_path: Path, gen_id: str, epoch_id: str) -> Generation:
     return Generation(
         id=gen_id,
-        epoch_id=EPOCH,
+        epoch_id=epoch_id,
         parent_id=None,
         snapshot_root=tmp_path / f"snap_{gen_id}",
         created_at="2024-01-01T00:00:00Z",
@@ -92,14 +92,16 @@ def _stub_run_single(monkeypatch, canned, *, log: list):
     async def fake_run_single(
         *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
     ):
-        del adapter, weights, config, workspace_root, epoch_id, side, match_id
+        del adapter, weights, config, workspace_root, side, match_id
         log.append((generation.id, entry.id))
-        return canned[(generation.id, entry.id)]
+        return replace(canned[(generation.id, entry.id)], epoch_id=epoch_id)
 
     monkeypatch.setattr(runner_mod, "_run_single", fake_run_single)
 
 
-def _seed_champion_cache(tmp_path: Path, champion_id: str, board: list[BoardEntry]) -> None:
+def _seed_champion_cache(
+    tmp_path: Path, champion_id: str, board: list[BoardEntry], epoch_id: str
+) -> None:
     """Write the champion's per-board ``loss.json`` files (the fast cache).
 
     The champion was scored on the full board when it became champion, so
@@ -112,18 +114,22 @@ def _seed_champion_cache(tmp_path: Path, champion_id: str, board: list[BoardEntr
         )
         profile = replace(
             profile,
+            epoch_id=epoch_id,
             measurement=MeasurementDraw.from_index(0, base_seed=None),
             run_id=run_id_for_unit(champion_id, entry.id, base_seed=None),
         )
         write_loss_profile(
-            profile, _unit_loss_path(tmp_path, EPOCH, champion_id, entry.id, 0, base_seed=None)
+            profile, _unit_loss_path(tmp_path, epoch_id, champion_id, entry.id, 0, base_seed=None)
         )
 
 
 def test_fast_matchup_reuses_cached_champion_and_skips_its_run(monkeypatch, tmp_path):
     """fast=True with a cached champion runs ONLY the challenger."""
     board = _board()
-    _seed_champion_cache(tmp_path, "v0", board)
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights(promote_margin=0.01)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    _seed_champion_cache(tmp_path, "v0", board, epoch_id)
     # Only challenger runs are canned; a champion run would KeyError, which
     # is itself an assertion that the champion side never executes.
     canned = {
@@ -136,13 +142,13 @@ def test_fast_matchup_reuses_cached_champion_and_skips_its_run(monkeypatch, tmp_
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
             board=board,
-            weights=ScoringWeights(promote_margin=0.01),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id=EPOCH,
+            epoch_id=epoch_id,
             fast=True,
         )
     )
@@ -163,7 +169,10 @@ def test_fast_matchup_reuses_cached_champion_and_skips_its_run(monkeypatch, tmp_
 def test_fast_racing_subset_reuses_cached_champion(monkeypatch, tmp_path):
     """A racing rung's growing board SUBSET reuses the cached champion."""
     board = _board()
-    _seed_champion_cache(tmp_path, "v0", board)  # cached on the FULL board
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    _seed_champion_cache(tmp_path, "v0", board, epoch_id)  # cached on the FULL board
     # The rung only needs entry_a + entry_b (a 2-of-3 subset).
     subset = ("entry_a", "entry_b")
     canned = {
@@ -176,13 +185,13 @@ def test_fast_racing_subset_reuses_cached_champion(monkeypatch, tmp_path):
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
             board=board,
-            weights=ScoringWeights(),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id=EPOCH,
+            epoch_id=epoch_id,
             board_subset=subset,
             fast=True,
         )
@@ -200,6 +209,9 @@ def test_fast_racing_subset_reuses_cached_champion(monkeypatch, tmp_path):
 def test_fast_matchup_degrades_to_full_without_cache(monkeypatch, tmp_path):
     """fast=True with NO cached champion runs the champion once (degraded)."""
     board = _board()
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights(promote_margin=0.01)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     # No champion cache seeded → degrade to full: BOTH sides must run.
     canned = {}
     for e in board:
@@ -215,13 +227,13 @@ def test_fast_matchup_degrades_to_full_without_cache(monkeypatch, tmp_path):
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
             board=board,
-            weights=ScoringWeights(promote_margin=0.01),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id=EPOCH,
+            epoch_id=epoch_id,
             fast=True,
         )
     )
@@ -235,7 +247,10 @@ def test_fast_matchup_degrades_to_full_without_cache(monkeypatch, tmp_path):
 def test_full_matchup_runs_champion_and_reports_full_mode(monkeypatch, tmp_path):
     """fast=False (default) runs the champion and reports champion_eval_mode='full'."""
     board = _board()
-    _seed_champion_cache(tmp_path, "v0", board)  # present, but fast NOT requested
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights(promote_margin=0.01)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    _seed_champion_cache(tmp_path, "v0", board, epoch_id)  # present, but fast NOT requested
     canned = {}
     for e in board:
         canned[("v0", e.id)] = _loss(
@@ -250,13 +265,13 @@ def test_full_matchup_runs_champion_and_reports_full_mode(monkeypatch, tmp_path)
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
             board=board,
-            weights=ScoringWeights(promote_margin=0.01),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id=EPOCH,
+            epoch_id=epoch_id,
             fast=False,
         )
     )
@@ -306,6 +321,7 @@ def _stub_run_single_persisting(monkeypatch, canned, *, log: list):
         replicate = int(entry.context.get("replicate_index", "0"))
         profile = replace(
             canned[(generation.id, entry.id)],
+            epoch_id=epoch_id,
             run_id=run_id_for_unit(generation.id, entry.id, replicate, base_seed=config.seed),
             measurement=MeasurementDraw.from_index(replicate, base_seed=config.seed),
         )
@@ -331,6 +347,9 @@ def test_swiss_runs_each_gen_entry_at_most_once(monkeypatch, tmp_path):
     pairing resolves its competitors from the cache.
     """
     board = _board()
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     competitors = ["v0", "v1", "v2"]
     canned = {
         (g, e.id): _loss(generation_id=g, entry_id=e.id, drift_loss=1.0, pass_fail=True)
@@ -349,13 +368,13 @@ def test_swiss_runs_each_gen_entry_at_most_once(monkeypatch, tmp_path):
         asyncio.run(
             run_matchup(
                 adapter=object(),
-                left_gen=_gen(tmp_path, left),
-                right_gen=_gen(tmp_path, right),
+                left_gen=_gen(tmp_path, left, epoch_id),
+                right_gen=_gen(tmp_path, right, epoch_id),
                 board=board,
-                weights=ScoringWeights(),
-                config=runtime_config(tmp_path),
+                weights=weights,
+                config=config,
                 workspace_root=tmp_path,
-                epoch_id=EPOCH,
+                epoch_id=epoch_id,
                 fast=True,
             )
         )
@@ -372,6 +391,9 @@ def test_swiss_runs_each_gen_entry_at_most_once(monkeypatch, tmp_path):
 def test_cross_round_reuse_is_near_zero_new_runs(monkeypatch, tmp_path):
     """A second duel over the same epoch reuses every prior (gen, entry)."""
     board = _board()
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     canned = {
         (g, e.id): _loss(generation_id=g, entry_id=e.id, drift_loss=1.0, pass_fail=True)
         for g in ("v0", "v1")
@@ -382,13 +404,13 @@ def test_cross_round_reuse_is_near_zero_new_runs(monkeypatch, tmp_path):
 
     kwargs = dict(
         adapter=object(),
-        left_gen=_gen(tmp_path, "v0"),
-        right_gen=_gen(tmp_path, "v1"),
+        left_gen=_gen(tmp_path, "v0", epoch_id),
+        right_gen=_gen(tmp_path, "v1", epoch_id),
         board=board,
-        weights=ScoringWeights(),
-        config=runtime_config(tmp_path),
+        weights=weights,
+        config=config,
         workspace_root=tmp_path,
-        epoch_id=EPOCH,
+        epoch_id=epoch_id,
         fast=True,
     )
     asyncio.run(run_matchup(**kwargs))  # type: ignore[arg-type]
@@ -405,6 +427,9 @@ def test_replicates_incremental_runs_only_missing(monkeypatch, tmp_path):
     """R existing + request R+1 → exactly 1 new run for that unit."""
     entry = BoardEntry(id="entry_a", kind="single_turn", wall_clock_budget_seconds=60, input="x")
     board = [entry]
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     canned = {
         (g, entry.id): _loss(generation_id=g, entry_id=entry.id, drift_loss=1.0, pass_fail=True)
         for g in ("v0", "v1")
@@ -420,6 +445,7 @@ def test_replicates_incremental_runs_only_missing(monkeypatch, tmp_path):
         replicate = int(entry.context.get("replicate_index", "0"))
         profile = replace(
             canned[(generation.id, entry.id)],
+            epoch_id=epoch_id,
             run_id=run_id_for_unit(generation.id, entry.id, replicate, base_seed=config.seed),
             measurement=MeasurementDraw.from_index(replicate, base_seed=config.seed),
         )
@@ -437,13 +463,13 @@ def test_replicates_incremental_runs_only_missing(monkeypatch, tmp_path):
     # 2 units per side = 4 runs (every slot a miss).
     base = dict(
         adapter=object(),
-        left_gen=_gen(tmp_path, "v0"),
-        right_gen=_gen(tmp_path, "v1"),
+        left_gen=_gen(tmp_path, "v0", epoch_id),
+        right_gen=_gen(tmp_path, "v1", epoch_id),
         board=board,
-        weights=ScoringWeights(),
-        config=runtime_config(tmp_path),
+        weights=weights,
+        config=config,
         workspace_root=tmp_path,
-        epoch_id=EPOCH,
+        epoch_id=epoch_id,
         fast=True,
     )
     asyncio.run(run_matchup(replicates=2, **base))  # type: ignore[arg-type]
@@ -461,9 +487,12 @@ def test_replicates_incremental_runs_only_missing(monkeypatch, tmp_path):
 def test_full_mode_bypasses_the_cache(monkeypatch, tmp_path):
     """fast=False (``--mode full``) forces a fresh run of every unit."""
     board = _board()
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
     # Seed v0 AND v1 caches so a cache-first run would reuse everything.
-    _seed_champion_cache(tmp_path, "v0", board)
-    _seed_champion_cache(tmp_path, "v1", board)
+    _seed_champion_cache(tmp_path, "v0", board, epoch_id)
+    _seed_champion_cache(tmp_path, "v1", board, epoch_id)
     canned = {
         (g, e.id): _loss(generation_id=g, entry_id=e.id, drift_loss=1.0, pass_fail=True)
         for g in ("v0", "v1")
@@ -475,13 +504,13 @@ def test_full_mode_bypasses_the_cache(monkeypatch, tmp_path):
     asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
             board=board,
-            weights=ScoringWeights(),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id=EPOCH,
+            epoch_id=epoch_id,
             fast=False,
         )
     )
@@ -493,8 +522,11 @@ def test_full_mode_bypasses_the_cache(monkeypatch, tmp_path):
 def test_contract_scoping_is_a_clean_miss_across_epochs(monkeypatch, tmp_path):
     """A different epoch/contract is a clean miss — no cross-contract reuse."""
     board = _board()
-    # Cache the champion under epoch "e0" only.
-    _seed_champion_cache(tmp_path, "v0", board)
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    # Cache the champion under the first prepared epoch only.
+    _seed_champion_cache(tmp_path, "v0", board, epoch_id)
     canned = {
         (g, e.id): _loss(generation_id=g, entry_id=e.id, drift_loss=1.0, pass_fail=True)
         for g in ("v0", "v1")
@@ -504,40 +536,44 @@ def test_contract_scoping_is_a_clean_miss_across_epochs(monkeypatch, tmp_path):
     _stub_run_single_persisting(monkeypatch, canned, log=log)
 
     # Run under a DIFFERENT epoch id (a contract change rolls a fresh
-    # epoch). The e0 cache must NOT be reused — the champion runs fresh.
+    # epoch). The prior cache must not be reused — the champion runs fresh.
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights, name="independent")
     asyncio.run(
         run_matchup(
             adapter=object(),
             left_gen=Generation(
                 id="v0",
-                epoch_id="e1",
+                epoch_id=epoch_id,
                 parent_id=None,
                 snapshot_root=tmp_path / "snap_v0",
                 created_at="2024-01-01T00:00:00Z",
             ),
             right_gen=Generation(
                 id="v1",
-                epoch_id="e1",
+                epoch_id=epoch_id,
                 parent_id=None,
                 snapshot_root=tmp_path / "snap_v1",
                 created_at="2024-01-01T00:00:00Z",
             ),
             board=board,
-            weights=ScoringWeights(),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id="e1",
+            epoch_id=epoch_id,
             fast=True,
         )
     )
-    # The champion (v0) ran under e1 — the e0 cache did not leak across.
+    # The champion ran under the independent epoch; prior measurements stayed separate.
     assert {e for g, e in log if g == "v0"} == {e.id for e in board}
 
 
 def test_unit_provenance_records_cached_vs_fresh(monkeypatch, tmp_path):
     """run_matchup reports a per-generation cached/fresh board-unit tally."""
     board = _board()
-    _seed_champion_cache(tmp_path, "v0", board)  # champion fully cached
+    config = runtime_config(tmp_path)
+    weights = ScoringWeights(promote_margin=0.01)
+    epoch_id = prepare_tournament_epoch(tmp_path, config, board, weights)
+    _seed_champion_cache(tmp_path, "v0", board, epoch_id)  # champion fully cached
     canned = {
         ("v1", e.id): _loss(generation_id="v1", entry_id=e.id, drift_loss=0.5, pass_fail=True)
         for e in board
@@ -548,13 +584,13 @@ def test_unit_provenance_records_cached_vs_fresh(monkeypatch, tmp_path):
     result = asyncio.run(
         run_matchup(
             adapter=object(),
-            left_gen=_gen(tmp_path, "v0"),
-            right_gen=_gen(tmp_path, "v1"),
+            left_gen=_gen(tmp_path, "v0", epoch_id),
+            right_gen=_gen(tmp_path, "v1", epoch_id),
             board=board,
-            weights=ScoringWeights(promote_margin=0.01),
-            config=runtime_config(tmp_path),
+            weights=weights,
+            config=config,
             workspace_root=tmp_path,
-            epoch_id=EPOCH,
+            epoch_id=epoch_id,
             fast=True,
         )
     )

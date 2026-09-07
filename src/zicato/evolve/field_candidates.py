@@ -112,18 +112,20 @@ def _publish_proposing_field(
     rather than as an empty idle state.
     """
 
+    prepared = field_round.prepared
+
     from zicato.runtime.state import TournamentPhase  # noqa: PLC0415
 
     champion_only = [{"generation_id": field_round.parent_id, "seed": 1, "role": "champion"}]
     _publish_active_tournament(
-        field_round.workspace_root,
+        prepared.workspace_root,
         tournament_id=tournament_id,
-        epoch_id=field_round.epoch_id,
-        structure=field_round.tournament_spec.structure,
-        structure_params=dict(field_round.tournament_spec.params),
+        epoch_id=prepared.epoch_id,
+        structure=prepared.tournament_spec.structure,
+        structure_params=dict(prepared.tournament_spec.params),
         competitors=champion_only,
-        round_index=field_round.round_index,
-        total_rounds=field_round.total_rounds,
+        round_index=prepared.round_index,
+        total_rounds=prepared.total_rounds,
         field_status=field_status,
         phase=TournamentPhase.PROPOSING,
         entries=_field_entries(champion_only),
@@ -137,9 +139,11 @@ def _publish_proposing_slot(
 ) -> None:
     """Republish the forming field with one candidate slot's latest status."""
 
+    prepared = field_round.prepared
+
     generation_id = str(record.get("generation_id", ""))
     if not slots.tournament_id:
-        slots.tournament_id = f"tourn_{field_round.epoch_id}_{generation_id}"
+        slots.tournament_id = f"tourn_{prepared.epoch_id}_{generation_id}"
     slots.status_by_generation[generation_id] = dict(record)
     _publish_proposing_field(
         field_round,
@@ -200,6 +204,8 @@ async def _settle_field_that_produced_nothing(
     continues.
     """
 
+    prepared = field_round.prepared
+
     parent_id = field_round.parent_id
     transport_trail = _transport_only_field_trail(rejections)
     if transport_trail is not None:
@@ -208,18 +214,18 @@ async def _settle_field_that_produced_nothing(
         # what each slot hit.
         _publish_proposing_field(
             field_round,
-            tournament_id=f"tourn_{field_round.epoch_id}_{base_id}",
+            tournament_id=f"tourn_{prepared.epoch_id}_{base_id}",
             field_status=field_status,
         )
         return deferred_infra_proposer_outage(
-            workspace_root=field_round.workspace_root,
-            epoch_id=field_round.epoch_id,
+            workspace_root=prepared.workspace_root,
+            epoch_id=prepared.epoch_id,
             parent_id=parent_id,
             next_id=base_id,
             attempts=transport_trail,
-            round_index=field_round.round_index,
-            beater=field_round.beater,
-            round_log=field_round.round_log,
+            round_index=prepared.round_index,
+            beater=prepared.beater,
+            round_log=prepared.round_log,
         )
     if field_round.field_size == 1 and rejections:
         from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
@@ -228,26 +234,26 @@ async def _settle_field_that_produced_nothing(
         if isinstance(rejection.proposer_error, ProposerError):
             error = rejection.proposer_error
             rejected_experiment = _rejected_proposer_experiment(
-                field_round.epoch_id,
+                prepared.epoch_id,
                 parent_id,
                 base_id,
                 error,
             )
             return await _persist_rejected_round(
-                workspace_root=field_round.workspace_root,
-                epoch_id=field_round.epoch_id,
+                workspace_root=prepared.workspace_root,
+                epoch_id=prepared.epoch_id,
                 parent_id=parent_id,
                 next_id=base_id,
                 experiment=rejected_experiment,
                 validation_errors=list(error.attempts),
                 proposer_retries_exhausted=True,
-                board=field_round.board,
-                round_index=field_round.round_index,
+                board=list(prepared.board),
+                round_index=prepared.round_index,
                 evaluation_call_llm=field_round.evaluation_call_llm,
                 evaluation_model=field_round.evaluation_model,
-                beater=field_round.beater,
-                round_log=field_round.round_log,
-                configuration=field_round.config.operational_configuration(),
+                beater=prepared.beater,
+                round_log=prepared.round_log,
+                configuration=prepared.config.operational_configuration(),
             )
     # Still persist the field-status so the dashboard's proposing-step
     # tracker reads "N proposed · 0 applied — all rejected" rather than an
@@ -264,24 +270,24 @@ async def _settle_field_that_produced_nothing(
         all_failed_reason += f" ({breakdown})"
     _publish_proposing_field(
         field_round,
-        tournament_id=f"tourn_{field_round.epoch_id}_{base_id}",
+        tournament_id=f"tourn_{prepared.epoch_id}_{base_id}",
         field_status=field_status,
     )
     # The round's terminal decision + close — the per-challenger
     # proposal_attempted failures were emitted as they settled.
-    field_round.round_log.emit(
+    prepared.round_log.emit(
         "decision_recorded",
         {
             "decision": "rejected",
             "provenance": {
-                "structure": field_round.tournament_spec.structure,
+                "structure": prepared.tournament_spec.structure,
                 "reason": all_failed_reason,
                 "parent_generation_id": parent_id,
                 "promoted_generation_id": None,
             },
         },
     )
-    field_round.round_log.emit("round_closed")
+    prepared.round_log.emit("round_closed")
     return EvolveRoundOutcome(
         parent_generation_id=parent_id,
         proposed_generation_id="",
@@ -317,8 +323,10 @@ def _append_placebo_arm(
     the real challengers.
     """
 
-    every_n = field_round.weights.experimental.random_baseline_every_n
-    if field_round.field_size <= 1 or base_n is None or not field_round.mutations:
+    prepared = field_round.prepared
+
+    every_n = prepared.weights.experimental.random_baseline_every_n
+    if field_round.field_size <= 1 or base_n is None or not prepared.mutations:
         return
 
     from zicato.evolve.placebo import placebo_round_due  # noqa: PLC0415
@@ -331,14 +339,14 @@ def _append_placebo_arm(
         on_error=lambda exc: log.warning("random-baseline placebo skipped: %s", exc),
     ):
         placebo = _mint_placebo_challenger(
-            workspace_root=field_round.workspace_root,
-            epoch_id=field_round.epoch_id,
+            workspace_root=prepared.workspace_root,
+            epoch_id=prepared.epoch_id,
             parent_id=field_round.parent_id,
             next_id=placebo_id,
-            point=field_round.mutations[0],
-            round_index=field_round.round_index,
+            point=prepared.mutations[0],
+            round_index=prepared.round_index,
             enumeration_roots=generation_phase.mutable_trees(
-                field_round.adapter, field_round.prepared.parent_generation.snapshot_root
+                prepared.adapter, prepared.parent_generation.snapshot_root
             ),
         )
         applied.append(placebo)
@@ -357,7 +365,7 @@ def _append_placebo_arm(
             "multi-challenger field: %s/%s fielded as the random-baseline "
             "placebo arm (cadence every_n=%d, round %d) — the gate must "
             "reject it",
-            field_round.epoch_id,
+            prepared.epoch_id,
             placebo.generation_id,
             every_n,
             base_n,
@@ -381,11 +389,13 @@ async def assemble_candidate_field(
     :mod:`zicato.evolve.field` still reaches this call site.
     """
 
+    prepared = field_round.prepared
+
     from zicato.scoring.diff_complexity import diff_size  # noqa: PLC0415
 
     slots = _ProposingSlots()
     candidate_batch = await produce_candidate_batch(
-        field_round.prepared,
+        prepared,
         field_round.field_size,
         resume_plan=resume_plan,
         on_status=partial(_publish_proposing_slot, field_round, slots),
@@ -414,15 +424,15 @@ async def assemble_candidate_field(
 
     champion = Generation(
         id=field_round.parent_id,
-        epoch_id=field_round.epoch_id,
+        epoch_id=prepared.epoch_id,
         parent_id=None,
         snapshot_root=generation_phase.snapshot_root(
-            field_round.workspace_root, field_round.epoch_id, field_round.parent_id
+            prepared.workspace_root, prepared.epoch_id, field_round.parent_id
         ),
         created_at=_now_iso(),
         promoted=True,
     )
-    parent_mutation_text = {point.id: point.content for point in field_round.mutations}
+    parent_mutation_text = {point.id: point.content for point in prepared.mutations}
     competitors = [{"generation_id": field_round.parent_id, "seed": 1, "role": "champion"}] + [
         {"generation_id": c.generation_id, "seed": i + 2, "role": "challenger"}
         for i, c in enumerate(applied)
@@ -439,7 +449,7 @@ async def assemble_candidate_field(
         },
         resume_cache=bool(candidate_batch.resumed_generation_ids),
         competitors=competitors,
-        tournament_id=f"tourn_{field_round.epoch_id}_{applied[0].generation_id}",
+        tournament_id=f"tourn_{prepared.epoch_id}_{applied[0].generation_id}",
         first_challenger_id=applied[0].generation_id,
     )
 

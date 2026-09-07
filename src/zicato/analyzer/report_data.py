@@ -56,7 +56,8 @@ from zicato.core.types import (
 from zicato.core.workspace import _normalise_workspace_root
 from zicato.epoch._storage import RecordError
 from zicato.epoch.journal import read_epoch_experiments
-from zicato.proposer.brief import brief_goal
+from zicato.mutation.inventory import read_mutation_inventory
+from zicato.proposer.brief import brief_goal, load_epoch_brief
 from zicato.tournament.scoring import read_gen_score
 from zicato.util.text import preview
 from zicato.workspace import (
@@ -273,6 +274,11 @@ def _read_text(path: Path, limit: int) -> str:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return ""
+    return _report_text(text, limit)
+
+
+def _report_text(text: str, limit: int) -> str:
+    """Cap embedded guidance and journal text with an explicit truncation note."""
     if len(text) > limit:
         return text[:limit] + "\n\n... [truncated for the analysis report]"
     return text
@@ -297,17 +303,12 @@ def _load_board(
     Reads through the shared canonical board reader
     (:func:`zicato.workspace.read_board_entries`), which the query layer's
     file-reading board paths use as well, so one rule decides what an
-    epoch's board holds. When that reader rejects the board (one predating
-    the current schema, a malformed line) this falls back to a tolerant
-    JSONL re-read so the report still surfaces the entry ids and kinds.
-    Either path yields the same view shape.
+    epoch's board holds. A missing board yields empty entries; a present
+    unreadable board raises RecordError before a report can be published.
     """
-    bpath = layout.board(epoch_id)
-    if not bpath.exists():
-        return (), ()
     board = read_board_entries(layout, epoch_id)
     if board is None:
-        return _load_board_tolerant(bpath), ()
+        return (), ()
     views: list[BoardEntryView] = []
     for e in board.entries:
         exp_kind = e.expectation.kind if e.expectation is not None else ""
@@ -327,71 +328,10 @@ def _load_board(
     return tuple(views), board.disable_drift
 
 
-def _load_board_tolerant(bpath: Path) -> tuple[BoardEntryView, ...]:
-    """Tolerant JSONL re-read of a board file the strict loader rejected."""
-    views: list[BoardEntryView] = []
-    try:
-        lines = bpath.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return ()
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(obj, dict) or obj.get("board_meta") is True:
-            continue
-        exp = obj.get("expectation")
-        exp_kind = str(exp.get("kind", "")) if isinstance(exp, dict) else ""
-        exp_spec = str(exp.get("spec", "")) if isinstance(exp, dict) else ""
-        judges_raw = obj.get("judges", []) or []
-        judge_names = tuple(str(j.get("name", "")) for j in judges_raw if isinstance(j, dict))
-        budget = obj.get("wall_clock_budget_seconds", obj.get("budget_s", 0))
-        try:
-            budget_i = int(budget) if budget is not None else 0
-        except (TypeError, ValueError):
-            budget_i = 0
-        views.append(
-            BoardEntryView(
-                id=str(obj.get("id", "")),
-                kind=str(obj.get("kind", "")),
-                weight=float(obj.get("weight", 1.0)),
-                tags=tuple(str(t) for t in obj.get("tags", []) or []),
-                expectation_kind=exp_kind,
-                expectation_spec=exp_spec,
-                judges=judge_names,
-                wall_clock_budget_seconds=budget_i,
-            )
-        )
-    return tuple(views)
-
-
 def _load_scoring(layout: WorkspaceLayout, epoch_id: str) -> dict[str, Any]:
     """Read ``scoring.json`` into a plain dict (best-effort)."""
     raw = _read_json(layout.scoring(epoch_id))
     return raw if isinstance(raw, dict) else {}
-
-
-def load_mutation_surface(layout: WorkspaceLayout, epoch_id: str) -> tuple[dict[str, Any], ...]:
-    """Read ``mutations.json`` — the most-recent enumerated surface.
-
-    Public because it is the ONE reader of the epoch's frozen mutation
-    enumeration that keeps every recorded field (the dashboard's
-    ``_parse_mutations`` keeps only a preview). The dashboard's
-    mutation-site browser reads it too, as the record that outlives a
-    pruned snapshot tree — see :mod:`zicato.query.mutation_view`.
-    """
-    raw = _read_json(layout.mutations(epoch_id))
-    if not isinstance(raw, list):
-        return ()
-    out: list[dict[str, Any]] = []
-    for m in raw:
-        if isinstance(m, dict):
-            out.append(m)
-    return tuple(out)
 
 
 def _str_movements(
@@ -560,11 +500,10 @@ def _cumulate_scalar(generations: list[GenerationView]) -> list[GenerationView]:
 def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReportData:
     """Walk one epoch's workspace tree into a frozen :class:`EpochReportData`.
 
-    Every artifact is read best-effort: a missing or malformed file
-    degrades to an empty / default value. The function therefore always
-    returns a populated view (possibly with zero generations) and never
-    raises on a partially-written workspace — the report generator is a
-    best-effort, regenerated-each-round caller.
+    Missing artifacts retain their empty/default representation. A present
+    corrupt board or unreadable brief raises RecordError before publication;
+    the report cannot describe a partial evaluation contract as complete.
+    Refused generation records remain listed in unreadable_generations.
     """
     # The analyzer accepts either the inner ``.zicato`` root or the outer
     # project dir (a historical caller passed the latter); normalise to
@@ -575,9 +514,14 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
     cfg = _load_epoch_config(layout, epoch_id)
     board_entries, disable_drift = _load_board(layout, epoch_id)
     scoring = _load_scoring(layout, epoch_id)
-    mutation_surface = load_mutation_surface(layout, epoch_id)
+    mutation_surface = tuple(read_mutation_inventory(layout.mutations(epoch_id)) or ())
 
-    brief_text = _read_text(layout.brief(epoch_id), _MAX_BRIEF_CHARS)
+    try:
+        brief_text = _report_text(
+            load_epoch_brief(layout.epoch_dir(epoch_id)).text, _MAX_BRIEF_CHARS
+        )
+    except FileNotFoundError:
+        brief_text = ""
     journal_text = _read_text(layout.journal(epoch_id), _MAX_JOURNAL_CHARS)
 
     experiments, unreadable_generations = read_epoch_experiments(layout.root, epoch_id)

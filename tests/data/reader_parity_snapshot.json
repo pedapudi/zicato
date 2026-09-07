@@ -709,7 +709,7 @@
     "analysis_md": "",
     "board": [
       {
-        "budget_s": null,
+        "budget_s": 1.0,
         "entry_id": "t1",
         "expectation_kind": "rubric",
         "input_preview": "Say hello.",
@@ -720,7 +720,7 @@
         "weight": 1.0
       },
       {
-        "budget_s": null,
+        "budget_s": 1.0,
         "entry_id": "t2",
         "expectation_kind": "predicate",
         "input_preview": "Say goodbye.",
@@ -818,7 +818,7 @@
     "analysis_md": "",
     "board": [
       {
-        "budget_s": null,
+        "budget_s": 1.0,
         "entry_id": "t1",
         "expectation_kind": "rubric",
         "input_preview": "Say hello.",
@@ -829,7 +829,7 @@
         "weight": 1.0
       },
       {
-        "budget_s": null,
+        "budget_s": 1.0,
         "entry_id": "t2",
         "expectation_kind": "predicate",
         "input_preview": "Say goodbye.",
@@ -943,7 +943,7 @@
     "analysis_md": "",
     "board": [
       {
-        "budget_s": null,
+        "budget_s": 1.0,
         "entry_id": "t1",
         "expectation_kind": "rubric",
         "input_preview": "Say hello.",
@@ -954,7 +954,7 @@
         "weight": 1.0
       },
       {
-        "budget_s": null,
+        "budget_s": 1.0,
         "entry_id": "t2",
         "expectation_kind": "predicate",
         "input_preview": "Say goodbye.",
@@ -1034,7 +1034,7 @@
   ],
   "execution_plan::e0": {
     "board": {
-      "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
+      "digest": "de9563c09dad9f61e298064c52e96325665b9766c43b1d110473ded03713b237",
       "entry_count": 2
     },
     "epoch_id": "e0",
@@ -1097,7 +1097,7 @@
   },
   "execution_plan::e1": {
     "board": {
-      "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
+      "digest": "de9563c09dad9f61e298064c52e96325665b9766c43b1d110473ded03713b237",
       "entry_count": 2
     },
     "epoch_id": "e1",
@@ -1188,7 +1188,7 @@
   },
   "execution_plan::e2": {
     "board": {
-      "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
+      "digest": "de9563c09dad9f61e298064c52e96325665b9766c43b1d110473ded03713b237",
       "entry_count": 2
     },
     "epoch_id": "e2",
@@ -1411,7 +1411,7 @@
   },
   "live_execution_plan": {
     "board": {
-      "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
+      "digest": "de9563c09dad9f61e298064c52e96325665b9766c43b1d110473ded03713b237",
       "entry_count": 2
     },
     "epoch_id": "e0",
@@ -1796,7 +1796,7 @@
       "analysis_md": "",
       "board": [
         {
-          "budget_s": null,
+          "budget_s": 1.0,
           "entry_id": "t1",
           "expectation_kind": "rubric",
           "input_preview": "Say hello.",
@@ -1807,7 +1807,7 @@
           "weight": 1.0
         },
         {
-          "budget_s": null,
+          "budget_s": 1.0,
           "entry_id": "t2",
           "expectation_kind": "predicate",
           "input_preview": "Say goodbye.",

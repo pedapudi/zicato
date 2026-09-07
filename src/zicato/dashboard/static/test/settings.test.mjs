@@ -117,20 +117,6 @@ test('router: #/settings/models deep-links the models section', () => {
   assertEqual(r.params.section, 'models', 'the models section');
 });
 
-test('router: #/builder resolves to the STANDALONE builder view (no longer into settings)', () => {
-  const r = router.parseRoute('#/builder');
-  assertEqual(r.view, 'builder', 'the builder is its own first-class view');
-  assert(!r.params.section, 'it is NOT a settings section any more (no section param)');
-  // the canonical href for the builder view is `#/builder`.
-  assertEqual(router.href('builder', {}), '#/builder', 'the builder href is the canonical standalone link');
-  // its breadcrumb reads environment › tournament builder, and it steps up to
-  // environment: it is a top-level view rather than a settings child.
-  const trail = router.crumbTrail({ view: 'builder', params: {} });
-  assertEqual(trail[0].label, 'environment', 'crumb root is environment');
-  assert(trail[trail.length - 1].label === 'tournament builder' && trail[trail.length - 1].current, 'the leaf is the tournament builder');
-  assert(!trail.some((c) => c.label === 'settings'), 'the builder crumb does NOT pass through settings');
-  assertEqual(router.up({ view: 'builder', params: {} }).view, 'home', 'the builder view steps up to environment');
-});
 
 test('router: settings crumbs + up climb back to the landing then environment', () => {
   const trail = router.crumbTrail({ view: 'settings', params: { section: 'models' } });
@@ -145,25 +131,19 @@ test('router: settings crumbs + up climb back to the landing then environment', 
 
 // ── the settings surface ──────────────────────────────────────────────
 
-test('settings: the rail renders three in-host sections + a builder LAUNCHER (Dashboard retired)', async () => {
+test('settings: the rail renders contract, model, and appearance sections', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'contract' });
   const items = byClass(host, 'dn-set-railitem');
   // three in-host sections (contract / models / appearance) + the launcher.
-  assertEqual(items.length, 4, 'three in-host sections + one launcher entry in the rail');
+  assertEqual(items.length, 3, 'three settings sections');
   const labels = items.map((i) => i.textContent);
   assert(labels.some((l) => l.includes('Contract')), 'the contract section is in the rail');
   assert(labels.some((l) => l.includes('Models')), 'the models / LLM-endpoints section is in the rail');
   assert(labels.some((l) => l.includes('Appearance')), 'the appearance section is in the rail');
   assert(!labels.some((l) => l.includes('Dashboard')), 'the Dashboard section was retired (folded into Appearance)');
-  // the builder is a LAUNCHER (a link OUT to the standalone view) rather than an
-  // in-host section: its rail entry carries the launcher class + the `#/builder`
-  // href, and there is exactly one of it.
-  const launchers = byClass(host, 'dn-set-raillauncher');
-  assertEqual(launchers.length, 1, 'exactly one builder launcher entry');
-  assert(launchers[0].textContent.includes('Tournament builder'), 'the launcher is labelled Tournament builder');
-  assertEqual(launchers[0].getAttribute('href'), '#/builder', 'the launcher navigates to the standalone builder view');
+
 });
 
 test('settings: the Appearance section is EDITABLE and shares the top-bar theme store', async () => {
@@ -230,9 +210,8 @@ test('settings: editing appearance updates the SAME store the top-bar reads (rou
   assert(tf, 'the typeface grouped popover renders in Appearance');
   const onOpt = byClass(tf, 'dt-tf-option').find((o) => o.getAttribute('aria-selected') === 'true');
   assert(onOpt && onOpt.getAttribute('data-type') === 'literata', 'the popover reflects the shared typeface store');
-  // a stored MODE id migrates to that group's first face on read.
   ui.persistType('display');
-  assertEqual(ui.readType(), 'archivo-narrow', 'a stored "display" migrates to the first Display face on read');
+  assertEqual(ui.readType(), ui.DEFAULT_TYPE, 'a retired typeface alias uses the existing default');
 });
 
 // The typeface picker now lives ONLY in Settings (removed from the top bar).
@@ -290,49 +269,13 @@ test('settings: the Contract section reads /api/epoch as a read-only roll-up', a
   assert(body.textContent.includes('0.05'), 'the promote margin is shown');
   // every contract row links INTO the builder (read-only here).
   const rows = byClass(body, 'dn-set-kvrow');
-  assert(rows.length > 0 && rows.every((r) => r.getAttribute('href') === '#/builder'), 'contract rows link into the builder');
+  assert(rows.length > 0 && rows.every((r) => !r.getAttribute('href')), 'contract rows are read-only');
 });
 
 // CHANGE 2: the Contract section LEADS with the builder's live-preview RENDERER
 // (reused read-only) — bound to /api/epoch's frozen contract. It shows the
 // per-structure schematic + the cost meter + the train/holdout strip + any
 // validation diagnostics, computed CLIENT-SIDE — and carries NO apply controls.
-test('settings: the Contract section renders the read-only builder PREVIEW from /api/epoch', async () => {
-  installFetch();
-  const host = globalThis.document.createElement('div');
-  await settings.render(host, ctx, { section: 'contract' });
-  await tick();
-  const body = firstClass(host, 'dn-set-body');
-  // the preview pane reuses the builder's preview classes, marked read-only.
-  const preview = firstClass(body, 'dn-set-preview');
-  assert(preview, 'the contract section renders the reused preview pane');
-  assert(preview.classList.contains('dn-bld-preview'), 'it reuses the builder preview classes');
-  // the per-structure schematic renders (a swiss epoch ⇒ the swiss ladder svg).
-  const fig = firstClass(preview, 'dn-bld-figure');
-  assert(fig, 'the schematic figure renders in the preview');
-  assert(firstClass(fig, 'dn-swissladder'), 'the schematic is the swiss-ladder svg figure');
-  // the cost meter renders the SERVER cost envelope's board-runs-per-round (C6:
-  // the /builder/draft fetch rather than a client re-estimate).
-  const cost = firstClass(preview, 'dn-bld-cost');
-  assert(cost, 'the cost meter renders');
-  const costNum = firstClass(cost, 'dn-bld-cost-num');
-  assertEqual(costNum.textContent, '12', 'the board-runs/round comes from the server cost envelope');
-  // the train / holdout strip renders from the server-computed board_split.
-  const strip = firstClass(preview, 'dn-bld-previewstrip');
-  assert(strip, 'the train/holdout strip renders');
-  assert(strip.textContent.includes('train 2'), 'the train count comes from board_split');
-  assert(strip.textContent.includes('holdout 0'), 'the holdout count comes from board_split');
-  // the read-only impact note (NOT the editable roll/apply pill) is present.
-  assert(firstClass(preview, 'dn-bld-impact-current'), 'a read-only "current contract" impact note (no apply)');
-  // there are NO apply / dry-run controls anywhere in the contract preview.
-  assertEqual(byClass(body, 'dn-bld-applyrow').length, 0, 'no apply / dry-run controls in the read-only contract preview');
-  assertEqual(byClass(body, 'dn-bld-btn-apply').length, 0, 'no apply button in the read-only contract preview');
-  // the holdout confirmation's own bounds are ABSENT at their default: both
-  // mean "reuse the train-side rule", and a row echoing the promote margin
-  // would be noise.
-  assert(!body.textContent.includes('Holdout margin'), 'no holdout-margin row while it is auto');
-  assert(!body.textContent.includes('Holdout regression budget'), 'no budget row at zero tolerance');
-});
 
 test('settings: the Contract section names the holdout bounds ONCE they are pinned', async () => {
   installFetch();
@@ -363,44 +306,7 @@ test('settings: the Contract section names the holdout bounds ONCE they are pinn
   assert(body.textContent.includes('1 entry'), 'the budget is singular at one entry');
 });
 
-test('settings: the Contract cost panel degrades to an honest "unavailable" line when the server envelope cannot be fetched (C6)', async () => {
-  installFetch();
-  // make ONLY the draft fetch fail — getDraft() then returns null, so no client
-  // re-estimate stands in for the missing server envelope.
-  const base = globalThis.fetch;
-  globalThis.fetch = async (path, init) => {
-    if (String(path).startsWith('/builder/draft')) return { ok: false, status: 500, headers: { get: () => 'application/json' }, json: async () => ({ error: 'boom' }), text: async () => '{"error":"boom"}' };
-    return base(path, init);
-  };
-  const host = globalThis.document.createElement('div');
-  await settings.render(host, ctx, { section: 'contract' });
-  await tick();
-  const preview = firstClass(host, 'dn-set-preview');
-  assert(preview, 'the contract preview still renders (the schematic + strip degrade independently)');
-  // the cost panel reads the honest unavailable line rather than a fabricated number.
-  const unavailable = firstClass(preview, 'dn-bld-cost-unavailable');
-  assert(unavailable, 'the cost panel shows the honest "unavailable" degrade');
-  assert(/unavailable/i.test(unavailable.textContent), 'the line names the envelope as unavailable');
-  assertEqual(byClass(preview, 'dn-bld-cost-num').length, 0, 'no fabricated board-runs/round number is shown');
-});
 
-test('settings: named engines are edited once and roles are assignments', async () => {
-  installFetch();
-  const host = globalThis.document.createElement('div');
-  await settings.render(host, ctx, { section: 'models' });
-  await tick();
-  const body = firstClass(host, 'dn-set-body');
-  const cards = byClass(body, 'dn-set-modelcard').filter((c) => c.getAttribute('data-engine'));
-  assertEqual(cards.length, 3, 'one editable card per engine');
-  for (const c of cards) {
-    assert(byClass(c, 'dn-set-typebtn').length === 2, 'each role has the form toggle');
-  }
-  const target = cards.find((c) => c.getAttribute('data-engine') === 'target');
-  const input = byClass(target, 'dn-set-input').find((i) => i.getAttribute('name') === 'target-call_llm');
-  assert(input && input.getAttribute('value') === 'pkg.harness:call_llm', 'target engine is seeded');
-  assert(body.textContent.includes('User emulator'), 'advanced role assignment is shown');
-  assert(body.textContent.includes('Proposer review'), 'specific proposer override is shown');
-});
 
 test('settings: the Models section shows the api_key_env NAME + set/unset flag, never a secret', async () => {
   installFetch();
@@ -408,90 +314,17 @@ test('settings: the Models section shows the api_key_env NAME + set/unset flag, 
   await settings.render(host, ctx, { section: 'models' });
   await tick();
   const body = firstClass(host, 'dn-set-body');
-  // evaluation arrived as a model spec with a SET env var; builder as UNSET.
-  // The NAME is surfaced in the (editable) api_key_env input value.
-  const keyInputs = byClass(body, 'dn-set-input').filter((i) => (i.getAttribute('name') || '').endsWith('-api_key_env'));
-  const keyVals = keyInputs.map((i) => i.getAttribute('value'));
-  assert(keyVals.includes('HOUSE_API_KEY'), 'the evaluation api_key_env NAME is shown');
-  assert(keyVals.includes('BUILDER_KEY'), 'the builder api_key_env NAME is shown');
-  const flags = byClass(body, 'dn-set-keyflag');
-  const flagText = flags.map((f) => f.textContent);
-  assert(flagText.includes('set'), 'a set indicator renders for a present env var');
-  assert(flagText.includes('unset'), 'an unset indicator renders for an absent env var');
+  assert(body.textContent.includes('HOUSE_API_KEY'), 'shows the credential variable name');
+  assert(body.textContent.includes('api_key_env_set'), 'shows credential availability');
+  assert(body.textContent.includes('true') && body.textContent.includes('false'), 'shows present and absent credentials');
   // there is NO secret-value input or text anywhere — only env-var NAMES.
   assert(!body.textContent.toLowerCase().includes('sk-'), 'no secret-looking value is rendered');
   const inputs = byClass(body, 'dn-set-input');
   assert(!inputs.some((i) => (i.getAttribute('type') || '') === 'password'), 'no password / secret input exists');
 });
 
-test('settings: editing a named engine saves the engines/roles schema', async () => {
-  installFetch();
-  const host = globalThis.document.createElement('div');
-  await settings.render(host, ctx, { section: 'models' });
-  await tick();
-  let body = firstClass(host, 'dn-set-body');
-  const evaluation = byClass(body, 'dn-set-modelcard').find((c) => c.getAttribute('data-engine') === 'evaluation');
-  const modelInput = byClass(evaluation, 'dn-set-input').find((i) => i.getAttribute('name') === 'evaluation-model');
-  modelInput.setAttribute('value', 'evaluation-model-y');
-  modelInput.value = 'evaluation-model-y';
-  modelInput.dispatchEvent(makeEvent('input'));
-  await tick();
-  // Save is enabled once dirty; click it.
-  body = firstClass(host, 'dn-set-body');
-  const save = byClass(body, 'dn-linkbtn').find((b) => b.textContent.includes('Save'));
-  assert(save && !save.getAttribute('disabled'), 'the save button is enabled after an edit');
-  save.dispatchEvent(makeEvent('click'));
-  await tick();
-  // the POST carried the edited model spec, an api_key_env NAME only, and never
-  // any resolved secret value.
-  assert(_lastModelsPost && _lastModelsPost.models, 'the POST carried a models block');
-  assertEqual(_lastModelsPost.models.engines.evaluation.model, 'evaluation-model-y', 'the engine id round-tripped');
-  assert(!('api_key_env_set' in _lastModelsPost.models.engines.evaluation), 'the set flag is never posted');
-  const flat = JSON.stringify(_lastModelsPost).toLowerCase();
-  assert(!flat.includes('sk-'), 'no secret value crossed the POST boundary');
-});
 
-test('settings: an advanced proposer role maps to a named engine', async () => {
-  installFetch();
-  const host = globalThis.document.createElement('div');
-  await settings.render(host, ctx, { section: 'models' });
-  await tick();
-  let body = firstClass(host, 'dn-set-body');
-  const breadth = byClass(body, 'dn-set-modelcard').find((c) => c.textContent.includes('Proposer generate'));
-  const select = byClass(breadth, 'dn-set-input')[0];
-  select.value = 'builder'; select.dispatchEvent(makeEvent('change'));
-  await tick();
-  body = firstClass(host, 'dn-set-body');
-  const save = byClass(body, 'dn-linkbtn').find((b) => b.textContent.includes('Save'));
-  save.dispatchEvent(makeEvent('click'));
-  await tick();
-  // the POST carried the proposer_breadth role's edited call_llm path — the
-  // role round-trips exactly like harness/judge (no special-casing).
-  assert(_lastModelsPost && _lastModelsPost.models, 'the POST carried a models block');
-  assertEqual(_lastModelsPost.models.roles.proposer_generate, 'builder', 'the override round-tripped');
-});
 
-test('settings: the EDITABLE builder is NO LONGER embedded — only a LAUNCHER (+ a read-only contract preview)', async () => {
-  installFetch();
-  const host = globalThis.document.createElement('div');
-  // even if a stale `#/builder` ever resolved into a settings section, the
-  // surface must not render the builder's EDITABLE chrome inside its host (that
-  // nesting was the clutter we removed). The launcher links out instead. The
-  // Contract section DOES reuse the builder's read-only preview RENDERER (a
-  // schematic + cost + holdout strip), but never its rail / form / apply chrome.
-  await settings.render(host, ctx, { section: 'builder' });
-  await tick();
-  // the builder's self-contained EDITABLE chrome must NOT appear inside settings.
-  assert(!firstClass(host, 'dn-builder'), 'the builder root is NOT mounted inside the settings host');
-  assertEqual(byClass(host, 'dn-bld-railitem').length, 0, 'no embedded builder rail inside settings');
-  assertEqual(byClass(host, 'dn-bld-applyrow').length, 0, 'no apply / dry-run controls inside settings');
-  assertEqual(byClass(host, 'dn-bld-card').length, 0, 'no editable structure-picker cards inside settings');
-  // a non-section `section: 'builder'` param falls back to the default section;
-  // the launcher to the standalone view is still present.
-  const launchers = byClass(host, 'dn-set-raillauncher');
-  assertEqual(launchers.length, 1, 'the builder launcher is present');
-  assertEqual(launchers[0].getAttribute('href'), '#/builder', 'the launcher targets the standalone builder view');
-});
 
 // ── S/M/L FONT-SIZE control (text-only multiplier in the typeface picker) ──
 //
@@ -536,32 +369,6 @@ test('ui: font-size model — normalise + read/persist round-trip + scale values
 // turns on the key spelling alone. What a stored VALUE may say is a separate
 // question each preference answers for itself: the typeface's retired option
 // ids are pinned in candidate_surfaces.test.mjs.
-test('prefs: a value stored under the retired key spelling is still read, and a write moves it', async () => {
-  const ui = await import('../js/ui.js');
-  const builder = await import('../js/builder/model.js');
-  const store = globalThis.window.localStorage;
-  store.clear();
-  store.setItem('zicato.T.theme', 'dracula');
-  store.setItem('zicato.T.typeface', 'literata');
-  store.setItem('zicato.T.scale', '120');
-  store.setItem('zicato.T.fontsize', 'large');
-  store.setItem('zicato.T.rail', '360');
-  store.setItem('zicato.T.builder.chatWidth', '420');
-  store.setItem('zicato.T.builder.chatCollapsed', '1');
-  assertEqual(ui.readColor(), 'dracula', 'the retired theme key is read');
-  assertEqual(ui.readType(), 'literata', 'the retired typeface key is read');
-  assertEqual(ui.readScale(), 120, 'the retired scale key is read');
-  assertEqual(ui.readFontSize(), 'large', 'the retired text-size key is read');
-  assertEqual(ui.readRail(), 360, 'the retired rail-width key is read');
-  assertEqual(builder.readChatWidth(), 420, 'the retired builder chat-width key is read');
-  assertEqual(builder.readChatCollapsed(), true, 'the retired builder collapse key is read');
-  // the current key wins once written, and the retired one is left untouched.
-  ui.persistColor('zenburn');
-  assertEqual(store.getItem('zicato.console.theme'), 'zenburn', 'a write lands on the current key');
-  assertEqual(store.getItem('zicato.T.theme'), 'dracula', 'a write does not touch the retired key');
-  assertEqual(ui.readColor(), 'zenburn', 'the current key shadows the retired one');
-  store.clear();
-});
 
 test('shell: applyFontSize stamps --dt-font-scale + data-t-fontsize per size + persists', async () => {
   const ui = await import('../js/ui.js');
@@ -609,5 +416,35 @@ test('settings: the typeface popover carries the S/M/L text-size control + appli
   assertEqual(large.getAttribute('aria-checked'), 'true', 'the large segment is now checked');
   assertEqual(small.getAttribute('aria-checked'), 'false', 'the small segment is no longer checked');
 });
+
+for (const failure of ['http', 'network']) {
+  test(`settings: Models keeps navigation usable after ${failure} failure and recovers`, async () => {
+    globalThis.fetch = async () => {
+      if (failure === 'network') throw new Error('connection failed');
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+    const host = document.createElement('div');
+    await settings.render(host, ctx, { section: 'models' });
+    const rail = firstClass(host, 'dn-set-rail');
+    const body = firstClass(host, 'dn-set-body');
+    assertEqual(byClass(rail, 'dn-set-railitem').length, 3, 'all settings sections remain available');
+    assert(body.textContent.includes('Could not load the models settings.'), 'failed reads have an explicit unavailable state');
+    assertEqual(body.querySelectorAll('pre').length, 0, 'unavailable settings do not render an empty configuration');
+    const unavailable = body.firstChild;
+    await settings.render(host, ctx, { section: 'models' });
+    assert(body.firstChild === unavailable, 'an unchanged unavailable state preserves its nodes');
+
+    installFetch();
+    await settings.render(host, ctx, { section: 'models' });
+    assert(body.textContent.includes('HOUSE_API_KEY'), 'a later successful read displays the configured values');
+    assert(!body.textContent.includes('Could not load'), 'successful read clears the unavailable state');
+    const available = body.firstChild;
+    await settings.render(host, ctx, { section: 'models' });
+    assert(body.firstChild === available, 'an unchanged successful read preserves its nodes');
+    await settings.render(host, ctx, { section: 'appearance' });
+    assert(firstClass(host, 'dn-set-rail') === rail, 'navigation keeps the section rail');
+    assert(firstClass(body, 'dn-set-appgrid'), 'appearance remains usable after a failed model read');
+  });
+}
 
 await run();

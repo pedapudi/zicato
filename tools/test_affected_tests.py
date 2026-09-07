@@ -138,9 +138,8 @@ def test_the_subprocess_worker_is_an_edge_out_of_the_runner(
 def test_the_dashboard_server_is_an_edge_out_of_its_launchers(
     graph: dict[str, set[str]],
 ) -> None:
-    """The CLI and the terminal console both launch the server with `-m`."""
+    """The CLI launches the server with `-m`."""
     assert "zicato.dashboard" in graph["zicato.cli.commands.evolve"]
-    assert "zicato.dashboard" in graph["zicato.tui.service"]
 
 
 def test_a_literal_dynamic_import_is_an_edge(graph: dict[str, set[str]]) -> None:

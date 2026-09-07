@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 
 import zicato.tournament.runner as runner_mod
-from tests._runtime_builders import runtime_config
+from tests._runtime_builders import prepare_tournament_epoch, runtime_config
 from zicato.core import (
     BUDGET_ABORT_CAUSE,
     BoardEntry,
@@ -365,14 +365,16 @@ def _seed_champion_cache(ws: Path, parent_gen: Generation, board: list[BoardEntr
             run_id=run_id_for_unit(parent_gen.id, entry.id, base_seed=None),
             entry_id=entry.id,
             generation_id=parent_gen.id,
-            epoch_id="e0",
+            epoch_id=parent_gen.epoch_id,
             drift_loss=2.0,
             pass_fail=True,
             measurement=MeasurementDraw.from_index(0, base_seed=None),
         )
         write_loss_profile(
             profile,
-            loss_profile_path(ws, "e0", parent_gen.id, entry.id).parent / "seed-none" / "loss.json",
+            loss_profile_path(ws, parent_gen.epoch_id, parent_gen.id, entry.id).parent
+            / "seed-none"
+            / "loss.json",
         )
 
 
@@ -393,7 +395,7 @@ def _stub_run_single_logging(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str,
         side: str,
         match_id: str = "",
     ) -> LossProfile:
-        del adapter, weights, workspace_root, epoch_id, side, match_id
+        del adapter, weights, workspace_root, side, match_id
         call_log.append((generation.id, entry.id))
         return make_loss_profile(
             run_id=run_id_for_unit(
@@ -401,7 +403,7 @@ def _stub_run_single_logging(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str,
             ),
             entry_id=entry.id,
             generation_id=generation.id,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             drift_loss=1.0,
             pass_fail=True,
         )
@@ -420,6 +422,11 @@ def test_run_tournament_cache_reads_champion_side(
     parent_gen = _generation(tmp_path, "v0", None)
     child_gen = _generation(tmp_path, "v1", "v0")
     board = [_entry("entry_a"), _entry("entry_b")]
+    config = runtime_config(ws)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(ws, config, board, weights)
+    parent_gen = replace(parent_gen, epoch_id=epoch_id)
+    child_gen = replace(child_gen, epoch_id=epoch_id)
 
     _seed_champion_cache(ws, parent_gen, board)
     call_log = _stub_run_single_logging(monkeypatch)
@@ -430,10 +437,10 @@ def test_run_tournament_cache_reads_champion_side(
             parent_gen=parent_gen,
             child_gen=child_gen,
             board=board,
-            weights=ScoringWeights(),
-            config=runtime_config(ws),
+            weights=weights,
+            config=config,
             workspace_root=ws,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -457,6 +464,11 @@ def test_run_tournament_full_mode_resamples_champion(
     parent_gen = _generation(tmp_path, "v0", None)
     child_gen = _generation(tmp_path, "v1", "v0")
     board = [_entry("entry_a"), _entry("entry_b")]
+    config = runtime_config(ws)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(ws, config, board, weights)
+    parent_gen = replace(parent_gen, epoch_id=epoch_id)
+    child_gen = replace(child_gen, epoch_id=epoch_id)
 
     _seed_champion_cache(ws, parent_gen, board)
     call_log = _stub_run_single_logging(monkeypatch)
@@ -467,10 +479,10 @@ def test_run_tournament_full_mode_resamples_champion(
             parent_gen=parent_gen,
             child_gen=child_gen,
             board=board,
-            weights=ScoringWeights(),
-            config=runtime_config(ws),
+            weights=weights,
+            config=config,
             workspace_root=ws,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             champion_force_fresh=True,
         )
     )
@@ -491,6 +503,11 @@ def test_run_tournament_first_round_still_runs_champion(
     parent_gen = _generation(tmp_path, "v0", None)
     child_gen = _generation(tmp_path, "v1", "v0")
     board = [_entry("entry_a"), _entry("entry_b")]
+    config = runtime_config(ws)
+    weights = ScoringWeights()
+    epoch_id = prepare_tournament_epoch(ws, config, board, weights)
+    parent_gen = replace(parent_gen, epoch_id=epoch_id)
+    child_gen = replace(child_gen, epoch_id=epoch_id)
 
     # No champion cache seeded -> the parent side MISSes and runs.
     call_log = _stub_run_single_logging(monkeypatch)
@@ -501,10 +518,10 @@ def test_run_tournament_first_round_still_runs_champion(
             parent_gen=parent_gen,
             child_gen=child_gen,
             board=board,
-            weights=ScoringWeights(),
-            config=runtime_config(ws),
+            weights=weights,
+            config=config,
             workspace_root=ws,
-            epoch_id="e0",
+            epoch_id=epoch_id,
         )
     )
 
@@ -514,7 +531,7 @@ def test_run_tournament_first_round_still_runs_champion(
     assert (
         _resolve_cached_unit(
             workspace_root=ws,
-            epoch_id="e0",
+            epoch_id=epoch_id,
             generation_id="v0",
             entry_id="entry_a",
             replicate_index=0,

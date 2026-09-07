@@ -113,7 +113,7 @@ jobs need different capability or cost, for example:
 
 The supported roles are `target`, `evaluation`, `proposer`,
 `proposer_generate`, `proposer_review`, `user_emulator`, `judge`,
-`adjudicator`, and `builder`. See
+and `adjudicator`. See
 [`MODEL-CONFIG.md`](../../docs/design/MODEL-CONFIG.md) before adding advanced
 overrides. A dotted `call_llm` engine is the advanced text-only/offline form;
 it is not interchangeable with a native tool runtime or process-owned model

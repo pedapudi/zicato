@@ -21,7 +21,7 @@ zicato helper uses)::
       heartbeat.json                  # orchestrator liveness beat
       dashboard.json                  # dashboard's actually-bound host/port
       active_runs/{run_id}.json       # per in-flight tournament run
-      active_tournament.json          # current tournament shape
+      active_tournament.events.jsonl  # recorded tournament transitions
       control/                        # operator commands queued by dashboard
         pause_epoch                   # flag file
         skip_round                    # flag file
@@ -88,16 +88,6 @@ def active_runs_dir(workspace_root: Path) -> Path:
 def active_run_path(workspace_root: Path, run_id: str) -> Path:
     """Return the path to one run's live-state JSON file."""
     return _layout(workspace_root).active_run(run_id)
-
-
-def active_tournament_path(workspace_root: Path) -> Path:
-    """Return the path to the LEGACY current-tournament snapshot file.
-
-    Retained for the compat reader + resume cleanup. The live producer
-    writes the event log (see :func:`active_tournament_log_path`); this
-    snapshot is only read when no log exists.
-    """
-    return _layout(workspace_root).active_tournament
 
 
 def active_tournament_log_path(workspace_root: Path) -> Path:
@@ -182,7 +172,6 @@ __all__ = [
     "dashboard_endpoint_path",
     "active_runs_dir",
     "active_run_path",
-    "active_tournament_path",
     "active_tournament_log_path",
     "progress_log_path",
     "inconclusive_dir",

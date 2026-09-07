@@ -11,7 +11,11 @@ from typing import Any
 
 import pytest
 
-from tests._runtime_builders import make_generation
+from tests._runtime_builders import (
+    make_generation,
+    prepare_tournament_epoch,
+    record_tournament_score,
+)
 from tests._subprocess_worker_support import SleepingAdapter
 from tests.test_subprocess_workers import _config, _entry
 from zicato.core import ScoringWeights
@@ -118,16 +122,22 @@ async def test_tournament_retains_writer_through_repeated_cancellation(
     monkeypatch.setattr(runner, "_terminate_worker", pause_cleanup)
     config = _config(root, supervisor_kill_wait_s=0.01)
     config = replace(config, parallelism=1, host_worker_permits=1)
+    board, weights = [_entry()], ScoringWeights()
+    epoch_id = prepare_tournament_epoch(root, config, board, weights)
+    parent, child = replace(parent, epoch_id=epoch_id), replace(child, epoch_id=epoch_id)
+    parent_score = {"scalar": 0.0, "generation_id": parent.id, "base_seed": config.seed}
+    if entry_point == "run_fast_mode":
+        record_tournament_score(root, epoch_id, parent.id, parent_score)
 
     async def execute() -> None:
         async with _caller_writer(root, nested) as writer:
             kwargs: dict[str, Any] = {
                 "adapter": SleepingAdapter(),
-                "board": [_entry()],
-                "weights": ScoringWeights(),
+                "board": board,
+                "weights": weights,
                 "config": config,
                 "workspace_root": root,
-                "epoch_id": "e0",
+                "epoch_id": epoch_id,
             }
             if nested:
                 kwargs["writer"] = writer
@@ -137,11 +147,7 @@ async def test_tournament_retains_writer_through_repeated_cancellation(
                 kwargs.update(
                     child_gen=child,
                     parent_generation_id=parent.id,
-                    parent_historical_agg={
-                        "scalar": 0.0,
-                        "generation_id": parent.id,
-                        "base_seed": config.seed,
-                    },
+                    parent_historical_agg=parent_score,
                 )
             else:
                 kwargs.update(parent_gen=parent, child_gen=child)

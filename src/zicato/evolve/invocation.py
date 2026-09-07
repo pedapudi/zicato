@@ -17,6 +17,7 @@ from zicato.epoch.execution import EpochExecutionContract
 from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock, release_workspace_lock
 
 if TYPE_CHECKING:
+    from zicato.core.types import RuntimeConfig
     from zicato.logging_stream import LogStreamHandle
 
 log = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class InvocationContext:
     workspace_config_bytes: bytes
     resources: AsyncExitStack = field(default_factory=AsyncExitStack)
     execution_contract: EpochExecutionContract | None = None
+    runtime_config: RuntimeConfig | None = None
     telemetry: TelemetryEndpoints = TelemetryEndpoints()
     log_stream: LogStreamHandle | None = None
     _imports: ExitStack = field(default_factory=ExitStack)
@@ -162,7 +164,15 @@ async def validated_invocation(
             if handle is not None:
                 invocation.telemetry = TelemetryEndpoints(handle.web_url, handle.grpc_target)
         if epoch_id is None:
+            from zicato.core.adapter_config import DriverImportContext  # noqa: PLC0415
+            from zicato.driver_imports import driver_import_scope  # noqa: PLC0415
+
             require_workspace_valid(writer.workspace_root, live_contract=True)
+            invocation._imports.enter_context(
+                driver_import_scope(
+                    DriverImportContext.from_config(workspace_config, writer.workspace_root)
+                )
+            )
         else:
             invocation.select_epoch(epoch_id)
         yield invocation

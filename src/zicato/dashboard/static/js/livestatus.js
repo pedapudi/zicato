@@ -250,7 +250,7 @@ export function deriveLiveStatus(
   // default to live. This closes the dead-run-shows-LIVE bug: a killed run
   // leaves a heartbeat whose ts cannot be aged out, so treating "no readable
   // ts" as fresh let an active/terminal phase (and a frozen
-  // active_tournament.json with phase:"running") read live forever.
+  // active_tournament.events.jsonl with phase:"running") read live forever.
   const hbTs = heartbeatTs(hb);
   const heartbeatFresh = isFinite(hbTs) && (now - hbTs) <= STALE_HEARTBEAT_MS;
   // `heartbeatStale` is the public flag the chrome/digest read: a heartbeat

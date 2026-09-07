@@ -14,7 +14,7 @@ import pytest
 
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
-    make_aux_responder,
+    evaluation_call_llm,
     target_call_llm,
 )
 from zicato.core.types import (
@@ -45,6 +45,10 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
                 # tags this fixture never writes.
                 "generation_source_backend": "directory",
                 "adapter": {"kind": "import", "factory": "tests._stub_adapter:make_stub_adapter"},
+                "runtime": {
+                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
+                    "evaluation_call_llm": "tests._orchestrator_harness:evaluation_call_llm",
+                },
             }
         )
     )
@@ -210,7 +214,7 @@ def test_evolve_n_rounds_writes_heartbeat_and_releases_lock(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
             instance_id="hb-test",
         )
     )
@@ -257,7 +261,7 @@ def test_evolve_n_rounds_advances_progress_seq_and_marks_terminal(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
             instance_id="seq-test",
         )
     )
@@ -289,7 +293,7 @@ def test_evolve_n_rounds_advances_progress_seq_and_marks_terminal(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
             instance_id="seq-test",
         )
     )
@@ -337,7 +341,7 @@ def test_evolve_n_rounds_refuses_when_workspace_locked(
                 workspace_root=workspace,
                 epoch_id=epoch_id,
                 target_call_llm=target_call_llm,
-                evaluation_call_llm=make_aux_responder([]),
+                evaluation_call_llm=evaluation_call_llm,
                 instance_id="hb-test",
             )
         )

@@ -82,6 +82,7 @@ def make_runtime_config(
     evaluation_call_llm: CallLLM | None = None,
     configuration: ResolvedConfiguration | None = None,
     telemetry: TelemetryEndpoints | None = None,
+    execution_roles: bytes | None = None,
 ) -> RuntimeConfig:
     """Assemble a :class:`RuntimeConfig` from workspace config + optional overrides.
 
@@ -130,88 +131,56 @@ def make_runtime_config(
         )
         resolved_root = Path(declaration.workspace_root)
 
-    # The unified ``models`` block (runtime infra, NOT part of the contract)
-    # is the first source for target / evaluation / judge — but an explicit
-    # callable kwarg still wins, and an unconfigured role falls through to
-    # the ``runtime.*`` dotted paths, which a workspace may configure
-    # instead.
-    models = load_models_config(workspace_config)
+    from zicato.models_config import (  # noqa: PLC0415
+        build_adk_model,
+        capture_execution_roles,
+        execution_roles_from_json,
+        resolve_worker_role,
+        role_spec_from_dict,
+    )
 
-    target = target_call_llm
-    if target is None:
-        target = resolve_role_call_llm(
-            workspace_config, role="target", workspace_root=resolved_root
+    captured = (
+        execution_roles
+        if execution_roles is not None
+        else capture_execution_roles(workspace_config)
+    )
+    roles = execution_roles_from_json(captured)
+
+    def resolved_role(role: str) -> CallLLM | None:
+        document = roles.get(role)
+        if role not in {"target", "evaluation"} and document == roles.get("evaluation"):
+            return None
+        return resolve_worker_role(document, role=role) if document is not None else None
+
+    target = target_call_llm or resolved_role("target")
+    aux = evaluation_call_llm or resolved_role("evaluation")
+    if target is None or aux is None:
+        missing_role = "target" if target is None else "evaluation"
+        raise ValueError(
+            f"model role {missing_role!r} is unconfigured: "
+            f"set runtime.{missing_role}_call_llm or models.roles.{missing_role}"
         )
+    judge = resolved_role("judge")
+    adjudicator = resolved_role("adjudicator")
+    user_emulator = resolved_role("user_emulator")
+    proposer = resolved_role("proposer")
+    proposer_breadth = resolved_role("proposer_breadth")
+    proposer_depth = resolved_role("proposer_depth")
 
-    aux = evaluation_call_llm
-    if aux is None:
-        aux = resolve_role_call_llm(
-            workspace_config, role="evaluation", workspace_root=resolved_root
-        )
+    def model_name(role: str) -> str | None:
+        value = roles.get(role, {}).get("models_role", {}).get("model")
+        return value if isinstance(value, str) else None
 
-    # Judges use ``models.judge`` when present; absent, ``judge_call_llm``
-    # stays ``None`` and judges fall back to the evaluation callable via
-    # ``RuntimeConfig.effective_judge_call_llm`` (the default behavior).
-    judge: CallLLM | None = None
-    if not models.judge.is_empty:
-        judge = resolve_text_call_llm(models.judge, role="judge")
-    adjudicator: CallLLM | None = None
-    if not models.adjudicator.is_empty:
-        adjudicator = resolve_text_call_llm(models.adjudicator, role="adjudicator")
-    user_emulator: CallLLM | None = None
-    if not models.user_emulator.is_empty:
-        user_emulator = resolve_text_call_llm(models.user_emulator, role="user_emulator")
-    proposer: CallLLM | None = None
-    proposer_model: str | None = None
-    if not models.proposer.is_empty:
-        proposer = resolve_text_call_llm(models.proposer, role="proposer")
-        if not models.proposer.uses_call_llm:
-            proposer_model = models.proposer.model
-
-    # Ensemble proposer roles: ``models.proposer_breadth`` steers the
-    # best-of-N SLATE SAMPLING and ``models.proposer_depth`` the CRITIQUE +
-    # REVISE passes. Both absent (the common case) ⇒ ``None``, and the
-    # best-of-N wrapper then runs every pass on the evaluation callable.
-    # No distinctness guard binds them to each other or to any
-    # other role: both are proposer-side, one trust domain (the guard is for
-    # evaluator-vs-evaluated separation). Like every ``models`` role, a change
-    # here is runtime infra and NEVER rolls the epoch.
-    # Each role also carries its MODEL-NAME string when configured via a model
-    # SPEC (``{"model": ...}``, NOT a ``{"call_llm": ...}`` dotted path): the
-    # wrapper threads it onto ``ctx.model`` so the DEFAULT ADK proposer — which
-    # binds the model string and never reads ``ctx.aux_call_llm`` — honors the
-    # role. A call_llm-form (or absent) role leaves the model name ``None`` and
-    # steers only proposers that read ``ctx.aux_call_llm`` (the text-shim path).
-    proposer_breadth: CallLLM | None = None
-    proposer_breadth_model: str | None = None
-    if not models.proposer_breadth.is_empty:
-        proposer_breadth = resolve_text_call_llm(models.proposer_breadth, role="proposer_breadth")
-        if not models.proposer_breadth.uses_call_llm:
-            proposer_breadth_model = models.proposer_breadth.model
-    proposer_depth: CallLLM | None = None
-    proposer_depth_model: str | None = None
-    if not models.proposer_depth.is_empty:
-        proposer_depth = resolve_text_call_llm(models.proposer_depth, role="proposer_depth")
-        if not models.proposer_depth.uses_call_llm:
-            proposer_depth_model = models.proposer_depth.model
-
-    # Inner ADK agent model: when ``models.target`` is a *model spec* (a
-    # model string, optionally + endpoint/api_key_env), build the ADK model
-    # object so the adapter can rebind the target's agents to it with native
-    # tool/function calling intact (the config-driven alternative to a bare
-    # string + the text-only shim). A dotted ``call_llm`` target role, or an
-    # endpoint-less spec that yields a bare string, leaves ``target_model``
-    # None, and the adapter then uses its guarded shim rebind.
     target_model: Any = None
-    if not models.target.is_empty and models.target.model:
-        from zicato.models_config import build_adk_model  # noqa: PLC0415
-
-        try:
-            built = build_adk_model(models.target, role="target")
-        except ValueError:
-            built = None  # ADK/litellm unavailable — fall back to the shim path.
-        if built is not None and not isinstance(built, str):
-            target_model = built
+    target_document = roles.get("target", {})
+    if model_name("target") and target_call_llm is None:
+        target_model = build_adk_model(
+            role_spec_from_dict(target_document["models_role"]),
+            role="target",
+            transport=target_document.get("transport"),
+        )
+        if isinstance(target_model, str):
+            target_model = None
 
     # Defense in depth — also re-checked by the runner.
     assert_distinct_callables(target, aux)
@@ -219,6 +188,7 @@ def make_runtime_config(
     return RuntimeConfig(
         **{item.name: getattr(settings, item.name) for item in fields(RuntimeSettings)},
         configuration=resolved,
+        execution_roles=captured,
         telemetry=telemetry or TelemetryEndpoints(),
         workspace_root=resolved_root,
         driver_imports=DriverImportContext.from_config(workspace_config, resolved_root),
@@ -230,9 +200,9 @@ def make_runtime_config(
         proposer_call_llm=proposer,
         proposer_breadth_call_llm=proposer_breadth,
         proposer_depth_call_llm=proposer_depth,
-        proposer_breadth_model=proposer_breadth_model,
-        proposer_depth_model=proposer_depth_model,
-        proposer_model=proposer_model,
+        proposer_breadth_model=model_name("proposer_breadth"),
+        proposer_depth_model=model_name("proposer_depth"),
+        proposer_model=model_name("proposer"),
         target_model=target_model,
     )
 

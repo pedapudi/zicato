@@ -92,10 +92,6 @@ class WorkspacePaths:
         return self._layout.active_runs_dir
 
     @property
-    def active_tournament(self) -> Path:
-        return self._layout.active_tournament
-
-    @property
     def active_tournament_log(self) -> Path:
         return self._layout.active_tournament_log
 

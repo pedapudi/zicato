@@ -32,8 +32,8 @@ import pytest
 from tests._contract_pins import deterministic_weights
 from tests._orchestrator_harness import (
     bootstrap_workspace,
+    evaluation_call_llm,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
     target_call_llm,
 )
@@ -329,7 +329,7 @@ def test_gauntlet_promotion_fires_the_hook_once(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "promoted"
     assert len(calls) == 1, calls
@@ -360,7 +360,7 @@ def test_a_rejected_round_never_fires_the_hook(
         canned_pass_by_gen={"v0": True, "v1": False},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "rejected"
     assert calls == []
@@ -383,7 +383,7 @@ def test_multi_challenger_crowning_fires_the_hook_once(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert outcome.tournament_decision == "promoted"
     assert len(calls) == 1, calls
@@ -429,7 +429,7 @@ def test_a_failing_hook_leaves_the_promotion_standing(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     # The round settled normally and the promotion is intact on every store.
     assert len(calls) == 1
@@ -469,7 +469,7 @@ def test_a_successful_hook_raises_no_finding(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    run_evolve_once(workspace, epoch_id, evaluation_call_llm)
 
     assert _findings(_health_report(workspace, epoch_id, 1), "on_promote_hook_failed") == []
     assert _settlement_receipt(workspace, epoch_id)["promotion_hook"]["state"] == "succeeded"
@@ -504,7 +504,7 @@ def test_resume_never_re_fires_a_settled_promotion(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": False},
     )
 
-    first = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    first = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     assert first.tournament_decision == "promoted"
     assert [c["generation_id"] for c in calls] == ["v1"]
 
@@ -528,7 +528,7 @@ def test_resume_never_re_fires_a_settled_promotion(
             workspace_root=workspace,
             epoch_id=epoch_id,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=make_aux_responder([]),
+            evaluation_call_llm=evaluation_call_llm,
         )
     )
 

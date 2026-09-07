@@ -3,7 +3,7 @@
 Liveness is a property of the CLOCK, not of file presence. The workspace
 that motivated this (issue #194) has been dead since June and still holds a
 heartbeat reading ``tournament:round_0:racing-final``, an
-``active_tournament.json`` reading ``phase: running`` and seven
+``active_tournament.events.jsonl`` reading ``phase: running`` and seven
 ``active_runs`` records — every one of which the dashboard used to read as
 "something is running right now".
 

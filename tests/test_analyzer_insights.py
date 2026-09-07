@@ -14,9 +14,28 @@ from __future__ import annotations
 
 import asyncio
 import json
+import stat
 from pathlib import Path
 
 from zicato.analyzer import analyze_epoch_telemetry, load_latest_insights
+
+
+def test_report_replacement_preserves_an_open_reader(tmp_path: Path) -> None:
+    async def unused_aux(_system: str, _user: str, _model: str) -> str:
+        raise AssertionError("an empty epoch requires no evaluation call")
+
+    out = asyncio.run(analyze_epoch_telemetry(tmp_path, "epoch", unused_aux))
+    previous = "Previous complete report.\n" * 20
+    out.write_text(previous, encoding="utf-8")
+    out.chmod(0o600)
+    with out.open("rb", buffering=0) as reader:
+        prefix = reader.read(10)
+        asyncio.run(analyze_epoch_telemetry(tmp_path, "epoch", unused_aux))
+        observed = prefix + reader.read()
+
+    assert observed == previous.encode("utf-8")
+    assert out.read_text(encoding="utf-8") != previous
+    assert stat.S_IMODE(out.stat().st_mode) == 0o600
 
 
 def _envelope(seq: int, payload_key: str, payload: dict) -> dict:

@@ -40,7 +40,7 @@ Two records reconstruct the surface, and neither is ever pruned:
 * ``epochs/{id}/mutations.json`` — the round's own frozen enumeration
   (id, kind, file, line span, content, content hash), read through the
   ONE reader that keeps every field,
-  :func:`zicato.analyzer.report_data.load_mutation_surface`.
+  :func:`zicato.mutation.inventory.read_mutation_inventory`.
 * the per-generation patch records — a ``replace`` patch carries its
   ``new_content`` forever, and a ``set_numeric`` / ``set_enum`` patch
   carries the value the applier wrote into the site.
@@ -70,8 +70,8 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from zicato.analyzer.report_data import load_mutation_surface
 from zicato.core.types import MutationPoint
+from zicato.epoch._storage import RecordError
 from zicato.epoch.genstore import (
     GIT_WORKTREES_DIRNAME,
     GenerationStore,
@@ -79,6 +79,7 @@ from zicato.epoch.genstore import (
 )
 from zicato.epoch.journal import read_generation_patches
 from zicato.mutation.enumerator import enumerate_mutations
+from zicato.mutation.inventory import read_mutation_inventory
 from zicato.query.paths import WorkspacePaths, layout_of
 from zicato.storage import workspace_backend
 from zicato.workspace import generation_ids, natural_key
@@ -316,36 +317,24 @@ def _split_record_path(raw: str) -> tuple[Path, str]:
     return Path(*parts[:split_at]), "/".join(parts[split_at:])
 
 
-def _int_or_zero(raw: Any) -> int:
-    return int(raw) if isinstance(raw, int | float) else 0
-
-
 def _record_surface(paths: WorkspacePaths, epoch_id: str) -> dict[str, MutationPoint]:
-    """Rebuild an epoch's mutation surface from ``mutations.json``.
+    """Derive display paths from recorded facts after source snapshots are pruned.
 
-    The round wrote that file from the very enumeration it fed the
-    proposer, so every site's content and line span is the real thing.
-    Two gaps remain, and the caller captions them rather than papering over
-    them. The snapshot carries no ``metadata``, so a site's ``role`` reads
-    empty. And it is the enumeration of the round's *champion*: ``v0`` for
-    an epoch that never promoted, the promoted parent otherwise.
+    The inventory records no execution root or metadata. Display paths use
+    the persisted filename; empty metadata cannot establish execution policy.
     """
     points: dict[str, MutationPoint] = {}
-    for record in load_mutation_surface(layout_of(paths), epoch_id):
-        mutation_id = record.get("id")
-        if not isinstance(mutation_id, str) or not mutation_id:
-            continue
-        source_root, rel = _split_record_path(str(record.get("file") or ""))
-        kind = record.get("kind")
-        points[mutation_id] = MutationPoint(
-            id=mutation_id,
-            kind=kind if kind in ("span", "file", "code") else "span",
+    for record in read_mutation_inventory(layout_of(paths).mutations(epoch_id)) or ():
+        source_root, rel = _split_record_path(record["file"])
+        points[record["id"]] = MutationPoint(
+            id=record["id"],
+            kind=record["kind"],
             file=source_root / rel if rel else source_root,
             source_root=source_root,
-            line_start=_int_or_zero(record.get("line_start")),
-            line_end=_int_or_zero(record.get("line_end")),
-            content=str(record.get("content") or ""),
-            content_hash=str(record.get("content_hash") or ""),
+            line_start=record["line_start"],
+            line_end=record["line_end"],
+            content=record["content"],
+            content_hash=record["content_hash"],
             metadata={},
         )
     return points
@@ -353,21 +342,24 @@ def _record_surface(paths: WorkspacePaths, epoch_id: str) -> dict[str, MutationP
 
 def _baseline_surface(
     store: GenerationStore | None, paths: WorkspacePaths, epoch_id: str
-) -> tuple[dict[str, MutationPoint], str]:
+) -> tuple[dict[str, MutationPoint], str, str | None]:
     """The epoch's baseline surface and where it came from.
 
     Tree first: while ``v0``'s snapshot is on disk its enumeration is
     exactly what the round saw, down to each site's ``role``. Once the
     tree is gone the frozen ``mutations.json`` enumeration serves in its
-    place. Returns ``(points, provenance)``; the provenance reads
+    place. Returns ``(points, provenance, error)``; the provenance reads
     ``records`` whenever the tree could not answer, including when the
     records could not either — the records WERE consulted, and the caller
     reports the empty surface naming both.
     """
     points = _enumerate_generation(store, epoch_id, _BASELINE_GENERATION, paths.root)
     if points:
-        return points, FROM_SNAPSHOT
-    return _record_surface(paths, epoch_id), FROM_RECORDS
+        return points, FROM_SNAPSHOT, None
+    try:
+        return _record_surface(paths, epoch_id), FROM_RECORDS, None
+    except RecordError as exc:
+        return {}, FROM_RECORDS, str(exc)
 
 
 def _reconstruct_content(baseline_content: str, patch: Any) -> tuple[str | None, str, bool]:
@@ -537,7 +529,7 @@ def build_mutation_index(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]
     store, store_error = _resolve_store(paths)
     generation_ids, store_saw_trees = _generation_ids(store, paths, epoch_id)
 
-    baseline, provenance = _baseline_surface(store, paths, epoch_id)
+    baseline, provenance, record_error = _baseline_surface(store, paths, epoch_id)
     if not baseline:
         return {
             "epoch_id": epoch_id,
@@ -545,7 +537,7 @@ def build_mutation_index(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]
             "mutations": [],
             "provenance": provenance,
             "provenance_note": "",
-            "error": _surface_error(epoch_id, store_error),
+            "error": record_error or _surface_error(epoch_id, store_error),
         }
 
     patched = _patching_generations(paths.root, epoch_id, generation_ids)
@@ -616,13 +608,13 @@ def build_mutation_detail(paths: WorkspacePaths, epoch_id: str, mutation_id: str
     back as an ``error`` field, never an exception.
     """
     store, store_error = _resolve_store(paths)
-    baseline, baseline_provenance = _baseline_surface(store, paths, epoch_id)
+    baseline, baseline_provenance, record_error = _baseline_surface(store, paths, epoch_id)
     if not baseline:
         return {
             "epoch_id": epoch_id,
             "mutation_id": mutation_id,
             "provenance": baseline_provenance,
-            "error": _surface_error(epoch_id, store_error),
+            "error": record_error or _surface_error(epoch_id, store_error),
         }
     baseline_point = baseline.get(mutation_id)
     if baseline_point is None:
@@ -763,14 +755,18 @@ def reconstructed_spans(
         return []
     if not record.patches:
         return []
-    baseline, _ = _baseline_surface(store, paths, epoch_id)
+    baseline, _, record_error = _baseline_surface(store, paths, epoch_id)
 
     spans: list[dict[str, Any]] = []
     for patch in record.patches:
         mutation_id = str(getattr(patch, "mutation_id", "") or "")
         point = baseline.get(mutation_id)
         old_content = point.content if point is not None else ""
-        new_content, note, _ = _reconstruct_content(old_content, patch)
+        new_content, note, _ = (
+            (None, record_error, False)
+            if record_error
+            else _reconstruct_content(old_content, patch)
+        )
         spans.append(
             {
                 "path": _rel_file(point) if point is not None else "",

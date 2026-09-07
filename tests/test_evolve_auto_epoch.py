@@ -63,25 +63,10 @@ def _proposer_response() -> str:
     )
 
 
-def _make_aux() -> Any:
-    """An aux callable that always returns a fresh valid proposer response.
-
-    Unlike the orchestrator test's exhausting responder, this one never
-    runs dry — auto-epoch close also calls the aux LLM (analysis pass),
-    and the round count across two evolve invocations is hard to
-    predict, so an inexhaustible stub keeps the test simple.
-    """
-
-    async def _aux(system: str, user: str, model: str) -> str:
-        del user, model
-        # The proposer expects JSON; the analysis pass expects prose.
-        # Returning JSON for everything is fine — the analysis pass
-        # tolerates arbitrary text.
-        if "hypothesis" in system or "proposer" in system.lower():
-            return _proposer_response()
-        return _proposer_response()
-
-    return _aux
+async def evaluation_call_llm(system: str, user: str, model: str) -> str:
+    """Return the deterministic response used by the epoch analysis fixture."""
+    del system, user, model
+    return _proposer_response()
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +128,10 @@ def _bootstrap_registered(tmp_path: Path) -> tuple[Path, Path]:
                 "generation_source_backend": "directory",
                 "mutable_trees": [str(agent)],
                 "source_roots": [str(agent)],
+                "runtime": {
+                    "target_call_llm": "tests._orchestrator_harness:target_call_llm",
+                    "evaluation_call_llm": "tests.test_evolve_auto_epoch:evaluation_call_llm",
+                },
                 "contract": {
                     "board_path": str(board),
                     "rubric_path": str(rubric),
@@ -326,7 +315,7 @@ def test_evolve_auto_creates_then_rolls_on_rubric_edit(
             workspace_root=workspace,
             epoch_id=None,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=_make_aux(),
+            evaluation_call_llm=evaluation_call_llm,
         )
     )
     assert len(outcomes) == 1
@@ -345,7 +334,7 @@ def test_evolve_auto_creates_then_rolls_on_rubric_edit(
             workspace_root=workspace,
             epoch_id=None,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=_make_aux(),
+            evaluation_call_llm=evaluation_call_llm,
         )
     )
     assert len(outcomes2) == 1
@@ -415,7 +404,7 @@ def test_pending_settlement_finishes_before_contract_drift_rolls_epoch(
                 workspace_root=workspace,
                 epoch_id=None,
                 target_call_llm=target_call_llm,
-                evaluation_call_llm=_make_aux(),
+                evaluation_call_llm=evaluation_call_llm,
             )
         )
     crashed_epoch = current_epoch_id(workspace)
@@ -430,7 +419,7 @@ def test_pending_settlement_finishes_before_contract_drift_rolls_epoch(
             workspace_root=workspace,
             epoch_id=None,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=_make_aux(),
+            evaluation_call_llm=evaluation_call_llm,
         )
     )
 
@@ -476,7 +465,7 @@ def test_contract_drift_discards_unsettled_candidate_before_closing_epoch(
                 workspace_root=workspace,
                 epoch_id=None,
                 target_call_llm=target_call_llm,
-                evaluation_call_llm=_make_aux(),
+                evaluation_call_llm=evaluation_call_llm,
             )
         )
     crashed_epoch = current_epoch_id(workspace)
@@ -490,7 +479,7 @@ def test_contract_drift_discards_unsettled_candidate_before_closing_epoch(
             workspace_root=workspace,
             epoch_id=None,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=_make_aux(),
+            evaluation_call_llm=evaluation_call_llm,
         )
     )
 
@@ -527,7 +516,7 @@ def test_evolve_no_auto_epoch_errors_on_drift(
                 workspace_root=workspace,
                 epoch_id=None,
                 target_call_llm=target_call_llm,
-                evaluation_call_llm=_make_aux(),
+                evaluation_call_llm=evaluation_call_llm,
                 auto_epoch=False,
             )
         )
@@ -540,7 +529,7 @@ def test_evolve_no_auto_epoch_errors_on_drift(
             workspace_root=workspace,
             epoch_id=None,
             target_call_llm=target_call_llm,
-            evaluation_call_llm=_make_aux(),
+            evaluation_call_llm=evaluation_call_llm,
         )
     )
     rubric.write_text("# Rubric\n- totally different steering text\n")
@@ -551,7 +540,7 @@ def test_evolve_no_auto_epoch_errors_on_drift(
                 workspace_root=workspace,
                 epoch_id=None,
                 target_call_llm=target_call_llm,
-                evaluation_call_llm=_make_aux(),
+                evaluation_call_llm=evaluation_call_llm,
                 auto_epoch=False,
             )
         )

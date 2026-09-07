@@ -123,8 +123,7 @@ def _import_callable(dotted: str) -> Any:
 def _resolve_role_call_llm(spec: Any, *, role: str) -> Any:
     """Resolve one role's worker spec to a text call_llm in this interpreter.
 
-    The spec is the dict the runner emitted (see
-    :func:`zicato.tournament.runner._role_worker_spec`):
+    The runner forwards each captured role from the selected execution contract:
 
     * ``{"dotted": "module:qualname"}`` — re-import the callable (a role
       configured by dotted path, or one left unconfigured); or
@@ -148,9 +147,9 @@ def _resolve_role_call_llm(spec: Any, *, role: str) -> Any:
         return _import_callable(str(dotted))
     raw_role = spec.get("models_role")
     if isinstance(raw_role, dict):
-        from zicato.models_config import lazy_text_call_llm, role_spec_from_dict  # noqa: PLC0415
+        from zicato.models_config import resolve_worker_role  # noqa: PLC0415
 
-        return lazy_text_call_llm(role_spec_from_dict(raw_role), role=role)
+        return resolve_worker_role(spec, role=role, lazy=True)
     raise ValueError(f"{role} role spec has neither 'dotted' nor 'models_role': {spec!r}")
 
 
@@ -176,10 +175,7 @@ def _resolve_target_model_from_role(spec: Any) -> Any:
     role_spec = role_spec_from_dict(raw_role)
     if not role_spec.model:
         return None
-    try:
-        built = build_adk_model(role_spec, role="target")
-    except ValueError:
-        return None
+    built = build_adk_model(role_spec, role="target", transport=spec.get("transport"))
     return built if not isinstance(built, str) else None
 
 
@@ -1156,10 +1152,12 @@ async def _run_with_imports(args: dict[str, Any], run_context: RunContext) -> No
         try:
             from zicato.tournament.artifacts import capture_run_artifacts  # noqa: PLC0415
 
-            artifacts = capture_run_artifacts(scratch_dir, loss_path)
+            artifacts = capture_run_artifacts(
+                scratch_dir, loss_path, measurement=measurement, run_id=run_id
+            )
             if run_result is not None:
                 run_result = replace(run_result, artifacts=artifacts)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             log.warning("run %s artifact capture failed: %s", run_id, exc)
 
     expectation_result = await _evaluate_expectation(entry, run_result, config)

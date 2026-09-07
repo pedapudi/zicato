@@ -79,7 +79,9 @@ from tests.test_decision_procedure_power import (  # noqa: E402  (path set up by
     _config,
     _effective_decision,
     _gen,
+    _measured_epoch,
     _NoisyWorld,
+    _prepared_epoch,
 )
 from zicato.core import ScoringWeights
 from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
@@ -229,15 +231,17 @@ async def _duel(
     replicate_base: int = 0,
 ) -> Any:
     """One real ``run_matchup`` duel through the (installed) counting world."""
+    config = _config(workspace, seed)
+    epoch_id = _prepared_epoch(workspace, config, weights)
     return await run_matchup(
         adapter=object(),
-        left_gen=_gen(left_id),
-        right_gen=_gen(right_id),
+        left_gen=_gen(left_id, epoch_id=epoch_id),
+        right_gen=_gen(right_id, epoch_id=epoch_id),
         board=list(_board()),
         weights=weights,
-        config=_config(workspace, seed),
+        config=config,
         workspace_root=workspace,
-        epoch_id="e0",
+        epoch_id=epoch_id,
         replicates=replicates,
         replicate_base=replicate_base,
         match_id=match_id,
@@ -386,17 +390,19 @@ def _measure_slice_floor(workspace: Path, m: int, draws: int, sigma: float) -> f
     the A/A delta_scalar) — the quantity a margin on this slice must clear.
     """
     world = _CountingWorld({"champion": BASE_TOKENS}, sigma)
+    config, weights = _config(workspace, 1), ScoringWeights()
+    epoch_id = _prepared_epoch(workspace, config, weights)
     with pytest.MonkeyPatch.context() as mp:
         world.install(mp)
         floor = asyncio.run(
             measure_noise_floor(
                 adapter=object(),
-                generation=_gen("champion"),
+                generation=_gen("champion", epoch_id=epoch_id),
                 board=_slice_board(m),
-                weights=ScoringWeights(),
-                config=_config(workspace, 1),
+                weights=weights,
+                config=config,
                 workspace_root=workspace,
-                epoch_id="e0",
+                epoch_id=epoch_id,
                 runs=draws,
             )
         )
@@ -912,23 +918,24 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
                 fast=False,
             )
         )
+        epoch_id = _measured_epoch(workspace)
         canonical: dict[tuple[str, str], bytes] = {}
         for gid in ("champion", "challenger"):
             for entry in _board():
                 canonical[(gid, entry.id)] = _unit_loss_path(
-                    workspace, "e0", gid, entry.id, 0, base_seed=1
+                    workspace, epoch_id, gid, entry.id, 0, base_seed=1
                 ).read_bytes()
 
         # (1) a calibration slice-floor draw at base 1000.
         asyncio.run(
             measure_noise_floor(
                 adapter=object(),
-                generation=_gen("champion"),
+                generation=_gen("champion", epoch_id=epoch_id),
                 board=_slice_board(2),
                 weights=ScoringWeights(),
                 config=_config(workspace, 9),
                 workspace_root=workspace,
-                epoch_id="e0",
+                epoch_id=epoch_id,
                 runs=3,
             )
         )
@@ -991,18 +998,19 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
 
         # Assertions.
         r0_unchanged = all(
-            _unit_loss_path(workspace, "e0", gid, entry_id, 0, base_seed=1).read_bytes() == before
+            _unit_loss_path(workspace, epoch_id, gid, entry_id, 0, base_seed=1).read_bytes()
+            == before
             for (gid, entry_id), before in canonical.items()
         )
         calib_present = all(
             _unit_loss_path(
-                workspace, "e0", "champion", entry.id, CALIBRATION_REPLICATE_BASE, base_seed=9
+                workspace, epoch_id, "champion", entry.id, CALIBRATION_REPLICATE_BASE, base_seed=9
             ).exists()
             for entry in _board()[:2]
         )
         evidence_present = all(
             _unit_loss_path(
-                workspace, "e0", gid, entry.id, EVIDENCE_REPLICATE_BASE + j, base_seed=2
+                workspace, epoch_id, gid, entry.id, EVIDENCE_REPLICATE_BASE + j, base_seed=2
             ).exists()
             for gid in ("champion", "challenger")
             for j in range(budget)

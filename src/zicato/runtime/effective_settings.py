@@ -62,6 +62,7 @@ UNRECORDED_RUNTIME_FIELDS: Mapping[str, str] = {
     "token_ledger": "a per-round tally minted at run time, not configuration",
     "judge_io_sink": "a live sink object the worker binds, not configuration",
     "goldfive": "contract settings recorded in the epoch's scoring.json",
+    "execution_roles": "model execution inputs recorded in the selected epoch’s frozen bindings",
     "configuration": "the selected values and their sources, reported field by field",
     "telemetry": "invocation service addresses, excluded from evaluation identity",
     "driver_imports": "resolved driver roots and mutable-package scope from adapter registration",

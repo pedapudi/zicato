@@ -31,9 +31,9 @@ import pytest
 from tests._contract_pins import deterministic_weights
 from tests._foe_support import stand_in_proposer_block
 from tests._orchestrator_harness import (
+    evaluation_call_llm,
     install_stub_adapter_factory,
     install_telemetry_stubs,
-    make_aux_responder,
     run_evolve_once,
 )
 from zicato.core.runtime import RoundTokenLedger, RuntimeConfig
@@ -71,7 +71,13 @@ def _bootstrap_multi_entry_workspace(
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    runtime_block = {"parallelism": 1, "preflight_gate": "off", **(runtime or {})}
+    runtime_block = {
+        "parallelism": 1,
+        "preflight_gate": "off",
+        "target_call_llm": "tests._orchestrator_harness:target_call_llm",
+        "evaluation_call_llm": "tests._orchestrator_harness:evaluation_call_llm",
+        **(runtime or {}),
+    }
     (workspace / "config.json").write_text(
         json.dumps(
             {
@@ -194,7 +200,7 @@ def _run_one_round(
     stub_reducer = sys.modules["zicato.telemetry.reducer"]
     stub_reducer.write_loss_profile = _real_write_loss_profile  # type: ignore[attr-defined]
 
-    outcome = run_evolve_once(workspace, epoch_id, make_aux_responder([]))
+    outcome = run_evolve_once(workspace, epoch_id, evaluation_call_llm)
     return workspace, epoch_id, outcome, calls
 
 

@@ -6,7 +6,7 @@ review answers *what you should change about how you evaluate*. It diagnoses
 the contract, the operating history, and (when a ``reflect run`` produced them)
 the reflection artifacts. **Zero LLM calls**: every input is a pure read (the
 free passive tier). Recommend-only: a mechanically-fixable check carries a
-``proposed_op`` naming a REAL builder op, validated against that op's signature
+``proposed_op`` naming a configuration operation, validated against that op's signature
 at emit time, as :mod:`zicato.reflection.findings` validates its own.
 
 The design of record is ``docs/design/BOARD-REFLECTION.md`` §"Practice review".
@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from zicato.board.budgets import BUDGET_OUTLIER_FACTOR, assess_budget_outliers
 from zicato.core.workspace import reflection_practices_path
 from zicato.epoch._storage import RecordError
 from zicato.storage import atomic_write_json
@@ -89,10 +90,6 @@ MAX_REPLICATE_BUMP: int = 8
 #: (ch.04 §1.5, the namespace-aggregate decomposition).
 MONOCULTURE_SHARE: float = 0.85
 
-#: How far above the board's median wall-clock budget an entry sits before it
-#: dominates the round — the builder's own ``entry_budget_outlier`` factor.
-BUDGET_OUTLIER_FACTOR: float = 10.0
-
 #: A noise floor measured this many lineage rounds ago (or more) on an active
 #: epoch is stale — the gate is calibrated against yesterday's noise (ch.04 §4).
 STALE_CALIBRATION_ROUNDS: int = 10
@@ -134,8 +131,8 @@ class PracticeCheck:
 
     ``headline`` is a single sentence with the numbers inline; ``rationale`` is
     the one-line doctrine grounding; ``proposed_op`` (present only for the
-    mechanically-fixable checks) is a signature-validated ``{op, args}`` builder
-    payload; ``unmeasured_reason`` names the missing input for an ``unmeasured``
+    mechanically-fixable checks) is a signature-validated ``{op, args}`` configuration
+    operation; ``unmeasured_reason`` names the missing input for an ``unmeasured``
     verdict (``None`` otherwise).
     """
 
@@ -300,7 +297,7 @@ def _op(op_name: str, args: dict[str, Any]) -> dict[str, Any] | None:
 
     Delegates to :func:`zicato.reflection.findings.validate_proposed_op` (the
     same emit-time signature check the findings use), lazily imported to keep
-    this engine's package-init import surface light. A payload the builder would
+    this engine's package-init import surface light. An operation the configuration library would
     reject degrades to ``None`` rather than shipping a broken recommendation.
     """
     from zicato.reflection.findings import validate_proposed_op  # noqa: PLC0415
@@ -784,25 +781,20 @@ def check_loss_monoculture(*, weights: Any, corpus_stats: dict[str, Any] | None)
 
 
 def check_budget_sanity(*, board_entries: list[Any]) -> PracticeCheck:
-    """A >10×-median entry dominates the round's wall-clock (builder validate heuristic)."""
-    rationale = "a >10×-median-budget entry dominates the round's wall-clock (builder heuristic)."
-    budgets = [int(getattr(e, "wall_clock_budget_seconds", 0)) for e in board_entries]
-    if len(budgets) < 2:
+    """A >10×-median entry dominates the round's wall-clock (configuration validation heuristic)."""
+    rationale = "An entry budget over ten times the median can dominate the round's duration."
+    if len(board_entries) < 2:
         return PracticeCheck(
             check_id=CHECK_BUDGET_SANITY,
             verdict=VERDICT_UNMEASURED,
             headline="Fewer than two board entries — no median wall-clock budget to compare.",
-            evidence={"n_entries": len(budgets)},
+            evidence={"n_entries": len(board_entries)},
             rationale=rationale,
             unmeasured_reason="fewer than two board entries carry a wall-clock budget",
         )
-    median = statistics.median(budgets)
-    outliers = [
-        str(getattr(e, "id", ""))
-        for e in board_entries
-        if median > 0
-        and int(getattr(e, "wall_clock_budget_seconds", 0)) > BUDGET_OUTLIER_FACTOR * median
-    ]
+    assessment = assess_budget_outliers(board_entries)
+    median = assessment.median_seconds
+    outliers = [entry.id for entry in assessment.outliers]
     evidence = {
         "median_budget_s": median,
         "outlier_entries": outliers,
@@ -881,7 +873,7 @@ def check_calibration_freshness(
             evidence=evidence,
             rationale=rationale,
             # Re-measuring is a CLI action (`zicato board audit`) rather than a
-            # builder op.
+            # configuration edit.
         )
     age = f"{rounds_since} round(s) ago" if rounds_since is not None else "recently"
     if ratio is not None:

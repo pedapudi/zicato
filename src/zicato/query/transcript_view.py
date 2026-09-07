@@ -20,10 +20,10 @@ Every function degrades to the same-shaped empty payload and never raises.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
+from zicato.core.measurement import artifact_replicate_index, unit_artifact_name
 from zicato.query.events_index import (
     find_proposal_episode_log,
     find_run_events_path,
@@ -32,6 +32,8 @@ from zicato.query.events_index import (
 from zicato.query.paths import WorkspacePaths
 from zicato.query.run_log import clamp_run_log_limit
 from zicato.query.transcript_reconstruction import reconstruct_transcript
+from zicato.tournament.artifacts import read_artifact_manifest
+from zicato.tournament.unit_cache import read_capture_loss
 
 #: The follow pane renders an events reconstruction rather than verbatim capture.
 FIDELITY_EVENTS = "events"
@@ -48,16 +50,20 @@ def _empty_execution() -> dict[str, Any]:
 
 def _add_run_artifacts(payload: dict[str, Any], events_path: Path) -> None:
     """Add the durable artifact inventory at run scope without inferring producers."""
-    try:
-        manifest = json.loads((events_path.parent / "artifacts.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    index = artifact_replicate_index(events_path.name, "events")
+    if index is None:
         return
-    files = manifest.get("files") if isinstance(manifest, dict) else None
+    loss_path = events_path.with_name(unit_artifact_name("loss", index))
+    try:
+        manifest = read_artifact_manifest(loss_path, expected=read_capture_loss(loss_path))
+    except (OSError, ValueError) as exc:
+        payload["error"] = f"artifact manifest unavailable: {exc}"
+        return
+    if manifest is None:
+        return
     execution = payload.setdefault("execution", _empty_execution())
-    for item in files if isinstance(files, list) else []:
-        path = item.get("path") if isinstance(item, dict) else None
-        if not isinstance(path, str) or not path:
-            continue
+    for item in manifest["files"]:
+        path = item["path"]
         node_id = f"artifact:{path}"
         execution["nodes"].append(
             {
@@ -66,7 +72,7 @@ def _add_run_artifacts(payload: dict[str, Any], events_path: Path) -> None:
                 "parent_id": None,
                 "name": path,
                 "status": "captured",
-                "summary": f"{item.get('size', 0)} bytes",
+                "summary": f"{item['size']} bytes",
                 "fidelity": "run",
             }
         )
@@ -308,12 +314,7 @@ def empty_run_transcript_delta(
 
 def _verbatim_capture_exists(events_path: Path) -> bool:
     """Report whether a valid higher-fidelity ``result.json`` exists."""
-    from zicato.core.measurement import (  # noqa: PLC0415
-        artifact_replicate_index,
-        unit_artifact_name,
-    )
     from zicato.tournament.unit_cache import (  # noqa: PLC0415
-        read_capture_loss,
         read_run_result,
         unit_result_path,
     )
@@ -322,7 +323,10 @@ def _verbatim_capture_exists(events_path: Path) -> bool:
     if index is None:
         return False
     loss_path = events_path.with_name(unit_artifact_name("loss", index))
-    loss = read_capture_loss(loss_path)
+    try:
+        loss = read_capture_loss(loss_path)
+    except ValueError:
+        return False
     return (
         loss is not None and read_run_result(unit_result_path(loss_path), expected=loss) is not None
     )
@@ -380,7 +384,7 @@ def build_run_transcript_delta(
     all_anns = full.get("annotations") or []
     delta_anns = [a for a in all_anns if int(a.get("source_index", -1)) >= floor]
 
-    return {
+    payload = {
         "epoch_id": epoch_id,
         "generation_id": generation_id,
         "entry_id": entry_id,
@@ -398,3 +402,6 @@ def build_run_transcript_delta(
         "verbatim_available": _verbatim_capture_exists(events_path),
         "events_path": str(events_path),
     }
+    if "error" in full:
+        payload["error"] = full["error"]
+    return payload

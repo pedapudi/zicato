@@ -1,4 +1,4 @@
-"""The served execution plan — the epoch's loop as one tree.
+"""The execution-plan reader — the epoch's loop as one tree.
 
 ``build_execution_plan`` joins the round logs (the stage/step spine), the
 per-unit loss files (the work units), the frozen board, lineage, and the
@@ -26,8 +26,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from starlette.testclient import TestClient
 
+from tests._workspace_support import write_tournament
 from zicato.core.loss import LossProfile
 from zicato.core.measurement import MeasurementDraw, range_at
 from zicato.core.workspace import loss_profile_path
@@ -56,7 +56,6 @@ from zicato.workspace import WorkspaceLayout
 
 EPOCH = "2026-08-18_plan"
 ENTRIES = ("login", "search")
-PLAN_ROUTE = "/api/epoch/{epoch_id}/execution-plan"
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +72,11 @@ def _workspace(tmp_path: Path) -> Path:
         json.dumps({"id": EPOCH, "created_at": "2026-08-18T00:00:00Z"}), encoding="utf-8"
     )
     layout.board(EPOCH).write_text(
-        "\n".join(json.dumps({"id": entry, "input": "go"}) for entry in ENTRIES) + "\n",
+        "\n".join(
+            json.dumps({"id": entry, "kind": "single_turn", "input": "go", "budget_s": 1})
+            for entry in ENTRIES
+        )
+        + "\n",
         encoding="utf-8",
     )
     return root
@@ -143,10 +146,14 @@ def _write_result(loss_path: Path, *, aborted: bool, abort_reason: str) -> None:
 def _complete_round(root: Path, index: int = 0, *, challenger: str = "v1") -> None:
     log = RoundLog(root, EPOCH, index)
     log.append(RoundOpened(contract_hash="hash-1"))
-    log.append(ProposalAttempted(errors=(), slot_index=0))
-    log.append(ProposalAttempted(errors=("credential lapse",), slot_index=1))
-    log.append(ExperimentMinted(experiment_id="exp-1"))
-    log.append(PatchesApplied(generation_id=challenger))
+    proposal_scope = {"generation_id": challenger, "step": "propose"}
+    log.append(ProposalAttempted(errors=(), slot_index=0), scope=proposal_scope)
+    log.append(ProposalAttempted(errors=("credential lapse",), slot_index=1), scope=proposal_scope)
+    log.append(ExperimentMinted(experiment_id="exp-1"), scope=proposal_scope)
+    log.append(
+        PatchesApplied(generation_id=challenger),
+        scope={"generation_id": challenger, "step": "apply"},
+    )
     log.append(
         GateEvaluated(
             rule_fired="",
@@ -154,9 +161,14 @@ def _complete_round(root: Path, index: int = 0, *, challenger: str = "v1") -> No
             champion_scalar=0.5,
             challenger_scalar=0.3,
             margin_required=0.01,
-        )
+        ),
+        scope={
+            "generation_id": challenger,
+            "step": "gate",
+            "attributes": {"matchup_id": "match-1", "opponent_generation_id": "v0"},
+        },
     )
-    log.append(HoldoutReleased(confirmed=True))
+    log.append(HoldoutReleased(confirmed=True), scope={"generation_id": challenger, "step": "gate"})
     log.append(DecisionRecorded(decision="promote", provenance={"gate": "margin"}))
     log.append(RoundClosed())
 
@@ -622,7 +634,7 @@ def test_a_failed_validation_fails_the_apply_step_and_names_its_findings(
 
     assert apply_step["status"] == "failed"
     assert apply_step["outcome"]["validation_findings"] == ["import of a banned module"]
-    validation = _find(apply_step, f"e:{EPOCH}/round:0/apply/validation")
+    validation = _find(apply_step, f"e:{EPOCH}/round:0/apply/event:5")
     assert validation["status"] == "failed"
     # The round closed without running or gating: those steps are stated
     # absences, not gaps in the tree.
@@ -727,18 +739,16 @@ def test_a_planned_round_appears_only_when_a_total_is_recorded(complete_run: Pat
     assert [stage["kind"] for stage in _plan(complete_run)["stages"]] == ["baseline", "round"]
 
     (complete_run / "runtime").mkdir(parents=True, exist_ok=True)
-    (complete_run / "runtime" / "active_tournament.json").write_text(
-        json.dumps(
-            {
-                "tournament_id": "t1",
-                "parent_generation_id": "v0",
-                "child_generation_id": "v1",
-                "epoch_id": EPOCH,
-                "started_at": "2026-08-18T00:00:00Z",
-                "total_rounds": 3,
-            }
-        ),
-        encoding="utf-8",
+    write_tournament(
+        complete_run,
+        {
+            "tournament_id": "t1",
+            "parent_generation_id": "v0",
+            "child_generation_id": "v1",
+            "epoch_id": EPOCH,
+            "started_at": "2026-08-18T00:00:00Z",
+            "total_rounds": 3,
+        },
     )
 
     stages = _plan(complete_run)["stages"]
@@ -798,11 +808,14 @@ def test_an_empty_board_still_serves_the_rounds(complete_run: Path) -> None:
     assert len(sweep["children"]) == 6
 
 
-def test_an_unreadable_board_row_does_not_empty_the_plan(complete_run: Path) -> None:
+def test_an_unreadable_board_row_refuses_the_plan(complete_run: Path) -> None:
     board = WorkspaceLayout.from_root(complete_run).board(EPOCH)
     board.write_text(board.read_text(encoding="utf-8") + "{ not json\n", encoding="utf-8")
 
-    assert _plan(complete_run)["board"]["entry_count"] == 2
+    plan = _plan(complete_run)
+    assert plan["board"]["entry_count"] == 0
+    assert plan["stages"] == []
+    assert "line 3: malformed JSON" in plan["note"]
 
 
 def test_an_unknown_epoch_degrades_to_the_empty_plan(complete_run: Path) -> None:
@@ -877,31 +890,4 @@ def test_every_json_get_route_declares_a_payload_contract(tmp_path: Path) -> Non
         and not route.path.endswith((".md", ".html"))
     }
 
-    assert PLAN_ROUTE in routes
     assert routes - set(ENDPOINT_PAYLOADS) == set()
-
-
-def _client(root: Path, tmp_path: Path) -> TestClient:
-    static = tmp_path / "static"
-    static.mkdir(exist_ok=True)
-    return TestClient(create_app(root, static))
-
-
-def test_the_endpoint_serves_the_plan(complete_run: Path, tmp_path: Path) -> None:
-    payload = _client(complete_run, tmp_path).get(f"/api/epoch/{EPOCH}/execution-plan").json()
-
-    assert payload["epoch_id"] == EPOCH
-    assert [stage["kind"] for stage in payload["stages"]] == ["baseline", "round"]
-
-
-@pytest.mark.parametrize("epoch_id", ["bad id", "a..b", "never_ran"])
-def test_a_malformed_or_unknown_coordinate_answers_200_with_the_empty_plan(
-    complete_run: Path, tmp_path: Path, epoch_id: str
-) -> None:
-    """DQ12 / DQ3: no traversal, no 500 — the same shape at HTTP 200."""
-    response = _client(complete_run, tmp_path).get(f"/api/epoch/{epoch_id}/execution-plan")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["stages"] == []
-    assert set(payload) == {"epoch_id", "generated_at", "board", "note", "stages"}
