@@ -50,7 +50,7 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 481,007 | +72,346 |
+| Total | 408,661 | 481,014 | +72,353 |
 | Production | 197,702 | 199,110 | +1,408 |
 | Production logic | 110,276 | 114,471 | +4,195 |
 
@@ -434,6 +434,6 @@ dropped rows named.
 | Remove the duplicate name for defaults (production) | 213,285 | -12 | 213,273 | Issue #395: remove the forwarding function and its duplicate public export. |
 | Remove the duplicate name for defaults (production logic) | 123,737 | -9 | 123,728 | Issue #395: callers use the existing configuration constructor; no replacement abstraction is introduced. |
 | Assert navigation while data is still loading (total) | 503,804 | +1 | 503,805 | Issue #405: observe navigation inside its handler while the request is held. Remove the helper thread and its one-second release timer. A delayed return from the test driver now passes; a read that blocks the input loop still fails. |
-| Validate saved records and reduce repeated execution (total) | 480,670 | +337 | 481,007 | Shared acceptance of saved result, judge and source records; focused recovery and browser checks; retained CI cost reports. Duplicate test setup and unused confirmation scheduling are removed. |
+| Validate saved records and reduce repeated execution (total) | 480,670 | +344 | 481,014 | Shared acceptance of saved result, judge and source records; focused recovery and browser checks; retained CI cost reports. Duplicate test setup and unused confirmation scheduling are removed. |
 | Validate saved records and reduce repeated execution (production) | 199,121 | -11 | 199,110 | Existing record owners replace consumer coercions. A round writer retains its sequence. The dashboard displays recorded tool values. Unused confirmation scheduling is deleted. |
 | Validate saved records and reduce repeated execution (production logic) | 114,342 | +129 | 114,471 | Shared validation of three saved formats and explicit failure propagation add logic, as does displaying tool arguments and results. Removing the unused pair-selection helper offsets part of that addition. |

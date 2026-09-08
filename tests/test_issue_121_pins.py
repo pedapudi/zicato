@@ -453,18 +453,25 @@ def _observation(decisions: list[dict[str, Any]], *, replicate: int = 0) -> Any:
 
 
 def test_corpus_marks_a_failed_judge_call_as_errored() -> None:
-    """The capture seam's own flag — the input every consumer below filters on."""
-    from zicato.judge_runtime.io_capture import JUDGE_IO_ERROR_KIND
+    """A failed judge call is distinct from a valid negative verdict."""
+    from zicato.judge_runtime.io_capture import JUDGE_IO_ERROR_KIND, build_judge_io_record
     from zicato.reflection.corpus import _judge_decisions, judge_answered
 
     decisions = _judge_decisions(
         None,
         [
-            {"judge_name": "j", "verdict": {"drift_emitted": False, "kind": ""}},
-            {
-                "judge_name": "j",
-                "verdict": {"drift_emitted": False, "kind": JUDGE_IO_ERROR_KIND},
-            },
+            build_judge_io_record(
+                judge_name="j",
+                call_index=index,
+                reasoning_text="",
+                transcript_window=(),
+                raw_response="",
+                drift_emitted=False,
+                kind=kind,
+                severity="",
+                detail="",
+            )
+            for index, kind in enumerate(("", JUDGE_IO_ERROR_KIND))
         ],
     )
     assert [judge_answered(d) for d in decisions] == [True, False]
