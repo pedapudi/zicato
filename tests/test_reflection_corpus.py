@@ -43,6 +43,7 @@ from zicato.reflection.corpus import (
     run_corpus,
 )
 from zicato.reflection.plan import new_plan, read_plan
+from zicato.runtime.lock import WorkspaceLock
 from zicato.tournament.unit_cache import _unit_loss_path, unit_events_path, unit_result_path
 from zicato.tournament.worker_transport import _entry_replicate_index
 
@@ -331,6 +332,7 @@ class _CountingRunSingle:
         weights: object,
         config: RuntimeConfig,
         workspace_root: Path,
+        writer: WorkspaceLock,
         epoch_id: str,
         side: str,
         match_id: str = "",

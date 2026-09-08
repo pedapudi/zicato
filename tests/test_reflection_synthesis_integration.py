@@ -27,6 +27,7 @@ from zicato.core.board import Expectation, ExpectationKind
 from zicato.core.workspace import generation_dir, reflection_suggestions_path
 from zicato.epoch.lifecycle import new_epoch
 from zicato.index.schema import apply_schema
+from zicato.runtime.lock import WorkspaceLock
 from zicato.tournament.unit_cache import _unit_loss_path
 
 _REFLECTION_ID = "refl-integration"
@@ -159,6 +160,7 @@ def test_unmocked_probe_measures_against_the_fixture_runner(tmp_path: Path, monk
             weights: object,
             config: object,
             workspace_root: Path,
+            writer: WorkspaceLock,
             epoch_id: str,
             side: str,
             match_id: str = "",

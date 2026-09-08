@@ -52,6 +52,7 @@ from zicato.reflection.mining import (
     HINT_JUDGE,
     HINT_REGRESSION_ENTRY,
 )
+from zicato.runtime.lock import WorkspaceLock
 
 EPOCH = "epoch-1"
 CHAMPION = "champ-v0"
@@ -89,6 +90,7 @@ class _ScriptedRunner:
         weights: object,
         config: object,
         workspace_root: Path,
+        writer: WorkspaceLock,
         epoch_id: str,
         side: str,
         match_id: str = "",

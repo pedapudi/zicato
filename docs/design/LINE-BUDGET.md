@@ -50,7 +50,7 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 481,209 | +72,548 |
+| Total | 408,661 | 481,215 | +72,554 |
 | Production | 197,702 | 198,948 | +1,246 |
 | Production logic | 110,276 | 114,507 | +4,231 |
 
@@ -437,6 +437,6 @@ dropped rows named.
 | Validate saved records and reduce repeated execution (total) | 480,670 | +344 | 481,014 | Shared acceptance of saved result, judge and source records; focused recovery and browser checks; retained CI cost reports. Duplicate test setup and unused confirmation scheduling are removed. |
 | Validate saved records and reduce repeated execution (production) | 199,121 | -11 | 199,110 | Existing record owners replace consumer coercions. A round writer retains its sequence. The dashboard displays recorded tool values. Unused confirmation scheduling is deleted. |
 | Validate saved records and reduce repeated execution (production logic) | 114,342 | +129 | 114,471 | Shared validation of three saved formats and explicit failure propagation add logic, as does displaying tool arguments and results. Removing the unused pair-selection helper offsets part of that addition. |
-| Retain runtime writers and reduce repeated test setup (total) | 481,014 | +195 | 481,209 | Issues #324, #385 and #411: remove repeated test setup and duplicate loss publication. Explicit writer scopes and interruption checks account for the net test increase. |
+| Retain runtime writers and reduce repeated test setup (total) | 481,014 | +201 | 481,215 | Issues #324, #385 and #411: remove repeated test setup and duplicate loss publication. Explicit writer scopes and interruption checks account for the net test increase. |
 | Retain runtime writers and reduce repeated test setup (production) | 199,110 | -162 | 198,948 | Issues #385 and #411: one workspace lease retains each runtime log. Delete five tournament publication wrappers, the duplicate progress helper and loss comparison used only by duplicate publication. |
 | Retain runtime writers and reduce repeated test setup (production logic) | 114,471 | +36 | 114,507 | Issue #385: forwarding the existing writer through execution and checking unfinished appends adds logic. Removing duplicate publication and its comparison helper offsets part of that addition. |
