@@ -66,7 +66,6 @@ __all__ = [
     "epoch_preflight_record",
     "epoch_settlement_receipt_attention",
     "epoch_tree_import_gaps",
-    "str_tuple",
     "workspace_preflight_gate",
 ]
 
@@ -117,18 +116,6 @@ def epoch_settlement_receipt_attention(
     return SettlementReceiptAttention(tuple(deliveries), tuple(repairs), corruptions)
 
 
-def str_tuple(raw: Any) -> tuple[str, ...]:
-    """Coerce a JSON list of names to a tuple of non-empty strings.
-
-    Tolerant by design — the records this reads are written by another process
-    and a malformed / absent field must degrade to "nothing recorded", never
-    raise into a round.
-    """
-    if not isinstance(raw, list):
-        return ()
-    return tuple(str(item) for item in raw if str(item))
-
-
 def epoch_tree_import_gaps(workspace_root: Path, epoch_id: str) -> dict[str, tuple[str, ...]]:
     """Per-generation mutable trees NO unit of that generation ever imported.
 
@@ -141,20 +128,17 @@ def epoch_tree_import_gaps(workspace_root: Path, epoch_id: str) -> dict[str, tup
     cannot have been under test (issue #110's original shape — an installed
     entrypoint that never imports the mutated tree at all).
 
-    Best-effort like every other health input: a missing / unreadable record
-    contributes nothing.
+    Missing records contribute nothing; corrupt present records refuse assessment.
     """
-    from zicato.storage import read_json  # noqa: PLC0415
+    from zicato.tournament.records import read_harness_load  # noqa: PLC0415
 
     gaps: dict[str, tuple[str, ...]] = {}
     layout = WorkspaceLayout.from_root(workspace_root)
     for generation_id in generation_ids(layout, epoch_id):
-        try:
-            record = read_json(layout.harness_load(epoch_id, generation_id))
-        except Exception as exc:  # noqa: BLE001 — health inputs are best-effort
-            log.debug("harness-load record unreadable for %s: %s", generation_id, exc)
-            continue
-        never_imported = str_tuple((record or {}).get("trees_never_imported"))
+        record = read_harness_load(
+            layout.harness_load(epoch_id, generation_id), generation_id=generation_id
+        )
+        never_imported = tuple((record or {}).get("trees_never_imported", ()))
         if never_imported:
             gaps[generation_id] = never_imported
     return gaps

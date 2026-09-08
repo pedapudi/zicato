@@ -74,7 +74,7 @@ owns it, and the selection layer only *reads* its verdict.
 | `src/zicato/selection/registry.py` | `STRATEGY_REGISTRY`, `make_strategy`, `STRUCTURE_DEFAULT_REPLICATES`, `default_replicates_for` | 110 lines |
 | `src/zicato/selection/strategies/*.py` | `gauntlet` (164), `racing` (467), and the `ChampionGateStrategy` base | — |
 | `src/zicato/selection/experimental/*.py` | `single_elim` (413), `double_elim` (474), `swiss` (413) — admitted only by `experimental.tournament_structures` | — |
-| `src/zicato/selection/evidence_gate.py` | The Bradley–Terry pre-gate: `evidence_verdict`, `closest_ci_duel`, `EVIDENCE_REPLICATE_BASE`, `MIN_CREDIBLE_DUELS`, `read_promote_confidence_threshold`, `rating_block` | 502 lines |
+| `src/zicato/selection/evidence_gate.py` | The Bradley–Terry pre-gate: `evidence_verdict`, `EVIDENCE_REPLICATE_BASE`, `MIN_CREDIBLE_DUELS`, `read_promote_confidence_threshold`, `rating_block` | 438 lines |
 | `src/zicato/selection/resolve.py` | The cycle-robust winner resolvers (propose-only): `condorcet_check`, `smith_set`, `ranked_pairs`, `copeland_order`, `resolve_leader`, `build_matrix` | 383 lines |
 | `src/zicato/selection/dead_letter.py` | `InconclusiveRecord`, `record_inconclusive`, `read_inconclusive`, `list_inconclusive` | 122 lines |
 | `src/zicato/evolve/placebo.py` | `build_placebo_experiment`, `derive_placebo_snapshot`, `placebo_round_due`, `PLACEBO_HYPOTHESIS_MARKER` | 220 lines |

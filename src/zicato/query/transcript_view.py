@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.measurement import artifact_replicate_index, unit_artifact_name
+from zicato.epoch._storage import RecordError
 from zicato.query.events_index import (
     find_proposal_episode_log,
     find_run_events_path,
@@ -384,6 +385,11 @@ def build_run_transcript_delta(
     all_anns = full.get("annotations") or []
     delta_anns = [a for a in all_anns if int(a.get("source_index", -1)) >= floor]
 
+    try:
+        verbatim_available = _verbatim_capture_exists(events_path)
+    except RecordError as exc:
+        verbatim_available = False
+        full["error"] = "; ".join(filter(None, (full.get("error"), str(exc))))
     payload = {
         "epoch_id": epoch_id,
         "generation_id": generation_id,
@@ -399,7 +405,7 @@ def build_run_transcript_delta(
         "complete": bool(full.get("complete")),
         "truncated": truncated,
         "fidelity": FIDELITY_EVENTS,
-        "verbatim_available": _verbatim_capture_exists(events_path),
+        "verbatim_available": verbatim_available,
         "events_path": str(events_path),
     }
     if "error" in full:

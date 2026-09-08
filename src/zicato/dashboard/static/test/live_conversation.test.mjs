@@ -541,4 +541,36 @@ test('the record lookup is exact — a sibling unit does not make this one live'
 
 
 
+test('late tool results and same-length edits patch only their owning live turn', async () => {
+  const srv = fakeServer().add('one').add('two');
+  srv.turns[0].tool_calls = [{ id: 'call-1', name: 'lookup', args: { query: 'first' } }];
+  const h = mount(srv, fakeBus());
+  await h.ready;
+  const scroller = scrollerOf(h);
+  const original = scroller.childNodes[0];
+  const untouched = scroller.childNodes[1];
+  assert(original.textContent.includes('first'), 'arguments arrive with the call');
+
+  srv.turns[0].tool_results = [{ call_id: 'call-1', name: 'lookup', result: 'alpha' }];
+  srv.turns[0].source_index = 10;
+  await h.refresh();
+  const completed = scroller.childNodes[0];
+  assert(completed !== original && completed.textContent.includes('alpha'), 'a delayed result patches the issuing turn');
+  assert(scroller.childNodes[1] === untouched, 'a delayed result preserves other turn nodes');
+
+  srv.turns[0].tool_calls[0].args.query = 'other';
+  srv.turns[0].tool_results[0].result = 'omega';
+  srv.turns[0].source_index = 11;
+  await h.refresh();
+  const edited = scroller.childNodes[0];
+  assert(edited !== completed, 'same-length values change the rendered content');
+  assert(edited.textContent.includes('other') && edited.textContent.includes('omega'), 'both updated values are visible');
+  assert(!edited.textContent.includes('first') && !edited.textContent.includes('alpha'), 'previous values leave the turn');
+  assert(scroller.childNodes[1] === untouched, 'unrelated turn identity remains stable');
+
+  srv.turns[0].source_index = 12;
+  await h.refresh();
+  assert(scroller.childNodes[0] === edited && scroller.childNodes[1] === untouched, 'an unchanged payload with a later cursor writes no turn DOM');
+  h.destroy();
+});
 await run();

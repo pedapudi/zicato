@@ -1994,7 +1994,7 @@ export function absoluteScalarsDigest(gate) {
 // EXACTLY `{present:false}` — render NOTHING (byte-identical to today). Below the
 // credible-fit minimum (n_duels < MIN_CREDIBLE_DUELS) we render a "rating forms
 // after N duels" placeholder, never a faked estimate. A `deferred` decision
-// drives the replicationStrip (replicates-spent pips + the next closest-CI duel
+// drives the replicationStrip (replicates-spent pips + the selected candidate and champion
 // + a CI-convergence sparkline); a schedule-exhausted deferral (no next_duel,
 // not credible) reads "inconclusive" — NEVER a faked crown.
 const MIN_CREDIBLE_DUELS = 3;       // build_rating_view's credible-fit floor.
@@ -2091,9 +2091,9 @@ function ratingProbBar(p, thr) {
 
 // The replicationStrip — shown when the rating decision is `deferred`. It reads
 // the evidence the scheduler is still gathering: (1) replicates-spent pips in the
-// dt-rungstep treatment, (2) the next closest-CI duel the scheduler will run to
-// sharpen the estimate, and (3) a CI-convergence sparkline of P(stronger) over
-// the recorded driver trace (ci_history). When the schedule is EXHAUSTED (no
+// dt-rungstep treatment, (2) the selected candidate and champion, and (3) a
+// CI-convergence sparkline of P(stronger) over the recorded driver trace
+// (ci_history). When the schedule is EXHAUSTED (no
 // next_duel + not credible) it caps with an explicit "inconclusive" caption —
 // the gate never fakes a crown out of an unresolved duel. Returns a Node, or null
 // when there is nothing to strip (no replicates, no history, no next duel).
@@ -2124,13 +2124,13 @@ function replicationStrip(rating) {
     wrap.appendChild(el('div', { class: 'dn-bt-repl-row dn-faint', text: 'live-reconstructed · 0 replicates spent' }));
   }
 
-  // (2) the next closest-CI duel.
+  // (2) the selected candidate and champion.
   if (next && (next.left != null || next.right != null)) {
     wrap.appendChild(el('div', { class: 'dn-bt-repl-row dn-bt-nextduel' }, [
       el('span', { class: 'dn-bt-repl-lab dn-faint', text: 'next duel' }),
       el('span', { class: 'dn-mono dn-bt-duelpair', text: (next.left == null ? '?' : String(next.left))
         + ' vs ' + (next.right == null ? '?' : String(next.right)) }),
-      el('span', { class: 'dn-faint', text: ' · closest-CI pair (sharpens P most)' }),
+      el('span', { class: 'dn-faint', text: ' · selected candidate and champion' }),
     ]));
   }
 

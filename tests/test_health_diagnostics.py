@@ -925,6 +925,8 @@ def test_cli_health_surfaces_preflight_and_tree_import_findings(tmp_path: Path) 
     (gen_dir / "harness_load.json").write_text(
         json.dumps(
             {
+                "schema": "zicato.harness_load/1",
+                "generation_id": "v1",
                 "entrypoint_file": "/tmp/agent.py",
                 "trees_verified": [],
                 "trees_never_imported": ["helper_tree"],

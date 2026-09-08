@@ -166,9 +166,9 @@ def _verbatim_context(loss_path: Path, judge_name: str) -> tuple[Any, str] | Non
     for rec in records:
         if str(rec.get("judge_name", "")) != judge_name:
             continue
-        inp = rec.get("input", {}) if isinstance(rec, dict) else {}
-        reasoning = str(inp.get("reasoning_text", ""))
-        window = tuple(str(t) for t in inp.get("transcript_window", ()) or ())
+        inp = rec["input"]
+        reasoning = inp["reasoning_text"]
+        window = tuple(inp["transcript_window"])
         # The verbatim context is the judge's EXACT ``reasoning_text`` — the
         # precise bytes it graded (:func:`_context_text` flattens this one turn
         # verbatim, so the adjudicator reads exactly what the judge read). The
@@ -199,8 +199,8 @@ def _result_context(loss_path: Path) -> tuple[Any, str] | None:
     body = read_run_result(unit_result_path(loss_path), expected=loss)
     if body is None:
         return None
-    turns = [str(t) for t in body.get("transcript", ()) or ()]
-    final = str(body.get("final_output", ""))
+    turns = list(body["transcript"])
+    final = body["final_output"]
     if final:
         turns.append(final)
     if not turns:

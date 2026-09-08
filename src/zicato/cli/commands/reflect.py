@@ -421,6 +421,7 @@ def run_cmd(
     # (evolve.loop.emit_dialect_capability_warnings), so a `reflect run`
     # tuning a drift-derived loss under a drift-incapable dialect is warned
     # too. Best-effort; a warning-emit failure never fails the run.
+    from zicato.epoch._storage import RecordError  # noqa: PLC0415
     from zicato.evolve.loop import emit_dialect_capability_warnings  # noqa: PLC0415
     from zicato.util import best_effort  # noqa: PLC0415
 
@@ -447,6 +448,8 @@ def run_cmd(
             board=board,
             output_path=output_path,
         )
+    except RecordError as exc:
+        raise click.ClickException(str(exc)) from exc
     finally:
         with contextlib.suppress(Exception):
             _log_stream.close()

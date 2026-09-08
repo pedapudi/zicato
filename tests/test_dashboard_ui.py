@@ -485,7 +485,7 @@ def test_bundle_under_size_envelope() -> None:
     # gatePanel: the champion/challenger θ̂ whiskers with credible-interval caps,
     # the P(challenger stronger) bar against the configured threshold marker, and
     # — when the rating is deferred — the replication strip (replicates-spent
-    # dt-rungstep pips + the next closest-CI duel + a CI-convergence sparkline,
+    # dt-rungstep pips + the selected candidate and champion + a CI-convergence sparkline,
     # capped with an explicit "inconclusive" caption when the schedule exhausts).
     # It overlays the challenger's CI band on the radar scalar vertex
     # (buildRadarModel → `chalBand`, drawn by svg.radarSilhouette) and threads a

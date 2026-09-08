@@ -135,7 +135,7 @@ def test_dashboard_javascript_is_a_visible_pull_request_lane() -> None:
     assert setup["with"]["node-version"] == "22"
 
     test_step = next(step for step in steps if step.get("name") == "Dashboard JavaScript behaviour")
-    assert test_step["run"] == "python tools/verify.py --only dashboard-javascript"
+    assert test_step["run"].startswith("python tools/verify.py --only dashboard-javascript ")
 
 
 def test_statistical_oracle_lane_selects_the_declared_slow_tier() -> None:
@@ -143,4 +143,6 @@ def test_statistical_oracle_lane_selects_the_declared_slow_tier() -> None:
     document = load_workflow(STATISTICAL_ORACLES)
     steps = document["jobs"]["slow-tier"]["steps"]
     pytest_step = next(step for step in steps if step.get("name") == "Pytest (slow tier)")
-    assert pytest_step["run"] == "uv run --no-sync python tools/verify.py --only python-slow"
+    assert pytest_step["run"].startswith(
+        "uv run --no-sync python tools/verify.py --only python-slow "
+    )

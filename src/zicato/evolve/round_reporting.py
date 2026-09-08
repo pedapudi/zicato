@@ -264,19 +264,10 @@ def _emit_harness_loaded(
     epoch_id: str,
     tournament_result: Any,
 ) -> None:
-    """Emit ``harness_loaded`` once per generation the duel actually ran.
+    """Emit accepted source facts once per generation that ran.
 
-    The mutated-tree provenance for issue #110: the subprocess worker records
-    what each generation actually loaded in its ``harness_load.json`` (it is the
-    only process that imports the entrypoint or the mutable trees) — the
-    resolved entrypoint file plus the accumulated per-tree verdicts; the
-    orchestrator — the round log's single writer — folds that into ONE event per
-    generation here, so the durable round record names both the file each side
-    ran and any tree its units never imported.
-
-    Best-effort and additive throughout: a generation with no record (a
-    non-ADK adapter kind, a fully cache-served side, a failed write) simply
-    contributes no event, and readers tolerate the absence.
+    Missing records contribute no event. An unreadable record is reported as
+    an optional failure without inventing source provenance or failing the round.
     """
     generation_ids: list[str] = []
     for attr in ("parent_generation_id", "child_generation_id"):
@@ -286,16 +277,18 @@ def _emit_harness_loaded(
     for gen_id in generation_ids:
         try:
             from zicato.core.workspace import harness_load_path  # noqa: PLC0415
-            from zicato.health.inputs import str_tuple  # noqa: PLC0415
-            from zicato.storage import read_json  # noqa: PLC0415
+            from zicato.tournament.records import read_harness_load  # noqa: PLC0415
+            from zicato.util.best_effort import report_optional_failure  # noqa: PLC0415
 
-            record = read_json(harness_load_path(workspace_root, epoch_id, gen_id))
+            record = read_harness_load(
+                harness_load_path(workspace_root, epoch_id, gen_id), generation_id=gen_id
+            )
         except Exception as exc:  # noqa: BLE001 — emission must never fail a round
-            log.debug("round-log harness_loaded read skipped for %s: %s", gen_id, exc)
+            report_optional_failure("round-log source record", exc)
             continue
-        entrypoint_file = str((record or {}).get("entrypoint_file", "") or "")
-        verified = str_tuple((record or {}).get("trees_verified"))
-        never_imported = str_tuple((record or {}).get("trees_never_imported"))
+        entrypoint_file = (record or {}).get("entrypoint_file", "")
+        verified = tuple((record or {}).get("trees_verified", ()))
+        never_imported = tuple((record or {}).get("trees_never_imported", ()))
         if not entrypoint_file and not verified and not never_imported:
             continue
         round_log.emit(
@@ -311,12 +304,6 @@ def _emit_harness_loaded(
             # happen to repeat the id in their own payload.
             {"generation_id": gen_id},
         )
-
-
-# ``str_tuple`` and the tree-import-gap reader (``epoch_tree_import_gaps``)
-# live in zicato.health.inputs — pure workspace reads shared with the
-# standalone `zicato health` CLI, which needs the same findings from a
-# point-in-time invocation rather than a live round.
 
 
 def _emit_gate_evaluated(

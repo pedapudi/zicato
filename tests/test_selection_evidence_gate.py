@@ -7,7 +7,6 @@ the gate is a soundness device the scaffolded contracts enable explicitly
 tests exercise it ON, to prove the machinery works:
 
 * a deferred verdict on a noisy near-tie,
-* the closest-CI replication schedule,
 * the inconclusive terminal verdict + its dead-letter record,
 * the rating-block shape,
 * the credibility floor (no override below the minimum duel count).
@@ -29,7 +28,6 @@ from zicato.selection.evidence_gate import (
     DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
     DEFAULT_REPLICATE_BUDGET,
     MIN_CREDIBLE_DUELS,
-    closest_ci_duel,
     evidence_verdict,
     rating_block,
     read_promote_confidence_threshold,
@@ -129,6 +127,7 @@ def test_noisy_near_tie_defers() -> None:
     assert v.ci_overlap is True
     assert v.p_stronger is not None and v.p_stronger < 0.9
     assert "deferred" in v.reason
+    assert "selected candidate against the champion" in v.reason
 
 
 def test_clearly_separated_win_promotes() -> None:
@@ -282,36 +281,6 @@ def test_exhausted_budget_goes_inconclusive() -> None:
     assert v.ci_overlap is True
     assert "inconclusive" in v.reason
     assert "dead-letter" in v.reason
-
-
-# ---------------------------------------------------------------------------
-# Closest-CI replication schedule
-# ---------------------------------------------------------------------------
-
-
-def test_closest_ci_duel_picks_the_tightest_pairing() -> None:
-    # Two pairings: (a,b) is a near-tie (overlapping CIs), (a,c) is lopsided
-    # (separated). The closest-CI duel — the cheapest replicate — is (a,b).
-    audit: list[MatchupResult] = []
-    audit += _audit("a", "b", child_wins=3, parent_wins=3)  # near-tie
-    # a clearly beats c (a is "right"? use child=a so a wins): build c-vs-a
-    audit += _audit("c", "a", child_wins=8, parent_wins=0)  # a >> c
-    cand = closest_ci_duel(audit)
-    assert cand is not None
-    assert {cand.left_id, cand.right_id} == {"a", "b"}
-
-
-def test_closest_ci_duel_restrict_to_pins_the_crowning_pair() -> None:
-    audit: list[MatchupResult] = []
-    audit += _audit("a", "b", child_wins=3, parent_wins=3)
-    audit += _audit("c", "a", child_wins=8, parent_wins=0)
-    cand = closest_ci_duel(audit, restrict_to=("c", "a"))
-    assert cand is not None
-    assert {cand.left_id, cand.right_id} == {"a", "c"}
-
-
-def test_closest_ci_duel_empty_audit_is_none() -> None:
-    assert closest_ci_duel([]) is None
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@
 // clears the configured threshold. `ratingBlock(gate.rating)` surfaces that
 // pre-gate as the operator's first read: two θ̂ whiskers + the P-bar against the
 // threshold marker, and (when deferred) the replicationStrip (replicates-spent
-// dt-rungstep pips + the next closest-CI duel + a CI-convergence sparkline; a
+// dt-rungstep pips + the selected candidate and champion + a CI-convergence sparkline; a
 // schedule-exhausted deferral reads "inconclusive", never a faked crown).
 //
 // Pins (all keys read VERBATIM from build_rating_view's contract):
@@ -153,8 +153,9 @@ test('ratingBlock: a deferred decision drives the replicationStrip (pips + next 
   // (1) replicates-spent pips in the dt-rungstep treatment.
   assert(allByClass(host, 'dt-rungstep').length >= 1, 'the replicates-spent pips use the dt-rungstep token');
   assertEqual(allByClass(host, 'dt-rungstep-pip').length, 4, 'four pips for replicates_spent:4');
-  // (2) the next closest-CI duel.
-  assert(allByClass(host, 'dn-bt-nextduel').length === 1 && host.textContent.includes('v3 vs v5'), 'the next closest-CI duel reads');
+  // (2) the selected candidate and champion.
+  assert(allByClass(host, 'dn-bt-nextduel').length === 1 && host.textContent.includes('v3 vs v5'), 'the selected candidate and champion reads');
+  assert(host.textContent.includes('selected candidate and champion'), 'the pair label describes the confirmation policy');
   // (3) the CI-convergence sparkline.
   assert(allByClass(host, 'dn-bt-convspark').length === 1, 'the CI-convergence sparkline is drawn');
   assert(allByClass(host, 'dn-spark').length >= 1, 'the convergence track reuses the dn-spark component');

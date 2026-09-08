@@ -33,4 +33,12 @@ jobs:
       - name: Pytest (slow tier)
         # A command-line -m REPLACES the pyproject selector, so `not node`
         # and `not cascade_oc` are restated rather than inherited.
-        run: uv run --no-sync python tools/verify.py --only python-slow
+        run: uv run --no-sync python tools/verify.py --only python-slow --report-dir "${{ runner.temp }}/verification-reports"
+
+      - name: Preserve verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ github.job }}
+          path: ${{ runner.temp }}/verification-reports/
+          if-no-files-found: ignore

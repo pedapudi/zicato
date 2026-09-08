@@ -24,6 +24,7 @@ from pathlib import Path
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import resolved_contract_with_proposer
 from tests._foe_support import stand_in_proposer_block
+from tests._runtime_builders import seed_baseline
 from zicato.epoch.lifecycle import _scoring_from_dict, load_epoch, new_epoch
 from zicato.epoch.preflight import (
     PREFLIGHT_REPLICATE_BASE,
@@ -326,33 +327,10 @@ def _bootstrap(
     return workspace, cfg.id
 
 
-def _seed_baseline(workspace: Path, epoch_id: str) -> object:
-    """Materialise v0 (no rounds, no proposer) and return the champion."""
-    from zicato import workspace_loader
-    from zicato.core.types import Generation
-    from zicato.evolve.generation_phase import current_generation, snapshot_root
-    from zicato.evolve.round_baseline import _ensure_baseline_snapshot
-
-    workspace_config = workspace_loader.load_workspace_config(workspace)
-    from zicato.runtime.lock import acquire_workspace_lock
-
-    with acquire_workspace_lock(workspace, "contract-test") as writer:
-        _ensure_baseline_snapshot(workspace, epoch_id, workspace_config, writer=writer)
-    champion_id = current_generation(workspace, epoch_id)
-    return Generation(
-        id=champion_id,
-        epoch_id=epoch_id,
-        parent_id=None,
-        snapshot_root=snapshot_root(workspace, epoch_id, champion_id),
-        created_at="",
-        promoted=True,
-    )
-
-
 def _run_preflight(workspace: Path, epoch_id: str, runs: int = 3, **kwargs: object) -> tuple:
     from zicato import adapter_factory, runtime_factory, workspace_loader
 
-    champion = _seed_baseline(workspace, epoch_id)
+    champion = seed_baseline(workspace, epoch_id)
     workspace_config = workspace_loader.load_workspace_config(workspace)
     adapter = adapter_factory.make_adapter_from_config(workspace_config)
     config = runtime_factory.make_runtime_config(
@@ -365,7 +343,7 @@ def _run_preflight(workspace: Path, epoch_id: str, runs: int = 3, **kwargs: obje
     return asyncio.run(
         run_contract_preflight(
             adapter=adapter,
-            generation=champion,  # type: ignore[arg-type]
+            generation=champion,
             board=workspace_loader.load_current_board(workspace),
             weights=epoch_cfg.scoring,
             config=config,
@@ -505,6 +483,10 @@ def test_noisy_adapter_refuses_when_signal_below_floor(tmp_path: Path) -> None:
     report, floor = _run_preflight(workspace, epoch_id, runs=5)
 
     assert floor.max_abs_delta > 0.0
+    assert floor.delta_std > 0.0
+    from zicato.tournament.calibration import MARGIN_NOISE_MULTIPLE
+
+    assert report.recommended_margin == MARGIN_NOISE_MULTIPLE * floor.delta_std
     assert report.signal <= floor.max_abs_delta
     assert report.verdict == VERDICT_REFUSE
     (finding,) = detect_preflight_verdict(report.to_json())
@@ -691,16 +673,18 @@ def test_margin_above_the_degradation_signal_warns_but_never_refuses(
     assert "degradation" in finding.summary, "the finding names what was measured"
 
 
-def test_noisy_measurement_records_recommended_margin(tmp_path: Path) -> None:
-    """The recorded recommendation uses the standard deviation of paired losses."""
-    from zicato.tournament.calibration import MARGIN_NOISE_MULTIPLE
+def test_recommended_margin_uses_paired_loss_spread() -> None:
+    """Two equally likely losses have four equally likely independent pairings."""
+    import math
 
-    noisy_workspace, noisy_epoch = _bootstrap(
-        tmp_path / "noisy", adapter_block=_noisy_adapter(0.45)
+    import pytest
+
+    from zicato.tournament.calibration import MARGIN_NOISE_MULTIPLE, recommended_promote_margin
+
+    # Differences are 0, -2, 2, 0: variance 2, despite a loss range of 2.
+    assert recommended_promote_margin(scalars=(1.0, 3.0)) == pytest.approx(
+        MARGIN_NOISE_MULTIPLE * math.sqrt(2.0)
     )
-    noisy_report, noisy_floor = _run_preflight(noisy_workspace, noisy_epoch, runs=5)
-    assert noisy_floor.delta_std > 0.0
-    assert noisy_report.recommended_margin == MARGIN_NOISE_MULTIPLE * noisy_floor.delta_std
 
 
 # ---------------------------------------------------------------------------
@@ -714,7 +698,7 @@ def test_board_preflight_cli_measures_and_persists(tmp_path: Path) -> None:
     from zicato.cli.discovery import build_cli_root
 
     workspace, epoch_id = _bootstrap(tmp_path)
-    _seed_baseline(workspace, epoch_id)
+    seed_baseline(workspace, epoch_id)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -841,7 +825,7 @@ def test_preflight_voids_on_infra_abort_instead_of_persisting_a_poisoned_floor(
     # tolerates aborts and returns a floor — the guard is opt-in.
     from zicato import adapter_factory, runtime_factory, workspace_loader
 
-    champion = _seed_baseline(workspace, epoch_id)
+    champion = seed_baseline(workspace, epoch_id)
     wc = workspace_loader.load_workspace_config(workspace)
     adapter = adapter_factory.make_adapter_from_config(wc)
     config = runtime_factory.make_runtime_config(
@@ -854,7 +838,7 @@ def test_preflight_voids_on_infra_abort_instead_of_persisting_a_poisoned_floor(
     floor = asyncio.run(
         measure_noise_floor(
             adapter=adapter,
-            generation=champion,  # type: ignore[arg-type]
+            generation=champion,
             board=workspace_loader.load_current_board(workspace),
             weights=epoch_cfg.scoring,
             config=config,

@@ -379,10 +379,10 @@ def _transcript_from_result(loss_ref: str | None) -> dict[str, Any] | None:
     if loss is None:
         return None
     body = read_run_result(unit_result_path(Path(loss_ref)), expected=loss)
-    if not isinstance(body, dict):
+    if body is None:
         return None
-    turns = [str(t) for t in (body.get("transcript") or [])]
-    final = str(body.get("final_output") or "")
+    turns = list(body["transcript"])
+    final = body["final_output"]
     if final:
         turns.append(final)
     if not turns:
@@ -409,9 +409,9 @@ def _transcript_from_judge_io(loss_ref: str | None, judge_name: str) -> dict[str
     for rec in read_judge_io(judge_io_path_for_loss(Path(loss_ref)), expected=loss):
         if str(rec.get("judge_name", "")) != judge_name:
             continue
-        inp = rec.get("input", {}) if isinstance(rec, dict) else {}
-        window = [str(t) for t in (inp.get("transcript_window") or [])]
-        reasoning = str(inp.get("reasoning_text") or "")
+        inp = rec["input"]
+        window = list(inp["transcript_window"])
+        reasoning = inp["reasoning_text"]
         if reasoning and (not window or window[-1] != reasoning):
             window.append(reasoning)
         if window:
@@ -456,11 +456,20 @@ def build_adjudication_xray(
         None,
     )
 
-    transcript = (
-        _transcript_from_result(match.loss_ref)
-        or _transcript_from_judge_io(match.loss_ref, judge_name)
-        or {"fidelity": _FIDELITY_UNAVAILABLE, "turns": []}
-    )
+    try:
+        transcript = (
+            _transcript_from_result(match.loss_ref)
+            or _transcript_from_judge_io(match.loss_ref, judge_name)
+            or {"fidelity": _FIDELITY_UNAVAILABLE, "turns": []}
+        )
+    except RecordError as exc:
+        return dict(
+            _empty_xray(reflection_id, judge_name, run_ref),
+            epoch_id=epoch_id,
+            judge_verdict=judge_verdict,
+            unreadable=True,
+            note=str(exc),
+        )
 
     from zicato.core.workspace import reflection_adjudication_path  # noqa: PLC0415
     from zicato.reflection.adjudication import read_adjudication  # noqa: PLC0415

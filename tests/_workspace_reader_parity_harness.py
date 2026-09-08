@@ -443,6 +443,11 @@ def _write_run(ws: Path, epoch_id: str, generation_id: str, entry_id: str) -> No
             {
                 "format_version": RUN_RESULT_FORMAT_VERSION,
                 "final_output": f"summary from {generation_id}",
+                "run_id": f"{epoch_id}-{generation_id}-{entry_id}-r0",
+                "entry_id": entry_id,
+                "runtime_ms": 1,
+                "aborted": False,
+                "abort_reason": "",
                 "transcript": ["user: summarise", f"agent: summary from {generation_id}"],
                 "clipped": False,
             },
@@ -470,6 +475,11 @@ def _write_run(ws: Path, epoch_id: str, generation_id: str, entry_id: str) -> No
             {
                 "format_version": RUN_RESULT_FORMAT_VERSION,
                 "final_output": f"defect list from {generation_id}",
+                "run_id": f"{epoch_id}-{generation_id}-{entry_id}-r0",
+                "entry_id": entry_id,
+                "runtime_ms": 1,
+                "aborted": False,
+                "abort_reason": "",
                 "transcript": [],
                 "clipped": False,
             },
@@ -601,6 +611,7 @@ def _write_generation(ws: Path, epoch_id: str, generation_id: str) -> None:
     _write_json(
         gen_dir / "harness_load.json",
         {
+            "schema": "zicato.harness_load/1",
             "generation_id": generation_id,
             "entrypoint_file": "src/pkg/agent.py",
             "trees_never_imported": (

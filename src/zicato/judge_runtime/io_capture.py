@@ -1,49 +1,13 @@
-"""Judge-I/O capture — the verbatim sidecar board reflection adjudicates.
+"""Verbatim judge-call captures beside each unit's loss and events.
 
-An inline judge's verdict survives a run only as a `JudgementEmitted`
-event with a one-line ``detail``; the judge's exact INPUT (the reasoning
-text it graded) and the raw LLM response it parsed were dropped on the
-floor (BOARD-REFLECTION.md's capture gap). This module is the seam that
-retains them: a tiny sink protocol
-(:class:`JudgeIOSink`), a best-effort append-only file sink
-(:class:`JudgeIOFileSink`) writing one JSON line per judge ``evaluate``
-call to a **zicato-owned** ``judge_io.jsonl`` beside the run's
-``loss.json`` (``judge_io.r{n}.jsonl`` per replicate — the sidecar is
-NOT a new ``events.jsonl`` frame; goldfive's proto taxonomy
-is pinned by three parsers), and a tolerant reader
-(:func:`read_judge_io`).
+The file sink appends one record for each answered or failed judge call.
+Capture failures cannot change the verdict or fail the run. Readers distinguish
+absent captures from malformed complete rows, retaining only a torn append's
+valid prefix. Paired loss identity controls whether a capture grants fidelity.
 
-Record shape (one line per judge ``evaluate`` call that reached the LLM)::
-
-    { "format_version": 1, "judge_name": ..., "ts": ..., "call_index": ...,
-      "input": { "reasoning_text": ..., "reasoning_sha256": ...,
-                 "transcript_window": [...], "clipped": bool },
-      "raw_response": ...,
-      "verdict": { "drift_emitted": bool, "kind": ..., "severity": ...,
-                   "detail": ... } }
-
-One record per call that reached the LLM, plus one per call that RAISED
-before it could: those carry ``verdict.kind ==``
-:data:`JUDGE_IO_ERROR_KIND` and the exception text in ``verdict.detail``
-(issue #121 — a failed call is not a missed fire).
-
-Text fields clip at :data:`JUDGE_IO_CLIP_CHARS`; ``reasoning_sha256`` is
-the sha256 of the **UNCLIPPED** reasoning text, so an adjudicator can
-prove it is reading the exact bytes the judge read even when the stored
-copy was truncated.
-
-Capture is BEST-EFFORT by contract: every sink failure is logged and
-swallowed — a capture problem must never change a verdict, re-score a
-run, or abort anything. With no sink wired (``RuntimeConfig.judge_io_sink
-is None`` — the ``persist_judge_io=False`` path, and every caller that
-predates the seam) the judge path is byte-identical to before this
-module existed.
-
-Scope note: capture rides :class:`_InlineCriterionJudge` (LLM-as-a-judge)
-only. ``python``-mode judges (:class:`_PythonJudgeWrapper`) are
-operator-owned code with no zicato-visible LLM call — there is no "raw
-response" to retain — so they are inline-only. Their verdicts land as
-``JudgementEmitted`` events like any other judge's.
+Text fields are clipped; reasoning_sha256 identifies the unclipped input.
+Only inline model-backed judges use this sink. Operator-owned Python judges
+publish verdict events without a captured model call.
 """
 
 from __future__ import annotations
@@ -57,12 +21,11 @@ from typing import Any, Protocol, runtime_checkable
 
 from zicato.core.loss import LossProfile, capture_matches_loss
 from zicato.core.measurement import MeasurementDraw, artifact_replicate_index, unit_artifact_name
+from zicato.epoch._storage import RecordError, check_record_format
 
 log = logging.getLogger("zicato.judge_runtime.io_capture")
 
-#: ``format_version`` stamped onto every ``judge_io.jsonl`` line. The reader
-#: accepts exactly this version per line and skips anything else — a garbage
-#: or future-format line degrades to "not captured", never a crash.
+#: Supported format of each complete judge capture row.
 JUDGE_IO_FORMAT_VERSION: int = 1
 
 #: Per-field clip (64 KiB) for the verbatim text fields (reasoning text,
@@ -110,6 +73,47 @@ def _clip(text: str) -> tuple[str, bool]:
     return text[:JUDGE_IO_CLIP_CHARS] + JUDGE_IO_CLIP_MARKER, True
 
 
+def judge_io_record_from_payload(payload: object) -> dict[str, Any]:
+    """Validate one complete judge capture without dropping extension fields."""
+    if not isinstance(payload, dict):
+        raise RecordError("judge capture must be an object")
+    check_record_format(
+        payload, "judge capture", expected_version=JUDGE_IO_FORMAT_VERSION, allow_missing=False
+    )
+    if any(not isinstance(payload.get(name), str) for name in ("judge_name", "ts", "raw_response")):
+        raise RecordError("judge capture names, timestamp and response must be text")
+    if type(payload.get("call_index")) is not int or payload["call_index"] < 0:
+        raise RecordError("judge capture call index must be a nonnegative integer")
+    inp, verdict = payload.get("input"), payload.get("verdict")
+    if not isinstance(inp, dict) or not isinstance(verdict, dict):
+        raise RecordError("judge capture input and verdict must be objects")
+    window, sha256 = inp.get("transcript_window"), inp.get("reasoning_sha256")
+    if (
+        not isinstance(inp.get("reasoning_text"), str)
+        or not isinstance(window, list)
+        or any(not isinstance(turn, str) for turn in window)
+        or type(inp.get("clipped")) is not bool
+        or not isinstance(sha256, str)
+        or len(sha256) != 64
+        or any(char not in "0123456789abcdef" for char in sha256)
+    ):
+        raise RecordError("judge capture input has invalid text, digest or clipping metadata")
+    if type(verdict.get("drift_emitted")) is not bool or any(
+        not isinstance(verdict.get(name), str) for name in ("kind", "severity", "detail")
+    ):
+        raise RecordError("judge capture verdict has invalid fields")
+    if "measurement" in payload:
+        try:
+            MeasurementDraw.from_json(payload["measurement"])
+        except ValueError as exc:
+            raise RecordError(str(exc)) from exc
+        if not isinstance(payload.get("run_id"), str) or not payload["run_id"]:
+            raise RecordError("judge capture measurement requires its run identity")
+    elif "run_id" in payload and not isinstance(payload["run_id"], str):
+        raise RecordError("judge capture run identity must be text")
+    return payload
+
+
 def build_judge_io_record(
     *,
     judge_name: str,
@@ -122,6 +126,8 @@ def build_judge_io_record(
     severity: str,
     detail: str,
     ts: str | None = None,
+    measurement: MeasurementDraw | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Assemble one ``judge_io.jsonl`` record (pure except the ``ts`` default).
 
@@ -138,7 +144,7 @@ def build_judge_io_record(
         clipped_any |= clipped
         window.append(text)
     response_clipped, _ = _clip(raw_response)
-    return {
+    payload: dict[str, Any] = {
         "format_version": JUDGE_IO_FORMAT_VERSION,
         "judge_name": str(judge_name),
         "ts": ts if ts is not None else datetime.now(UTC).isoformat(),
@@ -157,6 +163,11 @@ def build_judge_io_record(
             "detail": str(detail),
         },
     }
+    if measurement is not None:
+        payload["measurement"] = measurement.to_json()
+    if run_id is not None:
+        payload["run_id"] = run_id
+    return judge_io_record_from_payload(payload)
 
 
 @runtime_checkable
@@ -241,11 +252,9 @@ class JudgeIOFileSink:
             kind=kind,
             severity=severity,
             detail=detail,
+            measurement=self._measurement,
+            run_id=self._run_id,
         )
-        if self._measurement is not None:
-            record["measurement"] = self._measurement.to_json()
-        if self._run_id is not None:
-            record["run_id"] = self._run_id
         self._call_index += 1
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -256,38 +265,36 @@ class JudgeIOFileSink:
 
 
 def read_judge_io(path: Path, *, expected: LossProfile | None = None) -> list[dict[str, Any]]:
-    """Read one ``judge_io.jsonl`` sidecar; empty list on ANY defect.
+    """Read complete judge rows, retaining an interrupted append's valid prefix.
 
-    The tolerant read twin: a missing/unreadable file returns ``[]``;
-    an unparseable line, a non-object line, or a line whose
-    ``format_version`` is not :data:`JUDGE_IO_FORMAT_VERSION` (absent,
-    older, newer, garbage) is SKIPPED — the reader returns every line it
-    can vouch for and never raises.
-
-    With an expected loss carrying a known seed, only lines matching its
-    complete measurement and run id can supply verbatim fidelity. Unpaired
-    reads remain available for historical audit.
+    Absence returns an empty list. Malformed complete records raise RecordError;
+    only undecodable JSON or UTF-8 in a final unterminated append is ignored.
+    Valid rows that do not match the paired measurement remain audit-readable
+    through an unpaired read, but cannot supply that measurement's fidelity.
     """
     try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+        raw = path.read_bytes()
+    except FileNotFoundError:
         return []
+    except OSError as exc:
+        raise RecordError(f"judge capture {path}: {exc}") from exc
     records: list[dict[str, Any]] = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
+    lines = raw.split(b"\n")
+    for position, line in enumerate(lines):
+        if not line.strip():
             continue
         try:
-            body = json.loads(line)
-        except (ValueError, json.JSONDecodeError):
-            continue
-        if not isinstance(body, dict):
-            continue
-        if body.get("format_version") != JUDGE_IO_FORMAT_VERSION:
-            continue
-        if not capture_matches_loss(body, expected):
-            continue
-        records.append(body)
+            value = json.loads(line.decode("utf-8"))
+        except (UnicodeError, ValueError) as exc:
+            if position == len(lines) - 1 and not raw.endswith(b"\n"):
+                break
+            raise RecordError(f"judge capture {path} line {position + 1}: {exc}") from exc
+        try:
+            body = judge_io_record_from_payload(value)
+        except (ValueError, RecordError) as exc:
+            raise RecordError(f"judge capture {path} line {position + 1}: {exc}") from exc
+        if capture_matches_loss(body, expected):
+            records.append(body)
     return records
 
 
@@ -300,4 +307,5 @@ __all__ = [
     "build_judge_io_record",
     "judge_io_path_for_loss",
     "read_judge_io",
+    "judge_io_record_from_payload",
 ]

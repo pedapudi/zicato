@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tests._reflection_support import finding_body, scorecard_body
 from zicato.core import DriftCount, JudgeLoss, LossProfile, ScoringWeights
 from zicato.core.workspace import (
@@ -336,6 +338,26 @@ def test_adjudication_xray_result_tier(tmp_path: Path) -> None:
     assert "JSON object" in corrupt["note"]
     assert corrupt["transcript"] == xray["transcript"]
     path.write_bytes(accepted_bytes)
+
+    capture = unit_result_path(loss_path)
+    capture.write_text('{"format_version":1,"transcript":[42]}')
+    original = capture.read_bytes()
+    corrupt = rv.build_adjudication_xray(_paths(workspace), REFL, "j", run_ref)
+    assert corrupt["found"] is False and corrupt["unreadable"] is True
+    assert corrupt["transcript"]["turns"] == []
+    assert "result capture" in corrupt["note"]
+    from zicato.epoch._storage import RecordError
+
+    with pytest.raises(RecordError):
+        ingest_lineage(
+            workspace_root=workspace,
+            epoch_id=EPOCH,
+            reflection_id=REFL,
+            candidates=["v1"],
+            entries=["entryA"],
+            weights=ScoringWeights(),
+        )
+    assert capture.read_bytes() == original
 
 
 def test_adjudication_xray_degrades_on_unknown(tmp_path: Path) -> None:

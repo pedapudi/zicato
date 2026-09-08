@@ -376,7 +376,7 @@ complete list of torn-tail-tolerant stores:
 | Log | Reader that tolerates the tail | Writer repair |
 |---|---|---|
 | Per-run `events.jsonl` (telemetry) | the one reader counts an unparseable line and keeps the rest, and reports whether the last line parsed | none (one writer, then read-once) |
-| `epochs/{e}/rounds/{n}/round_log.jsonl` | `RoundLog.read` skips an unparseable LAST line only | `RoundLog.append` truncates a torn tail before appending (`_truncate_torn_tail`) |
+| `epochs/{e}/rounds/{n}/round_log.jsonl` | `RoundLog.read` ignores unterminated bytes before decoding; malformed complete rows raise | On first append or after a failed write, `RoundLog.append` validates the history and truncates an interrupted suffix |
 | `runtime/active_tournament.events.jsonl` + `runtime/progress.events.jsonl` | the Python fold and the Rust supervisor's fold (which counts torn lines into `FoldDiagnostics` for `/statusz`) | cleared wholesale on resume |
 | Supervisor `audit_ledger.jsonl` | `verify_chain` after `repair_torn_tail` | `AuditLedger::open` truncates the torn tail before verifying/chaining |
 
@@ -384,11 +384,9 @@ And the half of the invariant that keeps this from becoming general
 sloppiness — an interior tear is never tolerated:
 
 ```python
-        An unparseable LAST line is skipped (a crash mid-append); an
-        unparseable INTERIOR line raises :class:`ValueError` — under the
-        append-only single-writer invariant only the tail can be torn, so
-        interior corruption means something bypassed the writer and must
-        surface rather than silently dropping history.
+        The newline commits a record. An unterminated byte suffix is ignored
+        before text decoding, even if it contains valid JSON. Every malformed
+        complete line raises :class:`ValueError`. An absent file is empty.
 ```
 — `src/zicato/epoch/round_log.py`, `RoundLog.read`
 
@@ -1384,7 +1382,17 @@ events carry no challenger and no step.
 
 ### 7.10.3 Torn-tail truncation on the write path
 
-`RoundLog.append` repairs before it sequences:
+`_RoundLogEmitter` retains one `RoundLog` writer for its round. Before the
+first append, that writer validates the complete history and repairs any
+unterminated suffix. Unterminated bytes contribute no event, even if they form
+valid JSON; a partial UTF-8 character cannot prevent recovery. The writer then
+retains the next sequence number, advancing only
+after a successful append. A write failure discards the sequence state so retry
+checks the actual bytes and repairs any interrupted append. Recovery after a
+process exit creates a fresh writer; intentional log replacement must do the
+same. Concurrent readers continue validating the complete history.
+
+The writer derives the sequence after repair:
 
 ```python
         ``seq`` is the last PARSEABLE event's ``seq`` plus one (``1`` for
@@ -1399,10 +1407,12 @@ events carry no challenger and no step.
 ```
 — `src/zicato/epoch/round_log.py`, `RoundLog.append`
 
-This is the same tail discipline as the supervisor ledger's
-`repair_torn_tail` (08-supervisor.md) — repair the tail on the WRITE side so
-readers never see dead bytes merge into a fresh event, and so the interior-
-corruption rule (D4) stays a real invariant rather than a hope.
+The round log and file storage backend share compact JSONL byte publication
+in `storage.files.append_jsonl`. Their owners retain sequence and recovery
+policy: runtime event logs use strict JSONL reads and are cleared on resume.
+The append helper does not acquire ownership or fsync the file; an interrupted
+write can remain visible until recovery. Complete malformed rows are never
+repaired as torn tails.
 
 ### 7.10.4 The fold
 

@@ -77,6 +77,27 @@ def record_tournament_score(
         write_gen_score(workspace_root, epoch_id, generation_id, aggregate)
 
 
+def seed_baseline(workspace: Path, epoch_id: str) -> Generation:
+    """Publish the registered baseline snapshot and return its generation."""
+    from zicato import workspace_loader
+    from zicato.evolve.generation_phase import current_generation, snapshot_root
+    from zicato.evolve.round_baseline import _ensure_baseline_snapshot
+
+    workspace_config = workspace_loader.load_workspace_config(workspace)
+
+    with acquire_workspace_lock(workspace, "contract-test") as writer:
+        _ensure_baseline_snapshot(workspace, epoch_id, workspace_config, writer=writer)
+    champion_id = current_generation(workspace, epoch_id)
+    return Generation(
+        id=champion_id,
+        epoch_id=epoch_id,
+        parent_id=None,
+        snapshot_root=snapshot_root(workspace, epoch_id, champion_id),
+        created_at="",
+        promoted=True,
+    )
+
+
 def runtime_config(tmp_path: Path) -> RuntimeConfig:
     """A RuntimeConfig whose two LLM callables return the empty string.
 

@@ -41,6 +41,7 @@ from zicato.core.measurement import (
     unit_artifact_name,
 )
 from zicato.core.workspace import run_coordinates_from_dir
+from zicato.epoch._storage import RecordError, check_record_format
 from zicato.tournament.scoring import average_replicate_losses as _average_losses
 from zicato.tournament.worker_transport import _run_id_for
 
@@ -207,11 +208,7 @@ def persisted_loss_slots(run_dir: Path) -> list[tuple[int, Path]]:
     return _loss_slots(run_dir, lambda _index: True, include_aliases=True)
 
 
-#: ``format_version`` stamped onto every persisted ``result.json``. Readers
-#: accept exactly this version and return ``None`` for anything else — a
-#: missing / older / newer / garbage file degrades to "no capture", never a
-#: crash (the file is a best-effort reflection artifact rather than a scoring
-#: input).
+#: Supported format of complete result captures; absent provenance remains historical.
 RUN_RESULT_FORMAT_VERSION: int = 1
 
 #: Per-field clip for the persisted RunResult text (256 KiB). Each transcript
@@ -308,6 +305,48 @@ def _clip_result_text(text: str) -> tuple[str, bool]:
     return text[:RUN_RESULT_CLIP_CHARS] + RUN_RESULT_CLIP_MARKER, True
 
 
+def run_result_from_payload(payload: object) -> dict[str, Any]:
+    """Accept the result capture schema, retaining extensions and absent provenance.
+
+    All required fields were present in the first version-one producer.
+    Measurement and artifact summaries remain optional historical additions.
+    """
+    if not isinstance(payload, dict):
+        raise RecordError("result capture must be an object")
+    check_record_format(
+        payload, "result capture", expected_version=RUN_RESULT_FORMAT_VERSION, allow_missing=False
+    )
+    for name in ("run_id", "entry_id", "final_output", "abort_reason"):
+        if not isinstance(payload.get(name), str):
+            raise RecordError(f"result capture {name} must be text")
+    turns = payload.get("transcript")
+    if not isinstance(turns, list) or any(not isinstance(turn, str) for turn in turns):
+        raise RecordError("result capture transcript must contain text turns")
+    if type(payload.get("runtime_ms")) is not int or payload["runtime_ms"] < 0:
+        raise RecordError("result capture runtime must be a nonnegative integer")
+    if any(type(payload.get(name)) is not bool for name in ("aborted", "clipped")):
+        raise RecordError("result capture flags must be booleans")
+    if "measurement" in payload:
+        try:
+            MeasurementDraw.from_json(payload["measurement"])
+        except ValueError as exc:
+            raise RecordError(str(exc)) from exc
+    if "artifacts" in payload:
+        artifacts = payload["artifacts"]
+        if not isinstance(artifacts, dict):
+            raise RecordError("result artifact summary must be an object")
+        for name in ("root", "manifest"):
+            value = artifacts.get(name)
+            if not isinstance(value, str):
+                raise RecordError("result artifact names must be text")
+        for name in ("file_count", "total_bytes"):
+            if type(artifacts.get(name)) is not int or artifacts[name] < 0:
+                raise RecordError("result artifact counts must be nonnegative integers")
+        if type(artifacts.get("truncated")) is not bool:
+            raise RecordError("result artifact truncation must be a boolean")
+    return payload
+
+
 def run_result_to_payload(
     run_result: Any, *, measurement: MeasurementDraw | None = None
 ) -> dict[str, Any]:
@@ -351,7 +390,7 @@ def run_result_to_payload(
             "total_bytes": artifacts.total_bytes,
             "truncated": artifacts.truncated,
         }
-    return payload
+    return run_result_from_payload(payload)
 
 
 def read_capture_loss(loss_path: Path) -> LossProfile | None:
@@ -371,31 +410,18 @@ def read_capture_loss(loss_path: Path) -> LossProfile | None:
 
 
 def read_run_result(path: Path, *, expected: LossProfile | None = None) -> dict[str, Any] | None:
-    """Read one persisted ``result.json``; ``None`` on ANY defect.
+    """Read a supported capture; missing or ineligible captures return None.
 
-    The tolerant read twin of the worker's best-effort write: a missing file (a
-    run that captured none, an opted-out runtime, a failed capture), unreadable
-    bytes, non-JSON / non-object content, or a ``format_version`` other than
-    :data:`RUN_RESULT_FORMAT_VERSION` (absent, older, newer, garbage) all
-    return ``None`` — the caller degrades to the next fidelity tier
-    (BOARD-REFLECTION.md's ladder), never crashes.
-
-    Fidelity readers supply the paired loss. A known seed then requires the
-    capture's complete measurement and run id to match, including in archives.
-    Omitting ``expected`` exposes structurally valid records for audit only.
+    Malformed present records raise RecordError and remain available for audit.
+    Structural acceptance precedes measurement eligibility. A known-seed paired
+    loss requires matching measurement and run identity, including in archives.
     """
     try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+        body = run_result_from_payload(json.loads(path.read_text(encoding="utf-8")))
+    except FileNotFoundError:
         return None
-    try:
-        body = json.loads(raw)
-    except (ValueError, json.JSONDecodeError):
-        return None
-    if not isinstance(body, dict):
-        return None
-    if body.get("format_version") != RUN_RESULT_FORMAT_VERSION:
-        return None
+    except (OSError, UnicodeError, ValueError, RecordError) as exc:
+        raise RecordError(f"result capture {path}: {exc}") from exc
     if not capture_matches_loss(body, expected):
         return None
     if "measurement" in body:
@@ -404,8 +430,8 @@ def read_run_result(path: Path, *, expected: LossProfile | None = None) -> dict[
             index = artifact_replicate_index(path.name, "result")
             if index is not None:
                 recorded_measurement(index, measurement=measurement)
-        except ValueError:
-            return None
+        except ValueError as exc:
+            raise RecordError(f"result capture {path}: {exc}") from exc
     return body
 
 
@@ -866,6 +892,7 @@ __all__ = [
     "persisted_loss_slots",
     "any_unit_transcript",
     "read_run_result",
+    "run_result_from_payload",
     "read_unit_loss_history",
     "record_unit_attempt",
     "run_result_to_payload",

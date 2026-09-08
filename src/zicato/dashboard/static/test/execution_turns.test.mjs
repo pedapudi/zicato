@@ -139,4 +139,46 @@ test('a running root without a conversation turn remains visible at run scope', 
   assertEqual(allByClass(scroller, 'dn-exec-unresolved-title')[0].textContent, 'Run activity');
   assertEqual(scroller.querySelector('[data-node-id="worker"]').dataset.status, 'running');
 });
+test('tool calls render recorded arguments, results, and call IDs as text', () => {
+  const node = buildTurnNode({ role: 'agent', tool_calls: [
+    { id: 'call-1', name: 'lookup', args: { query: '<img src=x>', limit: 0, cached: false } },
+  ], tool_results: [
+    { call_id: 'call-1', name: 'lookup', result: '<script>missing record</script>', is_error: true },
+  ] }, new Map());
+  assert(node.textContent.includes('Arguments'), 'the call identifies its arguments');
+  assert(node.textContent.includes('"query": "<img src=x>"'), 'structured arguments remain readable');
+  assert(node.textContent.includes('"limit": 0') && node.textContent.includes('"cached": false'), 'zero and false arguments remain visible');
+  assert(node.textContent.includes('<script>missing record</script>'), 'the recorded result is displayed verbatim');
+  assert(node.textContent.includes('Result · error'), 'an error result retains its status');
+  assertEqual(node.textContent.split('call-1').length - 1, 2, 'both records show their recorded call ID');
+  assertEqual(node.innerHTMLWriteCount(), 0, 'recorded values are not parsed as HTML');
+});
+test('missing tool data and timing produce no invented values', () => {
+  const node = buildTurnNode({ role: 'agent', tool_calls: [{ name: 'ping' }] }, new Map());
+  assert(node.textContent.includes('ping'), 'the observed call remains visible');
+  assertEqual(allByClass(node, 'dn-tool-value').length, 0, 'absent arguments have no placeholder value');
+  assertEqual(allByClass(node, 'dn-turn-time').length, 0, 'missing timestamps are omitted');
+  assert(!node.textContent.includes('duration') && !node.textContent.includes('0 ms'), 'no call duration is inferred');
+  const timed = buildTurnNode({ role: 'agent', ts: '2026-01-01T12:34:56Z' }, new Map());
+  assertEqual(allByClass(timed, 'dn-turn-time')[0].getAttribute('datetime'), '2026-01-01T12:34:56Z', 'the recorded timestamp is retained');
+  assert(timed.textContent.includes('2026-01-01T12:34:56Z'), 'the recorded timestamp is visible');
+});
+test('explicit empty and scalar results remain recorded values', () => {
+  for (const value of [null, false, 0, '']) {
+    const node = buildTurnNode({ role: 'agent', tool_results: [{ name: 'lookup', result: value }] }, new Map());
+    const values = allByClass(node, 'dn-tool-value');
+    assertEqual(values.length, 1, 'an explicit value remains present');
+    assertEqual(values[0].textContent, typeof value === 'string' ? value : JSON.stringify(value));
+  }
+});
+test('result-bearing turns with matching text remain distinct', () => {
+  const host = document.createElement('div');
+  reconcileTurns(host, [
+    { seq: 1, role: 'agent', text: 'done', tool_results: [{ name: 'lookup', result: 'first' }] },
+    { seq: 2, role: 'agent', text: 'done', tool_results: [{ name: 'lookup', result: 'other' }] },
+  ]);
+  assertEqual(host.childNodes.length, 2, 'each result-bearing turn is retained');
+  assert(host.childNodes[0].textContent.includes('first'));
+  assert(host.childNodes[1].textContent.includes('other'));
+});
 await run();

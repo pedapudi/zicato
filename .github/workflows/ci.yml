@@ -17,12 +17,12 @@ jobs:
           fetch-depth: 0
 
       - name: Report and enforce line budgets
-        run: python tools/verify.py --only line-budget
+        run: python tools/verify.py --only line-budget --report-dir "${{ runner.temp }}/verification-reports"
 
       - name: Check the ledger's arithmetic and that no row was dropped
         env:
           VERIFICATION_BASE: origin/${{ github.base_ref || github.ref_name }}
-        run: python tools/verify.py --only ledger
+        run: python tools/verify.py --only ledger --report-dir "${{ runner.temp }}/verification-reports"
 
       - name: Show production logic per subsystem in the job summary
         run: |
@@ -31,6 +31,14 @@ jobs:
             python tools/line_budget.py --report
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ github.job }}
+          path: ${{ runner.temp }}/verification-reports/
+          if-no-files-found: ignore
 
   prose-lint:
     name: prose lint
@@ -46,7 +54,15 @@ jobs:
         # A cleanup change lowers counts and leaves the file alone (a fall
         # is green); one later change regenerates it to the measured floor,
         # so parallel prose branches never contend for the baseline.
-        run: python tools/verify.py --only prose
+        run: python tools/verify.py --only prose --report-dir "${{ runner.temp }}/verification-reports"
+
+      - name: Preserve verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ github.job }}
+          path: ${{ runner.temp }}/verification-reports/
+          if-no-files-found: ignore
 
   dashboard-javascript:
     name: dashboard JavaScript behaviour (Node 22)
@@ -62,7 +78,15 @@ jobs:
           node-version: "22"
 
       - name: Dashboard JavaScript behaviour
-        run: python tools/verify.py --only dashboard-javascript
+        run: python tools/verify.py --only dashboard-javascript --report-dir "${{ runner.temp }}/verification-reports"
+
+      - name: Preserve verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ github.job }}
+          path: ${{ runner.temp }}/verification-reports/
+          if-no-files-found: ignore
 
   lint-and-test:
     name: lint and default-tier tests (Python 3.12)
@@ -105,23 +129,31 @@ jobs:
             mypy-3.12-
 
       - name: Ruff
-        run: uv run --no-sync python tools/verify.py --only python-style
+        run: uv run --no-sync python tools/verify.py --only python-style --report-dir "${{ runner.temp }}/verification-reports"
 
       - name: Ruff formatting
-        run: uv run --no-sync python tools/verify.py --only python-format
+        run: uv run --no-sync python tools/verify.py --only python-format --report-dir "${{ runner.temp }}/verification-reports"
 
       - name: Import contracts
         # Every production namespace has a declared role. The shared
         # checker derives forbidden imports and checks the root facade.
-        run: uv run --no-sync python tools/verify.py --only import-boundaries
+        run: uv run --no-sync python tools/verify.py --only import-boundaries --report-dir "${{ runner.temp }}/verification-reports"
 
       - name: Mypy
-        run: uv run --no-sync python tools/verify.py --only python-types
+        run: uv run --no-sync python tools/verify.py --only python-types --report-dir "${{ runner.temp }}/verification-reports"
 
       - name: Pytest (default tier)
         # The shared plan discovers tool tests and excludes the slow tier.
         # The statistical workflow reports that required tier separately.
-        run: uv run --no-sync python tools/verify.py --only python-default
+        run: uv run --no-sync python tools/verify.py --only python-default --report-dir "${{ runner.temp }}/verification-reports"
+
+      - name: Preserve verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ github.job }}
+          path: ${{ runner.temp }}/verification-reports/
+          if-no-files-found: ignore
 
   parity:
     name: parity gates (Python 3.12)
@@ -154,10 +186,18 @@ jobs:
         run: uv sync --all-extras --frozen --reinstall-package zicato --no-editable
 
       - name: Verify installed supervisor
-        run: .venv/bin/python tools/verify.py --only installed-supervisor --installed-wheel
+        run: .venv/bin/python tools/verify.py --only installed-supervisor --installed-wheel --report-dir "${{ runner.temp }}/verification-reports"
 
       - name: Parity gates
-        run: uv run --no-sync python tools/verify.py --only parity
+        run: uv run --no-sync python tools/verify.py --only parity --report-dir "${{ runner.temp }}/verification-reports"
+
+      - name: Preserve verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ github.job }}
+          path: ${{ runner.temp }}/verification-reports/
+          if-no-files-found: ignore
 
   supervisor:
     name: supervisor (Rust)
@@ -174,10 +214,18 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Format
-        run: python tools/verify.py --only rust-format
+        run: python tools/verify.py --only rust-format --report-dir "${{ runner.temp }}/verification-reports"
 
       - name: Clippy
-        run: python tools/verify.py --only rust-clippy
+        run: python tools/verify.py --only rust-clippy --report-dir "${{ runner.temp }}/verification-reports"
 
       - name: Test
-        run: python tools/verify.py --only rust-tests
+        run: python tools/verify.py --only rust-tests --report-dir "${{ runner.temp }}/verification-reports"
+
+      - name: Preserve verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ github.job }}
+          path: ${{ runner.temp }}/verification-reports/
+          if-no-files-found: ignore

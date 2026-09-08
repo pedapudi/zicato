@@ -257,10 +257,6 @@ def build_adapter(spec: dict[str, Any]) -> Any:
     return make_adapter_from_spec(spec)
 
 
-#: Schema token of the per-generation harness-load provenance file.
-HARNESS_LOAD_SCHEMA = "zicato.harness_load/1"
-
-
 def _record_harness_load(
     workspace_root: Path,
     *,
@@ -271,50 +267,13 @@ def _record_harness_load(
     tree_status: dict[str, str] | None = None,
     implementation: dict[str, Any] | None = None,
 ) -> None:
-    """Record WHAT this generation actually loaded from its snapshot.
+    """Publish snapshot-relative source paths and accumulated tree verification.
 
-    The worker is the only process that ever imports the entrypoint or the
-    mutable trees, so it is the only one that knows where they resolved. It
-    writes that to the generation's ``harness_load.json``; the orchestrator
-    reads it back after the duel and emits the round log's ``harness_loaded``
-    event (the round log has a single writer, the orchestrator, so the worker
-    must not append to it directly).
-
-    Two facts land here, both keyed to the mutated-tree invariant. First,
-    ``entrypoint_file`` — the resolved entrypoint module, and the recorded
-    value is SNAPSHOT-RELATIVE (``agent/agent.py``) rather than the
-    absolute ``__file__``. ``snapshot_root`` here is the per-run EPHEMERAL
-    checkout (``ztw-snap-*`` under system temp, deleted in ``_run_single``'s
-    ``finally``), so the absolute path names a directory that is already gone
-    by the time anyone reads the round log, differs for every unit of the same
-    generation, and folds the operator's machine layout into a durable record.
-    The relative path is the part that carries the provenance — which module
-    inside the snapshot ran — and it is comparable across generations, runs and
-    checkouts. The absolute path still goes to the log line below for live
-    debugging. Falls back to the raw string if it is somehow not under the
-    snapshot, and is EMPTY for the dependency shape (the entrypoint lives
-    outside every mutable tree by design, so no snapshot-relative file names
-    it).
-
-    Second, ``trees_verified`` / ``trees_never_imported`` — the post-run
-    per-tree verdicts from :func:`zicato.adapters.adk.tree_import_status`,
-    passed as ``tree_status`` by :func:`_verify_trees_after_run`. These
-    ACCUMULATE across the generation's units rather than overwriting: a tree ANY
-    unit imported from the snapshot is verified for the generation, and
-    ``trees_never_imported`` is what is left over — the trees no unit ever
-    touched. That is the only observable form of a shadowed snapshot — an
-    installed entrypoint that never imports the mutated tree (issue #110). One
-    unit's
-    read-modify-write can lose a concurrent unit's verification, which can only
-    ever ADD a warning-severity never-imported entry, never suppress a failure:
-    a tree imported from outside the snapshot fails its own unit at load time
-    and again in :func:`_verify_trees_after_run`.
-
-    The entrypoint half stays idempotent — every worker for a generation
-    resolves the same file. Best-effort in both directions: an adapter that
-    reports neither an ``entrypoint_file`` nor a tree status (any non-ADK kind)
-    writes nothing, and a write failure is logged at debug and never fails a
-    run.
+    A tree verified by any unit is verified for the generation. Concurrent
+    read/modify/write can lose a verification and add a warning; outside-root
+    imports independently fail their own unit. Implementation metadata belongs
+    to the current attempt and is never copied from an earlier worker record.
+    Recording is best effort and cannot change the measured outcome.
     """
     absolute_file = str(getattr(session, "entrypoint_file", "") or "")
     if not absolute_file and not tree_status and not implementation:
@@ -342,10 +301,18 @@ def _record_harness_load(
             TREE_IMPORT_VERIFIED,
         )
         from zicato.core.workspace import harness_load_path  # noqa: PLC0415
-        from zicato.storage import atomic_write_json, read_json  # noqa: PLC0415
+        from zicato.storage import atomic_write_json  # noqa: PLC0415
+        from zicato.tournament.records import (  # noqa: PLC0415
+            HARNESS_LOAD_SCHEMA,
+            decode_harness_load,
+            read_harness_load,
+        )
 
         path = harness_load_path(workspace_root, epoch_id, generation_id)
-        previous = read_json(path) or {}
+        previous = read_harness_load(path, generation_id=generation_id) or {}
+        if entrypoint_file and previous.get("entrypoint_file") not in {"", entrypoint_file, None}:
+            previous = {}
+        previous.pop("implementation", None)
         verified = set(previous.get("trees_verified") or [])
         never = set(previous.get("trees_never_imported") or [])
         for basename, verdict in (tree_status or {}).items():
@@ -355,14 +322,18 @@ def _record_harness_load(
                 never.add(basename)
         atomic_write_json(
             path,
-            {
-                "schema": HARNESS_LOAD_SCHEMA,
-                **({"implementation": implementation} if implementation is not None else {}),
-                "generation_id": generation_id,
-                "entrypoint_file": entrypoint_file or str(previous.get("entrypoint_file") or ""),
-                "trees_verified": sorted(verified),
-                "trees_never_imported": sorted(never - verified),
-            },
+            decode_harness_load(
+                {
+                    **previous,
+                    "schema": HARNESS_LOAD_SCHEMA,
+                    **({"implementation": implementation} if implementation is not None else {}),
+                    "generation_id": generation_id,
+                    "entrypoint_file": entrypoint_file or previous.get("entrypoint_file", ""),
+                    "trees_verified": sorted(verified),
+                    "trees_never_imported": sorted(never - verified),
+                },
+                generation_id=generation_id,
+            ),
         )
 
 
@@ -373,6 +344,7 @@ def _verify_trees_after_run(
     generation_id: str,
     session: Any,
     snapshot_root: Path,
+    implementation: dict[str, Any] | None = None,
 ) -> None:
     """Post-run: verify every mutable tree ran from THIS generation's snapshot.
 
@@ -396,12 +368,10 @@ def _verify_trees_after_run(
       ever imported that tree.
 
     The record is written BEFORE the raise so the evidence survives the failure.
-    Silently inert for an adapter kind that reports no tree status.
+    Implementation metadata is published even when the adapter has no tree status.
     """
     reader = getattr(session, "tree_import_status", None)
     status: dict[str, str] = reader() or {} if callable(reader) else {}
-    if not status:
-        return
     _record_harness_load(
         workspace_root,
         epoch_id=epoch_id,
@@ -409,7 +379,10 @@ def _verify_trees_after_run(
         session=session,
         snapshot_root=snapshot_root,
         tree_status=status,
+        implementation=implementation,
     )
+    if not status:
+        return
     from zicato.adapters.adk import TREE_IMPORT_OUTSIDE_ROOT  # noqa: PLC0415
 
     outside = sorted(b for b, verdict in status.items() if verdict == TREE_IMPORT_OUTSIDE_ROOT)
@@ -1066,6 +1039,7 @@ async def _run_with_imports(args: dict[str, Any], run_context: RunContext) -> No
         # scoring it) when a tree came from outside the snapshot; records a
         # never-imported tree for the generation's health finding otherwise.
         candidate_sources = imported_sources(config.driver_imports, snapshot_root)
+        implementation = None
         if config.driver_imports.roots:
             from zicato.import_path import import_dotted_path
             from zicato.scoring.plugins import resolve_plugin_source
@@ -1088,20 +1062,13 @@ async def _run_with_imports(args: dict[str, Any], run_context: RunContext) -> No
                     for name, source in candidate_sources.items()
                 },
             }
-            _record_harness_load(
-                workspace_root,
-                epoch_id=epoch_id,
-                generation_id=generation_id,
-                session=session,
-                snapshot_root=snapshot_root,
-                implementation=implementation,
-            )
         _verify_trees_after_run(
             workspace_root,
             epoch_id=epoch_id,
             generation_id=generation_id,
             session=session,
             snapshot_root=snapshot_root,
+            implementation=implementation,
         )
     finally:
         # Closes the wall-clock span opened before the adapter load. First

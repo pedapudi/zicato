@@ -7,11 +7,14 @@ export function buildTurnNode(t, annBySeq, execution) {
     el('div', { class: 'dn-turn-head dn-faint dn-mono' }, [
       el('span', { text: t.agent || t.role || 'turn' }),
       t.kind ? el('span', { text: ' · ' + t.kind }) : null,
+      t.ts ? el('time', { class: 'dn-turn-time', datetime: t.ts, text: ' · ' + t.ts }) : null,
     ].filter(Boolean)),
     t.text ? el('div', { class: 'dn-turn-text', text: t.text }) : null,
   ].filter(Boolean));
-  if (Array.isArray(t.tool_calls)) for (const tc of t.tool_calls) {
-    turn.appendChild(el('div', { class: 'dn-tool dn-mono', text: '⚙ ' + (tc.name || tc.tool || 'tool') }));
+  for (const [records, field] of [[t.tool_calls, 'args'], [t.tool_results, 'result']]) {
+    if (Array.isArray(records)) for (const record of records) {
+      turn.appendChild(buildToolNode(toolContent(record, field)));
+    }
   }
   const activity = buildExecutionOutline(execution, t.activity_ids);
   if (activity) turn.appendChild(activity);
@@ -19,6 +22,27 @@ export function buildTurnNode(t, annBySeq, execution) {
     turn.appendChild(el('div', { class: 'dn-annot dn-annot-' + (a.kind || 'note'), text: '◂ ' + (a.summary || a.kind) }));
   }
   return turn;
+}
+
+function toolContent(record, field) {
+  const value = record[field];
+  return {
+    name: record.name || record.tool || 'tool',
+    label: field === 'args' ? 'Arguments' : (record.is_error ? 'Result · error' : 'Result'),
+    id: (field === 'args' ? record.id : record.call_id) || '',
+    text: typeof value === 'string' ? value : JSON.stringify(value, null, 2),
+  };
+}
+
+function buildToolNode({ name, label, id, text }) {
+  return el('div', { class: 'dn-tool' }, [
+    el('div', {}, [
+      el('span', { class: 'dn-mono', text: '⚙ ' + name }),
+      el('span', { class: 'dn-faint', text: ' · ' + label }),
+      id ? el('span', { class: 'dn-mono', text: ' · ' + id }) : null,
+    ]),
+    text !== undefined ? el('pre', { class: 'dn-tool-value dn-turn-text dn-mono', text }) : null,
+  ]);
 }
 
 // Follow only server-supplied edges; empty and foreign transcripts keep their old DOM.
@@ -106,9 +130,8 @@ function isDuplicateTurn(a, b) {
   const bText = (b.text || '').trim();
   if (aText === '' || aText !== bText) return false;
   if ((a.role || '') !== (b.role || '')) return false;
-  const aTools = Array.isArray(a.tool_calls) && a.tool_calls.length;
-  const bTools = Array.isArray(b.tool_calls) && b.tool_calls.length;
-  if (aTools || bTools) return false;
+  if ([a.tool_calls, a.tool_results, b.tool_calls, b.tool_results]
+    .some((records) => Array.isArray(records) && records.length)) return false;
   return true;
 }
 
@@ -118,7 +141,12 @@ export function turnSig(t, annBySeq, execution) {
   const ids = Array.isArray(t.activity_ids) ? t.activity_ids : [];
   const index = executionIndex(execution);
   const activity = ids.map((id) => executionNodeSig(id, index, new Set())).join('|');
-  return [t.seq, t.role, (t.text || '').length, Array.isArray(t.tool_calls) ? t.tool_calls.length : 0, na ? na.length : 0, activity].join(':');
+  const tools = [[t.tool_calls, 'args'], [t.tool_results, 'result']].map(([records, field]) =>
+    Array.isArray(records) ? records.map((record) => toolContent(record, field)) : []);
+  return JSON.stringify([
+    t.seq, t.role, t.agent, t.kind, t.ts, t.text || '', tools,
+    (na || []).map((a) => [a.kind, a.summary]), activity,
+  ]);
 }
 
 function executionNodeSig(id, index, seen) {

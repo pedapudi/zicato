@@ -15,22 +15,13 @@ every settled round writes its ``round_log.jsonl`` as the round runs.
 
 Load-bearing invariants
 -----------------------
-* **Append-only, single-writer.** Exactly one process (the orchestrator
-  driving the round) appends to a given round's log; each append is one
-  complete ``\\n``-terminated compact-JSON line, so a concurrent reader
-  observes a prefix of events, never a partial record. The monotonic
-  ``seq`` (first event ``1``, every append exactly ``+1``) is derived
-  from the current tail under that single-writer contract — the same
-  discipline as :class:`zicato.runtime.channel.EventLog` and the runtime
-  tournament log.
-* **Torn-tail tolerance.** A crash mid-append can leave one torn final
-  line. The reader SKIPS an unparseable last line (the reducer's
-  discipline for a run's ``events.jsonl``); every earlier line is
-  covered by the append-only invariant, so an unparseable INTERIOR line
-  means something bypassed the writer and raises rather than silently
-  dropping history. The writer repairs a torn tail before appending
-  (terminates the partial line) so the dead bytes can never concatenate
-  with the next event.
+* **Append-only, single-writer.** One orchestrator owns the writer for a
+  round. It validates existing history once, then advances the sequence after
+  each successful compact-JSON append. The first sequence number is ``1``.
+* **Torn-tail tolerance.** The newline commits a record. The reader ignores
+  an unterminated suffix; malformed complete rows raise, including the final row.
+  Before opening or resuming its sequence, the writer validates the history
+  and truncates an interrupted suffix so it cannot merge with a new event.
 * **Durability.** The log lives under ``epochs/``, the store-of-record
   tree, rather than under ``runtime/``: it survives the run, is keyed by
   the round it describes, and is never cleared by resume/crash cleanup.
@@ -55,6 +46,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from zicato.core.types import ProposerEpisodeOutcome
+from zicato.storage.files import append_jsonl
 from zicato.util.iso_time import now_iso as _now_iso
 from zicato.workspace import WorkspaceLayout
 
@@ -636,16 +628,15 @@ class RoundLog:
     """One round's append-only event log at its canonical path.
 
     Binding is pure path math — no I/O until :meth:`append` / :meth:`read`.
-    The append discipline mirrors the runtime tournament log's
-    :class:`~zicato.runtime.channel.EventLog` (one complete compact-JSON
-    line per event, ``seq`` derived from the tail under the single-writer
-    contract) with one durability addition this store-of-record needs:
-    the reader tolerates a torn tail, and the writer terminates one
-    before appending so the dead bytes never merge into a new event.
+    The single writer validates and repairs existing history before its first
+    append, then retains the next sequence number. A failed append discards that
+    state so retry recovers from disk. A new process or intentional file reset
+    requires a new writer. Readers always check the complete history.
     """
 
     def __init__(self, workspace_root: Path, epoch_id: str, round_index: int) -> None:
         self._path = round_log_path(workspace_root, epoch_id, round_index)
+        self._next_seq: int | None = None
 
     @property
     def path(self) -> Path:
@@ -657,23 +648,16 @@ class RoundLog:
     ) -> RoundLogEnvelope:
         """Append one typed event; return it with its assigned ``seq`` + ``ts``.
 
-        ``seq`` is the last PARSEABLE event's ``seq`` plus one (``1`` for
-        an empty/absent log) — a torn tail contributes nothing, so a
-        writer resuming after a crash continues the monotonic sequence.
-        Before appending, a file that does not end in a newline (the torn
-        tail a crash mid-append leaves) is TRUNCATED back to its last
-        complete line: the partial record was never a complete event (its
-        append never finished), so dropping it is the honest repair — and
-        it can never concatenate with this append or read back later as
-        interior corruption.
+        The writer starts after the last complete record and retains its sequence
+        between appends. Opening or retrying after a failed write validates the
+        saved records and truncates any bytes after the final newline.
         """
-        # Repair BEFORE deriving the seq, so a torn final line — even one
-        # whose partial bytes happen to parse — is dropped first and the
-        # sequence continues gap-free from the last durably complete event.
-        if self._path.exists() and not self._ends_with_newline():
+        if self._next_seq is None:
+            # Validate complete history before changing any interrupted suffix.
+            tail = self.tail()
             self._truncate_torn_tail()
-        tail = self.tail()
-        seq = 1 if tail is None else tail.seq + 1
+            self._next_seq = 1 if tail is None else tail.seq + 1
+        seq = self._next_seq
         ts = _now_iso()
         payload = asdict(event)
         event_scope = (
@@ -686,10 +670,10 @@ class RoundLog:
             "scope": event_scope.to_payload(),
             "payload": payload,
         }
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(record, separators=(",", ":"))
-        with self._path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        # A failed append may have written bytes; retry must recover from disk.
+        self._next_seq = None
+        append_jsonl(self._path, record)
+        self._next_seq = seq + 1
         return RoundLogEnvelope(
             seq=seq,
             ts=ts,
@@ -702,27 +686,23 @@ class RoundLog:
     def read(self) -> list[RoundLogEnvelope]:
         """Return every decoded event in append order, tolerating a torn tail.
 
-        An unparseable LAST line is skipped (a crash mid-append); an
-        unparseable INTERIOR line raises :class:`ValueError` — under the
-        append-only single-writer invariant only the tail can be torn, so
-        interior corruption means something bypassed the writer and must
-        surface rather than silently dropping history. An absent file is
-        an empty log.
+        The newline commits a record. An unterminated byte suffix is ignored
+        before text decoding, even if it contains valid JSON. Invalid JSON in a
+        complete line raises :class:`ValueError`. An absent file is empty.
         """
         if not self._path.exists():
             return []
-        raw_lines = self._path.read_text(encoding="utf-8").splitlines()
+        data = self._path.read_bytes()
+        raw_lines = data[: data.rfind(b"\n") + 1].decode("utf-8").splitlines()
         lines = [(i, line.strip()) for i, line in enumerate(raw_lines) if line.strip()]
         out: list[RoundLogEnvelope] = []
-        for pos, (line_no, line) in enumerate(lines):
+        for line_no, line in lines:
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
-                if pos == len(lines) - 1:
-                    continue  # torn tail — skip, like the telemetry reducer
                 raise ValueError(
                     f"round log {self._path} line {line_no + 1} is corrupt "
-                    "(not the tail — the append-only invariant was violated)"
+                    "(the append-only invariant was violated)"
                 ) from None
             payload = record.get("payload") or {}
             if not isinstance(payload, dict):
@@ -742,36 +722,28 @@ class RoundLog:
         return out
 
     def tail(self) -> RoundLogEnvelope | None:
-        """The last parseable event, or ``None`` for an empty/absent log."""
+        """The last complete event, or ``None`` for an empty or absent log."""
         events = self.read()
         return events[-1] if events else None
 
-    def _ends_with_newline(self) -> bool:
-        """True when the existing log's final byte is ``\\n`` (or it is empty)."""
-        try:
-            with self._path.open("rb") as fh:
-                fh.seek(0, 2)
-                size = fh.tell()
-                if size == 0:
-                    return True
-                fh.seek(size - 1)
-                return fh.read(1) == b"\n"
-        except OSError:
-            return True
-
     def _truncate_torn_tail(self) -> None:
-        """Drop the incomplete final line a crash mid-append left behind.
+        """Drop an unterminated suffix after validating the complete history.
 
-        Truncates the file back to just past its last ``\\n`` (to empty
-        when no complete line exists). Only ever called by :meth:`append`
-        under the single-writer contract, so no reader can observe a
-        mid-truncate state that a subsequent append does not immediately
-        repair.
+        A record without its newline is incomplete even when its bytes parse.
+        The single writer calls this only after validating the complete rows.
         """
-        data = self._path.read_bytes()
-        cut = data.rfind(b"\n") + 1
-        with self._path.open("rb+") as fh:
-            fh.truncate(cut)
+        try:
+            with self._path.open("rb+") as stream:
+                size = stream.seek(0, 2)
+                if not size:
+                    return
+                stream.seek(size - 1)
+                if stream.read(1) == b"\n":
+                    return
+                stream.seek(0)
+                stream.truncate(stream.read().rfind(b"\n") + 1)
+        except FileNotFoundError:
+            return
 
 
 # ---------------------------------------------------------------------------
