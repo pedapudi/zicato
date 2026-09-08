@@ -280,6 +280,7 @@ async def admit_suggestion(
     ) as writer:
         execution, noise = await _execution_and_noise(
             request.entry,
+            writer=writer,
             champion=champion,
             weights=weights,
             config=config,
@@ -294,6 +295,7 @@ async def admit_suggestion(
         if execution.get("ran"):
             discrimination = await _discrimination_probe(
                 request.entry,
+                writer=writer,
                 experiments=experiments,
                 weights=weights,
                 config=config,
@@ -653,6 +655,7 @@ def _placeholder_config(workspace_root: Path) -> RuntimeConfig:
 async def _execution_and_noise(
     entry: BoardEntry,
     *,
+    writer: WorkspaceLock,
     champion: Generation,
     weights: ScoringWeights,
     config: RuntimeConfig,
@@ -685,6 +688,7 @@ async def _execution_and_noise(
         try:
             loss = await _run_entry(
                 entry,
+                writer=writer,
                 generation=champion,
                 weights=weights,
                 config=config,
@@ -742,6 +746,7 @@ def _execution_from_loss(loss: Any) -> dict[str, Any]:
 async def _discrimination_probe(
     entry: BoardEntry,
     *,
+    writer: WorkspaceLock,
     experiments: list[dict[str, Any]],
     weights: ScoringWeights,
     config: RuntimeConfig,
@@ -771,10 +776,26 @@ async def _discrimination_probe(
     separated = 0
     for champ_id, child_id in recent:
         champ_pf = await _run_side(
-            entry, champ_id, weights, config, adapter, workspace_root, epoch_id, "champ"
+            entry,
+            champ_id,
+            weights,
+            config,
+            adapter,
+            workspace_root,
+            epoch_id,
+            "champ",
+            writer=writer,
         )
         child_pf = await _run_side(
-            entry, child_id, weights, config, adapter, workspace_root, epoch_id, "child"
+            entry,
+            child_id,
+            weights,
+            config,
+            adapter,
+            workspace_root,
+            epoch_id,
+            "child",
+            writer=writer,
         )
         if champ_pf is None or child_pf is None:
             continue  # a side we could not measure is not a comparison
@@ -796,6 +817,8 @@ async def _run_side(
     workspace_root: Path,
     epoch_id: str,
     side: str,
+    *,
+    writer: WorkspaceLock,
 ) -> bool | None:
     """Run ``entry`` on one reconstructed generation; return its pass/fail bit.
 
@@ -808,6 +831,7 @@ async def _run_side(
     try:
         loss = await _run_entry(
             entry,
+            writer=writer,
             generation=generation,
             weights=weights,
             config=config,
@@ -936,6 +960,7 @@ def _emulator_guard_ok(entry: BoardEntry) -> bool:
 async def _run_entry(
     entry: BoardEntry,
     *,
+    writer: WorkspaceLock,
     generation: Generation,
     weights: ScoringWeights,
     config: RuntimeConfig,
@@ -956,6 +981,7 @@ async def _run_entry(
     from zicato.tournament.worker_transport import _stamp_replicate_index  # noqa: PLC0415
 
     losses = await _run_board_units_fast(
+        writer=writer,
         adapter=adapter,
         child_gen=generation,
         board=_stamp_replicate_index([entry], replicate_index),

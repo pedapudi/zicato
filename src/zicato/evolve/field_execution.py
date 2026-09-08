@@ -299,7 +299,7 @@ def publish_live_structure(
         prepared.tournament_spec.structure,
     )
     _publish_active_tournament(
-        prepared.workspace_root,
+        prepared.writer,
         tournament_id=candidates.tournament_id,
         epoch_id=prepared.epoch_id,
         structure=prepared.tournament_spec.structure,
@@ -377,7 +377,7 @@ def _open_tournament_envelopes(field_round: FieldRound, candidates: CandidateFie
     from zicato.runtime import progress_log  # noqa: PLC0415
 
     _publish_active_tournament(
-        prepared.workspace_root,
+        prepared.writer,
         tournament_id=candidates.tournament_id,
         epoch_id=prepared.epoch_id,
         structure=prepared.tournament_spec.structure,
@@ -395,7 +395,7 @@ def _open_tournament_envelopes(field_round: FieldRound, candidates: CandidateFie
         "progress-log field tournament-start",
         on_error=lambda exc: log.debug("progress-log field tournament-start skipped: %s", exc),
     ):
-        progress_log.append_progress(prepared.workspace_root, progress_log.TOURNAMENT_START)
+        progress_log.append_progress(prepared.writer, progress_log.TOURNAMENT_START)
     _open_field_tournament(
         prepared.workspace_root,
         field_tournament_id=f"{prepared.epoch_id}:field:{candidates.first_challenger_id}",
@@ -513,7 +513,7 @@ async def execute_field_tournament(
             on_inconclusive=on_inconclusive,
         )
     except _InfrastructureRoundDeferred as deferred:
-        _clear_active_tournament(prepared.workspace_root)
+        _clear_active_tournament(prepared.writer)
         return _defer_round_infra_outage(
             workspace_root=prepared.workspace_root,
             epoch_id=prepared.epoch_id,
@@ -528,7 +528,7 @@ async def execute_field_tournament(
             health_config=prepared.config.operational_configuration().values.health,
         )
     except Exception:
-        _clear_active_tournament(prepared.workspace_root)
+        _clear_active_tournament(prepared.writer)
         raise
 
     gate_evidence: dict[str, Any] | None = None

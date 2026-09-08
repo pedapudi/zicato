@@ -250,6 +250,7 @@ def _install_telemetry_stubs(
         entry: BoardEntry,
         weights: Any,
         config: Any,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,

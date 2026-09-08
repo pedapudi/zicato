@@ -554,6 +554,7 @@ async def run_corpus(
             for draw in range(int(plan.replicates)):
                 replicate_index = REFLECTION_REPLICATE_BASE + draw
                 losses = await _run_board_units_fast(
+                    writer=writer,
                     adapter=adapter,
                     child_gen=generation,
                     board=_stamp_replicate_index(stamped_board, replicate_index),

@@ -14,6 +14,7 @@ from typing import Any
 
 from zicato.core.settings import IntegrationConfig
 from zicato.runtime.heartbeat import HeartbeatBeater
+from zicato.runtime.lock import WorkspaceLock
 from zicato.util import best_effort
 
 log = logging.getLogger("zicato.orchestrator")
@@ -140,67 +141,39 @@ class _NoopShutdownHandle:
         pass
 
 
-def _record_progress(workspace_root: Path | None, transition: str | None) -> int | None:
-    """Append one orchestrator progress transition; return the new ``seq``.
-
-    The TRUE liveness step: on a genuine transition
-    the loop appends a typed event to the progress event log
-    (:mod:`zicato.runtime.progress_log`), whose monotonic ``seq`` advances
-    only here — never on the heartbeat timer. Returns the new tail ``seq``
-    so the caller can stamp it onto the heartbeat, or ``None`` when there
-    is nothing to record (no ``workspace_root`` / ``transition``, e.g. a
-    standalone ``evolve_once`` with no lifecycle).
-
-    Best-effort: a failure to append must never abort the evolve round, so
-    a write error swallows to ``None`` (the heartbeat simply keeps its
-    prior ``seq``) rather than propagating.
-    """
-    if workspace_root is None or transition is None:
-        return None
-    seq: int | None = None
-
-    def _remember(value: int) -> None:
-        nonlocal seq
-        seq = value
-
+def _record_progress(writer: WorkspaceLock, transition: str) -> int | None:
+    """Append an owned progress transition; return None on a storage failure."""
     with best_effort(
         "progress-log append",
         on_error=lambda exc: log.debug("progress-log append skipped: %s", exc),
     ):
         from zicato.runtime import progress_log  # noqa: PLC0415
 
-        _remember(progress_log.append_progress(workspace_root, transition))
-    return seq
+        return progress_log.append_progress(writer, transition)
+    return None
 
 
 def _beat(
     beater: HeartbeatBeater | None,
     *,
-    workspace_root: Path | None = None,
+    progress_writer: WorkspaceLock | None = None,
     progress: str | None = None,
     **fields: Any,
 ) -> None:
-    """Push a heartbeat phase/coordinate update and flush it immediately.
+    """Update and flush heartbeat fields when a beater exists.
 
-    A no-op when ``beater`` is ``None`` (a standalone ``evolve_once``
-    call with no heartbeat lifecycle). Every update is followed by a
-    :meth:`HeartbeatBeater.bump_now` so the dashboard sees the new phase
-    without waiting for the next periodic bump. Best-effort: a failure
-    to write the heartbeat must never abort the evolve round.
-
-    ``progress`` — when supplied alongside ``workspace_root`` — names a
-    GENUINE orchestrator transition (a :mod:`zicato.runtime.progress_log`
-    type such as ``progress_log.PROPOSE``). The transition is appended to
-    the progress event log and its new ``seq`` is stamped onto the
-    heartbeat, so the heartbeat's ``seq`` advances on real progress
-    (distinct from the timer-driven ``last_heartbeat``). A heartbeat-only
-    ``_beat`` (no ``progress``) leaves ``seq`` unchanged — it carries the
-    prior value forward, so a phase relabel that is not a fresh transition
-    does not falsely advance the liveness cursor.
+    A progress transition additionally requires the acquired workspace writer.
+    Its persisted sequence advances the heartbeat's liveness cursor. An update
+    with no transition leaves that cursor unchanged. Storage failures remain
+    best-effort; omitting a required progress owner is a caller error.
     """
     if beater is None:
         return
-    seq = _record_progress(workspace_root, progress)
+    seq = None
+    if progress is not None:
+        if progress_writer is None:
+            raise ValueError("a progress transition requires its workspace writer")
+        seq = _record_progress(progress_writer, progress)
     with best_effort(
         "heartbeat update",
         on_error=lambda exc: log.debug("heartbeat update skipped: %s", exc),

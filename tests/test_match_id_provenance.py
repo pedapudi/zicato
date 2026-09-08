@@ -35,6 +35,7 @@ from zicato.epoch.journal import write_experiment
 from zicato.epoch.lifecycle import new_epoch
 from zicato.index.ingest import rebuild_index
 from zicato.query import WorkspacePaths, build_per_entry_for_generation
+from zicato.runtime.lock import acquire_workspace_lock, validate_workspace_lock
 from zicato.selection.strategy import rung_for_match_id
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import make_experiment, make_outcome_record
@@ -101,8 +102,19 @@ def test_run_matchup_threads_match_id_to_each_run(monkeypatch, tmp_path) -> None
     seen: list[str] = []
 
     async def fake_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+        *,
+        adapter,
+        generation,
+        entry,
+        weights,
+        config,
+        workspace_root,
+        writer,
+        epoch_id,
+        side,
+        match_id="",
     ):
+        validate_workspace_lock(writer, workspace_root)
         del adapter, weights, config, workspace_root, side
         seen.append(match_id)
         return replace(
@@ -161,8 +173,19 @@ def test_run_matchup_stamps_judge_only_onto_each_entry(monkeypatch, tmp_path) ->
     seen_contexts: list[dict[str, str]] = []
 
     async def fake_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+        *,
+        adapter,
+        generation,
+        entry,
+        weights,
+        config,
+        workspace_root,
+        writer,
+        epoch_id,
+        side,
+        match_id="",
     ):
+        validate_workspace_lock(writer, workspace_root)
         del adapter, generation, weights, config, workspace_root, side, match_id
         seen_contexts.append(dict(entry.context))
         return replace(
@@ -211,8 +234,19 @@ def test_run_matchup_default_leaves_judge_only_unset(monkeypatch, tmp_path) -> N
     seen_contexts: list[dict[str, str]] = []
 
     async def fake_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+        *,
+        adapter,
+        generation,
+        entry,
+        weights,
+        config,
+        workspace_root,
+        writer,
+        epoch_id,
+        side,
+        match_id="",
     ):
+        validate_workspace_lock(writer, workspace_root)
         del adapter, generation, weights, config, workspace_root, side, match_id
         seen_contexts.append(dict(entry.context))
         return replace(
@@ -335,19 +369,21 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
         def worker_spec(self) -> dict:
             return {"kind": "stub"}
 
-    result = asyncio.run(
-        runner_mod._run_single(
-            adapter=_Adapter(),
-            generation=gen,
-            entry=_board()[0],
-            weights=ScoringWeights(),
-            config=_config(tmp_path),
-            workspace_root=ws,
-            epoch_id=epoch_id,
-            side="child",
-            match_id="rung1_m0",
+    with acquire_workspace_lock(ws, "test-worker") as writer:
+        result = asyncio.run(
+            runner_mod._run_single(
+                writer=writer,
+                adapter=_Adapter(),
+                generation=gen,
+                entry=_board()[0],
+                weights=ScoringWeights(),
+                config=_config(tmp_path),
+                workspace_root=ws,
+                epoch_id=epoch_id,
+                side="child",
+                match_id="rung1_m0",
+            )
         )
-    )
     # The returned in-memory profile is tagged...
     assert result.match_id == "rung1_m0"
     # ...AND the on-disk loss.json was rewritten so a full reindex re-derives it.

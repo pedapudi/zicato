@@ -235,7 +235,7 @@ class _FakeCfg:
 
 @pytest.mark.parametrize("variant", ["full", "fast", "budgeted"])
 async def test_real_bounded_opens_matchup_span_with_worker_nested(
-    monkeypatch: pytest.MonkeyPatch, variant: str
+    monkeypatch: pytest.MonkeyPatch, variant: str, tmp_path
 ) -> None:
     """Every board-unit runner's ``_bounded`` brackets its unit in a matchup span.
 
@@ -247,8 +247,7 @@ async def test_real_bounded_opens_matchup_span_with_worker_nested(
     directly on the round — this test fails on that regression for ``budgeted``
     while passing for ``full`` / ``fast``.
     """
-    from pathlib import Path
-
+    from zicato.runtime.lock import acquire_workspace_lock
     from zicato.telemetry.meta_loop import SPAN_MATCHUP, SPAN_WORKER, meta_span
     from zicato.tournament import scheduling as sched
 
@@ -280,40 +279,42 @@ async def test_real_bounded_opens_matchup_span_with_worker_nested(
         "adapter": None,
         "weights": object(),
         "config": _FakeCfg(),
-        "workspace_root": Path("/tmp"),
+        "workspace_root": tmp_path,
         "epoch_id": "ep",
         "match_id": "m1",
     }
-    try:
-        if variant == "full":
-            await sched._run_board_units_full(
-                parent_gen=_Gen("v0"), child_gen=_Gen("v1"), board=board, **common
-            )
-        elif variant == "fast":
-            await sched._run_board_units_fast(child_gen=_Gen("v1"), board=board, **common)
-        else:
-            await sched._run_board_units_full_budgeted(
-                parent_gen=_Gen("v0"),
-                child_gen=_Gen("v1"),
-                board=board,
-                replicate_index=0,
-                force_fresh=False,
-                provenance=None,
-                matchup_deadline=time.monotonic() + 3600.0,
-                **common,
-            )
-    finally:
-        reset_current_emitter(token)
+    with acquire_workspace_lock(tmp_path, "test") as writer:
+        common["writer"] = writer
+        try:
+            if variant == "full":
+                await sched._run_board_units_full(
+                    parent_gen=_Gen("v0"), child_gen=_Gen("v1"), board=board, **common
+                )
+            elif variant == "fast":
+                await sched._run_board_units_fast(child_gen=_Gen("v1"), board=board, **common)
+            else:
+                await sched._run_board_units_full_budgeted(
+                    parent_gen=_Gen("v0"),
+                    child_gen=_Gen("v1"),
+                    board=board,
+                    replicate_index=0,
+                    force_fresh=False,
+                    provenance=None,
+                    matchup_deadline=time.monotonic() + 3600.0,
+                    **common,
+                )
+        finally:
+            reset_current_emitter(token)
 
-    starts = _starts(sink)
-    matchups = [s for s in starts if s.agent_name == f"zicato.{SPAN_MATCHUP}"]
-    workers = [s for s in starts if s.agent_name == f"zicato.{SPAN_WORKER}"]
-    assert len(matchups) == 1, f"{variant}: expected one matchup span, got {len(matchups)}"
-    assert len(workers) == 1, f"{variant}: expected one worker span, got {len(workers)}"
-    assert matchups[0].task_id == "e1"
-    assert (
-        workers[0].parent == matchups[0].invocation_id
-    ), f"{variant}: worker must nest under the matchup span, not the round"
+        starts = _starts(sink)
+        matchups = [s for s in starts if s.agent_name == f"zicato.{SPAN_MATCHUP}"]
+        workers = [s for s in starts if s.agent_name == f"zicato.{SPAN_WORKER}"]
+        assert len(matchups) == 1, f"{variant}: expected one matchup span, got {len(matchups)}"
+        assert len(workers) == 1, f"{variant}: expected one worker span, got {len(workers)}"
+        assert matchups[0].task_id == "e1"
+        assert (
+            workers[0].parent == matchups[0].invocation_id
+        ), f"{variant}: worker must nest under the matchup span, not the round"
 
 
 # ---------------------------------------------------------------------------

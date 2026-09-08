@@ -41,6 +41,7 @@ from zicato.core import (
 )
 from zicato.core.measurement import MeasurementDraw
 from zicato.core.workspace import run_id_for_unit
+from zicato.runtime.lock import acquire_workspace_lock
 from zicato.telemetry.reducer import (
     loss_profile_from_dict,
     read_loss_profile,
@@ -105,6 +106,7 @@ def _stub_run_single(monkeypatch: pytest.MonkeyPatch, profiles: list[LossProfile
         entry: BoardEntry,
         weights: ScoringWeights,
         config: RuntimeConfig,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,
@@ -125,19 +127,21 @@ def _evaluate(
     *,
     force_fresh: bool = False,
 ) -> LossProfile:
-    return asyncio.run(
-        _run_unit_cache_first(
-            adapter=object(),
-            generation=generation,
-            entry=entry,
-            weights=ScoringWeights(),
-            config=_runtime_config(workspace),
-            workspace_root=workspace,
-            epoch_id=_EPOCH,
-            side="parent",
-            force_fresh=force_fresh,
+    with acquire_workspace_lock(workspace, "test") as writer:
+        return asyncio.run(
+            _run_unit_cache_first(
+                writer=writer,
+                adapter=object(),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=_runtime_config(workspace),
+                workspace_root=workspace,
+                epoch_id=_EPOCH,
+                side="parent",
+                force_fresh=force_fresh,
+            )
         )
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -457,23 +461,45 @@ def test_not_completed_reason_survives_the_loss_json_round_trip(tmp_path: Path) 
     assert read_loss_profile(path).not_completed_reason == "harness_exception:ValueError"
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("seed", [None, 17])
-def test_adding_seed_provenance_preserves_the_unknown_predecessor(
-    tmp_path: Path, seed: int | None
+async def test_adding_seed_provenance_preserves_the_unknown_predecessor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, seed: int | None
 ) -> None:
     from dataclasses import replace
 
-    from zicato.tournament.unit_cache import archive_outgoing_unit_loss
+    from zicato.tournament.unit_cache import read_unit_loss_history
 
-    path = tmp_path / "loss.json"
-    previous = make_loss_profile()
+    generation, entry = _generation(tmp_path), _entry()
+    path = _unit_loss_path(tmp_path, _EPOCH, generation.id, entry.id, 0, base_seed=seed)
+    previous = make_loss_profile(
+        run_id=run_id_for_unit(generation.id, entry.id, base_seed=seed),
+        epoch_id=_EPOCH,
+        generation_id=generation.id,
+        entry_id=entry.id,
+    )
     write_loss_profile(previous, path)
     measured = replace(previous, measurement=MeasurementDraw.from_index(0, base_seed=seed))
-    archive_outgoing_unit_loss(path, incoming=measured)
+    calls = _stub_run_single(monkeypatch, [measured])
+    with acquire_workspace_lock(tmp_path, "test") as writer:
+        for _ in range(2):
+            await _run_unit_cache_first(
+                writer=writer,
+                adapter=object(),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=replace(_runtime_config(tmp_path), seed=seed),
+                workspace_root=tmp_path,
+                epoch_id=_EPOCH,
+                side="parent",
+            )
+    assert calls == [generation.id]
     archive = path.with_name("loss.archive.jsonl")
     records = [json.loads(line) for line in archive.read_text().splitlines()]
     assert len(records) == 1
     assert loss_profile_from_dict(records[0]["profile"]).measurement is None
-    write_loss_profile(measured, path)
-    archive_outgoing_unit_loss(path, incoming=measured)
-    assert len(archive.read_text().splitlines()) == 1
+    history = read_unit_loss_history(tmp_path, _EPOCH, generation.id, entry.id, base_seed=seed)
+    assert len(history) == 2
+    assert history[0].measurement is None
+    assert history[1].measurement == measured.measurement

@@ -56,7 +56,7 @@ class PreparedRound:
     screen_candidates: Any
     recombine_pair: Any
     custom_judge_names: frozenset[str]
-    writer: WorkspaceLock | None = None
+    writer: WorkspaceLock
 
 
 @dataclass(frozen=True, slots=True)

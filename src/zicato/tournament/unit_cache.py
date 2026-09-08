@@ -501,9 +501,8 @@ def _persist_unit_loss(
 
     Unstarted scheduling omissions become attempt siblings. A real worker
     already wrote the profile; this write also supports in-process adapters
-    and preserves idempotence. The execution owner archives all displaced
-    companions before a rerun starts. Loss-history publication here covers
-    direct persistence callers without duplicating an identical measurement."""
+    and preserves idempotence. The execution owner archives displaced
+    profiles and their companions before a rerun starts."""
     measurement = loss.measurement or MeasurementDraw.from_index(replicate_index)
     if loss.measurement is not None:
         recorded_measurement(replicate_index, measurement=loss.measurement)
@@ -534,11 +533,6 @@ def _persist_unit_loss(
         replicate_index,
         base_seed=measurement.base_seed,
     )
-    # The worker archives what IT displaces (see archive_outgoing_unit_loss);
-    # this call also covers a test stub that drove the unit in-process, and
-    # passes ``incoming`` so the idempotent re-persist of the profile the
-    # worker just wrote is not mistaken for a displaced measurement.
-    archive_outgoing_unit_loss(path, replicate_index=replicate_index, incoming=loss)
     try:
         writer(loss, path)
     except OSError as exc:  # noqa: BLE001 — cache persist is best-effort
@@ -678,45 +672,17 @@ def _replicate_index_from_slot(path: Path) -> int:
     return artifact_replicate_index(path.name) or 0
 
 
-def archive_outgoing_unit_loss(
-    path: Path,
-    *,
-    replicate_index: int | None = None,
-    incoming: LossProfile | None = None,
-) -> None:
-    """Append the profile currently in ``path`` to the run's loss archive.
+def archive_outgoing_unit_loss(path: Path) -> None:
+    """Append the displaced profile before execution replaces its artifacts.
 
-    Call this in the process that is ABOUT TO TRUNCATE ``path``, and
-    call it there only. The board unit's canonical ``loss.json`` is
-    written by the worker SUBPROCESS
-    (:func:`zicato._tournament_worker._run`), so that is the archive's
-    seam: by the time the orchestrator's :func:`_persist_unit_loss`
-    re-persists the same profile, the measurement this run displaced is
-    already gone from disk and cannot be archived from there.
+    The complete artifact owner calls this after publishing the retained copy
+    and before clearing the reusable slot. The raw profile remains available
+    to the historical decoder, with its slot coordinates and ordered ``seq``.
 
-    A no-op when the slot is empty — the overwhelmingly common case, in
-    which a unit is measured once and this costs one ``exists()``. The
-    displaced profile is archived VERBATIM (the raw ``loss.json`` object
-    under ``profile``) so the archive needs no schema of its own and
-    stays readable by the same reducer that reads the canonical file;
-    the wrapper adds only the slot coordinates and a monotonic ``seq``.
+    The slot filename supplies the replicate index.
 
-    ``replicate_index`` is provenance stamped onto the record; omit it
-    and it is read off the slot filename (:func:`_replicate_index_from_slot`).
-
-    ``incoming`` is the profile the caller is about to write, when it
-    has one. A slot already holding THAT profile is not a displaced
-    measurement — it is the same measurement, and the caller is the
-    orchestrator's idempotent re-persist of what the worker just wrote.
-    Archiving it would append a copy of the CURRENT profile on every
-    fresh unit run, so a unit measured once would read back as two
-    measurements. Compared on the decoded profile rather than the raw
-    bytes so a formatting difference between two writers cannot make
-    the same measurement look like two.
-
-    Best-effort throughout: the archive rides ALONGSIDE the canonical
-    write, so an unreadable prior file or an unwritable archive must
-    never cost the caller its ``loss.json``.
+    An empty slot is a no-op. Unreadable prior data or an unwritable archive
+    does not prevent the caller from publishing its canonical loss.
     """
     if not path.exists():
         return
@@ -726,8 +692,6 @@ def archive_outgoing_unit_loss(
         log.debug("unit-loss archive skipped (unreadable %s): %s", path, exc)
         return
     if not isinstance(outgoing, dict):
-        return
-    if incoming is not None and _is_same_measurement(outgoing, incoming):
         return
     archive = path.with_name(LOSS_ARCHIVE_FILENAME)
     seq = 0
@@ -739,9 +703,7 @@ def archive_outgoing_unit_loss(
     record = {
         "seq": seq,
         "slot": path.name,
-        "replicate_index": (
-            _replicate_index_from_slot(path) if replicate_index is None else replicate_index
-        ),
+        "replicate_index": _replicate_index_from_slot(path),
         "profile": outgoing,
     }
     try:
@@ -749,33 +711,6 @@ def archive_outgoing_unit_loss(
             fh.write(json.dumps(record, default=str, sort_keys=True) + "\n")
     except OSError as exc:  # pragma: no cover — unwritable workspace
         log.debug("unit-loss archive append skipped for %s: %s", archive, exc)
-
-
-def _is_same_measurement(persisted: dict[str, Any], incoming: LossProfile) -> bool:
-    """Whether ``persisted`` decodes to the profile ``incoming`` already is.
-
-    A decode failure answers ``False``: an unreadable slot is treated as
-    a genuine predecessor and archived, which costs one duplicate line
-    rather than losing a measurement.
-    """
-    from zicato.telemetry.reducer import loss_profile_from_dict  # noqa: PLC0415
-
-    try:
-        previous = loss_profile_from_dict(persisted)
-        if (
-            previous.measurement is None
-            and incoming.measurement is not None
-            and incoming.measurement.base_seed is UNKNOWN_SEED
-        ):
-            recorded_measurement(
-                incoming.measurement.replicate_index,
-                measurement=None,
-                match_id=previous.match_id,
-            )
-            previous = replace(previous, measurement=incoming.measurement)
-        return previous == incoming
-    except (KeyError, TypeError, ValueError):
-        return False
 
 
 def read_unit_loss_history(

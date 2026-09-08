@@ -1,26 +1,12 @@
-"""Dataclasses + load/save helpers for ``.zicato/runtime/`` state files.
+"""Typed records and publication helpers for ``.zicato/runtime/``.
 
-This module is the typed surface every state-file reader (the supervisor
-binary, the dashboard, tests) goes through. The orchestrator writes via
-the same helpers so the round-trip is symmetric.
+Heartbeat and active-run records use atomic file replacement. Tournament
+updates append through the event log retained by the workspace writer lease;
+readers fold those events into an :class:`ActiveTournament`. Missing runtime
+records are valid before an invocation starts or after cleanup.
 
-The dataclasses here are **runtime-only state** — distinct from the
-persisted-journal types in :mod:`zicato.core.types`. They are frozen,
-slotted, JSON-friendly, and carry the minimum information the supervisor
-and the dashboard need to render a live view of an in-progress epoch.
-
-Every writer is atomic (``.tmp`` + ``fsync`` + ``os.replace``); see
-:mod:`zicato.storage` (the atomic primitives). Readers tolerate missing files and return
-``None`` so the supervisor can run against a workspace that has never
-booted an orchestrator.
-
-Persistence is routed through :class:`zicato.storage.StorageBackend` —
-the canonical file backend by default (see :mod:`zicato.runtime._storage`).
-The public helpers below keep their ``workspace_root: Path`` signatures
-unchanged; internally each constructs the workspace's backend and
-addresses records by logical key. The on-disk layout and the
-atomic-write discipline are byte-identical to the pre-seam
-implementation — a caller cannot tell the difference.
+Readers accept a workspace path. Tournament publishers require the held
+:class:`WorkspaceLock`, which owns sequencing for every concurrent matchup.
 """
 
 from __future__ import annotations
@@ -39,17 +25,11 @@ from zicato.runtime._storage import (
     heartbeat_key,
     kill_request_key,
 )
+from zicato.runtime.lock import WorkspaceLock
 from zicato.runtime.paths import ensure_runtime_dirs
 from zicato.storage import workspace_backend
 
-# The active-tournament live state is an append-only event log rather than a
-# mutable snapshot. The public helpers below delegate to
-# :mod:`zicato.runtime.tournament_log`, imported lazily inside each, since
-# that module folds back through ``ActiveTournament`` / the merge helpers here
-# and a top-level import would cycle.
-# Single second-precision UTC stamper, shared via :mod:`zicato.util.iso_time`.
-# Kept under this module's historical name so tests can monkeypatch
-# ``zicato.runtime.state._utc_now_iso`` and in-module writers stay unchanged.
+# Keep the local clock binding replaceable for deterministic record tests.
 from zicato.util.iso_time import now_iso as _utc_now_iso
 
 
@@ -874,7 +854,7 @@ def read_active_tournament(workspace_root: Path) -> ActiveTournament | None:
     return tournament_log.fold_active_tournament(workspace_root)
 
 
-def write_active_tournament(workspace_root: Path, t: ActiveTournament) -> None:
+def write_active_tournament(writer: WorkspaceLock, t: ActiveTournament) -> None:
     """Publish a full-envelope ``Snapshot`` to the active-tournament log.
 
     An authoritative whole-envelope publish is one atomic append of a
@@ -883,7 +863,7 @@ def write_active_tournament(workspace_root: Path, t: ActiveTournament) -> None:
     """
     from zicato.runtime import tournament_log  # noqa: PLC0415
 
-    tournament_log.append_snapshot(workspace_root, t.to_dict())
+    writer.tournament_log.append(tournament_log.SNAPSHOT, t.to_dict())
 
 
 def _apply_entry_update(
@@ -909,7 +889,9 @@ def _apply_entry_update(
     return replace(current, entries=new_entries)
 
 
-def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **updates: Any) -> None:
+def update_tournament_entry(
+    writer: WorkspaceLock, entry_id: str, side: str, **updates: Any
+) -> None:
     """Append an ``EntryUpdate`` for one ``(entry_id, side)`` row.
 
     One atomic append rather than a read-modify-write of a shared mutable
@@ -928,11 +910,14 @@ def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **up
         raise TypeError(f"update_tournament_entry got unexpected field(s): {sorted(unknown)}")
     from zicato.runtime import tournament_log  # noqa: PLC0415
 
-    tournament_log.append_entry_update(workspace_root, entry_id, side, updates)
+    writer.tournament_log.append(
+        tournament_log.ENTRY_UPDATE,
+        {"entry_id": entry_id, "side": side, "updates": dict(updates)},
+    )
 
 
 def update_tournament_partial_aggregate(
-    workspace_root: Path,
+    writer: WorkspaceLock,
     *,
     champion_agg: dict[str, Any] | None = None,
     challenger_agg: dict[str, Any] | None = None,
@@ -952,72 +937,34 @@ def update_tournament_partial_aggregate(
     """
     from zicato.runtime import tournament_log  # noqa: PLC0415
 
-    tournament_log.append_partial_aggregate(
-        workspace_root, champion_agg=champion_agg, challenger_agg=challenger_agg
-    )
+    payload: dict[str, Any] = {}
+    if champion_agg is not None:
+        payload["champion_agg"] = dict(champion_agg)
+    if challenger_agg is not None:
+        payload["challenger_agg"] = dict(challenger_agg)
+    if payload:
+        writer.tournament_log.append(tournament_log.PARTIAL_AGGREGATE, payload)
 
 
 def update_tournament_projected(
-    workspace_root: Path,
+    writer: WorkspaceLock,
     projected: dict[str, dict[str, Any]],
 ) -> None:
-    """Merge live projected-standing rows into the active tournament.
+    """Append live standing updates through the shared tournament writer.
 
-    Mirrors :func:`update_tournament_partial_aggregate`: called by the
-    runner the instant a board unit settles, so a reader (the dashboard)
-    watches an in-flight competitor's *projected* standing
-    (``scalar`` / ``boards_done`` / ``boards_total`` / ``pass_rate``)
-    climb as its boards land — distinct from a settled scalar.
-
-    Reads the current tournament JSON, MERGES the supplied per-generation
-    rows onto :attr:`ActiveTournament.projected` (so concurrently-running
-    sides each keep their own row), AND folds the just-written progress
-    onto the live rung's per-lane ``live_progress`` (data-model §2.4), then
-    atomically writes the result. A competitor settles out of the map
-    naturally once the strategy folds a real settled scalar onto its
-    standing; until then the projected row is the live read. If no
-    tournament file exists, the call is a no-op.
-
-    The ``live_progress`` fold is the keystone of the live-racing render:
-    the selection DRIVER republishes the whole envelope only ONCE per
-    scheduled batch (before the rung's matchups run), so the orchestrator's
-    :func:`_overlay_projected_live_progress` runs at rung START when nothing
-    has landed and never again that rung. Folding here — at the single point
-    each board lands — refreshes the live rung continuously, independent of
-    the driver's once-per-batch cadence, so the dashboard's rung does not
-    freeze at ``{boards_total, inflight}`` mid-rung. The fold mirrors the
-    overlay's merge exactly, so the live-arrived render is byte-identical to
-    a fresh republish plus overlay.
-
-    ANTI-FLASH: a lane is mutated ONLY when a rounded value actually changes
-    (the dashboard digest-gates renders on the rounded scalar + integer
-    board counts), so a board that does not move any rounded lane value
-    leaves the record byte-identical and the republish stays a no-op.
-
-    CHAMPION BENCHMARK: a racing rung runs N concurrent
-    champion-vs-challenger duels, each with its own scorer writing
-    ``projected[champion_id]`` — last-writer-wins would thrash the champion
-    lane (each duel aggregates the champion over only ITS boards). So the
-    champion lane keeps the STRATEGY-seeded ``projected_scalar`` (the
-    benchmark the strategy wrote from its own ``_scalars[champion]``) rather
-    than the per-duel scalar, and its ``boards_done`` only ever GROWS to the
-    most-progressed duel — never regresses to a less-progressed last writer.
-    Per-challenger lanes are keyed by challenger id (one writer each) so
-    they take the projected scalar directly.
-
-    This is ONE atomic append of a ``ProjectedUpdate`` delta; the
-    ``projected`` merge AND the ``live_progress`` fold (via
-    :func:`_fold_projected_into_live_progress`) run in the READER's fold, so
-    concurrent duels appending their projection rows cannot lose each
-    other's updates. Writer and fold share :func:`_fold_one_lane`, so the
-    merge semantics (champion-max-progress, the rounding gate) cannot drift
-    apart.
+    The reader merges the per-generation rows and folds their progress into
+    the live rounds. Challenger lanes use their own aggregate. Champion lanes
+    retain the strategy's benchmark scalar and the largest observed completed
+    board count, so concurrent matchups cannot regress that shared progress.
     """
     if not projected:
         return
     from zicato.runtime import tournament_log  # noqa: PLC0415
 
-    tournament_log.append_projected_update(workspace_root, projected)
+    writer.tournament_log.append(
+        tournament_log.PROJECTED_UPDATE,
+        {"projected": {str(k): dict(v) for k, v in projected.items() if isinstance(v, dict)}},
+    )
 
 
 def _champion_ids(competitors: list[dict[str, Any]]) -> set[str]:
@@ -1117,11 +1064,9 @@ def _fold_one_lane(lane: dict[str, Any], proj: dict[str, Any], *, is_champion: b
     return changed
 
 
-def clear_active_tournament(workspace_root: Path) -> None:
+def clear_active_tournament(writer: WorkspaceLock) -> None:
     """Clear the active tournament event log. Idempotent."""
-    from zicato.runtime import tournament_log  # noqa: PLC0415
-
-    tournament_log.clear_log(workspace_root)
+    writer.tournament_log.clear()
 
 
 __all__ = [

@@ -16,6 +16,7 @@ from tests._runtime_builders import make_generation
 from tests._runtime_context_support import install_runtime_context
 from zicato.config import IntegrationConfig, InvocationOverlay, resolve_configuration
 from zicato.core import BoardEntry, LossProfile, RuntimeConfig, ScoringWeights
+from zicato.runtime.lock import acquire_workspace_lock
 
 # ---------------------------------------------------------------------------
 # Stub LLMs for evolve invocations (importable module-level objects)
@@ -230,18 +231,20 @@ def test_runner_threads_configuration_into_worker_args_file(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy_create)
 
-    loss = asyncio.run(
-        _run_single(
-            adapter=StubAdapter(),
-            generation=generation,
-            entry=entry,
-            weights=ScoringWeights(),
-            config=replace(_runtime_config(workspace), configuration=configuration),
-            workspace_root=workspace,
-            epoch_id="e0",
-            side="parent",
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        loss = asyncio.run(
+            _run_single(
+                writer=writer,
+                adapter=StubAdapter(),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=replace(_runtime_config(workspace), configuration=configuration),
+                workspace_root=workspace,
+                epoch_id="e0",
+                side="parent",
+            )
         )
-    )
 
     assert isinstance(loss, LossProfile)
     assert captured_args["configuration"]["values"]["aux"]["call_timeout_s"] == 7.5

@@ -439,6 +439,7 @@ def _wrap_sinks_with_progress(
 @with_workspace_imports
 async def _run_single(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     generation: Generation,
     entry: BoardEntry,
@@ -540,7 +541,7 @@ async def _run_single(
         state_mod, _ = rt
         try:
             state_mod.update_tournament_entry(
-                workspace_root,
+                writer,
                 entry.id,
                 side,
                 status=state_mod.RunStatus.RUNNING,
@@ -999,7 +1000,7 @@ async def _run_single(
                     if adk_sid:
                         entry_updates["adk_session_id"] = adk_sid
                 state_mod.update_tournament_entry(
-                    workspace_root,
+                    writer,
                     entry.id,
                     side,
                     **entry_updates,
@@ -1210,7 +1211,7 @@ async def run_tournament(
                     for e in board
                 ]
                 state_mod.write_active_tournament(
-                    workspace_root,
+                    writer,
                     ActiveTournament(
                         tournament_id=f"tour-{parent_gen.id}-vs-{child_gen.id}-{now}",
                         parent_generation_id=parent_gen.id,
@@ -1234,6 +1235,7 @@ async def run_tournament(
             replicate_runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
             for replicate_index in range(replicate_count):
                 run_parent, run_child = await _run_board_units_full(
+                    writer=writer,
                     adapter=adapter,
                     parent_gen=parent_gen,
                     child_gen=child_gen,
@@ -1319,7 +1321,7 @@ async def run_tournament(
             if rt is not None:
                 state_mod, _ = rt
                 try:
-                    state_mod.clear_active_tournament(workspace_root)
+                    state_mod.clear_active_tournament(writer)
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -1538,7 +1540,7 @@ async def run_fast_mode(
                         )
                     )
                 state_mod.write_active_tournament(
-                    workspace_root,
+                    writer,
                     ActiveTournament(
                         tournament_id=f"tour-{parent_gen_id}-vs-{child_gen.id}-{now}",
                         parent_generation_id=parent_gen_id,
@@ -1582,6 +1584,7 @@ async def run_fast_mode(
                 # The scheduler mints that one semaphore (this round supplies
                 # none), which is what keeps ``parallelism`` the ceiling.
                 replicate_runs = await _run_replicate_slots_fast(
+                    writer=writer,
                     adapter=adapter,
                     child_gen=child_gen,
                     board=board,
@@ -1597,6 +1600,7 @@ async def run_fast_mode(
                     # so the fold cannot present partial execution as complete.
                     replicate_runs.append(
                         await _run_board_units_fast(
+                            writer=writer,
                             adapter=adapter,
                             child_gen=child_gen,
                             board=_stamp_replicate_index(board, replicate_index),
@@ -1615,7 +1619,7 @@ async def run_fast_mode(
             if rt is not None:
                 state_mod, _ = rt
                 try:
-                    state_mod.clear_active_tournament(workspace_root)
+                    state_mod.clear_active_tournament(writer)
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -1756,6 +1760,7 @@ async def run_matchup(
             board = [e for e in board if e.id in subset]
 
         left_losses, right_losses, champion_eval_mode, unit_provenance = await _run_replicated(
+            writer=writer,
             adapter=adapter,
             left_gen=left_gen,
             right_gen=right_gen,

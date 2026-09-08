@@ -1,57 +1,29 @@
-"""Regression pins for issue #122 — a re-measurement kept the one before it.
+"""Remeasurement retains ordered profiles and the latest canonical result.
 
-The champion is a single generation id that defends across many rounds, and
-every artifact describing one of its evaluations is keyed by
-``(epoch, generation, entry)`` with NO round dimension:
-
-* ``generations/<g>/gen_score.json`` — :func:`zicato.tournament.scoring.write_gen_score`
-  writes it unconditionally (``ingest.py`` ~47);
-* ``generations/<g>/runs/<entry>/loss.json`` (``loss.r<N>.json`` for
-  replicates) — :func:`zicato.tournament.unit_cache._persist_unit_loss`;
-* ``generations/<g>/runs/<entry>/events.jsonl`` — the worker opens the sink
-  with ``mode="write"`` (``_tournament_worker.py`` ~459), so the raw
-  telemetry is truncated too, not appended;
-* ``generations/<g>/runs/<entry>/result.json`` — the same replicate slotting.
-
-Under the cache-first default (``--mode fast``) that is not data loss: the
-champion's units are cache HITS, nothing is re-measured, and at-most-once is
-the point. The loss is specific to ``--mode full``, where
-``champion_force_fresh=(not fast_mode) and resumed_experiment is None``
-(``orchestrator.py`` ~1118) re-samples the champion every round and then
-writes the new sample over the old one. That is the sharp edge: the ONE mode
-whose stated purpose is re-sampling for noise is the mode that destroys the
-sample it would be compared against.
-
-What survives today, and what does not
---------------------------------------
-The round log preserves the champion's per-round AGGREGATE scalar —
-``GateEvaluated.champion_scalar`` is durable under
-``epochs/<e>/rounds/<n>/round_log.jsonl`` — which is why the reporter could
-reconstruct 8.479 / 5.917 / 6.229 at all. What no artifact preserves is the
-decomposition (pass rate, drift-loss mean) and, decisively for the
-attributable-per-entry-regression check cross-referenced on the issue, the
-PER-ENTRY results of the parent's earlier measurement. ``UnitCompleted``
-carries ``entry_id`` / ``replicate`` / ``side`` and no numbers at all.
-
-The fix deliberately does NOT re-key the unit cache. Making the cache key
-round-aware would turn every champion lookup into a miss and re-run the
-champion each round in fast mode — breaking the at-most-once discipline the
-cache exists to enforce. What these pins hold is ARCHIVE-ON-OVERWRITE: the
-canonical flat path keeps holding the latest measurement (so every existing
-reader is untouched), and the outgoing measurement is retained beside it —
-``gen_score.history.jsonl`` (every aggregate, unbounded but tiny),
-``loss.archive.jsonl`` (every displaced per-entry profile), and
-``events.prev.jsonl`` (exactly one prior raw telemetry file).
+The execution owner archives a slot before another unit starts. The profile
+history retains repeated observations even when complete attempt archives
+share identical contents. Generation score history and event predecessors
+remain readable through their existing owners.
 """
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from tests._runtime_builders import make_generation, runtime_config
+from zicato.core import BoardEntry, ScoringWeights
+from zicato.core.measurement import MeasurementDraw
 from zicato.core.types import LossProfile
+from zicato.core.workspace import run_id_for_unit
+from zicato.runtime.lock import acquire_workspace_lock
+from zicato.telemetry.reducer import write_loss_profile
+from zicato.tournament import runner, unit_cache
+from zicato.tournament.scheduling import _run_unit_cache_first
 from zicato.tournament.scoring import read_gen_score, write_gen_score
 from zicato.workspace import WorkspaceLayout, read_loss
 
@@ -149,49 +121,77 @@ def test_gen_score_rewrite_retains_the_prior_measurement(workspace: Path) -> Non
     assert {float(m["pass_rate"]) for m in history} == {0.75}
 
 
-# ---------------------------------------------------------------------------
-# Pin 3 — per-entry evidence, the live-gating prerequisite
-# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("samples", "worker_persists"),
+    [
+        (((2.1, True),), True),
+        (((2.1, True), (1.4, False)), True),
+        (((2.1, True), (1.4, True), (1.9, True)), True),
+        (((2.1, True), (9.9, False)), False),
+        (((2.1, True), (1.4, True), (2.1, True), (1.9, True)), True),
+    ],
+)
+def test_executed_measurements_preserve_ordered_loss_history(
+    workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    samples: tuple[tuple[float, bool], ...],
+    worker_persists: bool,
+) -> None:
+    """Only the execution boundary reads history, including identical reruns."""
+    generation = replace(make_generation(workspace, CHAMPION), epoch_id=EPOCH)
+    entry = BoardEntry(id="e1", kind="single_turn", input="input", wall_clock_budget_seconds=1)
+    path = unit_cache._unit_loss_path(workspace, EPOCH, CHAMPION, entry.id, 0, base_seed=None)
+    history_reads: list[Path] = []
+    archive = unit_cache.archive_outgoing_unit_loss
 
+    def observe_archive(path: Path, **kwargs: Any) -> None:
+        if path.exists():
+            history_reads.append(path)
+        archive(path, **kwargs)
 
-def test_forced_fresh_unit_rerun_retains_the_prior_per_entry_result(workspace: Path) -> None:
-    """The parent's per-entry results must survive its own re-measurement.
-
-    Attributable per-entry regression — did an entry that passed under the
-    parent fail under the challenger — is computable only while the parent's
-    earlier per-entry results still exist at the moment the child is scored.
-    ``--mode full`` re-runs the champion every round and overwrites exactly
-    those results.
-    """
-    from zicato.tournament.unit_cache import _persist_unit_loss  # noqa: PLC0415
-
-    layout = WorkspaceLayout.from_root(workspace)
-    for loss in (
-        _loss("e1", drift_loss=2.1, pass_fail=True),
-        _loss("e1", drift_loss=1.4, pass_fail=False),
-    ):
-        _persist_unit_loss(
-            workspace_root=workspace,
-            epoch_id=EPOCH,
-            generation_id=CHAMPION,
-            entry_id="e1",
-            replicate_index=0,
-            loss=loss,
+    monkeypatch.setattr(unit_cache, "archive_outgoing_unit_loss", observe_archive)
+    for drift_loss, pass_fail in samples:
+        loss = replace(
+            _loss(entry.id, drift_loss=drift_loss, pass_fail=pass_fail),
+            run_id=run_id_for_unit(CHAMPION, entry.id, base_seed=None),
+            measurement=MeasurementDraw.from_index(0, base_seed=None),
+            execution_started=True,
         )
 
-    # Back-compat: the canonical slot is still the cache key and still the
-    # latest — the unit cache's at-most-once discipline is untouched. This
-    # half holds today, and any fix must keep it holding.
-    latest = read_loss(layout, EPOCH, CHAMPION, "e1")
+        async def measured(profile: LossProfile = loss, **kwargs: Any) -> LossProfile:
+            if worker_persists:
+                write_loss_profile(profile, path)
+            return profile
+
+        monkeypatch.setattr(runner, "_run_single", measured)
+        with acquire_workspace_lock(workspace, "loss-history-test") as writer:
+            asyncio.run(
+                _run_unit_cache_first(
+                    writer=writer,
+                    adapter=object(),
+                    generation=generation,
+                    entry=entry,
+                    weights=ScoringWeights(),
+                    config=runtime_config(workspace),
+                    workspace_root=workspace,
+                    epoch_id=EPOCH,
+                    side="parent",
+                    force_fresh=True,
+                )
+            )
+
+    latest = read_loss(
+        WorkspaceLayout.from_root(workspace), EPOCH, CHAMPION, entry.id, base_seed=None
+    )
     assert latest is not None
-    assert latest["pass_fail"] is False
-    assert latest["drift_loss"] == pytest.approx(1.4)
-
-    from zicato.tournament.unit_cache import read_unit_loss_history  # noqa: PLC0415
-
-    history = read_unit_loss_history(workspace, EPOCH, CHAMPION, "e1", 0)
-    assert [h.pass_fail for h in history] == [True, False]
-    assert [round(h.drift_loss, 3) for h in history] == [2.1, 1.4]
+    assert latest["pass_fail"] is samples[-1][1]
+    assert latest["drift_loss"] == pytest.approx(samples[-1][0])
+    history = unit_cache.read_unit_loss_history(
+        workspace, EPOCH, CHAMPION, entry.id, base_seed=None
+    )
+    assert [h.pass_fail for h in history] == [passed for _, passed in samples]
+    assert [round(h.drift_loss, 3) for h in history] == [value for value, _ in samples]
+    assert history_reads == [path] * (len(samples) - 1)
 
 
 # ---------------------------------------------------------------------------
@@ -258,103 +258,3 @@ def test_sink_construction_archives_the_prior_events_file(workspace: Path) -> No
     prev = layout.events_prev(EPOCH, CHAMPION, "e1")
     assert prev.exists()
     assert "first" in prev.read_text(encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# Pin 6 — the loss archive must sit in the process that TRUNCATES the slot
-# ---------------------------------------------------------------------------
-#
-# The worker SUBPROCESS writes the canonical ``loss.json``; the orchestrator's
-# ``_persist_unit_loss`` then re-persists the identical profile. Archiving from
-# the orchestrator alone gets both halves wrong: the measurement this run
-# displaced is already gone from disk by then (so nothing real is retained),
-# and the profile it does find is the one it is about to write (so every fresh
-# unit run appends a copy of the CURRENT measurement). These two pins model the
-# real two-writer flow rather than calling ``_persist_unit_loss`` twice.
-
-
-def test_a_unit_measured_once_reads_back_as_one_measurement(workspace: Path) -> None:
-    """The orchestrator's idempotent re-persist is not a second measurement."""
-    from zicato.telemetry.reducer import write_loss_profile  # noqa: PLC0415
-    from zicato.tournament.unit_cache import (  # noqa: PLC0415
-        _persist_unit_loss,
-        _unit_loss_path,
-        archive_outgoing_unit_loss,
-        read_unit_loss_history,
-    )
-
-    only = _loss("e1", drift_loss=2.1, pass_fail=True)
-    path = _unit_loss_path(workspace, EPOCH, CHAMPION, "e1", 0)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    archive_outgoing_unit_loss(path)  # the worker, before it truncates
-    write_loss_profile(only, path)  # the worker's write
-    _persist_unit_loss(  # the orchestrator's idempotent re-persist
-        workspace_root=workspace,
-        epoch_id=EPOCH,
-        generation_id=CHAMPION,
-        entry_id="e1",
-        replicate_index=0,
-        loss=only,
-    )
-
-    history = read_unit_loss_history(workspace, EPOCH, CHAMPION, "e1", 0)
-    assert [round(h.drift_loss, 3) for h in history] == [2.1]
-
-
-def test_worker_archives_the_measurement_its_write_displaces(workspace: Path) -> None:
-    """Three ``--mode full`` rounds yield three measurements, in order."""
-    from zicato.telemetry.reducer import write_loss_profile  # noqa: PLC0415
-    from zicato.tournament.unit_cache import (  # noqa: PLC0415
-        _persist_unit_loss,
-        _unit_loss_path,
-        archive_outgoing_unit_loss,
-        read_unit_loss_history,
-    )
-
-    path = _unit_loss_path(workspace, EPOCH, CHAMPION, "e1", 0)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    for drift_loss in (2.1, 1.4, 1.9):
-        loss = _loss("e1", drift_loss=drift_loss, pass_fail=True)
-        archive_outgoing_unit_loss(path)
-        write_loss_profile(loss, path)
-        _persist_unit_loss(
-            workspace_root=workspace,
-            epoch_id=EPOCH,
-            generation_id=CHAMPION,
-            entry_id="e1",
-            replicate_index=0,
-            loss=loss,
-        )
-
-    history = read_unit_loss_history(workspace, EPOCH, CHAMPION, "e1", 0)
-    assert [round(h.drift_loss, 3) for h in history] == [2.1, 1.4, 1.9]
-
-
-def test_a_displacing_write_with_no_worker_still_archives(workspace: Path) -> None:
-    """The skipped-unit path has no worker, so ``_persist_unit_loss`` archives.
-
-    A budget-skip synthesises its own loss and writes it straight over an
-    occupied slot; the ``incoming`` guard must suppress only the re-persist of
-    the SAME profile, never a genuine displacement.
-    """
-    from zicato.tournament.unit_cache import (  # noqa: PLC0415
-        _persist_unit_loss,
-        read_unit_loss_history,
-    )
-
-    for loss in (
-        _loss("e1", drift_loss=2.1, pass_fail=True),
-        _loss("e1", drift_loss=9.9, pass_fail=False),
-    ):
-        _persist_unit_loss(
-            workspace_root=workspace,
-            epoch_id=EPOCH,
-            generation_id=CHAMPION,
-            entry_id="e1",
-            replicate_index=0,
-            loss=loss,
-        )
-
-    history = read_unit_loss_history(workspace, EPOCH, CHAMPION, "e1", 0)
-    assert [round(h.drift_loss, 3) for h in history] == [2.1, 9.9]

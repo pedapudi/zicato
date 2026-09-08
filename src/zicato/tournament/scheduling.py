@@ -58,6 +58,7 @@ from zicato.core.measurement import (
     MeasurementDraw,
     validate_measurement_interval,
 )
+from zicato.runtime.lock import WorkspaceLock
 from zicato.tournament.scoring import aggregate_generation_score
 from zicato.tournament.scoring import (
     fold_matchup_replicates as _fold_replicate_runs,
@@ -116,6 +117,7 @@ def _cacheable_unit_key(
 
 async def _run_single(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     generation: Generation,
     entry: BoardEntry,
@@ -141,6 +143,7 @@ async def _run_single(
 
     run_single: Any = runner._run_single
     loss: LossProfile = await run_single(
+        writer=writer,
         adapter=adapter,
         generation=generation,
         entry=entry,
@@ -180,8 +183,8 @@ class _IncrementalScorer:
     """
 
     __slots__ = (
+        "_writer",
         "_weights",
-        "_workspace_root",
         "_champion",
         "_challenger",
         "_lock",
@@ -194,14 +197,14 @@ class _IncrementalScorer:
     def __init__(
         self,
         weights: ScoringWeights,
-        workspace_root: Path,
         *,
+        writer: WorkspaceLock,
         champion_id: str = "",
         challenger_id: str = "",
         board_total: int = 0,
     ) -> None:
+        self._writer = writer
         self._weights = weights
-        self._workspace_root = workspace_root
         self._champion: list[LossProfile] = []
         self._challenger: list[LossProfile] = []
         self._lock = asyncio.Lock()
@@ -251,7 +254,7 @@ class _IncrementalScorer:
             )
             try:
                 self._state.update_tournament_partial_aggregate(
-                    self._workspace_root,
+                    self._writer,
                     champion_agg=champion_agg,
                     challenger_agg=challenger_agg,
                 )
@@ -290,7 +293,7 @@ class _IncrementalScorer:
             if not projected:
                 return
             try:
-                self._state.update_tournament_projected(self._workspace_root, projected)
+                self._state.update_tournament_projected(self._writer, projected)
             except Exception as exc:  # noqa: BLE001 — projected scoring is best-effort
                 log.debug("projected-standing persist skipped: %s", exc)
 
@@ -313,6 +316,7 @@ class _IncrementalScorer:
 
 async def _run_full_board_unit(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     parent_gen: Generation,
     child_gen: Generation,
@@ -375,6 +379,7 @@ async def _run_full_board_unit(
     effective_parent_force_fresh = force_fresh if parent_force_fresh is None else parent_force_fresh
     parent_result, child_result = await gather_owned(
         _run_unit_cache_first(
+            writer=writer,
             adapter=adapter,
             generation=parent_gen,
             entry=entry,
@@ -389,6 +394,7 @@ async def _run_full_board_unit(
             provenance=provenance,
         ),
         _run_unit_cache_first(
+            writer=writer,
             adapter=adapter,
             generation=child_gen,
             entry=entry,
@@ -420,6 +426,7 @@ async def _run_full_board_unit(
 
 async def _run_fast_board_unit(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     child_gen: Generation,
     entry: BoardEntry,
@@ -446,6 +453,7 @@ async def _run_fast_board_unit(
     """
     validate_measurement_interval(replicate_index, 1)
     child_loss = await _run_unit_cache_first(
+        writer=writer,
         adapter=adapter,
         generation=child_gen,
         entry=entry,
@@ -555,6 +563,7 @@ def _effective_unit_semaphore(
 
 async def _run_board_units_full(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     parent_gen: Generation,
     child_gen: Generation,
@@ -622,6 +631,7 @@ async def _run_board_units_full(
     validate_measurement_interval(replicate_index, 1)
     if matchup_deadline is not None:
         return await _run_board_units_full_budgeted(
+            writer=writer,
             adapter=adapter,
             parent_gen=parent_gen,
             child_gen=child_gen,
@@ -646,7 +656,7 @@ async def _run_board_units_full(
     # "projected" so an in-flight candidate shows a climbing standing.
     scorer = _IncrementalScorer(
         weights,
-        workspace_root,
+        writer=writer,
         champion_id=parent_gen.id,
         challenger_id=child_gen.id,
         board_total=len(board),
@@ -703,6 +713,7 @@ async def _run_board_units_full(
                 )
                 return parent_loss, child_loss
             return await _run_full_board_unit(
+                writer=writer,
                 adapter=adapter,
                 parent_gen=parent_gen,
                 child_gen=child_gen,
@@ -749,6 +760,7 @@ async def _run_board_units_full(
 
 async def _run_board_units_full_budgeted(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     parent_gen: Generation,
     child_gen: Generation,
@@ -787,7 +799,7 @@ async def _run_board_units_full_budgeted(
     validate_measurement_interval(replicate_index, 1)
     scorer = _IncrementalScorer(
         weights,
-        workspace_root,
+        writer=writer,
         champion_id=parent_gen.id,
         challenger_id=child_gen.id,
         board_total=len(board),
@@ -823,6 +835,7 @@ async def _run_board_units_full_budgeted(
         if unit_semaphore is None:
             async with meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta):
                 return await _run_full_board_unit(
+                    writer=writer,
                     adapter=adapter,
                     parent_gen=parent_gen,
                     child_gen=child_gen,
@@ -843,6 +856,7 @@ async def _run_board_units_full_budgeted(
             unit_semaphore,
         ):
             return await _run_full_board_unit(
+                writer=writer,
                 adapter=adapter,
                 parent_gen=parent_gen,
                 child_gen=child_gen,
@@ -935,6 +949,7 @@ async def _run_board_units_full_budgeted(
 
 async def _run_board_units_fast(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     child_gen: Generation,
     board: list[BoardEntry],
@@ -976,7 +991,7 @@ async def _run_board_units_fast(
     # size so the live projected standing accrues for the in-flight challenger.
     scorer = _IncrementalScorer(
         weights,
-        workspace_root,
+        writer=writer,
         challenger_id=child_gen.id,
         board_total=len(board),
     )
@@ -1015,6 +1030,7 @@ async def _run_board_units_fast(
             # Scored the instant it settles — concurrently with the sibling
             # board units still running.
             return await _run_fast_board_unit(
+                writer=writer,
                 adapter=adapter,
                 child_gen=child_gen,
                 entry=entry,
@@ -1054,6 +1070,7 @@ async def _run_board_units_fast(
 
 async def _run_unit_cache_first(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     generation: Generation,
     entry: BoardEntry,
@@ -1107,6 +1124,7 @@ async def _run_unit_cache_first(
 
     async def _evaluate() -> LossProfile:
         return await _run_unit_after_cache_miss(
+            writer=writer,
             adapter=adapter,
             generation=generation,
             entry=entry,
@@ -1170,6 +1188,7 @@ async def _run_unit_cache_first(
 
 async def _run_unit_after_cache_miss(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     generation: Generation,
     entry: BoardEntry,
@@ -1211,6 +1230,7 @@ async def _run_unit_after_cache_miss(
         meta={"run_id": run_id, "side": side, "entry_id": entry.id},
     ) as _worker_span:
         loss = await _run_single(
+            writer=writer,
             adapter=adapter,
             generation=generation,
             entry=entry,
@@ -1366,6 +1386,7 @@ async def _run_entry_replicate_chains(
 
 async def _run_replicate_slots_full(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     parent_gen: Generation,
     child_gen: Generation,
@@ -1411,7 +1432,7 @@ async def _run_replicate_slots_full(
     semaphore = _effective_unit_semaphore(unit_semaphore, config)
     scorer = _IncrementalScorer(
         weights,
-        workspace_root,
+        writer=writer,
         champion_id=parent_gen.id,
         challenger_id=child_gen.id,
         board_total=len(board) * replicate_count,
@@ -1422,6 +1443,7 @@ async def _run_replicate_slots_full(
 
     async def _unit(entry: BoardEntry, replicate_index: int) -> tuple[LossProfile, LossProfile]:
         return await _run_full_board_unit(
+            writer=writer,
             adapter=adapter,
             parent_gen=parent_gen,
             child_gen=child_gen,
@@ -1458,6 +1480,7 @@ async def _run_replicate_slots_full(
 
 async def _run_replicate_slots_fast(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     child_gen: Generation,
     board: list[BoardEntry],
@@ -1490,7 +1513,7 @@ async def _run_replicate_slots_fast(
     semaphore = _effective_unit_semaphore(unit_semaphore, config)
     scorer = _IncrementalScorer(
         weights,
-        workspace_root,
+        writer=writer,
         challenger_id=child_gen.id,
         board_total=len(board) * replicate_count,
     )
@@ -1500,6 +1523,7 @@ async def _run_replicate_slots_fast(
 
     async def _unit(entry: BoardEntry, replicate_index: int) -> LossProfile:
         return await _run_fast_board_unit(
+            writer=writer,
             adapter=adapter,
             child_gen=child_gen,
             entry=entry,
@@ -1533,6 +1557,7 @@ async def _run_replicate_slots_fast(
 
 async def _run_replicated(
     *,
+    writer: WorkspaceLock,
     adapter: Any,
     left_gen: Generation,
     right_gen: Generation,
@@ -1661,6 +1686,7 @@ async def _run_replicated(
     # below is kept for the budgeted paths).
     if replicate_count > 1 and _overlap_replicate_slots(config, matchup_deadline):
         runs = await _run_replicate_slots_full(
+            writer=writer,
             adapter=adapter,
             parent_gen=left_gen,
             child_gen=right_gen,
@@ -1686,6 +1712,7 @@ async def _run_replicated(
         # it launches no missing units and still reuses existing measurements.
         replicate_index = replicate_base + replicate_offset
         left_losses, right_losses = await _run_board_units_full(
+            writer=writer,
             adapter=adapter,
             parent_gen=left_gen,
             child_gen=right_gen,

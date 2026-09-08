@@ -17,7 +17,12 @@ from tests._orchestrator_harness import bootstrap_workspace, evaluation_call_llm
 from zicato.evolve import lifecycle_services, loop, round_entry
 from zicato.evolve.invocation import validated_invocation
 from zicato.runtime.heartbeat import HeartbeatBeater
-from zicato.runtime.lock import WorkspaceLockHeld, acquire_workspace_lock
+from zicato.runtime.lock import (
+    WorkspaceLock,
+    WorkspaceLockHeld,
+    acquire_workspace_lock,
+    validate_workspace_lock,
+)
 from zicato.telemetry.meta_loop import (
     current_meta_emitter,
     reset_current_emitter,
@@ -89,7 +94,12 @@ def test_loop_failure_closes_every_acquired_resource(
     if failure_at == "mutation_surface":
         monkeypatch.setattr("zicato.mutation.markers.install_syntax_table", fail)
     if failure_at == "terminal":
-        monkeypatch.setattr("zicato.evolve.dashboard_projection._mark_run_terminal", fail)
+
+        def terminal(writer: WorkspaceLock) -> None:
+            validate_workspace_lock(writer, workspace)
+            raise original
+
+        monkeypatch.setattr("zicato.evolve.dashboard_projection._mark_run_terminal", terminal)
 
     async def exercise() -> None:
         previous = Emitter()

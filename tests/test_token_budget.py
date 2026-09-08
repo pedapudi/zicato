@@ -146,6 +146,7 @@ def _install_token_heavy_run_single(
         entry: Any,
         weights: Any,
         config: Any,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,

@@ -36,7 +36,7 @@ from zicato.query.runtime_view import (
     read_active_runs_view,
 )
 from zicato.runtime import progress_log
-from zicato.runtime.lock import pid_start_time
+from zicato.runtime.lock import acquire_workspace_lock, pid_start_time
 
 #: The pinned "now" every fixture is dated against.
 NOW = _dt.datetime(2026, 8, 9, 12, 0, 0, tzinfo=_dt.UTC)
@@ -161,8 +161,9 @@ def test_the_june_workspace_shape_is_interrupted(tmp_path: Path) -> None:
 
 def test_terminal_progress_event_is_settled(tmp_path: Path) -> None:
     ws = _ws(tmp_path, beat_age_s=1.0)
-    progress_log.append_progress(ws, progress_log.ROUND_START)
-    progress_log.append_progress(ws, progress_log.SETTLED)
+    with acquire_workspace_lock(ws, "test-publication") as writer:
+        progress_log.append_progress(writer, progress_log.ROUND_START)
+        progress_log.append_progress(writer, progress_log.SETTLED)
     out = _derive(ws)
     assert out["state"] == LIVENESS_SETTLED
     assert out["ended_at"] == progress_log.tail(ws).ts  # type: ignore[union-attr]
@@ -176,7 +177,8 @@ def test_terminal_beats_a_fresh_heartbeat(tmp_path: Path) -> None:
     live for the tail of the staleness window.
     """
     ws = _ws(tmp_path, phase="tournament:round_0:v1", beat_age_s=0.0)
-    progress_log.append_progress(ws, progress_log.STOPPED)
+    with acquire_workspace_lock(ws, "test-publication") as writer:
+        progress_log.append_progress(writer, progress_log.STOPPED)
     assert _derive(ws)["state"] == LIVENESS_SETTLED
 
 
@@ -189,7 +191,8 @@ def test_at_rest_phase_settles_without_a_progress_log(tmp_path: Path) -> None:
 
 def test_non_terminal_progress_tail_with_a_stale_beat_is_interrupted(tmp_path: Path) -> None:
     ws = _ws(tmp_path, beat_age_s=3600.0)
-    progress_log.append_progress(ws, progress_log.TOURNAMENT_START)
+    with acquire_workspace_lock(ws, "test-publication") as writer:
+        progress_log.append_progress(writer, progress_log.TOURNAMENT_START)
     assert _derive(ws)["state"] == LIVENESS_INTERRUPTED
 
 

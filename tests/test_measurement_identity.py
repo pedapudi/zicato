@@ -26,6 +26,7 @@ from zicato.query.replicate_scores import (
     cell_replicate_draws_indexed,
     measurement_band_draws_indexed,
 )
+from zicato.runtime.lock import acquire_workspace_lock
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 from zicato.testing.fixtures import make_loss_profile
 from zicato.tournament import scheduling
@@ -54,25 +55,28 @@ async def test_cache_reuse_requires_the_requested_execution_seed(
 
     monkeypatch.setattr(scheduling, "_run_single", measured)
 
-    async def draw(seed: int | None) -> Any:
-        return await scheduling._run_unit_cache_first(
-            adapter=object(),
-            generation=generation,
-            entry=entry,
-            weights=deterministic_weights(),
-            config=replace(runtime_config(tmp_path), seed=seed),
-            workspace_root=tmp_path,
-            epoch_id="e0",
-            side="child",
-        )
+    with acquire_workspace_lock(tmp_path, "test") as writer:
 
-    first = await draw(17)
-    assert (await draw(17)).drift_loss == first.drift_loss
-    second, repeated = await asyncio.gather(draw(29), draw(29))
-    assert second.drift_loss == 29
-    assert repeated == second
-    assert (await draw(17)).drift_loss == 17
-    assert calls == [17, 29]
+        async def draw(seed: int | None) -> Any:
+            return await scheduling._run_unit_cache_first(
+                writer=writer,
+                adapter=object(),
+                generation=generation,
+                entry=entry,
+                weights=deterministic_weights(),
+                config=replace(runtime_config(tmp_path), seed=seed),
+                workspace_root=tmp_path,
+                epoch_id="e0",
+                side="child",
+            )
+
+        first = await draw(17)
+        assert (await draw(17)).drift_loss == first.drift_loss
+        second, repeated = await asyncio.gather(draw(29), draw(29))
+        assert second.drift_loss == 29
+        assert repeated == second
+        assert (await draw(17)).drift_loss == 17
+        assert calls == [17, 29]
 
 
 @pytest.mark.parametrize("parameter", ["replicates", "promote_confidence_replicates"])
@@ -95,27 +99,33 @@ async def test_offset_plus_count_is_validated_before_scheduling(
         pytest.fail("measurement validation must precede scheduling")
 
     monkeypatch.setattr(scheduling, "_run_board_units_full", unexpected_schedule)
-    with pytest.raises(ValueError, match="measurement|range"):
-        await scheduling._run_replicated(
-            adapter=object(),
-            left_gen=parent,
-            right_gen=child,
-            board=[],
-            weights=deterministic_weights(),
-            config=runtime_config(tmp_path),
-            workspace_root=tmp_path,
-            epoch_id="e0",
-            replicates=2,
-            replicate_base=base,
-            fast=False,
-        )
-    assert existing.read_bytes() == b'{"measurement": "preserved"}\n'
-    assert sorted(path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")) == [
-        "existing-record.json",
-        "snap",
-        "snap/child",
-        "snap/parent",
-    ]
+    with acquire_workspace_lock(tmp_path, "test") as writer:
+        before = {
+            path.relative_to(tmp_path): path.read_bytes()
+            for path in tmp_path.rglob("*")
+            if path.is_file()
+        }
+        with pytest.raises(ValueError, match="measurement|range"):
+            await scheduling._run_replicated(
+                writer=writer,
+                adapter=object(),
+                left_gen=parent,
+                right_gen=child,
+                board=[],
+                weights=deterministic_weights(),
+                config=runtime_config(tmp_path),
+                workspace_root=tmp_path,
+                epoch_id="e0",
+                replicates=2,
+                replicate_base=base,
+                fast=False,
+            )
+        assert existing.read_bytes() == b'{"measurement": "preserved"}\n'
+        assert {
+            path.relative_to(tmp_path): path.read_bytes()
+            for path in tmp_path.rglob("*")
+            if path.is_file()
+        } == before
 
 
 @pytest.mark.parametrize("allocation", MEASUREMENT_RANGES, ids=lambda a: str(a.purpose))
@@ -234,25 +244,27 @@ async def test_colliding_history_is_preserved_beside_a_known_seed_draw(
         )
 
     monkeypatch.setattr(scheduling, "_run_single", measured)
-    for _ in range(2):
-        result = await scheduling._run_unit_cache_first(
-            adapter=object(),
-            generation=generation,
-            entry=entry,
-            weights=deterministic_weights(),
-            config=runtime_config(tmp_path),
-            workspace_root=tmp_path,
-            epoch_id="e0",
-            side="parent",
-            replicate_index=4000,
-        )
-        assert result.measurement == MeasurementDraw(MeasurementPurpose.CONFIRMATION, 0, None)
-        assert result.score == 0.75
-    assert calls == 1
-    history = read_unit_loss_history(tmp_path, "e0", "g0", "entry", 4000)
-    assert [profile.match_id for profile in history] == ["candidate-screen"]
-    selected = _unit_loss_path(tmp_path, "e0", "g0", "entry", 4000, base_seed=None)
-    assert read_loss_profile(selected).match_id == "bt-replicate:r4000:parent:child"
+    with acquire_workspace_lock(tmp_path, "test") as writer:
+        for _ in range(2):
+            result = await scheduling._run_unit_cache_first(
+                writer=writer,
+                adapter=object(),
+                generation=generation,
+                entry=entry,
+                weights=deterministic_weights(),
+                config=runtime_config(tmp_path),
+                workspace_root=tmp_path,
+                epoch_id="e0",
+                side="parent",
+                replicate_index=4000,
+            )
+            assert result.measurement == MeasurementDraw(MeasurementPurpose.CONFIRMATION, 0, None)
+            assert result.score == 0.75
+        assert calls == 1
+        history = read_unit_loss_history(tmp_path, "e0", "g0", "entry", 4000)
+        assert [profile.match_id for profile in history] == ["candidate-screen"]
+        selected = _unit_loss_path(tmp_path, "e0", "g0", "entry", 4000, base_seed=None)
+        assert read_loss_profile(selected).match_id == "bt-replicate:r4000:parent:child"
 
 
 @pytest.mark.asyncio

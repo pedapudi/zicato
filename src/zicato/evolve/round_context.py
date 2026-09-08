@@ -89,7 +89,6 @@ def _build_candidate_screen_runner(
     async def _screen(candidates: Sequence[Experiment]) -> list[Any]:
         _beat(
             beater,
-            workspace_root=workspace_root,
             epoch_id=epoch_id,
             generation_id=parent_gen.id,
             round_index=round_index,

@@ -20,6 +20,7 @@ from zicato.core.settings import InvocationOverlay, ResolvedConfiguration
 from zicato.core.types import ScoringWeights
 from zicato.epoch.preflight import PreflightRefusedError
 from zicato.evolve.invocation import InvocationContext, validated_invocation
+from zicato.evolve.lifecycle_services import _record_progress
 from zicato.logging_stream import install_log_stream, set_log_context
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.resume import (
@@ -198,35 +199,6 @@ def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
 #: transient (a single degenerate tournament, say), but two in a row means
 #: the loop is producing no signal.
 _DEGENERATE_HEALTH_STOP_THRESHOLD = 2
-
-
-def _append_progress_seq(workspace_root: Path, transition: str) -> int | None:
-    """Append a loop-level progress transition; return its ``seq`` or ``None``.
-
-    The loop appends genuine loop transitions
-    (:data:`progress_log.LOOP_START` / :data:`~progress_log.ROUND_START` /
-    the terminal :data:`~progress_log.SETTLED` / :data:`~progress_log.STOPPED`)
-    so the heartbeat's ``seq`` advances on real progress, never on the
-    timer. Returns the new tail ``seq`` to stamp onto the heartbeat, or
-    ``None`` on a write failure — passing ``None`` to
-    :meth:`HeartbeatBeater.update` leaves the prior ``seq`` unchanged, so a
-    log hiccup never regresses or fabricates the cursor. Best-effort: a
-    progress-log failure must never abort the loop.
-    """
-    seq: int | None = None
-
-    def _remember(value: int) -> None:
-        nonlocal seq
-        seq = value
-
-    with best_effort(
-        "progress-log append",
-        on_error=lambda exc: log.debug("progress-log append skipped: %s", exc),
-    ):
-        from zicato.runtime import progress_log  # noqa: PLC0415
-
-        _remember(progress_log.append_progress(workspace_root, transition))
-    return seq
 
 
 def _budget_aborted_outcome(parent_generation_id: str, budget_s: int) -> EvolveRoundOutcome:
@@ -617,7 +589,7 @@ async def _evolve_n_rounds(
         "progress-log clear",
         on_error=lambda exc: log.debug("progress-log clear skipped: %s", exc),
     ):
-        progress_log.clear_log(workspace_root)
+        progress_log.clear_log(writer)
     # The invocation owns only services it launched; workers receive both
     # endpoints explicitly through their runtime payload.
     harmonograf_url, harmonograf_handle = _resolve_or_launch_harmonograf(
@@ -644,7 +616,7 @@ async def _evolve_n_rounds(
         invocation.resources.push_async_callback(meta_loop_emitter.close)
     beater = HeartbeatBeater(workspace_root, instance_id, interval_s=2.0)
     invocation.resources.push_async_callback(beater.stop)
-    invocation.resources.callback(_mark_run_terminal, workspace_root)
+    invocation.resources.callback(_mark_run_terminal, writer)
     # Bind the emitter as the ambient meta-loop emitter so the structural
     # spans (round / phase / matchup / worker / slate slot) can be opened by
     # deep call sites — the runner, the board-unit scheduler, the best-of-N
@@ -668,7 +640,7 @@ async def _evolve_n_rounds(
         # First genuine transition: the loop booted (epoch resolved, lock
         # held). Stamp its seq so a reader sees a live, advancing cursor
         # from the very first beat. Best-effort.
-        loop_start_seq = _append_progress_seq(workspace_root, progress_log.LOOP_START)
+        loop_start_seq = _record_progress(writer, progress_log.LOOP_START)
         beater.update(
             epoch_id=epoch_id or "",
             phase="evolve_n_rounds:start",
@@ -754,7 +726,7 @@ async def _evolve_n_rounds(
                 # Re-tag the operator log with the rolled epoch id.
                 set_log_context(epoch_id=epoch_id)
 
-            round_start_seq = _append_progress_seq(workspace_root, progress_log.ROUND_START)
+            round_start_seq = _record_progress(writer, progress_log.ROUND_START)
             beater.update(
                 epoch_id=epoch_id or "",
                 round_index=epoch_round_index,
@@ -947,8 +919,8 @@ async def _evolve_n_rounds(
         # one (seq frozen mid-flight, no terminal event). ``budget_stopped``
         # (a budget / circuit-breaker cut) is STILL a clean end, marked
         # STOPPED to distinguish it from a fully-completed SETTLED run.
-        terminal_seq = _append_progress_seq(
-            workspace_root,
+        terminal_seq = _record_progress(
+            writer,
             progress_log.STOPPED if budget_stopped else progress_log.SETTLED,
         )
         beater.update(

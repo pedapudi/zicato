@@ -154,7 +154,6 @@ def _defer_round_infra_outage(
     )
     _beat(
         beater,
-        workspace_root=workspace_root,
         epoch_id=epoch_id,
         generation_id=next_id,
         round_index=round_index,

@@ -22,6 +22,7 @@ from tests._workspace_support import write_tournament
 from zicato.core.mutation import MutationPoint
 from zicato.dashboard.server import create_app
 from zicato.mutation.inventory import write_mutation_inventory
+from zicato.runtime.lock import acquire_workspace_lock
 
 # ---------------------------------------------------------------------------
 # Fixture workspace
@@ -2716,9 +2717,10 @@ async def test_sse_frames_carry_progress_seq_and_terminal(workspace: Path) -> No
     from zicato.runtime import progress_log
 
     # Seed the progress log: two genuine transitions then a terminal marker.
-    progress_log.append_progress(workspace, progress_log.LOOP_START)
-    progress_log.append_progress(workspace, progress_log.ROUND_START)
-    progress_log.append_progress(workspace, progress_log.SETTLED)
+    with acquire_workspace_lock(workspace, "test-publication") as writer:
+        progress_log.append_progress(writer, progress_log.LOOP_START)
+        progress_log.append_progress(writer, progress_log.ROUND_START)
+        progress_log.append_progress(writer, progress_log.SETTLED)
 
     paths = WorkspacePaths(workspace)
     broker = ChangeBroker(paths)

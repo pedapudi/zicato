@@ -140,7 +140,7 @@ def _publish_field_observations(
         round_log=prepared.round_log,
     )
     _settle_active_tournament(
-        prepared.workspace_root,
+        prepared.writer,
         tournament_id=candidates.tournament_id,
         epoch_id=prepared.epoch_id,
         structure=prepared.tournament_spec.structure,
@@ -649,10 +649,10 @@ async def _close_field_round(
         "progress-log field tournament-settle",
         on_error=lambda exc: log.debug("progress-log field tournament-settle skipped: %s", exc),
     ):
-        progress_log.append_progress(prepared.workspace_root, progress_log.TOURNAMENT_SETTLE)
+        progress_log.append_progress(prepared.writer, progress_log.TOURNAMENT_SETTLE)
     _beat(
         prepared.beater,
-        workspace_root=prepared.workspace_root,
+        progress_writer=prepared.writer,
         progress=(
             progress_log.PROMOTE if bookkeeping_decision == "promoted" else progress_log.REJECT
         ),

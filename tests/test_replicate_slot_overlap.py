@@ -46,6 +46,7 @@ from tests._runtime_builders import (
 from zicato.core.board import BoardEntry
 from zicato.core.runtime import RoundTokenLedger, RuntimeConfig
 from zicato.core.types import Generation, LossProfile
+from zicato.runtime.lock import WorkspaceLock, acquire_workspace_lock
 
 pytestmark = pytest.mark.asyncio
 
@@ -197,19 +198,26 @@ def _patch_fast_unit(monkeypatch: pytest.MonkeyPatch, recorder: _UnitRecorder) -
     monkeypatch.setattr(sched, "_run_fast_board_unit", _fake_unit)
 
 
+@pytest.fixture
+def writer(tmp_path: Path):
+    with acquire_workspace_lock(tmp_path, "test") as owned:
+        yield owned
+
+
 async def _run_replicated(
-    *, config: RuntimeConfig, board: list[BoardEntry], **kwargs: Any
+    *, writer: WorkspaceLock, config: RuntimeConfig, board: list[BoardEntry], **kwargs: Any
 ) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
     from zicato.tournament import scheduling as sched
 
     left, right, _mode, _provenance = await sched._run_replicated(
+        writer=writer,
         adapter=None,
         left_gen=_generation("v0"),
         right_gen=_generation("v1"),
         board=board,
         weights=deterministic_weights(),
         config=config,
-        workspace_root=Path("/nonexistent"),
+        workspace_root=writer.workspace_root,
         epoch_id="e1",
         fast=True,
         **kwargs,
@@ -222,7 +230,9 @@ async def _run_replicated(
 # ---------------------------------------------------------------------------
 
 
-async def test_a_later_slot_starts_before_slot_0_drains(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_later_slot_starts_before_slot_0_drains(
+    writer: WorkspaceLock, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Utilisation: the permit a finished unit frees goes to the next slot.
 
     Three entries, two permits: one entry's slot-0 unit holds its permit
@@ -233,7 +243,7 @@ async def test_a_later_slot_starts_before_slot_0_drains(monkeypatch: pytest.Monk
     _patch_full_unit(monkeypatch, recorder)
 
     left, right = await _run_replicated(
-        config=_config(parallelism=2), board=_board(3), replicates=2
+        writer=writer, config=_config(parallelism=2), board=_board(3), replicates=2
     )
 
     assert recorder.overlapped()
@@ -241,26 +251,32 @@ async def test_a_later_slot_starts_before_slot_0_drains(monkeypatch: pytest.Monk
 
 
 async def test_an_entry_never_holds_two_of_its_own_replicates(
+    writer: WorkspaceLock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The ordering rule: an entry's slots run in order, in its own chain."""
     recorder = _UnitRecorder(hold_entry="entry_2")
     _patch_full_unit(monkeypatch, recorder)
 
-    await _run_replicated(config=_config(parallelism=4), board=_board(3), replicates=3)
+    await _run_replicated(
+        writer=writer, config=_config(parallelism=4), board=_board(3), replicates=3
+    )
 
     assert recorder.overlapped()
     assert not recorder.repeated_entry_in_flight()
 
 
 async def test_overlapped_slots_never_exceed_parallelism(
+    writer: WorkspaceLock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """One shared semaphore: the ceiling is parallelism, not R × parallelism."""
     recorder = _UnitRecorder(hold_entry="entry_3", dwell=0.01)
     _patch_full_unit(monkeypatch, recorder)
 
-    await _run_replicated(config=_config(parallelism=2), board=_board(4), replicates=3)
+    await _run_replicated(
+        writer=writer, config=_config(parallelism=2), board=_board(4), replicates=3
+    )
 
     assert recorder.max_concurrent() <= 2
     assert recorder.overlapped()
@@ -272,6 +288,7 @@ async def test_overlapped_slots_never_exceed_parallelism(
 
 
 async def test_a_bound_token_ledger_keeps_the_slots_sequential(
+    writer: WorkspaceLock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A ledger decides between slots whether to launch the next one at all."""
@@ -282,7 +299,10 @@ async def test_a_bound_token_ledger_keeps_the_slots_sequential(
     ledger = RoundTokenLedger(10**9)
 
     await _run_replicated(
-        config=_config(parallelism=4, token_ledger=ledger), board=_board(3), replicates=3
+        writer=writer,
+        config=_config(parallelism=4, token_ledger=ledger),
+        board=_board(3),
+        replicates=3,
     )
 
     assert not recorder.overlapped()
@@ -291,6 +311,7 @@ async def test_a_bound_token_ledger_keeps_the_slots_sequential(
 
 
 async def test_a_matchup_deadline_keeps_the_slots_sequential(
+    writer: WorkspaceLock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The wall-clock deadline is read between slots, so slots stay ordered."""
@@ -298,6 +319,7 @@ async def test_a_matchup_deadline_keeps_the_slots_sequential(
     _patch_full_unit(monkeypatch, recorder)
 
     await _run_replicated(
+        writer=writer,
         config=_config(parallelism=4),
         board=_board(3),
         replicates=3,
@@ -314,19 +336,24 @@ async def test_a_matchup_deadline_keeps_the_slots_sequential(
 
 
 async def test_overlapped_slots_share_one_scorer_over_every_replicate_unit(
+    writer: WorkspaceLock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Two scorers would write disjoint subsets of one live aggregate."""
     recorder = _UnitRecorder()
     _patch_full_unit(monkeypatch, recorder)
 
-    await _run_replicated(config=_config(parallelism=4), board=_board(3), replicates=2)
+    await _run_replicated(
+        writer=writer, config=_config(parallelism=4), board=_board(3), replicates=2
+    )
 
     assert len({id(scorer) for scorer in recorder.scorers}) == 1
     assert recorder.scorers[0]._board_total == 3 * 2
 
 
-async def test_slot_maps_come_back_in_slot_order(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_slot_maps_come_back_in_slot_order(
+    writer: WorkspaceLock, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The fold's representative replicate must be replicate 0.
 
     ``_average_losses`` carries the fields it cannot fold from the FIRST
@@ -341,13 +368,14 @@ async def test_slot_maps_come_back_in_slot_order(monkeypatch: pytest.MonkeyPatch
 
     board = _board(3)
     runs = await sched._run_replicate_slots_full(
+        writer=writer,
         adapter=None,
         parent_gen=_generation("v0"),
         child_gen=_generation("v1"),
         board=board,
         weights=deterministic_weights(),
         config=_config(parallelism=2),
-        workspace_root=Path("/nonexistent"),
+        workspace_root=writer.workspace_root,
         epoch_id="e1",
         match_id="m1",
         replicate_base=0,
@@ -369,6 +397,7 @@ async def test_slot_maps_come_back_in_slot_order(monkeypatch: pytest.MonkeyPatch
 
 
 async def test_replicate_base_offsets_every_overlapped_slot(
+    writer: WorkspaceLock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The evidence pre-gate's reserved base still offsets each slot."""
@@ -378,13 +407,14 @@ async def test_replicate_base_offsets_every_overlapped_slot(
     _patch_full_unit(monkeypatch, recorder)
 
     await sched._run_replicate_slots_full(
+        writer=writer,
         adapter=None,
         parent_gen=_generation("v0"),
         child_gen=_generation("v1"),
         board=_board(2),
         weights=deterministic_weights(),
         config=_config(parallelism=4),
-        workspace_root=Path("/nonexistent"),
+        workspace_root=writer.workspace_root,
         epoch_id="e1",
         match_id="m1",
         replicate_base=5000,
@@ -403,7 +433,9 @@ async def test_replicate_base_offsets_every_overlapped_slot(
 # ---------------------------------------------------------------------------
 
 
-async def test_fast_slots_overlap_under_one_semaphore(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_fast_slots_overlap_under_one_semaphore(
+    writer: WorkspaceLock, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The fast round mints ONE semaphore for all its overlapped slots.
 
     It passes none of its own, so a per-slot semaphore would be a fresh
@@ -416,12 +448,13 @@ async def test_fast_slots_overlap_under_one_semaphore(monkeypatch: pytest.Monkey
     _patch_fast_unit(monkeypatch, recorder)
 
     runs = await sched._run_replicate_slots_fast(
+        writer=writer,
         adapter=None,
         child_gen=_generation("v1"),
         board=_board(4),
         weights=deterministic_weights(),
         config=_config(parallelism=2),
-        workspace_root=Path("/nonexistent"),
+        workspace_root=writer.workspace_root,
         epoch_id="e1",
         replicate_count=3,
     )

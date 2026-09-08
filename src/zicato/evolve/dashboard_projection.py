@@ -12,13 +12,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from zicato.runtime.lock import WorkspaceLock
 from zicato.tournament.records import field_tournament_record, write_field_tournament_record
 
 log = logging.getLogger("zicato.orchestrator")
 
 
 def _publish_active_tournament(
-    workspace_root: Path,
+    writer: WorkspaceLock,
     *,
     tournament_id: str,
     epoch_id: str,
@@ -62,6 +63,7 @@ def _publish_active_tournament(
 
     Never raises — a live-state write failure must not abort the round.
     """
+    workspace_root = writer.workspace_root
     try:
         from zicato.evolve.lifecycle_services import _now_iso  # noqa: PLC0415
         from zicato.runtime.state import (  # noqa: PLC0415
@@ -85,7 +87,7 @@ def _publish_active_tournament(
         partial_challenger = dict(prior.partial_challenger_agg) if prior is not None else {}
 
         write_active_tournament(
-            workspace_root,
+            writer,
             ActiveTournament(
                 tournament_id=tournament_id,
                 parent_generation_id="",
@@ -488,7 +490,7 @@ def _ingest_field_tournament_record(
 
 
 def _settle_active_tournament(
-    workspace_root: Path,
+    writer: WorkspaceLock,
     *,
     tournament_id: str,
     epoch_id: str,
@@ -518,7 +520,7 @@ def _settle_active_tournament(
         rounds = _serialise_rounds(strategy.rounds())
         standings = _serialise_standings(decision.standings)
         write_active_tournament(
-            workspace_root,
+            writer,
             ActiveTournament(
                 tournament_id=tournament_id,
                 parent_generation_id="",
@@ -546,17 +548,17 @@ def _settle_active_tournament(
         log.debug("active-tournament settle skipped: %s", exc)
 
 
-def _clear_active_tournament(workspace_root: Path) -> None:
+def _clear_active_tournament(writer: WorkspaceLock) -> None:
     """Best-effort: clear the live ActiveTournament record. Never raises."""
     try:
         from zicato.runtime.state import clear_active_tournament  # noqa: PLC0415
 
-        clear_active_tournament(workspace_root)
+        clear_active_tournament(writer)
     except Exception as exc:  # noqa: BLE001 — live state is best-effort
         log.debug("active-tournament clear skipped: %s", exc)
 
 
-def _mark_run_terminal(workspace_root: Path) -> None:
+def _mark_run_terminal(writer: WorkspaceLock) -> None:
     """Best-effort: mark a cleanly-ended run terminal so it never reads LIVE.
 
     A normally-ended evolve loop already stamps a terminal heartbeat phase
@@ -572,6 +574,7 @@ def _mark_run_terminal(workspace_root: Path) -> None:
     Never raises: a teardown-time live-state write failure must not mask the
     real shutdown reason.
     """
+    workspace_root = writer.workspace_root
     try:
         from zicato.runtime.state import (  # noqa: PLC0415
             TournamentPhase,
@@ -583,6 +586,6 @@ def _mark_run_terminal(workspace_root: Path) -> None:
         if current is None:
             return
         if str(current.phase).strip().lower() == "running":
-            write_active_tournament(workspace_root, replace(current, phase=TournamentPhase.STOPPED))
+            write_active_tournament(writer, replace(current, phase=TournamentPhase.STOPPED))
     except Exception as exc:  # noqa: BLE001 — terminal-state write is best-effort
         log.debug("terminal active-tournament mark skipped: %s", exc)

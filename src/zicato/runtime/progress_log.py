@@ -49,7 +49,7 @@ from pathlib import Path
 
 from zicato.runtime._storage import progress_log_key
 from zicato.runtime.channel import Event, EventLog
-from zicato.runtime.paths import ensure_runtime_dirs
+from zicato.runtime.lock import WorkspaceLock
 from zicato.storage import workspace_backend
 
 # ---------------------------------------------------------------------------
@@ -110,7 +110,7 @@ def _log(workspace_root: Path) -> EventLog:
 # ---------------------------------------------------------------------------
 
 
-def append_progress(workspace_root: Path, type: str, payload: object | None = None) -> int:
+def append_progress(writer: WorkspaceLock, type: str, payload: object | None = None) -> int:
     """Append one progress transition and return the new tail ``seq``.
 
     The single producer (the evolve loop) calls this on each genuine
@@ -119,8 +119,7 @@ def append_progress(workspace_root: Path, type: str, payload: object | None = No
     dashboard surfaces) — the machine-readable liveness cursor. Best-effort
     callers can ignore the return value.
     """
-    ensure_runtime_dirs(workspace_root)
-    return _log(workspace_root).append(type, payload).seq
+    return writer.progress_log.append(type, payload).seq
 
 
 def tail(workspace_root: Path) -> Event | None:
@@ -150,14 +149,14 @@ def tail_is_terminal(workspace_root: Path) -> bool:
     return last is not None and is_terminal(last.type)
 
 
-def clear_log(workspace_root: Path) -> None:
+def clear_log(writer: WorkspaceLock) -> None:
     """Remove the progress event log. Idempotent.
 
     Called on a fresh evolve boot (and crash-resume reconciliation) so a
     new invocation's ``seq`` starts from ``1`` rather than inheriting a
     prior run's tail — a stale ``seq`` must never read as live progress.
     """
-    workspace_backend(workspace_root, start=False).delete(progress_log_key())
+    writer.progress_log.clear()
 
 
 __all__ = [

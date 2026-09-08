@@ -70,6 +70,7 @@ def _install_infra_abort_run_single(monkeypatch: pytest.MonkeyPatch) -> None:
         entry: Any,
         weights: Any,
         config: Any,
+        writer: Any,
         workspace_root: Path,
         epoch_id: str,
         side: str,

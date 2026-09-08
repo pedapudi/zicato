@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from zicato.runtime.lock import acquire_workspace_lock
 from zicato.runtime.paths import active_run_path, heartbeat_path, kill_request_path
 from zicato.runtime.state import (
     ActiveRun,
@@ -389,7 +390,8 @@ def test_read_active_tournament_returns_none_when_missing(tmp_path: Path) -> Non
 
 def test_active_tournament_round_trip(tmp_path: Path) -> None:
     t = _sample_tournament()
-    write_active_tournament(tmp_path, t)
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, t)
     got = read_active_tournament(tmp_path)
     assert got == t
 
@@ -405,7 +407,8 @@ def test_active_tournament_round_fields_round_trip(tmp_path: Path) -> None:
         round_index=3,
         total_rounds=8,
     )
-    write_active_tournament(tmp_path, t)
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, t)
     got = read_active_tournament(tmp_path)
     assert got is not None
     assert got.round_index == 3
@@ -446,7 +449,8 @@ def test_active_tournament_entry_loss_summary_round_trips(tmp_path: Path) -> Non
             )
         ],
     )
-    write_active_tournament(tmp_path, t)
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, t)
     got = read_active_tournament(tmp_path)
     assert got is not None
     assert got.entries[0].loss_summary == {"drift_loss": 0.12, "pass_fail": 1.0}
@@ -478,7 +482,8 @@ def test_active_tournament_entry_adk_session_id_round_trips(tmp_path: Path) -> N
             )
         ],
     )
-    write_active_tournament(tmp_path, t)
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, t)
     got = read_active_tournament(tmp_path)
     assert got is not None
     assert got.entries[0].adk_session_id == "adk-sess-abc123"
@@ -515,14 +520,15 @@ def test_update_tournament_entry_stamps_adk_session_id(tmp_path: Path) -> None:
         started_at="t",
         entries=[ActiveTournamentEntry(entry_id="entry_a", side="child", status="running")],
     )
-    write_active_tournament(tmp_path, t)
-    update_tournament_entry(
-        tmp_path,
-        "entry_a",
-        "child",
-        status="completed",
-        adk_session_id="adk-sess-xyz789",
-    )
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, t)
+        update_tournament_entry(
+            writer,
+            "entry_a",
+            "child",
+            status="completed",
+            adk_session_id="adk-sess-xyz789",
+        )
     got = read_active_tournament(tmp_path)
     assert got is not None
     assert got.entries[0].status == "completed"
@@ -537,8 +543,9 @@ def test_update_tournament_entry_targets_child_side_only(tmp_path: Path) -> None
     child-side transition cannot bleed onto the parent's same-entry row.
     """
     t = _sample_tournament()  # entry_a on both sides, entry_b parent-only.
-    write_active_tournament(tmp_path, t)
-    update_tournament_entry(tmp_path, "entry_a", "child", status="completed")
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, t)
+        update_tournament_entry(writer, "entry_a", "child", status="completed")
     got = read_active_tournament(tmp_path)
     assert got is not None
     by_pair = {(e.entry_id, e.side): e.status for e in got.entries}
@@ -551,8 +558,9 @@ def test_update_tournament_entry_targets_child_side_only(tmp_path: Path) -> None
 def test_update_tournament_entry_targets_parent_side_only(tmp_path: Path) -> None:
     """Symmetric: a parent-side update lands on the parent row only."""
     t = _sample_tournament()
-    write_active_tournament(tmp_path, t)
-    update_tournament_entry(tmp_path, "entry_a", "parent", status="running")
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, t)
+        update_tournament_entry(writer, "entry_a", "parent", status="running")
     got = read_active_tournament(tmp_path)
     assert got is not None
     by_pair = {(e.entry_id, e.side): e.status for e in got.entries}
@@ -563,8 +571,9 @@ def test_update_tournament_entry_targets_parent_side_only(tmp_path: Path) -> Non
 
 def test_update_tournament_entry_preserves_side_field(tmp_path: Path) -> None:
     """A status update must not perturb either row's ``side`` label."""
-    write_active_tournament(tmp_path, _sample_tournament())
-    update_tournament_entry(tmp_path, "entry_a", "child", status="completed")
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, _sample_tournament())
+        update_tournament_entry(writer, "entry_a", "child", status="completed")
     got = read_active_tournament(tmp_path)
     assert got is not None
     sides = sorted((e.entry_id, e.side) for e in got.entries)
@@ -578,9 +587,10 @@ def test_update_tournament_entry_preserves_side_field(tmp_path: Path) -> None:
 
 def test_update_tournament_entry_no_match_is_noop(tmp_path: Path) -> None:
     """An (entry_id, side) pair that matches no row leaves the file unchanged."""
-    write_active_tournament(tmp_path, _sample_tournament())
-    # entry_b has no child row.
-    update_tournament_entry(tmp_path, "entry_b", "child", status="completed")
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, _sample_tournament())
+        # entry_b has no child row.
+        update_tournament_entry(writer, "entry_b", "child", status="completed")
     got = read_active_tournament(tmp_path)
     assert got is not None
     assert all(e.status == "queued" for e in got.entries)
@@ -599,8 +609,9 @@ def test_update_tournament_entry_tolerates_duplicate_pairs(tmp_path: Path) -> No
             ActiveTournamentEntry(entry_id="dup", side="parent", status="queued"),
         ],
     )
-    write_active_tournament(tmp_path, t)
-    update_tournament_entry(tmp_path, "dup", "parent", status="running")
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, t)
+        update_tournament_entry(writer, "dup", "parent", status="running")
     got = read_active_tournament(tmp_path)
     assert got is not None
     # First duplicate updated, second left untouched — no exception raised.
@@ -609,7 +620,8 @@ def test_update_tournament_entry_tolerates_duplicate_pairs(tmp_path: Path) -> No
 
 def test_update_tournament_entry_no_op_without_file(tmp_path: Path) -> None:
     # Must not raise; just a no-op.
-    update_tournament_entry(tmp_path, "anything", "parent", status="running")
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        update_tournament_entry(writer, "anything", "parent", status="running")
     assert read_active_tournament(tmp_path) is None
 
 
@@ -627,7 +639,8 @@ def test_active_tournament_round_trips_partial_aggregates(tmp_path: Path) -> Non
         partial_champion_agg=champion_agg,
         partial_challenger_agg=challenger_agg,
     )
-    write_active_tournament(tmp_path, t)
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, t)
     got = read_active_tournament(tmp_path)
     assert got is not None
     assert got.partial_champion_agg == champion_agg
@@ -641,7 +654,8 @@ def test_active_tournament_partial_aggregates_default_empty(tmp_path: Path) -> N
     incremental-scorer change has no ``partial_*_agg`` keys; the reader
     must default both to ``{}`` rather than failing.
     """
-    write_active_tournament(tmp_path, _sample_tournament())
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, _sample_tournament())
     got = read_active_tournament(tmp_path)
     assert got is not None
     assert got.partial_champion_agg == {}
@@ -679,20 +693,23 @@ def test_update_tournament_partial_aggregate_writes_only_supplied_side(
     intact and never perturbs the per-entry status rows — the incremental
     scorer and the per-entry status writer share the file safely.
     """
-    write_active_tournament(tmp_path, _sample_tournament())
-    update_tournament_entry(tmp_path, "entry_a", "child", status="running")
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, _sample_tournament())
+        update_tournament_entry(writer, "entry_a", "child", status="running")
 
-    update_tournament_partial_aggregate(tmp_path, challenger_agg={"scalar": 0.5, "entry_count": 1})
-    got = read_active_tournament(tmp_path)
-    assert got is not None
-    assert got.partial_challenger_agg == {"scalar": 0.5, "entry_count": 1}
-    assert got.partial_champion_agg == {}
-    # The per-entry status row set by update_tournament_entry survived.
-    by_pair = {(e.entry_id, e.side): e.status for e in got.entries}
-    assert by_pair[("entry_a", "child")] == "running"
+        update_tournament_partial_aggregate(
+            writer, challenger_agg={"scalar": 0.5, "entry_count": 1}
+        )
+        got = read_active_tournament(tmp_path)
+        assert got is not None
+        assert got.partial_challenger_agg == {"scalar": 0.5, "entry_count": 1}
+        assert got.partial_champion_agg == {}
+        # The per-entry status row set by update_tournament_entry survived.
+        by_pair = {(e.entry_id, e.side): e.status for e in got.entries}
+        assert by_pair[("entry_a", "child")] == "running"
 
-    # A later champion-side update leaves the challenger aggregate untouched.
-    update_tournament_partial_aggregate(tmp_path, champion_agg={"scalar": 0.7, "entry_count": 1})
+        # A later champion-side update leaves the challenger aggregate untouched.
+        update_tournament_partial_aggregate(writer, champion_agg={"scalar": 0.7, "entry_count": 1})
     got2 = read_active_tournament(tmp_path)
     assert got2 is not None
     assert got2.partial_champion_agg == {"scalar": 0.7, "entry_count": 1}
@@ -701,16 +718,18 @@ def test_update_tournament_partial_aggregate_writes_only_supplied_side(
 
 def test_update_tournament_partial_aggregate_no_op_without_file(tmp_path: Path) -> None:
     """No active tournament file -> the partial-aggregate write is a no-op."""
-    update_tournament_partial_aggregate(tmp_path, challenger_agg={"scalar": 1.0})
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        update_tournament_partial_aggregate(writer, challenger_agg={"scalar": 1.0})
     assert read_active_tournament(tmp_path) is None
 
 
 def test_clear_active_tournament_idempotent(tmp_path: Path) -> None:
-    write_active_tournament(tmp_path, _sample_tournament())
-    clear_active_tournament(tmp_path)
-    assert read_active_tournament(tmp_path) is None
-    # Second clear is a no-op.
-    clear_active_tournament(tmp_path)
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(writer, _sample_tournament())
+        clear_active_tournament(writer)
+        assert read_active_tournament(tmp_path) is None
+        # Second clear is a no-op.
+        clear_active_tournament(writer)
 
 
 def test_atomic_write_does_not_leave_partial_on_overwrite(tmp_path: Path) -> None:
@@ -891,25 +910,26 @@ def test_loss_summary_round_trips_through_active_tournament_entry(tmp_path: Path
     )
     summary = loss_summary_from_profile(profile)
     snapshot = drift_count_snapshot_from_profile(profile)
-    write_active_tournament(
-        tmp_path,
-        ActiveTournament(
-            tournament_id="t1",
-            parent_generation_id="v0",
-            child_generation_id="v1",
-            epoch_id="ep1",
-            started_at="2026-05-18T00:00:00Z",
-            entries=[ActiveTournamentEntry(entry_id="entry_a", side="child", status="queued")],
-        ),
-    )
-    update_tournament_entry(
-        tmp_path,
-        "entry_a",
-        "child",
-        status="completed",
-        loss_summary=summary,
-        drift_count_snapshot=snapshot,
-    )
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(
+            writer,
+            ActiveTournament(
+                tournament_id="t1",
+                parent_generation_id="v0",
+                child_generation_id="v1",
+                epoch_id="ep1",
+                started_at="2026-05-18T00:00:00Z",
+                entries=[ActiveTournamentEntry(entry_id="entry_a", side="child", status="queued")],
+            ),
+        )
+        update_tournament_entry(
+            writer,
+            "entry_a",
+            "child",
+            status="completed",
+            loss_summary=summary,
+            drift_count_snapshot=snapshot,
+        )
     got = read_active_tournament(tmp_path)
     assert got is not None
     assert got.entries[0].loss_summary == summary

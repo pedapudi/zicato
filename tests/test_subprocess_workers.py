@@ -68,7 +68,7 @@ from zicato.core.workspace import (
     loss_profile_path,
     run_id_for_unit,
 )
-from zicato.runtime.lock import pid_start_time
+from zicato.runtime.lock import acquire_workspace_lock, pid_start_time
 from zicato.runtime.paths import active_run_path
 from zicato.runtime.state import ActiveRun
 from zicato.tournament.runner import _run_single, run_tournament
@@ -162,6 +162,7 @@ def test_two_replicates_of_one_unit_hold_distinct_active_runs(tmp_path: Path) ->
         tasks = [
             asyncio.create_task(
                 _run_single(
+                    writer=writer,
                     adapter=EmittingThenSleepingAdapter(),
                     generation=generation,
                     entry=replicate_entry,
@@ -192,7 +193,8 @@ def test_two_replicates_of_one_unit_hold_distinct_active_runs(tmp_path: Path) ->
         }
         return list(await asyncio.gather(*tasks))
 
-    losses = asyncio.run(asyncio.wait_for(_drive(), timeout=20))
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        losses = asyncio.run(asyncio.wait_for(_drive(), timeout=20))
     assert len(losses) == 2 and all(loss.wall_clock_budget_exceeded for loss in losses)
     assert not list((workspace / "runtime" / "active_runs").glob("*.json"))
     assert not list((workspace / "runtime" / "control" / "kill_requests").glob("*"))
@@ -749,18 +751,20 @@ def test_run_single_spawns_worker_in_new_session(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy_create)
 
-    loss = asyncio.run(
-        _run_single(
-            adapter=StubAdapter(),
-            generation=generation,
-            entry=entry,
-            weights=ScoringWeights(),
-            config=_config(workspace),
-            workspace_root=workspace,
-            epoch_id="e0",
-            side="parent",
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        loss = asyncio.run(
+            _run_single(
+                writer=writer,
+                adapter=StubAdapter(),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=_config(workspace),
+                workspace_root=workspace,
+                epoch_id="e0",
+                side="parent",
+            )
         )
-    )
 
     assert isinstance(loss, LossProfile)
     assert captured["start_new_session"] is True
@@ -891,18 +895,20 @@ def test_run_single_scrubs_worker_env_when_opted_in(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy_create)
 
-    loss = asyncio.run(
-        _run_single(
-            adapter=StubAdapter(),
-            generation=generation,
-            entry=entry,
-            weights=ScoringWeights(),
-            config=config,
-            workspace_root=workspace,
-            epoch_id="e0",
-            side="parent",
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        loss = asyncio.run(
+            _run_single(
+                writer=writer,
+                adapter=StubAdapter(),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=config,
+                workspace_root=workspace,
+                epoch_id="e0",
+                side="parent",
+            )
         )
-    )
 
     assert isinstance(loss, LossProfile)
     env = captured["env"]
@@ -953,18 +959,20 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     started = time.monotonic()
-    loss = asyncio.run(
-        _run_single(
-            adapter=SleepingAdapter(),
-            generation=generation,
-            entry=entry,
-            weights=ScoringWeights(),
-            config=_config(workspace, supervisor_kill_wait_s=0.5),
-            workspace_root=workspace,
-            epoch_id="e0",
-            side="parent",
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        loss = asyncio.run(
+            _run_single(
+                writer=writer,
+                adapter=SleepingAdapter(),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=_config(workspace, supervisor_kill_wait_s=0.5),
+                workspace_root=workspace,
+                epoch_id="e0",
+                side="parent",
+            )
         )
-    )
     elapsed = time.monotonic() - started
 
     # Aborted, worst-case loss profile so the tournament can still aggregate.
@@ -1020,22 +1028,24 @@ def test_tournament_continues_after_a_budget_killed_run(
     monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     losses: dict[str, LossProfile] = {}
-    for entry, adapter in (
-        (_entry("entry_wedged", budget_s=1), SleepingAdapter()),
-        (_entry("entry_ok", budget_s=60), StubAdapter()),
-    ):
-        losses[entry.id] = asyncio.run(
-            _run_single(
-                adapter=adapter,
-                generation=generation,
-                entry=entry,
-                weights=ScoringWeights(),
-                config=_config(workspace, supervisor_kill_wait_s=0.5),
-                workspace_root=workspace,
-                epoch_id="e0",
-                side="parent",
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        for entry, adapter in (
+            (_entry("entry_wedged", budget_s=1), SleepingAdapter()),
+            (_entry("entry_ok", budget_s=60), StubAdapter()),
+        ):
+            losses[entry.id] = asyncio.run(
+                _run_single(
+                    writer=writer,
+                    adapter=adapter,
+                    generation=generation,
+                    entry=entry,
+                    weights=ScoringWeights(),
+                    config=_config(workspace, supervisor_kill_wait_s=0.5),
+                    workspace_root=workspace,
+                    epoch_id="e0",
+                    side="parent",
+                )
             )
-        )
 
     # The wedged entry aborted; the next entry still produced a profile.
     assert losses["entry_wedged"].wall_clock_budget_exceeded is True
@@ -1113,6 +1123,7 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
         sup = asyncio.create_task(_fake_supervisor())
         try:
             return await _run_single(
+                writer=writer,
                 adapter=SleepingAdapter(),
                 generation=generation,
                 entry=entry,
@@ -1130,7 +1141,8 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
         finally:
             sup.cancel()
 
-    loss = asyncio.run(_drive())
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        loss = asyncio.run(_drive())
 
     assert isinstance(loss, LossProfile)
     assert loss.wall_clock_budget_exceeded is True
@@ -1197,6 +1209,7 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
         monkeypatch.setattr(runner_mod, "acquire_worker_permit", acquire)
         task = asyncio.create_task(
             _run_single(
+                writer=writer,
                 adapter=SleepingAdapter(ignore_sigterm=cancel_during == "fallback"),
                 generation=generation,
                 entry=entry,
@@ -1312,7 +1325,8 @@ def test_cancellation_keeps_worker_resources_until_supervisor_reaps(
             monkeypatch.setattr(runner_mod, "_terminate_worker", real_terminate)
             await runner_mod.retry_worker_cleanup(workspace)
 
-    asyncio.run(drive())
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        asyncio.run(drive())
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="requires child adoption and process groups")
@@ -1351,6 +1365,7 @@ def test_invocation_cancellation_reaps_all_active_workers(
         tasks = [
             asyncio.create_task(
                 _run_single(
+                    writer=writer,
                     adapter=SleepingAdapter(),
                     generation=generation,
                     entry=_entry(entry_id),
@@ -1392,7 +1407,8 @@ def test_invocation_cancellation_reaps_all_active_workers(
             await asyncio.gather(*tasks, return_exceptions=True)
             await runner_mod.retry_worker_cleanup(workspace)
 
-    asyncio.run(drive())
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        asyncio.run(drive())
 
 
 # ---------------------------------------------------------------------------
@@ -1436,18 +1452,20 @@ def test_run_single_handles_externally_killed_worker(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", killing_create)
 
-    loss = asyncio.run(
-        _run_single(
-            adapter=SleepingAdapter(),
-            generation=generation,
-            entry=entry,
-            weights=ScoringWeights(),
-            config=_config(workspace),
-            workspace_root=workspace,
-            epoch_id="e0",
-            side="parent",
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        loss = asyncio.run(
+            _run_single(
+                writer=writer,
+                adapter=SleepingAdapter(),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=_config(workspace),
+                workspace_root=workspace,
+                epoch_id="e0",
+                side="parent",
+            )
         )
-    )
 
     # Worker gone + missing result file == a normal aborted run, NOT a
     # crash. The tournament continues.
@@ -1481,24 +1499,26 @@ def test_parent_escalates_to_sigkill_when_worker_ignores_sigterm(
     monkeypatch.setattr("zicato.tournament.worker_transport._SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
 
     started = time.monotonic()
-    loss = asyncio.run(
-        _run_single(
-            # ignore_sigterm=True -> the worker installs SIG_IGN for
-            # SIGTERM inside the subprocess, so only SIGKILL stops it.
-            adapter=SleepingAdapter(ignore_sigterm=True),
-            generation=generation,
-            entry=entry,
-            weights=ScoringWeights(),
-            # No supervisor is attached, so the parent waits the full
-            # supervisor_kill_wait_s window before its last-resort
-            # SIGTERM->SIGKILL escalation — shrunk so the escalation
-            # semantics (not the dead wait) dominate the test.
-            config=_config(workspace, supervisor_kill_wait_s=0.3),
-            workspace_root=workspace,
-            epoch_id="e0",
-            side="parent",
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        loss = asyncio.run(
+            _run_single(
+                writer=writer,
+                # ignore_sigterm=True -> the worker installs SIG_IGN for
+                # SIGTERM inside the subprocess, so only SIGKILL stops it.
+                adapter=SleepingAdapter(ignore_sigterm=True),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                # No supervisor is attached, so the parent waits the full
+                # supervisor_kill_wait_s window before its last-resort
+                # SIGTERM->SIGKILL escalation — shrunk so the escalation
+                # semantics (not the dead wait) dominate the test.
+                config=_config(workspace, supervisor_kill_wait_s=0.3),
+                workspace_root=workspace,
+                epoch_id="e0",
+                side="parent",
+            )
         )
-    )
     elapsed = time.monotonic() - started
 
     assert isinstance(loss, LossProfile)
@@ -1640,18 +1660,20 @@ def test_run_does_not_pollute_canonical_generation_snapshot(tmp_path: Path) -> N
     # Digest the canonical snapshot BEFORE the run.
     before = _hash_tree(snap)
 
-    loss = asyncio.run(
-        _run_single(
-            adapter=SnapshotWritingAdapter(),
-            generation=generation,
-            entry=entry,
-            weights=ScoringWeights(),
-            config=_config(workspace),
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            side="parent",
+    with acquire_workspace_lock(workspace, "test-worker") as writer:
+        loss = asyncio.run(
+            _run_single(
+                writer=writer,
+                adapter=SnapshotWritingAdapter(),
+                generation=generation,
+                entry=entry,
+                weights=ScoringWeights(),
+                config=_config(workspace),
+                workspace_root=workspace,
+                epoch_id=epoch_id,
+                side="parent",
+            )
         )
-    )
     # The run itself completed and produced a loss profile.
     assert isinstance(loss, LossProfile)
     assert loss.entry_id == entry.id

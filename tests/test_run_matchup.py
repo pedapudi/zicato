@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -73,7 +74,17 @@ def _gen(tmp_path: Path, gen_id: str, epoch_id: str) -> Generation:
 
 def _stub_run_single(monkeypatch, canned, *, log: list | None = None):
     async def fake_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+        *,
+        adapter,
+        generation,
+        entry,
+        weights,
+        config,
+        writer: Any,
+        workspace_root,
+        epoch_id,
+        side,
+        match_id="",
     ):
         del adapter, weights, config, workspace_root, side, match_id
         if log is not None:
@@ -179,7 +190,17 @@ def test_run_matchup_replicates_average_losses(monkeypatch, tmp_path):
     calls = {"v1_entry_a": 0}
 
     async def fake_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+        *,
+        adapter,
+        generation,
+        entry,
+        weights,
+        config,
+        writer: Any,
+        workspace_root,
+        epoch_id,
+        side,
+        match_id="",
     ):
         del adapter, weights, config, workspace_root, side, match_id
         key = f"{generation.id}_{entry.id}"
@@ -284,7 +305,17 @@ def test_run_matchup_budget_returns_partial_aggregate(monkeypatch, tmp_path):
     ran: list[str] = []
 
     async def slow_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+        *,
+        adapter,
+        generation,
+        entry,
+        weights,
+        config,
+        writer: Any,
+        workspace_root,
+        epoch_id,
+        side,
+        match_id="",
     ):
         del adapter, weights, workspace_root, side, match_id
         ran.append(entry.id)
@@ -365,7 +396,17 @@ def test_run_matchup_unset_budget_runs_every_unit(monkeypatch, tmp_path):
     ran: list[tuple[str, str]] = []
 
     async def fast_run_single(
-        *, adapter, generation, entry, weights, config, workspace_root, epoch_id, side, match_id=""
+        *,
+        adapter,
+        generation,
+        entry,
+        weights,
+        config,
+        writer: Any,
+        workspace_root,
+        epoch_id,
+        side,
+        match_id="",
     ):
         del adapter, weights, config, workspace_root, side, match_id
         ran.append((generation.id, entry.id))
@@ -431,6 +472,7 @@ class _PeakConcurrencyProbe:
             entry,
             weights,
             config,
+            writer: Any,
             workspace_root,
             epoch_id,
             side,

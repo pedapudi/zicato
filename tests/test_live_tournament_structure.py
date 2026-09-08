@@ -25,6 +25,7 @@ from zicato.evolve.dashboard_projection import (
     _serialise_rounds,
     _serialise_standings,
 )
+from zicato.runtime.lock import acquire_workspace_lock
 from zicato.runtime.state import (
     ActiveTournament,
     update_tournament_projected,
@@ -350,25 +351,26 @@ def test_racing_overlay_folds_runner_projected_into_live_progress(tmp_path: Path
     strategy, champion, challengers = _racing(4)
     strategy.next_matchups()  # schedule rung 0 (in-flight, no results yet)
 
-    write_active_tournament(
-        tmp_path,
-        ActiveTournament(
-            tournament_id="t",
-            parent_generation_id="",
-            child_generation_id="",
-            epoch_id="e",
-            started_at="x",
-            structure="racing",
-        ),
-    )
-    # The runner's incremental scorer has landed some boards for two lanes.
-    update_tournament_projected(
-        tmp_path,
-        {
-            "v0": {"scalar": 1.0, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
-            "v1": {"scalar": 0.3, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
-        },
-    )
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(
+            writer,
+            ActiveTournament(
+                tournament_id="t",
+                parent_generation_id="",
+                child_generation_id="",
+                epoch_id="e",
+                started_at="x",
+                structure="racing",
+            ),
+        )
+        # The runner's incremental scorer has landed some boards for two lanes.
+        update_tournament_projected(
+            writer,
+            {
+                "v0": {"scalar": 1.0, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
+                "v1": {"scalar": 0.3, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
+            },
+        )
 
     live = _serialise_rounds(strategy.live_rounds())
     _overlay_projected_live_progress(live, tmp_path)
@@ -420,34 +422,35 @@ def test_racing_live_arrived_fold_matches_overlay(tmp_path: Path) -> None:
     # Seed the active tournament with the strategy-published rung (the
     # republish path writes exactly this via _publish_active_tournament).
     live_rounds = _serialise_rounds(strategy.live_rounds())
-    write_active_tournament(
-        tmp_path,
-        ActiveTournament(
-            tournament_id="t",
-            parent_generation_id="",
-            child_generation_id="",
-            epoch_id="e",
-            started_at="x",
-            structure="racing",
-            competitors=[
-                {"generation_id": "v0", "seed": 1, "role": "champion"},
-                *[
-                    {"generation_id": c.generation_id, "seed": i + 2, "role": "challenger"}
-                    for i, c in enumerate(challengers)
+    with acquire_workspace_lock(tmp_path, "test-publication") as writer:
+        write_active_tournament(
+            writer,
+            ActiveTournament(
+                tournament_id="t",
+                parent_generation_id="",
+                child_generation_id="",
+                epoch_id="e",
+                started_at="x",
+                structure="racing",
+                competitors=[
+                    {"generation_id": "v0", "seed": 1, "role": "champion"},
+                    *[
+                        {"generation_id": c.generation_id, "seed": i + 2, "role": "challenger"}
+                        for i, c in enumerate(challengers)
+                    ],
                 ],
-            ],
-            rounds=live_rounds,
-        ),
-    )
+                rounds=live_rounds,
+            ),
+        )
 
-    # A board lands for the v1 duel → the FOLD path refreshes the rung.
-    update_tournament_projected(
-        tmp_path,
-        {
-            "v0": {"scalar": 1.0, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
-            "v1": {"scalar": 0.3, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
-        },
-    )
+        # A board lands for the v1 duel → the FOLD path refreshes the rung.
+        update_tournament_projected(
+            writer,
+            {
+                "v0": {"scalar": 1.0, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
+                "v1": {"scalar": 0.3, "boards_done": 1, "boards_total": 2, "pass_rate": 1.0},
+            },
+        )
     from zicato.runtime.state import read_active_tournament  # noqa: PLC0415
 
     folded = read_active_tournament(tmp_path)

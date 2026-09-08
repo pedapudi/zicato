@@ -141,6 +141,7 @@ class _ScreenWorld:
         entry: BoardEntry,
         weights: Any,
         config: Any,
+        writer: Any,
         workspace_root: Any,
         epoch_id: str,
         side: str,

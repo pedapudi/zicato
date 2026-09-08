@@ -1076,6 +1076,7 @@ async def run_contract_preflight(
                 # sample is deterministic a re-run is an idempotent HIT throughout.
                 replicate_index = PREFLIGHT_REPLICATE_BASE + ordinal
                 losses = await _run_board_units_fast(
+                    writer=writer,
                     adapter=adapter,
                     child_gen=degraded_gen,
                     # Stamped like the calibration draws: the harness derives any

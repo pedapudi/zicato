@@ -272,7 +272,7 @@ async def _propose_and_apply_challenger(
     screen_candidates: ScreenRunner | None = None,
     recombine_pair: Any = None,
     resume_experiment: Experiment | None = None,
-    writer: WorkspaceLock | None = None,
+    writer: WorkspaceLock,
     mutation_policy: MutationPolicy | None = None,
 ) -> CandidateAttempt:
     """Propose + apply ONE challenger child of the champion.
@@ -340,7 +340,7 @@ async def _propose_and_apply_challenger(
 
     _beat(
         beater,
-        workspace_root=workspace_root,
+        progress_writer=writer,
         progress=progress_log.PROPOSE,
         epoch_id=epoch_id,
         generation_id=next_id,

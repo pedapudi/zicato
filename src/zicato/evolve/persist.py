@@ -28,6 +28,7 @@ from zicato.core.types import (
 from zicato.evolve.ingest import _ingest_experiment_into_index
 from zicato.evolve.lifecycle_services import _beat, _now_iso
 from zicato.runtime.heartbeat import HeartbeatBeater
+from zicato.runtime.lock import WorkspaceLock
 from zicato.util import best_effort
 
 if TYPE_CHECKING:
@@ -203,6 +204,7 @@ async def _round_epilogue(
 
 async def _persist_rejected_round(
     *,
+    writer: WorkspaceLock,
     workspace_root: Path,
     epoch_id: str,
     parent_id: str,
@@ -290,7 +292,7 @@ async def _persist_rejected_round(
     )
     _beat(
         beater,
-        workspace_root=workspace_root,
+        progress_writer=writer,
         progress=progress_log.REJECT,
         epoch_id=epoch_id,
         generation_id=next_id,
@@ -394,7 +396,6 @@ def deferred_infra_proposer_outage(
         round_log.emit("round_closed")
     _beat(
         beater,
-        workspace_root=workspace_root,
         epoch_id=epoch_id,
         generation_id=next_id,
         round_index=round_index,
